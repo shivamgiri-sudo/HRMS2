@@ -16,6 +16,15 @@ const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catc
 const ROSTER_OWNERS = ["manager", "wfm"];
 const SCOPED_MONITORS = ["manager", "wfm", "assistant_manager", "tl"];
 
+// Dispute resolution legitimately happens after publish (a dispute is raised against an
+// already-published/acknowledged assignment, which bulkUpsertAssignments's narrower
+// EDITABLE_ASSIGNMENT_STATUSES — draft/submitted/reviewed only — would wrongly forbid).
+// What resolve-dispute must NOT be able to touch is a cycle whose attendance is already
+// locked or whose payroll has moved on: those three statuses are excluded here, matching
+// the concern bulkUpsertAssignments's own status gate exists for, without blocking the
+// normal published/acknowledged dispute flow this route is actually for.
+const DISPUTE_LOCKED_STATUSES = new Set(["attendance_locked", "payroll_input_ready", "closed"]);
+
 router.use(requireAuth);
 
 async function canOwnRoster(req: AuthenticatedRequest, processId: string, branchId?: string | null): Promise<boolean> {
@@ -421,7 +430,7 @@ router.post("/assignments/:id/resolve-dispute", h(async (req: AuthenticatedReque
   const userId = req.authUser!.id;
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT rda.*, wrc.process_id, wrc.branch_id
+    `SELECT rda.*, wrc.process_id, wrc.branch_id, wrc.status AS cycle_status
        FROM roster_daily_assignment rda
        JOIN weekly_roster_cycle wrc ON wrc.id = rda.cycle_id
       WHERE rda.id = ? LIMIT 1`,
@@ -432,6 +441,16 @@ router.post("/assignments/:id/resolve-dispute", h(async (req: AuthenticatedReque
 
   if (!(await canOwnRoster(req, assignment.process_id, assignment.branch_id))) {
     return res.status(403).json({ success: false, message: "Forbidden: roster ownership required to resolve disputes" });
+  }
+
+  // Every other assignment-mutating path in this file checks cycle status before
+  // writing (see bulkUpsertAssignments's EDITABLE_ASSIGNMENT_STATUSES); this route
+  // never did, so a shift could be silently changed on an assignment whose cycle was
+  // already attendance-locked or payroll-closed.
+  if (DISPUTE_LOCKED_STATUSES.has(assignment.cycle_status)) {
+    return res.status(409).json({
+      error: `Cannot resolve a dispute on a ${assignment.cycle_status} cycle — attendance/payroll has already moved on`,
+    });
   }
 
   const now = new Date().toISOString().slice(0, 19).replace("T", " ");

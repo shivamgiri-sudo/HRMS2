@@ -610,8 +610,26 @@ export const autoRosterSyncedService = {
       throw Object.assign(new Error("Published/locked roster cannot be regenerated."), { statusCode: 409 });
     }
 
-    await db.execute(`DELETE FROM wfm_roster_assignment WHERE plan_id = ? AND publish_status <> 'published'`, [planId]);
-    await db.execute(`DELETE FROM wfm_roster_assignment_control WHERE plan_id = ?`, [planId]);
+    // This DELETE previously wiped every non-published assignment in the plan
+    // unconditionally, with no check of wfm_roster_assignment_control.change_lock_status
+    // — the column the schema defines specifically so a manual per-employee override
+    // inside a draft plan survives the next "generate". A manager's manual edit was
+    // silently destroyed the moment someone (re)ran generation. 'locked' is not
+    // currently set by any write path, so this is a no-op against today's data — it
+    // closes the gap for when it is, without changing current behavior.
+    await db.execute(
+      `DELETE wra FROM wfm_roster_assignment wra
+        LEFT JOIN wfm_roster_assignment_control wrac ON wrac.assignment_id = wra.id
+        WHERE wra.plan_id = ?
+          AND wra.publish_status <> 'published'
+          AND (wrac.change_lock_status IS NULL OR wrac.change_lock_status <> 'locked')`,
+      [planId],
+    );
+    await db.execute(
+      `DELETE FROM wfm_roster_assignment_control
+        WHERE plan_id = ? AND change_lock_status <> 'locked'`,
+      [planId],
+    );
     await db.execute(`DELETE FROM wfm_roster_conflict_log WHERE plan_id = ?`, [planId]);
 
     const processName = await getProcessName(plan.process_id);

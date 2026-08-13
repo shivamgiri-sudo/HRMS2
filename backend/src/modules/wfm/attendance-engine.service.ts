@@ -601,10 +601,17 @@ export const attendanceEngineService = {
     //
     // Requiring a published roster row meant employees without one were never
     // marked late. Fall back to employees.working_hours_start.
+    //
+    // The assignment's own shift_start_time (set at generation time) is read first,
+    // matching getShiftWindow() above — wfm_shift_master.start_time is a live,
+    // editable value (wfm.service.ts:updateShift has no versioning), and reading it
+    // directly here meant every historical late-mark figure for a shift would
+    // silently be recomputed under its new time the moment anyone edited the shift,
+    // regardless of whether the assignment already had its own snapshot.
     const [shiftRows] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(
-                (SELECT wsm.start_time FROM wfm_roster_assignment wra
-                   JOIN wfm_shift_master wsm ON wsm.id = wra.shift_id
+                (SELECT COALESCE(wra.shift_start_time, wsm.start_time) FROM wfm_roster_assignment wra
+                   LEFT JOIN wfm_shift_master wsm ON wsm.id = wra.shift_id
                   WHERE wra.employee_id = ? AND wra.roster_date = ? LIMIT 1),
                 (SELECT e.working_hours_start FROM employees e WHERE e.id = ? LIMIT 1)
               ) AS start_time`,

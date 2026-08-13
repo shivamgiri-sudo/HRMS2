@@ -139,6 +139,9 @@ export const rosterGenerationService = {
       const approvedWeekoffs = empIds.length
         ? await loadApprovedWeekoffs(empIds)
         : new Map<string, ApprovedWeekOff>();
+      const approvedLeaveDates = await loadApprovedLeaveDates(
+        empIds, cycle.week_start_date, cycle.week_end_date,
+      );
 
       // 5. Load active shift templates for this process
       const [shiftTemplates] = await db.execute<ShiftTemplateRow[]>(
@@ -179,6 +182,7 @@ export const rosterGenerationService = {
             dates,
             holidays,
             approvedWeekoffs,
+            approvedLeaveDates,
             shiftTemplates,
             defaultShift,
             rosterTemplate,
@@ -291,6 +295,45 @@ async function loadApprovedWeekoffs(empIds: string[]): Promise<Map<string, Appro
   return map;
 }
 
+/**
+ * Dates within [from, to] each employee has approved leave for, keyed
+ * "employeeId|YYYY-MM-DD". This generator never checked leave_request at all — an
+ * employee on approved leave got a normal shift assignment identical to anyone at
+ * work. auto-roster-synced.service.ts (the other live generation engine) already
+ * filters its employee pool on the same approved/accepted leave_request condition;
+ * mirrored here rather than reinvented.
+ */
+export async function loadApprovedLeaveDates(empIds: string[], from: string, to: string): Promise<Set<string>> {
+  const dates = new Set<string>();
+  if (empIds.length === 0) return dates;
+  try {
+    const placeholders = empIds.map(() => "?").join(",");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id, from_date, to_date
+         FROM leave_request
+        WHERE employee_id IN (${placeholders})
+          AND LOWER(status) IN ('approved','accepted')
+          AND from_date <= ? AND to_date >= ?`,
+      [...empIds, to, from]
+    );
+    for (const row of rows as RowDataPacket[]) {
+      const empId = String(row.employee_id);
+      // Clamp the leave range to the cycle window being generated.
+      const start = String(row.from_date).slice(0, 10) < from ? from : String(row.from_date).slice(0, 10);
+      const end = String(row.to_date).slice(0, 10) > to ? to : String(row.to_date).slice(0, 10);
+      for (const date of getDatesInRange(start, end)) {
+        dates.add(`${empId}|${date}`);
+      }
+    }
+  } catch (error) {
+    // Non-fatal, matching loadHolidays below: roster generation must still produce
+    // a roster if the leave table is briefly unreachable, but the failure is logged
+    // rather than silently treated as "nobody is on leave."
+    console.error("[roster] approved-leave lookup unavailable; generating without a leave check:", (error as Error)?.message);
+  }
+  return dates;
+}
+
 async function loadHolidays(from: string, to: string): Promise<Set<string>> {
   const set = new Set<string>();
   try {
@@ -317,15 +360,24 @@ async function loadHolidays(from: string, to: string): Promise<Set<string>> {
   return set;
 }
 
+// Pinned to UTC construction/increment throughout (Date.UTC + setUTCDate), never the
+// local-timezone constructor. `new Date(fy, fm-1, fd)` builds midnight in the HOST's
+// timezone, and toISOString() converts that back to UTC — on a host running IST
+// (UTC+5:30, which this server does — see hrms2-host-timezone-date-bugs), midnight
+// IST is 18:30 the PREVIOUS day in UTC, so every date this returned was one day
+// earlier than the from/to strings it was given. Every roster this engine has ever
+// generated used this to build its date list. Date.UTC never involves the host's
+// local interpretation, so this is timezone-independent regardless of what the
+// process's TZ is set to.
 function getDatesInRange(from: string, to: string): string[] {
   const dates: string[] = [];
   const [fy, fm, fd] = from.split("-").map(Number);
   const [ty, tm, td] = to.split("-").map(Number);
-  const cur = new Date(fy, fm - 1, fd);
-  const end = new Date(ty, tm - 1, td);
+  const cur = new Date(Date.UTC(fy, fm - 1, fd));
+  const end = new Date(Date.UTC(ty, tm - 1, td));
   while (cur <= end) {
     dates.push(cur.toISOString().slice(0, 10));
-    cur.setDate(cur.getDate() + 1);
+    cur.setUTCDate(cur.getUTCDate() + 1);
   }
   return dates;
 }
@@ -335,6 +387,7 @@ async function processEmployee(ctx: {
   dates: string[];
   holidays: Set<string>;
   approvedWeekoffs: Map<string, ApprovedWeekOff>;
+  approvedLeaveDates: Set<string>;
   shiftTemplates: ShiftTemplateRow[];
   defaultShift: ShiftTemplateRow | null;
   rosterTemplate: RosterTemplateRow | null;
@@ -343,11 +396,18 @@ async function processEmployee(ctx: {
   runId: string;
   result: GenerationResult;
 }): Promise<void> {
-  const { emp, dates, holidays, approvedWeekoffs, defaultShift, weekoffRules, cycleId, runId, result } = ctx;
+  const { emp, dates, holidays, approvedWeekoffs, approvedLeaveDates, defaultShift, weekoffRules, cycleId, runId, result } = ctx;
   const weekoff = approvedWeekoffs.get(emp.id);
   let lastWeekoffDate: string | null = null;
 
   for (const date of dates) {
+    // On approved leave: no shift assignment at all for this date, matching
+    // auto-roster-synced.service.ts's getEmployeePool(), which filters these
+    // employees out before scheduling anything. Checked before holiday/week-off so
+    // an employee on leave over a holiday or their own week-off day isn't scheduled
+    // a shift on top of either.
+    if (approvedLeaveDates.has(`${emp.id}|${date}`)) continue;
+
     const isHoliday = ctx.holidays.has(date);
     const dateObj = new Date(date + "T00:00:00");
     const dayOfWeek = dateObj.getDay(); // 0=Sun

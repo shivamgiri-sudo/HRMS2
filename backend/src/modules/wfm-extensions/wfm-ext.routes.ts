@@ -5,7 +5,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
-import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { getEmployeeForUser, hasProcessScope, hasRole } from "../../shared/accessGuard.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { rosterSwapService, rosterConflictService, coverageService, attritionService } from "./wfm-ext.service.js";
 
@@ -36,6 +36,22 @@ async function computedCoverageSnapshot(input: any, userId: string) {
   const snapshotDate = String(input.snapshot_date ?? input.date ?? "").slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(snapshotDate)) throw Object.assign(new Error("snapshot_date/date is required in YYYY-MM-DD format"), { statusCode: 400 });
   if (input.planned_headcount !== undefined) {
+    // Manual/override snapshot: unlike the computed path below (which scopes via
+    // employeeScope()), this branch took process_id/branch_id straight from the
+    // request body with no check at all — a "manager" role scoped to one branch
+    // could write a fabricated headcount/shrinkage snapshot for any other branch
+    // or process, feeding downstream coverage reporting with numbers nobody who
+    // actually owns that scope produced.
+    if (!(await hasRole(userId, "admin", "hr"))) {
+      const processId = input.process_id ? String(input.process_id) : null;
+      const branchId = input.branch_id ? String(input.branch_id) : null;
+      // hasProcessScope requires a process id to evaluate against — it has no
+      // branch-only mode — so a branch-only submission has nothing to validate
+      // against and is rejected rather than let through unchecked.
+      if (!processId || !(await hasProcessScope(userId, processId, branchId, ...WFM_SCOPE_ROLES))) {
+        throw Object.assign(new Error("Not authorized for this process/branch"), { statusCode: 403 });
+      }
+    }
     return {
       snapshot_date: snapshotDate,
       process_id: input.process_id ?? null,

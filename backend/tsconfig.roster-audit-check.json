@@ -1,0 +1,23 @@
+{
+  // Typecheck for the roster/shift-planning audit fixes (2026-08-13).
+  //
+  //     npx tsc -p tsconfig.roster-audit-check.json
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/modules/wfm/attendance-engine.service.ts",
+    "src/modules/roster/roster-master.controller.ts",
+    "src/modules/roster/roster-master.routes.ts",
+    "src/modules/roster/roster-capacity.controller.ts",
+    "src/modules/roster/roster-capacity.routes.ts",
+    "src/modules/wfm-extensions/wfm-ext.routes.ts",
+    "src/modules/roster/roster.governance.routes.ts",
+    "src/modules/roster/roster-change-log.ts",
+    "src/modules/bulk-upload/roster-assignment-bulk.service.ts",
+    "src/modules/bulk-upload/shift-roster-bulk.service.ts",
+    "src/modules/roster/roster-generation.service.ts",
+    "src/modules/wfm/auto-roster-synced.service.ts"
+  ]
+}

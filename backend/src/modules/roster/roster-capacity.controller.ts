@@ -1,5 +1,27 @@
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
+import type { RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { getEmployeeForUser, hasProcessScope, hasRole } from '../../shared/accessGuard.js';
 import { rosterCapacityService } from './roster-capacity.service.js';
+
+type Request = AuthenticatedRequest;
+
+const SCOPED_ROSTER_ROLES = ['wfm', 'process_manager'];
+
+async function assertProcessScope(req: Request, processId: string | null | undefined): Promise<boolean> {
+  const userId = req.authUser!.id;
+  if (await hasRole(userId, 'admin', 'hr')) return true;
+  return Boolean(processId) && hasProcessScope(userId, processId!, null, ...SCOPED_ROSTER_ROLES);
+}
+
+async function ownEmployeeProcessId(employeeId: string): Promise<string | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    'SELECT process_id FROM employees WHERE id = ? LIMIT 1',
+    [employeeId],
+  );
+  return (rows[0] as { process_id?: string } | undefined)?.process_id ?? null;
+}
 
 export const rosterCapacityController = {
   // ========== Capacity Config ==========
@@ -25,6 +47,11 @@ export const rosterCapacityController = {
   async updateCapacityConfig(req: Request, res: Response) {
     try {
       const { processId, dayOfWeek } = req.params;
+      // processId was trusted straight from the URL with no check that the caller
+      // (role-gated to wfm/admin, but not scope-checked) actually owns that process.
+      if (!(await assertProcessScope(req, processId))) {
+        return res.status(403).json({ error: 'Not authorized for this process' });
+      }
       const updates = req.body;
 
       const config = await rosterCapacityService.updateCapacityConfig(
@@ -66,6 +93,10 @@ export const rosterCapacityController = {
   // ========== Allocation Management ==========
   async allocateWeekOff(req: Request, res: Response) {
     try {
+      // process_id was trusted straight from the body with no scope check.
+      if (!(await assertProcessScope(req, req.body?.process_id))) {
+        return res.status(403).json({ error: 'Not authorized for this process' });
+      }
       const allocation = await rosterCapacityService.allocateWeekOff(req.body);
       res.json(allocation);
     } catch (error: unknown) {
@@ -116,7 +147,26 @@ export const rosterCapacityController = {
   // ========== Week-Off Preference (Enhanced) ==========
   async submitWeekOffPreference(req: Request, res: Response) {
     try {
-      const result = await rosterCapacityService.submitWeekOffPreference(req.body);
+      // This route carries no role requirement at all (self-service by design — the
+      // route comment says "Employee submit"), but employee_id and process_id were
+      // trusted straight from the body: any authenticated user could submit — and,
+      // depending on capacity, get auto-approved — a week-off preference for any
+      // OTHER employee in any process. Self-service means the caller's own mapped
+      // employee record, not whatever id they claim in the body.
+      const employee = await getEmployeeForUser(req.authUser!.id);
+      if (!employee) {
+        return res.status(409).json({ error: 'No employee record is mapped to this account' });
+      }
+      const processId = await ownEmployeeProcessId(employee.id);
+      if (!processId) {
+        return res.status(409).json({ error: 'Your employee record has no process assigned' });
+      }
+      const result = await rosterCapacityService.submitWeekOffPreference({
+        employee_id: employee.id,
+        process_id: processId,
+        preferred_day: req.body.preferred_day,
+        alternate_day: req.body.alternate_day ?? null,
+      });
       res.json(result);
     } catch (error: unknown) {
       const err = error as Error;
