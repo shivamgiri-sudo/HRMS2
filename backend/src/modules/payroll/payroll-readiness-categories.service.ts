@@ -1,5 +1,5 @@
-﻿/**
- * Payroll Readiness â€” the five categories the governance gate did not cover.
+/**
+ * Payroll Readiness — the five categories the governance gate did not cover.
  *
  *   1. Incentive amount readiness      (VARIABLE_PAY)
  *   2. Reimbursement readiness         (VARIABLE_PAY)
@@ -7,7 +7,7 @@
  *   4. Full & Final readiness          (FULL_AND_FINAL)
  *   5. Payment-file readiness          (PAYMENT_FILE + RECONCILIATION)
  *
- * âš ï¸ RELATIONSHIP TO payroll-governance.service.ts â€” READ BEFORE EXTENDING EITHER
+ * ⚠️ RELATIONSHIP TO payroll-governance.service.ts — READ BEFORE EXTENDING EITHER
  *   payroll-governance.service.ts is CANONICAL for "may this run be CALCULATED". It carries its
  *   own category taxonomy (PayrollReadinessCategory) covering the same five subject areas in
  *   blocker/warning terms, and it is the gate the calculate endpoint actually enforces. Nothing
@@ -16,15 +16,15 @@
  *   This module is the PAYMENT-READINESS DEPTH LAYER underneath it, and exists because the
  *   governance gate deliberately answers at run level what payment needs answered at employee
  *   level. Concretely it adds, and is the only place that provides:
- *     Â· per-employee affected populations for every payment-blocking condition;
- *     Â· SOURCE_MISSING and NOT_APPLICABLE as first-class outcomes, so "no source of truth
- *       exists" is distinguishable from "checked and clean" â€” a distinction blocker/warning
+ *     · per-employee affected populations for every payment-blocking condition;
+ *     · SOURCE_MISSING and NOT_APPLICABLE as first-class outcomes, so "no source of truth
+ *       exists" is distinguishable from "checked and clean" — a distinction blocker/warning
  *       cannot express;
- *     Â· `canPay`, a gate separate from `canCalculate`, so a month can be reported as
+ *     · `canPay`, a gate separate from `canCalculate`, so a month can be reported as
  *       calculation-available and simultaneously NOT READY FOR PAYMENT;
- *     Â· payment-file reconciliation (batch total and headcount against eligible payroll),
+ *     · payment-file reconciliation (batch total and headcount against eligible payroll),
  *       duplicate instruction, already-paid markers and file reproducibility;
- *     Â· F&F net_payable reconciliation against its own components.
+ *     · F&F net_payable reconciliation against its own components.
  *
  *   The two therefore overlap in subject and not in question. That overlap is real and should
  *   not be left indefinitely: consolidating the shared incentive/reimbursement/recovery
@@ -40,26 +40,26 @@
  *
  * NO INVENTED BUSINESS RULES
  *   Where the repository has no authoritative source for a category, the result is
- *   SOURCE_MISSING and the category is reported as an architecture gap â€” never PASS, and never
+ *   SOURCE_MISSING and the category is reported as an architecture gap — never PASS, and never
  *   a rule made up here. Specifically, as verified against production on 2026-08-13:
- *     Â· Reimbursementâ†’payroll integration does not exist (see REIMB_SOURCE below).
- *     Â· There is no F&F calculation engine (see FF_ENGINE below).
- *     Â· There is no generated-payment-file history table (see PAYFILE_HISTORY below).
+ *     · Reimbursement→payroll integration does not exist (see REIMB_SOURCE below).
+ *     · There is no F&F calculation engine (see FF_ENGINE below).
+ *     · There is no generated-payment-file history table (see PAYFILE_HISTORY below).
  *   Those three report SOURCE_MISSING by design. Making them green would be manufacturing
  *   evidence, which is the failure this module exists to prevent.
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
-// â”€â”€â”€ State + severity vocabulary â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── State + severity vocabulary ─────────────────────────────────────────────
 
 /**
- * PASS            â€” check ran, condition satisfied.
- * FAIL            â€” check ran, real readiness defect found.
- * BLOCKED         â€” cannot be assessed because a prerequisite is unmet (e.g. run not calculated).
- * NOT_APPLICABLE  â€” the condition genuinely does not apply to this run/population.
- * SOURCE_MISSING  â€” no authoritative source of truth exists in the repository/schema.
- * CHECK_ERROR     â€” the check itself threw. Never green, never silently dropped.
+ * PASS            — check ran, condition satisfied.
+ * FAIL            — check ran, real readiness defect found.
+ * BLOCKED         — cannot be assessed because a prerequisite is unmet (e.g. run not calculated).
+ * NOT_APPLICABLE  — the condition genuinely does not apply to this run/population.
+ * SOURCE_MISSING  — no authoritative source of truth exists in the repository/schema.
+ * CHECK_ERROR     — the check itself threw. Never green, never silently dropped.
  */
 export type ReadinessState =
   | "PASS"
@@ -77,17 +77,17 @@ export function isGreen(state: ReadinessState): boolean {
 }
 
 /**
- * P0 â€” could cause incorrect pay, duplicate payment, payment to the wrong account, an unpaid
+ * P0 — could cause incorrect pay, duplicate payment, payment to the wrong account, an unpaid
  *      employee, an incorrect statutory result, or corruption of a finalized run.
- * P1 â€” material control gap that must close before enterprise go-live, but does not today
+ * P1 — material control gap that must close before enterprise go-live, but does not today
  *      prove incorrect money movement.
- * P2 â€” operational/reporting improvement; does not block correct payroll execution.
+ * P2 — operational/reporting improvement; does not block correct payroll execution.
  */
 export type ReadinessSeverity = "P0" | "P1" | "P2";
 
 /**
  * The layers a payroll month passes through. A month can be green on
- * PAYROLL_CALCULATION and still be red on PAYMENT_FILE â€” that distinction is the
+ * PAYROLL_CALCULATION and still be red on PAYMENT_FILE — that distinction is the
  * reason this is a list and not a percentage.
  */
 export type ReadinessLayer =
@@ -130,7 +130,7 @@ export interface CategoryCheckResult {
   message: string;
   /** Non-sensitive supporting numbers. Never bank account, PAN or UAN values. */
   detail?: Record<string, unknown>;
-  /** Employee identifiers only â€” code and name. Masking/RBAC is applied by the route, not here. */
+  /** Employee identifiers only — code and name. Masking/RBAC is applied by the route, not here. */
   sample?: Array<Record<string, unknown>>;
 }
 
@@ -175,12 +175,12 @@ export interface ReadinessCategoriesResult {
 // v1.0.0 result is not comparable with a v1.1.0 one on those two codes.
 export const READINESS_CATEGORIES_VERSION = "categories-v1.1.0";
 
-// â”€â”€â”€ Schema probing (fail-closed) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Schema probing (fail-closed) ────────────────────────────────────────────
 
 /**
  * mysql2 returns information_schema column aliases in the case the server chooses, and on this
- * estate that has been observed UPPERCASE. Reading only `row.c` silently yields undefined â†’
- * Number(undefined) â†’ NaN â†’ `> 0` false â†’ "table missing" for a table that exists, which would
+ * estate that has been observed UPPERCASE. Reading only `row.c` silently yields undefined →
+ * Number(undefined) → NaN → `> 0` false → "table missing" for a table that exists, which would
  * turn a real FAIL into a SOURCE_MISSING. Both cases are accepted on purpose.
  */
 function readCount(row: Record<string, unknown> | undefined): number {
@@ -225,7 +225,7 @@ export function __resetSchemaCache(): void {
   schemaCache.clear();
 }
 
-// â”€â”€â”€ Check plumbing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Check plumbing ──────────────────────────────────────────────────────────
 
 interface CheckSpec {
   code: string;
@@ -254,7 +254,7 @@ async function runCheck(
       ...spec,
       state: "CHECK_ERROR",
       affectedEmployees: 0,
-      message: `Check ${spec.code} could not be evaluated: ${message}. Treated as blocking â€” missing evidence is not readiness.`,
+      message: `Check ${spec.code} could not be evaluated: ${message}. Treated as blocking — missing evidence is not readiness.`,
       detail: { error: message },
     };
   }
@@ -285,7 +285,7 @@ function blocked(message: string, detail?: Record<string, unknown>) {
   return { state: "BLOCKED" as const, affectedEmployees: 0, message, detail };
 }
 
-// â”€â”€â”€ Run scope â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─── Run scope ───────────────────────────────────────────────────────────────
 
 export interface RunScope {
   runId: string;
@@ -395,19 +395,19 @@ async function population(
 const EMP_IDENTITY = `e.id AS employee_id, e.employee_code,
   COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name`;
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═════════════════════════════════════════════════════════════════════════════
 // 1. INCENTIVE AMOUNT READINESS
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═════════════════════════════════════════════════════════════════════════════
 
 /**
  * Authoritative source, established from the schema and from both consuming code paths:
  *
- *   incentive_master        â€” configuration (code, name, taxable/pf/esic flags)
- *   incentive_upload_batch  â€” one batch per (incentive type, pay_month), carries the approval
- *                             state: draft â†’ pending_approval â†’ approved â†’ applied / rejected
- *   incentive_upload_line   â€” per-employee amount, validation_status ok|error
+ *   incentive_master        — configuration (code, name, taxable/pf/esic flags)
+ *   incentive_upload_batch  — one batch per (incentive type, pay_month), carries the approval
+ *                             state: draft → pending_approval → approved → applied / rejected
+ *   incentive_upload_line   — per-employee amount, validation_status ok|error
  *   salary_prep_line.incentive_total + salary_prep_line_component(source='incentive')
- *                           â€” the payroll-consumed value
+ *                           — the payroll-consumed value
  *
  * The batch status is the approval of record; incentive_approval_step and
  * incentive_payroll_register exist but are empty and are written by nothing, so they are not
@@ -621,34 +621,34 @@ async function incentiveChecks(scope: RunScope): Promise<CategoryCheckResult[]> 
   ]);
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═════════════════════════════════════════════════════════════════════════════
 // 2. REIMBURSEMENT READINESS
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * REIMB_SOURCE â€” established 2026-08-13 against the live schema and both code paths.
+ * REIMB_SOURCE — established 2026-08-13 against the live schema and both code paths.
  *
  * Three candidate stores exist and none of them reaches payroll:
  *
- *   employee_reimbursement_claim â€” the payroll-module table. Has the right shape for payroll
- *       (claim_month, amount_approved, payroll_run_id, status draftâ†’submittedâ†’approvedâ†’
- *       rejectedâ†’processed). It is the only defensible source. It holds ZERO rows.
- *   reimbursement_claim          â€” an older, unrelated table with no payroll linkage at all
+ *   employee_reimbursement_claim — the payroll-module table. Has the right shape for payroll
+ *       (claim_month, amount_approved, payroll_run_id, status draft→submitted→approved→
+ *       rejected→processed). It is the only defensible source. It holds ZERO rows.
+ *   reimbursement_claim          — an older, unrelated table with no payroll linkage at all
  *       (no month, no approved amount, no run id). 1 row, rejected. Not a payroll source.
- *   expense_claim                â€” 5,634 rows, but this is the vendor/imprest expense system,
+ *   expense_claim                — 5,634 rows, but this is the vendor/imprest expense system,
  *       not employee salary reimbursement, and settles outside payroll. Correctly classified
  *       as NOT_APPLICABLE to payroll rather than forced into it.
  *
- * THE INTEGRATION IS BROKEN, NOT MERELY UNUSED. payrollCalculate.service.ts Â§5g reads
+ * THE INTEGRATION IS BROKEN, NOT MERELY UNUSED. payrollCalculate.service.ts §5g reads
  *   SELECT SUM(COALESCE(claim_amount, 0)) FROM employee_reimbursement_claim ...
- * and employee_reimbursement_claim has no `claim_amount` column â€” the columns are
+ * and employee_reimbursement_claim has no `claim_amount` column — the columns are
  * amount_claimed and amount_approved. The query therefore raises ER_BAD_FIELD_ERROR on every
  * single employee, and the surrounding bare `catch {}` swallows it, leaving
  * approvedReimbursements = 0. PATCH /reimbursements/:id/process likewise stamps payroll_run_id
  * but never adds the amount to salary_prep_line.reimbursement_total.
  *
  * So: approved reimbursements can never reach payroll by any path. That is reported as
- * SOURCE_MISSING for the integration, plus a FAIL for any approved claim left unsettled â€”
+ * SOURCE_MISSING for the integration, plus a FAIL for any approved claim left unsettled —
  * not as PASS, and not by inventing a settlement rule.
  */
 async function reimbursementChecks(scope: RunScope): Promise<CategoryCheckResult[]> {
@@ -669,9 +669,9 @@ async function reimbursementChecks(scope: RunScope): Promise<CategoryCheckResult
       const approvedColumnPresent = await columnExists("employee_reimbursement_claim", "amount_approved");
       if (!readColumnPresent) {
         return sourceMissing(
-          "Reimbursementâ†’payroll integration is not implemented. payrollCalculate.service.ts reads " +
+          "Reimbursement→payroll integration is not implemented. payrollCalculate.service.ts reads " +
             "employee_reimbursement_claim.claim_amount, which does not exist on the table (the real columns are " +
-            "amount_claimed / amount_approved), and the failure is swallowed by a bare catch â€” so approved " +
+            "amount_claimed / amount_approved), and the failure is swallowed by a bare catch — so approved " +
             "reimbursements are always read as zero. No other path writes salary_prep_line.reimbursement_total. " +
             "Reimbursement cannot currently be paid through payroll at all.",
           { reads_column: "claim_amount", column_exists: false, amount_approved_exists: approvedColumnPresent },
@@ -779,13 +779,13 @@ async function reimbursementChecks(scope: RunScope): Promise<CategoryCheckResult
         : fail(count, `${count} approved reimbursement claims for ${runMonth} have neither a document reference nor a description.`, undefined, sample);
     }),
 
-    // The expense system settles outside payroll â€” say so explicitly rather than silently ignoring it.
+    // The expense system settles outside payroll — say so explicitly rather than silently ignoring it.
     runCheck({ code: "REIMBURSEMENT_EXPENSE_CLAIM_SCOPE", layer: "VARIABLE_PAY", severity: "P2" }, async () => {
       if (!(await tableExists("expense_claim"))) {
         return notApplicable("expense_claim does not exist; there is no non-payroll expense system to classify.");
       }
       return notApplicable(
-        "expense_claim is the vendor/imprest expense system and settles outside payroll â€” it is correctly excluded " +
+        "expense_claim is the vendor/imprest expense system and settles outside payroll — it is correctly excluded " +
           "from payroll reimbursement readiness rather than folded into it. Confirm with Finance that no employee " +
           "salary reimbursement is being routed through it.",
       );
@@ -795,22 +795,22 @@ async function reimbursementChecks(scope: RunScope): Promise<CategoryCheckResult
   return [integration, ...checks];
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═════════════════════════════════════════════════════════════════════════════
 // 3. RECOVERY / DEDUCTION READINESS
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Implemented recovery sources, verified against the live schema â€” not assumed:
+ * Implemented recovery sources, verified against the live schema — not assumed:
  *
- *   employee_loans           â€” loans and advances. amount, installments, deduction_per_month,
+ *   employee_loans           — loans and advances. amount, installments, deduction_per_month,
  *                              deducted_amount, pending_amount, start_date, end_date, status.
- *                              Consumed by payrollCalculate Â§5e into salary_prep_line.loan_emi.
- *   salary_advance_log       â€” salary advances with recovery_months / recovered_amount.
- *                              Consumed by Â§5d into advance_recovery. Empty in production.
- *   employee_deduction_entries â€” ad-hoc deductions (canteen, uniformâ€¦) with a deduction type.
+ *                              Consumed by payrollCalculate §5e into salary_prep_line.loan_emi.
+ *   salary_advance_log       — salary advances with recovery_months / recovered_amount.
+ *                              Consumed by §5d into advance_recovery. Empty in production.
+ *   employee_deduction_entries — ad-hoc deductions (canteen, uniform…) with a deduction type.
  *                              Consumed by the custom-deduction block into other_deductions.
  *                              Empty in production.
- *   employee_deductions_log  â€” a LEGACY monthly import (mobile/asset/short-collection). NOT read
+ *   employee_deductions_log  — a LEGACY monthly import (mobile/asset/short-collection). NOT read
  *                              by any calculation path. Reported as an unreconciled source rather
  *                              than treated as authoritative, because promoting it would start
  *                              deducting money from a table nothing has validated.
@@ -855,8 +855,8 @@ async function recoveryChecks(scope: RunScope): Promise<CategoryCheckResult[]> {
         : fail(
             count,
             `${count} active loans have an end_date before ${monthStart} while still showing an outstanding balance. ` +
-              "payrollCalculate only recovers inside the start_dateâ€¦end_date window, so recovery has silently stopped " +
-              "on these while the debt stands. This is a recovery-omission gap, not proof of wrong pay â€” the balances " +
+              "payrollCalculate only recovers inside the start_date…end_date window, so recovery has silently stopped " +
+              "on these while the debt stands. This is a recovery-omission gap, not proof of wrong pay — the balances " +
               "may be stale legacy imports, which is exactly what needs a Finance decision.",
             { month_start: monthStart },
             sample,
@@ -995,7 +995,7 @@ async function recoveryChecks(scope: RunScope): Promise<CategoryCheckResult[]> {
         : fail(
             count,
             `${count} legacy deduction rows exist for ${runMonth} in employee_deductions_log, which no payroll calculation path reads. ` +
-              "Either these recoveries are being missed or the table is dead data â€” Finance must decide which.",
+              "Either these recoveries are being missed or the table is dead data — Finance must decide which.",
             undefined,
             sample,
           );
@@ -1003,16 +1003,16 @@ async function recoveryChecks(scope: RunScope): Promise<CategoryCheckResult[]> {
   ]);
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═════════════════════════════════════════════════════════════════════════════
 // 4. FULL & FINAL READINESS
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * FF_ENGINE â€” there is no F&F calculation engine in this repository.
+ * FF_ENGINE — there is no F&F calculation engine in this repository.
  *
- * full_final_calculation exists and ffService.createFF() writes it, but every monetary field â€”
+ * full_final_calculation exists and ffService.createFF() writes it, but every monetary field —
  * notice_recovery, earned_leave_encashment, gratuity_amount, salary_hold, advances_recovery and
- * net_payable itself â€” arrives as caller-supplied input on FfInput. Nothing derives them from
+ * net_payable itself — arrives as caller-supplied input on FfInput. Nothing derives them from
  * attendance through the last working day, the leave balance, the outstanding recovery ledger,
  * unpaid salary or arrears, and nothing checks that net_payable equals the sum of its own
  * components. The single computed piece is gratuity, via calculateGratuity, and even that must
@@ -1034,7 +1034,7 @@ async function fullFinalChecks(scope: RunScope): Promise<CategoryCheckResult[]> 
     return sourceMissing(
       "F&F CALCULATION ENGINE NOT IMPLEMENTED. full_final_calculation stores a settlement, but every monetary field " +
         "(notice recovery, leave encashment, gratuity, salary hold, advances recovery and net_payable) is supplied by " +
-        "the caller â€” nothing derives them from attendance through the last working day, leave balance, the recovery " +
+        "the caller — nothing derives them from attendance through the last working day, leave balance, the recovery " +
         "ledger, unpaid salary or arrears, and net_payable is never checked against its own components. Readiness for " +
         "the F&F population cannot be asserted until a calculation exists to be ready.",
       { table_present: true, derives_components: false, validates_net_payable: false },
@@ -1108,7 +1108,7 @@ async function fullFinalChecks(scope: RunScope): Promise<CategoryCheckResult[]> 
         : fail(
             count,
             `${count} settlements have a net_payable that does not equal their own components ` +
-              "(encashment + gratuity + salary hold âˆ’ notice recovery âˆ’ advances recovery). " +
+              "(encashment + gratuity + salary hold − notice recovery − advances recovery). " +
               "Nothing in the codebase enforces this, so the stored net is an unvalidated hand-keyed figure.",
             undefined,
             sample,
@@ -1153,7 +1153,7 @@ async function fullFinalChecks(scope: RunScope): Promise<CategoryCheckResult[]> 
         : fail(count, `${count} approved/paid settlements leave an outstanding loan balance larger than the advances recovered in the settlement.`, undefined, sample);
     }),
 
-    // Settled and then reactivated â€” a conflicting state.
+    // Settled and then reactivated — a conflicting state.
     runCheck({ code: "FF_PAID_BUT_EMPLOYEE_ACTIVE", layer: "FULL_AND_FINAL", severity: "P0" }, async () => {
       if (!haveFf) return sourceMissing("full_final_calculation does not exist.");
       const sql = `
@@ -1166,7 +1166,7 @@ async function fullFinalChecks(scope: RunScope): Promise<CategoryCheckResult[]> 
       const { count, sample } = await population(sql, []);
       return count === 0
         ? pass("No employee is active again after their settlement was paid.")
-        : fail(count, `${count} employees are active with a settlement already marked paid â€” a conflicting state that risks a second settlement or duplicate salary.`, undefined, sample);
+        : fail(count, `${count} employees are active with a settlement already marked paid — a conflicting state that risks a second settlement or duplicate salary.`, undefined, sample);
     }),
 
     // Attendance through the last working day.
@@ -1187,29 +1187,29 @@ async function fullFinalChecks(scope: RunScope): Promise<CategoryCheckResult[]> 
       const { count, sample } = await population(sql, [monthStart, monthEnd]);
       return count === 0
         ? pass("Every exit in this month has attendance recorded on its last working day.")
-        : fail(count, `${count} employees exiting in ${monthStart}â€¦${monthEnd} have no attendance record on their last working day, so payable days through LWD cannot be established.`, undefined, sample);
+        : fail(count, `${count} employees exiting in ${monthStart}…${monthEnd} have no attendance record on their last working day, so payable days through LWD cannot be established.`, undefined, sample);
     }),
   ]);
 
   return [engine, ...checks];
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═════════════════════════════════════════════════════════════════════════════
 // 5. PAYMENT-FILE READINESS
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═════════════════════════════════════════════════════════════════════════════
 
 /**
  * "Payroll calculated" is not "payroll can safely be paid". This category answers only the
  * second question.
  *
  * The payment mechanism, verified against the live schema:
- *   payroll_disbursement    â€” run-level batch header (total_amount, employee_count, status,
+ *   payroll_disbursement    — run-level batch header (total_amount, employee_count, status,
  *                             bank_ref). 12 rows. This is the payment batch of record.
- *   salary_run_disbursal    â€” per-employee payment instruction, UNIQUE(run_id, employee_id),
+ *   salary_run_disbursal    — per-employee payment instruction, UNIQUE(run_id, employee_id),
  *                             which is a real structural duplicate-payment guard. 0 rows.
- *   salary_prep_line.bank_transfer_initiated / _at â€” the per-line already-paid marker.
+ *   salary_prep_line.bank_transfer_initiated / _at — the per-line already-paid marker.
  *
- * PAYFILE_HISTORY â€” there is no generated-file history table anywhere: nothing records a file
+ * PAYFILE_HISTORY — there is no generated-file history table anywhere: nothing records a file
  * name, hash, generation timestamp or generating user, so a regenerated export cannot be shown
  * to be identical to the one already sent to the bank. That is reported as SOURCE_MISSING.
  *
@@ -1217,8 +1217,8 @@ async function fullFinalChecks(scope: RunScope): Promise<CategoryCheckResult[]> 
  *   A parallel module classifies individual employees into READY / MISSING / INVALID /
  *   CONFLICT / PENDING_APPROVAL / BLOCKED using db_bill credit confirmation. This module does
  *   NOT duplicate that per-employee classification. It checks only the run-level payment-file
- *   properties â€” calculation completeness, lock/approval state, payable amounts, count and
- *   total reconciliation, duplicate instructions and already-paid markers â€” and defers bank
+ *   properties — calculation completeness, lock/approval state, payable amounts, count and
+ *   total reconciliation, duplicate instructions and already-paid markers — and defers bank
  *   verification depth to that module. Two independent bank verdicts would be worse than one.
  */
 async function paymentFileChecks(scope: RunScope): Promise<CategoryCheckResult[]> {
@@ -1462,7 +1462,7 @@ async function paymentFileChecks(scope: RunScope): Promise<CategoryCheckResult[]
       const batches = rows as Array<Record<string, unknown>>;
       if (batches.length === 0) {
         return runIsCalculated
-          ? blocked("No payment batch exists for this run yet, so the payment file cannot be reconciled to payroll. Not a defect â€” it means the file has not been produced.")
+          ? blocked("No payment batch exists for this run yet, so the payment file cannot be reconciled to payroll. Not a defect — it means the file has not been produced.")
           : blocked(`Run status is '${status}'; no payment batch is expected yet.`);
       }
       const mismatched = batches.filter(
@@ -1517,9 +1517,100 @@ async function paymentFileChecks(scope: RunScope): Promise<CategoryCheckResult[]
   ]);
 }
 
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═════════════════════════════════════════════════════════════════════════════
 // Aggregation
-// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * UAN, scoped by what payroll actually does rather than by a flag nothing maintains.
+ *
+ * WHY NOT employee_statutory_info.pf_eligible, WHICH IS THE OBVIOUS SOURCE
+ *   Because it does not describe this workforce. Reconciled live 2026-08-13 against the July run:
+ *
+ *     July-eligible employees ................................. 1,239
+ *     PF actually deducted (salary_prep_line.pf_employee > 0) .. 1,111
+ *     employee_statutory_info.pf_eligible = 1 ..................    53
+ *     PF deducted while the flag says NOT eligible ............. 1,100
+ *     flagged eligible but no PF deducted ......................    42
+ *     PF deducted and no UAN in any store ......................   656
+ *
+ *   The flag disagrees with payroll for 1,100 of 1,111 people — 99%. Scoping the UAN requirement
+ *   to it returns zero gaps, and a gate that cannot go red is not a gate: it would certify as
+ *   clean a workforce where 656 people have PF taken from their pay with no member account to
+ *   credit it to.
+ *
+ * WHY NOT employee_uan EITHER
+ *   That table holds ZERO rows, total — which is the whole reason the original governance check
+ *   read as "100% missing UAN" for everybody. The real, partial store is employees.uan_number
+ *   (464 populated, all valid 12-digit), with employee_statutory_info.uan_number secondary. All
+ *   three are accepted as evidence here.
+ *
+ * ⚠️ payroll-governance.service.ts's MISSING_UAN uses the pf_eligible scope and reports 1.
+ *   This reports 656. They measure different populations rather than disagreeing about data.
+ *   Which is authoritative is a Payroll ruling and is on the sign-off list; this check exists so
+ *   the larger, defensible figure is visible while that ruling is outstanding, instead of the
+ *   comfortable one being the only number on the page.
+ */
+async function statutoryChecks(scope: RunScope): Promise<CategoryCheckResult[]> {
+  const { runId, where, params } = scope;
+
+  return Promise.all([
+    runCheck({ code: "STATUTORY_UAN_MISSING_FOR_PF_DEDUCTED", layer: "STATUTORY", severity: "P1" }, async () => {
+      if (!(await tableExists("employee_statutory_info"))) {
+        return sourceMissing("employee_statutory_info is absent, so UAN cannot be resolved from either store.");
+      }
+      const sql = `
+        SELECT ${EMP_IDENTITY}, ROUND(spl.pf_employee, 2) AS pf_deducted
+          FROM employees e
+          JOIN salary_prep_line spl ON spl.run_id = ? AND spl.employee_id = e.id
+         WHERE ${where}
+           AND spl.pf_employee > 0
+           AND COALESCE(NULLIF(TRIM(e.uan_number), ''), '') = ''
+           AND NOT EXISTS (
+             SELECT 1 FROM employee_statutory_info si
+              WHERE si.employee_id = e.id
+                AND COALESCE(NULLIF(TRIM(si.uan_number), ''), '') <> '')
+           AND NOT EXISTS (
+             SELECT 1 FROM employee_uan eu WHERE eu.employee_id = e.id AND eu.is_active = 1)`;
+      const { count, sample } = await population(sql, [runId, ...params]);
+      return count === 0
+        ? pass("Every employee PF is deducted from has a UAN in at least one of the three stores.")
+        : fail(
+            count,
+            `${count} employees have PF deducted in this run but no UAN in employees.uan_number, ` +
+              "employee_statutory_info.uan_number or employee_uan, so their contribution has no member account to be credited to. " +
+              "Scoped to PF actually deducted rather than to employee_statutory_info.pf_eligible, which is set on 53 of 1,239 and disagrees with payroll for 99% of them.",
+            undefined,
+            sample,
+          );
+    }),
+
+    // The flag itself is the deeper problem. Said once, at P2, rather than repeated.
+    runCheck({ code: "STATUTORY_PF_ELIGIBLE_FLAG_UNRELIABLE", layer: "STATUTORY", severity: "P2" }, async () => {
+      if (!(await tableExists("employee_statutory_info"))) {
+        return notApplicable("employee_statutory_info is absent.");
+      }
+      const sql = `
+        SELECT ${EMP_IDENTITY}, ROUND(spl.pf_employee, 2) AS pf_deducted
+          FROM employees e
+          JOIN salary_prep_line spl ON spl.run_id = ? AND spl.employee_id = e.id
+         WHERE ${where}
+           AND spl.pf_employee > 0
+           AND COALESCE((SELECT MAX(si.pf_eligible) FROM employee_statutory_info si
+                          WHERE si.employee_id = e.id), 0) = 0`;
+      const { count, sample } = await population(sql, [runId, ...params]);
+      return count === 0
+        ? pass("employee_statutory_info.pf_eligible agrees with what payroll deducts.")
+        : fail(
+            count,
+            `${count} employees have PF deducted while employee_statutory_info.pf_eligible says they are not PF-eligible. ` +
+              "Any statutory check scoped to that flag silently excludes them, so it must not be used as an eligibility source until it is reconciled against payroll.",
+            undefined,
+            sample,
+          );
+    }),
+  ]);
+}
 
 function summariseLayers(checks: CategoryCheckResult[]): LayerSummary[] {
   const present = READINESS_LAYERS.filter((layer) => checks.some((c) => c.layer === layer));
@@ -1560,13 +1651,14 @@ export async function evaluateReadinessCategories(runId: string): Promise<Readin
     recoveryChecks(scope),
     fullFinalChecks(scope),
     paymentFileChecks(scope),
+    statutoryChecks(scope),
   ]);
   const checks = groups.flat();
 
   const notGreen = checks.filter((c) => !isGreen(c.state));
 
   // canPay is fail-closed: any P0 or P1 that is not green holds it shut, and so does any
-  // CHECK_ERROR at any severity â€” a control that could not run has not been satisfied.
+  // CHECK_ERROR at any severity — a control that could not run has not been satisfied.
   const blockers = notGreen.filter(
     (c) => c.severity === "P0" || c.severity === "P1" || c.state === "CHECK_ERROR",
   );
