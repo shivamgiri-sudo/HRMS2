@@ -1568,14 +1568,23 @@ export const grnSmartService = {
         } else {
           await releaseAllocations(connection, allocations);
           newStatus = "rejected";
-          await connection.execute(
+          // P1-5, same as the branch_head and finance_head-approve UPDATEs above: expected
+          // status in WHERE so a concurrent transition can't be silently overwritten. This
+          // branch was the one arm of review() still missing it.
+          const [fhRejectResult] = await connection.execute<ResultSetHeader>(
             `UPDATE grn_request
                 SET status = 'rejected', finance_head_reviewed_by = ?,
                     finance_head_reviewed_at = NOW(), finance_head_review_note = ?,
                     reviewed_by = ?, reviewed_at = NOW(), review_note = ?, rejection_reason = ?
-              WHERE id = ?`,
+              WHERE id = ? AND status = 'branch_head_approved'`,
             [actorUserId, reviewNote?.trim(), actorUserId, reviewNote?.trim(), reviewNote?.trim(), grnId]
           );
+          if (fhRejectResult.affectedRows !== 1) {
+            throw Object.assign(
+              new Error("GRN state changed concurrently; refresh and try again"),
+              { code: "STATE_CHANGED", statusCode: 409 }
+            );
+          }
         }
       } else {
         throw new Error(`Role ${actorRole} is not permitted to review smart GRNs`);
