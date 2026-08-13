@@ -16,6 +16,7 @@
  * this service's making could ever reach a deploy button.
  */
 import { randomUUID } from 'crypto';
+import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { checkFixDraftSafety, extractTouchedFiles } from './mira-fix-draft-guard.js';
 
@@ -72,4 +73,52 @@ export async function createFixDraft(params: {
     rejectedReason,
     createdAt: new Date().toISOString(),
   };
+}
+
+function rowToFixDraft(row: RowDataPacket): FixDraft {
+  const parseJsonArray = (v: unknown): string[] => {
+    if (!v) return [];
+    try {
+      const parsed = JSON.parse(String(v));
+      return Array.isArray(parsed) ? parsed.map((x) => (typeof x === 'string' ? x : x?.file ?? String(x))) : [];
+    } catch {
+      return [];
+    }
+  };
+  return {
+    id: String(row.id),
+    workItemId: String(row.work_item_id),
+    status: row.status as FixDraftStatus,
+    targetFiles: parseJsonArray(row.target_files),
+    diffText: String(row.diff_text ?? ''),
+    model: row.model ? String(row.model) : null,
+    safetyFlags: row.safety_flags ? parseJsonArray(row.safety_flags) : null,
+    rejectedReason: row.rejected_reason ? String(row.rejected_reason) : null,
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+  };
+}
+
+/** Read-only: every draft ever attempted for a work_item, most recent first — so a
+ * rejected attempt stays visible as history, not just the one that happened to succeed. */
+export async function listFixDraftsForWorkItem(workItemId: string): Promise<FixDraft[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, work_item_id, status, target_files, diff_text, model, safety_flags, rejected_reason, created_at
+       FROM mira_fix_draft
+      WHERE work_item_id = ?
+      ORDER BY created_at DESC`,
+    [workItemId],
+  );
+  return (rows as RowDataPacket[]).map(rowToFixDraft);
+}
+
+/** Read-only: a single draft by id, or null if it does not exist. */
+export async function getFixDraftById(draftId: string): Promise<FixDraft | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, work_item_id, status, target_files, diff_text, model, safety_flags, rejected_reason, created_at
+       FROM mira_fix_draft
+      WHERE id = ? LIMIT 1`,
+    [draftId],
+  );
+  const row = (rows as RowDataPacket[])[0];
+  return row ? rowToFixDraft(row) : null;
 }

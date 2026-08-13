@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock('../../../db/mysql.js', () => ({ db: { execute: mocks.execute } }));
 
-import { createFixDraft } from '../mira-fix-draft.service.js';
+import { createFixDraft, listFixDraftsForWorkItem, getFixDraftById } from '../mira-fix-draft.service.js';
 
 function diffFor(path: string): string {
   return `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1,1 +1,2 @@\n+added\n`;
@@ -48,5 +48,69 @@ describe('createFixDraft', () => {
       model: 'openrouter/some-model',
     });
     expect(draft.status).toBe('rejected');
+  });
+});
+
+describe('listFixDraftsForWorkItem', () => {
+  beforeEach(() => mocks.execute.mockReset());
+
+  it('maps rows back into FixDraft shape, most recent first per the query order', async () => {
+    mocks.execute.mockResolvedValueOnce([[
+      {
+        id: 'd-2', work_item_id: 'wi-1', status: 'drafted',
+        target_files: JSON.stringify(['src/pages/Foo.tsx']),
+        diff_text: 'diff --git a/src/pages/Foo.tsx b/src/pages/Foo.tsx\n',
+        model: 'claude', safety_flags: null, rejected_reason: null,
+        created_at: '2026-08-13T10:00:00.000Z',
+      },
+      {
+        id: 'd-1', work_item_id: 'wi-1', status: 'rejected',
+        target_files: JSON.stringify([]),
+        diff_text: 'not a real diff',
+        model: null,
+        safety_flags: JSON.stringify([{ file: 'x.sql', reason: 'touches a database migration' }]),
+        rejected_reason: 'x.sql: touches a database migration',
+        created_at: '2026-08-13T09:00:00.000Z',
+      },
+    ], []]);
+
+    const drafts = await listFixDraftsForWorkItem('wi-1');
+    expect(drafts).toHaveLength(2);
+    expect(drafts[0].id).toBe('d-2');
+    expect(drafts[0].targetFiles).toEqual(['src/pages/Foo.tsx']);
+    expect(drafts[1].id).toBe('d-1');
+    expect(drafts[1].status).toBe('rejected');
+    expect(drafts[1].safetyFlags).toEqual(['x.sql']);
+
+    const [sql, params] = mocks.execute.mock.calls[0];
+    expect(sql).toContain('WHERE work_item_id = ?');
+    expect(sql).toContain('ORDER BY created_at DESC');
+    expect(params).toEqual(['wi-1']);
+  });
+
+  it('returns an empty array for a work item with no drafts, not an error', async () => {
+    mocks.execute.mockResolvedValueOnce([[], []]);
+    expect(await listFixDraftsForWorkItem('wi-none')).toEqual([]);
+  });
+});
+
+describe('getFixDraftById', () => {
+  beforeEach(() => mocks.execute.mockReset());
+
+  it('returns the mapped draft when it exists', async () => {
+    mocks.execute.mockResolvedValueOnce([[{
+      id: 'd-1', work_item_id: 'wi-1', status: 'drafted',
+      target_files: JSON.stringify(['a.ts']), diff_text: 'diff --git a/a.ts b/a.ts\n',
+      model: 'claude', safety_flags: null, rejected_reason: null,
+      created_at: '2026-08-13T10:00:00.000Z',
+    }], []]);
+    const draft = await getFixDraftById('d-1');
+    expect(draft?.id).toBe('d-1');
+    expect(draft?.targetFiles).toEqual(['a.ts']);
+  });
+
+  it('returns null when the draft does not exist, not a throw', async () => {
+    mocks.execute.mockResolvedValueOnce([[], []]);
+    expect(await getFixDraftById('nope')).toBeNull();
   });
 });

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import {
   AlertTriangle, Bell, BellOff, CheckCheck, CheckCircle2,
   Clock, Loader, RefreshCcw, X, ChevronRight, BarChart2,
-  Zap, Shield,
+  Zap, Shield, Wand2, ShieldAlert,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { formatIST } from "@/lib/utils";
+import { useHasRole } from "@/hooks/useUserRole";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -67,6 +68,28 @@ interface TimelineEvent {
   details?: string;
   source_table: string;
 }
+
+/** Matches backend/src/modules/ai/mira-fix-draft.service.ts's FixDraft shape exactly —
+ * the route returns it as-is, no transformation. */
+interface FixDraft {
+  id: string;
+  workItemId: string;
+  status: "drafted" | "rejected" | "deploying" | "deployed" | "failed";
+  targetFiles: string[];
+  diffText: string;
+  model: string | null;
+  safetyFlags: string[] | null;
+  rejectedReason: string | null;
+  createdAt: string;
+}
+
+type FixDraftGenerationOutcome =
+  | { status: "no_diagnosis" }
+  | { status: "not_eligible"; reason: string }
+  | { status: "ai_unavailable" }
+  | { status: "model_declined"; reason: string }
+  | { status: "ai_error"; message: string }
+  | { status: "drafted"; draft: FixDraft };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -202,6 +225,143 @@ function Timeline({ events, loading }: { events: TimelineEvent[]; loading: boole
   );
 }
 
+// ── AI Fix Draft ──────────────────────────────────────────────────────────────
+
+const DRAFT_STATUS_STYLES: Record<FixDraft["status"], string> = {
+  drafted: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  rejected: "bg-red-50 text-red-700 border-red-200",
+  deploying: "bg-amber-50 text-amber-700 border-amber-200",
+  deployed: "bg-blue-50 text-blue-700 border-blue-200",
+  failed: "bg-red-50 text-red-700 border-red-200",
+};
+
+function outcomeMessage(outcome: FixDraftGenerationOutcome): { text: string; tone: "info" | "warn" | "error" } {
+  switch (outcome.status) {
+    case "no_diagnosis":
+      return { text: "No AI diagnosis exists yet for this item — nothing to draft a fix from.", tone: "warn" };
+    case "not_eligible":
+      return { text: `Not eligible for an automatic fix draft (${outcome.reason}). A human needs to handle this one directly.`, tone: "warn" };
+    case "ai_unavailable":
+      return { text: "No AI provider is currently configured — can't generate a draft right now.", tone: "error" };
+    case "model_declined":
+      return { text: `The AI declined to propose a fix: ${outcome.reason}`, tone: "warn" };
+    case "ai_error":
+      return { text: `Draft generation failed: ${outcome.message}`, tone: "error" };
+    case "drafted":
+      return outcome.draft.status === "rejected"
+        ? { text: `A diff was generated but rejected by the safety guard: ${outcome.draft.rejectedReason ?? "see details below"}`, tone: "warn" }
+        : { text: "A new fix draft is ready for review below.", tone: "info" };
+  }
+}
+
+/** Only reachable for Mira complaints (entity_type='mira_feedback') and only to
+ * super_admin — see backend/src/modules/inbox/inbox.routes.ts, which enforces the same
+ * gate server-side regardless of what this component chooses to render. */
+function FixDraftPanel({ workItemId }: { workItemId: string }) {
+  const [drafts, setDrafts] = useState<FixDraft[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [lastOutcome, setLastOutcome] = useState<FixDraftGenerationOutcome | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const loadDrafts = useCallback(() => {
+    setLoading(true);
+    hrmsApi
+      .get<{ success: boolean; drafts: FixDraft[] }>(`/api/inbox/mira-fix-draft/${workItemId}`)
+      .then((r) => setDrafts(r.drafts ?? []))
+      .catch(() => setDrafts([]))
+      .finally(() => setLoading(false));
+  }, [workItemId]);
+
+  useEffect(() => { loadDrafts(); }, [loadDrafts]);
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    setLastOutcome(null);
+    try {
+      const res = await hrmsApi.post<{ success: boolean; outcome: FixDraftGenerationOutcome }>(
+        `/api/inbox/mira-fix-draft/${workItemId}/generate`,
+        {},
+      );
+      setLastOutcome(res.outcome);
+      loadDrafts();
+    } catch {
+      setLastOutcome({ status: "ai_error", message: "Request failed — check your connection and try again." });
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-xs font-black uppercase tracking-widest text-slate-400">AI Fix Draft</p>
+        <Button size="sm" variant="outline" onClick={handleGenerate} disabled={generating} className="gap-1.5 text-xs">
+          {generating ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+          Draft a fix
+        </Button>
+      </div>
+
+      {lastOutcome && (() => {
+        const { text, tone } = outcomeMessage(lastOutcome);
+        const toneClass = tone === "error" ? "bg-red-50 text-red-700" : tone === "warn" ? "bg-amber-50 text-amber-700" : "bg-blue-50 text-blue-700";
+        return <div className={`mb-3 rounded-xl p-3 text-xs ${toneClass}`}>{text}</div>;
+      })()}
+
+      {loading ? (
+        <div className="flex justify-center py-6"><Loader className="h-5 w-5 animate-spin text-slate-400" /></div>
+      ) : !drafts.length ? (
+        <p className="py-4 text-center text-xs text-slate-400">No fix drafts yet. This is a candidate AI-authored diff, always reviewed here before anything can deploy — nothing here applies itself.</p>
+      ) : (
+        <div className="space-y-2">
+          {drafts.map((d) => {
+            const isOpen = expandedId === d.id;
+            return (
+              <div key={d.id} className="rounded-xl border border-slate-200 p-3">
+                <button
+                  type="button"
+                  onClick={() => setExpandedId(isOpen ? null : d.id)}
+                  className="flex w-full items-center justify-between gap-2 text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${DRAFT_STATUS_STYLES[d.status]}`}>
+                      {d.status}
+                    </span>
+                    <span className="text-xs text-slate-500">{formatIST(d.createdAt)}</span>
+                    {d.model && <span className="text-[10px] text-slate-400">via {d.model}</span>}
+                  </div>
+                  <ChevronRight className={`h-4 w-4 text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                </button>
+
+                {d.status === "rejected" && d.rejectedReason && (
+                  <div className="mt-2 flex items-start gap-1.5 rounded-lg bg-red-50 p-2 text-[11px] text-red-700">
+                    <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>{d.rejectedReason}</span>
+                  </div>
+                )}
+
+                {isOpen && (
+                  <>
+                    {d.targetFiles.length > 0 && (
+                      <p className="mt-2 text-[11px] text-slate-500">Files: {d.targetFiles.join(", ")}</p>
+                    )}
+                    <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-slate-950 p-3 text-[11px] leading-relaxed text-slate-100">
+                      {d.diffText}
+                    </pre>
+                    <p className="mt-2 text-[10px] text-slate-400">
+                      Review only — nothing here can apply, push, or deploy this diff yet.
+                    </p>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Action Sheet ──────────────────────────────────────────────────────────────
 
 function ActionSheet({
@@ -217,6 +377,9 @@ function ActionSheet({
   const [acting, setActing] = useState(false);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [tlLoading, setTlLoading] = useState(false);
+  // See backend/src/modules/inbox/inbox.routes.ts — the fix-draft routes are super_admin
+  // only server-side; this only controls whether the panel renders, not access to it.
+  const canReviewFixDrafts = useHasRole("super_admin");
 
   useEffect(() => {
     if (!task?.entity_type || !task?.entity_id) return;
@@ -333,6 +496,11 @@ function ActionSheet({
               <p className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">Timeline</p>
               <Timeline events={timeline} loading={tlLoading} />
             </div>
+          )}
+
+          {/* AI Fix Draft — Mira complaints only, super_admin only (see canReviewFixDrafts). */}
+          {task.entity_type === "mira_feedback" && task.entity_id && canReviewFixDrafts && (
+            <FixDraftPanel workItemId={task.entity_id} />
           )}
 
           {/* Remarks + action — "derived" tasks (leave/exit-clearance/BGV computed live from

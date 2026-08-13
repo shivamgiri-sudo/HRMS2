@@ -4,6 +4,8 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { inboxService, getMyPending, getTimeline } from "./inbox.service.js";
+import { generateFixDraftForWorkItem } from "../ai/mira-fix-draft-generate.service.js";
+import { listFixDraftsForWorkItem } from "../ai/mira-fix-draft.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,6 +74,26 @@ router.patch("/mark-all-read", h(async (req: AuthenticatedRequest, res: Response
   const userId = req.authUser!.id;
   await inboxService.markAllRead(userId);
   return res.json({ success: true });
+}));
+
+// GET /mira-fix-draft/:workItemId — every draft ever attempted for a triaged complaint,
+// most recent first (rejected attempts stay visible as history, not hidden). super_admin
+// only — this is the same audience Mira feedback items are assigned to.
+router.get("/mira-fix-draft/:workItemId", requireRole("super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const drafts = await listFixDraftsForWorkItem(req.params.workItemId);
+  return res.json({ success: true, drafts });
+}));
+
+// POST /mira-fix-draft/:workItemId/generate — attempts to turn an already-triaged,
+// already-eligible diagnosis (category='genuine_bug', actionable=true) into a candidate
+// diff. Every outcome (including refusal and rejection) is a 200 with a status field, not
+// an error response — "the model declined" and "the deny-list rejected it" are expected,
+// informative outcomes for a human reviewer to read, not failures of this endpoint.
+// super_admin only: this is a privileged action that writes an AI-authored diff to the
+// database, even though nothing can be deployed from it yet (see mira-fix-draft.service.ts).
+router.post("/mira-fix-draft/:workItemId/generate", requireRole("super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const outcome = await generateFixDraftForWorkItem(req.params.workItemId);
+  return res.json({ success: true, outcome });
 }));
 
 export { router as inboxRouter };
