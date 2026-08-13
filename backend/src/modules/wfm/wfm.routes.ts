@@ -635,7 +635,7 @@ wfmRouter.get("/weekoff/day-rules/capacity-grid", requireAuth, requireRole("admi
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/manager/weekoff-review  — disputes needing manager action
-wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head"), h(async (req: any, res: any) => {
+wfmRouter.get("/manager/weekoff-review", requireAuth, requireRole("admin", "hr", "wfm", "manager", "branch_head", "team_leader", "assistant_manager"), h(async (req: any, res: any) => {
   const { db: dbConn } = await import("../../db/mysql.js");
   const { hasRole: checkRole } = await import("../../shared/accessGuard.js");
   const isPrivileged = await checkRole(req.authUser!.id, "admin", "hr", "wfm");
