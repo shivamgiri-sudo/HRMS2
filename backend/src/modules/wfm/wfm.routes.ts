@@ -21,6 +21,7 @@ import {
 } from "../../shared/attendanceStatus.js";
 import { planningRuleService } from "./planningRule.service.js";
 import { slotRequirementService } from "./slotRequirement.service.js";
+import { restPolicyConfigService } from "./rest-policy-config.service.js";
 import { weekoffDayRuleService } from "./weekoffDayRule.service.js";
 import { calculate } from "./hcCalculation.service.js";
 import { attendanceAprBulkRouter } from "./attendance-apr-bulk.routes.js";
@@ -502,6 +503,49 @@ wfmRouter.delete("/planning-rules/:id", requireAuth, requireRole("admin", "wfm")
 wfmRouter.post("/planning-rules/calculate", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager"), h(async (req: any, res: any) => {
   const result = calculate(req.body);
   return res.json({ success: true, data: result });
+}));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MINIMUM-REST POLICY CONFIG  /api/wfm/rest-policy
+//
+// Round 2 (2026-08-13), P1 gap: rest-policy.service.ts's resolution/
+// validation is fully wired into every roster-write path, but until this,
+// nothing could ever create a wfm_rest_policy row except direct SQL —
+// every "no minimum-rest policy configured" error message already pointed
+// callers at an admin page that had no backend behind it.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/wfm/rest-policy?scope_type=&active_status=
+wfmRouter.get("/rest-policy", requireAuth, requireRole("admin", "super_admin", "wfm", "hr"), h(async (req: any, res: any) => {
+  const data = await restPolicyConfigService.list({
+    scope_type: req.query.scope_type as string | undefined,
+    active_status: req.query.active_status as string | undefined,
+  });
+  return res.json({ success: true, data });
+}));
+
+// GET /api/wfm/rest-policy/:id
+wfmRouter.get("/rest-policy/:id", requireAuth, requireRole("admin", "super_admin", "wfm", "hr"), h(async (req: any, res: any) => {
+  const data = await restPolicyConfigService.get(req.params.id);
+  return res.json({ success: true, data });
+}));
+
+// POST /api/wfm/rest-policy
+wfmRouter.post("/rest-policy", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+  const data = await restPolicyConfigService.create(req.body, req.authUser!.id, req);
+  return res.status(201).json({ success: true, data });
+}));
+
+// PATCH /api/wfm/rest-policy/:id  (terms only — scope is immutable, create a new policy to change it)
+wfmRouter.patch("/rest-policy/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+  const data = await restPolicyConfigService.update(req.params.id, req.body, req.authUser!.id, req);
+  return res.json({ success: true, data });
+}));
+
+// DELETE /api/wfm/rest-policy/:id  (soft deactivate — matches the rest of this module's pattern)
+wfmRouter.delete("/rest-policy/:id", requireAuth, requireRole("admin", "wfm"), h(async (req: any, res: any) => {
+  await restPolicyConfigService.deactivate(req.params.id, req.authUser!.id, req);
+  return res.json({ success: true, message: "Rest policy deactivated" });
 }));
 
 // ═══════════════════════════════════════════════════════════════════════════════
