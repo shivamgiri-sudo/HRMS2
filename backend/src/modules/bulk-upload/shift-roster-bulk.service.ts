@@ -3,7 +3,8 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { logRosterChange } from "../roster/roster-change-log.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
-import { isRestPolicyFeatureActive, resolveRestPolicy, restGapMinutes, validateMinimumRest } from "../wfm/rest-policy.service.js";
+import { isRestPolicyFeatureActive, resolveRestPolicy, restGapMinutes, validateMinimumRest, withEmployeeRosterLock } from "../wfm/rest-policy.service.js";
+import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 
@@ -110,12 +111,6 @@ export async function importShiftRosterBatch(
       [batchId]
     );
 
-    // Collect all assignments for batch insert
-    const allAssignments: {
-      id: string; cycle_id: string; employee_id: string; roster_date: string;
-      shift_template_id: string | null; is_week_off: number; system_decision_reason: string | null;
-      shift_start_time: string | null; shift_end_time: string | null; scheduled_minutes: number | null;
-    }[] = [];
     const rowStatusUpdates: { id: string; status: string; errors?: string[]; targetRecordIds: string[] }[] = [];
 
     for (const batchRow of batchRows as RowDataPacket[]) {
@@ -211,103 +206,232 @@ export async function importShiftRosterBatch(
         );
       }
 
-      // Process each day - collect assignments for batch insert
+      // Process each day, then insert THIS employee's whole week under their
+      // own advisory lock (closure item #2b, 2026-08-13). Previously every
+      // employee's days across the WHOLE batch were collected into one array
+      // and inserted together in a single statement at the very end — which
+      // meant employee A's rest-check here could pass, and a moment later a
+      // completely unrelated concurrent request for employee A (a second
+      // upload, a manual assignment) could ALSO pass its own check, before
+      // either had actually written anything. Locking per-employee (not
+      // per-day — all of one employee's days still share one INSERT) closes
+      // that the same way roster-assignment-bulk.service.ts's per-row lock
+      // already does. Preserves the exact existing partial-week semantics:
+      // a day-level error (bad timing, locked date, insufficient rest) skips
+      // that day and is recorded in rowErrors, but days that DID succeed are
+      // still written — the row's own upload_batch_row status is 'error' if
+      // ANY day failed, independent of whether other days were inserted.
       let dayImported = 0;
       const rowErrors: string[] = [];
-      const rowAssignmentIds: string[] = [];
-      // Area 2: the most recently collected working day for THIS employee within
-      // THIS row's 7-day loop. Days are processed Monday->Sunday in order, so this
-      // is always the nearest preceding day already staged in allAssignments — the
-      // one case a database-only adjacency check (findAdjacentShifts, which only
-      // sees already-committed rows) cannot catch: two new days in the SAME upload
-      // that are adjacent to each other (e.g. a late Monday shift followed by an
-      // early Tuesday shift, both new).
-      let lastCollectedShift: { date: string; time: string } | null = null;
+      let rowAssignmentIds: string[] = [];
       const restPolicyFeatureActive = await isRestPolicyFeatureActive(conn);
 
-      for (let i = 0; i < DAYS.length; i++) {
-        const dayKey = `${DAYS[i]}_shift`;
-        const cellValue = (raw[dayKey] || "").trim();
-        if (!cellValue) continue;
+      await withEmployeeRosterLock(employeeId, async () => {
+        const weekAssignments: {
+          id: string; cycle_id: string; employee_id: string; roster_date: string;
+          shift_template_id: string | null; is_week_off: number; system_decision_reason: string | null;
+          shift_start_time: string | null; shift_end_time: string | null; scheduled_minutes: number | null;
+        }[] = [];
+        // Area 2: the most recently collected working day for THIS employee within
+        // THIS row's 7-day loop. Days are processed Monday->Sunday in order, so this
+        // is always the nearest preceding day already staged in weekAssignments — the
+        // one case a database-only adjacency check (findAdjacentShifts, which only
+        // sees already-committed rows) cannot catch: two new days in the SAME upload
+        // that are adjacent to each other (e.g. a late Monday shift followed by an
+        // early Tuesday shift, both new).
+        let lastCollectedShift: { date: string; time: string } | null = null;
 
-        const upper = cellValue.toUpperCase();
-        const isWeekOff = upper === "WO" || upper === "WEEKOFF" || upper === "OFF" || upper === "W/O";
+        for (let i = 0; i < DAYS.length; i++) {
+          const dayKey = `${DAYS[i]}_shift`;
+          const cellValue = (raw[dayKey] || "").trim();
+          if (!cellValue) continue;
 
-        const rosterDate = new Date(startDate);
-        rosterDate.setDate(rosterDate.getDate() + i);
-        const rosterDateStr = rosterDate.toISOString().slice(0, 10);
+          const upper = cellValue.toUpperCase();
+          const isWeekOff = upper === "WO" || upper === "WEEKOFF" || upper === "OFF" || upper === "W/O";
 
-        let shiftTemplateId: string | null = null;
-        let shiftStartTime: string | null = null;
-        let shiftEndTime: string | null = null;
+          const rosterDate = new Date(startDate);
+          rosterDate.setDate(rosterDate.getDate() + i);
+          const rosterDateStr = rosterDate.toISOString().slice(0, 10);
 
-        if (!isWeekOff) {
-          const parsed = parseShiftTiming(cellValue);
-          if (!parsed) {
-            rowErrors.push(`${DAYS[i].toUpperCase()}: '${cellValue}' is not a valid timing (use 09:00am-06:00pm or 09:00-18:00) or WO`);
+          // Closure item #2b: shared attendance/payroll lock guard, checked
+          // for every day (including a week-off day — reassigning someone
+          // OFF on an already-locked date is still a mutation of a locked
+          // record). Checked before shift-timing parsing since there's no
+          // point resolving a shift template for a day this path is about
+          // to refuse anyway.
+          const dateLockResult = await checkEmployeeDateNotLocked(conn, employeeId, rosterDateStr);
+          if (dateLockResult.blocked) {
+            rowErrors.push(`${DAYS[i].toUpperCase()}: ${dateLockResult.error}`);
             continue;
           }
-          try {
-            shiftTemplateId = await resolveShiftTemplate(conn, parsed.startTime, parsed.endTime, cellValue, userId);
-          } catch (e) {
-            rowErrors.push(`${DAYS[i].toUpperCase()}: failed to resolve shift template — ${(e as Error).message}`);
-            continue;
-          }
-          // parsed.startTime/endTime is what the uploaded cell literally said, so it's
-          // used directly for the snapshot rather than re-reading it back off the
-          // (possibly pre-existing, possibly reused) shift template row.
-          shiftStartTime = parsed.startTime;
-          shiftEndTime = parsed.endTime;
-        }
 
-        // Area 2: minimum-rest validation. BLOCKS with no override path, same as
-        // roster-assignment-bulk.service.ts — an override needs an individual,
-        // deliberate approval a CSV upload can't legitimately grant.
-        if (!isWeekOff && shiftStartTime && shiftEndTime && restPolicyFeatureActive) {
-          const candidateStart = { date: rosterDateStr, time: shiftStartTime.slice(0, 5) };
-          if (lastCollectedShift) {
-            const gapWithinBatch = restGapMinutes(lastCollectedShift, candidateStart);
-            const policy = await resolveRestPolicy(
-              { employeeId, processId: employeeProcessId, branchId: employeeBranchId, forDate: rosterDateStr }, conn
-            );
-            if (policy && gapWithinBatch < policy.minimumRestMinutes) {
-              rowErrors.push(`${DAYS[i].toUpperCase()}: only ${gapWithinBatch}min rest against the shift on ${lastCollectedShift.date} in this same upload (minimum ${policy.minimumRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`);
+          let shiftTemplateId: string | null = null;
+          let shiftStartTime: string | null = null;
+          let shiftEndTime: string | null = null;
+
+          if (!isWeekOff) {
+            const parsed = parseShiftTiming(cellValue);
+            if (!parsed) {
+              rowErrors.push(`${DAYS[i].toUpperCase()}: '${cellValue}' is not a valid timing (use 09:00am-06:00pm or 09:00-18:00) or WO`);
               continue;
             }
+            try {
+              shiftTemplateId = await resolveShiftTemplate(conn, parsed.startTime, parsed.endTime, cellValue, userId);
+            } catch (e) {
+              rowErrors.push(`${DAYS[i].toUpperCase()}: failed to resolve shift template — ${(e as Error).message}`);
+              continue;
+            }
+            // parsed.startTime/endTime is what the uploaded cell literally said, so it's
+            // used directly for the snapshot rather than re-reading it back off the
+            // (possibly pre-existing, possibly reused) shift template row.
+            shiftStartTime = parsed.startTime;
+            shiftEndTime = parsed.endTime;
           }
-          const restCheck = await validateMinimumRest(
-            { employeeId, processId: employeeProcessId, branchId: employeeBranchId, forDate: rosterDateStr },
-            { startTime: shiftStartTime.slice(0, 5), endTime: shiftEndTime.slice(0, 5) },
-            null, conn
-          );
-          if (!restCheck.ok) {
-            rowErrors.push(restCheck.reason === "REST_POLICY_MISSING"
-              ? `${DAYS[i].toUpperCase()}: no minimum-rest policy configured for this employee/process/branch/organization`
-              : `${DAYS[i].toUpperCase()}: only ${restCheck.actualRestMinutes}min rest against the ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`);
-            continue;
+
+          // Area 2: minimum-rest validation. BLOCKS with no override path, same as
+          // roster-assignment-bulk.service.ts — an override needs an individual,
+          // deliberate approval a CSV upload can't legitimately grant.
+          if (!isWeekOff && shiftStartTime && shiftEndTime && restPolicyFeatureActive) {
+            const candidateStart = { date: rosterDateStr, time: shiftStartTime.slice(0, 5) };
+            if (lastCollectedShift) {
+              const gapWithinBatch = restGapMinutes(lastCollectedShift, candidateStart);
+              const policy = await resolveRestPolicy(
+                { employeeId, processId: employeeProcessId, branchId: employeeBranchId, forDate: rosterDateStr }, conn
+              );
+              if (policy && gapWithinBatch < policy.minimumRestMinutes) {
+                rowErrors.push(`${DAYS[i].toUpperCase()}: only ${gapWithinBatch}min rest against the shift on ${lastCollectedShift.date} in this same upload (minimum ${policy.minimumRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`);
+                continue;
+              }
+            }
+            const restCheck = await validateMinimumRest(
+              { employeeId, processId: employeeProcessId, branchId: employeeBranchId, forDate: rosterDateStr },
+              { startTime: shiftStartTime.slice(0, 5), endTime: shiftEndTime.slice(0, 5) },
+              null, conn
+            );
+            if (!restCheck.ok) {
+              rowErrors.push(restCheck.reason === "REST_POLICY_MISSING"
+                ? `${DAYS[i].toUpperCase()}: no minimum-rest policy configured for this employee/process/branch/organization`
+                : `${DAYS[i].toUpperCase()}: only ${restCheck.actualRestMinutes}min rest against the ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`);
+              continue;
+            }
+            lastCollectedShift = { date: rosterDateStr, time: shiftEndTime.slice(0, 5) };
           }
-          lastCollectedShift = { date: rosterDateStr, time: shiftEndTime.slice(0, 5) };
+
+          // Collect assignment for this employee's per-week insert (below, still under the lock)
+          const assignmentId = randomUUID();
+          weekAssignments.push({
+            id: assignmentId,
+            cycle_id: cycleId,
+            employee_id: employeeId,
+            roster_date: rosterDateStr,
+            shift_template_id: shiftTemplateId,
+            is_week_off: isWeekOff ? 1 : 0,
+            system_decision_reason: notes ?? null,
+            shift_start_time: shiftStartTime,
+            shift_end_time: shiftEndTime,
+            scheduled_minutes: shiftStartTime && shiftEndTime
+              ? computeScheduledMinutes(shiftStartTime.slice(0, 5), shiftEndTime.slice(0, 5))
+              : null,
+          });
+          rowAssignmentIds.push(assignmentId);
+          dayImported++;
         }
 
-        // Collect assignment for batch insert
-        const assignmentId = randomUUID();
-        allAssignments.push({
-          id: assignmentId,
-          cycle_id: cycleId,
-          employee_id: employeeId,
-          roster_date: rosterDateStr,
-          shift_template_id: shiftTemplateId,
-          is_week_off: isWeekOff ? 1 : 0,
-          system_decision_reason: notes ?? null,
-          shift_start_time: shiftStartTime,
-          shift_end_time: shiftEndTime,
-          scheduled_minutes: shiftStartTime && shiftEndTime
-            ? computeScheduledMinutes(shiftStartTime.slice(0, 5), shiftEndTime.slice(0, 5))
-            : null,
-        });
-        rowAssignmentIds.push(assignmentId);
-        dayImported++;
-      }
+        // Per-employee insert — parameterized rather than the previous manual
+        // string-concatenation + single-quote-doubling escape, which was an incomplete
+        // defense against injection through the uploaded CSV's free-text notes field.
+        //
+        // Before the overwrite: capture what each date this employee's week touches
+        // currently holds, so a same employee+date re-upload leaves a trace in
+        // roster_change_log instead of silently replacing the prior shift with no
+        // record of what it used to be.
+        if (weekAssignments.length > 0) {
+          const pairPlaceholders = weekAssignments.map(() => "(?,?)").join(",");
+          const pairParams = weekAssignments.flatMap((a) => [a.employee_id, a.roster_date]);
+          const [existingRows] = await conn.execute<RowDataPacket[]>(
+            `SELECT id, employee_id, roster_date, shift_template_id, is_week_off
+               FROM wfm_roster_assignment
+              WHERE (employee_id, roster_date) IN (${pairPlaceholders})`,
+            pairParams,
+          );
+          const before = new Map<string, { id: string; shift_template_id: string | null; is_week_off: number }>();
+          for (const row of existingRows as RowDataPacket[]) {
+            before.set(`${row.employee_id}|${String(row.roster_date).slice(0, 10)}`, {
+              id: row.id as string,
+              shift_template_id: row.shift_template_id as string | null,
+              is_week_off: Number(row.is_week_off),
+            });
+          }
+
+          // shift_version_id/scheduled_minutes only exist once migration
+          // 1200_shift_versioning.sql has been applied — probe rather than assume,
+          // same pattern as the live engine (auto-roster-synced.service.ts) and
+          // roster-assignment-bulk.service.ts.
+          const raCols = await rosterAssignmentColumns(conn);
+          const hasScheduledMinutes = raCols.has("scheduled_minutes");
+          const hasShiftVersionId = raCols.has("shift_version_id");
+
+          const rowCols = ["id", "cycle_id", "employee_id", "roster_date", "shift_template_id", "is_week_off",
+            "shift_start_time", "shift_end_time"];
+          const rowPlaceholderParts = ["?", "?", "?", "?", "?", "?", "?", "?"];
+          const updateClauses = [
+            "shift_template_id = VALUES(shift_template_id)",
+            "is_week_off = VALUES(is_week_off)",
+            "shift_start_time = VALUES(shift_start_time)",
+            "shift_end_time = VALUES(shift_end_time)",
+          ];
+          if (hasShiftVersionId) {
+            rowCols.push("shift_version_id");
+            rowPlaceholderParts.push("?");
+            updateClauses.push("shift_version_id = VALUES(shift_version_id)");
+          }
+          if (hasScheduledMinutes) {
+            rowCols.push("scheduled_minutes");
+            rowPlaceholderParts.push("?");
+            updateClauses.push("scheduled_minutes = VALUES(scheduled_minutes)");
+          }
+          rowCols.push("roster_status", "publish_status", "decision_source", "system_decision_reason");
+          rowPlaceholderParts.push("'published'", "'published'", "'bulk_upload'", "?");
+          updateClauses.push("decision_source = 'bulk_upload'", "system_decision_reason = VALUES(system_decision_reason)", "updated_at = CURRENT_TIMESTAMP");
+
+          const placeholders = weekAssignments.map(() => `(${rowPlaceholderParts.join(",")})`).join(",");
+          // Built in the exact same order as rowCols/rowPlaceholderParts, per row —
+          // shift_version_id uses the shift_template_id (an already-immutable,
+          // append-only id — see the resolveShiftTemplate comment) as its stable
+          // reference, matching the null value for week-off rows.
+          const params = weekAssignments.flatMap((a) => {
+            const row = [a.id, a.cycle_id, a.employee_id, a.roster_date, a.shift_template_id, a.is_week_off,
+              a.shift_start_time, a.shift_end_time];
+            if (hasShiftVersionId) row.push(a.shift_template_id);
+            if (hasScheduledMinutes) row.push(a.scheduled_minutes);
+            row.push(a.system_decision_reason);
+            return row;
+          });
+          await conn.execute(
+            `INSERT INTO wfm_roster_assignment
+               (${rowCols.join(", ")})
+             VALUES ${placeholders}
+             ON DUPLICATE KEY UPDATE
+               ${updateClauses.join(",\n               ")}`,
+            params,
+          );
+
+          for (const a of weekAssignments) {
+            const prior = before.get(`${a.employee_id}|${a.roster_date}`);
+            if (prior && (prior.shift_template_id !== a.shift_template_id || Boolean(prior.is_week_off) !== Boolean(a.is_week_off))) {
+              await logRosterChange(conn, {
+                entityType: "wfm_roster_assignment",
+                entityId: prior.id,
+                changedBy: userId,
+                reason: `Bulk shift-roster upload (batch ${batchId})`,
+                cycleId: a.cycle_id,
+                oldValue: { shift_template_id: prior.shift_template_id, is_week_off: Boolean(prior.is_week_off) },
+                newValue: { shift_template_id: a.shift_template_id, is_week_off: Boolean(a.is_week_off) },
+              });
+            }
+          }
+        }
+      });
 
       if (rowErrors.length > 0) {
         errors.push(`Row ${batchRow.row_no} (${employee_code}): ${rowErrors.join("; ")}`);
@@ -316,100 +440,6 @@ export async function importShiftRosterBatch(
       } else {
         rowStatusUpdates.push({ id: batchRow.id, status: 'imported', targetRecordIds: rowAssignmentIds });
         imported += dayImported > 0 ? 1 : 0;
-      }
-    }
-
-    // Batch insert all assignments — parameterized rather than the previous manual
-    // string-concatenation + single-quote-doubling escape, which was an incomplete
-    // defense against injection through the uploaded CSV's free-text notes field.
-    //
-    // Before the overwrite: capture what each (employee, date) pair currently holds,
-    // so a same employee+date re-upload leaves a trace in roster_change_log instead
-    // of silently replacing the prior shift with no record of what it used to be.
-    const before = new Map<string, { id: string; shift_template_id: string | null; is_week_off: number }>();
-    if (allAssignments.length > 0) {
-      const pairPlaceholders = allAssignments.map(() => "(?,?)").join(",");
-      const pairParams = allAssignments.flatMap((a) => [a.employee_id, a.roster_date]);
-      const [existingRows] = await conn.execute<RowDataPacket[]>(
-        `SELECT id, employee_id, roster_date, shift_template_id, is_week_off
-           FROM wfm_roster_assignment
-          WHERE (employee_id, roster_date) IN (${pairPlaceholders})`,
-        pairParams,
-      );
-      for (const row of existingRows as RowDataPacket[]) {
-        before.set(`${row.employee_id}|${String(row.roster_date).slice(0, 10)}`, {
-          id: row.id as string,
-          shift_template_id: row.shift_template_id as string | null,
-          is_week_off: Number(row.is_week_off),
-        });
-      }
-
-      // shift_version_id/scheduled_minutes only exist once migration
-      // 1200_shift_versioning.sql has been applied — probe rather than assume,
-      // same pattern as the live engine (auto-roster-synced.service.ts) and
-      // roster-assignment-bulk.service.ts.
-      const raCols = await rosterAssignmentColumns(conn);
-      const hasScheduledMinutes = raCols.has("scheduled_minutes");
-      const hasShiftVersionId = raCols.has("shift_version_id");
-
-      const rowCols = ["id", "cycle_id", "employee_id", "roster_date", "shift_template_id", "is_week_off",
-        "shift_start_time", "shift_end_time"];
-      const rowPlaceholderParts = ["?", "?", "?", "?", "?", "?", "?", "?"];
-      const updateClauses = [
-        "shift_template_id = VALUES(shift_template_id)",
-        "is_week_off = VALUES(is_week_off)",
-        "shift_start_time = VALUES(shift_start_time)",
-        "shift_end_time = VALUES(shift_end_time)",
-      ];
-      if (hasShiftVersionId) {
-        rowCols.push("shift_version_id");
-        rowPlaceholderParts.push("?");
-        updateClauses.push("shift_version_id = VALUES(shift_version_id)");
-      }
-      if (hasScheduledMinutes) {
-        rowCols.push("scheduled_minutes");
-        rowPlaceholderParts.push("?");
-        updateClauses.push("scheduled_minutes = VALUES(scheduled_minutes)");
-      }
-      rowCols.push("roster_status", "publish_status", "decision_source", "system_decision_reason");
-      rowPlaceholderParts.push("'published'", "'published'", "'bulk_upload'", "?");
-      updateClauses.push("decision_source = 'bulk_upload'", "system_decision_reason = VALUES(system_decision_reason)", "updated_at = CURRENT_TIMESTAMP");
-
-      const placeholders = allAssignments.map(() => `(${rowPlaceholderParts.join(",")})`).join(",");
-      // Built in the exact same order as rowCols/rowPlaceholderParts, per row —
-      // shift_version_id uses the shift_template_id (an already-immutable,
-      // append-only id — see the resolveShiftTemplate comment) as its stable
-      // reference, matching the null value for week-off rows.
-      const params = allAssignments.flatMap((a) => {
-        const row = [a.id, a.cycle_id, a.employee_id, a.roster_date, a.shift_template_id, a.is_week_off,
-          a.shift_start_time, a.shift_end_time];
-        if (hasShiftVersionId) row.push(a.shift_template_id);
-        if (hasScheduledMinutes) row.push(a.scheduled_minutes);
-        row.push(a.system_decision_reason);
-        return row;
-      });
-      await conn.execute(
-        `INSERT INTO wfm_roster_assignment
-           (${rowCols.join(", ")})
-         VALUES ${placeholders}
-         ON DUPLICATE KEY UPDATE
-           ${updateClauses.join(",\n           ")}`,
-        params,
-      );
-
-      for (const a of allAssignments) {
-        const prior = before.get(`${a.employee_id}|${a.roster_date}`);
-        if (prior && (prior.shift_template_id !== a.shift_template_id || Boolean(prior.is_week_off) !== Boolean(a.is_week_off))) {
-          await logRosterChange(conn, {
-            entityType: "wfm_roster_assignment",
-            entityId: prior.id,
-            changedBy: userId,
-            reason: `Bulk shift-roster upload (batch ${batchId})`,
-            cycleId: a.cycle_id,
-            oldValue: { shift_template_id: prior.shift_template_id, is_week_off: Boolean(prior.is_week_off) },
-            newValue: { shift_template_id: a.shift_template_id, is_week_off: Boolean(a.is_week_off) },
-          });
-        }
       }
     }
 

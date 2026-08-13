@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { logRosterChange } from "../roster/roster-change-log.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
 import { isRestPolicyFeatureActive, validateMinimumRest, withEmployeeRosterLock } from "../wfm/rest-policy.service.js";
+import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 
 export async function importRosterAssignmentBatch(
   batchId: string,
@@ -120,6 +121,16 @@ export async function importRosterAssignmentBatch(
       const rowResult = await withEmployeeRosterLock(employeeId, async (): Promise<
         { ok: true; assignmentId: string } | { ok: false; message: string }
       > => {
+        // Closure item #2 (2026-08-13): shared attendance/payroll lock guard,
+        // the same function every other write path in this program now uses.
+        // Checked first — a locked date is a harder stop than a rest-policy
+        // outcome, and there's no point resolving a rest check for a row
+        // this bulk path is about to refuse anyway.
+        const dateLockResult = await checkEmployeeDateNotLocked(conn, employeeId, roster_date);
+        if (dateLockResult.blocked) {
+          return { ok: false, message: `Row ${batchRow.row_no}: ${dateLockResult.error}` };
+        }
+
         // Area 2: minimum-rest validation. Bulk upload BLOCKS on insufficient
         // rest with no override path — an override needs an individual,
         // deliberate approval (reason + named approver), which a CSV column

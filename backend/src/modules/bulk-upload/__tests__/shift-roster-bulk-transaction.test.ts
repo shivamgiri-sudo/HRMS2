@@ -7,6 +7,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * uploaded CSV's free-text notes field) instead of parameterized placeholders, and
  * never set upload_batch_row.target_record_id — breaking traceability from an
  * uploaded row back to the wfm_roster_assignment row(s) it created.
+ *
+ * Closure #2b (2026-08-13): the INSERT itself moved from one combined
+ * batch-wide statement at the end of the function to a per-employee insert,
+ * wrapped in that employee's own advisory lock — see
+ * shift-roster-bulk.service.ts's own comment for why (the collect-all-then-
+ * insert-all shape left a cross-request race the per-row transaction alone
+ * didn't close).
  */
 
 const conn = {
@@ -16,6 +23,12 @@ const conn = {
   rollback: vi.fn(),
   release: vi.fn(),
 };
+// Separate from `conn` for the same reason as roster-assignment-bulk-transaction.test.ts:
+// withEmployeeRosterLock's GET_LOCK/RELEASE_LOCK run on their own connection in
+// real production (db.getConnection() pulls a distinct one from the pool each
+// call). Sharing one mock object would inflate conn.release()'s call count in
+// a way that doesn't reflect real behavior.
+const lockConn = { query: vi.fn(), release: vi.fn() };
 const { getConnection } = vi.hoisted(() => ({ getConnection: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { getConnection } }));
 
@@ -37,12 +50,21 @@ function queueRows(...batches: unknown[][]) {
 
 describe("importShiftRosterBatch transaction handling", () => {
   beforeEach(() => {
-    getConnection.mockResolvedValue(conn);
+    // First getConnection() call (the batch's own transaction) returns conn;
+    // every call after that (one per employee, inside withEmployeeRosterLock)
+    // gets lockConn instead — mirrors the pool handing out a distinct
+    // connection each time in real production.
+    getConnection.mockReset();
+    getConnection.mockImplementationOnce(async () => conn);
+    getConnection.mockImplementation(async () => lockConn);
     conn.execute.mockReset();
     conn.beginTransaction.mockReset();
     conn.commit.mockReset();
     conn.rollback.mockReset();
     conn.release.mockReset();
+    lockConn.query.mockReset();
+    lockConn.query.mockImplementation(async (sql: string) => (sql.includes("GET_LOCK") ? [[{ acquired: 1 }], []] : [[], []]));
+    lockConn.release.mockReset();
     logRosterChange.mockClear();
     // Schema-probe caching is module-scope and would otherwise leak the first
     // test's result (even an empty Set is a cached hit) into every test after it.
@@ -67,15 +89,18 @@ describe("importShiftRosterBatch transaction handling", () => {
       // once per row before the day loop) -> wfm_rest_policy doesn't exist yet,
       // so every day's rest-check below is skipped -- no further Area 2 queries
       [],
+      // Closure #2: SELECT attendance_daily_record (checkEmployeeDateNotLocked,
+      // inside the employee's lock, per day) -> not locked
+      [],
       // resolveShiftTemplate: SELECT wfm_shift_template by start/end time
       [{ id: "shift-1" }],
-      // SELECT existing wfm_roster_assignment (before-value pre-fetch)
+      // SELECT existing wfm_roster_assignment (before-value pre-fetch, per employee)
       [],
       // SELECT INFORMATION_SCHEMA.COLUMNS (shift-versioning schema probe) -> no
       // versioning columns yet, so the INSERT below falls back to the
       // pre-migration column set
       [],
-      // INSERT wfm_roster_assignment (batch)
+      // INSERT wfm_roster_assignment (per employee)
       [],
       // UPDATE upload_batch_row (target_record_id)
       [],
@@ -97,6 +122,11 @@ describe("importShiftRosterBatch transaction handling", () => {
     );
     expect(targetUpdateCall, "target_record_id UPDATE not found").toBeDefined();
     expect(targetUpdateCall![1][0]).not.toBeNull();
+
+    // The lock was acquired and released for this employee.
+    const getLockCall = lockConn.query.mock.calls.find(([sql]: [string]) => sql.includes("GET_LOCK"));
+    expect(getLockCall![1]).toEqual(["roster_assign_emp-1"]);
+    expect(lockConn.query.mock.calls.find(([sql]: [string]) => sql.includes("RELEASE_LOCK"))).toBeDefined();
   });
 
   it("uses parameterized placeholders for the batch INSERT, not string-concatenated values", async () => {
@@ -109,6 +139,7 @@ describe("importShiftRosterBatch transaction handling", () => {
       [],
       [],
       [], // Area 2: isRestPolicyFeatureActive -> wfm_rest_policy doesn't exist yet
+      [], // Closure #2: checkEmployeeDateNotLocked -> not locked
       [{ id: "shift-1" }],
       [],
       [], // schema probe -> no versioning columns
@@ -147,6 +178,8 @@ describe("importShiftRosterBatch transaction handling", () => {
       [],
       // Area 2: isRestPolicyFeatureActive -> wfm_rest_policy EXISTS this time
       [{ TABLE_NAME: "wfm_rest_policy" }],
+      // Closure #2: checkEmployeeDateNotLocked -> not locked
+      [],
       // resolveShiftTemplate: SELECT wfm_shift_template by start/end time
       [{ id: "shift-1" }],
       // resolveRestPolicy scopes: employee, process, branch, organization
@@ -166,6 +199,35 @@ describe("importShiftRosterBatch transaction handling", () => {
       ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
     );
     expect(insertCall, "a day blocked on insufficient rest must never be inserted").toBeUndefined();
+  });
+
+  it("blocks a day whose date is already locked for payroll (closure #2), before the rest-policy check runs", async () => {
+    queueRows(
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        employee_code: "MAS001", week_start_date: "2026-08-17",
+        mon_shift: "09:00-18:00",
+      }) }],
+      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      [],
+      [],
+      [], // isRestPolicyFeatureActive -> inactive, wouldn't matter either way here
+      [{ is_locked: 1 }], // checkEmployeeDateNotLocked -> locked
+      [],
+      [],
+    );
+
+    const result = await importShiftRosterBatch("batch-1", "user-1");
+
+    expect(result.errors[0]).toMatch(/already locked for payroll/);
+    const insertCall = conn.execute.mock.calls.find(
+      ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
+    );
+    expect(insertCall, "a day blocked on a locked date must never be inserted").toBeUndefined();
+    // resolveShiftTemplate must never run either -- the lock check short-circuits first.
+    const shiftTemplateCall = conn.execute.mock.calls.find(
+      ([sql]: [string]) => typeof sql === "string" && sql.includes("FROM wfm_shift_template WHERE start_time"),
+    );
+    expect(shiftTemplateCall).toBeUndefined();
   });
 
   it("rolls back and releases on an unexpected failure", async () => {

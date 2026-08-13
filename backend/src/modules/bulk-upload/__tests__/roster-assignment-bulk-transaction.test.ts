@@ -72,16 +72,18 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     // 2: SELECT employees (resolve employee_code; also pulls process_id/branch_id
     //    for Area 2's rest-policy scope resolution)
     // 3: SELECT wfm_shift_template (resolve shift_code)
-    // 4: SELECT INFORMATION_SCHEMA.TABLES (Area 2: isRestPolicyFeatureActive ->
+    // 4: SELECT attendance_daily_record (closure #2: checkEmployeeDateNotLocked)
+    //    -> not locked
+    // 5: SELECT INFORMATION_SCHEMA.TABLES (Area 2: isRestPolicyFeatureActive ->
     //    wfm_rest_policy doesn't exist yet) -> feature inactive, so the rest-gap
     //    check below is skipped entirely -- no further Area 2 queries this row
-    // 5: SELECT existing wfm_roster_assignment (before-value lookup)
-    // 6: SELECT INFORMATION_SCHEMA.COLUMNS (Area 4: shift-versioning schema probe)
+    // 6: SELECT existing wfm_roster_assignment (before-value lookup)
+    // 7: SELECT INFORMATION_SCHEMA.COLUMNS (Area 4: shift-versioning schema probe)
     //    -> no versioning columns yet, so the INSERT below falls back to the
     //    pre-migration column set
-    // 7: INSERT wfm_roster_assignment
-    // 8: UPDATE upload_batch_row
-    // 9: UPDATE upload_batch
+    // 8: INSERT wfm_roster_assignment
+    // 9: UPDATE upload_batch_row
+    // 10: UPDATE upload_batch
     queueRows(
       [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
         cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
@@ -89,6 +91,7 @@ describe("importRosterAssignmentBatch transaction handling", () => {
       }) }],
       [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
       [{ id: "shift-1" }],
+      [],
       [],
       [],
       [],
@@ -121,14 +124,15 @@ describe("importRosterAssignmentBatch transaction handling", () => {
 
   it("blocks a row on insufficient rest (Area 2) once wfm_rest_policy is active, with no override path in bulk upload", async () => {
     // 1: upload_batch_row  2: employees  3: wfm_shift_template
-    // 4: INFORMATION_SCHEMA.TABLES -> wfm_rest_policy EXISTS this time
-    // 5: wfm_rest_policy (employee scope) -> none
-    // 6: wfm_rest_policy (process scope) -> none
-    // 7: wfm_rest_policy (branch scope) -> none
-    // 8: wfm_rest_policy (organization scope) -> a policy, 600min minimum, no override
-    // 9: findAdjacentShifts previous -> ends 22:00 the day before (only 6h gap to 04:00 start)
-    // 10: findAdjacentShifts next -> none
-    // 11: UPDATE upload_batch_row (error)   12: UPDATE upload_batch
+    // 4: attendance_daily_record (closure #2: checkEmployeeDateNotLocked) -> not locked
+    // 5: INFORMATION_SCHEMA.TABLES -> wfm_rest_policy EXISTS this time
+    // 6: wfm_rest_policy (employee scope) -> none
+    // 7: wfm_rest_policy (process scope) -> none
+    // 8: wfm_rest_policy (branch scope) -> none
+    // 9: wfm_rest_policy (organization scope) -> a policy, 600min minimum, no override
+    // 10: findAdjacentShifts previous -> ends 22:00 the day before (only 6h gap to 04:00 start)
+    // 11: findAdjacentShifts next -> none
+    // 12: UPDATE upload_batch_row (error)   13: UPDATE upload_batch
     queueRows(
       [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
         cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
@@ -136,6 +140,7 @@ describe("importRosterAssignmentBatch transaction handling", () => {
       }) }],
       [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
       [{ id: "shift-1", start_time: "04:00:00", end_time: "13:00:00" }],
+      [],
       [{ TABLE_NAME: "wfm_rest_policy" }],
       [],
       [],
@@ -158,6 +163,37 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     expect(insertCall, "a row blocked on insufficient rest must never be inserted").toBeUndefined();
     expect(conn.commit).toHaveBeenCalledTimes(1);
     expect(conn.rollback).not.toHaveBeenCalled();
+  });
+
+  it("blocks a row whose date is already locked for payroll (closure #2), before ever reaching the rest-policy check", async () => {
+    // 1: upload_batch_row  2: employees  3: wfm_shift_template
+    // 4: attendance_daily_record -> is_locked=1
+    // 5: UPDATE upload_batch_row (error)   6: UPDATE upload_batch
+    queueRows(
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
+        shift_code: "GEN", is_week_off: "0", notes: null,
+      }) }],
+      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      [{ id: "shift-1" }],
+      [{ is_locked: 1 }],
+      [],
+      [],
+    );
+
+    const result = await importRosterAssignmentBatch("batch-1", "user-1");
+
+    expect(result.skipped).toBe(1);
+    expect(result.errors[0]).toMatch(/already locked for payroll/);
+    const insertCall = conn.execute.mock.calls.find(
+      ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
+    );
+    expect(insertCall, "a row blocked on a locked date must never be inserted").toBeUndefined();
+    // Never reached the rest-policy feature-active probe either -- the lock check short-circuits first.
+    const restProbeCall = conn.execute.mock.calls.find(
+      ([sql]: [string]) => typeof sql === "string" && sql.includes("INFORMATION_SCHEMA.TABLES"),
+    );
+    expect(restProbeCall).toBeUndefined();
   });
 
   it("still collects a row-level validation failure without rolling back the transaction", async () => {
