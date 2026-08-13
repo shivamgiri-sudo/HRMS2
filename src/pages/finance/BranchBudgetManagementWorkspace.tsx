@@ -1298,7 +1298,7 @@ export default function BranchBudgetManagementWorkspace() {
                     <Button size="sm" onClick={() => void save(false)} disabled={saveBudget.isPending || locked}><Save className="mr-1.5 h-3.5 w-3.5" />Save draft</Button>
                     <Button size="sm" variant="outline" onClick={() => void save(true)} disabled={saveBudget.isPending || locked}><Send className="mr-1.5 h-3.5 w-3.5" />Submit to Branch Head</Button>
                     {autoSaveStatus === "pending" && <span className="flex items-center gap-1 text-xs text-slate-500"><Loader2 className="h-3 w-3 animate-spin" />Auto-saving…</span>}
-                    {autoSaveStatus === "saved" && <span className="flex items-center gap-1 text-xs text-emerald-700"><CheckCircle2 className="h-3 w-3" />Saved</span>}
+                    {autoSaveStatus === "saved" && <span className="flex items-center gap-1 text-xs text-emerald-700"><CheckCircle2 className="h-4 w-4" />Saved</span>}
                   </>
                 )}
                 {/* The stage reviewer can correct the lines in place instead of bouncing the whole
@@ -1871,7 +1871,7 @@ export default function BranchBudgetManagementWorkspace() {
                   {budgets.map((budget) => {
                     const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount);
                     return (
-                      <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]">
+                      <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr_auto]">
                         <div>
                           <div className="flex gap-2">
                             <p className="font-semibold">{budget.budget_number}</p>
@@ -1879,8 +1879,11 @@ export default function BranchBudgetManagementWorkspace() {
                           </div>
                           <p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p>
                         </div>
-                        <Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} />
-                        <Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />
+                        <Metric label="Gross" value={money(Number(budget.gross_budget_amount))} />
+                        <Metric label="P&L budget" value={money(Number(budget.pnl_budget_amount))} />
+                        <Metric label="Reserved" value={money(Number(budget.reserved_amount))} tone="amber" />
+                        <Metric label="Consumed" value={money(Number(budget.consumed_amount))} tone="emerald" />
+                        <Metric label="Available" value={money(available)} tone={available < 0 ? "rose" : "slate"} />
                         <div className="flex flex-wrap justify-end gap-2">
                           {canReview(budget) && (
                             <Button size="sm" variant="outline" onClick={() => setReviewingBudgetId(budget.id)}>
@@ -1890,14 +1893,14 @@ export default function BranchBudgetManagementWorkspace() {
                           {canAmendTax && budget.status === "active" && detailQuery.data?.lines && detailQuery.data.lines.length > 1 && (
                             <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => {
                               const lines = detailQuery.data!.lines;
-                              setTransferTarget({ budgetId: budget.id, fromLineId: lines[0].id, toLineId: lines[1].id, transferAmount: "", reason: "" });
+                              setTransferTarget({ budgetId: budget.id, fromLineId: "", toLineId: "", transferAmount: "", reason: "" });
                             }}>
                               <ArrowLeftRight className="mr-1 h-3.5 w-3.5" />Transfer
                             </Button>
                           )}
                         </div>
                         {canDeleteBudget(budget) && (
-                          <div className="flex justify-end xl:col-span-4">
+                          <div className="flex justify-end xl:col-span-7">
                             <Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={deleteBudget.isPending} onClick={() => void removeBudget(budget)}>
                               <Trash2 className="mr-1 h-3.5 w-3.5" />{isSuperAdmin ? "Delete / supersede (super admin)" : "Delete draft"}
                             </Button>
@@ -1979,7 +1982,7 @@ export default function BranchBudgetManagementWorkspace() {
                                       <td className="px-3 py-2 text-right">{line.quantity ?? "—"}</td>
                                       <td className="px-3 py-2 text-right">{line.unit_rate != null ? money(Number(line.unit_rate)) : "—"}</td>
                                       <td className="px-3 py-2 text-right font-medium">{money(Number(line.gross_amount))}</td>
-                                      <td className="max-w-[160px] px-3 py-2 text-slate-500">{line.justification ?? "—"}</td>
+                                      <td className="max-w-[160px] truncate px-3 py-2 text-slate-500" title={line.justification ?? ""}>{line.justification ?? "—"}</td>
                                       {canAct && (
                                         <td className="px-3 py-2">
                                           <Input
@@ -2207,12 +2210,14 @@ export default function BranchBudgetManagementWorkspace() {
               <div className="space-y-1">
                 <Label>From (source line) *</Label>
                 <select className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={transferTarget.fromLineId} onChange={(e) => setTransferTarget((t) => t && ({ ...t, fromLineId: e.target.value }))}>
+                  <option value="">— Select source line —</option>
                   {detailQuery.data.lines.map((l) => <option key={l.id} value={l.id}>{l.head} › {l.sub_head ?? "General"} › {l.item_name} (avail: {money(Number(l.available_gross_amount ?? 0))})</option>)}
                 </select>
               </div>
               <div className="space-y-1">
                 <Label>To (destination line) *</Label>
                 <select className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={transferTarget.toLineId} onChange={(e) => setTransferTarget((t) => t && ({ ...t, toLineId: e.target.value }))}>
+                  <option value="">— Select destination line —</option>
                   {detailQuery.data.lines.filter((l) => l.id !== transferTarget.fromLineId).map((l) => <option key={l.id} value={l.id}>{l.head} › {l.sub_head ?? "General"} › {l.item_name}</option>)}
                 </select>
               </div>
@@ -2228,7 +2233,7 @@ export default function BranchBudgetManagementWorkspace() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setTransferTarget(null)}>Cancel</Button>
               <Button
-                disabled={transferMutation.isPending || !transferTarget.transferAmount || !transferTarget.reason.trim() || transferTarget.fromLineId === transferTarget.toLineId}
+                disabled={transferMutation.isPending || !transferTarget.fromLineId || !transferTarget.toLineId || !transferTarget.transferAmount || !transferTarget.reason.trim() || transferTarget.fromLineId === transferTarget.toLineId}
                 onClick={() => void transferMutation.mutateAsync(transferTarget)}
               >
                 {transferMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ArrowLeftRight className="mr-2 h-4 w-4" />}
@@ -2457,7 +2462,7 @@ function AnnualBudgetTab({ branchId, period }: { branchId: string; period: strin
                   <tr key={metric} className="border-b last:border-0">
                     <td className="px-3 py-2 font-medium text-slate-700">{metric}</td>
                     {values.map((v, i) => (
-                      <td key={months[i]} className={`px-2 py-2 text-right tabular-nums ${metric === "Consumed" ? "text-emerald-700" : metric === "Available" ? "text-slate-700" : ""}`}>
+                      <td key={months[i]} className={`px-2 py-2 text-right tabular-nums ${metric === "Consumed" ? "text-emerald-700" : metric === "Available" && v !== null && v < 0 ? "font-semibold text-rose-600" : metric === "Available" ? "text-slate-700" : ""}`}>
                         {v === null ? <span className="text-slate-400">—</span> : money(v)}
                       </td>
                     ))}
@@ -2488,8 +2493,14 @@ function UtilizationBreakdown({
   rows: { head: string; subHead: string | null; planned: number; reserved: number; consumed: number; available: number }[];
   loading: boolean;
 }) {
-  if (loading) return null;
-  if (!rows.length) return null;
+  if (loading) return (
+    <div className="xl:col-span-4 flex justify-center py-8">
+      <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+    </div>
+  );
+  if (!rows.length) return (
+    <div className="xl:col-span-4 py-6 text-center text-sm text-slate-400">No utilization data yet.</div>
+  );
   return (
     <div className="xl:col-span-4">
       <p className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Utilization by Head / Sub-head</p>
@@ -2981,8 +2992,14 @@ function ExpenseMasterPanel({
           <Card className="rounded-3xl">
             <CardHeader><CardTitle className="text-base">Add Expense Head</CardTitle></CardHeader>
             <CardContent className="space-y-3">
-              <Input value={headName} onChange={(event) => setHeadName(event.target.value)} placeholder="Head name" />
-              <Input value={headCode} onChange={(event) => setHeadCode(event.target.value)} placeholder="Head code" />
+              <div className="space-y-1.5">
+                <Label htmlFor="new-head-name">Head name <span className="text-destructive" aria-hidden>*</span></Label>
+                <Input id="new-head-name" value={headName} onChange={(event) => setHeadName(event.target.value)} placeholder="e.g. Housekeeping" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="new-head-code">Head code</Label>
+                <Input id="new-head-code" value={headCode} onChange={(event) => setHeadCode(event.target.value)} placeholder="e.g. HK" />
+              </div>
               <Button className="w-full" disabled={!headName.trim() || busy}
                 onClick={async () => { await onSaveHead({ headName, headCode: headCode || undefined }); setHeadName(""); setHeadCode(""); }}>
                 <Plus className="mr-2 h-4 w-4" />Save Head
@@ -2992,13 +3009,19 @@ function ExpenseMasterPanel({
           <Card className="rounded-3xl">
             <CardHeader><CardTitle className="text-base">Add Expense Sub-head</CardTitle></CardHeader>
             <CardContent className="space-y-3">
-              <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                value={subHead.headId} onChange={(event) => setSubHead((current) => ({ ...current, headId: event.target.value }))}>
-                <option value="">Select Head</option>
-                {masters.map((head) => <option key={head.id} value={head.id}>{head.headName}</option>)}
-              </select>
-              <Input value={subHead.subHeadName} placeholder="Sub-head name"
-                onChange={(event) => setSubHead((current) => ({ ...current, subHeadName: event.target.value }))} />
+              <div className="space-y-1.5">
+                <Label htmlFor="new-subhead-parent">Parent head <span className="text-destructive" aria-hidden>*</span></Label>
+                <select id="new-subhead-parent" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  value={subHead.headId} onChange={(event) => setSubHead((current) => ({ ...current, headId: event.target.value }))}>
+                  <option value="">Select Head</option>
+                  {masters.map((head) => <option key={head.id} value={head.id}>{head.headName}</option>)}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="new-subhead-name">Sub-head name <span className="text-destructive" aria-hidden>*</span></Label>
+                <Input id="new-subhead-name" value={subHead.subHeadName} placeholder="e.g. Cleaning materials"
+                  onChange={(event) => setSubHead((current) => ({ ...current, subHeadName: event.target.value }))} />
+              </div>
               <Button className="w-full" disabled={!subHead.headId || !subHead.subHeadName.trim() || busy}
                 onClick={async () => { await onSaveSubHead({ ...subHead, pnlTreatment: "operating_expense" }); setSubHead((current) => ({ ...current, subHeadName: "" })); }}>
                 <Plus className="mr-2 h-4 w-4" />Save Sub-head

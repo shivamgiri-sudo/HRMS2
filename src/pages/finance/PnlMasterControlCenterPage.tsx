@@ -174,7 +174,7 @@ function StatusPill({ value }: { value: unknown }) {
   return <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ${className}`}>{titleCase(status)}</span>;
 }
 
-function MasterTable({ columns, rows, emptyText, maxHeight = 420, onRowClick, selectedId }: { columns: Column[]; rows: AnyRow[]; emptyText: string; maxHeight?: number; onRowClick?: (row: AnyRow) => void; selectedId?: string | number | null }) {
+function MasterTable({ columns, rows, emptyText, maxHeight = 420, onRowClick, selectedId, loading }: { columns: Column[]; rows: AnyRow[]; emptyText: string; maxHeight?: number; onRowClick?: (row: AnyRow) => void; selectedId?: string | number | null; loading?: boolean }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
       <div className="overflow-auto" style={{ maxHeight }}>
@@ -189,25 +189,39 @@ function MasterTable({ columns, rows, emptyText, maxHeight = 420, onRowClick, se
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {rows.map((row, rowIndex) => {
-              const isSelected = selectedId != null && String(row.id) === String(selectedId);
-              return (
-                <tr
-                  key={String(row.id ?? `${rowIndex}-${row[columns[0]?.key]}`)}
-                  className={`transition ${isSelected ? "bg-sky-50 ring-1 ring-inset ring-sky-200" : "hover:bg-sky-50/40"} ${onRowClick ? "cursor-pointer" : ""}`}
-                  onClick={() => onRowClick?.(row)}
-                >
+            {loading ? (
+              Array.from({ length: 3 }).map((_, i) => (
+                <tr key={i}>
                   {columns.map((column) => (
-                    <td key={column.key} className={`whitespace-nowrap px-4 py-3 ${isSelected ? "text-slate-900" : "text-slate-700"} ${column.align === "right" ? "text-right" : "text-left"}`}>
-                      {column.render ? column.render(row[column.key], row) : String(row[column.key] ?? "-")}
+                    <td key={column.key} className="px-4 py-3">
+                      <Skeleton className="h-4 w-full rounded" />
                     </td>
                   ))}
                 </tr>
-              );
-            })}
-            {rows.length === 0 ? (
-              <tr><td colSpan={columns.length} className="px-4 py-12 text-center text-sm text-slate-500">{emptyText}</td></tr>
-            ) : null}
+              ))
+            ) : (
+              <>
+                {rows.map((row, rowIndex) => {
+                  const isSelected = selectedId != null && String(row.id) === String(selectedId);
+                  return (
+                    <tr
+                      key={String(row.id ?? `${rowIndex}-${row[columns[0]?.key]}`)}
+                      className={`transition ${isSelected ? "bg-sky-50 ring-1 ring-inset ring-sky-200" : "hover:bg-sky-50/40"} ${onRowClick ? "cursor-pointer" : ""}`}
+                      onClick={() => onRowClick?.(row)}
+                    >
+                      {columns.map((column) => (
+                        <td key={column.key} className={`whitespace-nowrap px-4 py-3 ${isSelected ? "text-slate-900" : "text-slate-700"} ${column.align === "right" ? "text-right" : "text-left"}`}>
+                          {column.render ? column.render(row[column.key], row) : String(row[column.key] ?? "-")}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+                {rows.length === 0 ? (
+                  <tr><td colSpan={columns.length} className="px-4 py-12 text-center text-sm text-slate-500">{emptyText}</td></tr>
+                ) : null}
+              </>
+            )}
           </tbody>
         </table>
       </div>
@@ -850,17 +864,20 @@ export default function PnlMasterControlCenterPage() {
               {/* ── COMMERCIAL ── */}
               <TabsContent value="commercial" className="flex-1 overflow-hidden m-0">
                 <div className="space-y-1 mb-2 flex items-center gap-2 px-1 pt-1">
-                  <span className="text-xs text-slate-500 font-medium">Form:</span>
-                  {(["rule", "contract", "rate"] as const).map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => { setCommercialFormType(type); closeForm(); }}
-                      className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${commercialFormType === type ? "bg-sky-100 text-sky-700" : "text-slate-500 hover:bg-slate-100"}`}
-                    >
-                      {type === "rule" ? "Revenue Rule" : type === "contract" ? "Contract" : "Rate Card"}
-                    </button>
-                  ))}
+                  <span className="text-xs text-slate-500 font-medium" id="commercial-form-label">Form:</span>
+                  <div role="group" aria-labelledby="commercial-form-label" className="flex items-center gap-1">
+                    {(["rule", "contract", "rate"] as const).map((type) => (
+                      <button
+                        key={type}
+                        type="button"
+                        aria-pressed={commercialFormType === type}
+                        onClick={() => { setCommercialFormType(type); closeForm(); }}
+                        className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${commercialFormType === type ? "bg-sky-100 text-sky-700" : "text-slate-500 hover:bg-slate-100"}`}
+                      >
+                        {type === "rule" ? "Revenue Rule" : type === "contract" ? "Contract" : "Rate Card"}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 {commercialFormType === "rule" && (
@@ -874,6 +891,7 @@ export default function PnlMasterControlCenterPage() {
                     saving={bpo.saveRevenueRule.isPending}
                     tableSlot={
                       <MasterTable
+                        loading={bpo.revenueRulesQuery.isLoading}
                         emptyText="No revenue rule is configured for this scope."
                         selectedId={selectedRow?.id}
                         rows={revenueRules}
@@ -924,6 +942,7 @@ export default function PnlMasterControlCenterPage() {
                     saving={legacy.saveContract.isPending}
                     tableSlot={
                       <MasterTable
+                        loading={legacy.contractsQuery.isLoading}
                         rows={contracts as AnyRow[]}
                         emptyText="No contract configured."
                         selectedId={selectedRow?.id}
@@ -963,6 +982,7 @@ export default function PnlMasterControlCenterPage() {
                     saving={legacy.saveRate.isPending}
                     tableSlot={
                       <MasterTable
+                        loading={legacy.ratesQuery.isLoading}
                         rows={rates as AnyRow[]}
                         emptyText="No rate card configured."
                         selectedId={selectedRow?.id}
@@ -1004,6 +1024,7 @@ export default function PnlMasterControlCenterPage() {
                       saving={bpo.saveDeliveryActual.isPending}
                       tableSlot={
                         <MasterTable
+                          loading={bpo.deliveryActualsQuery.isLoading}
                           rows={deliveryActuals}
                           emptyText="No delivery records for the selected period."
                           selectedId={selectedRow?.id}
@@ -1072,6 +1093,7 @@ export default function PnlMasterControlCenterPage() {
                       saving={bpo.saveRevenueComponent.isPending}
                       tableSlot={
                         <MasterTable
+                          loading={bpo.revenueComponentsQuery.isLoading}
                           rows={revenueComponents}
                           emptyText="No revenue components for the selected period."
                           selectedId={selectedRow?.id}
@@ -1126,6 +1148,7 @@ export default function PnlMasterControlCenterPage() {
                   saving={bpo.saveCostComponent.isPending}
                   tableSlot={
                     <MasterTable
+                      loading={bpo.costComponentsQuery.isLoading}
                       rows={costComponents}
                       emptyText="No cost components for the selected period."
                       selectedId={selectedRow?.id}
@@ -1191,6 +1214,7 @@ export default function PnlMasterControlCenterPage() {
                   saving={bpo.saveAllocationPolicy.isPending}
                   tableSlot={
                     <MasterTable
+                      loading={bpo.allocationPoliciesQuery.isLoading}
                       rows={allocationPolicies}
                       emptyText="No allocation policy configured."
                       selectedId={selectedRow?.id}
@@ -1228,6 +1252,7 @@ export default function PnlMasterControlCenterPage() {
                   saving={bpo.saveClassificationRule.isPending}
                   tableSlot={
                     <MasterTable
+                      loading={bpo.classificationRulesQuery.isLoading}
                       rows={classificationRules}
                       emptyText="No classification rule configured."
                       selectedId={selectedRow?.id}
@@ -1271,6 +1296,7 @@ export default function PnlMasterControlCenterPage() {
                   saving={legacy.saveMonthlyPlan.isPending}
                   tableSlot={
                     <MasterTable
+                      loading={legacy.monthlyPlansQuery.isLoading}
                       rows={plans as AnyRow[]}
                       emptyText="No monthly plan configured for this period."
                       selectedId={selectedRow?.id}
@@ -1359,6 +1385,7 @@ export default function PnlMasterControlCenterPage() {
                     </Button>
                   </div>
                   <MasterTable
+                    loading={legacy.adjustmentsQuery.isLoading}
                     rows={adjustments as AnyRow[]}
                     emptyText="No adjustment history for the selected period."
                     maxHeight={520}
