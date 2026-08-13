@@ -29,8 +29,29 @@ export function MyAssets({ employeeId }: MyAssetsProps) {
   const { data: assignments, isLoading } = useQuery({
     queryKey: ["my-assets", employeeId],
     queryFn: async () => {
-      const res = await hrmsApi.get<{success:boolean;data:any}>("/api/assets-mgmt");
-      return (res.data ?? []) as AssetAssignment[];
+      // /api/assets-mgmt (bare list) is admin/hr-only and returns the whole company's
+      // asset_master table, unscoped to any employee — every non-admin/hr caller got a
+      // silent 403 that this hook never surfaced (isLoading just settles to false with
+      // assignments undefined), rendering as "No assets currently assigned" instead of
+      // the real access error. /employee/:employeeId is the actual self-service route:
+      // own assignments only, admin/hr may query any employee. Its response rows are
+      // flat (asset_name/asset_code/asset_category/serial_number alongside the
+      // assignment columns), not the nested `asset` shape this component renders, so
+      // they're mapped below rather than passed straight through.
+      const res = await hrmsApi.get<{ data: any[] }>(`/api/assets-mgmt/employee/${employeeId}`);
+      return (res.data ?? []).map((row: any): AssetAssignment => ({
+        id: row.id,
+        assigned_date: row.assigned_date,
+        returned_date: row.returned_date,
+        notes: row.notes,
+        asset: {
+          id: row.asset_id,
+          name: row.asset_name,
+          asset_code: row.asset_code,
+          category: row.asset_category,
+          serial_number: row.serial_number,
+        },
+      }));
     },
     enabled: !!employeeId,
   });
