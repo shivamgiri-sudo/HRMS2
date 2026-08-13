@@ -83,6 +83,17 @@ const envSchema = z.object({
 
   PORTAL_JWT_SECRET: z.string().min(32).default("change-me-in-production-portal-secret-32ch"),
   JWT_SECRET: z.string().min(32).default('change-me-jwt-secret-32characters!!'),
+  // Optional and NOT fatal-checked (unlike JWT_SECRET/PORTAL_JWT_SECRET above): until this
+  // is set, candidate-portal.service.ts falls back to JWT_SECRET with a loud startup
+  // warning, so an existing production deploy isn't broken by this var simply not being
+  // configured yet. The ATS candidate portal previously signed its tokens with JWT_SECRET
+  // directly — the SAME secret full employee sessions use — so a valid candidate-portal
+  // token could pass signature verification inside requireAuth (audit fix already closed
+  // the resulting req.authUser={id:undefined} exposure at the verification layer, but the
+  // secrets themselves were still shared). Once this is set in production and the process
+  // restarts, candidate-portal tokens use a fully separate secret, same as the client
+  // portal already does via PORTAL_JWT_SECRET. (2026-08-13, leave/auth-module audit)
+  CANDIDATE_PORTAL_JWT_SECRET: z.string().min(32).optional(),
   OTP_HMAC_SECRET: z.string().min(32).default('change-me-otp-hmac-secret-32chars!'),
   PORTAL_DEMO_BYPASS: z.string().default("false"),
   PAYROLL_BANK_KEY: z.string().min(16).default("hrms-bank-key-dev"),
@@ -280,6 +291,16 @@ if (parsed.data.NODE_ENV === "production") {
   }
   if (parsed.data.ENCRYPTION_KEY === '0000000000000000000000000000000000000000000000000000000000000000') {
     console.error('[FATAL] ENCRYPTION_KEY must be set to a secure 64-char hex value in production.');
+    process.exit(1);
+  }
+  // Non-fatal: CANDIDATE_PORTAL_JWT_SECRET not being set yet is handled by a safe fallback
+  // in candidate-portal.service.ts (see that var's own comment above), not blocked at boot.
+  // But if it HAS been set, it must actually be distinct — reusing JWT_SECRET/PORTAL_JWT_SECRET
+  // here would defeat the whole point of a separate secret per token audience.
+  if (parsed.data.CANDIDATE_PORTAL_JWT_SECRET &&
+      (parsed.data.CANDIDATE_PORTAL_JWT_SECRET === parsed.data.JWT_SECRET ||
+       parsed.data.CANDIDATE_PORTAL_JWT_SECRET === parsed.data.PORTAL_JWT_SECRET)) {
+    console.error('[FATAL] CANDIDATE_PORTAL_JWT_SECRET must be distinct from JWT_SECRET and PORTAL_JWT_SECRET.');
     process.exit(1);
   }
   if (parsed.data.INTERNAL_DEMO_BYPASS === "true") {

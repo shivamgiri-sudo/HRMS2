@@ -914,7 +914,17 @@ router.delete("/sessions/:sessionId", requireAuth, h(async (req, res) => {
 // DELETE /api/auth/sessions/all/others — Logout all other devices
 router.delete("/sessions/all/others", requireAuth, h(async (req, res) => {
   const userId = req.authUser!.id;
-  const currentRefreshToken = req.body.refreshToken || req.headers['x-refresh-token'];
+  // CORRECTED (2026-08-13, "fix immediately" follow-up): this endpoint was
+  // unusable from any browser-based frontend as originally written — the
+  // refresh token lives in an httpOnly cookie specifically so client-side JS
+  // can never read it (XSS protection), so a frontend could never actually
+  // supply req.body.refreshToken or the x-refresh-token header. Falls back to
+  // reading the same httpOnly cookie /api/auth/refresh already reads
+  // (getRefreshTokenFromRequest), which the browser sends automatically
+  // (credentials:'include') — the header/body path is kept for any
+  // non-browser caller that already uses it, but is no longer the only way in.
+  const currentRefreshToken =
+    req.body.refreshToken || req.headers['x-refresh-token'] || getRefreshTokenFromRequest(req);
 
   if (!currentRefreshToken) {
     return res.status(400).json({

@@ -110,15 +110,15 @@ export async function hasRoleForRequest(
 /**
  * All active role keys for a user, from user_roles plus scoped assignments.
  *
- * AUDIT NOTE (2026-08-13): this duplicates the first two sources
- * shared/roleResolver.ts's getUserRoleKeys() also reads, but not its later
- * fallbacks — notably the "employee" default it returns for an active,
- * mapped employee with no row in either table. So hasRole(userId, "employee")
- * here can answer false for a caller requireAuth (which uses roleResolver)
- * already treats as an employee. Confirmed fail-closed (false-deny), not a
- * privilege-escalation risk, so left as a documented follow-up rather than
- * merged into roleResolver.ts in this pass — see the note there for the full
- * list of independently-maintained role-resolution paths.
+ * CORRECTED (2026-08-13, "fix immediately" follow-up): this used to duplicate
+ * only the first two sources shared/roleResolver.ts's getUserRoleKeys() reads,
+ * missing its "employee" fallback for an active, mapped employee with no row
+ * in either table — so hasRole(userId, "employee") could answer false here
+ * for a caller requireAuth (which uses roleResolver) already treats as an
+ * employee. Now mirrors that fallback exactly. This is the one concrete drift
+ * identified between the two role-resolution paths; the broader question of
+ * merging all four independently-maintained role-resolution mechanisms in
+ * this codebase remains open — see the fuller note in roleResolver.ts.
  */
 async function fetchUserRoles(userId: string): Promise<string[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -130,9 +130,24 @@ async function fetchUserRoles(userId: string): Promise<string[]> {
     "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
     [userId],
   ));
-  return (rows as { role_key: string }[])
+  const roles = (rows as { role_key: string }[])
     .map((row) => String(row.role_key ?? "").trim().toLowerCase())
     .filter(Boolean);
+  if (roles.length > 0) return roles;
+
+  // Same fallback as roleResolver.ts's getUserRoleKeys(): a mapped, active
+  // employee with no explicit role row is implicitly "employee".
+  try {
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1",
+      [userId],
+    );
+    if ((empRows as RowDataPacket[]).length > 0) return ["employee"];
+  } catch {
+    // Fall through to empty — matches roleResolver's own final behaviour
+    // when even this lookup fails.
+  }
+  return [];
 }
 
 

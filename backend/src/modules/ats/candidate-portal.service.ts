@@ -9,7 +9,23 @@ import { env } from '../../config/env.js';
  * Handles candidate login, profile, tasks, and document management
  */
 
-const JWT_SECRET = env.JWT_SECRET;
+// SECURITY (2026-08-13 audit fix): this used to be env.JWT_SECRET directly — the SAME
+// secret full employee sessions are signed with, unlike the client portal (which already
+// has its own PORTAL_JWT_SECRET). A valid candidate-portal token could pass signature
+// verification inside requireAuth. Falls back to JWT_SECRET only when
+// CANDIDATE_PORTAL_JWT_SECRET isn't configured yet, so an existing deploy isn't broken —
+// but every candidate-portal token issued while on the fallback is still cryptographically
+// indistinguishable from an employee-session token to anything that only checks the
+// signature. Set CANDIDATE_PORTAL_JWT_SECRET in production and restart to close this for
+// real; until then this is unchanged from before except for the loud warning below.
+if (!env.CANDIDATE_PORTAL_JWT_SECRET) {
+  console.warn(
+    '[SECURITY] CANDIDATE_PORTAL_JWT_SECRET is not set — ATS candidate-portal tokens are ' +
+    'still signed with the shared JWT_SECRET (same secret as employee sessions). Set ' +
+    'CANDIDATE_PORTAL_JWT_SECRET in the environment and restart to use a fully separate secret.'
+  );
+}
+const JWT_SECRET = env.CANDIDATE_PORTAL_JWT_SECRET || env.JWT_SECRET;
 
 export interface CandidateLoginInput {
   candidate_id: string;

@@ -15,13 +15,13 @@ import { columnExists } from "./schema-object-cache.js";
  * and its own admin bypass), and auth-launch.routes.ts's inferRoles (one-time
  * bulk-bootstrap heuristic, not part of the live per-request path). This file
  * is the source of truth for req.authUser.role/roles (via requireAuth) and for
- * GET /api/access/me. Known concrete drift: getUserRoleKeys() below falls back
- * to "employee" for a mapped-but-role-less active employee; accessGuard.ts's
- * fetchUserRoles() has no equivalent fallback, so hasRole(userId, "employee")
- * can return false for a user requireAuth treats as having the employee role.
- * A full merge of all four was judged too large/risky to do inside this pass
- * (touches the authorization decision on 250+ routes) — flagged for a
- * dedicated, separately-reviewed phase rather than folded into this fix.
+ * GET /api/access/me. The one concrete drift found — accessGuard.ts's
+ * fetchUserRoles() missing this file's "employee" fallback for a
+ * mapped-but-role-less active employee — was closed on 2026-08-13 (both now
+ * fall back to "employee" the same way). A full merge of all four mechanisms
+ * remains open — judged too large/risky to do in one pass (touches the
+ * authorization decision on 250+ routes) — flagged for a dedicated,
+ * separately-reviewed phase.
  */
 const ROLE_PRIORITY: Readonly<Record<string, number>> = {
   super_admin: 100,

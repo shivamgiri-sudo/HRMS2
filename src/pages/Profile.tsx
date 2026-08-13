@@ -23,7 +23,7 @@ import {
   Loader2, User, Mail, Phone, MapPin, Building2, Calendar,
     Briefcase, Save, Clock, Wallet, Files, Package, Star,
     Users, Cake, Edit3, X, ChevronRight, GitBranch, Landmark,
-    HeartHandshake,
+    HeartHandshake, ShieldCheck,
 } from "lucide-react";
 import { PhotoUpload } from "@/components/employee/PhotoUpload";
 import { useToast } from "@/hooks/use-toast";
@@ -31,6 +31,7 @@ import { useAuth, useIsReadOnly } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { EmployeeDocuments } from "@/components/documents/EmployeeDocuments";
+import { SessionsSecurityPanel } from "@/components/profile/SessionsSecurityPanel";
 import { LeaveBalanceCard } from "@/components/profile/LeaveBalanceCard";
 import { LeaveRequestForm } from "@/components/profile/LeaveRequestForm";
 import { LeaveRequestHistory } from "@/components/profile/LeaveRequestHistory";
@@ -126,7 +127,7 @@ const Profile = () => {
   const isReadOnly = useIsReadOnly();
 
   const tabParam = (searchParams.get("tab") || "").toLowerCase();
-  const allowedTabs = ["profile", "statutory", "emergency", "journey", "leaves", "attendance", "assets", "reviews", "payslips", "documents"] as const;
+  const allowedTabs = ["profile", "statutory", "emergency", "journey", "leaves", "attendance", "assets", "reviews", "payslips", "documents", "security"] as const;
   const initialTab = allowedTabs.includes(tabParam as (typeof allowedTabs)[number]) ? tabParam : "profile";
 
   const [activeTab, setActiveTab] = useState<string>(initialTab);
@@ -381,6 +382,7 @@ const Profile = () => {
                     { value: "reviews",    icon: Star,     label: "Reviews" },
                     { value: "payslips",   icon: Wallet,   label: "Payslips" },
                     { value: "documents",  icon: Files,    label: "Documents" },
+                    { value: "security",   icon: ShieldCheck, label: "Security" },
                   ].map(({ value, icon: Icon, label }) => (
                     <TabsTrigger
                       key={value}
@@ -830,6 +832,10 @@ const Profile = () => {
                   canUpload={isAdminOrHR}
                   canDelete={isAdminOrHR}
                 />
+              </TabsContent>
+
+              <TabsContent value="security" className="space-y-6">
+                <SessionsSecurityPanel />
               </TabsContent>
             </Tabs>
           </>

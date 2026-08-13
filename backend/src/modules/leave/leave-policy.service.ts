@@ -246,30 +246,15 @@ function checkELSingleGoCap(requestedDays: number): { exceeded: boolean; cap: nu
   return { exceeded: requestedDays > CAP, cap: CAP };
 }
 
-// ---------------------------------------------------------------------------
-// requiresBranchHeadApproval
-// ---------------------------------------------------------------------------
-// DEAD CODE (confirmed 2026-08-13, leave-module audit): exported but never
-// called anywhere in this codebase. submitRequest (leave.service.ts) does
-// NOT use this function's ">12 days -> Branch Head" rule — a single EL
-// application over 12 days is hard-REJECTED there via checkELSingleGoCap,
-// never routed to pending_branch_head. Only the 3rd-occurrence-in-a-year
-// rule (checkELOccurrences, called directly from leave.service.ts) is live.
-// Left in place rather than deleted, per policy sign-off, since removing it
-// is a product decision (restore the documented >12-day escalation, or
-// formally retire this description of behaviour that doesn't exist) that
-// hasn't been made — do not call this function without that decision first.
-async function requiresBranchHeadApproval(
-  employeeId: string,
-  requestedDays: number,
-  fromDate: string,
-  toDate: string
-): Promise<boolean> {
-  if (requestedDays > 12) return true;
-
-  const { isException } = await checkELOccurrences(employeeId, fromDate, toDate);
-  return isException;
-}
+// requiresBranchHeadApproval was removed 2026-08-13 (leave-module audit,
+// "fix immediately" follow-up): it was dead code (exported, zero callers)
+// whose ">12 days -> Branch Head" rule was never actually live —
+// submitRequest (leave.service.ts) hard-REJECTS a single EL application over
+// 12 days via checkELSingleGoCap instead of escalating it. Retired rather
+// than activated, since no policy beyond the 3rd-occurrence-in-a-year rule
+// (checkELOccurrences, still live and called directly from leave.service.ts)
+// was ever confirmed — activating a new escalation tier would mean inventing
+// business policy that was never asked for.
 
 // ---------------------------------------------------------------------------
 // prorateMonthlyCredit
@@ -384,7 +369,6 @@ export const leavePolicyService = {
   checkELInSameMonth,
   checkELOccurrences,
   checkELSingleGoCap,
-  requiresBranchHeadApproval,
   prorateMonthlyCredit,
   prorateAnnualCredit,
   getCombinedCLMLBalance,
