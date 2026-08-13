@@ -5,6 +5,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowLeftRight,
+  Eye,
   BarChart2,
   Building2,
   Calendar,
@@ -48,7 +49,9 @@ import {
   BRANCH_SHARING_METHODS,
   budgetLineRecordToInput,
   calculateBudgetLine,
+  type BranchBudgetDetail,
   type BranchBudgetLineInput,
+  type BranchBudgetLineRecord,
   type BranchBudgetSummary,
   type BudgetAttributionScope,
   type BudgetLineCorrectionInput,
@@ -445,6 +448,11 @@ export default function BranchBudgetManagementWorkspace() {
   const [reviewRemarks, setReviewRemarks] = useState("");
   /** Reviewer's per head/sub-head correction notes, keyed by correctionKey(line). */
   const [correctionNotes, setCorrectionNotes] = useState<Record<string, string>>({});
+  /** Budget currently open in the review detail dialog. */
+  const [reviewingBudgetId, setReviewingBudgetId] = useState<string | null>(null);
+  /** Per-line correction notes typed inside the review dialog (keyed by lineId or head|sub). */
+  const [dialogLineNotes, setDialogLineNotes] = useState<Record<string, string>>({});
+  const [dialogRemarks, setDialogRemarks] = useState("");
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   /** The table planner is the fast path and therefore the default; the card editor stays one click
    *  away for the fields the table has no room for. */
@@ -555,6 +563,8 @@ export default function BranchBudgetManagementWorkspace() {
   // so this loads the detail read-only rather than opening it for edit.
   const detailId = savedBudgetId ?? editableBudget?.id ?? currentBudget?.id ?? null;
   const detailQuery = useBranchBudgetDetail(detailId);
+  // Separate detail query for the review dialog — fetches only when a budget is being reviewed.
+  const reviewDetailQuery = useBranchBudgetDetail(reviewingBudgetId);
   // Last month's budget, for the Prev/Var columns and Copy-forward. Matched by head+sub-head NAME
   // because saveDraft replaces the line set with fresh UUIDs on every save.
   const priorPeriod = previousPeriod(period);
@@ -1139,6 +1149,48 @@ export default function BranchBudgetManagementWorkspace() {
     }
   }
 
+  /** Review action triggered from inside the review detail dialog. */
+  async function reviewFromDialog(decision: "approve" | "reject" | "revision") {
+    const reviewDetail = reviewDetailQuery.data;
+    if (!reviewDetail) return;
+    try {
+      if (decision !== "approve" && !dialogRemarks.trim()) throw new Error("Remarks are mandatory");
+      let lineCorrections: BudgetLineCorrectionInput[] | undefined;
+      if (decision === "revision") {
+        lineCorrections = (reviewDetail.lines ?? [])
+          .map((line) => ({
+            lineId: line.id ?? null,
+            head: line.head,
+            subHead: line.sub_head ?? null,
+            itemName: line.item_name ?? null,
+            note: (dialogLineNotes[line.id] ?? "").trim(),
+          }))
+          .filter((entry) => entry.note && entry.head?.trim());
+        if (!lineCorrections.length) {
+          throw new Error("Add a correction note against at least one line before requesting revision");
+        }
+      }
+      await reviewBudget.mutateAsync({
+        id: reviewDetail.id,
+        decision,
+        remarks: dialogRemarks.trim() || undefined,
+        lineCorrections,
+      });
+      toast.success(
+        decision === "approve"
+          ? "Budget advanced"
+          : decision === "revision"
+            ? `Sent back with ${lineCorrections?.length} correction note(s)`
+            : "Budget rejected"
+      );
+      setReviewingBudgetId(null);
+      setDialogRemarks("");
+      setDialogLineNotes({});
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Budget review failed");
+    }
+  }
+
   /** Super-admin removal. The server decides between a true delete and a supersede based on
    *  whether any GRN has consumed against the budget, and says which it did. */
   async function removeBudget(budget: BranchBudgetSummary) {
@@ -1210,7 +1262,19 @@ Reason:`
                 )}
                 {/* The stage reviewer can correct the lines in place instead of bouncing the whole
                     budget back. The budget does not move: they still have to Approve. */}
-                {canReviewCurrent && <Button size="sm" onClick={() => void saveReviewerEdit()} disabled={reviewerReviseBudget.isPending}><Save className="mr-1.5 h-3.5 w-3.5" />Save my corrections</Button>}
+                {canReviewCurrent && (
+                  <>
+                    <Input
+                      className="h-8 w-56 text-xs"
+                      placeholder="Correction reason (required)"
+                      value={reviewRemarks}
+                      onChange={(e) => setReviewRemarks(e.target.value)}
+                    />
+                    <Button size="sm" onClick={() => void saveReviewerEdit()} disabled={reviewerReviseBudget.isPending}>
+                      <Save className="mr-1.5 h-3.5 w-3.5" />Save my corrections
+                    </Button>
+                  </>
+                )}
                 <Button asChild size="sm" variant="outline"><Link to="/finance/grn">Open Smart GRN</Link></Button>
               </div>
             </div>
@@ -1750,13 +1814,216 @@ Reason:`
               )}
             </TabsContent>
 
-            <TabsContent value="approval"><Card className="rounded-3xl border-slate-200 shadow-sm"><CardHeader><CardTitle>Approval and utilization</CardTitle></CardHeader><CardContent className="space-y-4"><Input value={reviewRemarks} onChange={(event) => setReviewRemarks(event.target.value)} placeholder="Mandatory for rejection or revision" />
-              {canReviewCurrent && <p className="text-xs text-slate-500">Revision also needs a correction note against at least one head/sub-head — add those on the <span className="font-medium">Plan Builder</span> tab, where you can also correct the lines yourself and then approve.</p>}
-              {Boolean(openCorrectionCount) && <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><span className="font-semibold">{openCorrectionCount} open correction note(s)</span> against this budget. Each one is shown on its own budget line in the Plan Builder tab.</div>}
-              {budgets.map((budget) => { const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount); return <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]"><div><div className="flex gap-2"><p className="font-semibold">{budget.budget_number}</p><Badge variant="outline">{statusLabel(budget.status)}</Badge></div><p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p></div><Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} /><Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} /><div className="flex flex-wrap justify-end gap-2">{canReview(budget) && <><Button size="sm" onClick={() => void review(budget, "approve")}><CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve</Button><Button size="sm" variant="outline" onClick={() => void review(budget, "revision")}><Settings2 className="mr-1 h-3.5 w-3.5" />Revision</Button><Button size="sm" variant="destructive" onClick={() => void review(budget, "reject")}><XCircle className="mr-1 h-3.5 w-3.5" />Reject</Button></>}{canAmendTax && budget.status === "active" && detailQuery.data?.lines && detailQuery.data.lines.length > 1 && <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => { const lines = detailQuery.data!.lines; setTransferTarget({ budgetId: budget.id, fromLineId: lines[0].id, toLineId: lines[1].id, transferAmount: "", reason: "" }); }}><ArrowLeftRight className="mr-1 h-3.5 w-3.5" />Transfer</Button>}</div>
-                {canDeleteBudget(budget) && <div className="flex justify-end xl:col-span-4"><Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={deleteBudget.isPending} onClick={() => void removeBudget(budget)}><Trash2 className="mr-1 h-3.5 w-3.5" />{isSuperAdmin ? "Delete / supersede (super admin)" : "Delete draft"}</Button></div>}</div>; })}{!budgets.length && <div className="py-12 text-center text-slate-500"><Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.</div>}
-              <UtilizationBreakdown rows={utilizationByHead} loading={detailQuery.isLoading} />
-              </CardContent></Card></TabsContent>
+            <TabsContent value="approval">
+              <Card className="rounded-3xl border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle>Approval and utilization</CardTitle>
+                  <p className="mt-1 text-xs text-slate-500">Click <span className="font-medium">Review</span> on any budget request to view its full detail before approving, requesting revision, or rejecting.</p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {Boolean(openCorrectionCount) && (
+                    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                      <span className="font-semibold">{openCorrectionCount} open correction note(s)</span> against this budget. Each one is shown on its own budget line in the Plan Builder tab.
+                    </div>
+                  )}
+
+                  {budgets.map((budget) => {
+                    const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount);
+                    return (
+                      <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_auto]">
+                        <div>
+                          <div className="flex gap-2">
+                            <p className="font-semibold">{budget.budget_number}</p>
+                            <Badge variant="outline">{statusLabel(budget.status)}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p>
+                        </div>
+                        <Metric label="Gross / P&L" value={`${money(Number(budget.gross_budget_amount))} / ${money(Number(budget.pnl_budget_amount))}`} />
+                        <Metric label="Reserved / Consumed / Available" value={`${money(Number(budget.reserved_amount))} / ${money(Number(budget.consumed_amount))} / ${money(available)}`} />
+                        <div className="flex flex-wrap justify-end gap-2">
+                          {canReview(budget) && (
+                            <Button size="sm" variant="outline" onClick={() => setReviewingBudgetId(budget.id)}>
+                              <Eye className="mr-1 h-3.5 w-3.5" />Review
+                            </Button>
+                          )}
+                          {canAmendTax && budget.status === "active" && detailQuery.data?.lines && detailQuery.data.lines.length > 1 && (
+                            <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => {
+                              const lines = detailQuery.data!.lines;
+                              setTransferTarget({ budgetId: budget.id, fromLineId: lines[0].id, toLineId: lines[1].id, transferAmount: "", reason: "" });
+                            }}>
+                              <ArrowLeftRight className="mr-1 h-3.5 w-3.5" />Transfer
+                            </Button>
+                          )}
+                        </div>
+                        {canDeleteBudget(budget) && (
+                          <div className="flex justify-end xl:col-span-4">
+                            <Button size="sm" variant="outline" className="border-rose-300 text-rose-700 hover:bg-rose-50" disabled={deleteBudget.isPending} onClick={() => void removeBudget(budget)}>
+                              <Trash2 className="mr-1 h-3.5 w-3.5" />{isSuperAdmin ? "Delete / supersede (super admin)" : "Delete draft"}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {!budgets.length && (
+                    <div className="py-12 text-center text-slate-500">
+                      <Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.
+                    </div>
+                  )}
+
+                  <UtilizationBreakdown rows={utilizationByHead} loading={detailQuery.isLoading} />
+                </CardContent>
+              </Card>
+
+              {/* Budget Review Detail Dialog */}
+              <Dialog open={Boolean(reviewingBudgetId)} onOpenChange={(open) => { if (!open) { setReviewingBudgetId(null); setDialogRemarks(""); setDialogLineNotes({}); } }}>
+                <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>
+                      {reviewDetailQuery.data
+                        ? `Review — ${reviewDetailQuery.data.budget_number} (${reviewDetailQuery.data.branch_name} · ${reviewDetailQuery.data.period_code} · Rev ${reviewDetailQuery.data.revision_no})`
+                        : "Loading budget detail…"}
+                    </DialogTitle>
+                  </DialogHeader>
+
+                  {reviewDetailQuery.isLoading && (
+                    <div className="flex justify-center py-12">
+                      <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+                    </div>
+                  )}
+
+                  {reviewDetailQuery.data && (() => {
+                    const rd = reviewDetailQuery.data;
+                    const budgetStatus = rd.status;
+                    const canAct = budgets.some((b) => b.id === rd.id && canReview(b));
+                    return (
+                      <div className="space-y-5">
+                        {/* Status banner */}
+                        <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                          <Badge variant="outline" className="text-xs">{statusLabel(budgetStatus)}</Badge>
+                          <span className="text-xs text-slate-500">Gross: <span className="font-medium text-slate-800">{money(Number(rd.gross_budget_amount))}</span></span>
+                          <span className="text-xs text-slate-500">P&L: <span className="font-medium text-slate-800">{money(Number(rd.pnl_budget_amount))}</span></span>
+                          <span className="text-xs text-slate-500">Reserved: <span className="font-medium text-slate-800">{money(Number(rd.reserved_amount))}</span></span>
+                          <span className="text-xs text-slate-500">Consumed: <span className="font-medium text-slate-800">{money(Number(rd.consumed_amount))}</span></span>
+                        </div>
+
+                        {/* Budget lines table */}
+                        {rd.lines && rd.lines.length > 0 && (
+                          <div>
+                            <p className="mb-2 text-sm font-semibold text-slate-700">Budget lines ({rd.lines.length})</p>
+                            <div className="overflow-x-auto rounded-xl border border-slate-200">
+                              <table className="w-full min-w-[700px] text-xs">
+                                <thead>
+                                  <tr className="border-b bg-slate-50 text-left text-slate-500">
+                                    <th className="h-8 px-3 font-medium">Head</th>
+                                    <th className="h-8 px-3 font-medium">Sub-head</th>
+                                    <th className="h-8 px-3 font-medium">Item</th>
+                                    <th className="h-8 px-3 text-right font-medium">Qty</th>
+                                    <th className="h-8 px-3 text-right font-medium">Rate</th>
+                                    <th className="h-8 px-3 text-right font-medium">Gross</th>
+                                    <th className="h-8 px-3 font-medium">Justification</th>
+                                    {canAct && <th className="h-8 px-3 font-medium">Correction note (revision)</th>}
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {rd.lines.map((line) => (
+                                    <tr key={line.id} className="hover:bg-slate-50/60">
+                                      <td className="px-3 py-2 font-medium text-slate-800">{line.head}</td>
+                                      <td className="px-3 py-2 text-slate-600">{line.sub_head ?? "—"}</td>
+                                      <td className="px-3 py-2 text-slate-600">{line.item_name ?? "—"}</td>
+                                      <td className="px-3 py-2 text-right">{line.quantity ?? "—"}</td>
+                                      <td className="px-3 py-2 text-right">{line.unit_rate != null ? money(Number(line.unit_rate)) : "—"}</td>
+                                      <td className="px-3 py-2 text-right font-medium">{money(Number(line.gross_amount))}</td>
+                                      <td className="max-w-[160px] px-3 py-2 text-slate-500">{line.justification ?? "—"}</td>
+                                      {canAct && (
+                                        <td className="px-3 py-2">
+                                          <Input
+                                            className="h-7 text-xs"
+                                            placeholder="Note for this line…"
+                                            value={dialogLineNotes[line.id] ?? ""}
+                                            onChange={(e) => setDialogLineNotes((prev) => ({ ...prev, [line.id]: e.target.value }))}
+                                          />
+                                        </td>
+                                      )}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Open correction notes from previous revision */}
+                        {rd.corrections && rd.corrections.length > 0 && (
+                          <div>
+                            <p className="mb-2 text-sm font-semibold text-amber-700">Open correction notes ({rd.corrections.length})</p>
+                            <div className="space-y-2">
+                              {rd.corrections.map((c) => (
+                                <div key={c.id} className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                                  <span className="font-semibold">{c.head}{c.sub_head ? ` › ${c.sub_head}` : ""}{c.item_name ? ` › ${c.item_name}` : ""}</span>
+                                  <p className="mt-1">{c.correction_note}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Approval history */}
+                        {rd.approvals && rd.approvals.length > 0 && (
+                          <div>
+                            <p className="mb-2 text-sm font-semibold text-slate-700">Approval history</p>
+                            <div className="space-y-1.5">
+                              {rd.approvals.map((a, idx) => (
+                                <div key={idx} className="flex items-start gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
+                                  <Badge variant="outline" className="shrink-0 text-[10px]">{a.action}</Badge>
+                                  <span className="font-medium text-slate-700">{a.actor_role}</span>
+                                  <span className="text-slate-500">{a.remarks ?? ""}</span>
+                                  <span className="ml-auto shrink-0 text-slate-400">{a.created_at ? new Date(a.created_at).toLocaleDateString() : ""}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Remarks / action area */}
+                        {canAct && (
+                          <div>
+                            <Label className="text-xs font-medium">Remarks <span className="text-slate-400">(mandatory for rejection or revision)</span></Label>
+                            <Textarea
+                              className="mt-1.5 text-sm"
+                              rows={3}
+                              placeholder="Enter your remarks…"
+                              value={dialogRemarks}
+                              onChange={(e) => setDialogRemarks(e.target.value)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  <DialogFooter className="gap-2 pt-2">
+                    <Button variant="outline" onClick={() => { setReviewingBudgetId(null); setDialogRemarks(""); setDialogLineNotes({}); }}>
+                      Close
+                    </Button>
+                    {reviewDetailQuery.data && budgets.some((b) => b.id === reviewDetailQuery.data!.id && canReview(b)) && (
+                      <>
+                        <Button variant="destructive" disabled={reviewBudget.isPending} onClick={() => void reviewFromDialog("reject")}>
+                          <XCircle className="mr-1 h-3.5 w-3.5" />Reject
+                        </Button>
+                        <Button variant="outline" className="border-amber-300 text-amber-700 hover:bg-amber-50" disabled={reviewBudget.isPending} onClick={() => void reviewFromDialog("revision")}>
+                          <Settings2 className="mr-1 h-3.5 w-3.5" />Request revision
+                        </Button>
+                        <Button disabled={reviewBudget.isPending} onClick={() => void reviewFromDialog("approve")}>
+                          <CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve
+                        </Button>
+                      </>
+                    )}
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+            </TabsContent>
 
             <TabsContent value="topups">
               {branchId ? (
