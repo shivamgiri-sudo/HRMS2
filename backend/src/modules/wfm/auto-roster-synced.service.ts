@@ -290,6 +290,37 @@ async function getEmployeePool(plan: AnyRow, rosterDate: string): Promise<AnyRow
   return employees.filter((e) => !leaveSet.has(String(e.id)));
 }
 
+/**
+ * Area 1 gap (2026-08-13): a concurrent session's audit found
+ * week_off_preference — the only table this function read — holds 0 rows in
+ * production; every real submission goes through employee_roster_preference
+ * instead (fed by both live frontend pages), which this engine never
+ * consulted. That session already fixed the identical gap in
+ * roster-generation.service.ts's loadApprovedWeekoffs() (the governance
+ * engine); this closes the same hole for THIS engine — the one
+ * auto-roster-synced.service.ts, whose generateDraft() Area 2 already wires
+ * rest-policy validation into as the primary write path this program treats
+ * as live/reachable.
+ *
+ * Same documented precedence as their fix: week_off_preference wins on
+ * conflict (it carries the FCFS/capacity columns
+ * rosterCapacityService/weekoffAllocationService depend on);
+ * employee_roster_preference fills in only for employees week_off_preference
+ * has no row for. Read-only merge — neither table is written here.
+ *
+ * Deliberately NOT included: roster_template.pattern_json (tier 2 in the
+ * governance engine's hierarchy). That tier is indexed by cycle DATE
+ * POSITION (day_number 1 = the cycle's first date), not day-of-week — this
+ * engine's `prefs` map is keyed by day-of-week throughout
+ * (getEmployeePool/HC-floor-gate/etc. all compare against `dow`), so
+ * reusing it here would need restructuring this engine's date-iteration
+ * shape, not just adding a lookup. Flagged as a residual gap, not silently
+ * worked around with a guess at what the semantics should be.
+ */
+const EMP_PREF_DAY_TO_INT: Record<string, number> = {
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+};
+
 async function getWeekOffPreferences(processId: string | null | undefined): Promise<Map<string, number>> {
   if (!(await schema.hasTable("week_off_preference"))) return new Map();
   const cols = await schema.columns("week_off_preference");
@@ -311,6 +342,38 @@ async function getWeekOffPreferences(processId: string | null | undefined): Prom
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   const map = new Map<string, number>();
   for (const r of rows as AnyRow[]) map.set(String(r.employee_id), Number(r.preferred_day));
+
+  // employee_roster_preference fallback — only for employees week_off_preference
+  // didn't resolve. Filtered by process here too (this engine's own pool is
+  // already process-scoped by the time prefs.get() is consulted, but the SQL
+  // itself should not hand back a cross-process employee's preference).
+  if (await schema.hasTable("employee_roster_preference")) {
+    try {
+      let empPrefSql = `SELECT erp.employee_id, erp.preferred_week_off
+                           FROM employee_roster_preference erp`;
+      const empPrefParams: unknown[] = [];
+      const empPrefConds = ["erp.status = 'approved'"];
+      if (processId && empCols.has("process_id")) {
+        empPrefSql += ` JOIN employees e2 ON e2.id = erp.employee_id`;
+        empPrefConds.push("e2.process_id = ?");
+        empPrefParams.push(processId);
+      }
+      empPrefSql += ` WHERE ${empPrefConds.join(" AND ")} ORDER BY erp.updated_at DESC`;
+      const [empPrefRows] = await db.execute<RowDataPacket[]>(empPrefSql, empPrefParams);
+      const seen = new Set<string>();
+      for (const r of empPrefRows as AnyRow[]) {
+        const empId = String(r.employee_id);
+        if (map.has(empId) || seen.has(empId)) continue; // week_off_preference wins; first (most recent) approved row wins otherwise
+        seen.add(empId);
+        const dayIdx = EMP_PREF_DAY_TO_INT[String(r.preferred_week_off ?? "").toLowerCase()];
+        if (dayIdx === undefined) continue;
+        map.set(empId, dayIdx);
+      }
+    } catch (error) {
+      console.error("[auto-roster] employee_roster_preference fallback lookup unavailable:", (error as Error)?.message);
+    }
+  }
+
   return map;
 }
 
