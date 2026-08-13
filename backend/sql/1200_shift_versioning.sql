@@ -4,11 +4,25 @@
 -- week-off policy, roster lifecycle lock) commissioned 2026-08-13.
 --
 -- ADDITIVE ONLY. Do not execute on production without explicit approval.
--- All ADD COLUMN IF NOT EXISTS; every new column is nullable or has a safe
--- default. No existing row is modified by this file — a separate, explicitly-run
--- backfill script (see backend/scripts/shift-versioning-backfill.ts, not executed
--- as part of applying this migration) populates the new columns for pre-existing
--- data. This file only changes schema.
+-- Every new column is nullable or has a safe default. No existing row is
+-- modified by this file — a separate, explicitly-run backfill script (see
+-- backend/scripts/shift-versioning-backfill.ts, not executed as part of
+-- applying this migration) populates the new columns for pre-existing data.
+-- This file only changes schema.
+--
+-- FIXED 2026-08-13 (migration-certification dry-run, round 2 follow-up):
+-- every ALTER below originally used `ADD COLUMN IF NOT EXISTS`. That exact
+-- clause is what took production down for ~24 minutes on migration 1006 —
+-- every variant throws ER_PARSE_ERROR on this server's MySQL 8.0.42 build
+-- at the IF NOT EXISTS token itself, not a semantic "already exists"
+-- failure (see docs/incidents/2026-08-13-migration-1006-production-outage.md).
+-- This file was already flagged in migration-syntax-compatibility.test.ts's
+-- KNOWN_LEGACY_VIOLATIONS baseline but not yet rewritten. Since 1200 is the
+-- first migration in the ordered shift-versioning/minimum-rest/week-off/
+-- roster-lock set and every later file in that set depends on its columns
+-- existing, this was the actual first blocker in the set, not 1210.
+-- Rewritten to the same information_schema-guard + PREPARE/EXECUTE idiom
+-- 1006's own fix and every other guarded ALTER in this codebase already uses.
 --
 -- ROLLBACK:
 --   ALTER TABLE wfm_shift_master
@@ -41,14 +55,33 @@ USE mas_hrms;
 -- needed to close that at the source: the service layer (separate change) stops
 -- updating in place and starts creating a new, immutable version row instead,
 -- exactly mirroring wfm_shift_template.
-ALTER TABLE wfm_shift_master
-  ADD COLUMN IF NOT EXISTS parent_shift_id CHAR(36)    NULL COMMENT 'Self-reference to the first version in this shift_code lineage. NULL means this row IS the root of its own lineage.' AFTER shift_code,
-  ADD COLUMN IF NOT EXISTS version         INT         NOT NULL DEFAULT 1,
-  ADD COLUMN IF NOT EXISTS effective_from  DATE        NULL,
-  ADD COLUMN IF NOT EXISTS effective_to    DATE        NULL,
-  ADD COLUMN IF NOT EXISTS is_locked       TINYINT(1)  NOT NULL DEFAULT 0 COMMENT 'Set true the first time this specific row is referenced by a published roster assignment, an attendance calculation, or a payroll run. A locked row can never be UPDATEd again by application code — an edit request must create a new version row instead. Enforced in wfm.service.ts, not a DB trigger.',
-  ADD COLUMN IF NOT EXISTS created_by      CHAR(36)    NULL,
-  ADD COLUMN IF NOT EXISTS approved_by     CHAR(36)    NULL;
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_shift_master' AND COLUMN_NAME = 'parent_shift_id');
+SET @sql := IF(@c = 0, 'ALTER TABLE wfm_shift_master ADD COLUMN parent_shift_id CHAR(36) NULL COMMENT ''Self-reference to the first version in this shift_code lineage. NULL means this row IS the root of its own lineage.'' AFTER shift_code', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_shift_master' AND COLUMN_NAME = 'version');
+SET @sql := IF(@c = 0, 'ALTER TABLE wfm_shift_master ADD COLUMN version INT NOT NULL DEFAULT 1', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_shift_master' AND COLUMN_NAME = 'effective_from');
+SET @sql := IF(@c = 0, 'ALTER TABLE wfm_shift_master ADD COLUMN effective_from DATE NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_shift_master' AND COLUMN_NAME = 'effective_to');
+SET @sql := IF(@c = 0, 'ALTER TABLE wfm_shift_master ADD COLUMN effective_to DATE NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_shift_master' AND COLUMN_NAME = 'is_locked');
+SET @sql := IF(@c = 0, 'ALTER TABLE wfm_shift_master ADD COLUMN is_locked TINYINT(1) NOT NULL DEFAULT 0 COMMENT ''Set true the first time this specific row is referenced by a published roster assignment, an attendance calculation, or a payroll run. A locked row can never be UPDATEd again by application code an edit request must create a new version row instead. Enforced in wfm.service.ts, not a DB trigger.''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_shift_master' AND COLUMN_NAME = 'created_by');
+SET @sql := IF(@c = 0, 'ALTER TABLE wfm_shift_master ADD COLUMN created_by CHAR(36) NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_shift_master' AND COLUMN_NAME = 'approved_by');
+SET @sql := IF(@c = 0, 'ALTER TABLE wfm_shift_master ADD COLUMN approved_by CHAR(36) NULL', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- shift_code currently carries a lone UNIQUE index (one row per code, full stop) —
 -- the exact constraint that makes versioning impossible: a second version of the
@@ -85,8 +118,12 @@ DEALLOCATE PREPARE stmt;
 -- minutes for payroll reproduction. shift_version_id is additive and
 -- backward-compatible: existing code keeps reading shift_id/shift_template_id
 -- unchanged; new code should prefer shift_version_id once populated.
-ALTER TABLE wfm_roster_assignment
-  ADD COLUMN IF NOT EXISTS shift_version_id  CHAR(36) NULL COMMENT 'FK wfm_shift_master.id — a specific, immutable-once-referenced version row. The canonical source for reproducing what was actually scheduled on this date. Prefer over shift_id/shift_template_id for anything payroll-facing.' AFTER shift_id,
-  ADD COLUMN IF NOT EXISTS scheduled_minutes INT      NULL COMMENT 'Snapshot of the shift''s working minutes at assignment time, cross-midnight-safe. NULL for rows created before this migration, until backfilled.';
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_roster_assignment' AND COLUMN_NAME = 'shift_version_id');
+SET @sql := IF(@c = 0, 'ALTER TABLE wfm_roster_assignment ADD COLUMN shift_version_id CHAR(36) NULL COMMENT ''FK wfm_shift_master.id, a specific immutable-once-referenced version row. The canonical source for reproducing what was actually scheduled on this date. Prefer over shift_id/shift_template_id for anything payroll-facing.'' AFTER shift_id', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @c := (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_roster_assignment' AND COLUMN_NAME = 'scheduled_minutes');
+SET @sql := IF(@c = 0, 'ALTER TABLE wfm_roster_assignment ADD COLUMN scheduled_minutes INT NULL COMMENT ''Snapshot of the shifts working minutes at assignment time, cross-midnight-safe. NULL for rows created before this migration, until backfilled.''', 'SELECT 1');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 SELECT '1200_shift_versioning.sql applied successfully' AS migration_status;
