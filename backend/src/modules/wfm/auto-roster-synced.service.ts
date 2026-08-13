@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { loadWeekoffRules } from "../roster/weekoff-rule.service.js";
 import { computeScheduledMinutes } from "./shift-scheduling.util.js";
 import { isRestPolicyFeatureActive, hasAnyRestPolicyConfigured, validateMinimumRest, logRestOverride } from "./rest-policy.service.js";
+import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 
 type AnyRow = Record<string, any>;
 
@@ -843,6 +844,31 @@ export const autoRosterSyncedService = {
         }
 
         for (const emp of selected) {
+          // Area 3 (2026-08-13): generateDraft() was one of three write paths
+          // to wfm_roster_assignment still missing the shared attendance/
+          // payroll-lock check (roster-lock-guard.ts) — already wired into
+          // manual assignment, the PM post-publish correction endpoint,
+          // manager realignment, and shift-swap apply, but not here.
+          // Regeneration already refuses outright once the PLAN itself is
+          // published/locked (the guard at the top of generateDraft), but
+          // that doesn't cover a plan still in draft whose date range has
+          // since had attendance locked for payroll independently (e.g. a
+          // stale unpublished draft regenerated weeks later). Per-employee,
+          // not per-plan, since a plan can span a date range straddling the
+          // lock boundary.
+          const dateLockResult = await checkEmployeeDateNotLocked(db, String(emp.id), rosterDate);
+          if (dateLockResult.blocked) {
+            await insertConflict({
+              plan_id: planId,
+              employee_id: String(emp.id),
+              roster_date: rosterDate,
+              conflict_type: "attendance_payroll_locked",
+              severity: "critical",
+              message: `Employee ${(emp as AnyRow).employee_code ?? emp.id}: ${dateLockResult.error}`,
+            });
+            continue; // not assigned to this slot; the date is off-limits to ordinary regeneration
+          }
+
           // Area 2: normal automated assignment BLOCKS on insufficient rest — no
           // silent override path here. restPolicyFeatureActive is false whenever
           // migration 1210 hasn't been applied, in which case this is a no-op and
