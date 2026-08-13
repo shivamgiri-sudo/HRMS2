@@ -10,19 +10,14 @@
 -- applying this migration) populates the new columns for pre-existing data.
 -- This file only changes schema.
 --
--- FIXED 2026-08-13 (migration-certification dry-run, round 2 follow-up):
--- every ALTER below originally used `ADD COLUMN IF NOT EXISTS`. That exact
--- clause is what took production down for ~24 minutes on migration 1006 —
--- every variant throws ER_PARSE_ERROR on this server's MySQL 8.0.42 build
--- at the IF NOT EXISTS token itself, not a semantic "already exists"
--- failure (see docs/incidents/2026-08-13-migration-1006-production-outage.md).
--- This file was already flagged in migration-syntax-compatibility.test.ts's
--- KNOWN_LEGACY_VIOLATIONS baseline but not yet rewritten. Since 1200 is the
--- first migration in the ordered shift-versioning/minimum-rest/week-off/
--- roster-lock set and every later file in that set depends on its columns
--- existing, this was the actual first blocker in the set, not 1210.
--- Rewritten to the same information_schema-guard + PREPARE/EXECUTE idiom
--- 1006's own fix and every other guarded ALTER in this codebase already uses.
+-- FIXED 2026-08-13 (migration-certification dry-run; re-applied a second
+-- time after the shared working tree reset this file back to the broken
+-- state): every ALTER below originally used `ADD COLUMN IF NOT EXISTS`.
+-- That exact clause is what took production down for ~24 minutes on
+-- migration 1006 — every variant throws ER_PARSE_ERROR on this server's
+-- MySQL 8.0.42 build at the IF NOT EXISTS token itself, not a semantic
+-- "already exists" failure. Rewritten to the same information_schema-guard
+-- + PREPARE/EXECUTE idiom 1006's own fix uses.
 --
 -- ROLLBACK:
 --   ALTER TABLE wfm_shift_master
