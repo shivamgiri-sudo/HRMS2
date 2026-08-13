@@ -4,9 +4,29 @@ import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 
 export type PayrollReadinessSeverity = "blocker" | "warning";
 
+/**
+ * Layered readiness domains (2026-08-13). A payroll month can be "calculation
+ * technically available" (source_data/attendance_payable_days/employee_master/
+ * bank/statutory clear) while simultaneously NOT READY FOR PAYMENT (variable_pay/
+ * recovery/full_and_final/payment_file still open) — that distinction must stay
+ * visible to callers, not get collapsed into one percentage.
+ */
+export type PayrollReadinessCategory =
+  | "source_data"
+  | "employee_master"
+  | "attendance_payable_days"
+  | "bank"
+  | "statutory"
+  | "variable_pay"
+  | "reimbursement"
+  | "recovery_deduction"
+  | "full_and_final"
+  | "payment_file";
+
 export interface PayrollReadinessIssue {
   code: string;
   severity: PayrollReadinessSeverity;
+  category: PayrollReadinessCategory;
   count: number;
   message: string;
   sample?: Array<Record<string, unknown>>;
@@ -119,14 +139,43 @@ export function esiContributionPeriodStart(runMonth: string): string {
   return `${year - 1}-10`; // Jan-Mar belongs to the period that opened last October
 }
 
-async function countIssue(sql: string, params: unknown[], code: string, severity: PayrollReadinessSeverity, message: string): Promise<PayrollReadinessIssue | null> {
+async function countIssue(sql: string, params: unknown[], code: string, severity: PayrollReadinessSeverity, message: string, category: PayrollReadinessCategory): Promise<PayrollReadinessIssue | null> {
   // Use db.query (text protocol) instead of db.execute (prepared statements) to avoid
   // "Incorrect arguments to mysqld_stmt_execute" when ? placeholders appear inside subqueries.
   const [countRows] = await (db as any).query(`SELECT COUNT(*) AS count FROM (${sql}) issue_rows`, params) as [RowDataPacket[], unknown];
   const count = Number((countRows as any)[0]?.count ?? 0);
   if (count === 0) return null;
   const [sample] = await (db as any).query(`${sql} LIMIT 10`, params) as [RowDataPacket[], unknown];
-  return { code, severity, count, message, sample: sample as Array<Record<string, unknown>> };
+  return { code, severity, category, count, message, sample: sample as Array<Record<string, unknown>> };
+}
+
+/**
+ * Wraps a single readiness check so a query/schema failure in ONE check (e.g. a
+ * table that doesn't exist yet in an older environment) cannot silently resolve
+ * to "no issue" and cannot abort every OTHER check via a rejected Promise.all.
+ *
+ * Fail-closed by construction: an exception becomes a blocker CHECK_ERROR, never
+ * a pass. "Missing evidence is not green." Used for the five newer categories
+ * (variable_pay/recovery_deduction/full_and_final/payment_file) whose source
+ * tables were only mapped in this audit and are less battle-tested than the
+ * original attendance/statutory checks above.
+ */
+async function checkedIssue(
+  category: PayrollReadinessCategory,
+  code: string,
+  fn: () => Promise<PayrollReadinessIssue | null>,
+): Promise<PayrollReadinessIssue | null> {
+  try {
+    return await fn();
+  } catch (err) {
+    return {
+      code: `${code}_CHECK_ERROR`,
+      severity: "blocker",
+      category,
+      count: 1,
+      message: `Readiness check ${code} failed to execute (${err instanceof Error ? err.message : String(err)}). Treated as a blocker: a check that could not run is not evidence the underlying condition is clear.`,
+    };
+  }
 }
 
 function monthCalendarSql() {
@@ -181,6 +230,7 @@ export const payrollGovernanceService = {
       issues.push({
         code: "MONTH_NOT_CLOSED",
         severity: "blocker",
+        category: "source_data",
         count: 1,
         message: `Payroll for ${run.run_month} cannot be calculated before ${earliestCalcDate}. Final calculation is allowed from M+2 to ensure night-shift attendance is fully captured.`,
       });
@@ -210,6 +260,7 @@ export const payrollGovernanceService = {
       issues.push({
         code: "TAX_CONFIG_MISSING_FOR_RUN_FY",
         severity: tdsMode === "auto" ? "blocker" : "warning",
+        category: "statutory",
         count: 1,
         message:
           `No approved tax configuration for financial year ${runFy}. ` +
@@ -227,6 +278,7 @@ export const payrollGovernanceService = {
       issues.push({
         code: "TAX_CONFIG_MISSING_FOR_NEXT_FY",
         severity: "warning",
+        category: "statutory",
         count: 1,
         message:
           `Financial year ${upcomingFy} begins on ${upcomingFy.slice(0, 4)}-04-01 and has no approved tax configuration yet. ` +
@@ -255,6 +307,7 @@ export const payrollGovernanceService = {
         "MISSING_SALARY_ASSIGNMENT",
         "blocker",
         "Employees missing active salary assignment for the payroll month",
+        "employee_master",
       ),
       countIssue(
         `${eligibleSql}
@@ -274,6 +327,7 @@ export const payrollGovernanceService = {
         // reaches disbursement, not at the moment someone clicks "generate NEFT".
         "blocker",
         "Employees missing verified primary bank account — resolve via bank-exception-report before disbursement",
+        "bank",
       ),
       countIssue(
         `${eligibleSql}
@@ -286,6 +340,7 @@ export const payrollGovernanceService = {
         "NO_ATTENDANCE_RECORDS",
         "blocker",
         "Employees missing attendance_daily_record rows for the payroll month",
+        "attendance_payable_days",
       ),
       countIssue(
         `SELECT e.id, e.employee_code,
@@ -306,6 +361,7 @@ export const payrollGovernanceService = {
         "PARTIAL_ATTENDANCE_DAYS_MISSING",
         "blocker",
         "Eligible employees have one or more missing attendance_daily_record dates in the payroll month",
+        "attendance_payable_days",
       ),
       countIssue(
         `SELECT e.id, e.employee_code,
@@ -330,6 +386,7 @@ export const payrollGovernanceService = {
         "MISSING_PUNCH_WITH_BIOMETRIC_EVIDENCE",
         "blocker",
         "Attendance is marked missing_punch even though biometric evidence has usable minutes",
+        "attendance_payable_days",
       ),
       countIssue(
         `SELECT e.id, e.employee_code,
@@ -354,6 +411,7 @@ export const payrollGovernanceService = {
         "APR_MISSING_ATTENDANCE_DAILY_RECORD",
         "blocker",
         "APR source rows exist but attendance_daily_record is missing for the employee/date",
+        "attendance_payable_days",
       ),
       countIssue(
         `SELECT e.id, e.employee_code,
@@ -388,6 +446,7 @@ export const payrollGovernanceService = {
         "APR_ATTENDANCE_DAILY_RECORD_MISMATCH",
         "blocker",
         "APR source minutes/source do not match unlocked attendance_daily_record rows",
+        "attendance_payable_days",
       ),
       countIssue(
         `SELECT e.id, e.employee_code,
@@ -411,7 +470,22 @@ export const payrollGovernanceService = {
         "APPROVED_REGULARIZATION_MISSING_ADR",
         "blocker",
         "Approved attendance regularization is missing from locked attendance_daily_record",
+        "attendance_payable_days",
       ),
+      // Root-caused 2026-08-13: apr-payroll-reconciliation.service.ts (the only
+      // writer of this issue_type) has zero callers anywhere in the reachable
+      // codebase — no route, no worker. Its 455 unresolved July rows were all
+      // detected in one 90-minute manual invocation on 2026-07-25 against a run
+      // id that no longer exists in salary_prep_run (deleted/superseded since),
+      // while every OTHER issue_type in this table has a real daily 2am refresh
+      // (attendance-reconciliation.worker.ts) that keeps resolving/re-detecting.
+      // Without the `runId` match below, this check counts phantom blockers tied
+      // to a run nobody can act on. Binding to the run actually being evaluated
+      // means: (a) truly stale rows (wrong/deleted run) stop blocking calculation
+      // for the live run, and (b) a genuine mismatch detected against THIS run
+      // still blocks, exactly as before, if the reconciliation job is ever rerun.
+      // This does not touch attendance_daily_record, salary_prep_line or any
+      // payroll figure — it only changes which pre-existing rows this gate reads.
       countIssue(
         `SELECT e.id, e.employee_code,
                 COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
@@ -423,11 +497,13 @@ export const payrollGovernanceService = {
             AND ari.issue_date BETWEEN ? AND ?
             AND ari.issue_type = 'salary_payable_days_mismatch'
             AND ari.resolved_at IS NULL
+            AND JSON_UNQUOTE(JSON_EXTRACT(ari.source_payload_json, '$.runId')) = ?
           WHERE ${where}`,
-        [range.start, effectiveEnd, ...params],
+        [range.start, effectiveEnd, run.id, ...params],
         "SALARY_PAYABLE_DAYS_MISMATCH",
         "blocker",
-        "Salary prep final payable days do not match recomputed attendance_daily_record payable days",
+        "Salary prep final payable days do not match recomputed attendance_daily_record payable days for THIS run",
+        "attendance_payable_days",
       ),
       countIssue(
         `${eligibleSql}
@@ -441,6 +517,7 @@ export const payrollGovernanceService = {
         "UNRECONCILED_ATTENDANCE",
         "blocker",
         "Employees with unreconciled attendance in payroll month",
+        "attendance_payable_days",
       ),
       countIssue(
         `${eligibleSql}
@@ -454,6 +531,7 @@ export const payrollGovernanceService = {
         "ATTENDANCE_NOT_LOCKED",
         "warning",
         "Employees have attendance rows not locked/frozen for payroll",
+        "attendance_payable_days",
       ),
       countIssue(
         `${eligibleSql}
@@ -470,6 +548,7 @@ export const payrollGovernanceService = {
         tdsMode === "auto"
           ? "Employees missing PAN — auto-TDS cannot apply the correct rate without PAN; under-deduction is employer liability. Resolve or switch to manual TDS before calculation."
           : "Employees missing PAN number (manual TDS run — verify rate is applied correctly)",
+        "statutory",
       ),
       countIssue(
         // PAN format: 5 uppercase letters, 4 digits, 1 uppercase letter (Income Tax Act).
@@ -486,9 +565,27 @@ export const payrollGovernanceService = {
         tdsMode === "auto"
           ? "Employees have a PAN stored but it does not match the 10-character format (AAAAA0000A). Auto-TDS treats these as placeholder/invalid and cannot compute correct rate — resolve before calculation."
           : "Employees have a PAN stored that does not match the valid 10-character format (AAAAA0000A) — verify before TDS filing.",
+        "statutory",
       ),
+      // Root-caused 2026-08-13: this previously checked ONLY `employee_uan`
+      // (schema exists, 0 rows ever — a table that was scaffolded but never
+      // populated) against the FULL eligible-for-payroll population, which is
+      // why it read as ~100% missing (1,229-1,234 of ~1,250). Real UAN data
+      // lives in `employee_statutory_info.uan_number` instead (53 real values
+      // among active employees) — a different table the check never looked at.
+      // Separately, only 54 of 1,327 active employees are `pf_eligible = 1`;
+      // UAN is a PF/EPFO concept and does not apply to the rest. Fixed to (a)
+      // accept either source as evidence, and (b) scope the requirement to
+      // PF-eligible employees only, matching the already-configured
+      // `employee_statutory_info.pf_eligible` flag rather than inventing a new
+      // rule. Verified live: this drops the count from ~1,234 to 1 genuine gap.
       countIssue(
         `${eligibleSql}
+          AND EXISTS (
+            SELECT 1 FROM employee_statutory_info esi
+             WHERE esi.employee_id = e.id AND esi.pf_eligible = 1
+          )
+          AND COALESCE((SELECT esi2.uan_number FROM employee_statutory_info esi2 WHERE esi2.employee_id = e.id), '') = ''
           AND NOT EXISTS (
             SELECT 1 FROM employee_uan eu
              WHERE eu.employee_id = e.id AND eu.is_active = 1
@@ -496,7 +593,8 @@ export const payrollGovernanceService = {
         params,
         "MISSING_UAN",
         "warning",
-        "Employees missing active UAN/PF record",
+        "PF-eligible employees missing a UAN in both employee_statutory_info.uan_number and employee_uan",
+        "statutory",
       ),
       countIssue(
         `${eligibleSql}
@@ -510,6 +608,7 @@ export const payrollGovernanceService = {
         "INCOMPLETE_JOINING_DOCUMENTS",
         "warning",
         "Employees with mandatory joining documents pending completion/signing",
+        "employee_master",
       ),
       countIssue(
         `${eligibleSql}
@@ -524,6 +623,7 @@ export const payrollGovernanceService = {
         "PENDING_LEAVE_REQUESTS",
         "warning",
         "Employees have pending (unapproved) leave requests for this payroll month — these will be lapsed as LWP at cycle close if not resolved",
+        "attendance_payable_days",
       ),
       // ESI contribution-period continuity.
       //
@@ -571,7 +671,183 @@ export const payrollGovernanceService = {
         "ESI_MID_PERIOD_CEILING_CROSSING",
         "warning",
         "Employees were within the ESI wage ceiling earlier in this contribution period. Under the ESI Act they remain covered until the period ends (30 Sep / 31 Mar) even if their gross has since crossed the ceiling — verify ESI is still being deducted for them",
+        "statutory",
       ),
+
+      // ============================================================
+      // Five categories added 2026-08-13. Each is mapped to a real, verified
+      // source table — none invent a workflow or business rule. Where the real
+      // engine has a known integration bug (reimbursements, incentive double
+      // -count), the check reports the gap; it does not patch
+      // payrollCalculate.service.ts, which stays read-only per standing
+      // instruction — payroll arithmetic is quantified and reported, not
+      // "corrected" by this audit.
+      // ============================================================
+
+      // VARIABLE_PAY / INCENTIVES — source: incentive_upload_batch +
+      // incentive_upload_line (backend/src/modules/incentives/incentives.service.ts).
+      // This one DOES work: payrollCalculate.service.ts pulls approved lines
+      // automatically on every calculation (no manual step required).
+      checkedIssue("variable_pay", "INCENTIVE_BATCH_PENDING_APPROVAL", () => countIssue(
+        `SELECT ib.id, ib.batch_ref, ib.total_employees, ib.total_amount, ib.status
+           FROM incentive_upload_batch ib
+          WHERE ib.pay_month = ?
+            AND ib.status IN ('draft', 'pending_approval')`,
+        [run.run_month],
+        "INCENTIVE_BATCH_PENDING_APPROVAL",
+        "warning",
+        "Incentive batches for this payroll month are not yet approved (status draft/pending_approval) — their amounts will not be included until approved.",
+        "variable_pay",
+      )),
+      // A batch reaching status='applied' is proof the manual POST
+      // /api/incentives/apply-to-run path fired for it. That path ADDS its
+      // total onto gross_salary/net_salary a second time on top of what
+      // payrollCalculate.service.ts already pulls automatically from the same
+      // approved batch on every calculation — there is no guard against this in
+      // either code path. Reported as a blocker: verify affected employees'
+      // gross/net before disbursing.
+      checkedIssue("variable_pay", "INCENTIVE_APPLY_TO_RUN_DOUBLE_COUNT_RISK", () => countIssue(
+        `SELECT ib.id, ib.batch_ref, ib.total_employees, ib.total_amount, ib.status
+           FROM incentive_upload_batch ib
+          WHERE ib.pay_month = ?
+            AND ib.status = 'applied'`,
+        [run.run_month],
+        "INCENTIVE_APPLY_TO_RUN_DOUBLE_COUNT_RISK",
+        "blocker",
+        "Incentive batch(es) reached status='applied' via POST /api/incentives/apply-to-run, which adds its total to gross/net a second time on top of the automatic per-calculation pull — verify affected employees' gross/net are not double-counted before disbursing this run.",
+        "variable_pay",
+      )),
+
+      // REIMBURSEMENT — source: employee_reimbursement_claim
+      // (backend/src/modules/payroll/reimbursements.routes.ts). Real
+      // draft->submitted->approved->processed lifecycle exists, but
+      // payrollCalculate.service.ts:1074 selects a column, `claim_amount`, that
+      // does not exist on this table (real columns are amount_claimed /
+      // amount_approved) — the query throws ER_BAD_FIELD_ERROR on every run and
+      // is silently swallowed by a catch, so approved reimbursements NEVER reach
+      // gross/net or salary_prep_line.reimbursement_total. Any approved claim
+      // for this run's month is proof of real money that structurally cannot be
+      // paid through the current calculation path.
+      checkedIssue("reimbursement", "REIMBURSEMENT_APPROVED_NOT_INTEGRATED", () => countIssue(
+        `SELECT erc.id, erc.employee_id, e.employee_code, erc.claim_type, erc.amount_approved, erc.status
+           FROM employee_reimbursement_claim erc
+           JOIN employees e ON e.id = erc.employee_id
+          WHERE erc.claim_month = ?
+            AND erc.status = 'approved'`,
+        [run.run_month],
+        "REIMBURSEMENT_APPROVED_NOT_INTEGRATED",
+        "blocker",
+        "Approved reimbursement claims exist for this payroll month, but payrollCalculate.service.ts's automatic pull references a non-existent column (claim_amount instead of amount_approved) and fails silently on every run — these approved amounts never reach gross/net pay. This is a live integration bug in existing code, reported per the payroll-arithmetic change restriction; needs a one-line column-name correction with Payroll/Engineering sign-off.",
+        "reimbursement",
+      )),
+
+      // RECOVERY / DEDUCTION — sources: salary_advance_log + employee_loans +
+      // employee_deduction_entries, all read by payrollCalculate.service.ts.
+      // salary_advance_log's recovery query filters `WHERE status = 'active'`
+      // (payrollCalculate.service.ts:1030) — moving an advance to status
+      // 'approved' via PATCH /advances/:id/approve therefore REMOVES it from
+      // recovery instead of confirming it, while a real balance may still be
+      // outstanding. This is real, incorrect money movement (employee is paid
+      // more than owed because a recovery silently stopped) — a P0-class gap by
+      // the standing severity model, not a cosmetic status quirk.
+      checkedIssue("recovery_deduction", "RECOVERY_APPROVAL_STATUS_STOPS_DEDUCTION", () => countIssue(
+        `${eligibleSql}
+          AND EXISTS (
+            SELECT 1 FROM salary_advance_log sal
+             WHERE sal.employee_id = e.id
+               AND sal.status = 'approved'
+               AND COALESCE(sal.recovered_amount, 0) < sal.amount
+          )`,
+        params,
+        "RECOVERY_APPROVAL_STATUS_STOPS_DEDUCTION",
+        "blocker",
+        "Salary advances with status='approved' are excluded from the recovery query (payrollCalculate.service.ts sums only status='active' rows) while a balance remains outstanding — approving an advance silently stops its recovery instead of confirming it. These employees will not have their outstanding advance deducted this run.",
+        "recovery_deduction",
+      )),
+      checkedIssue("recovery_deduction", "LOAN_RECOVERY_STOPPED_WITH_BALANCE", () => countIssue(
+        `${eligibleSql}
+          AND EXISTS (
+            SELECT 1 FROM employee_loans el
+             WHERE el.employee_id = e.id
+               AND el.status <> 'active'
+               AND COALESCE(el.pending_amount, 0) > 0.01
+          )`,
+        params,
+        "LOAN_RECOVERY_STOPPED_WITH_BALANCE",
+        "warning",
+        "Employee loans have an outstanding pending_amount but status is not 'active' (deduction_per_month is only summed from status='active' rows) — recovery has stopped while a balance remains. Verify whether this is an intended hold or a status error.",
+        "recovery_deduction",
+      )),
+
+      // FULL & FINAL — source: full_final_calculation, joined by employee_id.
+      // No calculation ENGINE exists for F&F (net_payable is summed client-side
+      // in NativeFullFinal.tsx from operator-typed values; the reusable gratuity
+      // formula is never called from any route), so this check validates
+      // existence/lifecycle only — it cannot and does not verify F&F amount
+      // correctness, because there is no authoritative computed figure to check
+      // against. Root-caused 2026-08-13: the tracked exit_request workflow that
+      // is supposed to trigger F&F is essentially unused in production —
+      // exit_request has 2 rows and full_final_calculation has 1 row, ever,
+      // against 57,513 active_status=0 employees all-time and 372 in the last
+      // two months alone (306 resigned + 66 terminated, real names/DOJ, zero of
+      // them with an exit_request row). Real exits are recorded directly on
+      // `employees` by an untracked path that bypasses F&F entirely. Scoped here
+      // to exits in this run's month or the prior month so the count is
+      // actionable against the current cycle, not the full historical backlog
+      // (that backlog is a separate, org-wide finding — see report).
+      checkedIssue("full_and_final", "FF_MISSING_FOR_RECENT_EXIT", () => countIssue(
+        `SELECT e.id, e.employee_code,
+                COALESCE(NULLIF(e.full_name, ''), CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+                COALESCE(e.date_of_exit, e.date_of_leaving) AS exit_date,
+                e.employment_status
+           FROM employees e
+          WHERE e.active_status = 0
+            AND COALESCE(e.date_of_exit, e.date_of_leaving) BETWEEN DATE_SUB(?, INTERVAL 1 MONTH) AND ?
+            AND NOT EXISTS (
+              SELECT 1 FROM full_final_calculation ffc WHERE ffc.employee_id = e.id
+            )`,
+        [range.start, range.end],
+        "FF_MISSING_FOR_RECENT_EXIT",
+        "blocker",
+        "Employees who exited in this run's month or the previous month have no full_final_calculation record at all. The tracked exit_request -> F&F workflow is effectively unused in production (see report for full scope) — real exits bypass it.",
+        "full_and_final",
+      )),
+
+      // PAYMENT FILE — sources: employee_bank_detail (export input),
+      // profile_update_approval (bank-change approval queue). Three competing
+      // export code paths exist (payroll.routes.ts neft-export [live/reachable],
+      // payroll-extended.routes.ts neft-export [shadowed/dead by route order],
+      // disbursal.routes.ts bank-export [reachable, post-hoc record format]) —
+      // none of them check MISSING_VERIFIED_BANK or a pending bank-change
+      // request at export time, and the reachable neft-export writes
+      // "NOT_LINKED" for unbanked employees while still adding their net_salary
+      // to the declared total (payroll.routes.ts:2201-2211).
+      checkedIssue("payment_file", "PAYMENT_FILE_NEFT_EXPORT_OVERSTATEMENT_RISK", () => countIssue(
+        `${eligibleSql}
+          AND NOT EXISTS (
+            SELECT 1 FROM employee_bank_detail ebd
+             WHERE ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
+          )`,
+        params,
+        "PAYMENT_FILE_NEFT_EXPORT_OVERSTATEMENT_RISK",
+        "warning",
+        "Employees with no active primary bank record at all would be written into the live NEFT export (GET /api/payroll/runs/:id/neft-export) as account 'NOT_LINKED' while their net_salary is still added to the declared payment total — a live bug in the only reachable NEFT-export route. Resolve MISSING_VERIFIED_BANK for these employees before this run reaches export, or the exported total will overstate the actual payable amount.",
+        "payment_file",
+      )),
+      checkedIssue("payment_file", "PAYMENT_FILE_PENDING_BANK_CHANGE_AT_RISK", () => countIssue(
+        `${eligibleSql}
+          AND EXISTS (
+            SELECT 1 FROM profile_update_approval pua
+             WHERE pua.employee_id = e.id
+               AND pua.request_type = 'bank_details'
+               AND pua.status = 'pending'
+          )`,
+        params,
+        "PAYMENT_FILE_PENDING_BANK_CHANGE_AT_RISK",
+        "blocker",
+        "Employees have a pending, unapproved bank-change request. No export route (neft-export, bank-export) checks for a pending bank-details request before generating a payment file — exporting now risks paying to a stale account while a change is in flight. Resolve via /api/payroll/bank-change-requests before export.",
+        "payment_file",
+      )),
     ];
 
     for (const issue of await Promise.all(checks)) {
@@ -585,6 +861,38 @@ export const payrollGovernanceService = {
     const eligibleEmployees = Number(eligibleCountRows[0]?.count ?? 0);
     const blockerCount = issues.filter((issue) => issue.severity === "blocker").length;
 
+    // Layered readiness: a payroll month can be "calculation technically
+    // available" (source_data/attendance_payable_days/employee_master/bank/
+    // statutory all clear) while simultaneously NOT READY FOR PAYMENT
+    // (variable_pay/recovery_deduction/full_and_final/payment_file still open).
+    // Every category present in ALL_CATEGORIES gets a status even when it has
+    // zero issues, so a caller can render "PASS" explicitly rather than infer it
+    // from absence — a category that was never evaluated (e.g. a check that
+    // failed to run at all, outside the try/catch) must not read the same as one
+    // that ran clean.
+    const ALL_CATEGORIES: PayrollReadinessCategory[] = [
+      "source_data", "employee_master", "attendance_payable_days", "bank",
+      "statutory", "variable_pay", "reimbursement", "recovery_deduction", "full_and_final", "payment_file",
+    ];
+    const categories: Record<PayrollReadinessCategory, {
+      status: "PASS" | "WARNING" | "BLOCKED" | "CHECK_ERROR";
+      blockers: number;
+      warnings: number;
+      issueCodes: string[];
+    }> = {} as any;
+    for (const cat of ALL_CATEGORIES) {
+      const catIssues = issues.filter((issue) => issue.category === cat);
+      const hasCheckError = catIssues.some((issue) => issue.code.endsWith("_CHECK_ERROR"));
+      const blockers = catIssues.filter((issue) => issue.severity === "blocker").length;
+      const warnings = catIssues.filter((issue) => issue.severity === "warning").length;
+      categories[cat] = {
+        status: hasCheckError ? "CHECK_ERROR" : blockers > 0 ? "BLOCKED" : warnings > 0 ? "WARNING" : "PASS",
+        blockers,
+        warnings,
+        issueCodes: catIssues.map((issue) => issue.code),
+      };
+    }
+
     return {
       runId,
       runMonth: run.run_month,
@@ -594,6 +902,7 @@ export const payrollGovernanceService = {
       attendanceSnapshotLocked: Boolean(run.attendance_snapshot_locked),
       complianceChecked: Boolean(run.compliance_checked),
       issues,
+      categories,
       summary: {
         blockers: issues.filter((issue) => issue.severity === "blocker").length,
         warnings: issues.filter((issue) => issue.severity === "warning").length,
