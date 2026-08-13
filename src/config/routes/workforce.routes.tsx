@@ -28,6 +28,8 @@ const NativeWFMAutoRoster          = lazy(() => import("@/pages/NativeWFMAutoRos
 const NativeWFMPlanningRules       = lazy(() => import("@/pages/NativeWFMPlanningRules"));
 const NativeSlotRequirementBuilder = lazy(() => import("@/pages/NativeSlotRequirementBuilder"));
 const NativeWeekOffDayRuleConfig   = lazy(() => import("@/pages/NativeWeekOffDayRuleConfig"));
+const NativeWFMRestPolicyConfig    = lazy(() => import("@/pages/NativeWFMRestPolicyConfig"));
+const NativeWeekOffDefaultConfig   = lazy(() => import("@/pages/NativeWeekOffDefaultConfig"));
 const NativeWeekOffPreferences     = lazy(() => import("@/pages/NativeWeekOffPreferences"));
 const NativeRosterPreference       = lazy(() => import("@/pages/NativeRosterPreference"));
 const NativeMyRoster               = lazy(() => import("@/pages/NativeMyRoster"));
@@ -104,6 +106,16 @@ export const workforceRouteElements = (
       <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_SLOT_REQUIREMENTS"><NativeSlotRequirementBuilder /></Gate></ProtectedRoute>} />
       <Route path="/wfm/auto-roster"   element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWFMAutoRoster /></Gate></ProtectedRoute>} />
       <Route path="/wfm/weekoff-day-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_WEEKOFF_DAY_RULES"><NativeWeekOffDayRuleConfig /></Gate></ProtectedRoute>} />
+      {/* No Gate pageCode here (unlike siblings above): canViewPage() fails closed for any
+          pageCode absent from the page-access catalog, and adding one is a production data
+          seed outside what a code change should do unreviewed. roles={...} is the live
+          enforcement for these two routes; the real security boundary is the backend RBAC
+          on /api/wfm/rest-policy (requireRole admin/wfm) and /api/roster-gov/week-off-policy-default
+          (hasRole/hasProcessScope admin/wfm, in roster.governance.routes.ts — a different session's
+          already-shipped CRUD for the same week_off_policy_default table, reused here rather than
+          duplicated). A pageCode can be added later by whoever administers the access catalog. */}
+      <Route path="/wfm/rest-policy"       element={<ProtectedRoute roles={['super_admin','admin','wfm']}><NativeWFMRestPolicyConfig /></ProtectedRoute>} />
+      <Route path="/wfm/week-off-default"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><NativeWeekOffDefaultConfig /></ProtectedRoute>} />
       <Route path="/wfm/weekoff-fairness"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_WEEKOFF_FAIRNESS"><WeekoffFairness /></Gate></ProtectedRoute>} />
       <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
 

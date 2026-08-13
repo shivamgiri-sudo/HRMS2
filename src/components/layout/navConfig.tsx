@@ -7,7 +7,7 @@ import {
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
   Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail, Share2,
-  Video, PenLine, Workflow, Layers3
+  Video, PenLine, Workflow, Layers3, CalendarOff
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -207,6 +207,8 @@ export const navGroups: NavGroup[] = [
           { label: "Week-off Day Rules",     href: "/wfm/weekoff-day-rules",     icon: ic(CalendarDays),  roles: ["admin","hr","wfm","manager","super_admin"], description: "Day-level rules" },
           { label: "WFM Planning Rules",     href: "/wfm/planning-rules",        icon: ic(Settings2),     roles: ["admin","hr","wfm","manager","super_admin"], description: "Shift planning rules" },
           { label: "Slot Requirements",      href: "/wfm/slot-requirements",     icon: ic(Calendar),      roles: ["admin","hr","wfm","manager","super_admin"], description: "Slot capacity" },
+          { label: "Minimum Rest Policy",    href: "/wfm/rest-policy",           icon: ic(ShieldAlert),   roles: ["admin","hr","wfm","manager","super_admin"], description: "Minimum rest between shifts" },
+          { label: "Week-off Default Policy", href: "/wfm/week-off-default",     icon: ic(CalendarOff),   roles: ["admin","hr","wfm","manager","super_admin"], description: "Last-resort week-off day default" },
           { label: "Workforce Planning",     href: "/workforce-planning",        icon: ic(Users),         pageCode: "WFM_AUTO_ROSTER", description: "Headcount planning" },
           { label: "Week-off Fairness",      href: "/wfm/weekoff-fairness",      icon: ic(Target),        roles: ["admin","super_admin","wfm"], description: "Fairness scores & allocation" },
           { label: "Branch SPOC Config",     href: "/wfm/branch-spoc-config",    icon: ic(ShieldCheck),   roles: ["admin","super_admin"], description: "Branch WFM final-approver assignment" },
