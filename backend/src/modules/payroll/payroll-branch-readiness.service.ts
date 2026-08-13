@@ -379,8 +379,18 @@ export const payrollBranchReadinessService = {
     updates.uan_complete_pct = uanCompletePct;
 
     // --- noc_resolved --------------------------------------------------------
+    // Previously: any error on any candidate table — including a genuine query
+    // failure on a table that DOES exist (syntax, permission, connectivity) — was
+    // silently treated the same as "no NOC table in this deployment" and fell
+    // through to `return 1` (resolved). A real error surfacing as "resolved" is
+    // exactly the fail-open pattern this dashboard cannot afford: it would show
+    // payroll as more ready than it is. Now: ER_NO_SUCH_TABLE (errno 1146) is the
+    // only case treated as "NOC tracking isn't configured here, don't block on
+    // it" — every other error is logged loudly and blocks (0), never silently
+    // passes.
     const nocResolved = await safeQuery(
       async () => {
+        let sawGenuineError = false;
         // Try payroll_noc / noc_issuance / employee_noc tables
         for (const table of ["payroll_noc", "noc_issuance", "employee_noc"]) {
           try {
@@ -406,18 +416,39 @@ export const payrollBranchReadinessService = {
             const [rows] = await db.execute<RowDataPacket[]>(sql, params);
             const cnt = Number((rows[0] as any)?.cnt ?? 0);
             return cnt === 0 ? 1 : 0;
-          } catch {
+          } catch (err: unknown) {
+            const code = (err as { code?: string })?.code;
+            if (code !== "ER_NO_SUCH_TABLE") {
+              sawGenuineError = true;
+              console.error(
+                `[BranchReadiness] noc_resolved query against '${table}' failed for a reason other than a missing table — treating as unresolved rather than silently passing:`,
+                err instanceof Error ? err.message : err
+              );
+            }
             continue;
           }
         }
-        return 1; // table doesn't exist — treat as resolved
+        // All three candidates missing (ER_NO_SUCH_TABLE) → NOC tracking genuinely
+        // isn't deployed here, don't block on it. Any genuine error → block.
+        return sawGenuineError ? 0 : 1;
       },
-      1,
+      // Outer fallback for anything that throws outside the per-table try/catch
+      // above (i.e. a genuine bug, not a per-table query error, which is already
+      // handled inline). Was 1 ("resolved") — changed to 0 so an unexpected
+      // failure here blocks readiness instead of silently passing it, consistent
+      // with the inline handling above.
+      0,
       "noc_resolved"
     );
     updates.noc_resolved = nocResolved;
 
     // --- holiday_work_approved -----------------------------------------------
+    // The COUNT query below previously had no try/catch of its own, so any failure
+    // on it (once a date column was found) propagated to the outer safeQuery,
+    // whose fallback was 1 ("approved") — a real query error silently reported as
+    // "no pending holiday-work approvals." Now caught explicitly and blocks (0);
+    // the outer fallback is also changed from 1 to 0 for the same reason as
+    // noc_resolved above.
     const holidayWorkApproved = await safeQuery(
       async () => {
         const [year, mon] = month.split("-");
@@ -437,18 +468,26 @@ export const payrollBranchReadinessService = {
         // to count — return 0 rather than guessing a name.
         const dateCol = (cols[0] as any)?.COLUMN_NAME as string | undefined;
         if (!dateCol) return 0;
-        const [rows] = await db.execute<RowDataPacket[]>(
-          `SELECT COUNT(*) AS cnt
-             FROM holiday_work_request
-            WHERE branch_id = ?
-              AND status = 'pending'
-              AND \`${dateCol}\` BETWEEN ? AND ?`,
-          [branchId, monthStart, monthEnd]
-        );
-        const cnt = Number((rows[0] as any)?.cnt ?? 0);
-        return cnt === 0 ? 1 : 0;
+        try {
+          const [rows] = await db.execute<RowDataPacket[]>(
+            `SELECT COUNT(*) AS cnt
+               FROM holiday_work_request
+              WHERE branch_id = ?
+                AND status = 'pending'
+                AND \`${dateCol}\` BETWEEN ? AND ?`,
+            [branchId, monthStart, monthEnd]
+          );
+          const cnt = Number((rows[0] as any)?.cnt ?? 0);
+          return cnt === 0 ? 1 : 0;
+        } catch (err: unknown) {
+          console.error(
+            `[BranchReadiness] holiday_work_approved COUNT query failed — treating as unresolved rather than silently passing:`,
+            err instanceof Error ? err.message : err
+          );
+          return 0;
+        }
       },
-      1,
+      0,
       "holiday_work_approved"
     );
     updates.holiday_work_approved = holidayWorkApproved;

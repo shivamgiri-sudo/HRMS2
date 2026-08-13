@@ -425,6 +425,14 @@ const MIGRATION_MANIFEST: string[] = [
   "538_route_page_access_backfill.sql",         // Backfill route-mapped page codes and grants
   "542_attendance_reconciliation_source_conflict_issue_type.sql", // Reconciliation issue type for dialler rows without source evidence
   "543_cosec_exclusion_and_inactive_issue_type.sql", // Ignore intentional COSEC identities and separate inactive punch activity
+  // 1006/1007 existed on disk but were never registered here — confirmed live (2026-08-13)
+  // that payroll_branch_readiness already HAS process_id/process_manager_signoff/etc. (1006's
+  // columns), so it ran through some other path while the manifest didn't know it happened.
+  // Both are safe to register now regardless: 1006 uses ADD COLUMN/INDEX IF NOT EXISTS and a
+  // guarded unique-key swap, 1007 uses INSERT IGNORE — re-running either against a DB that
+  // already has them is a verified no-op, not a duplicate-column error.
+  "1006_payroll_process_readiness_extend.sql",  // Extend payroll_branch_readiness: process_id, attendance_data_ready, process_manager_signoff
+  "1007_payroll_process_readiness_page.sql",    // Register PAYROLL_PROCESS_READINESS page catalog entry + role grants
   "1008_migrate_photo_urls_to_api.sql",         // Migrate employee photo URLs from /uploads/ to /api/files/
   "1009_ats_hiring_followup_call_feedback.sql", // ATS hiring: follow-up call outcome, date, notes, reschedule columns
   "1021_payroll_signoff_columns_and_ceo_sod.sql", // salary_prep_run sign-off columns (route 500'd without them) + narrow ceo create/delete grants
