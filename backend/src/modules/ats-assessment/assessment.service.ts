@@ -1012,7 +1012,7 @@ async function loadSessionData(attempt: AttemptRow) {
   // Auto-expire zombie typing attempts: unsubmitted rows where elapsed > duration.
   // These cause the candidate page to auto-submit on load (remaining=0 from first tick).
   for (const typing of typingAttempts) {
-    if (!typing.submitted_at && Number(typing.elapsed_since_start_seconds ?? 0) > Number(typing.duration_limit_seconds)) {
+    if (!typing.submitted_at && Number(typing.elapsed_since_start_seconds ?? 0) >= Number(typing.duration_limit_seconds)) {
       await db.execute(
         `UPDATE ats_typing_test_attempt
             SET submitted_at = NOW(),
