@@ -457,6 +457,50 @@ describe("5. payment-file readiness", () => {
     expect(result.canPay).toBe(false);
   });
 
+  // PAYSLIP_COMPONENT_TOTAL_MISMATCH / PAYSLIP_COMPONENTS_NOT_GENERATED —
+  // added 2026-08-14 alongside the payrollCalculate.service.ts fix for the
+  // same defect (see payslip-earning-components.test.ts for the fix's own
+  // tests). Verified live against production before shipping: 837/1,595 July
+  // lines FAIL the mismatch check, 11 the not-generated check, 0 overlap.
+  it("PASSES component-total reconciliation when every line's components sum to gross", async () => {
+    const { check } = await checkByCode("PAYSLIP_COMPONENT_TOTAL_MISMATCH");
+    expect(check.state).toBe("PASS");
+  });
+
+  it("FAILS component-total reconciliation when a line's components do not sum to gross", async () => {
+    baseline(...population(/JOIN \(\s*SELECT line_id, SUM\(amount\) AS earning_sum/, 837));
+    const { check, result } = await checkByCode("PAYSLIP_COMPONENT_TOTAL_MISMATCH");
+    expect(check.state).toBe("FAIL");
+    expect(check.severity).toBe("P1");
+    expect(check.affectedEmployees).toBe(837);
+    expect(result.canPay).toBe(false);
+  });
+
+  it("PASSES components-not-generated when every positive-gross line has at least one earning component", async () => {
+    const { check } = await checkByCode("PAYSLIP_COMPONENTS_NOT_GENERATED");
+    expect(check.state).toBe("PASS");
+  });
+
+  it("FAILS components-not-generated (only) when a positive-gross line has zero earning component rows, and does not conflate it with the mismatch check", async () => {
+    baseline(...population(/NOT EXISTS \(\s*SELECT 1 FROM salary_prep_line_component c\s*WHERE c\.line_id = spl\.id AND c\.component_type = 'earning'/, 11));
+    const { check: notGenerated } = await checkByCode("PAYSLIP_COMPONENTS_NOT_GENERATED");
+    expect(notGenerated.state).toBe("FAIL");
+    expect(notGenerated.severity).toBe("P2"); // not a money defect — lower severity than the mismatch check
+    expect(notGenerated.affectedEmployees).toBe(11);
+
+    const { check: mismatch } = await checkByCode("PAYSLIP_COMPONENT_TOTAL_MISMATCH");
+    expect(mismatch.state).toBe("PASS"); // a line with zero component rows is excluded from the INNER JOIN this check uses
+  });
+
+  it("reports SOURCE_MISSING for both entirely new tests deliberately in both directions", async () => {
+    rules = [];
+    baseline();
+    const both = await evaluateReadinessCategories(RUN_ID);
+    const codes = both.checks.map((c) => c.code);
+    expect(codes).toContain("PAYSLIP_COMPONENT_TOTAL_MISMATCH");
+    expect(codes).toContain("PAYSLIP_COMPONENTS_NOT_GENERATED");
+  });
+
   it("reports SOURCE_MISSING for payment-file reproducibility when no history table exists", async () => {
     rules = [
       { match: /payroll_payment_file|payroll_bank_file_log|payment_file_history/, rows: [{ c: 0 }] },

@@ -1500,6 +1500,89 @@ async function paymentFileChecks(scope: RunScope): Promise<CategoryCheckResult[]
       );
     }),
 
+    // PAYSLIP_COMPONENT_TOTAL_MISMATCH — root-caused 2026-08-13, fixed 2026-08-14
+    // in payrollCalculate.service.ts's buildPayslipEarningComponents(). Two
+    // now-fixed defects left the itemized salary_prep_line_component
+    // breakdown disagreeing with the authoritative gross_salary by real
+    // rupees, not paise, on 848 of 1,595 lines in the July 2026 run alone:
+    // leftover structure-template components (Portfolio, Bonus) surviving
+    // into an employee-assignment-priced line, and a stale stored
+    // special_allowance used instead of the actual computed residual. The
+    // fix is forward-looking only — this check is what surfaces the same
+    // defect in ANY line calculated before the fix, or by any future
+    // component-generation change that reintroduces it. Deliberately a
+    // SUPERSET of INCENTIVE_NOT_TRACEABLE_TO_COMPONENT above: any positive
+    // gross a line's own earning components cannot reconstruct is a
+    // traceability failure regardless of which component type is missing.
+    //
+    // Requires at least one earning component row to exist — a line with
+    // ZERO component rows despite positive gross is a different, unrelated
+    // and lower-severity condition (PAYSLIP_COMPONENTS_NOT_GENERATED,
+    // below): salary_prep_line's own basic/hra/special_allowance columns
+    // already reconcile to gross for that population (confirmed live,
+    // 2026-08-14 — 11 such lines in the July run, all new joiners on a
+    // pct_of_ctc structure whose component-insert step never fired), so it
+    // is not proof of incorrect money, only of a missing itemization.
+    runCheck({ code: "PAYSLIP_COMPONENT_TOTAL_MISMATCH", layer: "PAYROLL_CALCULATION", severity: "P1" }, async () => {
+      if (!(await tableExists("salary_prep_line_component"))) {
+        return sourceMissing("salary_prep_line_component does not exist, so payslip component totals cannot be reconciled to gross.");
+      }
+      const sql = `
+        SELECT ${EMP_IDENTITY}, ROUND(spl.gross_salary, 2) AS gross_salary,
+               ROUND(comp.earning_sum, 2) AS component_sum,
+               ROUND(spl.gross_salary - comp.earning_sum, 2) AS variance
+          FROM salary_prep_line spl
+          JOIN employees e ON e.id = spl.employee_id
+          JOIN (
+            SELECT line_id, SUM(amount) AS earning_sum
+              FROM salary_prep_line_component
+             WHERE component_type = 'earning'
+             GROUP BY line_id
+          ) comp ON comp.line_id = spl.id
+         WHERE spl.run_id = ?
+           AND spl.gross_salary > 0
+           AND ABS(spl.gross_salary - comp.earning_sum) > 1.00`;
+      const { count, sample } = await population(sql, [runId]);
+      return count === 0
+        ? pass("Every positive-gross line's earning components reconcile to gross_salary within tolerance.")
+        : fail(
+            count,
+            `${count} positive-gross lines have an earning-component breakdown that does not sum to gross_salary (off by more than ₹1). A payslip built from these components would misstate the employee's own earnings breakdown even though gross/net themselves may be correct — see this line's component rows for the specific over/under-counted item.`,
+            undefined,
+            sample,
+          );
+    }),
+
+    // See PAYSLIP_COMPONENT_TOTAL_MISMATCH immediately above for why this is
+    // reported separately rather than folded into it.
+    runCheck({ code: "PAYSLIP_COMPONENTS_NOT_GENERATED", layer: "PAYROLL_CALCULATION", severity: "P2" }, async () => {
+      if (!(await tableExists("salary_prep_line_component"))) {
+        return sourceMissing("salary_prep_line_component does not exist.");
+      }
+      const sql = `
+        SELECT ${EMP_IDENTITY}, ROUND(spl.gross_salary, 2) AS gross_salary,
+               ROUND(COALESCE(spl.basic,0) + COALESCE(spl.hra,0) + COALESCE(spl.special_allowance,0), 2) AS stored_breakdown_sum
+          FROM salary_prep_line spl
+          JOIN employees e ON e.id = spl.employee_id
+         WHERE spl.run_id = ?
+           AND spl.gross_salary > 0
+           AND NOT EXISTS (
+             SELECT 1 FROM salary_prep_line_component c
+              WHERE c.line_id = spl.id AND c.component_type = 'earning'
+           )`;
+      const { count, sample } = await population(sql, [runId]);
+      return count === 0
+        ? pass("Every positive-gross line has at least one earning component row.")
+        : fail(
+            count,
+            `${count} positive-gross lines have no earning component rows at all, so a payslip cannot itemize them — ` +
+              "not a money defect (salary_prep_line's own basic/hra/special_allowance columns already reconcile to gross for these), " +
+              "but the component-insert step did not run for them. Trace why before assuming this is the same root cause as PAYSLIP_COMPONENT_TOTAL_MISMATCH.",
+            undefined,
+            sample,
+          );
+    }),
+
     // Held / excluded employees must be named, not silently dropped.
     runCheck({ code: "PAYFILE_EXCLUDED_NOT_IDENTIFIED", layer: "PAYMENT_FILE", severity: "P2" }, async () => {
       const sql = `

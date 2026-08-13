@@ -51,6 +51,116 @@ export function reconcileNetAndDeductions(
   return { totalDeductions, netSalary };
 }
 
+// ─── Payslip earning-component breakdown ───────────────────────────────────────
+
+export interface PayslipEarningComponent {
+  code: string;
+  name: string;
+  amount: number;
+}
+
+const PAYSLIP_COMPONENT_NAMES: Record<string, string> = {
+  BASIC: "Basic Salary", HRA: "House Rent Allowance", BONUS: "Bonus",
+  CONV: "Conveyance Allowance", PORTFOLIO: "Portfolio Allowance",
+  MEDICAL: "Medical Allowance", LTA: "Leave Travel Allowance",
+  SPECIAL: "Special Allowance", OTHER_ALLOW: "Other Allowance", PLI: "PLI",
+};
+
+/**
+ * Builds the itemized earning-component breakdown for one salary_prep_line's
+ * payslip. Extracted 2026-08-14 for testability, from logic that used to be
+ * inline in calculatePayrollRunScoped — behaviour unchanged except for the two
+ * fixes this exists to prove (PAYSLIP_COMPONENT_TOTAL_MISMATCH, root-caused
+ * 2026-08-13):
+ *
+ * 1. LEFTOVER COMPONENT LEAKAGE. compAmounts is populated by the caller from
+ *    TWO sources — the structure template (salary_structure_component) and,
+ *    when present, the per-employee assignment (salary_component_assignments,
+ *    "scaRow"). The assignment only ever knows about basic/hra/conveyance/
+ *    special_allowance; any other code the template alone defined — BONUS,
+ *    PORTFOLIO, MEDICAL, LTA, OTHER_ALLOW, PLI — must not be present in
+ *    `compAmounts` by the time it reaches this function when
+ *    `usedScaRowAssignment` is true, or it gets written as an extra earning
+ *    component with no matching contribution to gross_salary (confirmed:
+ *    MAS00175, July 2026, Portfolio Allowance ₹11,612.90 double-counted). The
+ *    caller is responsible for resetting compAmounts on the assignment path;
+ *    this function trusts what it is given.
+ *
+ * 2. SPECIAL RESIDUAL MISMATCH. The assignment's stored `special_allowance` is
+ *    a static, independently-entered figure that is not guaranteed to equal
+ *    the residual calculateNetSalary actually computed
+ *    (grossMonthlyCTC - basic - hra) and gross_salary was built from. When
+ *    `usedScaRowAssignment` is true, SPECIAL is therefore sourced from
+ *    `calcSpecialAllowance` — the real computed residual, already fully
+ *    prorated — not from any value inside `compAmounts` (confirmed: MAS63025,
+ *    July 2026, ₹547.83 of real gross had no component row at all because the
+ *    stored special_allowance was stale at 0). That residual has no concept
+ *    of conveyance either — calculateNetSalary's formula never subtracts it
+ *    — so it is already folded into the residual. Because CONV is written as
+ *    its own line from `compAmounts.CONV`, its (prorated) value is subtracted
+ *    back out of the residual before the remainder is written as SPECIAL, or
+ *    conveyance would be double-counted a second time (caught by this fix's
+ *    own tests, not by production data — always verify with an exact
+ *    reconciliation, not a symbolic argument).
+ *
+ * Does not compute gross/net and cannot change them — calc.basic/calc.hra/
+ * calc.special_allowance are treated here as given, already-authoritative
+ * inputs from calculateNetSalary.
+ */
+export function buildPayslipEarningComponents(params: {
+  hasFixedComponents: boolean;
+  usedScaRowAssignment: boolean;
+  compAmounts: Record<string, number>;
+  ratio: number;
+  calcBasic: number;
+  calcHra: number;
+  calcSpecialAllowance: number;
+  convAllowanceDefault: number;
+  medicalAllowanceDefault: number;
+}): PayslipEarningComponent[] {
+  const earnings: PayslipEarningComponent[] = [];
+  if (params.hasFixedComponents) {
+    for (const [code, val] of Object.entries(params.compAmounts)) {
+      if (val > 0 && PAYSLIP_COMPONENT_NAMES[code]) {
+        earnings.push({
+          code,
+          name: PAYSLIP_COMPONENT_NAMES[code],
+          amount: Math.round(val * params.ratio * 100) / 100,
+        });
+      }
+    }
+    if (params.usedScaRowAssignment) {
+      // calculateNetSalary's residual (calcSpecialAllowance = grossMonthlyCTC
+      // - basic - hra) has no concept of conveyance at all — its formula
+      // never subtracts it — so conveyance's rupee value is already folded
+      // into this residual. CONV was just written above as its own line from
+      // `compAmounts.CONV`; writing the raw residual as SPECIAL on top of
+      // that double-counts conveyance a second time. Subtract CONV's
+      // (prorated) contribution before treating the remainder as SPECIAL, so
+      // CONV + SPECIAL together still equal exactly what the residual holds.
+      const conveyanceProrated = Math.round((params.compAmounts.CONV ?? 0) * params.ratio * 100) / 100;
+      const specialFromResidual = Math.round((params.calcSpecialAllowance - conveyanceProrated) * 100) / 100;
+      if (specialFromResidual > 0) {
+        earnings.push({ code: "SPECIAL", name: "Special Allowance", amount: specialFromResidual });
+      }
+    }
+  } else {
+    const { conv, ma, pa } = breakSpecialAllowance(
+      params.calcSpecialAllowance,
+      params.convAllowanceDefault,
+      params.medicalAllowanceDefault,
+    );
+    earnings.push(
+      { code: "BASIC", name: "Basic Salary", amount: params.calcBasic },
+      { code: "HRA", name: "House Rent Allowance", amount: params.calcHra },
+      { code: "CONV", name: "Conveyance Allowance", amount: conv },
+      { code: "MA", name: "Medical Allowance", amount: ma },
+      { code: "PA", name: "Personal Allowance", amount: pa },
+    );
+  }
+  return earnings;
+}
+
 // ─── Gratuity ─────────────────────────────────────────────────────────────────
 
 export interface GratuityResult {
@@ -871,17 +981,38 @@ export async function calculatePayrollRunScoped(
     let fixedBasic: number;
     let fixedHRA: number;
     let fixedGross: number;
+    // True when the per-employee assignment (salary_component_assignments) is
+    // authoritative for this line, rather than the structure template.
+    let usedScaRowAssignment = false;
 
     if (scaRow && Number(scaRow.gross) > 0) {
       hasFixedComponents = true;
+      usedScaRowAssignment = true;
       fixedBasic = Number(scaRow.basic) || 0;
       fixedHRA   = Number(scaRow.hra)   || 0;
       fixedGross = Number(scaRow.gross);
-      // Populate compAmounts so payslip component loop works
+      // Root-caused 2026-08-13 (PAYSLIP_COMPONENT_TOTAL_MISMATCH): compAmounts
+      // was pre-populated above from the structure TEMPLATE (compRows), which
+      // can define codes this per-employee assignment knows nothing about —
+      // BONUS, PORTFOLIO, MEDICAL, LTA, OTHER_ALLOW, PLI. Overlaying the four
+      // scaRow fields onto that dictionary left those leftover template values
+      // in place, so they were written as extra payslip earning components with
+      // no corresponding contribution to fixedGross/gross_salary (confirmed:
+      // MAS00175, Portfolio Allowance ₹11,612.90 double-counted). The scaRow
+      // path only ever knows about basic/hra/conveyance/special_allowance —
+      // reset rather than overlay, so nothing the template alone defined can
+      // survive into this employee's payslip.
+      for (const key of Object.keys(compAmounts)) delete compAmounts[key];
       compAmounts.BASIC  = fixedBasic;
       compAmounts.HRA    = fixedHRA;
-      compAmounts.CONV   = Number(scaRow.conveyance)        || 0;
-      compAmounts.SPECIAL = Number(scaRow.special_allowance) || 0;
+      compAmounts.CONV   = Number(scaRow.conveyance) || 0;
+      // SPECIAL is deliberately NOT set from scaRow.special_allowance here —
+      // that stored value is static and can drift from the residual
+      // calculateNetSalary actually computes and gross_salary is built from
+      // (confirmed: MAS63025, ₹547.83 of real gross with no component at all,
+      // because special_allowance was stale-stored as 0 while the true
+      // residual was positive). It is written from calc.special_allowance
+      // instead, once that residual is known — see the payslip-component block.
     } else {
       hasFixedComponents = compAmounts.BASIC !== undefined && compAmounts.BASIC > 0;
       fixedBasic = compAmounts.BASIC || 0;
@@ -1265,34 +1396,17 @@ export async function calculatePayrollRunScoped(
 
     // 6b. Insert component-level breakdown for payslip display
     // Use actual fixed component amounts from salary_structure_component when available
-    const payslipEarnings: Array<{code: string; name: string; amount: number}> = [];
-    if (hasFixedComponents) {
-      const ratio = finalPayableDays / daysInMonth;
-      const compNames: Record<string, string> = {
-        BASIC: "Basic Salary", HRA: "House Rent Allowance", BONUS: "Bonus",
-        CONV: "Conveyance Allowance", PORTFOLIO: "Portfolio Allowance",
-        MEDICAL: "Medical Allowance", LTA: "Leave Travel Allowance",
-        SPECIAL: "Special Allowance", OTHER_ALLOW: "Other Allowance", PLI: "PLI"
-      };
-      for (const [code, val] of Object.entries(compAmounts)) {
-        if (val > 0 && compNames[code]) {
-          payslipEarnings.push({ code, name: compNames[code], amount: Math.round(val * ratio * 100) / 100 });
-        }
-      }
-    } else {
-      const { conv, ma, pa } = breakSpecialAllowance(
-        calc.special_allowance,
-        statConfig["conv_allowance_default"],
-        statConfig["medical_allowance_default"],
-      );
-      payslipEarnings.push(
-        { code: "BASIC", name: "Basic Salary", amount: calc.basic },
-        { code: "HRA", name: "House Rent Allowance", amount: calc.hra },
-        { code: "CONV", name: "Conveyance Allowance", amount: conv },
-        { code: "MA", name: "Medical Allowance", amount: ma },
-        { code: "PA", name: "Personal Allowance", amount: pa },
-      );
-    }
+    const payslipEarnings = buildPayslipEarningComponents({
+      hasFixedComponents,
+      usedScaRowAssignment,
+      compAmounts,
+      ratio: finalPayableDays / daysInMonth,
+      calcBasic: calc.basic,
+      calcHra: calc.hra,
+      calcSpecialAllowance: calc.special_allowance,
+      convAllowanceDefault: statConfig["conv_allowance_default"],
+      medicalAllowanceDefault: statConfig["medical_allowance_default"],
+    });
     // 6b. Accumulate component rows for batch insert
     for (const comp of payslipEarnings) {
       if (comp.amount <= 0) continue;
