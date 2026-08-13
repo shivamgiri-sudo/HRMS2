@@ -43,4 +43,4 @@ CREATE TABLE IF NOT EXISTS finance_budget_line_tax_amendment (
   INDEX idx_bltax_budget_status (budget_id, status),
   INDEX idx_bltax_line (line_id),
   INDEX idx_bltax_requested (requested_by)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
