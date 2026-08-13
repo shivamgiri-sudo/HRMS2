@@ -8,7 +8,14 @@ export const rosterActualSecureRouter = Router();
 rosterActualSecureRouter.use(requireAuth);
 
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
-const ROSTER_SCOPE_ROLES = ["wfm", "process_manager", "branch_head", "manager", "assistant_manager", "tl"];
+// team_leader and tl are two distinct, independently assignable roles (team_leader is
+// canonical elsewhere in the backend); buildScopeWhereClause/hasAnyRole (scopeAccess.js)
+// do a literal string match with no ROLE_ALIASES expansion, so this array needed both
+// listed explicitly — same fix already applied to WFM_SCOPE_ROLES (wfm-ext.routes.ts),
+// LEAVE_VIEW_SCOPE_ROLES (leave.secure.routes.ts) and WFM_VIEW_SCOPE_ROLES
+// (wfm.regularization.secure.routes.ts) earlier the same day; this array is the same
+// team-leadership-tier role set, just for actual-roster data.
+const ROSTER_SCOPE_ROLES = ["wfm", "process_manager", "branch_head", "manager", "assistant_manager", "tl", "team_leader"];
 
 async function actualRosterScope(userId: string) {
   if (await hasAnyRole(userId, "admin", "hr", "ceo")) return { sql: "1=1", params: [] as unknown[] };

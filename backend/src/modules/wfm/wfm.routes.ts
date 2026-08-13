@@ -375,7 +375,11 @@ wfmRouter.get("/week-off-preference", requireAuth, h(async (req: any, res: any) 
     const emp = await getEmployeeForUser(req.authUser.id);
     if (!emp) return res.status(403).json({ success: false, error: 'Forbidden' });
 
-    const isManager = await checkRole(req.authUser.id, 'manager', 'tl', 'team_lead');
+    // 'team_lead' (no trailing 'er') was a typo — it matches no real role_key in
+    // workforce_role_catalog, so this branch could never recognize a team_leader caller
+    // regardless of intent. Corrected to 'team_leader', the canonical spelling used
+    // elsewhere in the backend.
+    const isManager = await checkRole(req.authUser.id, 'manager', 'tl', 'team_leader');
     if (isManager) {
       // Manager/TL sees direct reports (downline)
       cond = 'WHERE e.reporting_manager_id = ?';
