@@ -222,7 +222,7 @@ export const employeeService = {
   },
 
   async listEmployees(filters: EmployeeFilters & { scopeFilter?: { sql: string; params: unknown[] } }): Promise<PaginatedResult<Employee>> {
-    const { page, limit, status, recordStatus, processId, branchId, departmentId, designationId, search, scopeFilter } = filters;
+    const { page, limit, status, recordStatus, processId, branchId, departmentId, designationId, search, scopeFilter, includeAnalytics } = filters;
     const offset = (page - 1) * limit;
 
     // `active_status = 1` used to be hardcoded here, while `recordStatus` was declared in
@@ -231,22 +231,28 @@ export const employeeService = {
     // `active_status = 1 AND employment_status = 'Inactive'` and returned 0 rows, for all
     // 57,517 inactive employees. Offboarded was the same. An accepted-and-ignored parameter
     // reads as supported from every layer above it, which is why this survived.
-    const conds: string[] = [];
-    if (recordStatus === "inactive")    conds.push("e.active_status = 0");
-    else if (recordStatus === "all")    { /* both */ }
-    else                                conds.push("e.active_status = 1");
+    const recordStatusCond =
+      recordStatus === "inactive" ? "e.active_status = 0"
+      : recordStatus === "all"    ? null
+      :                             "e.active_status = 1";
 
-    const params: unknown[] = [];
+    // Filters shared between the row-fetching query and the analytics aggregates below.
+    // Deliberately excludes recordStatusCond: the directory page's Active/Inactive metric
+    // cards (PaginatedResult.stats) are meant to show both counts side by side within the
+    // caller's other filters, regardless of which value the recordStatus toggle itself
+    // currently holds — otherwise selecting "Inactive" would always show "Active: 0".
+    const filterConds: string[] = [];
+    const filterParams: unknown[] = [];
 
-    if (status)       { conds.push("e.employment_status = ?"); params.push(status); }
-    if (processId)    { conds.push("e.process_id = ?");        params.push(processId); }
-    if (branchId)     { conds.push("e.branch_id = ?");         params.push(branchId); }
-    if (departmentId) { conds.push("e.department_id = ?");     params.push(departmentId); }
-    if (designationId){ conds.push("e.designation_id = ?");    params.push(designationId); }
+    if (status)       { filterConds.push("e.employment_status = ?"); filterParams.push(status); }
+    if (processId)    { filterConds.push("e.process_id = ?");        filterParams.push(processId); }
+    if (branchId)     { filterConds.push("e.branch_id = ?");         filterParams.push(branchId); }
+    if (departmentId) { filterConds.push("e.department_id = ?");     filterParams.push(departmentId); }
+    if (designationId){ filterConds.push("e.designation_id = ?");    filterParams.push(designationId); }
     if (search) {
       // full_name alone missed employees whose full_name is empty — fall back to
       // first/last name (and the concatenation, so "First Last" still matches).
-      conds.push(`(
+      filterConds.push(`(
         e.full_name LIKE ?
         OR e.first_name LIKE ?
         OR e.last_name LIKE ?
@@ -256,19 +262,22 @@ export const employeeService = {
         OR e.official_email LIKE ?
       )`);
       const token = `%${search}%`;
-      params.push(token, token, token, token, token, token, token);
+      filterParams.push(token, token, token, token, token, token, token);
     }
 
     // Apply scope filter from middleware
     if (scopeFilter?.sql) {
       const scopeClause = scopeFilter.sql.replace(/^WHERE\s+/i, '').trim();
       if (scopeClause) {
-        conds.push(`(${scopeClause})`);
-        params.push(...(scopeFilter.params ?? []));
+        filterConds.push(`(${scopeClause})`);
+        filterParams.push(...(scopeFilter.params ?? []));
       }
     }
 
-    const where = `WHERE ${conds.join(" AND ")}`;
+    const conds = recordStatusCond ? [recordStatusCond, ...filterConds] : [...filterConds];
+    const params = [...filterParams];
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+    const filterWhere = filterConds.length ? `WHERE ${filterConds.join(" AND ")}` : "";
 
     // Use string interpolation for LIMIT/OFFSET to avoid parameter binding issues
     const [[rows], [countRows]] = await Promise.all([
@@ -305,7 +314,62 @@ export const employeeService = {
         `SELECT COUNT(*) AS total FROM employees e ${where}`, params
       ),
     ]);
-    return { data: rows as Employee[], total: (countRows as any)[0]?.total ?? 0, page, limit };
+    const result: PaginatedResult<Employee> = {
+      data: rows as Employee[],
+      total: (countRows as any)[0]?.total ?? 0,
+      page,
+      limit,
+    };
+
+    // Analytics are a separate, deliberately low-frequency call (see useEmployeeDirectoryAnalytics
+    // on the frontend, which fetches page=1&limit=1) — skip the extra aggregate queries on every
+    // ordinary page navigation. Both queries reuse filterWhere/filterParams, i.e. every filter the
+    // caller applied except recordStatus, for the reason documented above filterConds.
+    if (includeAnalytics) {
+      const [[statsRows], [breakdownRows]] = await Promise.all([
+        db.execute<RowDataPacket[]>(
+          `SELECT
+             COUNT(*) AS total_employees,
+             SUM(e.active_status = 1) AS active_employees,
+             SUM(e.active_status = 0) AS inactive_employees,
+             COUNT(DISTINCT e.department_id) AS department_count
+           FROM employees e
+           ${filterWhere}`,
+          filterParams,
+        ),
+        db.execute<RowDataPacket[]>(
+          `SELECT
+             pm.id AS process_id,
+             COALESCE(pm.process_name, 'Unassigned') AS process_name,
+             SUM(e.active_status = 1) AS active_count,
+             SUM(e.active_status = 0) AS inactive_count,
+             COUNT(*) AS total_count
+           FROM employees e
+           LEFT JOIN process_master pm ON pm.id = e.process_id
+           ${filterWhere}
+           GROUP BY pm.id, pm.process_name
+           ORDER BY total_count DESC
+           LIMIT 100`,
+          filterParams,
+        ),
+      ]);
+      const s = (statsRows as any[])[0] ?? {};
+      result.stats = {
+        total_employees: Number(s.total_employees ?? 0),
+        active_employees: Number(s.active_employees ?? 0),
+        inactive_employees: Number(s.inactive_employees ?? 0),
+        department_count: Number(s.department_count ?? 0),
+      };
+      result.process_breakdown = (breakdownRows as any[]).map((r) => ({
+        process_id: r.process_id ?? null,
+        process_name: r.process_name,
+        active_count: Number(r.active_count ?? 0),
+        inactive_count: Number(r.inactive_count ?? 0),
+        total_count: Number(r.total_count ?? 0),
+      }));
+    }
+
+    return result;
   },
 
   async updateEmployee(id: string, input: UpdateEmployeeInput, actorUserId: string): Promise<Employee> {

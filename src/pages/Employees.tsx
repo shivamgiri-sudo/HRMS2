@@ -275,7 +275,12 @@ const Employees = () => {
 
   const isLoading = isLoadingEmployees || isLoadingRole;
 
-  const filteredStats = directoryData?.stats;
+  // Metric-card counts come from the analytics call (page=1&limit=1, includeAnalytics=true),
+  // not the row-fetching directoryData call — the backend only computes stats/process_breakdown
+  // when includeAnalytics is set, and directoryData never sets it. Previously read
+  // directoryData?.stats here, which the backend never populated, so Active/Inactive always
+  // rendered 0.
+  const filteredStats = directoryAnalytics?.stats;
   const totalEmployees = filteredStats?.total_employees ?? directoryTotal;
   const activeEmployees = filteredStats?.active_employees ?? 0;
   const inactiveEmployees = filteredStats?.inactive_employees ?? 0;
