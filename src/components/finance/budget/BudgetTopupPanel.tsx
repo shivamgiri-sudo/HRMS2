@@ -33,6 +33,7 @@ type BudgetTopupRequest = {
   finance_head_reviewed_by: string | null;
   rejection_reason: string | null;
   created_at: string;
+  requested_by: string | null;
 };
 
 /** A row from GET /pnl/budget-lines/available. The headroom column is `available_gross_amount`
@@ -71,6 +72,7 @@ export function BudgetTopupPanel({
   canReviewFinanceStage,
   presetLineId,
   onConsumedPreset,
+  currentUserId,
 }: {
   branchId: string;
   period: string;
@@ -84,6 +86,9 @@ export function BudgetTopupPanel({
   canReviewFinanceStage: boolean;
   presetLineId?: string | null;
   onConsumedPreset?: () => void;
+  /** Current user's ID — used to disable the Approve button when the viewer is the submitter
+   *  (maker-checker enforcement mirrors the backend check in budget-topup.service.ts). */
+  currentUserId?: string | null;
 }) {
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(Boolean(presetLineId));
@@ -231,7 +236,16 @@ export function BudgetTopupPanel({
                   <div className="flex gap-2">
                     <Button
                       size="sm"
-                      disabled={reviewMutation.isPending}
+                      disabled={
+                        reviewMutation.isPending ||
+                        // P0P1-4: prevent self-approval — mirror backend maker-checker.
+                        Boolean(currentUserId && request.requested_by && currentUserId === request.requested_by)
+                      }
+                      title={
+                        currentUserId && request.requested_by && currentUserId === request.requested_by
+                          ? "You submitted this request — a different reviewer must approve it"
+                          : undefined
+                      }
                       onClick={() => reviewMutation.mutate({ id: request.id, decision: "approve" })}
                     >
                       <CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve

@@ -2121,6 +2121,7 @@ export default function BranchBudgetManagementWorkspace() {
                   canCreate={Boolean(capabilities?.canCreate || capabilities?.canReviewBranchStage)}
                   canReviewBranchStage={Boolean(capabilities?.canReviewBranchStage)}
                   canReviewFinanceStage={Boolean(capabilities?.canReviewFinanceStage)}
+                  currentUserId={user?.id ?? null}
                   presetLineId={topupPresetLineId || null}
                   onConsumedPreset={() => setTopupPresetLineId("")}
                 />
