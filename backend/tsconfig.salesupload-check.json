@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/modules/sales-upload/sales-upload.service.ts", "src/modules/sales-upload/sales-upload.routes.ts"],
+  "compilerOptions": { "noEmit": true }
+}
