@@ -199,6 +199,13 @@ function legacyBranchCondition(
 }
 export const grnService = {
   async createDraft(payload: CreateGrnPayload, actorUserId: string, actorRole: string) {
+    // P0-2: Provision type has no accounting lifecycle in application code.
+    if ((payload.grnType as string) === "provision") {
+      throw Object.assign(
+        new Error("PROVISION_GRN_NOT_SUPPORTED: Provision GRN accounting lifecycle is not yet implemented. Contact Finance Admin."),
+        { code: "PROVISION_GRN_NOT_SUPPORTED" }
+      );
+    }
     if (!payload.branchId) throw new Error("Branch is required");
     if (!payload.budgetLineId) throw new Error("An approved budget line is required");
     if (!payload.billDate || !/^\d{4}-\d{2}-\d{2}$/.test(payload.billDate)) {
@@ -393,6 +400,13 @@ export const grnService = {
     actorRole: string
   ) {
     const grn = await getGrnOrThrow(grnId);
+    // P0-2: Provision type has no accounting lifecycle — fail closed.
+    if (String(grn.grn_type) === "provision") {
+      throw Object.assign(
+        new Error("PROVISION_GRN_NOT_SUPPORTED: Provision GRNs cannot be submitted until the accounting lifecycle is implemented."),
+        { code: "PROVISION_GRN_NOT_SUPPORTED" }
+      );
+    }
     if (grn.status !== "draft") {
       throw new Error(`GRN is already ${grn.status}, cannot submit`);
     }
@@ -457,6 +471,51 @@ export const grnService = {
             ? "finance_head"
             : null
         : role;
+
+      // P0-2: Provision GRNs have no payment/ledger/reversal lifecycle — block approval.
+      if (String(grn.grn_type) === "provision") {
+        throw Object.assign(
+          new Error("PROVISION_GRN_NOT_SUPPORTED: Provision GRNs cannot be approved until the accounting lifecycle is implemented."),
+          { code: "PROVISION_GRN_NOT_SUPPORTED" }
+        );
+      }
+
+      // P0-3: Re-check period lock inside the transaction immediately before the financial
+      // mutation. Guards against a concurrent lock applied after the API-level check in
+      // createDraft() but before this approval actually changes reserved/consumed figures.
+      const grnPeriod = String(grn.accounting_period ?? grn.bill_date ?? "").substring(0, 7);
+      if (grnPeriod && await isPeriodLocked(grnPeriod, connection)) {
+        throw new Error(
+          `${grnPeriod} was locked for P&L close before this approval completed. `
+          + "Resubmit the GRN against the current open period."
+        );
+      }
+
+      // P0P1-4: Enforce actor-identity maker-checker, not role names alone.
+      // Applies to approvals only — rejections do not create financial commitments.
+      if (payload.decision === "approved") {
+        if (
+          effectiveStage === "branch_head"
+          && grn.submitted_by
+          && String(grn.submitted_by) === actorUserId
+        ) {
+          throw new Error(
+            "Maker-checker violation: the same person cannot submit and Branch Head-approve the same GRN"
+          );
+        }
+        if (effectiveStage === "finance_head") {
+          if (grn.submitted_by && String(grn.submitted_by) === actorUserId) {
+            throw new Error(
+              "Maker-checker violation: Finance Head cannot be the person who submitted this GRN"
+            );
+          }
+          if (grn.branch_head_reviewed_by && String(grn.branch_head_reviewed_by) === actorUserId) {
+            throw new Error(
+              "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head review"
+            );
+          }
+        }
+      }
 
       if (effectiveStage === "branch_head") {
         if (grn.status !== "submitted") {

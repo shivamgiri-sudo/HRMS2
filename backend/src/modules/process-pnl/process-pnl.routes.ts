@@ -341,8 +341,8 @@ router.patch(
   })
 );
 
-// 2-A: Budget transfer / virement — Finance Head moves approved budget between lines on the same
-// active budget without requiring a full re-approval cycle.
+// 2-A: Budget transfer / virement — submit creates a pending request; a distinct authorised
+// actor must approve via /budget-transfers/:id/review before lines are mutated (P1-7).
 router.post(
   "/pnl/budgets/:budgetId/transfer",
   requireWriteAccess,
@@ -352,7 +352,7 @@ router.post(
     await assertBranchOf(req, await branchBudgetService.get(req.params.budgetId).then((b: any) => b?.branch_id));
     const { fromLineId, toLineId, transferAmount, reason } = req.body ?? {};
     if (!fromLineId || !toLineId) throw Object.assign(new Error("fromLineId and toLineId are required"), { statusCode: 400 });
-    const data = await branchBudgetService.transferBetweenLines({
+    const data = await branchBudgetService.submitTransfer({
       budgetId: req.params.budgetId,
       fromLineId: String(fromLineId),
       toLineId: String(toLineId),
@@ -360,6 +360,29 @@ router.post(
       reason: String(reason ?? ""),
       actorId: user.id,
     });
+    res.status(201).json({ success: true, data });
+  })
+);
+
+// 2-A: Review a pending virement — approve (applies with canonical recalc) or reject.
+// Maker-checker: approver cannot be the person who submitted.
+router.post(
+  "/pnl/budget-transfers/:id/review",
+  requireWriteAccess,
+  requireRole("finance_head", "accounts_head", "super_admin"),
+  h(async (req, res) => {
+    const user = actor(req);
+    const { decision, remarks } = req.body ?? {};
+    if (!["approve", "reject"].includes(String(decision ?? ""))) {
+      throw Object.assign(new Error("decision must be 'approve' or 'reject'"), { statusCode: 400 });
+    }
+    const data = await branchBudgetService.reviewTransfer(
+      req.params.id,
+      String(decision) as "approve" | "reject",
+      user.id,
+      user.role,
+      remarks ? String(remarks) : undefined
+    );
     res.json({ success: true, data });
   })
 );

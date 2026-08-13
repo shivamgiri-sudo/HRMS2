@@ -200,6 +200,18 @@ export const grnValidationControlService = {
     actorRole: string,
     remarks?: string
   ) {
+    // P0-2: Provision GRNs have no accounting lifecycle — fail closed before any validation.
+    const [typeRows] = await db.execute<RowDataPacket[]>(
+      "SELECT grn_type FROM grn_request WHERE id = ? LIMIT 1",
+      [grnId]
+    );
+    if (!typeRows[0]) throw new Error("GRN not found");
+    if (String(typeRows[0].grn_type) === "provision") {
+      throw Object.assign(
+        new Error("PROVISION_GRN_NOT_SUPPORTED: Provision GRN accounting lifecycle is not yet implemented. Contact Finance Admin."),
+        { code: "PROVISION_GRN_NOT_SUPPORTED" }
+      );
+    }
     const validation = await effectiveValidation(grnId);
     if (validation.blocking.length) {
       throw new Error(

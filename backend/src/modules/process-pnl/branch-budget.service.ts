@@ -11,6 +11,7 @@ import {
   replaceLineAllocations,
   type ManualAllocationInput,
 } from "./branch-budget-allocation.service.js";
+import { isPeriodLocked } from "./finance-period-lock.js";
 
 export type BudgetTaxTreatment =
   | "inclusive"
@@ -85,6 +86,10 @@ export interface BudgetLineCorrectionInput {
 
 function roundMoney(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function roundQuantity(value: number) {
+  return Math.round((Number(value) + Number.EPSILON) * 10_000) / 10_000;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -1488,7 +1493,9 @@ export const branchBudgetService = {
     try {
       await connection.beginTransaction();
       const [rows] = await connection.execute<RowDataPacket[]>(
-        `SELECT status, revision_no
+        // P0P1-4: Include actor columns so we can enforce identity-based maker-checker.
+        `SELECT status, revision_no,
+                submitted_by, branch_head_approved_by, finance_head_approved_by
            FROM finance_budget_header
           WHERE id = ?
           FOR UPDATE`,
@@ -1501,6 +1508,49 @@ export const branchBudgetService = {
         throw new Error(
           `Role ${actorRole} cannot review budget in status ${currentStatus}`
         );
+      }
+
+      // P0P1-4: Enforce actor-identity maker-checker — role membership is not sufficient.
+      // A finance_admin or multi-role user holding both submitter and approver roles must not
+      // be able to self-approve at any stage.
+      if (decision === "approve") {
+        const submittedBy = rows[0].submitted_by ? String(rows[0].submitted_by) : null;
+        const bhApprovedBy = rows[0].branch_head_approved_by ? String(rows[0].branch_head_approved_by) : null;
+        const fhApprovedBy = rows[0].finance_head_approved_by ? String(rows[0].finance_head_approved_by) : null;
+        if (role === "branch_head" && submittedBy && submittedBy === actorId) {
+          throw new Error(
+            "Maker-checker violation: the same person cannot submit and Branch Head-approve the same budget"
+          );
+        }
+        if (role === "finance_head") {
+          if (submittedBy && submittedBy === actorId) {
+            throw new Error(
+              "Maker-checker violation: Finance Head cannot be the person who submitted this budget"
+            );
+          }
+          if (bhApprovedBy && bhApprovedBy === actorId) {
+            throw new Error(
+              "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head approval"
+            );
+          }
+        }
+        if (role === "accounts_head") {
+          if (submittedBy && submittedBy === actorId) {
+            throw new Error(
+              "Maker-checker violation: Accounts Head cannot be the person who submitted this budget"
+            );
+          }
+          if (bhApprovedBy && bhApprovedBy === actorId) {
+            throw new Error(
+              "Maker-checker violation: Accounts Head cannot be the person who performed the Branch Head approval"
+            );
+          }
+          if (fhApprovedBy && fhApprovedBy === actorId) {
+            throw new Error(
+              "Maker-checker violation: Accounts Head cannot be the person who performed the Finance Head approval"
+            );
+          }
+        }
       }
 
       const nextStatus: BudgetStatus = decision === "reject"
@@ -1656,10 +1706,10 @@ export const branchBudgetService = {
   },
 
   /**
-   * Moves budget (gross_amount) from one active line to another within the same budget.
-   * Validates: same budget, active status, from_line has sufficient available amount.
+   * Submits a virement request (pending) — no line mutation yet.
+   * A distinct authorised actor must call reviewTransfer() to apply it (P1-7 maker-checker).
    */
-  async transferBetweenLines(input: {
+  async submitTransfer(input: {
     budgetId: string;
     fromLineId: string;
     toLineId: string;
@@ -1668,73 +1718,324 @@ export const branchBudgetService = {
     actorId: string;
   }) {
     const amount = roundMoney(Number(input.transferAmount));
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new Error("Transfer amount must be a positive number");
-    }
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error("Transfer amount must be a positive number");
     if (!input.reason?.trim()) throw new Error("Reason is required for a budget transfer");
     if (input.fromLineId === input.toLineId) throw new Error("From and To lines must be different");
+
+    // P1-7: Idempotency — reject a duplicate pending transfer for the same lines/amount
+    // created in the last 60 seconds (double-click or network retry guard).
+    const [dupes] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM finance_budget_transfer
+        WHERE budget_id = ? AND from_line_id = ? AND to_line_id = ?
+          AND transfer_amount = ? AND status = 'pending'
+          AND created_at > DATE_SUB(NOW(), INTERVAL 60 SECOND)
+       LIMIT 1`,
+      [input.budgetId, input.fromLineId, input.toLineId, amount]
+    );
+    if ((dupes as RowDataPacket[]).length > 0) {
+      throw new Error(
+        "A duplicate transfer request is already pending. The previous request is awaiting approval."
+      );
+    }
+
+    const [headerRows] = await db.execute<RowDataPacket[]>(
+      "SELECT id, status, period_code FROM finance_budget_header WHERE id = ?",
+      [input.budgetId]
+    );
+    const header = (headerRows as RowDataPacket[])[0];
+    if (!header) throw new Error("Budget not found");
+    if (String(header.status) !== "active") throw new Error("Budget transfers are only allowed on active budgets");
+
+    // Early period-lock check at submission time — gives an upfront error rather than
+    // having the request sit pending only to fail at review.
+    if (await isPeriodLocked(String(header.period_code))) {
+      throw new Error(
+        `${header.period_code} is locked for P&L close. Budget transfers cannot be submitted for locked periods.`
+      );
+    }
+
+    const [lineRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, budget_id, gross_amount, reserved_amount, consumed_amount
+         FROM finance_budget_line WHERE id IN (?, ?)`,
+      [input.fromLineId, input.toLineId]
+    );
+    const fromLine = (lineRows as RowDataPacket[]).find((r) => String(r.id) === input.fromLineId);
+    const toLine   = (lineRows as RowDataPacket[]).find((r) => String(r.id) === input.toLineId);
+    if (!fromLine) throw new Error("Source budget line not found");
+    if (!toLine)   throw new Error("Target budget line not found");
+    if (String(fromLine.budget_id) !== input.budgetId) throw new Error("Source line belongs to a different budget");
+    if (String(toLine.budget_id)   !== input.budgetId) throw new Error("Target line belongs to a different budget");
+
+    const available = roundMoney(
+      Number(fromLine.gross_amount) - Number(fromLine.reserved_amount) - Number(fromLine.consumed_amount)
+    );
+    if (amount > available + 0.01) {
+      throw new Error(
+        `Transfer amount ₹${amount.toLocaleString("en-IN")} exceeds available balance ₹${available.toLocaleString("en-IN")} on the source line`
+      );
+    }
+
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO finance_budget_transfer
+         (id, budget_id, from_line_id, to_line_id, transfer_amount, reason, status, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
+      [id, input.budgetId, input.fromLineId, input.toLineId, amount, input.reason.trim(), input.actorId]
+    );
+    return this.getTransfer(id);
+  },
+
+  async getTransfer(id: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT t.*, h.period_code, bm.branch_name,
+              fl.item_name AS from_item_name, fl.head AS from_head,
+              tl.item_name AS to_item_name,   tl.head AS to_head
+         FROM finance_budget_transfer t
+         JOIN finance_budget_header h ON h.id = t.budget_id
+         LEFT JOIN branch_master bm ON bm.id = h.branch_id
+         LEFT JOIN finance_budget_line fl ON fl.id = t.from_line_id
+         LEFT JOIN finance_budget_line tl ON tl.id = t.to_line_id
+        WHERE t.id = ?`,
+      [id]
+    );
+    if (!(rows as RowDataPacket[])[0]) throw new Error("Transfer not found");
+    return (rows as RowDataPacket[])[0];
+  },
+
+  /**
+   * Approves or rejects a pending virement.
+   *
+   * On approval: both lines are recomputed via calculateBudgetLine (P1-6) so quantity,
+   * base_amount, tax_amount, GST splits and pnl_cost_amount remain internally consistent —
+   * not just gross_amount. The header totals are re-summed from the lines, same as top-up.
+   *
+   * Maker-checker: approver cannot be the same person who submitted (P1-7).
+   * Period lock: re-checked inside the transaction before mutation (P0-3).
+   */
+  async reviewTransfer(
+    id: string,
+    decision: "approve" | "reject",
+    actorId: string,
+    actorRole: string,
+    remarks?: string
+  ) {
+    if (decision === "reject" && !remarks?.trim()) {
+      throw new Error("A reason is required to reject a transfer request");
+    }
 
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
 
-      const [headerRows] = await connection.execute<RowDataPacket[]>(
-        `SELECT id, status FROM finance_budget_header WHERE id = ? FOR UPDATE`,
-        [input.budgetId]
+      const [transferRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT t.*, h.period_code
+           FROM finance_budget_transfer t
+           JOIN finance_budget_header h ON h.id = t.budget_id
+          WHERE t.id = ?
+          FOR UPDATE`,
+        [id]
       );
-      if (!headerRows[0]) throw new Error("Budget not found");
-      if (headerRows[0].status !== "active") {
-        throw new Error("Budget transfers are only allowed on active budgets");
+      const transfer = (transferRows as RowDataPacket[])[0];
+      if (!transfer) throw new Error("Budget transfer not found");
+      if (String(transfer.status) !== "pending") {
+        throw new Error(`Transfer is not awaiting approval (status: ${transfer.status})`);
       }
 
-      const [lineRows] = await connection.execute<RowDataPacket[]>(
-        `SELECT id, budget_id,
-                gross_amount, reserved_amount, consumed_amount,
-                (gross_amount - reserved_amount - consumed_amount) AS available_gross_amount
-           FROM finance_budget_line
-          WHERE id IN (?, ?)
-          FOR UPDATE`,
-        [input.fromLineId, input.toLineId]
-      );
-      const fromLine = (lineRows as RowDataPacket[]).find((row) => row.id === input.fromLineId);
-      const toLine   = (lineRows as RowDataPacket[]).find((row) => row.id === input.toLineId);
-      if (!fromLine) throw new Error("Source budget line not found");
-      if (!toLine)   throw new Error("Target budget line not found");
-      if (String(fromLine.budget_id) !== input.budgetId) throw new Error("Source line belongs to a different budget");
-      if (String(toLine.budget_id)   !== input.budgetId) throw new Error("Target line belongs to a different budget");
+      // P1-7: Maker-checker — approver cannot be the person who submitted.
+      if (String(transfer.created_by) === actorId) {
+        throw new Error(
+          "Maker-checker violation: the approver cannot be the same person who submitted this transfer"
+        );
+      }
 
-      const available = roundMoney(Number(fromLine.available_gross_amount));
-      if (amount > available) {
+      if (decision === "reject") {
+        await connection.execute(
+          `UPDATE finance_budget_transfer
+              SET status = 'rejected', approved_by = ?, approved_at = NOW()
+            WHERE id = ? AND status = 'pending'`,
+          [actorId, id]
+        );
+        await auditInTransaction(
+          connection, String(transfer.budget_id), "TRANSFER_REJECT", "active", "active",
+          actorId, actorRole,
+          `Transfer ₹${transfer.transfer_amount} rejected. ${remarks?.trim() ?? ""}`
+        );
+        await connection.commit();
+        return this.getTransfer(id);
+      }
+
+      // --- Approve: apply the transfer with canonical recalculation ---
+
+      // P0-3: Re-check period lock inside the transaction before mutation.
+      if (await isPeriodLocked(String(transfer.period_code), connection)) {
+        throw new Error(
+          `${transfer.period_code} is locked for P&L close. This transfer cannot be applied.`
+        );
+      }
+
+      const [headerRows] = await connection.execute<RowDataPacket[]>(
+        "SELECT id, status FROM finance_budget_header WHERE id = ? FOR UPDATE",
+        [String(transfer.budget_id)]
+      );
+      if (!headerRows[0] || String(headerRows[0].status) !== "active") {
+        throw new Error("Budget is no longer active; transfer cannot be applied");
+      }
+
+      const amount = Number(transfer.transfer_amount);
+
+      // Lock and read source line.
+      const [fromRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, budget_id, head, sub_head, item_name, quantity, unit, unit_rate,
+                tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
+                gross_amount, reserved_amount, consumed_amount
+           FROM finance_budget_line WHERE id = ? FOR UPDATE`,
+        [String(transfer.from_line_id)]
+      );
+      const fromLine = (fromRows as RowDataPacket[])[0];
+      if (!fromLine) throw new Error("Source budget line not found");
+
+      // Derive quantity delta: grossPerUnit = calculateBudgetLine({...line, quantity:1}).grossAmount.
+      // This is the exact inverse of the forward calculation so the gross change is precisely
+      // `amount` regardless of tax treatment, and all other fields stay internally consistent.
+      const fromGrossPerUnit = calculateBudgetLine({
+        head: String(fromLine.head),
+        subHead: fromLine.sub_head ? String(fromLine.sub_head) : undefined,
+        itemName: String(fromLine.item_name),
+        quantity: 1,
+        unit: String(fromLine.unit ?? ""),
+        unitRate: Number(fromLine.unit_rate),
+        taxTreatment: String(fromLine.tax_treatment) as BudgetTaxTreatment,
+        gstRate: Number(fromLine.gst_rate ?? 0),
+        gstType: (fromLine.gst_type ?? undefined) as BudgetGstType | undefined,
+        recoverableTaxPct: fromLine.recoverable_tax_pct == null ? undefined : Number(fromLine.recoverable_tax_pct),
+        justification: "",
+      }).grossAmount;
+      if (!fromGrossPerUnit || fromGrossPerUnit <= 0) {
+        throw new Error("Source line has a zero unit rate; transfer amount cannot be derived");
+      }
+
+      const fromQtyDelta = roundQuantity(amount / fromGrossPerUnit);
+      const newFromQty = roundQuantity(Number(fromLine.quantity) - fromQtyDelta);
+      if (newFromQty < 0) {
+        throw new Error("Transfer would reduce source line quantity below zero");
+      }
+      const available = roundMoney(
+        Number(fromLine.gross_amount) - Number(fromLine.reserved_amount) - Number(fromLine.consumed_amount)
+      );
+      if (amount > available + 0.01) {
         throw new Error(
           `Transfer amount ₹${amount.toLocaleString("en-IN")} exceeds available balance ₹${available.toLocaleString("en-IN")} on the source line`
         );
       }
 
+      const fromRecomputed = calculateBudgetLine({
+        head: String(fromLine.head),
+        subHead: fromLine.sub_head ? String(fromLine.sub_head) : undefined,
+        itemName: String(fromLine.item_name),
+        quantity: newFromQty,
+        unit: String(fromLine.unit ?? ""),
+        unitRate: Number(fromLine.unit_rate),
+        taxTreatment: String(fromLine.tax_treatment) as BudgetTaxTreatment,
+        gstRate: Number(fromLine.gst_rate ?? 0),
+        gstType: (fromLine.gst_type ?? undefined) as BudgetGstType | undefined,
+        recoverableTaxPct: fromLine.recoverable_tax_pct == null ? undefined : Number(fromLine.recoverable_tax_pct),
+        justification: "",
+      });
       await connection.execute(
-        `UPDATE finance_budget_line SET gross_amount = gross_amount - ? WHERE id = ?`,
-        [amount, input.fromLineId]
-      );
-      await connection.execute(
-        `UPDATE finance_budget_line SET gross_amount = gross_amount + ? WHERE id = ?`,
-        [amount, input.toLineId]
+        `UPDATE finance_budget_line
+            SET quantity = ?, base_amount = ?, tax_amount = ?, gross_amount = ?,
+                recoverable_tax_amount = ?, pnl_cost_amount = ?,
+                cgst_amount = ?, sgst_amount = ?, igst_amount = ?
+          WHERE id = ?`,
+        [
+          newFromQty, fromRecomputed.baseAmount, fromRecomputed.taxAmount, fromRecomputed.grossAmount,
+          fromRecomputed.recoverableTaxAmount, fromRecomputed.pnlCostAmount,
+          fromRecomputed.cgstAmount, fromRecomputed.sgstAmount, fromRecomputed.igstAmount,
+          String(fromLine.id),
+        ]
       );
 
-      const transferId = randomUUID();
+      // Lock and read target line.
+      const [toRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, budget_id, head, sub_head, item_name, quantity, unit, unit_rate,
+                tax_treatment, gst_rate, gst_type, recoverable_tax_pct
+           FROM finance_budget_line WHERE id = ? FOR UPDATE`,
+        [String(transfer.to_line_id)]
+      );
+      const toLine = (toRows as RowDataPacket[])[0];
+      if (!toLine) throw new Error("Target budget line not found");
+
+      const toGrossPerUnit = calculateBudgetLine({
+        head: String(toLine.head),
+        subHead: toLine.sub_head ? String(toLine.sub_head) : undefined,
+        itemName: String(toLine.item_name),
+        quantity: 1,
+        unit: String(toLine.unit ?? ""),
+        unitRate: Number(toLine.unit_rate),
+        taxTreatment: String(toLine.tax_treatment) as BudgetTaxTreatment,
+        gstRate: Number(toLine.gst_rate ?? 0),
+        gstType: (toLine.gst_type ?? undefined) as BudgetGstType | undefined,
+        recoverableTaxPct: toLine.recoverable_tax_pct == null ? undefined : Number(toLine.recoverable_tax_pct),
+        justification: "",
+      }).grossAmount;
+      if (!toGrossPerUnit || toGrossPerUnit <= 0) {
+        throw new Error("Target line has a zero unit rate; transfer amount cannot be derived");
+      }
+
+      const toQtyDelta = roundQuantity(amount / toGrossPerUnit);
+      const newToQty = roundQuantity(Number(toLine.quantity) + toQtyDelta);
+      const toRecomputed = calculateBudgetLine({
+        head: String(toLine.head),
+        subHead: toLine.sub_head ? String(toLine.sub_head) : undefined,
+        itemName: String(toLine.item_name),
+        quantity: newToQty,
+        unit: String(toLine.unit ?? ""),
+        unitRate: Number(toLine.unit_rate),
+        taxTreatment: String(toLine.tax_treatment) as BudgetTaxTreatment,
+        gstRate: Number(toLine.gst_rate ?? 0),
+        gstType: (toLine.gst_type ?? undefined) as BudgetGstType | undefined,
+        recoverableTaxPct: toLine.recoverable_tax_pct == null ? undefined : Number(toLine.recoverable_tax_pct),
+        justification: "",
+      });
       await connection.execute(
-        `INSERT INTO finance_budget_transfer
-           (id, budget_id, from_line_id, to_line_id, transfer_amount, reason,
-            status, approved_by, approved_at, created_by)
-         VALUES (?,?,?,?,?,?,'approved',?,NOW(),?)`,
-        [transferId, input.budgetId, input.fromLineId, input.toLineId, amount, input.reason.trim(), input.actorId, input.actorId]
+        `UPDATE finance_budget_line
+            SET quantity = ?, base_amount = ?, tax_amount = ?, gross_amount = ?,
+                recoverable_tax_amount = ?, pnl_cost_amount = ?,
+                cgst_amount = ?, sgst_amount = ?, igst_amount = ?
+          WHERE id = ?`,
+        [
+          newToQty, toRecomputed.baseAmount, toRecomputed.taxAmount, toRecomputed.grossAmount,
+          toRecomputed.recoverableTaxAmount, toRecomputed.pnlCostAmount,
+          toRecomputed.cgstAmount, toRecomputed.sgstAmount, toRecomputed.igstAmount,
+          String(toLine.id),
+        ]
       );
 
+      // Re-sum header totals from the lines (same pattern as applyTopupToLine).
+      await connection.execute(
+        `UPDATE finance_budget_header h
+            SET h.gross_budget_amount = (
+                  SELECT COALESCE(SUM(l.gross_amount), 0) FROM finance_budget_line l WHERE l.budget_id = h.id),
+                h.pnl_budget_amount = (
+                  SELECT COALESCE(SUM(l.pnl_cost_amount), 0) FROM finance_budget_line l WHERE l.budget_id = h.id)
+          WHERE h.id = ?`,
+        [String(transfer.budget_id)]
+      );
+
+      await connection.execute(
+        `UPDATE finance_budget_transfer
+            SET status = 'approved', approved_by = ?, approved_at = NOW()
+          WHERE id = ? AND status = 'pending'`,
+        [actorId, id]
+      );
       await auditInTransaction(
-        connection, input.budgetId, "TRANSFER", "active", "active", input.actorId, "finance_head",
-        `Transfer ₹${amount} from ${input.fromLineId} to ${input.toLineId}: ${input.reason.trim()}`
+        connection, String(transfer.budget_id), "TRANSFER_APPROVE", "active", "active",
+        actorId, actorRole,
+        `Transfer ₹${amount} from ${transfer.from_line_id} to ${transfer.to_line_id} approved`
       );
 
       await connection.commit();
-      return { transferId, fromLineId: input.fromLineId, toLineId: input.toLineId, amount };
+      return this.getTransfer(id);
     } catch (error) {
       await connection.rollback();
       throw error;

@@ -1420,6 +1420,46 @@ export const grnSmartService = {
       if (!allocations.length) throw new Error("Smart GRN has no saved cost allocations");
       const role = actorRole.toLowerCase();
 
+      // P0-2: Provision GRNs have no payment/ledger/reversal lifecycle — block approval.
+      if (String(grn.grn_type) === "provision") {
+        throw Object.assign(
+          new Error("PROVISION_GRN_NOT_SUPPORTED: Provision GRN approval is not yet implemented. Contact Finance Admin."),
+          { code: "PROVISION_GRN_NOT_SUPPORTED" }
+        );
+      }
+
+      // P0-3: Re-check period lock inside the transaction immediately before the financial
+      // mutation so a concurrent lock cannot slip through between API check and this UPDATE.
+      const grnPeriod = String(grn.accounting_period ?? grn.bill_date ?? "").substring(0, 7);
+      if (grnPeriod && await isPeriodLocked(grnPeriod, connection)) {
+        throw new Error(
+          `${grnPeriod} was locked for P&L close before this approval completed. `
+          + "Resubmit the GRN against the current open period."
+        );
+      }
+
+      // P0P1-4: Enforce actor-identity maker-checker — role names alone are insufficient.
+      // Applies to approvals; rejections do not create financial commitments.
+      if (decision === "approved") {
+        if (role === "branch_head" && grn.submitted_by && String(grn.submitted_by) === actorUserId) {
+          throw new Error(
+            "Maker-checker violation: the same person cannot submit and Branch Head-approve the same GRN"
+          );
+        }
+        if (role === "finance_head") {
+          if (grn.submitted_by && String(grn.submitted_by) === actorUserId) {
+            throw new Error(
+              "Maker-checker violation: Finance Head cannot be the person who submitted this GRN"
+            );
+          }
+          if (grn.branch_head_reviewed_by && String(grn.branch_head_reviewed_by) === actorUserId) {
+            throw new Error(
+              "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head review"
+            );
+          }
+        }
+      }
+
       if (role === "branch_head") {
         if (String(grn.status) !== "submitted") {
           throw new Error(`Branch Head can only review submitted GRNs. Current status: ${grn.status}`);
@@ -1430,17 +1470,25 @@ export const grnSmartService = {
         } else {
           newStatus = "rejected";
         }
-        await connection.execute(
+        // P1-5: Include expected status in WHERE so a concurrent state change yields
+        // affectedRows === 0 and is caught as a 409, not silently swallowed.
+        const [bhUpdateResult] = await connection.execute<ResultSetHeader>(
           `UPDATE grn_request
               SET status = ?, branch_head_reviewed_by = ?, branch_head_reviewed_at = NOW(),
                   branch_head_review_note = ?, reviewed_by = ?, reviewed_at = NOW(),
                   review_note = ?, rejection_reason = ?
-            WHERE id = ?`,
+            WHERE id = ? AND status = 'submitted'`,
           [
             newStatus, actorUserId, reviewNote?.trim() || null, actorUserId,
             reviewNote?.trim() || null, decision === "rejected" ? reviewNote?.trim() : null, grnId,
           ]
         );
+        if (bhUpdateResult.affectedRows !== 1) {
+          throw Object.assign(
+            new Error("GRN state changed concurrently; refresh and try again"),
+            { code: "STATE_CHANGED", statusCode: 409 }
+          );
+        }
       } else if (role === "finance_head") {
         if (String(grn.status) !== "branch_head_approved") {
           throw new Error(`Finance Head can only review Branch Head-approved GRNs. Current status: ${grn.status}`);
@@ -1448,19 +1496,26 @@ export const grnSmartService = {
         if (decision === "approved") {
           await consumeAllocations(connection, allocations);
           newStatus = grn.grn_type === "vendor" ? "pending_accounts_payment" : "approved";
-          await connection.execute(
+          // P1-5: Expected status in WHERE for atomic guard.
+          const [fhUpdateResult] = await connection.execute<ResultSetHeader>(
             `UPDATE grn_request
                 SET status = ?, accounts_payment_status = ?, finance_head_reviewed_by = ?,
                     finance_head_reviewed_at = NOW(), finance_head_review_note = ?,
                     reviewed_by = ?, reviewed_at = NOW(), review_note = ?, approved_by = ?,
                     approved_at = NOW(), rejection_reason = NULL
-              WHERE id = ?`,
+              WHERE id = ? AND status = 'branch_head_approved'`,
             [
               newStatus, grn.grn_type === "vendor" ? "pending" : "not_required",
               actorUserId, reviewNote?.trim() || null, actorUserId,
               reviewNote?.trim() || null, actorUserId, grnId,
             ]
           );
+          if (fhUpdateResult.affectedRows !== 1) {
+            throw Object.assign(
+              new Error("GRN state changed concurrently; refresh and try again"),
+              { code: "STATE_CHANGED", statusCode: 409 }
+            );
+          }
           if (grn.grn_type === "vendor") {
             paymentId = await vendorPaymentService.createFromGrn(grnId, actorUserId, connection);
           } else if (grn.grn_type === "imprest") {

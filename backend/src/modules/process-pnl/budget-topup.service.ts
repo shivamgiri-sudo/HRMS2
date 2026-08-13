@@ -10,6 +10,7 @@ import {
 import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance-access-scope.js";
 import { resolvePendingWith } from "../finance/finance-workflow-role.js";
 import { lockActiveBudgetLine } from "./budget-consumption.service.js";
+import { isPeriodLocked } from "./finance-period-lock.js";
 
 export type BudgetTopupStatus =
   | "submitted"
@@ -285,8 +286,13 @@ export const budgetTopupService = {
     const connection = await db.getConnection();
     try {
       await connection.beginTransaction();
+      // P0-3: Join the header to get period_code so the lock check runs inside this transaction.
       const [rows] = await connection.execute<RowDataPacket[]>(
-        `SELECT * FROM finance_budget_topup_request WHERE id = ? FOR UPDATE`,
+        `SELECT t.*, h.period_code
+           FROM finance_budget_topup_request t
+           JOIN finance_budget_header h ON h.id = t.budget_id
+          WHERE t.id = ?
+          FOR UPDATE`,
         [id]
       );
       const request = rows[0];
@@ -329,6 +335,12 @@ export const budgetTopupService = {
       if (effectiveRole === "finance_head") {
         if (status !== "branch_head_approved") {
           throw new Error(`Top-up request is not awaiting finance_head review (status: ${status})`);
+        }
+        // P0-3: Re-check period lock inside the transaction before mutating the budget line.
+        if (await isPeriodLocked(String(request.period_code), connection)) {
+          throw new Error(
+            `${request.period_code} is locked for P&L close. This top-up cannot be applied.`
+          );
         }
         // Same lock GRN reserve()/consume() already use — a top-up and a GRN cannot race
         // against the same line's headroom.

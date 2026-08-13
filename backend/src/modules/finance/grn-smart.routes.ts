@@ -106,6 +106,27 @@ async function onlyWhenSmart(req: SmartRequest, _res: Response, next: NextFuncti
   }
 }
 
+// P0-1: Submit must never fall through to the weaker legacy path — zero allocation rows mean
+// the GRN is incomplete, not that it should bypass Smart validations.  Return ALLOCATIONS_REQUIRED
+// rather than calling next("router"), so invoice / duplicate / statutory / budget / FY checks
+// cannot be skipped simply by omitting cost allocations.
+async function requireAllocationsForSubmit(req: SmartRequest, res: Response, next: NextFunction) {
+  try {
+    if (!(await grnSmartService.hasAllocations(req.params.id))) {
+      res.status(400).json({
+        success: false,
+        code: "ALLOCATIONS_REQUIRED",
+        error: "At least one approved budget allocation is required before submission. "
+          + "Add cost-centre allocations via the Smart GRN workspace.",
+      });
+      return;
+    }
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
 export const smartGrnRouter = Router();
 
 smartGrnRouter.get(
@@ -379,14 +400,14 @@ smartGrnRouter.get(
   }
 );
 
-// These handlers intercept allocation-aware GRNs. Legacy single-line GRNs fall through
-// to the existing grnRouter mounted immediately after this Finance router.
+// P0-1: All GRN submissions go through Smart validation. Zero allocation rows are an error
+// (ALLOCATIONS_REQUIRED), not a signal to fall through to the legacy path.
 smartGrnRouter.post(
   "/:id/submit",
   requireWriteAccess,
   requireRole(...SMART_WRITE_ROLES),
   authorizeGrn,
-  onlyWhenSmart,
+  requireAllocationsForSubmit,
   async (req: SmartRequest, res) => {
     try {
       const user = actor(req);
