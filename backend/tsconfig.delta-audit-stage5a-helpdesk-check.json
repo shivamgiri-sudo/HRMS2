@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["src/modules/helpdesk/helpdesk.routes.ts", "src/modules/helpdesk/helpdesk.service.ts"]
+}

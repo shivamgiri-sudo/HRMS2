@@ -4,6 +4,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRoleForRequest } from "../../shared/accessGuard.js";
+import { resolveUserBusinessScope, buildProcessScopeCondition } from "../../shared/enterpriseScope.js";
 import { helpdeskService, writeSensitiveAuditLog } from "./helpdesk.service.js";
 import {
   getHelpdeskDashboard,
@@ -25,6 +26,34 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 
 // Roles that can manage tickets (IT agents + existing admin/HR)
 const HELPDESK_ADMIN_ROLES = ["admin", "hr", "super_admin", "it", "branch_it", "it_admin"] as const;
+// The subset of HELPDESK_ADMIN_ROLES that is org-wide by design (unchanged).
+const HELPDESK_ORG_WIDE_ROLES = ["admin", "hr", "super_admin"] as const;
+// The subset that must be scoped to its own branch/process — previously treated
+// identically to org-wide roles, giving company-wide ticket visibility to a role
+// named "branch_it" (delta-audit 2026-08-14, P1; same anti-pattern the same-HEAD
+// IJP fix closed for job postings).
+const HELPDESK_SCOPED_IT_ROLES = ["it", "branch_it", "it_admin"] as const;
+
+/**
+ * Row-scope condition for a caller reaching a HELPDESK_ADMIN_ROLES-gated route.
+ * "1=1" (unrestricted) for admin/hr/super_admin — unchanged behavior. A real
+ * branch/process condition for it/branch_it/it_admin, resolved the same way
+ * job-requisition.service.ts and ijp.service.ts already do for their own
+ * manager-tier roles: org-wide if the assignment says "all", branch/process-
+ * scoped if a real user_assignment_scope row exists, fail-closed (1=0) if the
+ * caller has none configured yet — consistent with how every other under-
+ * provisioned manager-tier role in this codebase already behaves, not a
+ * special case invented here.
+ */
+async function resolveHelpdeskTicketScope(
+  user: AuthenticatedRequest["authUser"]
+): Promise<{ sql: string; params: unknown[] }> {
+  if (await hasRoleForRequest(user, ...HELPDESK_ORG_WIDE_ROLES)) {
+    return { sql: "1=1", params: [] };
+  }
+  const scope = await resolveUserBusinessScope(user as { id: string });
+  return buildProcessScopeCondition(scope, { branchId: "e.branch_id", processId: "e.process_id" });
+}
 
 router.use(requireAuth);
 
@@ -76,7 +105,8 @@ router.get("/it-analysis", requireRole("admin", "hr", "super_admin", "it", "bran
 router.get("/tickets", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   if (await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES)) {
-    return res.json({ data: await helpdeskService.listTickets(req.query as any) });
+    const scope = await resolveHelpdeskTicketScope(req.authUser);
+    return res.json({ data: await helpdeskService.listTickets(req.query as any, scope) });
   }
   const emp = await getEmployeeForUser(userId);
   if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
@@ -102,11 +132,18 @@ router.post("/tickets", h(async (req: AuthenticatedRequest, res: Response) => {
 
 router.get("/tickets/:id", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  const ticket = await helpdeskService.getTicket(req.params.id) as (Record<string, unknown> & { employee_id: string; comments?: Record<string, unknown>[] }) | null;
-  if (!ticket) return res.status(404).json({ error: "Not found" });
-
   const isAdminHr = await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES);
-  if (!isAdminHr) {
+
+  let ticket: (Record<string, unknown> & { employee_id: string; comments?: Record<string, unknown>[] }) | null;
+  if (isAdminHr) {
+    const scope = await resolveHelpdeskTicketScope(req.authUser);
+    ticket = await helpdeskService.getTicket(req.params.id, scope) as typeof ticket;
+    // Out-of-scope reads identically to not-found — consistent with the rest of
+    // this route (an employee cannot tell "exists elsewhere" from "doesn't exist").
+    if (!ticket) return res.status(404).json({ error: "Not found" });
+  } else {
+    ticket = await helpdeskService.getTicket(req.params.id) as typeof ticket;
+    if (!ticket) return res.status(404).json({ error: "Not found" });
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== ticket.employee_id) {
       return res.status(403).json({ success: false, message: "Forbidden" });
@@ -120,13 +157,21 @@ router.get("/tickets/:id", h(async (req: AuthenticatedRequest, res: Response) =>
   res.json({ data });
 }));
 
+/** Confirms the ticket exists AND falls within the caller's scope before a mutation. */
+async function loadTicketInScope(req: AuthenticatedRequest) {
+  const scope = await resolveHelpdeskTicketScope(req.authUser);
+  return helpdeskService.getTicket(req.params.id, scope);
+}
+
 router.patch("/tickets/:id", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  if (!(await loadTicketInScope(req))) return res.status(404).json({ error: "Not found" });
   res.json({ data: await helpdeskService.updateTicket(req.params.id, req.body) });
 }));
 
 router.post("/tickets/:id/assign", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { assigned_to } = req.body;
   if (!assigned_to) return res.status(400).json({ error: "assigned_to required" });
+  if (!(await loadTicketInScope(req))) return res.status(404).json({ error: "Not found" });
   const data = await helpdeskService.updateTicket(req.params.id, req.body);
   await writeSensitiveAuditLog({
     actorUserId: req.authUser!.id,
@@ -142,7 +187,7 @@ router.post("/tickets/:id/assign", requireRole(...HELPDESK_ADMIN_ROLES), h(async
 }));
 
 router.post("/tickets/:id/escalate", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
-  const ticket = await helpdeskService.getTicket(req.params.id) as any;
+  const ticket = await loadTicketInScope(req) as any;
   if (!ticket) return res.status(404).json({ error: "Not found" });
   const newLevel = Number(ticket.escalation_level ?? 0) + 1;
   const data = await helpdeskService.updateTicket(req.params.id, { escalation_level: newLevel, status: "in_progress" } as any);
@@ -162,17 +207,22 @@ router.post("/tickets/:id/escalate", requireRole(...HELPDESK_ADMIN_ROLES), h(asy
 router.post("/tickets/:id/resolve", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { resolution_note, root_cause } = req.body;
   if (!resolution_note) return res.status(400).json({ error: "resolution_note required" });
+  if (!(await loadTicketInScope(req))) return res.status(404).json({ error: "Not found" });
   const data = await helpdeskService.updateTicket(req.params.id, { status: "resolved", resolution_note, root_cause });
   res.json({ data });
 }));
 
 router.post("/tickets/:id/reopen", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  const ticket = await helpdeskService.getTicket(req.params.id) as any;
-  if (!ticket) return res.status(404).json({ error: "Not found" });
-
   const isAdminHr = await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES);
-  if (!isAdminHr) {
+
+  let ticket: any;
+  if (isAdminHr) {
+    ticket = await loadTicketInScope(req);
+    if (!ticket) return res.status(404).json({ error: "Not found" });
+  } else {
+    ticket = await helpdeskService.getTicket(req.params.id) as any;
+    if (!ticket) return res.status(404).json({ error: "Not found" });
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== ticket.employee_id) {
       return res.status(403).json({ success: false, message: "Forbidden" });

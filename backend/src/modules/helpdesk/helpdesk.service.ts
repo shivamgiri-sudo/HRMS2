@@ -58,17 +58,26 @@ const TICKET_SELECT = `SELECT t.*,
   LEFT JOIN employees emp_u ON emp_u.user_id = u.id`;
 
 export const helpdeskService = {
-  async listTickets(filters: {
-    employee_id?: string;
-    status?: string;
-    category?: string;
-    assigned_to?: string;
-    priority?: string;
-    branch_id?: string;
-    process_id?: string;
-    from?: string;
-    to?: string;
-  }) {
+  async listTickets(
+    filters: {
+      employee_id?: string;
+      status?: string;
+      category?: string;
+      assigned_to?: string;
+      priority?: string;
+      branch_id?: string;
+      process_id?: string;
+      from?: string;
+      to?: string;
+    },
+    // Row scope for the caller (delta-audit 2026-08-14, P1): the it/branch_it/
+    // it_admin family was treated identically to admin/hr/super_admin — full
+    // company-wide visibility, with branch_id/process_id only applied when the
+    // caller happened to pass them as query params, not derived from identity.
+    // Same anti-pattern the same-HEAD IJP fix closed. Undefined (or "1=1") means
+    // unrestricted — admin/hr/super_admin's existing behavior is unchanged.
+    scopeCondition?: { sql: string; params: unknown[] }
+  ) {
     const conds: string[] = [];
     const params: unknown[] = [];
     if (filters.employee_id) { conds.push("t.employee_id = ?");  params.push(filters.employee_id); }
@@ -80,6 +89,10 @@ export const helpdeskService = {
     if (filters.process_id)  { conds.push("e.process_id = ?");    params.push(filters.process_id); }
     if (filters.from)        { conds.push("t.created_at >= ?");   params.push(filters.from + " 00:00:00"); }
     if (filters.to)          { conds.push("t.created_at <= ?");   params.push(filters.to   + " 23:59:59"); }
+    if (scopeCondition && scopeCondition.sql !== "1=1") {
+      conds.push(`(${scopeCondition.sql})`);
+      params.push(...scopeCondition.params);
+    }
 
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -89,9 +102,18 @@ export const helpdeskService = {
     return rows as RowDataPacket[];
   },
 
-  async getTicket(id: string): Promise<(RowDataPacket & { employee_id: string; comments: RowDataPacket[] }) | null> {
+  async getTicket(
+    id: string,
+    scopeCondition?: { sql: string; params: unknown[] }
+  ): Promise<(RowDataPacket & { employee_id: string; comments: RowDataPacket[] }) | null> {
+    const conds = ["t.id = ?"];
+    const params: unknown[] = [id];
+    if (scopeCondition && scopeCondition.sql !== "1=1") {
+      conds.push(`(${scopeCondition.sql})`);
+      params.push(...scopeCondition.params);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
-      `${TICKET_SELECT} WHERE t.id = ? LIMIT 1`, [id]
+      `${TICKET_SELECT} WHERE ${conds.join(" AND ")} LIMIT 1`, params
     );
     const ticket = (rows as RowDataPacket[])[0] ?? null;
     if (!ticket) return null;
