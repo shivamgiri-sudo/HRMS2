@@ -1923,7 +1923,7 @@ export function BudgetLinkedGrnForm({
 
                   {/* Row 4: GST states - always 3 columns for consistency */}
                   <DenseFieldGroup cols={3}>
-                    <DenseField label="Vendor State">
+                    <DenseField label="Vendor State/Country">
                       {form.gstEnabled !== false ? (
                         <GrnSelect
                           className="h-8 text-[12px]"
@@ -1937,27 +1937,21 @@ export function BudgetLinkedGrnForm({
                         </GrnSelect>
                       ) : (
                         <div className="flex items-center h-8 px-2 text-[12px] text-grn-ink-soft bg-grn-paper rounded-[8px] border border-grn-line">
-                          N/A — International
+                          International (Non-GST)
                         </div>
                       )}
                     </DenseField>
-                    <DenseField label="Billing State">
-                      {form.gstEnabled !== false ? (
-                        <GrnSelect
-                          className="h-8 text-[12px]"
-                          value={form.billingStateCode}
-                          onChange={(e) => setForm((cur) => ({ ...cur, billingStateCode: e.target.value }))}
-                        >
-                          <option value="">Select state</option>
-                          {GST_STATE_CODES.map((sc) => (
-                            <option key={sc.value} value={sc.value}>{sc.label}</option>
-                          ))}
-                        </GrnSelect>
-                      ) : (
-                        <div className="flex items-center h-8 px-2 text-[12px] text-grn-ink-soft bg-grn-paper rounded-[8px] border border-grn-line">
-                          N/A — International
-                        </div>
-                      )}
+                    <DenseField label="Billing State (MAS)">
+                      <GrnSelect
+                        className="h-8 text-[12px]"
+                        value={form.billingStateCode}
+                        onChange={(e) => setForm((cur) => ({ ...cur, billingStateCode: e.target.value }))}
+                      >
+                        <option value="">Select state</option>
+                        {GST_STATE_CODES.map((sc) => (
+                          <option key={sc.value} value={sc.value}>{sc.label}</option>
+                        ))}
+                      </GrnSelect>
                     </DenseField>
                     <DenseField label="Tax Type">
                       <div className="flex items-center h-8">
