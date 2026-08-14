@@ -2118,6 +2118,20 @@ router.get("/runs/:id/neft-summary", requireRole("admin", "super_admin", "financ
                 WHEN ebd.employee_id IS NOT NULL
                  AND COALESCE(NULLIF(TRIM(ebd.account_number), ''),
                               NULLIF(TRIM(ebd.account_number_enc), '')) IS NOT NULL
+                 -- Mirrors /neft-export's SCIENTIFIC_RE/VALID_ACCT_RE — a plaintext value present
+                 -- must actually look like an account number (an Excel-mangled "3.03801E+13" is
+                 -- non-null and would otherwise count as payable here while /neft-export now
+                 -- excludes it, which is exactly the drift this query's own comment above warns
+                 -- against). account_number_enc is ciphertext and can't be format-checked in SQL,
+                 -- so a row relying on it alone is unaffected by this clause.
+                 --
+                 -- account_number is varbinary(500), not text — REGEXP against it directly throws
+                 -- ER_CHARACTER_SET_MISMATCH ("Character set 'binary' cannot be used in
+                 -- conjunction with 'utf8mb4_unicode_ci'"), caught live before this shipped.
+                 -- CONVERT(...USING utf8mb4) makes it a text value REGEXP can actually match.
+                 AND (NULLIF(TRIM(ebd.account_number), '') IS NULL
+                      OR (CONVERT(TRIM(ebd.account_number) USING utf8mb4) REGEXP '^[0-9]{6,20}$'
+                          AND CONVERT(TRIM(ebd.account_number) USING utf8mb4) NOT REGEXP '[Ee][+-]'))
                  AND UPPER(TRIM(COALESCE(ebd.ifsc_code, ''))) REGEXP '^[A-Z]{4}0[A-Z0-9]{6}$'
                 THEN 1 ELSE 0
               END AS is_payable
@@ -2263,6 +2277,21 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
 
   /** RBI IFSC: 4 letters, a literal zero, then 6 alphanumerics. A failing value cannot be routed. */
   const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+  /**
+   * Same two checks as the "payable bank total" in payroll-extended.routes.ts's golden-month
+   * reconciliation, and as disbursal.routes.ts's /bank-export. Not reused here only because
+   * account_number arrives already resolved (encrypted-or-legacy) as a plain string, not as a
+   * (enc, legacy) pair those two check separately.
+   *
+   * A number like "3.03801E+13" is truthy and passes `!accountNo`, so it silently reached the
+   * bank as a real payment line before this: live 2026-04 run, MAS-code employee, Rs 55,414,
+   * account_number literally that string (a legacy plaintext value Excel round-tripped into
+   * scientific notation on someone's machine before import). VALID_ACCT_RE also rejects it on
+   * length/character grounds independent of the scientific-notation check, so either alone would
+   * have caught this one; both are kept because they catch different corruption shapes.
+   */
+  const SCIENTIFIC_RE = /[Ee][+-]/;
+  const VALID_ACCT_RE = /^[0-9]{6,20}$/;
 
   // Standard Indian bank NEFT format
   // Columns: Sr No, Employee Code, Employee Name, Bank Name, IFSC Code, Account Number, Net Amount, Remarks
@@ -2295,6 +2324,7 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
     const code = line.employee_code as string;
 
     const reason = !accountNo ? "NO_ACTIVE_PRIMARY_ACCOUNT"
+      : (SCIENTIFIC_RE.test(accountNo) || !VALID_ACCT_RE.test(accountNo)) ? "ACCOUNT_INVALID_FORMAT"
       : !ifsc ? "IFSC_MISSING"
       : !IFSC_RE.test(ifsc) ? "IFSC_INVALID_FORMAT"
       : null;

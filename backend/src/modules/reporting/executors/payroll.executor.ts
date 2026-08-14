@@ -914,6 +914,34 @@ export async function neftTransferFile(
   clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
   clauses.push("spl.net_salary > 0");
 
+  /**
+   * Refuse to emit a row this file cannot safely pay — unlike bank-advice (above), this report
+   * had NO payability filter at all: every line with net_salary > 0 was emitted, including one
+   * with no bank_detail row whatsoever and one whose account number is unroutable garbage. And
+   * per this function's own doc-comment below, THIS is the report Finance actually uses ("what
+   * payroll actually generates"), so of the two sibling reports this was the more consequential
+   * gap, not the smaller one.
+   *
+   * Scoped narrowly to what this report itself pays from (employee_bank_detail via `ebd`, joined
+   * below) — does NOT touch the separate, already-flagged bank-advice/neft-transfer-file dual
+   * account-source disagreement (see the comment on ACCOUNT_SOURCE_JOIN above); that remains a
+   * decision for whoever owns reconciling the two sources, not something to guess at here.
+   */
+  clauses.push(`(
+    (ebd.account_number IS NOT NULL AND TRIM(ebd.account_number) <> '')
+    OR (ebd.account_number_enc IS NOT NULL AND TRIM(ebd.account_number_enc) <> '')
+  )`);
+  // employee_bank_detail.account_number is varbinary(500), not text — REGEXP against it
+  // directly throws ER_CHARACTER_SET_MISMATCH ("Character set 'binary' cannot be used in
+  // conjunction with 'utf8mb4_unicode_ci'"), caught live before this shipped. CONVERT(...USING
+  // utf8mb4) makes it a text value REGEXP can actually match.
+  clauses.push(`NOT (
+    ebd.account_number IS NOT NULL
+    AND (CONVERT(ebd.account_number USING utf8mb4) NOT REGEXP '^[0-9]{6,20}$'
+         OR CONVERT(ebd.account_number USING utf8mb4) REGEXP '[Ee][+-]')
+  )`);
+  clauses.push("UPPER(TRIM(COALESCE(ebd.ifsc_code, e.ifsc_code, ''))) REGEXP '^[A-Z]{4}0[A-Z0-9]{6}$'");
+
   const base = `
     SELECT e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,

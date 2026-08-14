@@ -48,8 +48,25 @@ describe("only payable rows reach the declared total", () => {
 
   it("classifies why an employee cannot be paid instead of papering over it", () => {
     expect(EXPORT_HANDLER).toContain("NO_ACTIVE_PRIMARY_ACCOUNT");
+    expect(EXPORT_HANDLER).toContain("ACCOUNT_INVALID_FORMAT");
     expect(EXPORT_HANDLER).toContain("IFSC_MISSING");
     expect(EXPORT_HANDLER).toContain("IFSC_INVALID_FORMAT");
+  });
+
+  it("rejects a scientific-notation-mangled account number, not just an empty one", () => {
+    // "3.03801E+13" is truthy, so `!accountNo` alone always let it through. Live case: a 2026-04
+    // FINALIZED-run employee whose legacy account_number was exactly that string reached the
+    // fixed total below with Rs 55,414 before this check existed.
+    expect(EXPORT_HANDLER).toMatch(/SCIENTIFIC_RE\s*=\s*\/\[Ee\]\[\+-\]\//);
+    expect(EXPORT_HANDLER).toMatch(/VALID_ACCT_RE\s*=\s*\/\^\[0-9\]\{6,20\}\$\//);
+    // Both checks must gate the same `reason` assignment the presence check gates, not sit
+    // unused elsewhere in the handler.
+    const reasonBlock = EXPORT_HANDLER.slice(
+      EXPORT_HANDLER.indexOf("const reason ="),
+      EXPORT_HANDLER.indexOf(": null;") + 8,
+    );
+    expect(reasonBlock).toContain("SCIENTIFIC_RE.test(accountNo)");
+    expect(reasonBlock).toContain("VALID_ACCT_RE.test(accountNo)");
   });
 
   it("skips unpayable rows before the total is accumulated", () => {
@@ -103,6 +120,14 @@ describe("the summary Finance reads first agrees with the file they get", () => 
     expect(SUMMARY_HANDLER).not.toMatch(/ebd\.id IS NOT NULL AND ebd\.ifsc_code IS NOT NULL/);
   });
 
+  it("also rejects a scientific-notation-mangled plaintext account, matching the export", () => {
+    // Same drift class this describe block exists to prevent, for the format check specifically:
+    // the export excludes "3.03801E+13"-shaped values, so the summary's is_payable must too, or
+    // the preview keeps counting a row the file itself won't include.
+    expect(SUMMARY_HANDLER).toMatch(/\^\[0-9\]\{6,20\}\$/);
+    expect(SUMMARY_HANDLER).toMatch(/\[Ee\]\[\+-\]/);
+  });
+
   it("reads the account columns only to test presence, never into its response", () => {
     // The summary must establish payability without becoming another place an account number
     // reaches a caller. bank-export-gating.contract.test.ts counts this site, so the claim that
@@ -118,7 +143,11 @@ describe("the summary Finance reads first agrees with the file they get", () => 
 
     const legacyReads = (SUMMARY_HANDLER.match(/ebd\.account_number(?!_enc)\b/g) ?? []).length;
     const encReads = (SUMMARY_HANDLER.match(/ebd\.account_number_enc\b/g) ?? []).length;
-    expect(legacyReads, "one presence read only").toBe(1);
+    // 1 presence read (inside the COALESCE guard) + 3 format-check reads (a null-check plus the
+    // REGEXP and NOT REGEXP tests) — all four still inside guard clauses, never in the SELECT
+    // list. account_number_enc is ciphertext and can't be format-checked in SQL, so it keeps its
+    // single presence read.
+    expect(legacyReads, "presence + format-check reads, still guard-only").toBe(4);
     expect(encReads, "one presence read only").toBe(1);
 
     // No aliasing an account column out of the query.
