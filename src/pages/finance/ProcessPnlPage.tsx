@@ -1,4 +1,6 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { Link, useSearchParams } from "react-router-dom";
 import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -119,6 +121,16 @@ export default function ProcessPnlPage() {
   };
   const bpoQuery = useBpoProcessPnl(filters);
   const statementQuery = usePnlStatement(filters, statementViewBy);
+  const [showYtd, setShowYtd] = useState(false);
+  const ytdQuery = useQuery({
+    queryKey: ["pnl-ytd-summary", period],
+    queryFn: async () => {
+      const response = await hrmsApi.get<{ success: boolean; data: any }>(`/api/finance/pnl/ytd-summary?upTo=${period}`);
+      return response.data.data;
+    },
+    enabled: showYtd,
+    staleTime: 5 * 60_000,
+  });
   const summary = bpoQuery.data;
   const rows = summary?.rows ?? [];
   /*
@@ -409,6 +421,57 @@ export default function ProcessPnlPage() {
                   branchId={branchId || undefined}
                   onBranchChange={(id) => updateFilters({ branchId: id })}
                 />
+
+                {/* YTD summary strip */}
+                <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-semibold text-slate-700">
+                      Year-to-Date Summary {ytdQuery.data ? `(FY ${ytdQuery.data.fy} · ${ytdQuery.data.months.length} month${ytdQuery.data.months.length !== 1 ? "s" : ""})` : ""}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setShowYtd((v) => !v)}
+                    >
+                      {showYtd ? "Hide YTD" : `Show YTD (Apr–${period})`}
+                    </Button>
+                  </div>
+
+                  {showYtd && (
+                    <div className="mt-4">
+                      {ytdQuery.isLoading ? (
+                        <div className="flex gap-3">
+                          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 flex-1 rounded-xl" />)}
+                        </div>
+                      ) : ytdQuery.isError ? (
+                        <p className="text-sm text-rose-600">Failed to load YTD summary. <button className="underline" onClick={() => ytdQuery.refetch()}>Retry</button></p>
+                      ) : ytdQuery.data ? (
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-5">
+                            {[
+                              { label: "Revenue", value: ytdQuery.data.totalRevenue, tone: "text-slate-900" },
+                              { label: "People Cost", value: ytdQuery.data.totalPeopleCost, tone: "text-slate-700" },
+                              { label: "Indirect Cost", value: ytdQuery.data.totalIndirectCost, tone: "text-slate-700" },
+                              { label: "Operating Profit", value: ytdQuery.data.totalOperatingProfit, tone: ytdQuery.data.totalOperatingProfit >= 0 ? "text-emerald-700 font-semibold" : "text-rose-700 font-semibold" },
+                              { label: "Budget (allocated)", value: ytdQuery.data.totalBudget, tone: "text-blue-700" },
+                            ].map((item) => (
+                              <div key={item.label} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{item.label}</p>
+                                <p className={`mt-1 text-lg tabular-nums ${item.tone}`}>{formatCurrency(item.value, true)}</p>
+                              </div>
+                            ))}
+                          </div>
+                          {ytdQuery.data.marginPct != null && (
+                            <p className="text-xs text-slate-500">
+                              YTD operating margin: <span className={`font-semibold ${ytdQuery.data.marginPct >= 8 ? "text-emerald-700" : "text-rose-700"}`}>{ytdQuery.data.marginPct.toFixed(1)}%</span>
+                              {" · "}Budget consumed: <span className="font-semibold text-slate-700">{ytdQuery.data.totalBudget > 0 ? `${((ytdQuery.data.totalIndirectCost / ytdQuery.data.totalBudget) * 100).toFixed(1)}%` : "—"}</span>
+                            </p>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
 
               </div>
             )}

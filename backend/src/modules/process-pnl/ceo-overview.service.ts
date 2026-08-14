@@ -1049,4 +1049,65 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
   };
 }
 
-export const ceoOverviewService = { getCeoOverview };
+export interface CeoYtdSummary {
+  fy: string;
+  months: string[];
+  totalRevenue: number;
+  totalPeopleCost: number;
+  totalIndirectCost: number;
+  totalOperatingProfit: number;
+  totalBudget: number;
+  marginPct: number | null;
+  monthly: Array<{ period: string; revenue: number; peopleCost: number; indirectCost: number; operatingProfit: number; budget: number }>;
+}
+
+export async function getYtdSummary(upToMonth: string, filters: CeoFilters = {}): Promise<CeoYtdSummary> {
+  // Indian financial year: April (month 4) to March (month 3)
+  const [y, m] = upToMonth.split("-").map(Number);
+  const fyStartYear = m >= 4 ? y : y - 1;
+  const fyStart = `${fyStartYear}-04`;
+
+  const months: string[] = [];
+  let cursor = fyStart;
+  while (cursor <= upToMonth) {
+    months.push(cursor);
+    const [cy, cm] = cursor.split("-").map(Number);
+    const next = cm === 12 ? `${cy + 1}-01` : `${cy}-${String(cm + 1).padStart(2, "0")}`;
+    cursor = next;
+  }
+
+  const monthly: CeoYtdSummary["monthly"] = [];
+  let totalRevenue = 0, totalPeopleCost = 0, totalIndirectCost = 0, totalBudget = 0;
+
+  await Promise.all(
+    months.map(async (period) => {
+      const overview = await getCeoOverview(period, filters);
+      const op = overview.revenue - overview.peopleCost - overview.indirectCost;
+      const budget = overview.branches.reduce((s, b) => s + (b.budget ?? 0), 0);
+      monthly.push({ period, revenue: overview.revenue, peopleCost: overview.peopleCost, indirectCost: overview.indirectCost, operatingProfit: op, budget });
+    })
+  );
+
+  monthly.sort((a, b) => a.period.localeCompare(b.period));
+  for (const m of monthly) {
+    totalRevenue += m.revenue;
+    totalPeopleCost += m.peopleCost;
+    totalIndirectCost += m.indirectCost;
+    totalBudget += m.budget;
+  }
+  const totalOperatingProfit = totalRevenue - totalPeopleCost - totalIndirectCost;
+
+  return {
+    fy: `${fyStartYear}-${fyStartYear + 1}`,
+    months,
+    totalRevenue,
+    totalPeopleCost,
+    totalIndirectCost,
+    totalOperatingProfit,
+    totalBudget,
+    marginPct: totalRevenue > 0 ? (totalOperatingProfit / totalRevenue) * 100 : null,
+    monthly,
+  };
+}
+
+export const ceoOverviewService = { getCeoOverview, getYtdSummary };

@@ -16,7 +16,7 @@ import { bpoPnlRouter } from "./bpo-pnl.routes.js";
 import { canonicalPnlService } from "./canonical-pnl.service.js";
 import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService, getCompanyBudgetConsolidation } from "./branch-budget.service.js";
-import { getCeoOverview } from "./ceo-overview.service.js";
+import { getCeoOverview, getYtdSummary } from "./ceo-overview.service.js";
 import { budgetTopupService } from "./budget-topup.service.js";
 import { branchBudgetAllocationService } from "./branch-budget-allocation.service.js";
 import { meterService } from "./meter.service.js";
@@ -1088,6 +1088,17 @@ router.get(
       processIds: confinedProcess ? [confinedProcess] : requestedProcessIds,
       costCentreIds: csv(req.query.costCentreIds),
     });
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/ytd-summary",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const upTo = req.query.upTo ? String(req.query.upTo) : "";
+    if (!/^\d{4}-\d{2}$/.test(upTo)) throw Object.assign(new Error("upTo must be YYYY-MM"), { statusCode: 400 });
+    const data = await getYtdSummary(upTo, {});
     res.json({ success: true, data });
   })
 );
