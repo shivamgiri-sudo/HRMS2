@@ -89,14 +89,15 @@ const KNOWN_LEGACY_VIOLATIONS = new Set([
   "380_requisition_extend_deadline_audit.sql",
   "391_payroll_validation_freeze_columns.sql",
   "396_statutory_config_history.sql",
-  "397_salary_prep_line_loan_emi.sql",
-  "398_run_incentive_tracking.sql",
+  // 397, 398, 402, 404, 413 fixed 2026-08-14 — see backend/sql/{397,398,402,404,413}_*.sql.
+  // 398 and 404 both targeted salary_prep_run.incentives_applied_at and were both recorded
+  // success=1 since 2026-07-20 despite the column never existing; 402's payslip_emailed /
+  // payslip_emailed_at were the same drift. All four columns/indexes now genuinely exist —
+  // verified via information_schema before and after, and all five files re-run clean and
+  // idempotent against the now-migrated schema.
   "400_payroll_branch_readiness.sql",
   "401_payroll_calendar.sql",
-  "402_salary_prep_line_bulk_outputs.sql",
   "403_payroll_run_signoff.sql",
-  "404_payroll_incentive_tracking.sql",
-  "413_salary_prep_run_tds_mode.sql",
   "450_policy_engine_config.sql",
   "451_company_feed_foundation.sql",
   "470_company_post_engagement.sql",
