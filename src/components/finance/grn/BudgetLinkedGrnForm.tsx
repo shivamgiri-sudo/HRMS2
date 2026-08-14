@@ -1921,25 +1921,19 @@ export function BudgetLinkedGrnForm({
                     </DenseField>
                   </DenseFieldGroup>
 
-                  {/* Row 4: GST states - always 3 columns for consistency */}
+                  {/* Row 4: GST states - all fields always enabled */}
                   <DenseFieldGroup cols={3}>
-                    <DenseField label="Vendor State/Country">
-                      {form.gstEnabled !== false ? (
-                        <GrnSelect
-                          className="h-8 text-[12px]"
-                          value={form.vendorStateCode}
-                          onChange={(e) => setForm((cur) => ({ ...cur, vendorStateCode: e.target.value }))}
-                        >
-                          <option value="">Select state</option>
-                          {GST_STATE_CODES.map((sc) => (
-                            <option key={sc.value} value={sc.value}>{sc.label}</option>
-                          ))}
-                        </GrnSelect>
-                      ) : (
-                        <div className="flex items-center h-8 px-2 text-[12px] text-grn-ink-soft bg-grn-paper rounded-[8px] border border-grn-line">
-                          International (Non-GST)
-                        </div>
-                      )}
+                    <DenseField label="Vendor State">
+                      <GrnSelect
+                        className="h-8 text-[12px]"
+                        value={form.vendorStateCode}
+                        onChange={(e) => setForm((cur) => ({ ...cur, vendorStateCode: e.target.value }))}
+                      >
+                        <option value="">Select state</option>
+                        {GST_STATE_CODES.map((sc) => (
+                          <option key={sc.value} value={sc.value}>{sc.label}</option>
+                        ))}
+                      </GrnSelect>
                     </DenseField>
                     <DenseField label="Billing State (MAS)">
                       <GrnSelect
@@ -1957,7 +1951,7 @@ export function BudgetLinkedGrnForm({
                       <div className="flex items-center h-8">
                         {form.gstEnabled === false ? (
                           <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold bg-slate-100 text-slate-600">
-                            No GST (International)
+                            No GST
                           </span>
                         ) : form.vendorStateCode && form.billingStateCode ? (
                           <span className={cn(
@@ -1969,7 +1963,7 @@ export function BudgetLinkedGrnForm({
                             {form.vendorStateCode === form.billingStateCode ? "Intra (CGST/SGST)" : "Inter (IGST)"}
                           </span>
                         ) : (
-                          <span className="text-[11px] text-grn-ink-soft">Select states above</span>
+                          <span className="text-[11px] text-grn-ink-soft">Select states</span>
                         )}
                       </div>
                     </DenseField>
