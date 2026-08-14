@@ -1109,7 +1109,16 @@ export async function calculatePayrollRunScoped(
     );
     const decl = (declRows as TaxDeclarationRow[])[0] ?? null;
 
-    // 5b. TDS: skip auto-projection when run is in manual TDS mode.
+    // 5b. Employee age — used for 80D senior citizen cap (Section 80D: ₹50K if age ≥ 60)
+    let employeeAge: number | null = null;
+    if (emp.date_of_birth) {
+      const dob = new Date(emp.date_of_birth);
+      const runDate = new Date(year, month - 1, 1);
+      employeeAge = runDate.getFullYear() - dob.getFullYear() -
+        (runDate < new Date(runDate.getFullYear(), dob.getMonth(), dob.getDate()) ? 1 : 0);
+    }
+
+    // 5c. TDS: skip auto-projection when run is in manual TDS mode.
     // In manual mode, Payroll HO uploads per-employee TDS via POST /runs/:id/manual-tds.
     // Those amounts are applied in a post-calculation pass (see applyManualTds below).
     let tdsMonthly = 0;
