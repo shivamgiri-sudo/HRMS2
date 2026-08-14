@@ -33,7 +33,8 @@ import { db } from '../../db/mysql.js';
 import { TRIAGE_AUDIT_ACTION, resolveWorkingProvider } from './mira-issue-triage.service.js';
 import { buildContextBundle } from './mira-fix-draft-context.js';
 import { createFixDraft, type FixDraft } from './mira-fix-draft.service.js';
-import type { AiGenerateRequest } from './ai-provider.types.js';
+import { aiProviderRegistry } from './ai-provider.registry.js';
+import type { AiGenerateRequest, AiProvider } from './ai-provider.types.js';
 
 export type FixDraftGenerationOutcome =
   | { status: 'no_diagnosis' }
@@ -55,6 +56,35 @@ interface ParsedDiagnosis {
 // See __tests__/mira-fix-draft-generate.test.ts for the regression test against that format.
 const DIAGNOSIS_REMARK_RE =
   /^AI-drafted diagnosis \(([a-z_]+), confidence (low|medium|high), actionable=(true|false)\): ([\s\S]+?) — Suggested next step: ([\s\S]+?) — This is an AI-generated hypothesis/;
+
+/**
+ * Provider resolution for the CODE-FIX stage specifically — deliberately not the triage
+ * resolver.
+ *
+ * resolveWorkingProvider() (mira-issue-triage.service.ts) resolves one provider for the whole
+ * Mira pipeline, so before this existed, whichever model classified a complaint also wrote the
+ * patch. In production that resolved to Gemini 2.5 Flash — the DB default with the only live
+ * key — which is a reasonable triage classifier and the wrong tool for emitting a unified diff
+ * that must apply cleanly to a large TypeScript codebase.
+ *
+ * The two stages have genuinely different requirements, so they now resolve separately:
+ * triage is high-volume, cheap, and tolerant of a near-miss category; a fix draft is low-volume
+ * and either applies or is wasted. Claude is preferred here for that reason (and is the only
+ * registered provider that actually implements generateJson — see note #2 in the file header —
+ * though this path still uses generateText so it works on any provider).
+ *
+ * Falls back to the shared resolver rather than refusing, so an org with no ANTHROPIC_API_KEY
+ * keeps the behaviour it has today instead of losing fix drafts entirely. Requires
+ * ANTHROPIC_API_KEY to be set for the preference to take effect; the model itself is the Claude
+ * provider's own default (claude-opus-5), not pinned here.
+ */
+async function resolveCodeFixProvider(): Promise<AiProvider | null> {
+  if (process.env.ANTHROPIC_API_KEY) {
+    const claude = aiProviderRegistry.get('claude');
+    if (claude) return claude;
+  }
+  return resolveWorkingProvider();
+}
 
 export function parseDiagnosisRemark(remarks: string): ParsedDiagnosis | null {
   const m = remarks.match(DIAGNOSIS_REMARK_RE);
@@ -155,7 +185,7 @@ export async function generateFixDraftForWorkItem(workItemId: string): Promise<F
     ? contextFiles.map((f) => `--- FILE: ${f.path} ---\n${f.content}`).join('\n\n')
     : '(no relevant source files were found by keyword search)';
 
-  const provider = await resolveWorkingProvider();
+  const provider = await resolveCodeFixProvider();
   if (!provider) {
     await writeFixDraftAudit(workItemId, 'Fix-draft not attempted — no usable AI provider found (checked ANTHROPIC_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY and DB default). Configure a provider key to enable fix-draft generation.');
     return { status: 'ai_unavailable' };
