@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
-import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance-access-scope.js";
+import { financeBranchFilter, resolveFinanceBranchScope, type FinanceBranchScope } from "../finance/finance-access-scope.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import {
   computeLineAllocations,
@@ -875,21 +875,32 @@ export const branchBudgetService = {
     return rows;
   },
 
-  async listPendingForReviewer(actorRole: string) {
+  async listPendingForReviewer(actorRole: string, userId: string, userRoles: string[]) {
     const targetStatus =
       actorRole === "branch_head" ? "submitted" :
       actorRole === "finance_head" ? "branch_head_approved" :
       actorRole === "accounts_head" ? "finance_head_approved" : null;
     if (!targetStatus) return [];
+    const branchScope = await resolveFinanceBranchScope({
+      userId,
+      primaryRole: actorRole,
+      userRoles,
+    });
+    const where: string[] = ["h.status = ?"];
+    const params: unknown[] = [targetStatus];
+    if (branchScope !== undefined) {
+      where.push("h.branch_id = ?");
+      params.push(branchScope);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT h.id, h.budget_number, h.period_code, h.status, h.gross_budget, h.pnl_budget,
               h.revision_number, h.created_at, h.updated_at,
               bm.branch_name
          FROM finance_budget_header h
          LEFT JOIN branch_master bm ON bm.id = h.branch_id
-        WHERE h.status = ?
+        WHERE ${where.join(" AND ")}
         ORDER BY h.updated_at ASC`,
-      [targetStatus]
+      params
     );
     return rows;
   },

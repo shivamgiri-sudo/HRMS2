@@ -236,7 +236,7 @@ router.get(
   requireRole(...BUDGET_REVIEW_ROLES),
   h(async (req, res) => {
     const user = actor(req);
-    const data = await branchBudgetService.listPendingForReviewer(user.role);
+    const data = await branchBudgetService.listPendingForReviewer(user.role, user.id, user.roles);
     res.json({ success: true, data });
   })
 );
