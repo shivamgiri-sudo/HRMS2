@@ -260,18 +260,22 @@ export async function calculateGratuity(
 
   const joinDate = new Date(emp.date_of_joining);
   const asOfDate = asOf ? new Date(asOf) : new Date();
-  const diffMs = asOfDate.getTime() - joinDate.getTime();
-  const totalMonths = Math.floor(diffMs / (1000 * 60 * 60 * 24 * 30.4375));
-  const completedYears = Math.floor(totalMonths / 12);
+  // Calendar-accurate month diff avoids floating-point imprecision of ms/30.4375 approach
+  const totalCalendarMonths = (asOfDate.getFullYear() - joinDate.getFullYear()) * 12
+    + (asOfDate.getMonth() - joinDate.getMonth());
+  const fullYears = Math.floor(totalCalendarMonths / 12);
+  const remainderMonths = totalCalendarMonths % 12;
+  // s.4(2) Payment of Gratuity Act 1972: round up to next year when remainder > 6 months
+  const eligibleYears = remainderMonths > 6 ? fullYears + 1 : fullYears;
 
-  if (totalMonths < minMonths) {
-    return { eligible: false, amount: 0, years: completedYears, reason: "below_minimum_service" };
+  if (totalCalendarMonths < minMonths) {
+    return { eligible: false, amount: 0, years: fullYears, reason: "below_minimum_service" };
   }
 
   const amount = Math.round(
-    ((lastBasicMonthly / divisor) * multiplier * completedYears) * 100
+    ((lastBasicMonthly / divisor) * multiplier * eligibleYears) * 100
   ) / 100;
-  return { eligible: true, amount, years: completedYears };
+  return { eligible: true, amount, years: eligibleYears };
 }
 
 // ─── TDS ──────────────────────────────────────────────────────────────────────
