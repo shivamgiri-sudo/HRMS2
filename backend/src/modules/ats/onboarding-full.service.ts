@@ -1734,8 +1734,11 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
   const ageCheck = await assertEmployableAge(candidateId, null);
   // Persist the DPDP minor flag. ats_candidate.is_minor has existed since
   // migration 336 and nothing has ever written it, so the guardian-consent
-  // banner in the onboarding UI could never render.
-  await persistMinorFlag(candidateId, ageCheck).catch(() => undefined);
+  // banner in the onboarding UI could never render. persistMinorFlag itself
+  // now logs (rather than silently swallows) a write failure, so it's no
+  // longer double-wrapped here — see its docstring for why this stays
+  // non-fatal to the submission either way.
+  await persistMinorFlag(candidateId, ageCheck);
 
   await db.execute(
     `UPDATE candidate_onboarding_profile SET profile_status = 'submitted', submitted_at = NOW(), updated_at = NOW()

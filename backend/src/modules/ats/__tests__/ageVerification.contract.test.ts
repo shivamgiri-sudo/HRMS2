@@ -12,26 +12,27 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 type Rows = Record<string, unknown>[];
-const state: { bgv?: Rows; docs?: Rows; profile?: Rows } = {};
+const state: { bgv?: Rows; docs?: Rows; profile?: Rows; minorUpdateFails?: boolean } = {};
 
-vi.mock("../../../db/mysql.js", () => ({
-  db: {
-    execute: vi.fn(async (sql: string) => {
-      const s = String(sql);
-      if (s.includes("candidate_bgv_check")) return [state.bgv ?? []];
-      if (s.includes("candidate_onboarding_document")) return [state.docs ?? []];
-      if (s.includes("FROM ats_candidate c")) return [state.profile ?? []];
-      return [[]];
-    }),
-  },
-}));
+const dbExecute = vi.fn(async (sql: string) => {
+  const s = String(sql);
+  if (s.includes("candidate_bgv_check")) return [state.bgv ?? []];
+  if (s.includes("candidate_onboarding_document")) return [state.docs ?? []];
+  if (s.includes("FROM ats_candidate c")) return [state.profile ?? []];
+  if (s.includes("UPDATE ats_candidate SET is_minor")) {
+    if (state.minorUpdateFails) throw new Error("Connection lost");
+    return [{ affectedRows: 1 }];
+  }
+  return [[]];
+});
+vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
 
 const {
   resolveVerifiedDob, assertEmployableAge, extractDobFromText, ageOn,
-  MINIMUM_EMPLOYMENT_AGE,
+  MINIMUM_EMPLOYMENT_AGE, persistMinorFlag,
 } = await import("../ageVerification.service.js");
 
-beforeEach(() => { state.bgv = []; state.docs = []; state.profile = []; });
+beforeEach(() => { state.bgv = []; state.docs = []; state.profile = []; state.minorUpdateFails = false; dbExecute.mockClear(); });
 
 /** A DOB that makes someone exactly `years` old on `on`. */
 const dobFor = (years: number, on = new Date()) =>
@@ -173,5 +174,32 @@ describe("the block itself", () => {
     // Blocking on absent data would stop every candidate whose DOB was never
     // captured, which is most of them historically.
     await expect(assertEmployableAge("cand-1")).resolves.toMatchObject({ source: "none" });
+  });
+});
+
+/**
+ * Regression test, 2026-08-14: persistMinorFlag used to be `.catch(() => undefined)` —
+ * completely silent, no logging at all. A real write failure reproduced the exact defect
+ * this function exists to fix (the guardian-consent banner could never render), invisibly.
+ * It now logs instead of silently discarding the error, and — the load-bearing behavior —
+ * still never throws, so a write failure cannot block the rest of onboarding submission
+ * over one column.
+ */
+describe("persistMinorFlag", () => {
+  it("writes is_minor and does not throw on success", async () => {
+    await expect(
+      persistMinorFlag("cand-1", { isMinor: true, age: 17, source: "self_declared", dob: dobFor(17) } as any)
+    ).resolves.toBeUndefined();
+    expect(dbExecute).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE ats_candidate SET is_minor"),
+      [1, "cand-1"],
+    );
+  });
+
+  it("does not throw when the write fails — the caller must not be blocked by this", async () => {
+    state.minorUpdateFails = true;
+    await expect(
+      persistMinorFlag("cand-1", { isMinor: false, age: 25, source: "self_declared", dob: dobFor(25) } as any)
+    ).resolves.toBeUndefined();
   });
 });

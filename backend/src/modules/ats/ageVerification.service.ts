@@ -24,6 +24,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { logger } from "../../lib/logger.js";
 
 /** Employment below this age is prohibited; 18 is the working standard for BPO/call-centre employment under state Shops & Establishments Acts. */
 export const MINIMUM_EMPLOYMENT_AGE = 18;
@@ -206,10 +207,21 @@ export async function assertEmployableAge(
  *
  * The column and the consent banner have existed since migration 336; nothing
  * ever computed the value, so the banner could not render.
+ *
+ * The write itself used to be `.catch(() => undefined)` — completely silent, with no
+ * logging at all — so a real write failure (schema drift, a dropped connection) would
+ * reproduce the exact defect this function exists to fix, invisibly: the guardian-consent
+ * banner still wouldn't render for a genuine minor, and nobody would know why. Logged
+ * loudly instead so a failure here is observable and can be investigated/backfilled,
+ * rather than blocking the whole onboarding submission over one column write — the hard
+ * legal block on employing anyone under MINIMUM_EMPLOYMENT_AGE lives in
+ * assertEmployableAge, above, and is unaffected by this flag either way.
  */
 export async function persistMinorFlag(candidateId: string, v: AgeVerification): Promise<void> {
   await db.execute(
     `UPDATE ats_candidate SET is_minor = ?, updated_at = NOW() WHERE id = ?`,
     [v.isMinor ? 1 : 0, candidateId],
-  ).catch(() => undefined);
+  ).catch((err: unknown) => {
+    logger.error({ err, candidateId, isMinor: v.isMinor }, '[ageVerification] Failed to persist is_minor flag');
+  });
 }
