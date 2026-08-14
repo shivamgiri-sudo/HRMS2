@@ -216,7 +216,12 @@ export const weekOffPolicyConfigService = {
     await db.execute(`UPDATE week_off_policy_default SET ${sets.join(", ")} WHERE id = ?`, params);
     await logSensitiveAction({
       actor_user_id: userId, action_type: "WEEK_OFF_POLICY_DEFAULT_UPDATED", module_key: "week_off_policy_default",
-      entity_type: "week_off_policy_default", entity_id: id, change_summary: input, req,
+      // `input as Record<string, unknown>` does not compile: UpdateWeekOffPolicyInput is an
+      // INTERFACE, and interfaces get no implicit index signature, so they are neither
+      // assignable NOR assertable to Record<string, unknown>. Object literals do get one, so
+      // spreading into a fresh literal satisfies it. (A type alias would also have worked —
+      // the distinction is interface vs alias, which is why this looks like it should compile.)
+      entity_type: "week_off_policy_default", entity_id: id, change_summary: { ...input }, req,
     });
     return this.get(id);
   },

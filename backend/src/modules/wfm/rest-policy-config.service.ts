@@ -203,7 +203,10 @@ export const restPolicyConfigService = {
     await db.execute(`UPDATE wfm_rest_policy SET ${sets.join(", ")} WHERE id = ?`, params);
     await logSensitiveAction({
       actor_user_id: userId, action_type: "REST_POLICY_UPDATED", module_key: "wfm_rest_policy",
-      entity_type: "wfm_rest_policy", entity_id: id, change_summary: input, req,
+      // Same interface-has-no-index-signature rule as week-off-policy-config.service.ts's
+      // update(): the `as Record<string, unknown>` assertion this replaced does not compile,
+      // because UpdateRestPolicyInput is an interface. Spreading into an object literal does.
+      entity_type: "wfm_rest_policy", entity_id: id, change_summary: { ...input }, req,
     });
     return this.get(id);
   },
