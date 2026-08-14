@@ -74,9 +74,13 @@ import {
  *  real weight is a server-side blended-CTC calculation — the client stand-in branch-budget
  *  planning uses for preview is a crude plannedHeadcount proxy, wrong enough to silently misinform
  *  an actual invoice split. "manual" is the row-by-row editor itself, not an auto-split target. */
-const GRN_AUTO_SPLIT_METHODS = BRANCH_SHARING_METHODS.filter(
-  (method) => !["manual", "meter_wise", "grade_weighted_headcount"].includes(method.value)
-);
+const GRN_AUTO_SPLIT_METHODS = [
+  // "Direct to cost centre" - user picks one cost centre to receive 100%
+  { value: "direct", label: "Direct to cost centre" },
+  ...BRANCH_SHARING_METHODS.filter(
+    (method) => !["manual", "meter_wise", "grade_weighted_headcount"].includes(method.value)
+  ),
+];
 
 type GrnType = "vendor" | "imprest";
 
@@ -719,16 +723,20 @@ export function BudgetLinkedGrnForm({
 
   /** One entry per cost centre that has at least one line matching Head/Sub-head — the candidate
    *  rows for the cost-centre split editor. A cost centre with more than one matching line needs
-   *  its own item picker, exactly like the single-line cascade's `needsItemChoice`. */
+   *  its own item picker, exactly like the single-line cascade's `needsItemChoice`.
+   *  Budget lines without a cost centre (NULL cost_centre_id) are indirect/branch-common expenses
+   *  and are excluded — GRN vendor splits should target named cost centres only. */
   const vendorCostCentreGroups = useMemo(() => {
     const map = new Map<string, BudgetLine[]>();
     vendorMatchingLines.forEach((line) => {
-      const key = line.cost_centre_id ?? NO_COST_CENTRE;
+      // Skip branch-common / indirect expense lines (no cost centre)
+      if (!line.cost_centre_id) return;
+      const key = line.cost_centre_id;
       map.set(key, [...(map.get(key) ?? []), line]);
     });
     return [...map.entries()].map(([costCentreKey, lines]) => ({
       costCentreKey,
-      costCentreName: lines[0].cost_centre_name ?? "Branch (no cost centre)",
+      costCentreName: lines[0].cost_centre_name ?? "Unknown cost centre",
       lines,
     }));
   }, [vendorMatchingLines]);
@@ -806,8 +814,18 @@ export function BudgetLinkedGrnForm({
     setCostCentreSplits((current) => current.map((row) => ({ ...row, percentage: equalPct })));
   }
 
+  // G15: Direct cost centre selection — which CC gets 100% of the spend
+  const [directCostCentreKey, setDirectCostCentreKey] = useState<string>("");
+
   /** G15: Why "Auto-split by" is disabled for vendor cost-centre split right now, if it is. */
   const costCentreSplitReadiness = useMemo((): { ready: boolean; reason: string } => {
+    if (!costCentreSplits.length) return { ready: false, reason: "No cost centres available." };
+    // "Direct to cost centre" needs at least 1 CC and a selection
+    if (costCentreSplitMethod === "direct") {
+      if (!directCostCentreKey) return { ready: false, reason: "Select which cost centre receives this spend." };
+      return { ready: true, reason: "" };
+    }
+    // Other split methods need at least 2 cost centres
     if (costCentreSplits.length < 2) return { ready: false, reason: "Need at least 2 cost centres to split." };
     if (costCentreSplitMethod === "equal_split") return { ready: true, reason: "" };
     // Check if all cost centres have driver data for the chosen method
@@ -824,12 +842,26 @@ export function BudgetLinkedGrnForm({
       };
     }
     return { ready: true, reason: "" };
-  }, [costCentreSplits, costCentreSplitMethod, driversByCostCentre]);
+  }, [costCentreSplits, costCentreSplitMethod, driversByCostCentre, directCostCentreKey]);
 
   /** G15: Redistributes the cost-centre split percentages by the chosen sharing method's weight. */
   function applyCostCentreSplitMethod() {
     if (!costCentreSplitReadiness.ready) {
       toast({ title: "Can't auto-split yet", description: costCentreSplitReadiness.reason, variant: "destructive" });
+      return;
+    }
+    if (costCentreSplitMethod === "direct") {
+      // "Direct to cost centre" — give 100% to the selected cost centre, 0% to others
+      if (!directCostCentreKey) {
+        toast({ title: "Select a cost centre", description: "Pick which cost centre should receive 100% of this spend.", variant: "destructive" });
+        return;
+      }
+      setCostCentreSplits((current) =>
+        current.map((row) => ({
+          ...row,
+          percentage: row.costCentreKey === directCostCentreKey ? 100 : 0,
+        }))
+      );
       return;
     }
     if (costCentreSplitMethod === "equal_split") {
@@ -2336,6 +2368,8 @@ export function BudgetLinkedGrnForm({
               onSplitMethodChange={setCostCentreSplitMethod}
               onApplySplit={applyCostCentreSplitMethod}
               splitReadiness={costCentreSplitReadiness}
+              directCostCentreKey={directCostCentreKey}
+              onDirectCostCentreChange={setDirectCostCentreKey}
             />
           )}
 
@@ -2950,6 +2984,8 @@ function CostCentreSplitEditor({
   onSplitMethodChange,
   onApplySplit,
   splitReadiness,
+  directCostCentreKey,
+  onDirectCostCentreChange,
 }: {
   groups: Array<{ costCentreKey: string; costCentreName: string; lines: BudgetLine[] }>;
   rows: CostCentreSplitDraft[];
@@ -2961,20 +2997,27 @@ function CostCentreSplitEditor({
   onSplitMethodChange: (method: string) => void;
   onApplySplit: () => void;
   splitReadiness: { ready: boolean; reason: string };
+  directCostCentreKey: string;
+  onDirectCostCentreChange: (key: string) => void;
 }) {
   const reconciled = Math.abs(total - 100) <= 0.5;
+  const isDirectMethod = splitMethod === "direct";
 
   return (
     <GrnCard>
       <GrnCardHeader
         title="Cost-centre split"
-        description="Select a split method to distribute the spend across cost centres."
+        description={
+          isDirectMethod
+            ? "Select which cost centre receives 100% of this spend."
+            : "Select a split method to distribute the spend across cost centres."
+        }
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <GrnSelect
               value={splitMethod}
               onChange={(event) => onSplitMethodChange(event.target.value)}
-              className="h-9 w-[160px] text-[12px]"
+              className="h-9 w-[180px] text-[12px]"
               title={!splitReadiness.ready ? splitReadiness.reason : undefined}
             >
               {GRN_AUTO_SPLIT_METHODS.map((method) => (
@@ -2983,6 +3026,21 @@ function CostCentreSplitEditor({
                 </option>
               ))}
             </GrnSelect>
+            {isDirectMethod && (
+              <GrnSelect
+                value={directCostCentreKey}
+                onChange={(event) => onDirectCostCentreChange(event.target.value)}
+                className="h-9 min-w-[200px] text-[12px]"
+                placeholder="Select cost centre"
+              >
+                <option value="">Select cost centre</option>
+                {groups.map((group) => (
+                  <option key={group.costCentreKey} value={group.costCentreKey}>
+                    {group.costCentreName}
+                  </option>
+                ))}
+              </GrnSelect>
+            )}
             <Button
               onClick={onApplySplit}
               disabled={!splitReadiness.ready}
