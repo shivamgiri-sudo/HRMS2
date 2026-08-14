@@ -948,22 +948,9 @@ export const grnSmartService = {
         throw new Error("All cost-centre splits must share the same expense head and sub-head");
       }
 
-      // The invoice's own GST rate overrides whatever the budget line assumed at planning
-      // time (requirement: invoice is ground truth) — but a line marked exempt/non-taxable
-      // structurally cannot carry a GST-bearing component; that's a hard conflict, not
-      // something to silently coerce to 0%.
-      const gstBearing = components.some((component) => Number(component.gstRate) > 0);
-      if (gstBearing) {
-        const exemptSplit = resolvedSplits.find((item) =>
-          ["exempt", "non_gst"].includes(String(item.line.tax_treatment))
-        );
-        if (exemptSplit) {
-          const label = String(exemptSplit.line.tax_treatment) === "exempt" ? "exempt" : "non-taxable";
-          throw new Error(
-            `Cost centre "${exemptSplit.line.cost_centre_name || "Unassigned"}": budget line is marked ${label} and cannot carry a GST-bearing invoice component. Finance should review the budget line tax treatment in Branch Budget Management → Approval tab → Amend Tax button. If the line is unused and the period is open, a Tax Treatment Amendment can be requested; otherwise a controlled budget revision is required.`
-          );
-        }
-      }
+      // Invoice GST rates are ground truth. Budget line tax_treatment is a planning-time
+      // classification and does not block GRN submission — gross amount consumption is
+      // correct regardless of the budget line's tax_treatment label.
 
       // Tax breakdown is entirely component-driven (each component supplies its own explicit
       // base + rate), computed via the same calculateBudgetLine() every other GRN/budget path

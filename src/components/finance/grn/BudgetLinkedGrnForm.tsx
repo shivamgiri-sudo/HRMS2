@@ -836,20 +836,6 @@ export function BudgetLinkedGrnForm({
           next.costCentreSplit = "No approved budget line matches this Head/Sub-head yet.";
         } else if (Math.abs(costCentreSplitTotal - 100) > 0.5) {
           next.costCentreSplit = `Cost-centre split percentages must total 100% (currently ${decimal(costCentreSplitTotal, 2)}%).`;
-        } else if (invoiceComponents.some((c) => Number(c.gstRate) > 0)) {
-          // Catch the non-taxable / GST mismatch client-side so the user sees an inline
-          // error immediately, not a server 400 after the GRN row has already been created.
-          const badSplit = costCentreSplits.find((row) => {
-            const group = vendorCostCentreGroups.find((g) => g.costCentreKey === row.costCentreKey);
-            const line = group?.lines.find((l) => l.id === row.budgetLineId);
-            return line && ["exempt", "non_gst"].includes(line.tax_treatment);
-          });
-          if (badSplit) {
-            const badGroup = vendorCostCentreGroups.find((g) => g.costCentreKey === badSplit.costCentreKey);
-            const badLine = badGroup?.lines.find((l) => l.id === badSplit.budgetLineId);
-            const label = badLine?.tax_treatment === "exempt" ? "exempt" : "non-taxable";
-            next.costCentreSplit = `"${badGroup?.costCentreName || "Unassigned"}": budget line is marked ${label} — it cannot carry a GST invoice component. Ask Finance to review this in Branch Budget Management → Approval tab → Amend Tax button on the affected line. If the line has already been reserved or consumed, Finance will need to raise a controlled budget revision instead.`;
-          }
         }
         if (!invoiceComponents.some((item) => Number(item.amountWithoutTax) > 0)) {
           next.components = "Add at least one invoice component.";
@@ -1282,7 +1268,6 @@ export function BudgetLinkedGrnForm({
     },
     onError: (error: Error) => {
       const overBudget = /exceeds (the )?available budget/i.test(error.message);
-      const taxMismatch = /budget line is marked (non-taxable|exempt)/i.test(error.message);
       const lineId = attemptedLineIdRef.current;
       toast({
         title: "GRN could not be saved",
@@ -1297,15 +1282,7 @@ export function BudgetLinkedGrnForm({
                   + `&branchId=${form.branchId}&period=${form.billDate ? form.billDate.slice(0, 7) : ""}`
                 ),
             }
-          : taxMismatch
-            ? {
-                label: "Fix in Budget Management",
-                onClick: () =>
-                  navigate(
-                    `/finance/branch-budget?branchId=${form.branchId}&period=${form.billDate ? form.billDate.slice(0, 7) : ""}`
-                  ),
-              }
-            : undefined,
+          : undefined,
       });
     },
   });
