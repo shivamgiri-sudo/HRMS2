@@ -43,6 +43,36 @@ async function employeeProcessScope(employeeId: string): Promise<{ processId: st
   return { processId: row?.process_id ?? null, branchId: row?.branch_id ?? null };
 }
 
+/**
+ * List-endpoint counterpart to assertProcessScope: create/update/delete/approve
+ * already went through assertProcessScope (a single, caller-supplied process_id
+ * checked against the caller's own scope), but listTemplates/listWeekOffPreferences
+ * left process_id as an entirely optional filter — a wfm/process_manager caller who
+ * simply omitted it got every template/preference company-wide (delta-audit
+ * 2026-08-14, P1). Returns 'unrestricted' for admin/hr and any 'all'-scope grant,
+ * otherwise the caller's own assigned process ids — [] (not 'unrestricted') for a
+ * scoped role with no user_assignment_scope row at all, which the caller must
+ * translate into "return nothing", matching the fail-closed behavior every other
+ * under-provisioned manager-tier role in this codebase already gets.
+ */
+async function resolveScopedProcessIds(req: Request): Promise<'unrestricted' | string[]> {
+  const userId = req.authUser!.id;
+  if (await hasRole(userId, 'admin', 'hr')) return 'unrestricted';
+
+  const placeholders = SCOPED_ROSTER_ROLES.map(() => '?').join(', ');
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT scope_type, process_id
+       FROM user_assignment_scope
+      WHERE user_id = ?
+        AND role_key IN (${placeholders})
+        AND active_status = 1`,
+    [userId, ...SCOPED_ROSTER_ROLES],
+  );
+  const scopes = rows as { scope_type: string; process_id: string | null }[];
+  if (scopes.some((s) => s.scope_type === 'all')) return 'unrestricted';
+  return scopes.map((s) => s.process_id).filter((id): id is string => !!id);
+}
+
 export const rosterMasterController = {
   // ========== Templates ==========
   async createTemplate(req: Request, res: Response) {
@@ -57,8 +87,16 @@ export const rosterMasterController = {
   async listTemplates(req: Request, res: Response) {
     const { process_id, is_active } = req.query;
 
+    const allowed = await resolveScopedProcessIds(req);
+    if (allowed !== 'unrestricted') {
+      if (allowed.length === 0) return res.json({ data: [] });
+      if (process_id && !allowed.includes(String(process_id))) {
+        return res.status(403).json({ error: 'Not authorized for this process' });
+      }
+    }
+
     const templates = await rosterMasterService.listTemplates({
-      process_id: process_id as string,
+      process_id: process_id ? (process_id as string) : (allowed === 'unrestricted' ? undefined : allowed),
       is_active: is_active === 'true' ? true : is_active === 'false' ? false : undefined,
     });
 
@@ -71,6 +109,11 @@ export const rosterMasterController = {
     if (!template) {
       return res.status(404).json({ error: 'Template not found' });
     }
+
+    // Same row-scope gap as the list endpoint: fetching by id bypassed process
+    // scope entirely. Mirrors updateTemplate's own check against the row's
+    // actual process, not a caller-supplied value.
+    await assertProcessScope(req, (template as { process_id?: string }).process_id ?? null);
 
     res.json(template);
   },
@@ -115,9 +158,17 @@ export const rosterMasterController = {
   async listWeekOffPreferences(req: Request, res: Response) {
     const { approved, process_id } = req.query;
 
+    const allowed = await resolveScopedProcessIds(req);
+    if (allowed !== 'unrestricted') {
+      if (allowed.length === 0) return res.json({ data: [] });
+      if (process_id && !allowed.includes(String(process_id))) {
+        return res.status(403).json({ error: 'Not authorized for this process' });
+      }
+    }
+
     const preferences = await rosterMasterService.listWeekOffPreferences({
       approved: approved === 'true' ? true : approved === 'false' ? false : undefined,
-      process_id: process_id as string,
+      process_id: process_id ? (process_id as string) : (allowed === 'unrestricted' ? undefined : allowed),
     });
 
     res.json({ data: preferences });

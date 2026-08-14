@@ -31,11 +31,41 @@ async function notificationOwnerId(notificationId: string): Promise<string | nul
   return (rows[0] as { employee_id?: string } | undefined)?.employee_id ?? null;
 }
 
+/**
+ * List-endpoint counterpart to assertProcessScope, matching roster-master.controller.ts's
+ * own copy of the same pattern: getCapacityConfig/checkCapacity had a processId URL param
+ * to check directly, but getAllocations' process_id is an entirely optional filter — a
+ * wfm/process_manager caller who omitted it got every allocation company-wide (delta-audit
+ * 2026-08-14, P1).
+ */
+async function resolveScopedProcessIds(req: Request): Promise<'unrestricted' | string[]> {
+  const userId = req.authUser!.id;
+  if (await hasRole(userId, 'admin', 'hr')) return 'unrestricted';
+
+  const placeholders = SCOPED_ROSTER_ROLES.map(() => '?').join(', ');
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT scope_type, process_id
+       FROM user_assignment_scope
+      WHERE user_id = ?
+        AND role_key IN (${placeholders})
+        AND active_status = 1`,
+    [userId, ...SCOPED_ROSTER_ROLES],
+  );
+  const scopes = rows as { scope_type: string; process_id: string | null }[];
+  if (scopes.some((s) => s.scope_type === 'all')) return 'unrestricted';
+  return scopes.map((s) => s.process_id).filter((id): id is string => !!id);
+}
+
 export const rosterCapacityController = {
   // ========== Capacity Config ==========
   async getCapacityConfig(req: Request, res: Response) {
     try {
       const { processId, dayOfWeek } = req.params;
+      // processId was trusted straight from the URL with no scope check — a
+      // wfm/process_manager caller could read any process' capacity config.
+      if (!(await assertProcessScope(req, processId))) {
+        return res.status(403).json({ error: 'Not authorized for this process' });
+      }
       const config = await rosterCapacityService.getCapacityConfig(
         processId,
         parseInt(dayOfWeek)
@@ -84,6 +114,11 @@ export const rosterCapacityController = {
       if (!allocationDate || !dayOfWeek) {
         return res.status(400).json({ error: 'allocationDate and dayOfWeek required' });
       }
+      // Same gap as getCapacityConfig — processId was never checked against the
+      // caller's own process scope.
+      if (!(await assertProcessScope(req, processId))) {
+        return res.status(403).json({ error: 'Not authorized for this process' });
+      }
 
       const result = await rosterCapacityService.checkCapacity(
         processId,
@@ -115,7 +150,20 @@ export const rosterCapacityController = {
 
   async getAllocations(req: Request, res: Response) {
     try {
-      const allocations = await rosterCapacityService.getAllocations(req.query);
+      const { process_id, ...restQuery } = req.query as Record<string, string | undefined>;
+
+      const allowed = await resolveScopedProcessIds(req);
+      if (allowed !== 'unrestricted') {
+        if (allowed.length === 0) return res.json([]);
+        if (process_id && !allowed.includes(String(process_id))) {
+          return res.status(403).json({ error: 'Not authorized for this process' });
+        }
+      }
+
+      const allocations = await rosterCapacityService.getAllocations({
+        ...restQuery,
+        process_id: process_id ?? (allowed === 'unrestricted' ? undefined : allowed),
+      } as Parameters<typeof rosterCapacityService.getAllocations>[0]);
       res.json(allocations);
     } catch (error: unknown) {
       const err = error as Error;

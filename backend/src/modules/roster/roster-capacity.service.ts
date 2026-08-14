@@ -303,7 +303,7 @@ class RosterCapacityService {
   }
 
   async getAllocations(filters: {
-    process_id?: string;
+    process_id?: string | string[];
     allocation_date?: string;
     employee_id?: string;
     day_of_week?: number;
@@ -311,7 +311,11 @@ class RosterCapacityService {
     let sql = 'SELECT * FROM weekoff_allocation_log WHERE 1=1';
     const params: unknown[] = [];
 
-    if (filters.process_id) {
+    if (Array.isArray(filters.process_id)) {
+      if (filters.process_id.length === 0) return [];
+      sql += ` AND process_id IN (${filters.process_id.map(() => '?').join(',')})`;
+      params.push(...filters.process_id);
+    } else if (filters.process_id) {
       sql += ' AND process_id = ?';
       params.push(filters.process_id);
     }

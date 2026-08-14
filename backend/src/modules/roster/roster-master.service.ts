@@ -94,11 +94,15 @@ class RosterMasterService {
     return template;
   }
 
-  async listTemplates(filters?: { process_id?: string; is_active?: boolean }): Promise<RosterTemplate[]> {
+  async listTemplates(filters?: { process_id?: string | string[]; is_active?: boolean }): Promise<RosterTemplate[]> {
     let sql = 'SELECT * FROM roster_template WHERE 1=1';
     const params: unknown[] = [];
 
-    if (filters?.process_id) {
+    if (Array.isArray(filters?.process_id)) {
+      if (filters.process_id.length === 0) return [];
+      sql += ` AND process_id IN (${filters.process_id.map(() => '?').join(',')})`;
+      params.push(...filters.process_id);
+    } else if (filters?.process_id) {
       sql += ' AND process_id = ?';
       params.push(filters.process_id);
     }
@@ -214,12 +218,16 @@ class RosterMasterService {
 
   async listWeekOffPreferences(filters?: {
     approved?: boolean;
-    process_id?: string;
+    process_id?: string | string[];
   }): Promise<WeekOffPreference[]> {
     let sql = 'SELECT wp.* FROM week_off_preference wp';
     const params: unknown[] = [];
 
-    if (filters?.process_id) {
+    if (Array.isArray(filters?.process_id)) {
+      if (filters.process_id.length === 0) return [];
+      sql += ` JOIN employees e ON wp.employee_id = e.id WHERE e.process_id IN (${filters.process_id.map(() => '?').join(',')})`;
+      params.push(...filters.process_id);
+    } else if (filters?.process_id) {
       sql += ' JOIN employees e ON wp.employee_id = e.id WHERE e.process_id = ?';
       params.push(filters.process_id);
     } else {

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/modules/roster/roster-master.controller.ts",
+    "src/modules/roster/roster-master.service.ts",
+    "src/modules/roster/roster-capacity.controller.ts",
+    "src/modules/roster/roster-capacity.service.ts"
+  ]
+}

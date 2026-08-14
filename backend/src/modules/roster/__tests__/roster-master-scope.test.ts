@@ -24,13 +24,22 @@ const {
   approveWeekOffPreference,
   createTemplate,
   generateRoster,
+  listTemplates,
+  getTemplateById,
+  listWeekOffPreferences,
 } = vi.hoisted(() => ({
   approveWeekOffPreference: vi.fn().mockResolvedValue({ id: "pref-1", approved: 1 }),
   createTemplate: vi.fn().mockResolvedValue({ id: "tmpl-1" }),
   generateRoster: vi.fn().mockResolvedValue({ created: 1, skipped: 0, errors: [] }),
+  listTemplates: vi.fn().mockResolvedValue([{ id: "tmpl-1" }]),
+  getTemplateById: vi.fn().mockResolvedValue({ id: "tmpl-1", process_id: "process-A" }),
+  listWeekOffPreferences: vi.fn().mockResolvedValue([{ id: "pref-1" }]),
 }));
 vi.mock("../roster-master.service.js", () => ({
-  rosterMasterService: { approveWeekOffPreference, createTemplate, generateRoster },
+  rosterMasterService: {
+    approveWeekOffPreference, createTemplate, generateRoster,
+    listTemplates, getTemplateById, listWeekOffPreferences,
+  },
 }));
 
 import { rosterMasterController } from "../roster-master.controller.js";
@@ -60,6 +69,9 @@ describe("roster-master.controller scope enforcement", () => {
     approveWeekOffPreference.mockClear();
     createTemplate.mockClear();
     generateRoster.mockClear();
+    listTemplates.mockClear().mockResolvedValue([{ id: "tmpl-1" }]);
+    getTemplateById.mockClear().mockResolvedValue({ id: "tmpl-1", process_id: "process-A" });
+    listWeekOffPreferences.mockClear().mockResolvedValue([{ id: "pref-1" }]);
   });
 
   it("refuses to approve week-off for an employee outside the caller's process scope", async () => {
@@ -120,5 +132,85 @@ describe("roster-master.controller scope enforcement", () => {
 
     await expect(rosterMasterController.createTemplate(req, res)).rejects.toMatchObject({ statusCode: 403 });
     expect(createTemplate).not.toHaveBeenCalled();
+  });
+
+  // ── List endpoints: process_id was an entirely optional filter, so omitting it
+  // ── gave a scoped role every row company-wide (delta-audit 2026-08-14, P1).
+  describe("listTemplates / getTemplate / listWeekOffPreferences — process_id is no longer optional for scoped roles", () => {
+    it("listTemplates returns [] for a scoped caller with no user_assignment_scope row at all", async () => {
+      hasRole.mockResolvedValue(false); // not admin/hr
+      execute.mockResolvedValue([[], []]); // resolveScopedProcessIds: zero scope rows
+
+      const req = mockReq();
+      const res = mockRes();
+      await rosterMasterController.listTemplates(req, res);
+
+      expect(res.json).toHaveBeenCalledWith({ data: [] });
+      expect(listTemplates).not.toHaveBeenCalled();
+    });
+
+    it("listTemplates passes the caller's own scoped process ids when none was requested", async () => {
+      hasRole.mockResolvedValue(false);
+      execute.mockResolvedValue([[{ scope_type: "process", process_id: "process-A" }], []]);
+
+      const req = mockReq();
+      const res = mockRes();
+      await rosterMasterController.listTemplates(req, res);
+
+      expect(listTemplates).toHaveBeenCalledWith(expect.objectContaining({ process_id: ["process-A"] }));
+    });
+
+    it("listTemplates 403s when a scoped caller requests a process outside their own scope", async () => {
+      hasRole.mockResolvedValue(false);
+      execute.mockResolvedValue([[{ scope_type: "process", process_id: "process-A" }], []]);
+
+      const req = mockReq({ query: { process_id: "process-B" } });
+      const res = mockRes();
+      await rosterMasterController.listTemplates(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(listTemplates).not.toHaveBeenCalled();
+    });
+
+    it("listTemplates stays unrestricted for admin/hr (unchanged behaviour)", async () => {
+      hasRole.mockResolvedValue(true);
+      const req = mockReq();
+      const res = mockRes();
+      await rosterMasterController.listTemplates(req, res);
+      expect(listTemplates).toHaveBeenCalledWith(expect.objectContaining({ process_id: undefined }));
+    });
+
+    it("getTemplate 403s when the fetched template's own process is outside the caller's scope", async () => {
+      hasRole.mockResolvedValue(false); // assertProcessScope: not admin/hr
+      hasProcessScope.mockResolvedValue(false); // assertProcessScope: no grant for process-A
+      getTemplateById.mockResolvedValue({ id: "tmpl-1", process_id: "process-A" });
+
+      const req = mockReq({ params: { id: "tmpl-1" } });
+      const res = mockRes();
+      await expect(rosterMasterController.getTemplate(req, res)).rejects.toMatchObject({ statusCode: 403 });
+    });
+
+    it("listWeekOffPreferences returns [] for a scoped caller with no assignment", async () => {
+      hasRole.mockResolvedValue(false);
+      execute.mockResolvedValue([[], []]);
+
+      const req = mockReq();
+      const res = mockRes();
+      await rosterMasterController.listWeekOffPreferences(req, res);
+
+      expect(res.json).toHaveBeenCalledWith({ data: [] });
+      expect(listWeekOffPreferences).not.toHaveBeenCalled();
+    });
+
+    it("listWeekOffPreferences with an 'all'-scope grant stays unrestricted", async () => {
+      hasRole.mockResolvedValue(false);
+      execute.mockResolvedValue([[{ scope_type: "all", process_id: null }], []]);
+
+      const req = mockReq();
+      const res = mockRes();
+      await rosterMasterController.listWeekOffPreferences(req, res);
+
+      expect(listWeekOffPreferences).toHaveBeenCalledWith(expect.objectContaining({ process_id: undefined }));
+    });
   });
 });
