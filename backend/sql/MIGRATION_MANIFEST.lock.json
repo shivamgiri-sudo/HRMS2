@@ -518,10 +518,15 @@
     "1213_wfm_shift_master_immutability_trigger.sql",
     "460_budget_line_tax_amendment.sql",
     "440_finance_phase1.sql",
-    "1214_repair_live_payroll_schema_gaps.sql",
     "441_finance_phases_2_3_4.sql"
   ],
-  "approvedDeletions": [],
+  "approvedDeletions": [
+    {
+      "filename": "1214_repair_live_payroll_schema_gaps.sql",
+      "reason": "Fully superseded by 1211_salary_prep_run_incentives_applied_at.sql and 1212_payslip_email_tracking_and_missing_indexes.sql, which declare the same four objects (salary_prep_run.incentives_applied_at, salary_prep_line.payslip_emailed / payslip_emailed_at, idx_spl_payslip_gen) with the same information_schema + PREPARE idiom, and applied cleanly on 2026-08-14 11:19 (executor maslms:2882130). 1214 was authored during a window when 8d8f34a5 had accidentally deleted 1211/1212 from the repo, so they could not be found; 9b7fdac7 restored them. It never ran - no schema_migrations row - so nothing is lost by unscheduling it. Kept on disk per the repository rule against deleting migrations, and left in knownUnlisted so it can never be scheduled again by accident. Scheduling both would be two migrations owning one set of columns.",
+      "approvedBy": "shivam.giri@teammas.in"
+    }
+  ],
   "knownDangling": [
     "migrations/426_employee_geofence_alerts.sql"
   ],
@@ -608,6 +613,7 @@
     "1126_salary_prep_line_component_unique_key.sql",
     "1127_scope_apr_eligibility_by_process.sql",
     "1136_employee_bank_detail_account_blind_index.sql",
+    "1214_repair_live_payroll_schema_gaps.sql",
     "127_ats_candidate_unique_constraints.sql",
     "133_phase2_security_fixes.sql",
     "136_incentive_module.sql",
