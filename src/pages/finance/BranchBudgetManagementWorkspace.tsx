@@ -484,6 +484,8 @@ export default function BranchBudgetManagementWorkspace() {
   /** Per-line correction notes typed inside the review dialog (keyed by lineId or head|sub). */
   const [dialogLineNotes, setDialogLineNotes] = useState<Record<string, string>>({});
   const [dialogRemarks, setDialogRemarks] = useState("");
+  /** Period or branch change when unsaved lines exist — drives a guard AlertDialog. */
+  const [pendingNavigation, setPendingNavigation] = useState<{ type: "period" | "branch"; value: string } | null>(null);
   /** Budget pending delete confirmation — drives the delete AlertDialog. */
   const [pendingDeleteBudget, setPendingDeleteBudget] = useState<BranchBudgetSummary | null>(null);
   const [deleteBudgetReason, setDeleteBudgetReason] = useState("");
@@ -518,6 +520,17 @@ export default function BranchBudgetManagementWorkspace() {
   useEffect(() => {
     if (capabilities?.scopedBranchId) setBranchId(capabilities.scopedBranchId);
   }, [capabilities?.scopedBranchId]);
+  // Role-aware default tab: reviewer-only roles land on Approval, not Plan Builder.
+  const didSetInitialTab = useRef(false);
+  useEffect(() => {
+    if (!capabilities || didSetInitialTab.current) return;
+    // Only override if the URL didn't request a specific tab (those already override to "plan" or "topups")
+    const requestedTab = new URLSearchParams(window.location.search).get("tab");
+    if (!requestedTab && !capabilities.canCreate && (capabilities.canReviewBranchStage || capabilities.canReviewFinanceStage || capabilities.canReviewAccountsStage)) {
+      setTab("approval");
+    }
+    didSetInitialTab.current = true;
+  }, [capabilities]);
 
   const { user } = useAuth();
   const { budgetsQuery, saveBudget, submitBudget, reviewBudget, reviewerReviseBudget, deleteBudget } = useBranchBudgets({
@@ -1041,7 +1054,7 @@ export default function BranchBudgetManagementWorkspace() {
 
   async function save(submit: boolean) {
     try {
-      validateLines();
+      if (submit) validateLines();
       if (locked) throw new Error(`The budget is already ${statusLabel(currentBudget!.status)}`);
       const result = await saveBudget.mutateAsync({
         id: savedBudgetId ?? editableBudget?.id,
@@ -1205,7 +1218,8 @@ export default function BranchBudgetManagementWorkspace() {
       if (decision !== "approve" && !dialogRemarks.trim()) throw new Error("Remarks are mandatory");
       let lineCorrections: BudgetLineCorrectionInput[] | undefined;
       if (decision === "revision") {
-        lineCorrections = (reviewDetail.lines ?? [])
+        // Corrections from the review dialog (keyed by lineId)
+        const dialogCorrections = (reviewDetail.lines ?? [])
           .map((line) => ({
             lineId: line.id ?? null,
             head: line.head,
@@ -1214,6 +1228,18 @@ export default function BranchBudgetManagementWorkspace() {
             note: (dialogLineNotes[line.id] ?? "").trim(),
           }))
           .filter((entry) => entry.note && entry.head?.trim());
+        // Corrections from Plan Builder tab (keyed by head|subHead) — merge in if not already covered
+        const coveredKeys = new Set(dialogCorrections.map((c) => `${c.head}|${c.subHead}`));
+        const planBuilderCorrections = lines
+          .map((line) => ({
+            lineId: line.id ?? null,
+            head: line.head,
+            subHead: line.subHead ?? null,
+            itemName: line.itemName ?? null,
+            note: (correctionNotes[correctionKey(line)] ?? "").trim(),
+          }))
+          .filter((entry) => entry.note && entry.head?.trim() && !coveredKeys.has(`${entry.head}|${entry.subHead}`));
+        lineCorrections = [...dialogCorrections, ...planBuilderCorrections];
         if (!lineCorrections.length) {
           throw new Error("Add a correction note against at least one line before requesting revision");
         }
@@ -1306,8 +1332,8 @@ export default function BranchBudgetManagementWorkspace() {
               <div className="flex flex-wrap items-center gap-2">
                 {capabilities?.canCreate && (
                   <>
-                    <Button size="sm" onClick={() => void save(false)} disabled={saveBudget.isPending || locked}><Save className="mr-1.5 h-3.5 w-3.5" />Save draft</Button>
-                    <Button size="sm" variant="outline" onClick={() => void save(true)} disabled={saveBudget.isPending || locked}><Send className="mr-1.5 h-3.5 w-3.5" />Submit to Branch Head</Button>
+                    <Button size="sm" onClick={() => void save(false)} disabled={saveBudget.isPending || locked || !branchId || !period}><Save className="mr-1.5 h-3.5 w-3.5" />Save draft</Button>
+                    <Button size="sm" variant="outline" onClick={() => void save(true)} disabled={saveBudget.isPending || locked || !branchId || !period}><Send className="mr-1.5 h-3.5 w-3.5" />Submit to Branch Head</Button>
                     {autoSaveStatus === "pending" && <span className="flex items-center gap-1 text-xs text-slate-500"><Loader2 className="h-3 w-3 animate-spin" />Auto-saving…</span>}
                     {autoSaveStatus === "saved" && <span className="flex items-center gap-1 text-xs text-emerald-700"><CheckCircle2 className="h-4 w-4" />Saved</span>}
                   </>
@@ -1354,6 +1380,30 @@ export default function BranchBudgetManagementWorkspace() {
               <TabsTrigger value="master"><Settings2 className="mr-2 h-4 w-4" />Expense Master</TabsTrigger>
             </TabsList>
 
+            {/* Context strip — always visible on every tab */}
+            {(branchId || period) && (
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-1.5 text-xs text-slate-500">
+                <span className="font-medium text-slate-700">
+                  {branches.find((b) => b.id === branchId)?.branch_name ?? branches.find((b) => b.id === branchId)?.name ?? (branchId ? "Branch" : "No branch selected")}
+                </span>
+                <span>·</span>
+                <span>{period ?? "No period selected"}</span>
+                {currentBudget && <span>{statusBadge(currentBudget.status)}</span>}
+              </div>
+            )}
+
+            {/* ACTION REQUIRED banner for pending reviewers */}
+            {currentBudget && canReview(currentBudget) && tab !== "approval" && (
+              <div className="flex items-center gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                This budget is pending your approval —{" "}
+                <button type="button" className="underline" onClick={() => setTab("approval")}>
+                  go to Approval & Utilization tab
+                </button>
+                {" "}to review and act.
+              </div>
+            )}
+
             <TabsContent value="plan" className="space-y-5">
               {/* Period and branch are navigation, not creation: reviewers (branch/finance/accounts head)
                   have canCreate=false, so gating these on canCreate stranded them on the current month
@@ -1362,7 +1412,7 @@ export default function BranchBudgetManagementWorkspace() {
               {/* Compacted: three tall stacked blocks became one inline row. This is a context
                   selector, not a form to fill in, so it should not occupy a card's worth of height
                   above the grid that actually does the work. */}
-              <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500"><div className="w-52 space-y-1"><Label>Period *</Label><MonthYearPicker value={period} onChange={(value) => { setPeriod(value); setSavedBudgetId(null); setLoadedDetailId(null); }} /></div><div className="w-56 space-y-1"><Label>{branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={branchLocked} onChange={(event) => { setBranchId(event.target.value); setSavedBudgetId(null); setLoadedDetailId(null); }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}</select></div><div className="w-28 space-y-1"><Label>Financial year</Label><div className="flex h-9 items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-600" title="Set by Period — April to March. Not independently editable.">{financialYear(period)}</div></div></CardContent></Card>
+              <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500"><div className="w-52 space-y-1"><Label>Period *</Label><MonthYearPicker value={period} onChange={(value) => { if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "period", value }); } else { setPeriod(value); setSavedBudgetId(null); setLoadedDetailId(null); } }} /></div><div className="w-56 space-y-1"><Label>{branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={branchLocked} onChange={(event) => { const v = event.target.value; if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "branch", value: v }); } else { setBranchId(v); setSavedBudgetId(null); setLoadedDetailId(null); } }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}</select></div><div className="w-28 space-y-1"><Label>Financial year</Label><div className="flex h-9 items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-600" title="Set by Period — April to March. Not independently editable.">{financialYear(period)}</div></div></CardContent></Card>
               {/* The branch picker above is locked and empty whenever capabilities failed to load.
                   Say why — an unexplained empty dropdown reads as a broken page, and the server's
                   own message ("not mapped to an active employee branch") is the actionable one. */}
@@ -1944,7 +1994,16 @@ export default function BranchBudgetManagementWorkspace() {
 
                   {!budgets.length && (
                     <div className="py-12 text-center text-slate-500">
-                      <Building2 className="mx-auto mb-3 h-10 w-10" />No budget found.
+                      <Building2 className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+                      <p className="text-sm font-semibold text-slate-700">No budgets found</p>
+                      <p className="mt-1 text-xs">
+                        {!branchId ? "Select a branch to view its budgets." :
+                         capabilities?.canCreate ? "No budget exists for this branch and period." :
+                         "No budgets are pending your review for this branch and period."}
+                      </p>
+                      {!branchId && (
+                        <Button className="mt-4" size="sm" onClick={() => setTab("plan")}>Open Plan Builder</Button>
+                      )}
                     </div>
                   )}
 
@@ -1969,6 +2028,14 @@ export default function BranchBudgetManagementWorkspace() {
                   {reviewDetailQuery.isLoading && (
                     <div className="flex min-h-[200px] items-center justify-center">
                       <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+                    </div>
+                  )}
+
+                  {reviewDetailQuery.isError && (
+                    <div className="flex min-h-[200px] flex-col items-center justify-center gap-3 text-center">
+                      <AlertTriangle className="h-8 w-8 text-rose-400" />
+                      <p className="text-sm font-medium text-slate-700">Failed to load budget details</p>
+                      <Button size="sm" variant="outline" onClick={() => reviewDetailQuery.refetch()}>Try again</Button>
                     </div>
                   )}
 
@@ -2001,6 +2068,7 @@ export default function BranchBudgetManagementWorkspace() {
                                     <th className="h-8 px-3 text-right font-medium">Qty</th>
                                     <th className="h-8 px-3 text-right font-medium">Rate</th>
                                     <th className="h-8 px-3 text-right font-medium">Gross</th>
+                                    <th className="h-8 px-3 text-right font-medium">P&amp;L Budget</th>
                                     <th className="h-8 px-3 font-medium">Justification</th>
                                     {canAct && <th className="h-8 px-3 font-medium">Correction note (revision)</th>}
                                   </tr>
@@ -2014,6 +2082,7 @@ export default function BranchBudgetManagementWorkspace() {
                                       <td className="px-3 py-2 text-right">{line.quantity ?? "—"}</td>
                                       <td className="px-3 py-2 text-right">{line.unit_rate != null ? money(Number(line.unit_rate)) : "—"}</td>
                                       <td className="px-3 py-2 text-right font-medium">{money(Number(line.gross_amount))}</td>
+                                      <td className="px-3 py-2 text-right font-medium text-blue-700">{money(Number(line.pnl_cost_amount))}</td>
                                       <td className="max-w-[160px] truncate px-3 py-2 text-slate-500" title={line.justification ?? ""}>{line.justification ?? "—"}</td>
                                       {canAct && (
                                         <td className="px-3 py-2">
@@ -2149,7 +2218,7 @@ export default function BranchBudgetManagementWorkspace() {
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Available</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed %</th>
-                            <th className="h-8 px-3 text-right font-medium text-slate-500">Variance</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500" title="Positive = under budget (favourable). Negative = overspent.">Variance (Budget − Actual)</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y">
@@ -2159,7 +2228,7 @@ export default function BranchBudgetManagementWorkspace() {
                             const reserved = Number(line.reserved_amount ?? 0);
                             const available = Number(line.available_gross_amount ?? 0);
                             const consumedPct = budgeted > 0 ? Math.round((consumed / budgeted) * 100) : 0;
-                            const variance = consumed - budgeted;
+                            const variance = budgeted - consumed; // positive = under budget (favourable)
                             return (
                               <tr key={line.id} className="hover:bg-slate-50/70">
                                 <td className="px-3 py-2 font-medium text-slate-800">{line.head}</td>
@@ -2174,7 +2243,7 @@ export default function BranchBudgetManagementWorkspace() {
                                     {consumedPct}%
                                   </Badge>
                                 </td>
-                                <td className={`px-3 py-2 text-right tabular-nums font-medium ${variance > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                                <td className={`px-3 py-2 text-right tabular-nums font-medium ${variance < 0 ? "text-rose-600" : "text-emerald-600"}`}>
                                   {variance > 0 ? "+" : ""}{money(variance)}
                                 </td>
                               </tr>
@@ -2422,6 +2491,32 @@ export default function BranchBudgetManagementWorkspace() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Unsaved-work guard: period/branch change while dirty */}
+      <AlertDialog open={Boolean(pendingNavigation)} onOpenChange={(open) => { if (!open) setPendingNavigation(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Unsaved changes will be lost</AlertDialogTitle>
+            <AlertDialogDescription>
+              You have {dirtyCount} unsaved budget line{dirtyCount !== 1 ? "s" : ""}. Changing the {pendingNavigation?.type === "period" ? "period" : "branch"} will discard them.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setPendingNavigation(null)}>Keep editing</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (!pendingNavigation) return;
+                if (pendingNavigation.type === "period") { setPeriod(pendingNavigation.value); } else { setBranchId(pendingNavigation.value); }
+                setSavedBudgetId(null); setLoadedDetailId(null);
+                setPendingNavigation(null);
+              }}
+            >
+              Discard and continue
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Delete expense master AlertDialog — replaces window.confirm() */}
       <AlertDialog open={Boolean(pendingDeleteMaster)} onOpenChange={(open) => { if (!open) setPendingDeleteMaster(null); }}>
         <AlertDialogContent>
@@ -2503,12 +2598,13 @@ function AnnualBudgetTab({ branchId, period }: { branchId: string; period: strin
               </tr>
             </thead>
             <tbody>
-              {(["Budgeted", "Consumed", "Available"] as const).map((metric) => {
+              {(["Budgeted", "Consumed", "Reserved", "Available"] as const).map((metric) => {
                 const values = months.map((m) => {
                   const b = byMonth[m];
                   if (!b) return null as number | null;
                   if (metric === "Budgeted") return Number(b.gross_budget_amount ?? 0);
                   if (metric === "Consumed") return Number(b.consumed_amount ?? 0);
+                  if (metric === "Reserved") return Number(b.reserved_amount ?? 0);
                   return Number(b.gross_budget_amount ?? 0) - Number(b.reserved_amount ?? 0) - Number(b.consumed_amount ?? 0);
                 });
                 const total = values.reduce<number>((s, v) => s + (v ?? 0), 0);
@@ -2516,7 +2612,7 @@ function AnnualBudgetTab({ branchId, period }: { branchId: string; period: strin
                   <tr key={metric} className="border-b last:border-0">
                     <td className="px-3 py-2 font-medium text-slate-700">{metric}</td>
                     {values.map((v, i) => (
-                      <td key={months[i]} className={`px-2 py-2 text-right tabular-nums ${metric === "Consumed" ? "text-emerald-700" : metric === "Available" && v !== null && v < 0 ? "font-semibold text-rose-600" : metric === "Available" ? "text-slate-700" : ""}`}>
+                      <td key={months[i]} className={`px-2 py-2 text-right tabular-nums ${metric === "Consumed" ? "text-emerald-700" : metric === "Reserved" ? "text-amber-700" : metric === "Available" && v !== null && v < 0 ? "font-semibold text-rose-600" : metric === "Available" ? "text-slate-700" : ""}`}>
                         {v === null ? <span className="text-slate-400">—</span> : money(v)}
                       </td>
                     ))}
