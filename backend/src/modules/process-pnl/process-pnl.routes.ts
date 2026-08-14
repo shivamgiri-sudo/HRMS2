@@ -425,6 +425,7 @@ router.post(
       transferAmount: Number(transferAmount ?? 0),
       reason: String(reason ?? ""),
       actorId: user.id,
+      actorRole: user.role,
     });
     res.status(201).json({ success: true, data });
   })

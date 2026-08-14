@@ -2166,6 +2166,7 @@ export const branchBudgetService = {
     transferAmount: number;
     reason: string;
     actorId: string;
+    actorRole?: string;
   }) {
     const amount = roundMoney(Number(input.transferAmount));
     if (!Number.isFinite(amount) || amount <= 0) throw new Error("Transfer amount must be a positive number");
@@ -2226,12 +2227,32 @@ export const branchBudgetService = {
     }
 
     const id = randomUUID();
-    await db.execute(
-      `INSERT INTO finance_budget_transfer
-         (id, budget_id, from_line_id, to_line_id, transfer_amount, reason, status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
-      [id, input.budgetId, input.fromLineId, input.toLineId, amount, input.reason.trim(), input.actorId]
-    );
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.execute(
+        `INSERT INTO finance_budget_transfer
+           (id, budget_id, from_line_id, to_line_id, transfer_amount, reason, status, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        [id, input.budgetId, input.fromLineId, input.toLineId, amount, input.reason.trim(), input.actorId]
+      );
+      await auditInTransaction(
+        conn,
+        input.budgetId,
+        "TRANSFER_SUBMIT",
+        String(header.status),
+        String(header.status),
+        input.actorId,
+        input.actorRole ?? "",
+        `Transfer ${id}: ₹${amount} from line ${input.fromLineId} to ${input.toLineId} — ${input.reason.trim()}`
+      );
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
     return this.getTransfer(id);
   },
 
