@@ -112,7 +112,7 @@ git pull --ff-only origin main
 echo "Now at $(git rev-parse --short HEAD)"
 echo
 
-echo -e "${YELLOW}Step 2: Preflight — will a restart leave health at 503?${NC}"
+echo -e "${YELLOW}Step 2: Preflight — will a restart leave health at 503, or fail outright?${NC}"
 echo "--------------------------------------"
 cd "$ROOT/backend"
 npm run preflight
@@ -120,6 +120,16 @@ npm run preflight
 # and a green preflight against a 35-commit-stale artifact was the result: it listed 7 pending
 # migrations from a file the runtime would never execute. The parity gate runs after the build
 # (Step 3a), where dist exists and can be compared.
+#
+# Two checks now run here, both read-only, both fast, neither needing the CREATE/DROP DATABASE
+# grant migration-preflight.ts still needs (open, see the readiness doc): deploy-preflight.mjs
+# (does every manifest entry have a schema_migrations row, or a file that still exists under that
+# name) and migration-target-table-check.ts (does every pending migration's INSERT/UPDATE/ALTER
+# TABLE target a table that exists, unless the same file creates it). The second one closed the
+# gap that took the API down for ~11 minutes on 2026-08-14: migration 1007 wrote to tables that
+# had never existed (workforce_page_catalog / workforce_role_page_permissions instead of the real
+# page_catalog / role_page_access), and neither deploy-preflight.mjs nor a manifest/file check
+# catches that class — only asking information_schema whether the table is actually there does.
 echo
 
 echo -e "${YELLOW}Step 3: Build backend${NC}"

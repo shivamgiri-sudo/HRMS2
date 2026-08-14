@@ -252,6 +252,37 @@ jobs:
           done
           exit 1
 
+      # MariaDB-only `ADD COLUMN IF NOT EXISTS` / `ADD INDEX IF NOT EXISTS` syntax is
+      # rejected by this production MySQL 8.0.42 build with ER_PARSE_ERROR — the exact
+      # cause of the 2026-08-13 outage (~24 min) on migration 1006. The test existed
+      # before that incident (scoped to migration 225) but was never generalized to run
+      # against every migration in CI, so it caught nothing for 1006. Static, no DB
+      # needed — this is the earliest possible gate, well before a deploy.
+      - name: Migration syntax compatibility (MySQL 8)
+        shell: bash
+        run: |
+          for attempt in 1 2; do
+            (cd backend && npm exec -- vitest run src/db/__tests__/migration-syntax-compatibility.test.ts) && exit 0
+            echo "Migration syntax compatibility attempt $attempt failed."
+          done
+          exit 1
+
+      # A migration whose INSERT/UPDATE/ALTER TABLE targets a table that does not
+      # exist (and that the same file does not create) raises ER_NO_SUCH_TABLE at
+      # boot — the cause of the 2026-08-14 outage (~11 min) on migration 1007, which
+      # wrote to workforce_page_catalog/workforce_role_page_permissions when the real
+      # tables are page_catalog/role_page_access. This only tests the pure parsing
+      # logic (no DB) — the live information_schema check runs at deploy time via
+      # `npm run preflight`, see migration-target-table-check.ts.
+      - name: Migration target-table parsing
+        shell: bash
+        run: |
+          for attempt in 1 2; do
+            (cd backend && npm exec -- vitest run scripts/__tests__/migration-target-table-check.test.ts) && exit 0
+            echo "Migration target-table parsing attempt $attempt failed."
+          done
+          exit 1
+
       # Catches a client calling an API path no router serves. Three such bugs
       # reached production in one week and none was findable by probing, because
       # requireAuth on the bare /api prefix makes a missing route 401 like a real
