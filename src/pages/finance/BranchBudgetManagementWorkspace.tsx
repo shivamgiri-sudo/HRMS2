@@ -707,6 +707,46 @@ export default function BranchBudgetManagementWorkspace() {
     });
     return [...map.values()].sort((a, b) => a.head.localeCompare(b.head) || (a.subHead ?? "").localeCompare(b.subHead ?? ""));
   }, [detailQuery.data]);
+
+  // Cost Centre Budget vs Actual: aggregate budget lines by cost centre to show per-CC spend
+  const utilizationByCostCentre = useMemo(() => {
+    const map = new Map<string, {
+      costCentreId: string | null;
+      costCentreName: string;
+      planned: number;
+      reserved: number;
+      consumed: number;
+      available: number;
+      lineCount: number;
+    }>();
+    (detailQuery.data?.lines ?? []).forEach((l) => {
+      const ccId = l.cost_centre_id ?? null;
+      const ccName = l.cost_centre_name ?? "Branch Common";
+      const key = ccId ?? "__branch__";
+      const entry = map.get(key) ?? {
+        costCentreId: ccId,
+        costCentreName: ccName,
+        planned: 0,
+        reserved: 0,
+        consumed: 0,
+        available: 0,
+        lineCount: 0,
+      };
+      entry.planned += Number(l.gross_amount ?? 0);
+      entry.reserved += Number(l.reserved_amount ?? 0);
+      entry.consumed += Number(l.consumed_amount ?? 0);
+      entry.available += Number(l.available_gross_amount ?? 0);
+      entry.lineCount += 1;
+      map.set(key, entry);
+    });
+    return [...map.values()].sort((a, b) => {
+      // Branch Common at the end
+      if (!a.costCentreId && b.costCentreId) return 1;
+      if (a.costCentreId && !b.costCentreId) return -1;
+      return a.costCentreName.localeCompare(b.costCentreName);
+    });
+  }, [detailQuery.data]);
+
   // Tax amendment queue — pending and recent amendments for the active/selected budget.
   const taxAmendmentsQuery = useQuery({
     queryKey: ["budget-tax-amendments", savedBudgetId ?? detailId],
@@ -1409,6 +1449,7 @@ export default function BranchBudgetManagementWorkspace() {
               <TabsTrigger value="approval"><ShieldCheck className="mr-2 h-4 w-4" />Approval & Utilization</TabsTrigger>
               <TabsTrigger value="topups"><TrendingUp className="mr-2 h-4 w-4" />Top-up Requests</TabsTrigger>
               <TabsTrigger value="variance"><BarChart2 className="mr-2 h-4 w-4" />Variance</TabsTrigger>
+              <TabsTrigger value="cost-centre"><Building2 className="mr-2 h-4 w-4" />Cost Centre</TabsTrigger>
               <TabsTrigger value="year"><Calendar className="mr-2 h-4 w-4" />Year</TabsTrigger>
               <TabsTrigger value="master"><Settings2 className="mr-2 h-4 w-4" />Expense Master</TabsTrigger>
               {(capabilities?.canReviewBranchStage || capabilities?.canReviewFinanceStage || capabilities?.canReviewAccountsStage) && (
@@ -2288,6 +2329,113 @@ export default function BranchBudgetManagementWorkspace() {
                             );
                           })}
                         </tbody>
+                      </table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            {/* Cost Centre Budget vs Actual — per-CC aggregation of budget consumption */}
+            <TabsContent value="cost-centre">
+              <Card className="rounded-3xl border-slate-200 shadow-sm">
+                <CardHeader>
+                  <CardTitle>Cost Centre Budget vs. Actual</CardTitle>
+                  <p className="text-sm text-slate-500">
+                    Budget allocation and consumption aggregated by cost centre for {period || "selected period"}.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {!utilizationByCostCentre.length ? (
+                    <p className="py-8 text-center text-slate-500">Select a branch and period to view cost centre budget data.</p>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="w-full min-w-[800px] text-xs">
+                        <thead>
+                          <tr className="border-b bg-slate-50">
+                            <th className="h-8 px-3 text-left font-medium text-slate-500">Cost Centre</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500">Budget Lines</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500">Budgeted</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500">Reserved</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500">Available</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500">Utilization %</th>
+                            <th className="h-8 px-3 text-right font-medium text-slate-500" title="Positive = under budget (favourable). Negative = overspent.">Variance</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {utilizationByCostCentre.map((cc) => {
+                            const utilPct = cc.planned > 0 ? Math.round((cc.consumed / cc.planned) * 100) : 0;
+                            const variance = cc.planned - cc.consumed;
+                            return (
+                              <tr key={cc.costCentreId ?? "__branch__"} className="hover:bg-slate-50/70">
+                                <td className="px-3 py-2 font-medium text-slate-800">
+                                  {cc.costCentreName}
+                                  {!cc.costCentreId && <span className="ml-2 text-xs text-slate-400">(indirect)</span>}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-slate-600">{cc.lineCount}</td>
+                                <td className="px-3 py-2 text-right tabular-nums">{money(cc.planned)}</td>
+                                <td className="px-3 py-2 text-right tabular-nums text-amber-700">{money(cc.reserved)}</td>
+                                <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{money(cc.consumed)}</td>
+                                <td className={`px-3 py-2 text-right tabular-nums ${cc.available < 0 ? "font-semibold text-rose-600" : "text-slate-700"}`}>
+                                  {money(cc.available)}
+                                </td>
+                                <td className="px-3 py-2 text-right">
+                                  <Badge variant="outline" className={utilPct >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : utilPct >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
+                                    {utilPct}%
+                                  </Badge>
+                                </td>
+                                <td className={`px-3 py-2 text-right tabular-nums font-medium ${variance < 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                                  {variance > 0 ? "+" : ""}{money(variance)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot className="border-t-2 border-slate-300 bg-slate-100 font-semibold">
+                          <tr>
+                            <td className="px-3 py-2 text-slate-800">Total</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-slate-600">
+                              {utilizationByCostCentre.reduce((sum, cc) => sum + cc.lineCount, 0)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {money(utilizationByCostCentre.reduce((sum, cc) => sum + cc.planned, 0))}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-amber-700">
+                              {money(utilizationByCostCentre.reduce((sum, cc) => sum + cc.reserved, 0))}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-emerald-700">
+                              {money(utilizationByCostCentre.reduce((sum, cc) => sum + cc.consumed, 0))}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums text-slate-700">
+                              {money(utilizationByCostCentre.reduce((sum, cc) => sum + cc.available, 0))}
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              {(() => {
+                                const totalPlanned = utilizationByCostCentre.reduce((sum, cc) => sum + cc.planned, 0);
+                                const totalConsumed = utilizationByCostCentre.reduce((sum, cc) => sum + cc.consumed, 0);
+                                const totalPct = totalPlanned > 0 ? Math.round((totalConsumed / totalPlanned) * 100) : 0;
+                                return (
+                                  <Badge variant="outline" className={totalPct >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : totalPct >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
+                                    {totalPct}%
+                                  </Badge>
+                                );
+                              })()}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {(() => {
+                                const totalPlanned = utilizationByCostCentre.reduce((sum, cc) => sum + cc.planned, 0);
+                                const totalConsumed = utilizationByCostCentre.reduce((sum, cc) => sum + cc.consumed, 0);
+                                const totalVariance = totalPlanned - totalConsumed;
+                                return (
+                                  <span className={totalVariance < 0 ? "text-rose-600" : "text-emerald-600"}>
+                                    {totalVariance > 0 ? "+" : ""}{money(totalVariance)}
+                                  </span>
+                                );
+                              })()}
+                            </td>
+                          </tr>
+                        </tfoot>
                       </table>
                     </div>
                   )}
