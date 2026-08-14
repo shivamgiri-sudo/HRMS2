@@ -17,11 +17,11 @@ function read(relativePath: string) {
  * Migration 1217 suspends exactly those 6, leaving ats_candidate untouched.
  */
 describe("migration 1217 suspends only the 6 unhandled retention-policy rows", () => {
-  const migration = read("sql/1217_suspend_unhandled_retention_policies.sql");
+  const migration = read("sql/1219_suspend_unhandled_retention_policies.sql");
   const runner = read("src/db/runPendingMigrations.ts");
 
   it("is registered in the migration manifest", () => {
-    expect(runner).toContain('"1217_suspend_unhandled_retention_policies.sql"');
+    expect(runner).toContain('"1219_suspend_unhandled_retention_policies.sql"');
   });
 
   it("targets exactly the 6 entity_types with no working handler", () => {
