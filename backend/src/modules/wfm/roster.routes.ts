@@ -52,15 +52,15 @@ rosterRouter.patch("/plans/:id/publish",
 );
 
 // Assignments
-rosterRouter.get("/actual-process",
-  requireRole("admin", "wfm", "process_manager", "branch_head", "hr", "ceo"),
-  h(c.getActualProcess.bind(c))
-);
-
-rosterRouter.get("/actual-assignments",
-  requireRole("admin", "wfm", "process_manager", "branch_head", "hr", "ceo"),
-  h(c.listActualAssignments.bind(c))
-);
+// GET /actual-process and GET /actual-assignments: handled by
+// roster.actual.secure.routes.ts (mounted first at /api/wfm/roster — see app.ts). Removed
+// here (delta-audit 2026-08-14, Stage 7, item 6) — this was dead code shadowed by the
+// identically-pathed pair there, undocumented until now. Not merely redundant: this
+// version only did a coarse requireRole check, while the version that actually runs
+// applies real row-level scope filtering (actualRosterScope/buildScopeWhereClause,
+// including the team_leader/tl role-alias fix shared with wfm-ext.routes.ts,
+// leave.secure.routes.ts and wfm.regularization.secure.routes.ts). Confirm any future
+// change to these two reads lands in roster.actual.secure.routes.ts.
 
 rosterRouter.post("/assignments",
   requireRole("admin", "wfm", "process_manager"),

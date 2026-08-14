@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/modules/exit/exit.routes.ts",
+    "src/modules/exit/gratuity-distribution.service.ts",
+    "src/modules/leave/leave.controller.ts",
+    "src/modules/wfm/roster.routes.ts"
+  ]
+}

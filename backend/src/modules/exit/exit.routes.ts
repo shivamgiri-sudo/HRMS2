@@ -214,22 +214,12 @@ exitRouter.post(
   })
 );
 
-exitRouter.post(
-  "/ff/:id/approve",
-  requireRole("admin"),
-  h(async (req, res) => {
-    const data = await ffService.approveFF(req.params.id, req.authUser!.id, req);
-    await logSensitiveAction({
-      actor_user_id: req.authUser!.id,
-      action_type: "FF_APPROVE",
-      module_key: "exit",
-      entity_type: "exit_request",
-      entity_id: req.params.id,
-      req,
-    });
-    return res.json({ success: true, data, message: "F&F approved" });
-  })
-);
+// POST /ff/:id/approve: handled by ff-approval-guard.compat.routes.ts (mounted first at
+// /api/exit — see app.ts). Removed here (delta-audit 2026-08-14, Stage 7, item 1) — this
+// was dead code shadowed by the identically-pathed handler there, and not merely
+// redundant: this version called ffService.approveFF directly with no check for open
+// clearance tasks or is_ff_provisional, unlike the guarded version that actually runs.
+// Confirm any future F&F-approval change lands in ff-approval-guard.compat.routes.ts.
 
 exitRouter.post(
   "/ff/:id/verify",

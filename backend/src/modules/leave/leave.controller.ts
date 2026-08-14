@@ -6,7 +6,6 @@ import {
   createLeaveTypeSchema,
   leaveRequestFiltersSchema,
   leaveRequestSchema,
-  reviewLeaveSchema,
 } from "./leave.validation.js";
 
 export const leaveController = {
@@ -34,11 +33,14 @@ export const leaveController = {
     return res.json({ success: true, ...result });
   },
 
-  async reviewRequest(req: AuthenticatedRequest, res: Response) {
-    const input = reviewLeaveSchema.parse(req.body);
-    const data = await leaveService.reviewRequest(req.params.id, input, req.authUser!.id);
-    return res.json({ success: true, data, message: `Leave ${input.status}` });
-  },
+  // reviewRequest (leave approve/reject) removed here (delta-audit 2026-08-14, Stage 7,
+  // item 4) — orphaned since leave.routes.ts's GET /requests and
+  // PATCH /requests/:id/review were removed in the 2026-08-13 audit (see that file's own
+  // comment): both were shadowed dead code behind leaveSecureRouter, mounted first at
+  // /api/leave, and had no row-scope check. The live equivalent is
+  // leaveSecureRouter's PATCH /requests/:id/review (leave.secure.routes.ts), which calls
+  // leaveService.reviewRequest directly with a real canReviewLeave scope check. No route
+  // called this method any more; confirmed zero references repo-wide before removing.
 
   async getBalance(req: AuthenticatedRequest, res: Response) {
     const year = req.query.year ? Number(req.query.year) : new Date().getFullYear();

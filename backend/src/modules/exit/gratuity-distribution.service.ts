@@ -1,6 +1,24 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
+/**
+ * Nominee-based gratuity payout splitting — INTENTIONALLY UNWIRED.
+ *
+ * The `gratuity_distribution` table this service writes to exists in production
+ * (migration 246_nominee_gratuity_distribution.sql) and this service is functionally
+ * complete, but nothing in the app currently imports it: no route, no controller, no other
+ * service calls calculateNomineePayouts or recordNomineePayouts, and there is no test
+ * covering it (delta-audit 2026-08-14, Stage 7, item 5 — confirmed zero importers
+ * repo-wide). F&F gratuity approval today pays gratuity as a single line to the employee's
+ * own bank account; multi-nominee splitting was evidently scoped and built but never
+ * connected to that flow.
+ *
+ * Per CLAUDE.md ("never delete existing functions... solely to simplify") and an explicit
+ * 2026-08-14 decision: leave this in place, unwired, rather than delete it or wire it in
+ * without a real scoping/TDD pass. Wiring this into the F&F approval flow is new feature
+ * work, not cleanup — do not connect it without a fresh decision on when nominee-split
+ * gratuity payout should go live.
+ */
 export const gratuityDistributionService = {
   async calculateNomineePayouts(
     employeeId: string,
