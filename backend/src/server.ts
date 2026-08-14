@@ -35,6 +35,7 @@ import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
 import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recalc.worker.js";
 import { startSLABreachWorker } from "./workers/sla-breach-worker.js";
 import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
+import { startMiraTriageScheduler } from "./modules/ai/mira-triage-scheduler.js";
 import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
@@ -260,6 +261,7 @@ function startServer() {
         startLmsSyncWorker().catch((error) =>
           console.error("[lms-sync] startup error:", error instanceof Error ? error.message : String(error)),
         );
+        startMiraTriageScheduler();
 
         console.log(
           "[workers] apr-sync, payroll-nightly-recalc, kpi-sync, sla-breach, lms-sync started inline",

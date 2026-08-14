@@ -607,6 +607,33 @@ export default function NativeWorkInbox() {
   const [search, setSearch]       = useState("");
   const [selected, setSelected]   = useState<PendingTask | null>(null);
 
+  const canRunTriage = useHasRole("super_admin");
+  const [triageRunning, setTriageRunning] = useState(false);
+  const [triageMsg, setTriageMsg]         = useState<string | null>(null);
+
+  const runTriage = useCallback(async () => {
+    setTriageRunning(true);
+    setTriageMsg(null);
+    try {
+      const res = await hrmsApi.post<{ success: boolean; data: { processed: number; outcomes: Record<string, number> } }>(
+        "/api/ai/triage/run",
+      );
+      const { processed, outcomes } = res.data ?? res as unknown as { processed: number; outcomes: Record<string, number> };
+      if (processed === 0) {
+        setTriageMsg("No untriaged complaints found.");
+      } else {
+        const parts = Object.entries(outcomes).map(([k, v]) => `${v} ${k}`).join(", ");
+        setTriageMsg(`Triaged ${processed} complaint(s): ${parts}.`);
+      }
+      // Reload inbox so newly-triaged work_items are visible with updated timeline
+      void load();
+    } catch (err) {
+      setTriageMsg(err instanceof Error ? err.message : "Triage run failed.");
+    } finally {
+      setTriageRunning(false);
+    }
+  }, [load]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -709,14 +736,32 @@ export default function NativeWorkInbox() {
               </div>
               <p className="mt-1 text-blue-200 text-sm">Your pending tasks across all platform modules</p>
             </div>
-            <button
-              onClick={() => void load()}
-              disabled={loading}
-              className="inline-flex items-center gap-2 rounded-2xl bg-white/10 px-4 py-2.5 text-sm font-bold text-white backdrop-blur-sm hover:bg-white/20 transition-all disabled:opacity-50"
-            >
-              <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-              Refresh
-            </button>
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex gap-2">
+                {canRunTriage && (
+                  <button
+                    onClick={() => void runTriage()}
+                    disabled={triageRunning}
+                    className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600/80 px-4 py-2.5 text-sm font-bold text-white backdrop-blur-sm hover:bg-indigo-600 transition-all disabled:opacity-50"
+                    title="Run Mira triage on all pending complaints"
+                  >
+                    <Wand2 className={`h-4 w-4 ${triageRunning ? "animate-spin" : ""}`} />
+                    {triageRunning ? "Triaging…" : "Run Triage"}
+                  </button>
+                )}
+                <button
+                  onClick={() => void load()}
+                  disabled={loading}
+                  className="inline-flex items-center gap-2 rounded-2xl bg-white/10 px-4 py-2.5 text-sm font-bold text-white backdrop-blur-sm hover:bg-white/20 transition-all disabled:opacity-50"
+                >
+                  <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+                  Refresh
+                </button>
+              </div>
+              {triageMsg && (
+                <p className="text-xs text-indigo-200 max-w-xs text-right">{triageMsg}</p>
+              )}
+            </div>
           </div>
         </div>
 

@@ -37,6 +37,7 @@ import {
 } from './ai-company-knowledge.service.js';
 import { answerHowToQuestion } from './ai-howto.service.js';
 import { detectFeedbackIntent, describeFeedbackForHistory, logFeedback } from './ai-feedback.service.js';
+import { runTriagePass } from './mira-triage-scheduler.js';
 import { ruleBasedProvider } from './providers/ruleBased.provider.js';
 
 export const aiInsightsRouter = Router();
@@ -865,4 +866,21 @@ Label the answer as an AI-generated recommendation.`;
     data_confidence: response.dataConfidence || {},
     generated_at: response.generatedAt,
   }));
+}));
+
+/**
+ * POST /api/ai/triage/run — Immediately trigger a Mira triage pass over all pending
+ * MIRA_FEEDBACK work_items. Equivalent to running mira-issue-triage-run.ts from the CLI
+ * but callable from the Work Inbox UI without a server restart.
+ *
+ * The scheduler (mira-triage-scheduler.ts) fires automatically every 15 minutes; this
+ * endpoint exists for super_admin to force an immediate pass without waiting.
+ *
+ * Safe to call repeatedly — findUntriagedMiraFeedback() is idempotent: items that
+ * already have a 'mira_ai_triage' audit row are not re-processed.
+ */
+aiInsightsRouter.post('/triage/run', requireAuth, requireRole('super_admin'), h(async (_req, res) => {
+  const outcomes = await runTriagePass();
+  const processed = Object.values(outcomes).reduce((sum, n) => sum + n, 0);
+  return res.json(apiSuccess({ processed, outcomes }));
 }));

@@ -27,6 +27,7 @@
  * string writeTriageAudit() builds — if that format ever changes, the test catches it rather
  * than this silently seeing every diagnosis as "no_diagnosis".
  */
+import { randomUUID } from 'crypto';
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { TRIAGE_AUDIT_ACTION, resolveWorkingProvider } from './mira-issue-triage.service.js';
@@ -79,6 +80,20 @@ async function loadLatestDiagnosis(workItemId: string): Promise<ParsedDiagnosis 
   return parseDiagnosisRemark(String(remarks));
 }
 
+export const FIX_DRAFT_AUDIT_ACTION = 'mira_fix_draft_attempt';
+
+async function writeFixDraftAudit(workItemId: string, remarks: string): Promise<void> {
+  try {
+    await db.execute(
+      `INSERT INTO work_item_audit_log (id, work_item_id, action, from_status, to_status, remarks, performed_by, performed_at)
+       VALUES (?, ?, ?, 'pending', 'pending', ?, 'system-mira-fix-draft', NOW())`,
+      [randomUUID(), workItemId, FIX_DRAFT_AUDIT_ACTION, remarks.slice(0, 4000)],
+    );
+  } catch (err) {
+    console.error('[mira-fix-draft] failed to write audit log:', err instanceof Error ? err.message : String(err));
+  }
+}
+
 const NO_SAFE_DIFF_RE = /^NO_SAFE_DIFF:\s*(.+)$/im;
 
 /** Strips markdown fences if the model added them despite being told not to (same defensive
@@ -116,9 +131,14 @@ Keep the diff as small as possible: touch only the files and lines necessary.`;
 
 export async function generateFixDraftForWorkItem(workItemId: string): Promise<FixDraftGenerationOutcome> {
   const diagnosis = await loadLatestDiagnosis(workItemId);
-  if (!diagnosis) return { status: 'no_diagnosis' };
+  if (!diagnosis) {
+    await writeFixDraftAudit(workItemId, 'Fix-draft not attempted — no triage diagnosis found for this item. Run triage first.');
+    return { status: 'no_diagnosis' };
+  }
   if (!diagnosis.actionable || diagnosis.category !== 'genuine_bug') {
-    return { status: 'not_eligible', reason: `category=${diagnosis.category}, actionable=${diagnosis.actionable}` };
+    const reason = `category=${diagnosis.category}, actionable=${diagnosis.actionable}`;
+    await writeFixDraftAudit(workItemId, `Fix-draft not attempted — diagnosis not eligible (${reason}). Only genuine_bug + actionable=true items reach the fix-draft stage.`);
+    return { status: 'not_eligible', reason };
   }
 
   const [wiRows] = await db.execute<RowDataPacket[]>(
@@ -136,7 +156,10 @@ export async function generateFixDraftForWorkItem(workItemId: string): Promise<F
     : '(no relevant source files were found by keyword search)';
 
   const provider = await resolveWorkingProvider();
-  if (!provider) return { status: 'ai_unavailable' };
+  if (!provider) {
+    await writeFixDraftAudit(workItemId, 'Fix-draft not attempted — no usable AI provider found (checked ANTHROPIC_API_KEY, OPENROUTER_API_KEY, GEMINI_API_KEY and DB default). Configure a provider key to enable fix-draft generation.');
+    return { status: 'ai_unavailable' };
+  }
 
   const userPrompt = `Bug report: ${complaintText}
 
@@ -164,6 +187,7 @@ ${contextBlock}`;
 
     const parsed = extractDiffOrRefusal(response.answer);
     if (parsed.kind === 'declined') {
+      await writeFixDraftAudit(workItemId, `Fix-draft declined by model: ${parsed.reason}`);
       return { status: 'model_declined', reason: parsed.reason };
     }
 
@@ -171,6 +195,7 @@ ${contextBlock}`;
     return { status: 'drafted', draft };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    await writeFixDraftAudit(workItemId, `Fix-draft generation error: ${message}`);
     return { status: 'ai_error', message };
   }
 }
