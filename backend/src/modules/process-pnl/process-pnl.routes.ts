@@ -16,7 +16,7 @@ import { bpoPnlRouter } from "./bpo-pnl.routes.js";
 import { canonicalPnlService } from "./canonical-pnl.service.js";
 import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService, getCompanyBudgetConsolidation } from "./branch-budget.service.js";
-import { getCeoOverview, getYtdSummary } from "./ceo-overview.service.js";
+import { getCeoOverview, getYtdSummary, type CeoFilters } from "./ceo-overview.service.js";
 import { budgetTopupService } from "./budget-topup.service.js";
 import { branchBudgetAllocationService } from "./branch-budget-allocation.service.js";
 import { meterService } from "./meter.service.js";
@@ -1098,7 +1098,17 @@ router.get(
   h(async (req, res) => {
     const upTo = req.query.upTo ? String(req.query.upTo) : "";
     if (!/^\d{4}-\d{2}$/.test(upTo)) throw Object.assign(new Error("upTo must be YYYY-MM"), { statusCode: 400 });
-    const data = await getYtdSummary(upTo, {});
+    const user = actor(req);
+    const confinedBranch = await resolveFinanceBranchScope({
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+    });
+    const confinedProcess = await resolveFinanceProcessScope({
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+    });
+    const filters: CeoFilters = {};
+    if (confinedBranch !== undefined) filters.branchId = confinedBranch;
+    if (confinedProcess !== undefined) filters.processId = confinedProcess;
+    const data = await getYtdSummary(upTo, filters);
     res.json({ success: true, data });
   })
 );
