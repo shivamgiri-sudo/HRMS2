@@ -16,6 +16,7 @@ export interface TaxEngineInput {
   declaration?: TaxDeclarationLike | null;
   alreadyDeducted?: number;
   monthsRemaining?: number;
+  employeeAge?: number | null;
 }
 
 export interface TaxEngineResult {
@@ -113,11 +114,12 @@ export const taxEngineService = {
     return r2(tax);
   },
 
-  allowedOldRegimeDeductions(decl?: TaxDeclarationLike | null): number {
+  allowedOldRegimeDeductions(decl?: TaxDeclarationLike | null, employeeAge?: number | null): number {
     if (!decl) return 0;
     const hra = Math.max(0, Number(decl.declared_hra ?? 0));
     const sec80c = Math.min(Math.max(0, Number(decl.declared_80c ?? 0)), 150000);
-    const sec80d = Math.min(Math.max(0, Number(decl.declared_80d ?? 0)), 25000);
+    const sec80dCap = (employeeAge != null && employeeAge >= 60) ? 50000 : 25000; // s.80D: ₹50K for senior citizens
+    const sec80d = Math.min(Math.max(0, Number(decl.declared_80d ?? 0)), sec80dCap);
     return r2(hra + sec80c + sec80d);
   },
 
@@ -128,7 +130,7 @@ export const taxEngineService = {
 
     const annualGross = Math.max(0, Number(input.annualGross || 0));
     const standardDeduction = Math.max(0, Number(config.standard_deduction || 0));
-    const deductionsAllowed = regime === "old" ? this.allowedOldRegimeDeductions(input.declaration) : 0;
+    const deductionsAllowed = regime === "old" ? this.allowedOldRegimeDeductions(input.declaration, input.employeeAge) : 0;
 
     const taxableIncome = r2(Math.max(0, annualGross - standardDeduction - deductionsAllowed));
     const taxBeforeRebate = this.calculateSlabTax(taxableIncome, slabs);

@@ -479,6 +479,7 @@ interface EmployeeRow {
   state_code: string | null;
   salary_start_date: string | null;
   date_of_leaving: string | null;
+  date_of_birth: string | null;
   process_id: string | null;
   branch_id: string | null;
   pan_number: string | null;
@@ -678,6 +679,7 @@ export async function calculatePayrollRunScoped(
             e.process_id, e.branch_id,
             COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date,
             e.date_of_leaving,
+            e.date_of_birth,
             TRIM(COALESCE(e.pan_number, '')) AS pan_number
        FROM employees e
        -- Point-in-time salary selection. See the block comment above this query for why
@@ -1158,6 +1160,17 @@ export async function calculatePayrollRunScoped(
       // annualGross = paid so far this FY + current month × remaining months
       const fyAnnualGross = alreadyEarned + (grossAfterLwp * monthsRemaining);
 
+      // Age at run month — needed for 80D senior citizen cap (≥60 → ₹50K)
+      let employeeAge: number | null = null;
+      if (emp.date_of_birth) {
+        const dob = new Date(emp.date_of_birth);
+        const ref = new Date(year, month - 1, 1);
+        let age = ref.getFullYear() - dob.getFullYear();
+        const mDiff = ref.getMonth() - dob.getMonth();
+        if (mDiff < 0 || (mDiff === 0 && ref.getDate() < dob.getDate())) age--;
+        employeeAge = age;
+      }
+
       try {
         const tdsResult = await taxEngineService.calculateMonthlyTds({
           financialYear,
@@ -1170,6 +1183,7 @@ export async function calculatePayrollRunScoped(
             declared_80d:  Number(decl.declared_80d)  || 0,
           } : null,
           monthsRemaining,
+          employeeAge,
         });
         tdsMonthly = tdsResult.tds_monthly;
       } catch {
@@ -1179,8 +1193,9 @@ export async function calculatePayrollRunScoped(
         const annualGross = fyAnnualGross;
         const isOldRegime = (decl?.regime ?? "new") === "old";
         const declHra = isOldRegime && decl ? Number(decl.declared_hra) : 0;
-        const decl80c = isOldRegime && decl ? Number(decl.declared_80c) : 0;
-        const decl80d = isOldRegime && decl ? Number(decl.declared_80d) : 0;
+        const decl80c = isOldRegime && decl ? Math.min(Number(decl.declared_80c), 150000) : 0;
+        const sec80dCap = (employeeAge != null && employeeAge >= 60) ? 50000 : 25000; // s.80D senior citizen cap
+        const decl80d = isOldRegime && decl ? Math.min(Number(decl.declared_80d), sec80dCap) : 0;
         // Old-regime employees can deduct HRA/80C/80D; new-regime cannot.
         // Standard deduction is applied inside calculateTds for all regimes.
         const taxableIncome = Math.max(0, annualGross - declHra - decl80c - decl80d);
