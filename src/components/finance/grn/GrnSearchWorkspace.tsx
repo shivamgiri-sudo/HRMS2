@@ -233,7 +233,18 @@ export function GrnSearchWorkspace({
           <GrnInput placeholder="Sub-head" value={draft.subHead}
             onChange={(e) => set("subHead")(e.target.value)} />
 
-          <GrnSelect value={draft.source} onChange={(e) => set("source")(e.target.value)}>
+          <GrnSelect value={draft.source} onChange={(e) => {
+            const nextSource = e.target.value;
+            // Process filtering only works for source="new" (backend joins g.process_id
+            // directly). "legacy"/"all" go through listLegacyGrns, which links Process via
+            // employees.cost_centre_id — empty on nearly every employee row, so the filter
+            // silently zeroed every legacy result rather than erroring (delta-audit
+            // 2026-08-14, Section K item 7, Option B approved: remove from the UI until the
+            // legacy join is rebuilt). Clearing processId here, not just disabling the
+            // control below, so a value picked before switching source can't linger and get
+            // sent anyway.
+            setDraft((f) => ({ ...f, source: nextSource, processId: nextSource === "new" ? f.processId : "" }));
+          }}>
             <option value="new">New HRMS only</option>
             <option value="legacy">Legacy (db_bill) only</option>
             <option value="all">All sources</option>
@@ -246,8 +257,13 @@ export function GrnSearchWorkspace({
             ))}
           </GrnSelect>
 
-          <GrnSelect value={draft.processId} onChange={(e) => set("processId")(e.target.value)}>
-            <option value="">Any process</option>
+          <GrnSelect
+            value={draft.processId}
+            disabled={draft.source !== "new"}
+            title={draft.source !== "new" ? "Process filtering only works for New HRMS only — switch source to use it" : undefined}
+            onChange={(e) => set("processId")(e.target.value)}
+          >
+            <option value="">{draft.source !== "new" ? "Process filter unavailable for this source" : "Any process"}</option>
             {(processes.data ?? []).map((p) => (
               <option key={p.id} value={p.id}>{p.process_name}</option>
             ))}
