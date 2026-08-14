@@ -62,10 +62,16 @@ export default function NativeWeekOffDefaultConfig() {
     queryFn: async () => (await hrmsApi.get<{ data: Process[] }>("/api/processes")).data ?? [],
   });
 
+  // /api/access/branches (admin/hr only) — NOT /api/branches, which doesn't exist anywhere
+  // in the backend. A wfm-only user (this page's own route allows wfm) will get a 403 here
+  // even though they can write a branch-scoped default just fine at the API level; the
+  // branch dropdown below degrades to a plain ID input on any fetch error rather than
+  // silently showing an empty, permanently-loading "Select branch" with no explanation.
   const branchesQ = useQuery({
     queryKey: ["branches"],
     enabled: form.scope_type === "branch",
-    queryFn: async () => (await hrmsApi.get<{ data: Branch[] }>("/api/branches")).data ?? [],
+    retry: false,
+    queryFn: async () => (await hrmsApi.get<{ data: Branch[] }>("/api/access/branches")).data ?? [],
   });
 
   const createMut = useMutation({
@@ -158,10 +164,19 @@ export default function NativeWeekOffDefaultConfig() {
             )}
             {form.scope_type === "branch" && (
               <label className="text-xs font-bold uppercase text-slate-500">Branch
-                <select value={form.branch_id} onChange={(e) => setForm({ ...form, branch_id: e.target.value })} className="mt-1 block w-full rounded-xl border bg-white p-3 text-sm text-slate-900">
-                  <option value="">Select branch</option>
-                  {(branchesQ.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.branch_name ?? b.name}</option>)}
-                </select>
+                {branchesQ.isError ? (
+                  <>
+                    <input value={form.branch_id} onChange={(e) => setForm({ ...form, branch_id: e.target.value })} placeholder="branch UUID" className="mt-1 block w-full rounded-xl border p-3 text-sm" />
+                    <span className="mt-1 block text-[11px] font-normal normal-case text-amber-700">
+                      Couldn't load the branch list ({branchesQ.error instanceof Error ? branchesQ.error.message : "permission or network error"}) — enter the branch ID directly.
+                    </span>
+                  </>
+                ) : (
+                  <select value={form.branch_id} onChange={(e) => setForm({ ...form, branch_id: e.target.value })} className="mt-1 block w-full rounded-xl border bg-white p-3 text-sm text-slate-900">
+                    <option value="">{branchesQ.isLoading ? "Loading branches…" : "Select branch"}</option>
+                    {(branchesQ.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.branch_name ?? b.name}</option>)}
+                  </select>
+                )}
               </label>
             )}
 

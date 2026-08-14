@@ -109,13 +109,21 @@ export const workforceRouteElements = (
       {/* No Gate pageCode here (unlike siblings above): canViewPage() fails closed for any
           pageCode absent from the page-access catalog, and adding one is a production data
           seed outside what a code change should do unreviewed. roles={...} is the live
-          enforcement for these two routes; the real security boundary is the backend RBAC
-          on /api/wfm/rest-policy (requireRole admin/wfm) and /api/roster-gov/week-off-policy-default
-          (hasRole/hasProcessScope admin/wfm, in roster.governance.routes.ts — a different session's
-          already-shipped CRUD for the same week_off_policy_default table, reused here rather than
-          duplicated). A pageCode can be added later by whoever administers the access catalog. */}
-      <Route path="/wfm/rest-policy"       element={<ProtectedRoute roles={['super_admin','admin','wfm']}><NativeWFMRestPolicyConfig /></ProtectedRoute>} />
-      <Route path="/wfm/week-off-default"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><NativeWeekOffDefaultConfig /></ProtectedRoute>} />
+          enforcement for these two routes; the real security boundary is the backend RBAC.
+          Deliberately DIFFERENT role lists on the two routes below, not copy-pasted — a
+          same-day self-audit found nav had promised both pages to hr/manager while both
+          routes actually gated to admin/wfm only, so any hr/manager user clicking the nav
+          link landed on "Access Denied". Fixed by matching each route's roles to what its
+          OWN backend genuinely allows to read (they differ):
+            - /api/wfm/rest-policy GET is requireRole(admin,super_admin,wfm,hr) — no manager.
+            - /api/roster-gov/week-off-policy-default GET has no role check beyond requireAuth
+              (roster.governance.routes.ts — a different session's already-shipped CRUD for
+              the same week_off_policy_default table, reused here rather than duplicated) —
+              open to hr and manager too. Both pages' writes stay admin/wfm-only regardless;
+              a hr/manager viewer just can't submit the form, same as any other read-only role
+              here. A pageCode can be added later by whoever administers the access catalog. */}
+      <Route path="/wfm/rest-policy"       element={<ProtectedRoute roles={['super_admin','admin','wfm','hr']}><NativeWFMRestPolicyConfig /></ProtectedRoute>} />
+      <Route path="/wfm/week-off-default"  element={<ProtectedRoute roles={['super_admin','admin','wfm','hr','manager']}><NativeWeekOffDefaultConfig /></ProtectedRoute>} />
       <Route path="/wfm/weekoff-fairness"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_WEEKOFF_FAIRNESS"><WeekoffFairness /></Gate></ProtectedRoute>} />
       <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
 
