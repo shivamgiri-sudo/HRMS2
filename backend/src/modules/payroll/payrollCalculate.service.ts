@@ -1135,10 +1135,30 @@ export async function calculatePayrollRunScoped(
       const diffMs     = fyEndDate.getTime() - runDate.getTime();
       const monthsRemaining = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24 * 30.4375)));
 
+      // FY-accurate annual gross: use actual paid months so far + projected remaining.
+      // This handles mid-FY joiners correctly (new-regime joiner in Oct → 6 months, not 12).
+      const fyStartPeriod = `${fyStartYear}-04`;
+      const [ytdRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT COALESCE(SUM(spl.gross_salary), 0) AS already_earned,
+                COALESCE(SUM(spl.tds), 0)          AS already_deducted
+           FROM salary_prep_line spl
+           JOIN salary_prep_run spr ON spr.id = spl.run_id
+          WHERE spl.employee_id = ?
+            AND spr.run_month >= ?
+            AND spr.run_month < ?
+            AND spr.status IN ('approved', 'finalized')`,
+        [emp.employee_id, fyStartPeriod, run.run_month]
+      );
+      const alreadyEarned   = Number(ytdRows[0]?.already_earned   ?? 0);
+      const alreadyDeducted = Number(ytdRows[0]?.already_deducted ?? 0);
+      // annualGross = paid so far this FY + current month × remaining months
+      const fyAnnualGross = alreadyEarned + (grossAfterLwp * monthsRemaining);
+
       try {
         const tdsResult = await taxEngineService.calculateMonthlyTds({
           financialYear,
-          annualGross: grossAfterLwp * 12,
+          annualGross: fyAnnualGross,
+          alreadyDeducted,
           declaration: decl ? {
             regime:        decl.regime as string | null,
             declared_hra:  Number(decl.declared_hra)  || 0,
@@ -1152,7 +1172,7 @@ export async function calculatePayrollRunScoped(
         // Fallback to the synchronous engine when the taxEngine tables are
         // unavailable. It reads the same approved statutory_config, so this is a
         // different route to the same rates — not a laxer one.
-        const annualGross = grossAfterLwp * 12;
+        const annualGross = fyAnnualGross;
         const declHra = decl ? Number(decl.declared_hra) : 0;
         const decl80c = decl ? Number(decl.declared_80c) : 0;
         const decl80d = decl ? Number(decl.declared_80d) : 0;
@@ -1172,7 +1192,9 @@ export async function calculatePayrollRunScoped(
             `for this period — no fallback rates are applied.`,
           );
         }
-        tdsMonthly = fallback.tds_monthly;
+        // Distribute remaining annual liability over remaining months, netting off what was
+        // already deducted earlier in the FY (handles mid-FY joiners and YTD corrections).
+        tdsMonthly = Math.round(Math.max(0, fallback.tds_annual - alreadyDeducted) / monthsRemaining * 100) / 100;
       }
     }
 
