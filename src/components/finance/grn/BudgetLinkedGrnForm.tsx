@@ -1643,32 +1643,33 @@ export function BudgetLinkedGrnForm({
             <div className="p-4 space-y-1">
               <DenseSection title={isVendor ? "Invoice Details" : "Receipt Details"} />
 
-              {/* Row 1: Amount (vendor) / Branch / Company - always 3 columns */}
+              {/* Row 1: Amount / Branch / Company - always 3 columns */}
               <DenseFieldGroup cols={3}>
-                {isVendor ? (
-                  <DenseField label="Amount (incl. GST)" required error={err("amount")}>
+                <DenseField label={isVendor ? "Amount (incl. GST)" : "Amount"} required={isVendor} error={isVendor ? err("amount") : undefined}>
+                  {isVendor ? (
                     <Input
                       id="grn-amount"
                       type="number"
                       inputMode="decimal"
                       min="0.01"
                       step="0.01"
-                      className={cn(inputClass, "h-8 text-right font-semibold tabular-nums")}
+                      className={cn(inputClass, "h-8 w-full text-right font-semibold tabular-nums")}
                       value={form.amount || ""}
                       placeholder="0.00"
                       onChange={(event) =>
                         setForm((current) => ({ ...current, amount: Number(event.target.value) }))
                       }
                     />
-                  </DenseField>
-                ) : (
-                  <div /> /* Empty cell for imprest - amount is in separate section */
-                )}
+                  ) : (
+                    <div className="h-8 flex items-center text-[12px] text-grn-ink-soft">See Amount section below</div>
+                  )}
+                </DenseField>
                 <DenseField label="Branch" required error={err("branchId")}>
                   <SearchableSelect
                     id="grn-branch"
                     aria-label="Branch"
                     disabled={locked}
+                    className="h-8"
                     options={branches.map((branch) => ({
                       value: branch.id,
                       label: branch.branch_name ?? branch.name,
@@ -1691,25 +1692,26 @@ export function BudgetLinkedGrnForm({
                     searchPlaceholder="Type a branch name…"
                   />
                 </DenseField>
-                {companies.length > 1 ? (
-                  <DenseField label="Company">
+                <DenseField label="Company">
+                  {companies.length > 1 ? (
                     <SearchableSelect
                       id="grn-company"
                       aria-label="Legal entity"
                       disabled={locked}
+                      className="h-8"
                       options={companies.map((c) => ({ value: c.company_code, label: c.company_name }))}
                       value={form.companyCode}
                       onChange={(value) => setForm((current) => ({ ...current, companyCode: value }))}
                       placeholder="Select company"
                       searchPlaceholder="Type company name…"
                     />
-                  </DenseField>
-                ) : (
-                  <div /> /* Empty cell when single company */
-                )}
+                  ) : (
+                    <div className="h-8 flex items-center text-[12px] text-grn-ink">{companies[0]?.company_name || "MAS"}</div>
+                  )}
+                </DenseField>
               </DenseFieldGroup>
 
-              {/* Row 2: Invoice date */}
+              {/* Row 2: Date / Invoice # / Due Date - always 3 columns */}
               <DenseFieldGroup cols={3}>
                 <DenseField
                   label={isVendor ? "Invoice date" : "Receipt date"}
@@ -1720,7 +1722,7 @@ export function BudgetLinkedGrnForm({
                   <Input
                     id="grn-bill-date"
                     type="date"
-                    className={cn(inputClass, "h-8")}
+                    className={cn(inputClass, "h-8 w-full")}
                     disabled={locked}
                     value={form.billDate}
                     onChange={(event) => {
@@ -1744,39 +1746,41 @@ export function BudgetLinkedGrnForm({
                     }}
                   />
                 </DenseField>
-
-                {/* Vendor: Invoice # and Due Date in same row */}
-                {isVendor && (
-                  <>
-                    <DenseField label="Invoice #" required error={err("invoiceNumber")}>
-                      <Input
-                        id="grn-invoice-no"
-                        className={cn(inputClass, "h-8")}
-                        value={form.invoiceNumber}
-                        placeholder="As printed"
-                        onChange={(event) =>
-                          setForm((current) => ({ ...current, invoiceNumber: event.target.value }))
-                        }
-                      />
-                    </DenseField>
-                    <DenseField
-                      label="Due date"
-                      error={err("dueDate")}
-                      hint={dueDateGap !== null && dueDateGap >= 0 ? `${dueDateGap}d from invoice` : undefined}
-                    >
-                      <Input
-                        id="grn-due-date"
-                        type="date"
-                        className={cn(inputClass, "h-8")}
-                        min={form.billDate || undefined}
-                        value={form.dueDate}
-                        onChange={(event) =>
-                          setForm((current) => ({ ...current, dueDate: event.target.value }))
-                        }
-                      />
-                    </DenseField>
-                  </>
-                )}
+                <DenseField label="Invoice #" required={isVendor} error={isVendor ? err("invoiceNumber") : undefined}>
+                  {isVendor ? (
+                    <Input
+                      id="grn-invoice-no"
+                      className={cn(inputClass, "h-8 w-full")}
+                      value={form.invoiceNumber}
+                      placeholder="As printed"
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, invoiceNumber: event.target.value }))
+                      }
+                    />
+                  ) : (
+                    <div className="h-8 flex items-center text-[12px] text-grn-ink-soft">N/A for imprest</div>
+                  )}
+                </DenseField>
+                <DenseField
+                  label="Due date"
+                  error={isVendor ? err("dueDate") : undefined}
+                  hint={isVendor && dueDateGap !== null && dueDateGap >= 0 ? `${dueDateGap}d from invoice` : undefined}
+                >
+                  {isVendor ? (
+                    <Input
+                      id="grn-due-date"
+                      type="date"
+                      className={cn(inputClass, "h-8 w-full")}
+                      min={form.billDate || undefined}
+                      value={form.dueDate}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, dueDate: event.target.value }))
+                      }
+                    />
+                  ) : (
+                    <div className="h-8 flex items-center text-[12px] text-grn-ink-soft">N/A for imprest</div>
+                  )}
+                </DenseField>
               </DenseFieldGroup>
 
               {/* Late invoice warning (non-finance raisers, >30 days old) */}
@@ -1925,7 +1929,7 @@ export function BudgetLinkedGrnForm({
                   <DenseFieldGroup cols={3}>
                     <DenseField label="Vendor State">
                       <GrnSelect
-                        className="h-8 text-[12px]"
+                        className="h-8 w-full text-[12px]"
                         value={form.vendorStateCode}
                         onChange={(e) => setForm((cur) => ({ ...cur, vendorStateCode: e.target.value }))}
                       >
@@ -1937,7 +1941,7 @@ export function BudgetLinkedGrnForm({
                     </DenseField>
                     <DenseField label="Billing State (MAS)">
                       <GrnSelect
-                        className="h-8 text-[12px]"
+                        className="h-8 w-full text-[12px]"
                         value={form.billingStateCode}
                         onChange={(e) => setForm((cur) => ({ ...cur, billingStateCode: e.target.value }))}
                       >
@@ -1969,12 +1973,12 @@ export function BudgetLinkedGrnForm({
                     </DenseField>
                   </DenseFieldGroup>
 
-                  {/* Row 5: Place of supply, Contract ref, empty for alignment */}
+                  {/* Row 5: Place of supply, Contract ref, Remarks preview */}
                   <DenseFieldGroup cols={3}>
                     <DenseField label="Place of supply">
                       <Input
                         id="grn-place"
-                        className={cn(inputClass, "h-8")}
+                        className={cn(inputClass, "h-8 w-full")}
                         value={form.placeOfSupply}
                         placeholder="State or country"
                         onChange={(event) =>
@@ -1985,7 +1989,7 @@ export function BudgetLinkedGrnForm({
                     <DenseField label="Contract reference">
                       <Input
                         id="grn-contract-ref"
-                        className={cn(inputClass, "h-8")}
+                        className={cn(inputClass, "h-8 w-full")}
                         value={form.purchaseReference}
                         placeholder="Contract/agreement ref"
                         onChange={(event) =>
@@ -1993,7 +1997,11 @@ export function BudgetLinkedGrnForm({
                         }
                       />
                     </DenseField>
-                    <div /> {/* Empty cell for grid alignment */}
+                    <DenseField label="Period">
+                      <div className="h-8 flex items-center text-[12px] font-semibold text-grn-ink">
+                        {effectivePeriod || "Select date first"}
+                      </div>
+                    </DenseField>
                   </DenseFieldGroup>
 
                   {/* IRN fields (Finance only) - 3 columns */}
@@ -2002,7 +2010,7 @@ export function BudgetLinkedGrnForm({
                       <DenseField label="IRN (e-invoice)" hint="From GSTN portal">
                         <Input
                           id="grn-irn"
-                          className={cn(inputClass, "h-8 font-mono")}
+                          className={cn(inputClass, "h-8 w-full font-mono")}
                           value={form.irn}
                           placeholder="64-char IRN"
                           onChange={(event) =>
@@ -2013,7 +2021,7 @@ export function BudgetLinkedGrnForm({
                       <DenseField label="IRN Ack. No.">
                         <Input
                           id="grn-irn-ack"
-                          className={cn(inputClass, "h-8 font-mono")}
+                          className={cn(inputClass, "h-8 w-full font-mono")}
                           value={form.irnAckNo}
                           placeholder="Ack number"
                           onChange={(event) =>
@@ -2021,7 +2029,9 @@ export function BudgetLinkedGrnForm({
                           }
                         />
                       </DenseField>
-                      <div /> {/* Empty cell for grid alignment */}
+                      <DenseField label="IRN Date">
+                        <div className="h-8 flex items-center text-[12px] text-grn-ink-soft">Auto from portal</div>
+                      </DenseField>
                     </DenseFieldGroup>
                   )}
                 </>
