@@ -548,6 +548,152 @@ export function GrnEmptyState({
   );
 }
 
+/* ── Dense Layout Components ────────────────────────────────────────────────
+ *  Compact form primitives for the redesigned GRN form: fields grouped 2-3 per row,
+ *  stacked labels, minimal vertical spacing. Use inside a single GrnCard wrapper. */
+
+/** Horizontal field group - arranges children in a 2-4 column grid */
+export function DenseFieldGroup({
+  children,
+  cols = 3,
+  className,
+}: {
+  children: React.ReactNode;
+  cols?: 2 | 3 | 4;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid gap-3 py-1",
+        cols === 2 && "grid-cols-1 sm:grid-cols-2",
+        cols === 3 && "grid-cols-1 sm:grid-cols-2 md:grid-cols-3",
+        cols === 4 && "grid-cols-2 sm:grid-cols-4",
+        className
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Stacked label + input (label on top, compact height) */
+export function DenseField({
+  label,
+  required,
+  error,
+  hint,
+  children,
+  span = 1,
+  className,
+}: {
+  label: string;
+  required?: boolean;
+  error?: string;
+  hint?: string;
+  children: React.ReactNode;
+  span?: 1 | 2;
+  className?: string;
+}) {
+  return (
+    <div className={cn("space-y-0.5", span === 2 && "sm:col-span-2", className)}>
+      <label className="text-[11px] font-semibold uppercase tracking-wide text-grn-ink-soft">
+        {label}
+        {required && <span className="ml-0.5 text-rose-500">*</span>}
+      </label>
+      {children}
+      {error && <p className="text-[10px] font-medium text-grn-crit">{error}</p>}
+      {hint && !error && <p className="text-[10px] text-grn-ink-soft">{hint}</p>}
+    </div>
+  );
+}
+
+/** Thin section divider with label - separates logical groups within the form */
+export function DenseSection({
+  title,
+  action,
+  className,
+}: {
+  title: string;
+  action?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("flex items-center gap-2 pb-1 pt-3 first:pt-0", className)}>
+      <span className="text-[10px] font-bold uppercase tracking-wider text-grn-brand">
+        {title}
+      </span>
+      <div className="h-px flex-1 bg-grn-line" />
+      {action}
+    </div>
+  );
+}
+
+/** Sticky footer strip with totals and action buttons - replaces the side rail */
+export function DenseSummaryStrip({
+  leftContent,
+  children,
+  className,
+}: {
+  leftContent?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "sticky bottom-0 z-10 flex items-center justify-between gap-4 rounded-b-[12px] border-t border-grn-line bg-grn-card px-4 py-2.5 shadow-[0_-2px_8px_rgba(0,0,0,0.04)]",
+        className
+      )}
+    >
+      {leftContent && <div className="flex items-center gap-4 text-[12px]">{leftContent}</div>}
+      <div className="ml-auto flex items-center gap-2">{children}</div>
+    </div>
+  );
+}
+
+/** Compact file upload bar - single line with drop zone */
+export function DenseFileUpload({
+  fileCount,
+  onDrop,
+  onBrowse,
+  disabled,
+  className,
+}: {
+  fileCount: number;
+  onDrop?: (files: FileList) => void;
+  onBrowse?: () => void;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      onClick={disabled ? undefined : onBrowse}
+      onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!disabled && e.dataTransfer.files.length && onDrop) {
+          onDrop(e.dataTransfer.files);
+        }
+      }}
+      className={cn(
+        "flex h-[38px] cursor-pointer items-center gap-3 rounded-[8px] border border-dashed border-grn-line bg-grn-paper px-3 text-[12px] text-grn-ink-soft transition-colors hover:border-grn-brand hover:bg-grn-card",
+        disabled && "cursor-not-allowed opacity-50",
+        className
+      )}
+    >
+      <span className="text-base">📎</span>
+      <span className="flex-1">Drop invoice PDF/JPG here or click to browse</span>
+      {fileCount > 0 && (
+        <span className="rounded-full bg-grn-brand-soft px-2 py-0.5 text-[10px] font-bold text-grn-brand">
+          {fileCount} {fileCount === 1 ? "file" : "files"}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /* ── Class constants for the Radix pieces we keep ─────────────────────────── */
 
 /* The `!`-prefixed radius utilities are load-bearing. tailwind-merge (default config) does not

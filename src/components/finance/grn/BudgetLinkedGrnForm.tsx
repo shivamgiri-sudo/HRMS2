@@ -48,6 +48,11 @@ import {
   GrnTd,
   GrnTextarea as Textarea,
   GrnTh,
+  DenseFieldGroup,
+  DenseField,
+  DenseSection,
+  DenseSummaryStrip,
+  DenseFileUpload,
 } from "@/components/finance/grn/grn-ui";
 import {
   BRANCH_SHARING_METHODS,
@@ -1616,11 +1621,9 @@ export function BudgetLinkedGrnForm({
         ]}
       />
 
-      {/* Side rail collapses at 900px, matching the rest of the page, rather than at 1280px
-          where it left a 380px gap unused. items-start so the rail does not stretch to the
-          form's height. */}
-      <div className="mt-[16px] grid items-start gap-[16px] min-[900px]:grid-cols-[minmax(0,1fr)_300px]">
-        <div className="min-w-0 space-y-[16px]">
+      {/* Compact layout: reduced spacing, full-width form (side rail moved to sticky footer) */}
+      <div className="mt-3">
+        <div className="min-w-0 space-y-3">
           {showErrors && hasErrors && (
             <div
               role="alert"
@@ -1635,461 +1638,401 @@ export function BudgetLinkedGrnForm({
             </div>
           )}
 
-          {/* ── Details ── */}
-          <FormSection
-            title={isVendor ? "Invoice details" : "Receipt details"}
-            description={
-              isVendor
-                ? "Who the payment goes to and against what document."
-                : "When the expense was incurred."
-            }
-          >
-            {isVendor && (
-              <FieldRow
-                label="Total invoice amount (incl. GST)"
-                htmlFor="grn-amount"
-                required
-                error={err("amount")}
-                hint="What the vendor's invoice adds up to. Break it into components below."
-              >
-                <Input
-                  id="grn-amount"
-                  type="number"
-                  inputMode="decimal"
-                  min="0.01"
-                  step="0.01"
-                  className={cn(inputClass, "text-right font-semibold tabular-nums")}
-                  value={form.amount || ""}
-                  placeholder="0.00"
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, amount: Number(event.target.value) }))
-                  }
-                />
-              </FieldRow>
-            )}
+          {/* ── Details — Dense grid layout ── */}
+          <GrnCard>
+            <div className="p-4 space-y-1">
+              <DenseSection title={isVendor ? "Invoice Details" : "Receipt Details"} />
 
-            <FieldRow label="Branch" htmlFor="grn-branch" required error={err("branchId")}>
-              <SearchableSelect
-                id="grn-branch"
-                aria-label="Branch"
-                disabled={locked}
-                options={branches.map((branch) => ({
-                  value: branch.id,
-                  label: branch.branch_name ?? branch.name,
-                  hint: branch.branch_code ?? undefined,
-                }))}
-                value={form.branchId}
-                onChange={(value) => {
-                  setForm((current) => ({
-                    ...current,
-                    branchId: value,
-                    costCentreKey: "",
-                    head: "",
-                    subHead: "",
-                    budgetLineId: "",
-                  }));
-                  setAllocations([newAllocation()]);
-                  setInvoiceComponents([newInvoiceComponent()]);
-                }}
-                placeholder="Select branch"
-                searchPlaceholder="Type a branch name…"
-              />
-            </FieldRow>
-
-            {companies.length > 1 && (
-              <FieldRow label="Company" htmlFor="grn-company">
-                <SearchableSelect
-                  id="grn-company"
-                  aria-label="Legal entity"
-                  disabled={locked}
-                  options={companies.map((c) => ({ value: c.company_code, label: c.company_name }))}
-                  value={form.companyCode}
-                  onChange={(value) => setForm((current) => ({ ...current, companyCode: value }))}
-                  placeholder="Select company (MAS / IDC / Pikquick)"
-                  searchPlaceholder="Type company name…"
-                />
-              </FieldRow>
-            )}
-
-            <FieldRow
-              label={isVendor ? "Invoice date" : "Receipt date"}
-              htmlFor="grn-bill-date"
-              required
-              error={err("billDate")}
-              hint={effectivePeriod ? `Financial year ${financialYearFromPeriod(effectivePeriod)}` : undefined}
-            >
-              <Input
-                id="grn-bill-date"
-                type="date"
-                className={inputClass}
-                disabled={locked}
-                value={form.billDate}
-                onChange={(event) => {
-                  const billDate = event.target.value;
-                  setForm((current) => ({
-                    ...current,
-                    billDate,
-                    // Reset accounting period override whenever bill date changes — the user can
-                    // re-pick a different accounting month if needed after the date is set.
-                    accountingPeriod: "",
-                    costCentreKey: "",
-                    head: "",
-                    subHead: "",
-                    budgetLineId: "",
-                    lateInvoiceReason: "",
-                    dueDate:
-                      current.dueDate || !billDate
-                        ? current.dueDate
-                        : addDays(billDate, current.paymentTermsDays),
-                  }));
-                  setAllocations([newAllocation()]);
-                  setInvoiceComponents([newInvoiceComponent()]);
-                }}
-              />
-            </FieldRow>
-
-            {/* 3-D: Late invoice — non-finance raisers must supply a reason for invoices >30 days old. */}
-            {isVendor && !canOverridePeriod && form.billDate && (() => {
-              const today = new Date(); today.setHours(0, 0, 0, 0);
-              const billD = new Date(form.billDate); billD.setHours(0, 0, 0, 0);
-              const daysOld = Math.floor((today.getTime() - billD.getTime()) / 86400000);
-              if (daysOld <= 30) return null;
-              return (
-                <div className="mx-4 mb-3 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2.5">
-                  <div className="flex items-start gap-2 text-[11.5px] text-amber-800">
-                    <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
-                    <span>
-                      This invoice is <strong>{daysOld} days old</strong>. Please provide a reason — Finance Head will see this flag during review.
-                    </span>
-                  </div>
-                  <textarea
-                    className="mt-2 w-full rounded-[6px] border border-amber-300 bg-white px-2.5 py-1.5 text-xs text-grn-ink placeholder:text-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-                    placeholder="e.g. Invoice received late from vendor / delayed dispatch"
-                    rows={2}
-                    value={form.lateInvoiceReason}
-                    onChange={(e) => setForm((cur) => ({ ...cur, lateInvoiceReason: e.target.value }))}
-                  />
-                  {!form.lateInvoiceReason.trim() && (
-                    <p className="mt-1 text-[10.5px] text-amber-700">Required before saving</p>
-                  )}
-                </div>
-              );
-            })()}
-
-            {/* Accounting period override: Finance Head / Accounts Head can book a late invoice
-                into a different month (period-end cut-off). Hidden for branch-level raisers. */}
-            {isVendor && canOverridePeriod && period && (
-              <>
-                <FieldRow
-                  label="Accounting period"
-                  htmlFor="grn-accounting-period"
-                  hint={
-                    form.accountingPeriod && form.accountingPeriod !== period
-                      ? `Invoice date month is ${period} — you are booking this into ${form.accountingPeriod}.`
-                      : "Leave as-is to use the invoice date's month."
-                  }
-                >
-                  {/* Not a native <input type="month">: Safari has never implemented it and
-                      degrades to a bare text box, so the period would be unpickable there.
-                      Styled with this module's own tokens rather than the default theme. */}
-                  <MonthYearPicker
-                    className="w-[210px]"
-                    disabled={locked && !canOverridePeriod}
-                    value={effectivePeriod}
-                    onChange={(value) =>
-                      setForm((current) => ({
-                        ...current,
-                        accountingPeriod: value === period ? "" : value,
-                      }))
-                    }
-                    selectClassName="h-[34px] rounded-[8px] border border-grn-line bg-white px-[8px] text-[12.5px] text-grn-ink focus:outline-none focus:ring-2 focus:ring-grn-brand/15"
-                  />
-                </FieldRow>
-                {form.accountingPeriod && form.accountingPeriod !== period && (
-                  <div className="mx-4 mb-1 flex items-start gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11.5px] text-amber-800">
-                    <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
-                    <span>
-                      This is a period-end cut-off entry. The invoice will be booked into{" "}
-                      <strong>{form.accountingPeriod}</strong> instead of the invoice date month{" "}
-                      <strong>{period}</strong>. Budget lines shown below are for {form.accountingPeriod}.
-                    </span>
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* D1: Show accounting period read-only for non-elevated roles so they know which
-                period the GRN will post to. Editable override is above for Finance/Accounts. */}
-            {isVendor && !canOverridePeriod && effectivePeriod && (
-              <FieldRow label="Accounting period">
-                <div className="flex items-center gap-2 text-[13px] text-grn-ink">
-                  <span className="font-bold">{effectivePeriod}</span>
-                  <span className="text-grn-ink-soft">
-                    (FY {financialYearFromPeriod(effectivePeriod)})
-                  </span>
-                </div>
-              </FieldRow>
-            )}
-
-            {/* Directly under the bill date, because the financial year the schedule is clamped
-                to is derived from it — the two decisions are one decision. */}
-            <MonthSplitPanel
-              value={monthSplit}
-              onChange={setMonthSplit}
-              amount={Number(form.amount) || 0}
-              accountingPeriod={period}
-              disabled={locked}
-              canCustomSplit={canOverridePeriod}
-              canCrossFy={canOverridePeriod}
-            />
-
-            {isVendor && (
-              <>
-                <FieldRow label="Invoice number" htmlFor="grn-invoice-no" required error={err("invoiceNumber")}>
-                  <Input
-                    id="grn-invoice-no"
-                    className={inputClass}
-                    value={form.invoiceNumber}
-                    placeholder="As printed on the invoice"
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, invoiceNumber: event.target.value }))
-                    }
-                  />
-                </FieldRow>
-
-                <FieldRow label="Vendor" htmlFor="grn-vendor" required error={err("vendorId")}>
-                  <SearchableSelect
-                    id="grn-vendor"
-                    aria-label="Vendor"
-                    disabled={locked}
-                    loading={vendorsLoading}
-                    options={vendors.map((vendor) => ({
-                      value: vendor.id,
-                      label: (vendor.vendor_name ?? vendor.name ?? "").trim(),
-                      hint: vendor.vendor_code ?? undefined,
-                    }))}
-                    value={form.vendorId}
-                    onChange={(value) => {
-                      const picked = vendors.find((vendor) => vendor.id === value);
-                      setForm((current) => ({
-                        ...current,
-                        vendorId: value,
-                        vendorGstin: current.vendorGstin || (picked?.gst_number ?? ""),
-                      }));
-                    }}
-                    search={vendorSearch}
-                    onSearchChange={setVendorSearch}
-                    placeholder="Select vendor"
-                    searchPlaceholder="Type a vendor name or code…"
-                    emptyText={
-                      vendorSearch.trim() ? "No vendor matches that." : "Start typing to search."
-                    }
-                  />
-                </FieldRow>
-
-                <FieldRow label="Vendor GSTIN" htmlFor="grn-gstin">
-                  <Input
-                    id="grn-gstin"
-                    className={cn(inputClass, "font-mono uppercase")}
-                    value={form.vendorGstin}
-                    placeholder="GSTIN, or NA for a non-GST vendor"
-                    onChange={(event) => {
-                      const gstin = event.target.value.toUpperCase();
-                      const stateCode = extractStateCodeFromGstin(gstin);
-                      setForm((current) => ({
-                        ...current,
-                        vendorGstin: gstin,
-                        vendorStateCode: stateCode || current.vendorStateCode,
-                      }));
-                    }}
-                  />
-                </FieldRow>
-
-                <FieldRow label="Place of supply" htmlFor="grn-place">
-                  <Input
-                    id="grn-place"
-                    className={inputClass}
-                    value={form.placeOfSupply}
-                    placeholder="State or place"
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, placeOfSupply: event.target.value }))
-                    }
-                  />
-                </FieldRow>
-
-                <FieldRow
-                  label="GST enabled"
-                  hint="Set No for non-GST vendors or exempt supplies."
-                >
-                  <div className="flex items-center gap-3">
-                    <Switch
-                      id="grn-gst-enabled"
-                      checked={form.gstEnabled ?? true}
-                      onCheckedChange={(checked) =>
-                        setForm((current) => ({ ...current, gstEnabled: checked }))
+              {/* Row 1: Amount (vendor only), Branch, Company */}
+              <DenseFieldGroup cols={isVendor ? 3 : 2}>
+                {isVendor && (
+                  <DenseField label="Amount (incl. GST)" required error={err("amount")}>
+                    <Input
+                      id="grn-amount"
+                      type="number"
+                      inputMode="decimal"
+                      min="0.01"
+                      step="0.01"
+                      className={cn(inputClass, "h-8 text-right font-semibold tabular-nums")}
+                      value={form.amount || ""}
+                      placeholder="0.00"
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, amount: Number(event.target.value) }))
                       }
                     />
-                    <span className="text-[13px] text-grn-ink">
-                      {form.gstEnabled === false ? "No" : "Yes"}
-                    </span>
-                  </div>
-                </FieldRow>
-
-                {form.gstEnabled !== false && (
-                  <>
-                    <FieldRow
-                      label="Vendor state code"
-                      hint="First 2 digits of GSTIN. Auto-filled if GSTIN is provided."
-                    >
-                      <GrnSelect
-                        value={form.vendorStateCode}
-                        onValueChange={(v) =>
-                          setForm((current) => ({ ...current, vendorStateCode: v }))
-                        }
-                        placeholder="Select state"
-                      >
-                        {GST_STATE_CODES.map((sc) => (
-                          <option key={sc.value} value={sc.value}>
-                            {sc.label}
-                          </option>
-                        ))}
-                      </GrnSelect>
-                    </FieldRow>
-
-                    <FieldRow
-                      label="Billing state code"
-                      hint="State of the billing branch (MAS entity)."
-                    >
-                      <GrnSelect
-                        value={form.billingStateCode}
-                        onValueChange={(v) =>
-                          setForm((current) => ({ ...current, billingStateCode: v }))
-                        }
-                        placeholder="Select state"
-                      >
-                        {GST_STATE_CODES.map((sc) => (
-                          <option key={sc.value} value={sc.value}>
-                            {sc.label}
-                          </option>
-                        ))}
-                      </GrnSelect>
-                    </FieldRow>
-
-                    {form.vendorStateCode && form.billingStateCode && (
-                      <FieldRow label="GST type">
-                        <div
-                          className={cn(
-                            "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-bold",
-                            form.vendorStateCode === form.billingStateCode
-                              ? "bg-emerald-100 text-emerald-700"
-                              : "bg-amber-100 text-amber-700"
-                          )}
-                        >
-                          {form.vendorStateCode === form.billingStateCode
-                            ? "Intra-state (CGST/SGST)"
-                            : "Inter-state (IGST)"}
-                        </div>
-                      </FieldRow>
-                    )}
-                  </>
+                  </DenseField>
                 )}
-
-                {canOverridePeriod && (
-                  <>
-                    <FieldRow
-                      label="IRN (e-invoice)"
-                      htmlFor="grn-irn"
-                      hint="Invoice Reference Number from the GSTN e-invoice portal. Leave blank if not applicable."
-                    >
-                      <Input
-                        id="grn-irn"
-                        className={cn(inputClass, "font-mono")}
-                        value={form.irn}
-                        placeholder="64-character IRN (optional)"
-                        onChange={(event) =>
-                          setForm((current) => ({ ...current, irn: event.target.value.trim() }))
-                        }
-                      />
-                    </FieldRow>
-                    <FieldRow label="IRN Ack. No." htmlFor="grn-irn-ack">
-                      <Input
-                        id="grn-irn-ack"
-                        className={cn(inputClass, "font-mono")}
-                        value={form.irnAckNo}
-                        placeholder="Acknowledgement number (optional)"
-                        onChange={(event) =>
-                          setForm((current) => ({ ...current, irnAckNo: event.target.value.trim() }))
-                        }
-                      />
-                    </FieldRow>
-                  </>
-                )}
-
-                <FieldRow
-                  label="Contract reference"
-                  htmlFor="grn-contract-ref"
-                  hint="Contract or agreement reference. Leave blank if there is none."
-                >
-                  <Input
-                    id="grn-contract-ref"
-                    className={inputClass}
-                    value={form.purchaseReference}
-                    placeholder="Contract reference"
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, purchaseReference: event.target.value }))
-                    }
+                <DenseField label="Branch" required error={err("branchId")}>
+                  <SearchableSelect
+                    id="grn-branch"
+                    aria-label="Branch"
+                    disabled={locked}
+                    options={branches.map((branch) => ({
+                      value: branch.id,
+                      label: branch.branch_name ?? branch.name,
+                      hint: branch.branch_code ?? undefined,
+                    }))}
+                    value={form.branchId}
+                    onChange={(value) => {
+                      setForm((current) => ({
+                        ...current,
+                        branchId: value,
+                        costCentreKey: "",
+                        head: "",
+                        subHead: "",
+                        budgetLineId: "",
+                      }));
+                      setAllocations([newAllocation()]);
+                      setInvoiceComponents([newInvoiceComponent()]);
+                    }}
+                    placeholder="Select branch"
+                    searchPlaceholder="Type a branch name…"
                   />
-                </FieldRow>
+                </DenseField>
+                {companies.length > 1 && (
+                  <DenseField label="Company">
+                    <SearchableSelect
+                      id="grn-company"
+                      aria-label="Legal entity"
+                      disabled={locked}
+                      options={companies.map((c) => ({ value: c.company_code, label: c.company_name }))}
+                      value={form.companyCode}
+                      onChange={(value) => setForm((current) => ({ ...current, companyCode: value }))}
+                      placeholder="Select company"
+                      searchPlaceholder="Type company name…"
+                    />
+                  </DenseField>
+                )}
+              </DenseFieldGroup>
 
-                <FieldRow
-                  label="Payment due date"
-                  htmlFor="grn-due-date"
-                  error={err("dueDate")}
-                  hint={
-                    form.billDate && form.dueDate && dueDateGap !== null && dueDateGap >= 0
-                      ? `${dueDateGap} days from the invoice date`
-                      : "Enter the date payment is actually due."
-                  }
+              {/* Row 2: Invoice date */}
+              <DenseFieldGroup cols={3}>
+                <DenseField
+                  label={isVendor ? "Invoice date" : "Receipt date"}
+                  required
+                  error={err("billDate")}
+                  hint={effectivePeriod ? `FY ${financialYearFromPeriod(effectivePeriod)}` : undefined}
                 >
                   <Input
-                    id="grn-due-date"
+                    id="grn-bill-date"
                     type="date"
-                    className={inputClass}
-                    min={form.billDate || undefined}
-                    value={form.dueDate}
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, dueDate: event.target.value }))
-                    }
+                    className={cn(inputClass, "h-8")}
+                    disabled={locked}
+                    value={form.billDate}
+                    onChange={(event) => {
+                      const billDate = event.target.value;
+                      setForm((current) => ({
+                        ...current,
+                        billDate,
+                        accountingPeriod: "",
+                        costCentreKey: "",
+                        head: "",
+                        subHead: "",
+                        budgetLineId: "",
+                        lateInvoiceReason: "",
+                        dueDate:
+                          current.dueDate || !billDate
+                            ? current.dueDate
+                            : addDays(billDate, current.paymentTermsDays),
+                      }));
+                      setAllocations([newAllocation()]);
+                      setInvoiceComponents([newInvoiceComponent()]);
+                    }}
                   />
-                </FieldRow>
-              </>
-            )}
-          </FormSection>
+                </DenseField>
 
-          {/* ── Proof ──
-              Sits directly after the invoice header, not first and not last.
+                {/* Vendor: Invoice # and Due Date in same row */}
+                {isVendor && (
+                  <>
+                    <DenseField label="Invoice #" required error={err("invoiceNumber")}>
+                      <Input
+                        id="grn-invoice-no"
+                        className={cn(inputClass, "h-8")}
+                        value={form.invoiceNumber}
+                        placeholder="As printed"
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, invoiceNumber: event.target.value }))
+                        }
+                      />
+                    </DenseField>
+                    <DenseField
+                      label="Due date"
+                      error={err("dueDate")}
+                      hint={dueDateGap !== null && dueDateGap >= 0 ? `${dueDateGap}d from invoice` : undefined}
+                    >
+                      <Input
+                        id="grn-due-date"
+                        type="date"
+                        className={cn(inputClass, "h-8")}
+                        min={form.billDate || undefined}
+                        value={form.dueDate}
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, dueDate: event.target.value }))
+                        }
+                      />
+                    </DenseField>
+                  </>
+                )}
+              </DenseFieldGroup>
 
-              Not first, because I-Spark's flow is to key the invoice and then attach it, and a
-              raiser who has the document in hand types from it rather than the other way round.
+              {/* Late invoice warning (non-finance raisers, >30 days old) */}
+              {isVendor && !canOverridePeriod && form.billDate && (() => {
+                const today = new Date(); today.setHours(0, 0, 0, 0);
+                const billD = new Date(form.billDate); billD.setHours(0, 0, 0, 0);
+                const daysOld = Math.floor((today.getTime() - billD.getTime()) / 86400000);
+                if (daysOld <= 30) return null;
+                return (
+                  <div className="rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2">
+                    <div className="flex items-start gap-2 text-[11px] text-amber-800">
+                      <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
+                      <span>Invoice is <strong>{daysOld} days old</strong>. Reason required.</span>
+                    </div>
+                    <textarea
+                      className="mt-1.5 w-full rounded-[6px] border border-amber-300 bg-white px-2 py-1.5 text-xs text-grn-ink placeholder:text-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                      placeholder="e.g. Invoice received late from vendor"
+                      rows={2}
+                      value={form.lateInvoiceReason}
+                      onChange={(e) => setForm((cur) => ({ ...cur, lateInvoiceReason: e.target.value }))}
+                    />
+                    {!form.lateInvoiceReason.trim() && (
+                      <p className="mt-1 text-[10px] text-amber-700">Required before saving</p>
+                    )}
+                  </div>
+                );
+              })()}
 
-              Not last either, which is where a naive reading of the section order would put it:
-              the Gemini extraction below reads the uploaded file and fills the fields ABOVE it.
-              Move the upload past them and auto-fill has nothing left to fill, which would trade
-              a working capability for a cosmetic reordering. */}
-          {/* ── Proof ── */}
-          <FormSection
-            title="Proof"
-            description="Attach the invoice or receipt. At least one file is required to submit."
-          >
-            <div className="px-4 py-3">
-              <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[10px] border-[1.5px] border-dashed border-grn-line bg-grn-paper px-4 py-[22px] text-center transition-colors hover:border-grn-brand">
-                <UploadCloud className="h-[26px] w-[26px] text-grn-ink-soft" strokeWidth={1.6} />
-                <span className="text-[13px] font-bold text-grn-ink">
-                  Tap to attach invoice or receipt
-                </span>
-                <span className="text-[11px] text-grn-ink-soft">
-                  PDF, JPG, PNG or WEBP · up to 10 files, 20 MB each
-                </span>
+              {/* Accounting period override (Finance Head / Accounts Head only) */}
+              {isVendor && canOverridePeriod && period && (
+                <DenseFieldGroup cols={2}>
+                  <DenseField
+                    label="Accounting period"
+                    hint={form.accountingPeriod && form.accountingPeriod !== period
+                      ? `Booking into ${form.accountingPeriod} (invoice month: ${period})`
+                      : "Leave as-is for invoice date month"
+                    }
+                  >
+                    <MonthYearPicker
+                      className="w-full"
+                      disabled={locked && !canOverridePeriod}
+                      value={effectivePeriod}
+                      onChange={(value) =>
+                        setForm((current) => ({
+                          ...current,
+                          accountingPeriod: value === period ? "" : value,
+                        }))
+                      }
+                      selectClassName="h-8 rounded-[8px] border border-grn-line bg-white px-2 text-[12px] text-grn-ink focus:outline-none focus:ring-2 focus:ring-grn-brand/15"
+                    />
+                  </DenseField>
+                </DenseFieldGroup>
+              )}
+
+              {/* Period-end cut-off warning */}
+              {isVendor && canOverridePeriod && form.accountingPeriod && form.accountingPeriod !== period && (
+                <div className="flex items-start gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                  <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
+                  <span>Period-end cut-off: booking into <strong>{form.accountingPeriod}</strong> instead of {period}.</span>
+                </div>
+              )}
+
+              {/* Accounting period read-only for non-elevated roles */}
+              {isVendor && !canOverridePeriod && effectivePeriod && (
+                <div className="flex items-center gap-2 text-[12px] text-grn-ink">
+                  <span className="text-grn-ink-soft">Period:</span>
+                  <span className="font-bold">{effectivePeriod}</span>
+                  <span className="text-grn-ink-soft">(FY {financialYearFromPeriod(effectivePeriod)})</span>
+                </div>
+              )}
+
+              {/* Month split panel */}
+              <MonthSplitPanel
+                value={monthSplit}
+                onChange={setMonthSplit}
+                amount={Number(form.amount) || 0}
+                accountingPeriod={period}
+                disabled={locked}
+                canCustomSplit={canOverridePeriod}
+                canCrossFy={canOverridePeriod}
+              />
+
+              {/* Row 3: Vendor, GSTIN (vendor only) */}
+              {isVendor && (
+                <>
+                  <DenseFieldGroup cols={2}>
+                    <DenseField label="Vendor" required error={err("vendorId")}>
+                      <SearchableSelect
+                        id="grn-vendor"
+                        aria-label="Vendor"
+                        disabled={locked}
+                        loading={vendorsLoading}
+                        options={vendors.map((vendor) => ({
+                          value: vendor.id,
+                          label: (vendor.vendor_name ?? vendor.name ?? "").trim(),
+                          hint: vendor.vendor_code ?? undefined,
+                        }))}
+                        value={form.vendorId}
+                        onChange={(value) => {
+                          const picked = vendors.find((vendor) => vendor.id === value);
+                          setForm((current) => ({
+                            ...current,
+                            vendorId: value,
+                            vendorGstin: current.vendorGstin || (picked?.gst_number ?? ""),
+                          }));
+                        }}
+                        search={vendorSearch}
+                        onSearchChange={setVendorSearch}
+                        placeholder="Select vendor"
+                        searchPlaceholder="Type a vendor name or code…"
+                        emptyText={vendorSearch.trim() ? "No vendor matches." : "Start typing to search."}
+                      />
+                    </DenseField>
+                    <DenseField label="Vendor GSTIN">
+                      <Input
+                        id="grn-gstin"
+                        className={cn(inputClass, "h-8 font-mono uppercase")}
+                        value={form.vendorGstin}
+                        placeholder="GSTIN or NA"
+                        onChange={(event) => {
+                          const gstin = event.target.value.toUpperCase();
+                          const stateCode = extractStateCodeFromGstin(gstin);
+                          setForm((current) => ({
+                            ...current,
+                            vendorGstin: gstin,
+                            vendorStateCode: stateCode || current.vendorStateCode,
+                          }));
+                        }}
+                      />
+                    </DenseField>
+                  </DenseFieldGroup>
+
+                  {/* Row 4: GST toggle + states inline */}
+                  <DenseFieldGroup cols={4}>
+                    <DenseField label="GST" hint={form.gstEnabled === false ? "Non-GST vendor" : undefined}>
+                      <div className="flex items-center gap-2 h-8">
+                        <Switch
+                          id="grn-gst-enabled"
+                          checked={form.gstEnabled ?? true}
+                          onCheckedChange={(checked) =>
+                            setForm((current) => ({ ...current, gstEnabled: checked }))
+                          }
+                        />
+                        <span className="text-[12px] text-grn-ink">{form.gstEnabled === false ? "No" : "Yes"}</span>
+                      </div>
+                    </DenseField>
+                    {form.gstEnabled !== false && (
+                      <>
+                        <DenseField label="Vendor State">
+                          <GrnSelect
+                            className="h-8 text-[12px]"
+                            value={form.vendorStateCode}
+                            onChange={(e) => setForm((cur) => ({ ...cur, vendorStateCode: e.target.value }))}
+                          >
+                            <option value="">Select</option>
+                            {GST_STATE_CODES.map((sc) => (
+                              <option key={sc.value} value={sc.value}>{sc.label}</option>
+                            ))}
+                          </GrnSelect>
+                        </DenseField>
+                        <DenseField label="Billing State">
+                          <GrnSelect
+                            className="h-8 text-[12px]"
+                            value={form.billingStateCode}
+                            onChange={(e) => setForm((cur) => ({ ...cur, billingStateCode: e.target.value }))}
+                          >
+                            <option value="">Select</option>
+                            {GST_STATE_CODES.map((sc) => (
+                              <option key={sc.value} value={sc.value}>{sc.label}</option>
+                            ))}
+                          </GrnSelect>
+                        </DenseField>
+                        <DenseField label="GST Type">
+                          <div className="flex items-center h-8">
+                            {form.vendorStateCode && form.billingStateCode ? (
+                              <span className={cn(
+                                "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold",
+                                form.vendorStateCode === form.billingStateCode
+                                  ? "bg-emerald-100 text-emerald-700"
+                                  : "bg-amber-100 text-amber-700"
+                              )}>
+                                {form.vendorStateCode === form.billingStateCode ? "Intra (CGST/SGST)" : "Inter (IGST)"}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-grn-ink-soft">Select states</span>
+                            )}
+                          </div>
+                        </DenseField>
+                      </>
+                    )}
+                  </DenseFieldGroup>
+
+                  {/* Row 5: Place of supply, Contract ref */}
+                  <DenseFieldGroup cols={2}>
+                    <DenseField label="Place of supply">
+                      <Input
+                        id="grn-place"
+                        className={cn(inputClass, "h-8")}
+                        value={form.placeOfSupply}
+                        placeholder="State or place"
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, placeOfSupply: event.target.value }))
+                        }
+                      />
+                    </DenseField>
+                    <DenseField label="Contract reference">
+                      <Input
+                        id="grn-contract-ref"
+                        className={cn(inputClass, "h-8")}
+                        value={form.purchaseReference}
+                        placeholder="Contract/agreement ref"
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, purchaseReference: event.target.value }))
+                        }
+                      />
+                    </DenseField>
+                  </DenseFieldGroup>
+
+                  {/* IRN fields (Finance only) */}
+                  {canOverridePeriod && (
+                    <DenseFieldGroup cols={2}>
+                      <DenseField label="IRN (e-invoice)" hint="From GSTN portal">
+                        <Input
+                          id="grn-irn"
+                          className={cn(inputClass, "h-8 font-mono")}
+                          value={form.irn}
+                          placeholder="64-char IRN"
+                          onChange={(event) =>
+                            setForm((current) => ({ ...current, irn: event.target.value.trim() }))
+                          }
+                        />
+                      </DenseField>
+                      <DenseField label="IRN Ack. No.">
+                        <Input
+                          id="grn-irn-ack"
+                          className={cn(inputClass, "h-8 font-mono")}
+                          value={form.irnAckNo}
+                          placeholder="Ack number"
+                          onChange={(event) =>
+                            setForm((current) => ({ ...current, irnAckNo: event.target.value.trim() }))
+                          }
+                        />
+                      </DenseField>
+                    </DenseFieldGroup>
+                  )}
+                </>
+              )}
+
+              {/* ── Proof section (inline within card) ── */}
+              <DenseSection title="Attachments" />
+              <label className="flex cursor-pointer items-center gap-3 rounded-[8px] border border-dashed border-grn-line bg-grn-paper px-3 py-2.5 text-center transition-colors hover:border-grn-brand hover:bg-grn-card">
+                <UploadCloud className="h-5 w-5 text-grn-ink-soft" strokeWidth={1.6} />
+                <div className="flex-1 text-left">
+                  <span className="text-[12px] font-semibold text-grn-ink">
+                    Tap to attach invoice/receipt
+                  </span>
+                  <span className="ml-2 text-[11px] text-grn-ink-soft">
+                    PDF, JPG, PNG, WEBP · max 10 files
+                  </span>
+                </div>
                 <input
                   type="file"
                   multiple
@@ -2107,23 +2050,24 @@ export function BudgetLinkedGrnForm({
                 />
               </label>
 
+              {/* Attached files list - compact */}
               {(files.length > 0 || (workspace?.documents?.length ?? 0) > 0) && (
-                <ul className="mt-3 space-y-1.5">
+                <ul className="mt-2 space-y-1">
                   {files.map((file) => (
                     <li
                       key={file.name}
-                      className="flex items-center justify-between gap-2 rounded-[8px] border border-grn-line bg-grn-paper px-3 py-2 text-[12px]"
+                      className="flex items-center justify-between gap-2 rounded-[6px] border border-grn-line bg-grn-paper px-2.5 py-1.5 text-[11px]"
                     >
                       <span className="truncate text-grn-ink">{file.name}</span>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <StatusStamp tone="neutral">Pending upload</StatusStamp>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <StatusStamp tone="neutral">Pending</StatusStamp>
                         <button
                           type="button"
                           aria-label={`Remove ${file.name}`}
-                          className="ml-1 text-grn-ink-soft hover:text-grn-crit"
+                          className="text-grn-ink-soft hover:text-grn-crit"
                           onClick={() => setFiles((prev) => prev.filter((f) => f.name !== file.name))}
                         >
-                          <XCircle className="h-3.5 w-3.5" />
+                          <XCircle className="h-3 w-3" />
                         </button>
                       </div>
                     </li>
@@ -2134,7 +2078,7 @@ export function BudgetLinkedGrnForm({
                       <li
                         key={document.id}
                         className={cn(
-                          "flex items-center justify-between gap-2 rounded-lg border px-3 py-2 text-[12px]",
+                          "flex items-center justify-between gap-2 rounded-[6px] border px-2.5 py-1.5 text-[11px]",
                           tone === "ok"
                             ? "border-grn-ok-line bg-grn-ok-bg"
                             : tone === "warn"
@@ -2152,206 +2096,193 @@ export function BudgetLinkedGrnForm({
                 </ul>
               )}
 
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-                <label className="flex items-center gap-2 text-[11.5px] text-grn-ink-soft">
+              {/* Auto-analyze toggle - compact inline */}
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                <label className="flex items-center gap-1.5 text-[10px] text-grn-ink-soft">
                   <input
                     type="checkbox"
-                    className="h-4 w-4"
+                    className="h-3.5 w-3.5"
                     checked={autoAnalyze}
                     onChange={(event) => setAutoAnalyze(event.target.checked)}
                   />
-                  Read the invoice automatically after upload
+                  Auto-read invoice after upload
                 </label>
                 {primaryDocument && (
                   <Button
+                    size="sm"
                     disabled={analyzeMutation.isPending}
                     onClick={() => analyzeMutation.mutate(primaryDocument.id)}
                   >
                     {analyzeMutation.isPending ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <Loader2 className="h-3 w-3 animate-spin" />
                     ) : (
-                      <ScanLine className="h-3.5 w-3.5" />
+                      <ScanLine className="h-3 w-3" />
                     )}
-                    Analyze invoice
+                    Analyze
                   </Button>
                 )}
               </div>
-            </div>
-          </FormSection>
 
-          {/* ── Budget coordinates ── */}
-          <FormSection
-            title="Where this spend belongs"
-            description={
-              isVendor
-                ? "Head and sub-head identify the approved budget. The cost-centre split below decides how much of this spend belongs to each cost centre."
-                : "Cost centre, head and sub-head together identify the approved budget."
-            }
-            action={
-              <div className="flex flex-wrap items-center gap-1.5">
-                {/* Placed here rather than in a tab of its own: this is the card that tells you
-                    there is no approved budget line to charge to, so it is where someone
-                    discovers they need one. */}
-                <GrnBudgetImportButton branchId={form.branchId} period={effectivePeriod} disabled={locked} />
-                {/* Vendor GRNs always split by cost centre now — see CostCentreSplitEditor below.
-                    Imprest keeps the single-line / split-mode toggle exactly as before. */}
-                {!isVendor && (
-                  <Button onClick={() => setSplitMode((value) => !value)}>
-                    <Split className="h-3 w-3" />
-                    {splitMode ? "Use a single budget line" : "Split this invoice across budget lines"}
-                  </Button>
-                )}
-              </div>
-            }
-          >
-            {!form.branchId || !effectivePeriod ? (
-              <div className="px-4 py-4 text-[12px] text-grn-warn">
-                Select the branch and date first to load approved budgets.
-              </div>
-            ) : linesLoading ? (
-              <div className="flex items-center gap-2 px-4 py-6 text-[12px] text-grn-ink-soft">
-                <Loader2 className="h-4 w-4 animate-spin" /> Loading approved budgets…
-              </div>
-            ) : isVendor ? (
-              <>
-                <FieldRow label="Head" htmlFor="grn-head" required error={err("head")}>
-                  <SearchableSelect
-                    id="grn-head"
-                    aria-label="Expense head"
-                    options={vendorHeadOptions}
-                    value={form.head}
-                    onChange={(value) => setForm((current) => ({ ...current, head: value, subHead: "" }))}
-                    placeholder="Select head"
-                    searchPlaceholder="Type a head…"
-                  />
+              {/* ── Budget Allocation section ── */}
+              <DenseSection
+                title="Budget Allocation"
+                action={
+                  <div className="flex items-center gap-1.5">
+                    <GrnBudgetImportButton branchId={form.branchId} period={effectivePeriod} disabled={locked} />
+                    {!isVendor && (
+                      <Button size="sm" onClick={() => setSplitMode((value) => !value)}>
+                        <Split className="h-3 w-3" />
+                        {splitMode ? "Single line" : "Split"}
+                      </Button>
+                    )}
+                  </div>
+                }
+              />
+
+              {!form.branchId || !effectivePeriod ? (
+                <div className="py-2 text-[11px] text-grn-warn">
+                  Select branch and date first to load budgets.
+                </div>
+              ) : linesLoading ? (
+                <div className="flex items-center gap-2 py-3 text-[11px] text-grn-ink-soft">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading budgets…
+                </div>
+              ) : isVendor ? (
+                <>
+                  <DenseFieldGroup cols={2}>
+                    <DenseField label="Head" required error={err("head")}>
+                      <SearchableSelect
+                        id="grn-head"
+                        aria-label="Expense head"
+                        options={vendorHeadOptions}
+                        value={form.head}
+                        onChange={(value) => setForm((current) => ({ ...current, head: value, subHead: "" }))}
+                        placeholder="Select head"
+                        searchPlaceholder="Type a head…"
+                      />
+                    </DenseField>
+                    <DenseField label="Sub-head" required error={err("subHead")}>
+                      <SearchableSelect
+                        id="grn-subhead"
+                        aria-label="Expense sub-head"
+                        disabled={!form.head}
+                        options={vendorSubHeadOptions}
+                        value={form.subHead}
+                        onChange={(value) => setForm((current) => ({ ...current, subHead: value }))}
+                        placeholder={form.head ? "Select sub-head" : "Select head first"}
+                        searchPlaceholder="Type a sub-head…"
+                      />
+                    </DenseField>
+                  </DenseFieldGroup>
                   {form.head && !vendorHeadOptions.find((o) => o.value === form.head)?.hasBudget && (
-                    <p className="mt-1 text-[11px] text-amber-600">
-                      No approved budget for this head in {effectivePeriod}. GRN will be flagged — Finance Head must link a budget line during approval.
+                    <p className="text-[10px] text-amber-600">
+                      No approved budget for this head — Finance Head must link during approval.
                     </p>
                   )}
-                </FieldRow>
+                </>
+              ) : !budgetLines.length ? (
+                <div className="py-2 text-[11px] text-grn-warn">
+                  No approved budget for {effectivePeriod}. Branch/Finance/Accounts Head approval required.
+                </div>
+              ) : splitMode ? (
+                <div className="py-2 text-[11px] text-grn-ink-soft">
+                  Budget lines are chosen per row in the split editor below.
+                </div>
+              ) : (
+                <>
+                  <DenseFieldGroup cols={3}>
+                    <DenseField label="Cost centre" required error={err("costCentreKey")}>
+                      <SearchableSelect
+                        id="grn-cc"
+                        aria-label="Cost centre"
+                        options={costCentreOptions}
+                        value={form.costCentreKey}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            costCentreKey: value,
+                            head: "",
+                            subHead: "",
+                            budgetLineId: "",
+                          }))
+                        }
+                        placeholder="Select cost centre"
+                        searchPlaceholder="Type a cost centre…"
+                      />
+                    </DenseField>
+                    <DenseField label="Head" required error={err("head")}>
+                      <SearchableSelect
+                        id="grn-head"
+                        aria-label="Expense head"
+                        disabled={!form.costCentreKey}
+                        options={headOptions}
+                        value={form.head}
+                        onChange={(value) =>
+                          setForm((current) => ({
+                            ...current,
+                            head: value,
+                            subHead: "",
+                            budgetLineId: "",
+                          }))
+                        }
+                        placeholder={form.costCentreKey ? "Select head" : "Select CC first"}
+                        searchPlaceholder="Type a head…"
+                      />
+                    </DenseField>
+                    <DenseField label="Sub-head" required error={err("subHead")}>
+                      <SearchableSelect
+                        id="grn-subhead"
+                        aria-label="Expense sub-head"
+                        disabled={!form.head}
+                        options={subHeadOptions}
+                        value={form.subHead}
+                        onChange={(value) =>
+                          setForm((current) => ({ ...current, subHead: value, budgetLineId: "" }))
+                        }
+                        placeholder={form.head ? "Select sub-head" : "Select head first"}
+                        searchPlaceholder="Type a sub-head…"
+                      />
+                    </DenseField>
+                  </DenseFieldGroup>
 
-                <FieldRow label="Sub-head" htmlFor="grn-subhead" required error={err("subHead")}>
-                  <SearchableSelect
-                    id="grn-subhead"
-                    aria-label="Expense sub-head"
-                    disabled={!form.head}
-                    options={vendorSubHeadOptions}
-                    value={form.subHead}
-                    onChange={(value) => setForm((current) => ({ ...current, subHead: value }))}
-                    placeholder={form.head ? "Select sub-head" : "Select a head first"}
-                    searchPlaceholder="Type a sub-head…"
-                  />
-                </FieldRow>
-              </>
-            ) : !budgetLines.length ? (
-              <div className="px-4 py-4 text-[12px] text-grn-warn">
-                No approved budget line is available for {effectivePeriod}. Branch Head, Finance Head and
-                Accounts Head approval must be completed first.
-              </div>
-            ) : splitMode ? (
-              <div className="px-4 py-4 text-[12px] text-grn-ink-soft">
-                Budget lines are chosen per row in the split editor below.
-              </div>
-            ) : (
-              <>
-                <FieldRow label="Cost centre" htmlFor="grn-cc" required error={err("costCentreKey")}>
-                  <SearchableSelect
-                    id="grn-cc"
-                    aria-label="Cost centre"
-                    options={costCentreOptions}
-                    value={form.costCentreKey}
-                    onChange={(value) =>
-                      setForm((current) => ({
-                        ...current,
-                        costCentreKey: value,
-                        head: "",
-                        subHead: "",
-                        budgetLineId: "",
-                      }))
-                    }
-                    placeholder="Select cost centre"
-                    searchPlaceholder="Type a cost centre…"
-                  />
-                </FieldRow>
+                  {/* Item picker when trio is ambiguous */}
+                  {needsItemChoice && (
+                    <DenseFieldGroup cols={2}>
+                      <DenseField label="Item" required error={err("budgetLineId")} hint={`${matchingLines.length} lines match`}>
+                        <SearchableSelect
+                          id="grn-item"
+                          aria-label="Budget item"
+                          options={matchingLines.map((line) => ({
+                            value: line.id,
+                            label: line.item_name,
+                            hint: `${money(Number(line.available_gross_amount))} left`,
+                            keywords: line.budget_number,
+                          }))}
+                          value={form.budgetLineId}
+                          onChange={(value) =>
+                            setForm((current) => ({ ...current, budgetLineId: value }))
+                          }
+                          placeholder="Select item"
+                          searchPlaceholder="Type item name…"
+                        />
+                      </DenseField>
+                    </DenseFieldGroup>
+                  )}
 
-                <FieldRow label="Head" htmlFor="grn-head" required error={err("head")}>
-                  <SearchableSelect
-                    id="grn-head"
-                    aria-label="Expense head"
-                    disabled={!form.costCentreKey}
-                    options={headOptions}
-                    value={form.head}
-                    onChange={(value) =>
-                      setForm((current) => ({
-                        ...current,
-                        head: value,
-                        subHead: "",
-                        budgetLineId: "",
-                      }))
-                    }
-                    placeholder={form.costCentreKey ? "Select head" : "Select a cost centre first"}
-                    searchPlaceholder="Type a head…"
-                  />
-                </FieldRow>
-
-                <FieldRow label="Sub-head" htmlFor="grn-subhead" required error={err("subHead")}>
-                  <SearchableSelect
-                    id="grn-subhead"
-                    aria-label="Expense sub-head"
-                    disabled={!form.head}
-                    options={subHeadOptions}
-                    value={form.subHead}
-                    onChange={(value) =>
-                      setForm((current) => ({ ...current, subHead: value, budgetLineId: "" }))
-                    }
-                    placeholder={form.head ? "Select sub-head" : "Select a head first"}
-                    searchPlaceholder="Type a sub-head…"
-                  />
-                </FieldRow>
-
-                {/* Shown only when the trio above is genuinely ambiguous. */}
-                {needsItemChoice && (
-                  <FieldRow
-                    label="Item"
-                    htmlFor="grn-item"
-                    required
-                    error={err("budgetLineId")}
-                    hint={`${matchingLines.length} budget lines share this head and sub-head.`}
-                  >
-                    <SearchableSelect
-                      id="grn-item"
-                      aria-label="Budget item"
-                      options={matchingLines.map((line) => ({
-                        value: line.id,
-                        label: line.item_name,
-                        hint: `${money(Number(line.available_gross_amount))} left`,
-                        keywords: line.budget_number,
-                      }))}
-                      value={form.budgetLineId}
-                      onChange={(value) =>
-                        setForm((current) => ({ ...current, budgetLineId: value }))
-                      }
-                      placeholder="Select the item"
-                      searchPlaceholder="Type an item name…"
-                    />
-                  </FieldRow>
-                )}
-
-                {resolvedLine && (
-                  <FieldRow label="Approved budget">
-                    <StaticValue>
-                      <span className="text-[12px] font-normal text-grn-ink-soft">
-                        {resolvedLine.budget_number} · {money(Number(resolvedLine.available_gross_amount))}{" "}
-                        available · {decimal(Number(resolvedLine.available_quantity))}{" "}
-                        {resolvedLine.unit} left
-                      </span>
-                    </StaticValue>
-                  </FieldRow>
-                )}
-              </>
-            )}
-          </FormSection>
+                  {/* Resolved budget line summary - inline */}
+                  {resolvedLine && (
+                    <div className="flex items-center gap-2 text-[11px] text-grn-ink-soft">
+                      <span className="font-mono">{resolvedLine.budget_number}</span>
+                      <span>·</span>
+                      <span className="font-semibold text-grn-ok">{money(Number(resolvedLine.available_gross_amount))} available</span>
+                      <span>·</span>
+                      <span>{decimal(Number(resolvedLine.available_quantity))} {resolvedLine.unit} left</span>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </GrnCard>
 
           {/* Vendor GRNs: cost-centre split, then invoice GST components, in that order — the
               unified flow. Each is its own card for the same reason SplitAllocationEditor already
@@ -2415,60 +2346,50 @@ export function BudgetLinkedGrnForm({
           {/* ── Amount (imprest only — vendor's amount lives in Invoice details, its GST
                  breakdown and remarks live at the end of InvoiceComponentsEditor) ── */}
           {!isVendor && (
-            <FormSection title="Amount" description="Enter the amount spent. The total is calculated for you.">
-              <FieldRow
-                label={splitMode ? "Invoice total (incl. GST)" : "Amount"}
-                htmlFor="grn-amount"
-                required
-                error={err("amount")}
-                hint={roundingNote}
-              >
-                <Input
-                  id="grn-amount"
-                  type="number"
-                  inputMode="decimal"
-                  min="0.01"
-                  step="0.01"
-                  className={cn(inputClass, "text-right font-semibold tabular-nums")}
-                  value={form.amount || ""}
-                  placeholder="0.00"
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, amount: Number(event.target.value) }))
-                  }
-                />
-              </FieldRow>
+            <GrnCard>
+              <div className="p-4 space-y-2">
+                <DenseSection title="Amount" />
+                <DenseFieldGroup cols={2}>
+                  <DenseField
+                    label={splitMode ? "Invoice total (incl. GST)" : "Amount"}
+                    required
+                    error={err("amount")}
+                    hint={roundingNote}
+                  >
+                    <Input
+                      id="grn-amount"
+                      type="number"
+                      inputMode="decimal"
+                      min="0.01"
+                      step="0.01"
+                      className={cn(inputClass, "h-8 text-right font-semibold tabular-nums")}
+                      value={form.amount || ""}
+                      placeholder="0.00"
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, amount: Number(event.target.value) }))
+                      }
+                    />
+                  </DenseField>
+                  <div className="flex items-end gap-3 text-[11px]">
+                    <span className="text-grn-ink-soft">Taxable: <b className="text-grn-ink">{money(totals.base)}</b></span>
+                    <span className="text-grn-ink-soft">GST: <b className="text-grn-ink">{money(totals.tax)}</b></span>
+                    <span className="font-bold text-grn-ink">Total: {money(totals.gross)}</span>
+                  </div>
+                </DenseFieldGroup>
 
-              <div className="border-b border-grn-line-soft bg-grn-paper px-4 py-3">
-                <dl className="ml-auto w-full space-y-1.5 text-[12px] md:max-w-sm">
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-grn-ink-soft">Taxable value</dt>
-                    <dd className="font-grn-mono font-semibold text-grn-ink">{money(totals.base)}</dd>
-                  </div>
-                  <div className="flex justify-between gap-4">
-                    <dt className="text-grn-ink-soft">GST</dt>
-                    <dd className="font-grn-mono font-semibold text-grn-ink">{money(totals.tax)}</dd>
-                  </div>
-                  <div className="flex justify-between gap-4 border-t border-grn-line pt-1.5">
-                    <dt className="font-bold text-grn-ink">Total payable</dt>
-                    <dd className="font-grn-mono text-[13px] font-bold text-grn-ink">
-                      {money(totals.gross)}
-                    </dd>
-                  </div>
-                </dl>
+                <DenseField label="Remark" required error={err("remarks")}>
+                  <Textarea
+                    id="grn-remarks"
+                    className="min-h-16 text-[12px]"
+                    value={form.remarks}
+                    placeholder="What was bought or paid for, and why."
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, remarks: event.target.value }))
+                    }
+                  />
+                </DenseField>
               </div>
-
-              <FieldRow label="Remark" htmlFor="grn-remarks" required error={err("remarks")}>
-                <Textarea
-                  id="grn-remarks"
-                  className="min-h-20"
-                  value={form.remarks}
-                  placeholder="What was bought or paid for, and why."
-                  onChange={(event) =>
-                    setForm((current) => ({ ...current, remarks: event.target.value }))
-                  }
-                />
-              </FieldRow>
-            </FormSection>
+            </GrnCard>
           )}
 
           {/* ── Extraction ── */}

@@ -68,3 +68,28 @@
     grid-template-columns: var(--grn-label-w, 170px) minmax(0, 1fr);
   }
 }
+
+/* ── Dense mode utilities ───────────────────────────────────────────────────
+ *  Compact field heights and table rows for the redesigned GRN form. */
+
+.grn-scope .grn-input-dense {
+  height: 32px;
+  font-size: 13px;
+  padding: 0 10px;
+}
+
+.grn-scope .grn-select-dense {
+  height: 32px;
+  font-size: 13px;
+  padding: 0 8px;
+}
+
+.grn-scope .grn-table-dense td {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.grn-scope .grn-table-dense th {
+  padding: 6px 8px;
+  font-size: 10px;
+}
