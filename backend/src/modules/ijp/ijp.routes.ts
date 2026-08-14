@@ -86,7 +86,7 @@ router.get(
   '/postings',
   requireRole('super_admin', 'hr', 'hr_admin', 'recruitment_hr', 'branch_head', 'process_manager', 'operations_manager'),
   h(async (req, res) => {
-    const result = await ijpService.listPostings({
+    const result = await ijpService.listPostings(req.authUser, {
       status: req.query.status as string,
       departmentId: req.query.department_id as string,
       processId: req.query.process_id as string,
@@ -173,7 +173,7 @@ router.get(
   '/postings/:id/applications',
   requireRole('super_admin', 'hr', 'hr_admin', 'recruitment_hr', 'branch_head', 'process_manager', 'operations_manager'),
   h(async (req, res) => {
-    const result = await ijpService.listApplicationsForPosting(req.params.id, {
+    const result = await ijpService.listApplicationsForPosting(req.authUser, req.params.id, {
       status: req.query.status as string,
       limit: Number(req.query.limit) || 50,
       offset: Number(req.query.offset) || 0,

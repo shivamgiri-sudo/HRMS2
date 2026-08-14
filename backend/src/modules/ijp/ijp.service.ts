@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto';
 import { sqlLimitOffset } from "../../db/pagination.js";
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
+import { resolveUserBusinessScope, buildProcessScopeCondition, type EnterpriseUser } from '../../shared/enterpriseScope.js';
 import type {
   IjpPosting,
   IjpPostingWithDetails,
@@ -156,16 +157,37 @@ export async function getPostingById(id: string): Promise<IjpPosting | null> {
   } as IjpPosting;
 }
 
-export async function listPostings(filters: {
-  status?: string;
-  departmentId?: string;
-  processId?: string;
-  branchId?: string;
-  limit?: number;
-  offset?: number;
-}): Promise<{ postings: IjpPostingWithDetails[]; total: number }> {
-  const conditions: string[] = ['1=1'];
-  const params: unknown[] = [];
+export async function listPostings(
+  actor: EnterpriseUser,
+  filters: {
+    status?: string;
+    departmentId?: string;
+    processId?: string;
+    branchId?: string;
+    limit?: number;
+    offset?: number;
+  }
+): Promise<{ postings: IjpPostingWithDetails[]; total: number }> {
+  // Row scope, not just a role gate. requireRole('branch_head', 'process_manager',
+  // 'operations_manager', ...) in ijp.routes.ts only checks role membership — it does not
+  // restrict WHICH postings those roles see, so this used to return every posting company-
+  // wide to any of them regardless of branch/process. branchId/processId in `filters` are
+  // caller-supplied query params (an optional UI convenience filter), not derived from the
+  // caller's own identity, so omitting them bypassed nothing — a branch_head could simply
+  // not pass branch_id and see every branch. buildProcessScopeCondition returns 1=1 for
+  // super_admin/admin/hr/ceo (hr covers hr_admin/recruitment_hr — see resolveUserBusinessScope),
+  // so HR keeps its org-wide view; everyone else is restricted to their assigned
+  // branch/process/department via user_assignment_scope, the same mechanism
+  // job-requisition.service.ts already uses for this exact role set.
+  const scope = await resolveUserBusinessScope(actor);
+  const scopeCond = buildProcessScopeCondition(scope, {
+    processId: 'p.process_id',
+    branchId: 'p.branch_id',
+    departmentId: 'p.department_id',
+  });
+
+  const conditions: string[] = ['1=1', `(${scopeCond.sql})`];
+  const params: unknown[] = [...scopeCond.params];
 
   if (filters.status) {
     conditions.push('p.status = ?');
@@ -452,8 +474,43 @@ export async function checkEligibility(
 export async function listEligiblePostings(employeeId: string): Promise<{
   postings: Array<IjpPostingWithDetails & { eligibility: EligibilityCheckResult }>;
 }> {
-  // Get all open postings
-  const { postings } = await listPostings({ status: 'open', limit: 100 });
+  // Deliberately NOT routed through the now-scoped listPostings() above: this is the
+  // "jobs I can apply to" browse view, not the HR/manager administration view — every
+  // employee company-wide is meant to see every open posting here, with eligibility (tenure,
+  // branch, process, employment status) computed per-posting by checkEligibility() below.
+  // Scoping this by the CALLER's own branch/process assignment (as listPostings now does for
+  // branch_head/process_manager/operations_manager) would be wrong here: an ordinary employee
+  // has no user_assignment_scope row at all, so that scoping would resolve to 1=0 and hide
+  // every posting from every regular applicant.
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT p.*,
+            dm.dept_name AS department_name,
+            pm.process_name AS process_name,
+            dsm.designation_name AS designation_name,
+            bm.branch_name AS branch_name,
+            CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS posted_by_name,
+            (SELECT COUNT(*) FROM ijp_application a WHERE a.posting_id = p.id) AS application_count
+     FROM ijp_posting p
+     LEFT JOIN department_master dm ON dm.id = p.department_id
+     LEFT JOIN process_master pm ON pm.id = p.process_id
+     LEFT JOIN designation_master dsm ON dsm.id = p.designation_id
+     LEFT JOIN branch_master bm ON bm.id = p.branch_id
+     LEFT JOIN employees e ON e.id = p.posted_by
+     WHERE p.status = 'open'
+     ORDER BY p.created_at DESC
+     ${sqlLimitOffset(100, 0)}`
+  );
+  const postings = rows.map((row) => ({
+    ...row,
+    eligible_employment_status: parseJson(row.eligible_employment_status, ['Active']),
+    eligible_department_ids: parseJson(row.eligible_department_ids, null),
+    eligible_process_ids: parseJson(row.eligible_process_ids, null),
+    excluded_process_ids: parseJson(row.excluded_process_ids, null),
+    eligible_designation_ids: parseJson(row.eligible_designation_ids, null),
+    eligible_branch_ids: parseJson(row.eligible_branch_ids, null),
+    require_manager_approval: Boolean(row.require_manager_approval),
+    application_count: Number(row.application_count ?? 0),
+  })) as IjpPostingWithDetails[];
 
   // Check eligibility for each
   const results: Array<IjpPostingWithDetails & { eligibility: EligibilityCheckResult }> = [];
@@ -562,11 +619,24 @@ export async function getApplicationById(id: string): Promise<IjpApplication | n
 }
 
 export async function listApplicationsForPosting(
+  actor: EnterpriseUser,
   postingId: string,
   filters: { status?: string; limit?: number; offset?: number } = {}
 ): Promise<{ applications: IjpApplicationWithDetails[]; total: number }> {
-  const conditions: string[] = ['a.posting_id = ?'];
-  const params: unknown[] = [postingId];
+  // Same row-scope gap as listPostings above: requireRole only gated who could reach this
+  // endpoint, not which applicants they could see — any branch_head/process_manager/
+  // operations_manager handed (or guessing) a posting UUID could pull every applicant's
+  // name/email/mobile/employee_code company-wide. Scoped against the posting's own
+  // branch_id/process_id, the same columns listPostings scopes on.
+  const scope = await resolveUserBusinessScope(actor);
+  const scopeCond = buildProcessScopeCondition(scope, {
+    processId: 'p.process_id',
+    branchId: 'p.branch_id',
+    departmentId: 'p.department_id',
+  });
+
+  const conditions: string[] = ['a.posting_id = ?', `(${scopeCond.sql})`];
+  const params: unknown[] = [postingId, ...scopeCond.params];
 
   if (filters.status) {
     conditions.push('a.status = ?');
@@ -577,8 +647,10 @@ export async function listApplicationsForPosting(
   const limit = filters.limit ?? 50;
   const offset = filters.offset ?? 0;
 
+  // JOINs ijp_posting here too (the count previously didn't need to) because the scope
+  // condition above reads p.branch_id/p.process_id.
   const [countRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total FROM ijp_application a WHERE ${where}`,
+    `SELECT COUNT(*) AS total FROM ijp_application a JOIN ijp_posting p ON p.id = a.posting_id WHERE ${where}`,
     params
   );
   const total = Number(countRows[0]?.total ?? 0);
