@@ -380,6 +380,37 @@ function Metric({ label, value, tone = "slate" }: {
   );
 }
 
+const PIPELINE_STAGES = [
+  { key: "draft",                 label: "Draft" },
+  { key: "submitted",             label: "Branch Head" },
+  { key: "branch_head_approved",  label: "Finance Head" },
+  { key: "finance_head_approved", label: "Accounts Head" },
+  { key: "active",                label: "Active" },
+] as const;
+
+function ApprovalPipeline({ status }: { status: string }) {
+  const currentIdx = PIPELINE_STAGES.findIndex((s) => s.key === status);
+  return (
+    <div className="flex items-start gap-0 overflow-x-auto text-[9px]">
+      {PIPELINE_STAGES.map((stage, i) => {
+        const done = i < currentIdx;
+        const current = i === currentIdx;
+        return (
+          <Fragment key={stage.key}>
+            {i > 0 && <div className={`mt-2.5 h-px w-4 shrink-0 ${done ? "bg-emerald-400" : "bg-slate-200"}`} />}
+            <div className={`flex flex-col items-center ${done ? "text-emerald-600" : current ? "text-blue-700 font-semibold" : "text-slate-400"}`}>
+              <div className={`flex h-5 w-5 items-center justify-center rounded-full border ${done ? "border-emerald-400 bg-emerald-50" : current ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white"}`}>
+                {done ? <CheckCircle2 className="h-3 w-3" /> : <span className="text-[8px]">{i + 1}</span>}
+              </div>
+              <span className="mt-0.5 whitespace-nowrap leading-tight">{stage.label}</span>
+            </div>
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
 function CoverageDecision({
   item,
   draft,
@@ -1573,6 +1604,7 @@ export default function BranchBudgetManagementWorkspace() {
                       ...preset,
                     })));
                   }}
+                  onAmendTax={canAmendTax && savedBudgetId ? (lineId) => setAmendDialogLineId(lineId) : undefined}
                   onSaveDrivers={() => void saveDrivers()}
                   onSaveDraft={() => void save(false)}
                   saving={saveBudget.isPending || saveMonthlyDrivers.isPending}
@@ -1962,6 +1994,7 @@ export default function BranchBudgetManagementWorkspace() {
                             {statusBadge(budget.status)}
                           </div>
                           <p className="mt-1 text-xs text-slate-500">{budget.branch_name} · {budget.period_code} · Revision {budget.revision_no}</p>
+                          <div className="mt-2"><ApprovalPipeline status={budget.status} /></div>
                         </div>
                         <Metric label="Gross" value={money(Number(budget.gross_budget_amount))} />
                         <Metric label="P&L budget" value={money(Number(budget.pnl_budget_amount))} />

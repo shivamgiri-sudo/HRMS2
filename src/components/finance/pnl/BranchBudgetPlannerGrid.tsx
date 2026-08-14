@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Wrench } from "lucide-react";
 import {
   BRANCH_SHARING_METHODS,
   type BranchBudgetLineInput,
@@ -168,6 +168,7 @@ export interface BranchBudgetPlannerGridProps {
   onAddLine: (head: string, subHead: string, unit: string, method: string) => void;
   onRemoveLine: (index: number) => void;
   onDriverChange: (costCentreId: string, key: DriverKey, value: number) => void;
+  onAmendTax?: (lineId: string) => void;
   /** Hiding the standalone drivers card in table mode also hid its Save button, leaving no way to
    *  persist a driver edited in the pinned band. Both saves belong on the grid's own toolbar. */
   onSaveDrivers?: () => void;
@@ -189,6 +190,7 @@ export interface BranchBudgetPlannerGridProps {
 export function BranchBudgetPlannerGrid({
   lines, masters, costCentres, drivers, canEdit, period,
   onUpdateLine, onAddLine, onRemoveLine, onDriverChange,
+  onAmendTax,
   onSaveDrivers, onSaveDraft, saving,
   priorByKey, priorLabel, priorRowCount, onCopyForward, dirtyCount = 0, canUndo, onUndo,
 }: BranchBudgetPlannerGridProps) {
@@ -680,6 +682,13 @@ export function BranchBudgetPlannerGrid({
                               <button type="button" title="Remove this line" aria-label="Remove line"
                                 className="rounded px-1 text-slate-400 hover:bg-rose-50 hover:text-rose-700"
                                 onClick={() => onRemoveLine(index)}>✕</button>
+                            )}
+                            {!canEdit && onAmendTax && line.id && (
+                              <button type="button" title="Amend Tax Treatment" aria-label="Amend Tax Treatment"
+                                className="rounded px-1 text-amber-600 hover:bg-amber-50 hover:text-amber-800"
+                                onClick={() => onAmendTax(line.id!)}>
+                                <Wrench className="h-3 w-3" />
+                              </button>
                             )}
                           </span>
                         </td>
