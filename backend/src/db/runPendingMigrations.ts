@@ -663,6 +663,11 @@ function isIdempotentMigrationError(error: unknown): boolean {
   const code = dbError?.code;
   const errno = Number(dbError?.errno ?? 0);
   const msg = String(dbError?.message ?? "").toLowerCase();
+  // A gate-3 assertion failure is never idempotent-benign: it means the schema is absent, which
+  // is the opposite of "already there". Excluded explicitly rather than relying on its wording
+  // dodging the message-based fallbacks below — those match substrings like "already exists",
+  // and an assertion message is free text that a later edit could easily walk into.
+  if (code === "SCHEMA_ASSERTION_FAILED") return false;
   return (
     // Named codes (mysql2 preferred)
     code === "ER_TABLE_EXISTS_ERROR" ||   // 1050
@@ -990,6 +995,127 @@ async function runFileOnConnection(
 }
 
 /**
+ * ─── Gate 3: the schema a migration declares must actually exist afterwards ───
+ *
+ * Three things are independent, and this codebase fails all three in different places:
+ *
+ *   1. the runner did not throw          -> schema_migrations.success = 1
+ *   2. the file's DDL is executable here -> MySQL 8 accepts it
+ *   3. the declared schema exists        -> nothing checked this until now
+ *
+ * Gate 1 has never implied gate 3. Measured on production 2026-08-13: eight manifest files are
+ * recorded success = 1 while 40 of the columns they declare do not exist. 398, 402 and 404 are
+ * the reachable ones — payslip_emailed breaks two mounted endpoints and incentives_applied_at
+ * disables the guard against wiping applied incentives on recalculate. All three were written
+ * `ADD COLUMN IF NOT EXISTS`, MariaDB syntax MySQL 8.0.42 rejects with ER_PARSE_ERROR, and were
+ * recorded applied anyway because at the time the parse error was classified at file level.
+ *
+ * A file that fails this check is recorded success = 0, which keeps it OUT of appliedMap
+ * (buildSchemaMigrationsAppliedRowsQuery filters `success = 1 OR success IS NULL`), so it is
+ * retried on the next boot rather than being remembered as done. That is the self-healing half of
+ * failing closed.
+ *
+ * WHY THE PARSER IS DELIBERATELY TIMID
+ *
+ * A false positive here blocks production startup, because a failed migration halts the chain.
+ * So this asserts only what it can read unambiguously and stays silent otherwise — silence costs
+ * a missed assertion, a wrong assertion costs an outage. Specifically it skips:
+ *
+ *   · any file containing DROP / RENAME / CHANGE COLUMN — the file's net intent is not
+ *     decidable from a forward scan, and a migration that legitimately drops a column must not
+ *     then be told the column is missing
+ *   · TEMPORARY tables, which are session-scoped and gone by the time we look
+ *   · anything schema-qualified (`db_masmis.foo`) — another database this account may not see;
+ *     that exact case produced the only false positives in the 2026-08-13 sweep
+ *   · DDL built inside PREPARE string literals, which it cannot see into. Those files are the
+ *     well-written ones; they are simply not covered.
+ */
+const SCHEMA_ASSERTION_UNSAFE = /\b(DROP\s+(TABLE|COLUMN|INDEX)|RENAME\s+(TABLE|COLUMN)|CHANGE\s+COLUMN)\b/i;
+
+export interface DeclaredSchema {
+  tables: string[];
+  columns: Array<{ table: string; column: string }>;
+  skipped: boolean;
+}
+
+/** Strip comments and string literals so DDL keywords inside them are not mistaken for statements. */
+function stripNoise(sql: string): string {
+  return sql
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/--[^\n]*/g, " ")
+    .replace(/#[^\n]*/g, " ")
+    .replace(/'(?:[^'\\]|\\.|'')*'/g, "''");
+}
+
+export function parseDeclaredSchema(rawSql: string): DeclaredSchema {
+  const sql = stripNoise(rawSql);
+  if (SCHEMA_ASSERTION_UNSAFE.test(sql)) return { tables: [], columns: [], skipped: true };
+
+  const tables: string[] = [];
+  for (const m of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?(TEMPORARY\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z0-9_]+)`?(\s*\.)?/gi)) {
+    if (m[1]) continue;            // TEMPORARY — gone before we could look
+    if (m[3]) continue;            // schema-qualified — another database
+    tables.push(m[2].toLowerCase());
+  }
+
+  const columns: Array<{ table: string; column: string }> = [];
+  for (const alter of sql.matchAll(/ALTER\s+TABLE\s+`?([A-Za-z0-9_]+)`?(\s*\.)?([\s\S]*?);/gi)) {
+    if (alter[2]) continue;        // schema-qualified
+    const table = alter[1].toLowerCase();
+    for (const c of alter[3].matchAll(/ADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?`?([A-Za-z0-9_]+)`?/gi)) {
+      columns.push({ table, column: c[1].toLowerCase() });
+    }
+  }
+
+  return { tables: [...new Set(tables)], columns, skipped: false };
+}
+
+/**
+ * Returns the declared objects that are absent from the database. Empty means the assertion holds.
+ *
+ * A column on a table that is itself missing is reported as the table only — one cause, one line,
+ * rather than a wall of columns all saying the same thing.
+ */
+export async function findMissingDeclaredSchema(
+  conn: mysql.Connection,
+  declared: DeclaredSchema
+): Promise<string[]> {
+  if (declared.skipped) return [];
+  if (declared.tables.length === 0 && declared.columns.length === 0) return [];
+
+  const missing: string[] = [];
+  const wantedTables = new Set<string>([...declared.tables, ...declared.columns.map((c) => c.table)]);
+
+  const [tableRows] = await conn.query<RowDataPacket[]>(
+    `SELECT LOWER(table_name) AS t FROM information_schema.tables
+      WHERE table_schema = DATABASE() AND LOWER(table_name) IN (${[...wantedTables].map(() => "?").join(",")})`,
+    [...wantedTables]
+  );
+  const haveTables = new Set((tableRows as Array<{ t: string }>).map((r) => r.t));
+
+  for (const t of declared.tables) if (!haveTables.has(t)) missing.push(`table ${t}`);
+
+  const checkable = declared.columns.filter((c) => haveTables.has(c.table));
+  for (const c of declared.columns) {
+    if (!haveTables.has(c.table) && !missing.includes(`table ${c.table}`)) missing.push(`table ${c.table}`);
+  }
+  if (checkable.length > 0) {
+    const [colRows] = await conn.query<RowDataPacket[]>(
+      `SELECT LOWER(table_name) AS t, LOWER(column_name) AS c FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND LOWER(table_name) IN (${[...new Set(checkable.map((c) => c.table))].map(() => "?").join(",")})`,
+      [...new Set(checkable.map((c) => c.table))]
+    );
+    const haveCols = new Set((colRows as Array<{ t: string; c: string }>).map((r) => `${r.t}.${r.c}`));
+    for (const c of checkable) {
+      if (!haveCols.has(`${c.table}.${c.column}`)) missing.push(`column ${c.table}.${c.column}`);
+    }
+  }
+
+  return missing;
+}
+
+/**
  * Runs pending SQL migrations in manifest order and records a health summary.
  *
  * GOVERNANCE FEATURES:
@@ -1162,6 +1288,23 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
       const conn = await mysql.createConnection(connConfig);
       try {
         await runFileOnConnection(conn, filePath);
+
+        // GATE 3: the file ran without throwing — now prove it actually left the schema it
+        // declares. Recorded-successful has never implied schema-present; see
+        // parseDeclaredSchema for the eight production files where it did not.
+        const declared = parseDeclaredSchema(fs.readFileSync(filePath, "utf8"));
+        const missing = await findMissingDeclaredSchema(conn, declared);
+        if (missing.length > 0) {
+          throw Object.assign(
+            new Error(
+              `SCHEMA_ASSERTION_FAILED: ${file} ran without error but the schema it declares is ` +
+              `not present: ${missing.join(", ")}. Recorded success = 0 so it is retried rather ` +
+              `than remembered as applied. A migration whose DDL MySQL silently would not apply ` +
+              `(e.g. MariaDB's ADD COLUMN IF NOT EXISTS) reaches exactly this state.`
+            ),
+            { code: "SCHEMA_ASSERTION_FAILED" }
+          );
+        }
 
         const endTime = new Date();
         const durationMs = endTime.getTime() - startTime.getTime();
