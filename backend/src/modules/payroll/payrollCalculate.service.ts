@@ -51,6 +51,28 @@ export function reconcileNetAndDeductions(
   return { totalDeductions, netSalary };
 }
 
+/**
+ * Root-caused 2026-08-14: salary_prep_line.calculation_version and
+ * salary_prep_run.payroll_model_version both exist in schema (NOT NULL
+ * DEFAULT 'INDIA_COMPLIANCE_V1') specifically to answer "which logic version
+ * computed this figure", but the live engine never wrote either — new rows
+ * got the schema default, recalculated rows kept whatever version string
+ * they already had, unrelated to what actually ran. After a future logic
+ * change, every recalculated line would silently claim the OLD version
+ * marker forever, making the columns actively misleading rather than merely
+ * empty.
+ *
+ * Fixed by writing this constant explicitly on every INSERT and
+ * recalculation. Deliberately set to the exact value the schema default
+ * already uses — this commit changes NOTHING about what any run reports
+ * today; it only makes the marker start tracking reality from here forward.
+ * Bump this string (and only this string) the next time payroll calculation
+ * logic changes in a way that should be distinguishable from what came
+ * before — not for a fix to an adjacent concern like the payslip-component
+ * generator, which does not change what any figure IS.
+ */
+export const CALCULATION_ENGINE_VERSION = "INDIA_COMPLIANCE_V1";
+
 // ─── Payslip earning-component breakdown ───────────────────────────────────────
 
 export interface PayslipEarningComponent {
@@ -1392,6 +1414,7 @@ export async function calculatePayrollRunScoped(
       hasEngineData ? 'ADR' : 'SESSION_FALLBACK',
       approvedIncentives,
       approvedReimbursements,
+      CALCULATION_ENGINE_VERSION,
     ]);
 
     // 6b. Insert component-level breakdown for payslip display
@@ -1500,7 +1523,7 @@ export async function calculatePayrollRunScoped(
       );
     }
 
-    const placeholders = batchPrepLines.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'calculated\', ?, ?)').join(',');
+    const placeholders = batchPrepLines.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'calculated\', ?, ?, ?)').join(',');
     await conn.execute(
       `INSERT INTO salary_prep_line
          (id, run_id, employee_id, employee_code,
@@ -1516,7 +1539,8 @@ export async function calculatePayrollRunScoped(
           attendance_data_source,
           status,
           incentive_total,
-          reimbursement_total)
+          reimbursement_total,
+          calculation_version)
        VALUES ${placeholders}
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
@@ -1542,6 +1566,7 @@ export async function calculatePayrollRunScoped(
          attendance_data_source = VALUES(attendance_data_source),
          incentive_total = VALUES(incentive_total),
          reimbursement_total = VALUES(reimbursement_total),
+         calculation_version = VALUES(calculation_version),
          status = 'calculated'`,
       batchPrepLines.flat()
     );
@@ -1654,11 +1679,12 @@ export async function calculatePayrollRunScoped(
     `UPDATE salary_prep_run
         SET status = 'processing', total_employees = ?,
             total_gross = ?, total_deductions = ?, total_net = ?,
+            payroll_model_version = ?,
             finance_approved_by = NULL, finance_approved_at = NULL, finance_remarks = NULL,
             ceo_acknowledged_by = NULL, ceo_acknowledged_at = NULL, ceo_remarks = NULL,
             validation_status = NULL, validated_by = NULL, validated_at = NULL
       WHERE id = ?`,
-    [processedCount, totalGross, totalDed, totalNet, runId]
+    [processedCount, totalGross, totalDed, totalNet, CALCULATION_ENGINE_VERSION, runId]
   );
 
   await conn.commit();
