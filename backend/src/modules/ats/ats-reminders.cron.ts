@@ -15,12 +15,16 @@ import { db } from "../../db/mysql.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { sendOnboardingTokenEmail } from "./ats.email.service.js";
 import { env } from "../../config/env.js";
+import { triggerOnboardingStuck } from "../work-inbox/work-inbox.triggers.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 
 // ── 1. Onboarding incomplete reminder ────────────────────────────────────────
 
-async function runOnboardingIncompleteReminders(): Promise<void> {
+// Exported for direct testing (matching tat-escalation.worker.ts's runTatEscalationSweep) —
+// otherwise only reachable through the internal 24h setTimeout loop in
+// startAtsRemindersScheduler below.
+export async function runOnboardingIncompleteReminders(): Promise<void> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        c.id AS candidate_id,
@@ -78,6 +82,20 @@ async function runOnboardingIncompleteReminders(): Promise<void> {
         `UPDATE ats_onboarding_bridge SET reminder_sent_at = NOW() WHERE id = ?`,
         [row.bridge_id]
       );
+
+      // ONBOARDING_STUCK was a registered Work Inbox item_type with zero producers
+      // anywhere in the app (delta-audit 2026-08-14, Stage 7b, user-approved) —
+      // triggerOnboardingStuck() existed, fully written, but nothing called it. This job
+      // is already the canonical "onboarding incomplete" detector (candidates 3+ days
+      // past selection with an unsubmitted portal), so it's the correct trigger point.
+      // Separate from and additional to the inboxService nudge below — that is a
+      // different, older notification system this job already fed; Work Inbox is the
+      // newer catalogue-driven one. branchId omitted deliberately: applied_for_branch is
+      // free-text (sometimes an id, sometimes a name, sometimes a code — see
+      // branch-head-scope.ts), and a wrong branch scope on a work item is worse than no
+      // branch scope on one that's still assigned_to_role: "hr" and visible either way.
+      await triggerOnboardingStuck(row.candidate_id as string, (row.full_name ?? "Candidate") as string)
+        .catch((e: unknown) => console.warn(`[onboarding-reminder] work-item creation failed for ${row.candidate_id as string}:`, e));
 
       // Recruiter inbox nudge
       if (row.recruiter_employee_id) {

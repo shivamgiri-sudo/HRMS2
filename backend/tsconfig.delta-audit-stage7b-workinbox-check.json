@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": true },
+  "include": [
+    "src/workers/tat-escalation.worker.ts",
+    "src/modules/ats/ats-reminders.cron.ts",
+    "src/modules/work-inbox/work-inbox.triggers.ts"
+  ]
+}

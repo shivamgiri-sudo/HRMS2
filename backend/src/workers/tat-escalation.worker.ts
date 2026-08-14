@@ -25,6 +25,7 @@ import { db } from '../db/mysql.js';
 import { findDueEscalations, recordEscalation, markBreached } from '../modules/governance/tat.service.js';
 import type { DueEscalation } from '../modules/governance/tat.service.js';
 import { notificationGateway } from '../modules/communication/notification.gateway.js';
+import { triggerTatBreach } from '../modules/work-inbox/work-inbox.triggers.js';
 import { isWorkerEnabled, markWorkerRun } from '../shared/worker-config.js';
 import { withWorkerLock, registerTimer, unregisterTimer, recordWorkerRun } from './worker-utils.js';
 
@@ -82,6 +83,16 @@ export async function runTatEscalationSweep(): Promise<{
       if (!claimed) { skipped++; continue; }
 
       await markBreached(esc.tatInstanceId);
+
+      // TAT_BREACH was a registered Work Inbox item_type with zero producers anywhere in
+      // the app (delta-audit 2026-08-14, Stage 7b, user-approved) — triggerTatBreach()
+      // existed, fully written, but nothing called it. This is the one place a TAT
+      // instance is confirmed to have actually breached (markBreached just above), so it's
+      // the correct trigger point. createWorkItemIfNotExists dedupes on
+      // (entityType, entityId, itemType, status='pending'), so polling this worker every
+      // 15 minutes does not create a second pending item for the same instance.
+      await triggerTatBreach(esc.tatInstanceId, esc.taskType, esc.entityId, esc.notifyRole ?? undefined)
+        .catch((err) => console.error(`[${WORKER_NAME}] work-item creation failed for ${esc.tatInstanceId}:`, (err as Error).message));
 
       const result = await notificationGateway.notify({
         eventCode: eventCodeFor(esc.escalationLevel),
