@@ -93,6 +93,12 @@ export interface SmartGrnComponentSplitInput {
   /** Provided when invoice is >30 days old and the raiser is a branch-level role.
    *  Stored on grn_request after migration 1219 (is_late_invoice, late_invoice_reason). */
   lateInvoiceReason?: string | null;
+  /** GST Enable toggle — explicit Yes/No on the GRN (migration 1218). */
+  gstEnabled?: boolean | null;
+  /** 2-digit GST state code of the vendor (e.g., "09" for UP). Auto-derived from GSTIN if present. */
+  vendorStateCode?: string | null;
+  /** 2-digit GST state code of the billing branch (e.g., "07" for Delhi). */
+  billingStateCode?: string | null;
 }
 
 /** Above this, the raiser must fix the invoice components themselves — a bigger mismatch
@@ -981,10 +987,15 @@ export const grnSmartService = {
       const rawTotalTax = roundMoney(componentAmounts.reduce((sum, item) => sum + item.taxAmount, 0));
       const rawTotalGross = roundMoney(rawTotalBase + rawTotalTax);
       const diff = roundMoney(declaredTotal - rawTotalGross);
-      if (Math.abs(diff) > GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT) {
+      // G8: Finance Head / Accounts Head / Super Admin can accept larger round-offs (up to ₹500)
+      // for invoices with legitimate rounding differences. Branch-level roles are still limited
+      // to ₹1 auto-round-off.
+      const isElevatedRole = ["finance_head", "accounts_head", "super_admin"].includes(actorRole);
+      const roundoffLimit = isElevatedRole ? 500 : GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT;
+      if (Math.abs(diff) > roundoffLimit) {
         throw new Error(
           `Invoice components total ₹${rawTotalGross.toFixed(2)} does not match the declared invoice total `
-          + `₹${declaredTotal.toFixed(2)}. Difference ₹${diff.toFixed(2)} exceeds the ₹1.00 auto-round-off limit.`
+          + `₹${declaredTotal.toFixed(2)}. Difference ₹${diff.toFixed(2)} exceeds the ₹${roundoffLimit.toFixed(2)} round-off limit.`
         );
       }
 
@@ -1165,7 +1176,10 @@ export const grnSmartService = {
                 irn = ?, irn_ack_no = ?,
                 accounting_period = COALESCE(?, accounting_period),
                 is_late_invoice  = COALESCE(?, is_late_invoice),
-                late_invoice_reason = COALESCE(?, late_invoice_reason)
+                late_invoice_reason = COALESCE(?, late_invoice_reason),
+                gst_enabled = COALESCE(?, gst_enabled),
+                vendor_state_code = COALESCE(?, vendor_state_code),
+                billing_state_code = COALESCE(?, billing_state_code)
           WHERE id = ?`,
         [
           grid.length > 1 ? "split" : "single", first.budget_id, first.id,
@@ -1193,6 +1207,10 @@ export const grnSmartService = {
           // Late invoice fields (migration 1219 columns) — null when invoice is current
           input.lateInvoiceReason?.trim() ? 1 : null,
           input.lateInvoiceReason?.trim() || null,
+          // GST fields (migration 1218 columns)
+          input.gstEnabled != null ? (input.gstEnabled ? 1 : 0) : null,
+          input.vendorStateCode?.trim() || null,
+          input.billingStateCode?.trim() || null,
           grnId,
         ]
       );

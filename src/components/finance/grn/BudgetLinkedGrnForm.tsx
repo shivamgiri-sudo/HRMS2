@@ -60,6 +60,8 @@ import { GST_RATES } from "@/lib/gst";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { splitRupees, weightFor } from "@/lib/sharingWeights";
 import { cn } from "@/lib/utils";
+import { GST_STATE_CODES, deriveGstType, extractStateCodeFromGstin } from "@/lib/indian-states";
+import { Switch } from "@/components/ui/switch";
 import { FieldRow, FormSection, StaticValue } from "./sections/form-primitives";
 import {
   MonthSplitPanel,
@@ -172,6 +174,12 @@ type GrnFormState = {
   lateInvoiceReason: string;
   /** Legal entity this GRN is raised under (MAS / IDC / Pikquick). */
   companyCode: string;
+  /** GST Enable toggle — explicit Yes/No. null means "auto" from budget line. */
+  gstEnabled: boolean | null;
+  /** 2-digit GST state code of the vendor (e.g., "09" for UP). */
+  vendorStateCode: string;
+  /** 2-digit GST state code of the billing branch (e.g., "07" for Delhi). */
+  billingStateCode: string;
 };
 
 type CreatedGrn = { id: string; grnNumber: string; submitted: boolean };
@@ -224,6 +232,9 @@ const EMPTY_FORM: GrnFormState = {
   irnAckNo: "",
   lateInvoiceReason: "",
   companyCode: "",
+  gstEnabled: null,
+  vendorStateCode: "",
+  billingStateCode: "",
 };
 
 function newAllocation(): AllocationDraft {
@@ -363,6 +374,8 @@ export function BudgetLinkedGrnForm({
   const [form, setForm] = useState<GrnFormState>(EMPTY_FORM);
   const [splitMode, setSplitMode] = useState(false);
   const [autoSplitMethod, setAutoSplitMethod] = useState<string>("equal_split");
+  // G15: Vendor GRN cost-centre split method (same concept as imprest's autoSplitMethod)
+  const [costCentreSplitMethod, setCostCentreSplitMethod] = useState<string>("equal_split");
   const [allocations, setAllocations] = useState<AllocationDraft[]>([newAllocation()]);
   const [costCentreSplits, setCostCentreSplits] = useState<CostCentreSplitDraft[]>([]);
   const [invoiceComponents, setInvoiceComponents] = useState<InvoiceComponentDraft[]>([newInvoiceComponent()]);
@@ -515,6 +528,9 @@ export function BudgetLinkedGrnForm({
       remarks: String(g.remarks ?? ""),
       lateInvoiceReason: String(g.late_invoice_reason ?? ""),
       companyCode: String(g.company_code ?? ""),
+      gstEnabled: g.gst_enabled != null ? Boolean(g.gst_enabled) : null,
+      vendorStateCode: String(g.vendor_state_code ?? ""),
+      billingStateCode: String(g.billing_state_code ?? ""),
     });
     setCreated({ id: String(g.id), grnNumber: String(g.grn_number ?? editGrnId ?? "") || "…", submitted: false });
     if (workspace.invoiceComponents?.length) {
@@ -790,6 +806,54 @@ export function BudgetLinkedGrnForm({
     setCostCentreSplits((current) => current.map((row) => ({ ...row, percentage: equalPct })));
   }
 
+  /** G15: Why "Auto-split by" is disabled for vendor cost-centre split right now, if it is. */
+  const costCentreSplitReadiness = useMemo((): { ready: boolean; reason: string } => {
+    if (costCentreSplits.length < 2) return { ready: false, reason: "Need at least 2 cost centres to split." };
+    if (costCentreSplitMethod === "equal_split") return { ready: true, reason: "" };
+    // Check if all cost centres have driver data for the chosen method
+    const missingDrivers = costCentreSplits.some((row) => {
+      const ccKey = row.costCentreKey === NO_COST_CENTRE ? null : row.costCentreKey;
+      const driver = driversByCostCentre[ccKey ?? ""];
+      return !driver || weightFor(costCentreSplitMethod, driver) <= 0;
+    });
+    if (missingDrivers) {
+      const methodLabel = GRN_AUTO_SPLIT_METHODS.find((m) => m.value === costCentreSplitMethod)?.label ?? costCentreSplitMethod;
+      return {
+        ready: false,
+        reason: `${methodLabel} data not available for one or more cost centres. Set monthly drivers in Branch Budget → Plan Builder.`,
+      };
+    }
+    return { ready: true, reason: "" };
+  }, [costCentreSplits, costCentreSplitMethod, driversByCostCentre]);
+
+  /** G15: Redistributes the cost-centre split percentages by the chosen sharing method's weight. */
+  function applyCostCentreSplitMethod() {
+    if (!costCentreSplitReadiness.ready) {
+      toast({ title: "Can't auto-split yet", description: costCentreSplitReadiness.reason, variant: "destructive" });
+      return;
+    }
+    if (costCentreSplitMethod === "equal_split") {
+      splitCostCentresEvenly();
+      return;
+    }
+    const weights = costCentreSplits.map((row) => {
+      const ccKey = row.costCentreKey === NO_COST_CENTRE ? null : row.costCentreKey;
+      const driver = driversByCostCentre[ccKey ?? ""];
+      return weightFor(costCentreSplitMethod, driver ?? {});
+    });
+    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+    if (totalWeight <= 0) {
+      toast({ title: "No driver data", description: `${costCentreSplitMethod} data not available for these cost centres.`, variant: "destructive" });
+      return;
+    }
+    setCostCentreSplits((current) =>
+      current.map((row, i) => ({
+        ...row,
+        percentage: Math.round((weights[i] / totalWeight) * 100 * 1_000_000) / 1_000_000,
+      }))
+    );
+  }
+
   function updateInvoiceComponent(key: string, patch: Partial<InvoiceComponentDraft>) {
     setInvoiceComponents((current) => current.map((item) => (item.key === key ? { ...item, ...patch } : item)));
   }
@@ -900,8 +964,12 @@ export function BudgetLinkedGrnForm({
         }
         if (!invoiceComponents.some((item) => Number(item.amountWithoutTax) > 0)) {
           next.components = "Add at least one invoice component.";
-        } else if (Math.abs(componentsPreview.diff) > 1) {
-          next.components = `Invoice components total ${money(componentsPreview.rawTotalGross)} — the declared invoice total is ${money(Number(form.amount || 0))}. Difference ${money(componentsPreview.diff)} exceeds the ₹1 auto-round-off limit.`;
+        } else {
+          // G8: Finance Head / Accounts Head can accept up to ₹500 round-off; others are limited to ₹1
+          const roundoffLimit = canOverridePeriod ? 500 : 1;
+          if (Math.abs(componentsPreview.diff) > roundoffLimit) {
+            next.components = `Invoice components total ${money(componentsPreview.rawTotalGross)} — the declared invoice total is ${money(Number(form.amount || 0))}. Difference ${money(componentsPreview.diff)} exceeds the ₹${roundoffLimit} round-off limit.`;
+          }
         }
 
         // Client-side budget cap per cost-centre split — catches over-budget vendor GRNs before the API call.
@@ -1255,6 +1323,9 @@ export function BudgetLinkedGrnForm({
             percentage: Number(row.percentage),
           })),
           lateInvoiceReason: form.lateInvoiceReason.trim() || undefined,
+          gstEnabled: form.gstEnabled,
+          vendorStateCode: form.vendorStateCode || undefined,
+          billingStateCode: form.billingStateCode || undefined,
         });
       } else {
         await hrmsApi.put(`/api/finance/grns/${current.id}/allocations`, {
@@ -1413,11 +1484,13 @@ export function BudgetLinkedGrnForm({
 
   const actionButtons = (
     <div className="flex gap-2">
-      {created && (
-        <GrnIconButton onClick={resetForm} aria-label="Start a new GRN" title="Start a new GRN">
-          <RotateCcw className="h-3.5 w-3.5" />
-        </GrnIconButton>
-      )}
+      <GrnIconButton
+        onClick={resetForm}
+        aria-label={created ? "Start a new GRN" : "Clear form"}
+        title={created ? "Start a new GRN" : "Clear form"}
+      >
+        <RotateCcw className="h-3.5 w-3.5" />
+      </GrnIconButton>
       <Button
         className="flex-1 md:flex-none"
         disabled={persistMutation.isPending || submitted}
@@ -1713,6 +1786,19 @@ export function BudgetLinkedGrnForm({
               </>
             )}
 
+            {/* D1: Show accounting period read-only for non-elevated roles so they know which
+                period the GRN will post to. Editable override is above for Finance/Accounts. */}
+            {isVendor && !canOverridePeriod && effectivePeriod && (
+              <FieldRow label="Accounting period">
+                <div className="flex items-center gap-2 text-[13px] text-grn-ink">
+                  <span className="font-bold">{effectivePeriod}</span>
+                  <span className="text-grn-ink-soft">
+                    (FY {financialYearFromPeriod(effectivePeriod)})
+                  </span>
+                </div>
+              </FieldRow>
+            )}
+
             {/* Directly under the bill date, because the financial year the schedule is clamped
                 to is derived from it — the two decisions are one decision. */}
             <MonthSplitPanel
@@ -1775,12 +1861,15 @@ export function BudgetLinkedGrnForm({
                     className={cn(inputClass, "font-mono uppercase")}
                     value={form.vendorGstin}
                     placeholder="GSTIN, or NA for a non-GST vendor"
-                    onChange={(event) =>
+                    onChange={(event) => {
+                      const gstin = event.target.value.toUpperCase();
+                      const stateCode = extractStateCodeFromGstin(gstin);
                       setForm((current) => ({
                         ...current,
-                        vendorGstin: event.target.value.toUpperCase(),
-                      }))
-                    }
+                        vendorGstin: gstin,
+                        vendorStateCode: stateCode || current.vendorStateCode,
+                      }));
+                    }}
                   />
                 </FieldRow>
 
@@ -1795,6 +1884,83 @@ export function BudgetLinkedGrnForm({
                     }
                   />
                 </FieldRow>
+
+                <FieldRow
+                  label="GST enabled"
+                  hint="Set No for non-GST vendors or exempt supplies."
+                >
+                  <div className="flex items-center gap-3">
+                    <Switch
+                      id="grn-gst-enabled"
+                      checked={form.gstEnabled ?? true}
+                      onCheckedChange={(checked) =>
+                        setForm((current) => ({ ...current, gstEnabled: checked }))
+                      }
+                    />
+                    <span className="text-[13px] text-grn-ink">
+                      {form.gstEnabled === false ? "No" : "Yes"}
+                    </span>
+                  </div>
+                </FieldRow>
+
+                {form.gstEnabled !== false && (
+                  <>
+                    <FieldRow
+                      label="Vendor state code"
+                      hint="First 2 digits of GSTIN. Auto-filled if GSTIN is provided."
+                    >
+                      <GrnSelect
+                        value={form.vendorStateCode}
+                        onValueChange={(v) =>
+                          setForm((current) => ({ ...current, vendorStateCode: v }))
+                        }
+                        placeholder="Select state"
+                      >
+                        {GST_STATE_CODES.map((sc) => (
+                          <option key={sc.value} value={sc.value}>
+                            {sc.label}
+                          </option>
+                        ))}
+                      </GrnSelect>
+                    </FieldRow>
+
+                    <FieldRow
+                      label="Billing state code"
+                      hint="State of the billing branch (MAS entity)."
+                    >
+                      <GrnSelect
+                        value={form.billingStateCode}
+                        onValueChange={(v) =>
+                          setForm((current) => ({ ...current, billingStateCode: v }))
+                        }
+                        placeholder="Select state"
+                      >
+                        {GST_STATE_CODES.map((sc) => (
+                          <option key={sc.value} value={sc.value}>
+                            {sc.label}
+                          </option>
+                        ))}
+                      </GrnSelect>
+                    </FieldRow>
+
+                    {form.vendorStateCode && form.billingStateCode && (
+                      <FieldRow label="GST type">
+                        <div
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-bold",
+                            form.vendorStateCode === form.billingStateCode
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-amber-100 text-amber-700"
+                          )}
+                        >
+                          {form.vendorStateCode === form.billingStateCode
+                            ? "Intra-state (CGST/SGST)"
+                            : "Inter-state (IGST)"}
+                        </div>
+                      </FieldRow>
+                    )}
+                  </>
+                )}
 
                 {canOverridePeriod && (
                   <>
@@ -2166,6 +2332,10 @@ export function BudgetLinkedGrnForm({
               error={err("costCentreSplit")}
               onUpdate={updateCostCentreSplit}
               onSplitEvenly={splitCostCentresEvenly}
+              splitMethod={costCentreSplitMethod}
+              onSplitMethodChange={setCostCentreSplitMethod}
+              onApplySplit={applyCostCentreSplitMethod}
+              splitReadiness={costCentreSplitReadiness}
             />
           )}
 
@@ -2177,6 +2347,7 @@ export function BudgetLinkedGrnForm({
               error={err("components")}
               remarks={form.remarks}
               remarksError={err("remarks")}
+              canOverridePeriod={canOverridePeriod}
               onUpdate={updateInvoiceComponent}
               onAdd={addInvoiceComponent}
               onRemove={removeInvoiceComponent}
@@ -2765,7 +2936,9 @@ function SplitAllocationEditor({
 
 /** One Head/Sub-head, split by percentage across every cost centre that has an approved budget
  *  line for it. A cost centre with more than one matching line gets its own item picker, the
- *  same "only when genuinely ambiguous" rule the single-line cascade already uses. */
+ *  same "only when genuinely ambiguous" rule the single-line cascade already uses.
+ *  G15: Now supports driver-based auto-split methods (headcount, revenue, seat count, etc.) like
+ *  Branch Budget planning — same infrastructure, same sharing weights. */
 function CostCentreSplitEditor({
   groups,
   rows,
@@ -2773,6 +2946,10 @@ function CostCentreSplitEditor({
   error,
   onUpdate,
   onSplitEvenly,
+  splitMethod,
+  onSplitMethodChange,
+  onApplySplit,
+  splitReadiness,
 }: {
   groups: Array<{ costCentreKey: string; costCentreName: string; lines: BudgetLine[] }>;
   rows: CostCentreSplitDraft[];
@@ -2780,6 +2957,10 @@ function CostCentreSplitEditor({
   error?: string;
   onUpdate: (key: string, patch: Partial<CostCentreSplitDraft>) => void;
   onSplitEvenly: () => void;
+  splitMethod: string;
+  onSplitMethodChange: (method: string) => void;
+  onApplySplit: () => void;
+  splitReadiness: { ready: boolean; reason: string };
 }) {
   const reconciled = Math.abs(total - 100) <= 0.5;
 
@@ -2787,11 +2968,29 @@ function CostCentreSplitEditor({
     <GrnCard>
       <GrnCardHeader
         title="Cost-centre split"
-        description="How much of this one spend belongs to each cost centre."
+        description="Select a split method to distribute the spend across cost centres."
         action={
-          <Button onClick={onSplitEvenly}>
-            <Split className="h-3.5 w-3.5" /> Split evenly
-          </Button>
+          <div className="flex items-center gap-2">
+            <GrnSelect
+              value={splitMethod}
+              onChange={(event) => onSplitMethodChange(event.target.value)}
+              className="h-9 w-[160px] text-[12px]"
+              title={!splitReadiness.ready ? splitReadiness.reason : undefined}
+            >
+              {GRN_AUTO_SPLIT_METHODS.map((method) => (
+                <option key={method.value} value={method.value}>
+                  {method.label}
+                </option>
+              ))}
+            </GrnSelect>
+            <Button
+              onClick={onApplySplit}
+              disabled={!splitReadiness.ready}
+              title={!splitReadiness.ready ? splitReadiness.reason : undefined}
+            >
+              <Split className="h-3.5 w-3.5" /> Apply
+            </Button>
+          </div>
         }
       />
 
@@ -2953,6 +3152,14 @@ function CostCentreSplitEditor({
         </span>
       </div>
 
+      {/* G15: Show why auto-split isn't ready, if it isn't */}
+      {!splitReadiness.ready && splitMethod !== "equal_split" && (
+        <p className="flex items-start gap-1 border-t border-grn-line-soft px-4 py-2.5 text-[11px] text-amber-700">
+          <AlertCircle className="mt-px h-3 w-3 shrink-0" />
+          {splitReadiness.reason}
+        </p>
+      )}
+
       {error && (
         <p className="flex items-start gap-1 border-t border-grn-line-soft px-4 py-2.5 text-[11px] font-semibold text-grn-crit">
           <AlertCircle className="mt-px h-3 w-3 shrink-0" />
@@ -2973,6 +3180,7 @@ function InvoiceComponentsEditor({
   error,
   remarks,
   remarksError,
+  canOverridePeriod,
   onUpdate,
   onAdd,
   onRemove,
@@ -2985,15 +3193,16 @@ function InvoiceComponentsEditor({
   error?: string;
   remarks: string;
   remarksError?: string;
+  canOverridePeriod: boolean;
   onUpdate: (key: string, patch: Partial<InvoiceComponentDraft>) => void;
   onAdd: () => void;
   onRemove: (key: string) => void;
   canRemove: boolean;
   onRemarksChange: (value: string) => void;
 }) {
-  // Mirrors the ≤₹1 auto-round-off / >₹1 block boundary saveComponentAllocations() enforces
-  // server-side — this is a live preview, the server call is what's actually authoritative.
-  const withinAutoRoundoff = Math.abs(preview.diff) <= 1;
+  // G8: Finance Head / Accounts Head can accept up to ₹500 round-off; others limited to ₹1
+  const roundoffLimit = canOverridePeriod ? 500 : 1;
+  const withinAutoRoundoff = Math.abs(preview.diff) <= roundoffLimit;
   const reconciled = Math.abs(preview.diff) <= 0.01;
 
   return (
