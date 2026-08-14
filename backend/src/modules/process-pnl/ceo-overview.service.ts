@@ -256,7 +256,8 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
             COUNT(*) AS staff,
             SUM(COALESCE(l.gross_salary, 0)
               + COALESCE(l.pf_employer, 0)
-              + COALESCE(l.esic_employer, 0)) AS cost
+              + COALESCE(l.esic_employer, 0)
+              + COALESCE(l.gratuity, 0)) AS cost
        FROM salary_prep_line l
        JOIN salary_prep_run r ON r.id = l.run_id
        JOIN employees e ON e.id = l.employee_id

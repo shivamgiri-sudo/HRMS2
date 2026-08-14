@@ -1459,6 +1459,7 @@ export async function calculatePayrollRunScoped(
       approvedIncentives,
       approvedReimbursements,
       CALCULATION_ENGINE_VERSION,
+      calc.gratuity ?? 0,
     ]);
 
     // 6b. Insert component-level breakdown for payslip display
@@ -1567,7 +1568,7 @@ export async function calculatePayrollRunScoped(
       );
     }
 
-    const placeholders = batchPrepLines.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'calculated\', ?, ?, ?)').join(',');
+    const placeholders = batchPrepLines.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'calculated\', ?, ?, ?, ?)').join(',');
     await conn.execute(
       `INSERT INTO salary_prep_line
          (id, run_id, employee_id, employee_code,
@@ -1584,7 +1585,8 @@ export async function calculatePayrollRunScoped(
           status,
           incentive_total,
           reimbursement_total,
-          calculation_version)
+          calculation_version,
+          gratuity)
        VALUES ${placeholders}
        ON DUPLICATE KEY UPDATE
          working_days = VALUES(working_days), present_days = VALUES(present_days),
@@ -1611,6 +1613,7 @@ export async function calculatePayrollRunScoped(
          incentive_total = VALUES(incentive_total),
          reimbursement_total = VALUES(reimbursement_total),
          calculation_version = VALUES(calculation_version),
+         gratuity = VALUES(gratuity),
          status = 'calculated'`,
       batchPrepLines.flat()
     );
