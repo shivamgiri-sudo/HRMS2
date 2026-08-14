@@ -26,6 +26,7 @@ import {
   labelStatus,
   money,
 } from "@/components/finance/grn/grn-format";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import {
   GRN_SHEET_TAB_TRIGGER,
   GRN_SHEET_TABS_LIST,
@@ -431,12 +432,15 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
               <option key={b.id} value={b.id}>{b.branch_name ?? b.name ?? b.id}</option>
             ))}
           </GrnSelect>
-          <input
-            type="month"
+          {/* Safari never implemented input[type=month] — it degrades to a bare text box with no
+              picker, so this filter was unusable there. Same swap GrnSearchWorkspace already made,
+              styled to this queue's own tokens. emptyLabel keeps "" reachable: the filter is off by
+              default and must be clearable back to all periods. */}
+          <MonthYearPicker
             value={filterPeriod}
-            onChange={(e) => setFilterPeriod(e.target.value)}
-            aria-label="Filter by period"
-            className="h-7 rounded border border-grn-line-soft bg-white px-2 text-xs text-grn-ink focus:outline-none focus:ring-1 focus:ring-grn-brand"
+            onChange={setFilterPeriod}
+            emptyLabel="All periods"
+            selectClassName="h-7 rounded border border-grn-line-soft bg-white px-2 text-xs text-grn-ink focus:outline-none focus:ring-1 focus:ring-grn-brand"
           />
           <GrnChip active={backDated} onClick={() => setBackDated((v) => !v)}>
             Back-dated

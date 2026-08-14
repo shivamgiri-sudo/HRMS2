@@ -28,6 +28,7 @@ export function MonthYearPicker({
   className,
   selectClassName,
   disabled = false,
+  emptyLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -43,7 +44,15 @@ export function MonthYearPicker({
    *  which is a worse defect than the Safari gap this component exists to close. Defaults to
    *  false, so existing callers are unaffected. */
   disabled?: boolean;
+  /** Opt-in "no period selected" state, for the filter case rather than the form case. A native
+   *  `<input type="month">` expresses "" as a blank box, so a filter could always be cleared back
+   *  to "all periods"; two selects have no such state and would strand the user on whichever month
+   *  they picked first. Passing a label (e.g. "All periods") adds it as the leading option in both
+   *  selects and emits "" when chosen. Omitted by default, so every existing caller — all of them
+   *  form fields with a value that is always set — behaves exactly as before. */
+  emptyLabel?: string;
 }) {
+  const hasValue = Boolean(value);
   const [yearPart, monthPart] = value.split("-");
   const year = Number(yearPart) || new Date().getFullYear();
   const month = Number(monthPart) || 1;
@@ -58,9 +67,12 @@ export function MonthYearPicker({
         aria-label="Month"
         className={selectClassName ?? "h-9 flex-1 rounded-md border border-input bg-background px-2 text-sm"}
         disabled={disabled}
-        value={month}
-        onChange={(event) => onChange(`${year}-${String(Number(event.target.value)).padStart(2, "0")}`)}
+        value={hasValue ? month : ""}
+        onChange={(event) => onChange(
+          event.target.value ? `${year}-${String(Number(event.target.value)).padStart(2, "0")}` : ""
+        )}
       >
+        {emptyLabel && <option value="">{emptyLabel}</option>}
         {MONTH_NAMES.map((name, index) => (
           <option key={name} value={index + 1}>{name}</option>
         ))}
@@ -69,9 +81,12 @@ export function MonthYearPicker({
         aria-label="Year"
         className={selectClassName ? `${selectClassName} w-24` : "h-9 w-24 rounded-md border border-input bg-background px-2 text-sm"}
         disabled={disabled}
-        value={year}
-        onChange={(event) => onChange(`${event.target.value}-${String(month).padStart(2, "0")}`)}
+        value={hasValue ? year : ""}
+        onChange={(event) => onChange(
+          event.target.value ? `${event.target.value}-${String(month).padStart(2, "0")}` : ""
+        )}
       >
+        {emptyLabel && <option value="">{emptyLabel}</option>}
         {years.map((y) => <option key={y} value={y}>{y}</option>)}
       </select>
     </div>

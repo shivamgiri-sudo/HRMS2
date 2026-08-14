@@ -7,7 +7,7 @@ import {
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
   Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail, Share2,
-  Video, PenLine, Workflow, Layers3, CalendarOff
+  Video, PenLine, Workflow, Layers3, CalendarOff, MessageSquare
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -427,6 +427,7 @@ export const navGroups: NavGroup[] = [
           { label: "Feed Creators",    href: "/super-admin/company-feed-creators", icon: ic(UsersRound), roles: ["super_admin"], description: "Grant company feed posting rights" },
           { label: "AI Providers",     href: "/settings/ai-providers",           icon: ic(Settings2), roles: ["super_admin"], description: "Configure AI models" },
           { label: "PeopleOS Copilot", href: "/peopleos/copilot", icon: ic(Sparkles), roles: ["super_admin","admin","hr","manager"], description: "AI-assisted HR workspace" },
+          { label: "Mira Complaints",  href: "/admin/mira-complaints", icon: ic(MessageSquare), roles: ["super_admin"], description: "Mira complaint triage & AI fix drafts" },
           { label: "Super Admin Dashboard", href: "/super-admin/dashboard", icon: ic(Shield),     pageCode: "SUPER_ADMIN_DASHBOARD", roles: ["super_admin"], description: "Super admin dashboard" },
           { label: "Security Center",  href: "/security-center",            icon: ic(ShieldAlert),pageCode: "SECURITY_CENTER", roles: ["super_admin", "admin"], description: "Security monitoring" },
           { label: "DPDP / Privacy",   href: "/compliance/dpdp",            icon: ic(ShieldCheck),roles: ["admin","hr"],       description: "DPDP" },
