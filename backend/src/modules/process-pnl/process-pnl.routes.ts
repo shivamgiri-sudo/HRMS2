@@ -1127,8 +1127,16 @@ router.post(
   requireRole(...PNL_WRITE_ROLES),
   h(async (req, res) => {
     const period = String(req.body?.period ?? "");
+    const user = actor(req);
+    const requestedBranchId = req.body?.branchId ? String(req.body.branchId) : undefined;
+    const confinedBranch = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId,
+    });
     const data = await refreshRunningSalarySnapshot(period, {
-      branchId: req.body?.branchId ? String(req.body.branchId) : undefined,
+      branchId: confinedBranch ?? requestedBranchId,
       asOfDate: req.body?.asOfDate ? String(req.body.asOfDate) : undefined,
     });
     res.json({ success: true, data });
