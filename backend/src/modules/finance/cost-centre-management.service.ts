@@ -588,6 +588,28 @@ export const costCentreManagementService = {
       );
     }
 
+    // Maker-checker, same guard as approveL1 above (delta-audit 2026-08-14, Section K
+    // item 13, Option A approved): CC_L2_APPROVAL_ROLES (super_admin, admin) is a
+    // superset of CC_CREATE_ROLES, so without this check the same person who raised
+    // and submitted a cost centre could also approve it at L2 — the exact thing L1's
+    // guard exists to prevent, just one stage later. L2 is intentionally narrower
+    // than L1 (2 roles vs 4) and would still have caught a finance_head/accounts_head
+    // walking all three stages, but not an admin/super_admin doing so alone.
+    //
+    // Safe to enforce: 12 distinct users hold an L2 role (admin 9, super_admin 3);
+    // zero cost centres have ever reached l2_approved_by IS NOT NULL, so this changes
+    // no existing behaviour, only closes a live-but-unexercised gap (verified live,
+    // 2026-08-14).
+    const actorId = actor?.id ?? null;
+    if (actorId && (actorId === existing.created_by || actorId === existing.submitted_by)) {
+      throw Object.assign(
+        new Error(
+          "L2 approval must come from someone other than the person who raised or submitted this cost centre",
+        ),
+        { statusCode: 403 },
+      );
+    }
+
     await db.execute(
       `UPDATE cost_centre_master SET
         status = 'approved',
