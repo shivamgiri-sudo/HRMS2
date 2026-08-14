@@ -18,17 +18,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ORIGINAL_ENV = { ...process.env };
 
-// A production-valid baseline for every OTHER fatal check env.ts runs — both the ones
-// BEFORE CANDIDATE_PORTAL_JWT_SECRET's (OTP_HMAC_SECRET etc., which would exit(1) before
-// this file's checks are ever reached) and the ones AFTER it, which matter for the
-// "boots cleanly" case that has to survive the whole block.
-//
-// BGV_WEBHOOK_SECRET and ATS_FORM_API_KEY were added to that block by 338916ba
-// (fix(auth): close remaining open items) after this test was written, and both run after
-// the CANDIDATE_PORTAL_JWT_SECRET check — so "boots cleanly" started exiting on them
-// rather than on anything this test is about. Keep this baseline in step with env.ts's
-// production block: any newly-required var belongs here, or the clean-boot case fails for
-// a reason unrelated to what it asserts.
+// A production-valid baseline for every OTHER fatal check env.ts runs before reaching
+// CANDIDATE_PORTAL_JWT_SECRET's — without this, OTP_HMAC_SECRET's own check (which runs
+// first) would exit(1) before this file's checks are ever reached.
 const VALID_PROD_BASELINE = {
   JWT_SECRET: "a-real-distinct-jwt-secret-32-characters!!",
   PORTAL_JWT_SECRET: "a-real-distinct-portal-secret-32-characters",
@@ -37,9 +29,6 @@ const VALID_PROD_BASELINE = {
   ENCRYPTION_KEY: "a".repeat(64),
   INTERNAL_DEMO_BYPASS: "false",
   PORTAL_DEMO_BYPASS: "false",
-  OUTBOUND_ALLOW_PRIVATE_URLS: "false",
-  BGV_WEBHOOK_SECRET: "a-real-bgv-webhook-secret",
-  ATS_FORM_API_KEY: "a-real-ats-form-api-key",
 };
 
 function resetEnv(overrides: Record<string, string | undefined>) {
