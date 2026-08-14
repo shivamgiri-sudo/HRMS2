@@ -1022,7 +1022,15 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                       <div className="flex gap-2 pt-1">
                         <GrnButton variant="primary"
                           disabled={!dnForm.date || !dnForm.amount || Number(dnForm.amount) <= 0 || createDnMutation.isPending}
-                          onClick={() => createDnMutation.mutate()}>
+                          onClick={() => {
+                            const grnTotal = Number(target?.amount_with_tax ?? target?.amount ?? 0);
+                            const dnAmount = Number(dnForm.amount);
+                            if (grnTotal > 0 && dnAmount > grnTotal) {
+                              toast({ title: `Debit note (${money(dnAmount)}) exceeds GRN total (${money(grnTotal)})`, variant: "destructive" });
+                              return;
+                            }
+                            createDnMutation.mutate();
+                          }}>
                           {createDnMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
                           Raise Note
                         </GrnButton>

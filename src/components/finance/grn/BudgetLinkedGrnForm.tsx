@@ -440,6 +440,19 @@ export function BudgetLinkedGrnForm({
     ? unwrapData<WorkspacePayload>(workspaceQuery.data)
     : null;
 
+  // Poll for real GRN status after submission so the approval path widget reflects live state.
+  const submittedGrnId = created?.submitted ? created.id : null;
+  const submittedStatusQuery = useQuery({
+    queryKey: ["grn-submitted-status", submittedGrnId],
+    enabled: Boolean(submittedGrnId),
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const res = await hrmsApi.get<any>(`/api/finance/grns/${submittedGrnId}/workspace`);
+      return (res?.grn ?? res?.data?.grn ?? res?.data ?? res) as { status: string } | null;
+    },
+  });
+  const liveStatus = submittedStatusQuery.data?.status ?? null;
+
   // Reset to fresh edit mode whenever editGrnId changes (makes pre-fill
   // correct regardless of whether the parent unmounts this component or not).
   useEffect(() => {
@@ -2328,13 +2341,19 @@ export function BudgetLinkedGrnForm({
           <ol className="mt-3">
             {[
               { label: "Branch Admin submits", note: submitted ? undefined : "This form" },
-              { label: "Branch Head reviews", note: submitted ? "Awaiting action" : undefined },
+              { label: "Branch Head reviews", note: submitted && !liveStatus ? "Awaiting action" : undefined },
               { label: "Finance Head reviews" },
               { label: isVendor ? "Accounts Head → payment" : "Imprest closure" },
             ].map((step, index) => {
-              // Only step 1 (this form) has a real status to report — the rest genuinely aren't
-              // known here, since this screen never fetches the GRN's post-submission state.
-              const stepState = index === 0 ? (submitted ? "done" : "current") : index === 1 && submitted ? "current" : "upcoming";
+              // Map live GRN status to step states so the widget reflects real approval progress.
+              const grnDone = liveStatus === "approved" || liveStatus === "paid" || liveStatus === "partially_paid" || liveStatus === "pending_accounts_payment";
+              const branchDone = grnDone || liveStatus === "branch_head_approved" || liveStatus === "finance_head_approved";
+              const financeDone = grnDone || liveStatus === "finance_head_approved";
+              const stepState =
+                index === 0 ? (submitted ? "done" : "current") :
+                index === 1 ? (branchDone ? "done" : submitted ? "current" : "upcoming") :
+                index === 2 ? (financeDone ? "done" : branchDone ? "current" : "upcoming") :
+                grnDone ? "done" : financeDone ? "current" : "upcoming";
               return (
                 <li key={step.label} className="relative flex gap-2.5 pb-5 last:pb-0">
                   {index < 3 && (
