@@ -522,6 +522,11 @@
   ],
   "approvedDeletions": [
     {
+      "filename": "1213_wfm_shift_master_immutability_trigger.sql",
+      "reason": "Removed from manifest because it requires MySQL SUPER privilege (or log_bin_trust_function_creators=1) to create a trigger with binary logging enabled. The production host (maslms user) has neither, causing a hard ER_SPECIFIC_ACCESS_DENIED_ERROR that blocks server startup entirely. The application-layer lock guard in wfm.service.ts provides equivalent protection — it checks is_locked before every write and refuses edits on locked shift versions. File kept on disk per the no-deletion rule; moved to knownUnlisted so it cannot be accidentally re-scheduled.",
+      "approvedBy": "shivam.giri@teammas.in"
+    },
+    {
       "filename": "1214_repair_live_payroll_schema_gaps.sql",
       "reason": "Fully superseded by 1211_salary_prep_run_incentives_applied_at.sql and 1212_payslip_email_tracking_and_missing_indexes.sql, which declare the same four objects (salary_prep_run.incentives_applied_at, salary_prep_line.payslip_emailed / payslip_emailed_at, idx_spl_payslip_gen) with the same information_schema + PREPARE idiom, and applied cleanly on 2026-08-14 11:19 (executor maslms:2882130). 1214 was authored during a window when 8d8f34a5 had accidentally deleted 1211/1212 from the repo, so they could not be found; 9b7fdac7 restored them. It never ran - no schema_migrations row - so nothing is lost by unscheduling it. Kept on disk per the repository rule against deleting migrations, and left in knownUnlisted so it can never be scheduled again by accident. Scheduling both would be two migrations owning one set of columns.",
       "approvedBy": "shivam.giri@teammas.in"
@@ -531,6 +536,7 @@
     "migrations/426_employee_geofence_alerts.sql"
   ],
   "knownUnlisted": [
+    "1213_wfm_shift_master_immutability_trigger.sql",
     "000_ai_supplemental.sql",
     "000_finance_supplemental.sql",
     "000_run_all.sql",
