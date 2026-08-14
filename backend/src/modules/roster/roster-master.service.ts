@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { rosterCapacityService } from './roster-capacity.service.js';
+import { checkEmployeeDateNotLocked } from './roster-lock-guard.js';
 
 // ========== Types ==========
 export interface RosterTemplate {
@@ -365,6 +366,25 @@ class RosterMasterService {
           );
 
           if (existing.length > 0) {
+            skipped++;
+            continue;
+          }
+
+          // Round 2 governance-matrix finding (2026-08-13): this engine had
+          // no attendance/payroll-lock check at all — the same shared
+          // roster-lock-guard.ts function the other three write engines use.
+          // This table (roster_assignment) is disconnected from the live
+          // attendance/payroll pipeline today (nothing downstream reads it
+          // for pay), so the blast radius is lower than the other engines'
+          // equivalent gap, but "no roster engine should mutate a locked
+          // date through an alternative path" doesn't carve out an
+          // exception for a lower-traffic one — and this is cheap to add:
+          // unlike minimum-rest (which needs shift start/end times this
+          // table never stores), the lock check only needs employee_id +
+          // date, both already in hand here.
+          const lockResult = await checkEmployeeDateNotLocked(db, employee_id, dateStr);
+          if (lockResult.blocked) {
+            errors.push(`Employee ${employee_id} on ${dateStr}: ${lockResult.error}`);
             skipped++;
             continue;
           }
