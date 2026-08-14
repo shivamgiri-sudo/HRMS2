@@ -80,6 +80,35 @@ const KNOWN_GAPS: Record<string, string> = {
     "Same schema decision as POST /reports. The delete flow is PATCH {status:'deleted'} against a status column that does not exist.",
   "GET /api/wfm/roster":
     "Deliberately unbuilt. /roster/assignments cannot serve it: requireRosterPlanScope throws when planId is absent, before the global-role bypass, and the caller is a plan-agnostic date-range view. Needs a cross-plan read model.",
+
+  // ── Reachable — a live defect, parked on a security decision. Found 2026-08-14.
+  //
+  // Unlike every other entry above, the backend for these is WRITTEN. bank-payment-readiness.routes.ts
+  // exists and exports bankPaymentReadinessRouter; nothing ever calls app.use() on it. Grepping the
+  // symbol outside its own file finds only a migration comment, a service comment and its own tests —
+  // no mount. So all five 401 in production, which is indistinguishable from a permission failure
+  // (the exact confusion this suite exists to catch).
+  //
+  // This is NOT unreachable scaffolding: /payroll/bank-readiness is routed in payroll.routes.tsx and
+  // sits in the sidebar for super_admin, admin, payroll*, finance*, hr, branch_head and branch_admin.
+  // Any of them can click "Bank Payment Readiness" today and get a page where every panel fails.
+  //
+  // Parked rather than fixed because the one-line mount is not a neutral act: the same router serves
+  // GET /payment-file, described in its own header as "THE payment export. Full account numbers."
+  // Mounting the router to green this contract would ship a full-account-number export as a side
+  // effect of a test fix. That belongs to whoever owns payroll, with the export gating reviewed on
+  // purpose — not to whoever happens to be unblocking CI. Listing them here states the gap honestly
+  // and stops it blocking every unrelated deploy while that decision is made.
+  "GET /api/payroll/bank-readiness/summary":
+    "REACHABLE, LIVE DEFECT. bankPaymentReadinessRouter is exported but never mounted (no app.use), so this 401s for every role the page is offered to. Parked, not fixed, because mounting the router also exposes GET /payment-file — the full-account-number payment export — which needs a payroll-owner decision on its gating first. Mount the router as one deliberate change, or delete the page; do not add a narrower route to satisfy this line.",
+  "GET /api/payroll/bank-readiness/exceptions":
+    "Same unmounted router as /bank-readiness/summary — see that entry for why it is parked.",
+  "GET /api/payroll/bank-readiness/remediation-list":
+    "Same unmounted router as /bank-readiness/summary.",
+  "GET /api/payroll/bank-readiness/payment-source-divergence":
+    "Same unmounted router as /bank-readiness/summary.",
+  "PATCH /api/payroll/bank-readiness/exceptions/:p":
+    "Same unmounted router as /bank-readiness/summary. This is the write half — INSERT ... ON DUPLICATE KEY UPDATE against payroll_bank_exception — so the page's edit action fails silently today as well as its reads.",
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
