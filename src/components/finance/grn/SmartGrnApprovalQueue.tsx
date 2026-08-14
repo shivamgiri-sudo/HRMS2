@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -72,7 +72,15 @@ type GrnRow = {
   allocation_mode?: "single" | "split" | null;
   validation_score?: number | null;
   document_match_status?: string | null;
+  created_at?: string | null;
 };
+
+const PAGE_SIZE = 50;
+
+function daysSince(dateStr: string | null | undefined): number {
+  if (!dateStr) return 0;
+  return Math.floor((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
+}
 
 type Workspace = {
   grn: Record<string, any>;
@@ -87,6 +95,7 @@ type Capabilities = {
   canCreate: boolean;
   canReviewBranchStage: boolean;
   canReviewFinanceStage: boolean;
+  canReviewAccountsStage: boolean;
 };
 
 const STATUS_TABS = [
@@ -112,6 +121,10 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   const [grnType, setGrnType] = useState("_all");
   const [search, setSearch] = useState("");
   const [backDated, setBackDated] = useState(false);
+  const [filterBranch, setFilterBranch] = useState("");
+  const [filterPeriod, setFilterPeriod] = useState("");
+  const [page, setPage] = useState(1);
+  const didSetInitialTab = useRef(false);
   const [target, setTarget] = useState<GrnRow | null>(null);
   const [decision, setDecision] = useState<"approved" | "rejected">("approved");
   const [reviewNote, setReviewNote] = useState("");
@@ -129,17 +142,40 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   });
   const capabilities = capabilitiesQuery.data;
 
+  useEffect(() => {
+    if (!capabilities || didSetInitialTab.current) return;
+    didSetInitialTab.current = true;
+    if (capabilities.canReviewAccountsStage && !capabilities.canReviewBranchStage && !capabilities.canReviewFinanceStage) {
+      setStatus("finance_head_approved");
+    } else if (capabilities.canReviewFinanceStage && !capabilities.canReviewBranchStage) {
+      setStatus("branch_head_approved");
+    }
+    // branch stage reviewers stay on "submitted" — the default is already correct
+  }, [capabilities]);
+
+  const branchesQuery = useQuery({
+    queryKey: ["grn-branches-list"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<any>("/api/org/branches?limit=200");
+      return (res?.data ?? res?.rows ?? []) as Array<{ id: string; branch_name?: string; name?: string }>;
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+  const branchOptions = branchesQuery.data ?? [];
+
   // Per-status counts for the filter chips. Aggregated server-side, so a chip's number is the
   // true total rather than however many of that status happened to fit in the 100-row list.
   const summary = useGrnSummary().data;
 
   const listQuery = useQuery({
-    queryKey: ["grn-list", status, grnType, search],
+    queryKey: ["grn-list", status, grnType, search, filterBranch, filterPeriod, page],
     queryFn: async () => {
-      const params = new URLSearchParams({ limit: "100" });
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), page: String(page) });
       if (status !== "_all") params.set("status", status);
       if (grnType !== "_all") params.set("grnType", grnType);
       if (search.trim()) params.set("search", search.trim());
+      if (filterBranch) params.set("branchId", filterBranch);
+      if (filterPeriod) params.set("accountingPeriod", filterPeriod);
       const response = await hrmsApi.get<any>(`/api/finance/grns?${params}`);
       return (response?.data ?? response?.rows ?? []) as GrnRow[];
     },
@@ -382,6 +418,19 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
             <option value="vendor">Vendor</option>
             <option value="imprest">Imprest</option>
           </GrnSelect>
+          <GrnSelect small value={filterBranch} onChange={(e) => setFilterBranch(e.target.value)} aria-label="Filter by branch">
+            <option value="">All branches</option>
+            {branchOptions.map((b) => (
+              <option key={b.id} value={b.id}>{b.branch_name ?? b.name ?? b.id}</option>
+            ))}
+          </GrnSelect>
+          <input
+            type="month"
+            value={filterPeriod}
+            onChange={(e) => setFilterPeriod(e.target.value)}
+            aria-label="Filter by period"
+            className="h-7 rounded border border-grn-line-soft bg-white px-2 text-xs text-grn-ink focus:outline-none focus:ring-1 focus:ring-grn-brand"
+          />
           <GrnChip active={backDated} onClick={() => setBackDated((v) => !v)}>
             Back-dated
           </GrnChip>
@@ -422,6 +471,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                 <GrnTh sticky={false} align="right">Amount</GrnTh>
                 <GrnTh sticky={false}>Due</GrnTh>
                 {backDated && <GrnTh sticky={false}>Acctg Period</GrnTh>}
+                <GrnTh sticky={false} align="right">Waiting</GrnTh>
                 <GrnTh sticky={false}>Status</GrnTh>
                 <GrnTh sticky={false} />
               </tr>
@@ -461,6 +511,16 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                       <span className="font-grn-mono text-amber-700">{row.accounting_period ?? "—"}</span>
                     </GrnTd>
                   )}
+                  <GrnTd align="right">
+                    {row.created_at ? (() => {
+                      const d = daysSince(row.created_at);
+                      return (
+                        <span className={`font-grn-mono text-[11px] font-semibold ${d > 3 ? "text-rose-600" : d > 1 ? "text-amber-600" : "text-grn-ink-soft"}`}>
+                          {d}d
+                        </span>
+                      );
+                    })() : <span className="text-grn-ink-soft">—</span>}
+                  </GrnTd>
                   <GrnTd>
                     <StatusStamp tone={grnStatusTone(row.status)}>{labelStatus(row.status)}</StatusStamp>
                   </GrnTd>
@@ -500,6 +560,16 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
               ))}
             </tbody>
           </GrnTable>
+        )}
+        {displayRows.length > 0 && (
+          <div className="flex items-center justify-between px-4 py-3 text-xs text-grn-ink-soft">
+            <span>Showing {displayRows.length} result{displayRows.length !== 1 ? "s" : ""}</span>
+            {rows.length === PAGE_SIZE && (
+              <GrnButton variant="secondary" size="sm" onClick={() => setPage((p) => p + 1)}>
+                Load more
+              </GrnButton>
+            )}
+          </div>
         )}
       </GrnCard>
 

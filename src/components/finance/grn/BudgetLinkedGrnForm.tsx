@@ -18,6 +18,7 @@ import {
   Split,
   Trash2,
   UploadCloud,
+  XCircle,
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 // SearchableSelect deliberately stays: vendor picking is server-side searched (search /
@@ -1795,7 +1796,15 @@ export function BudgetLinkedGrnForm({
                   multiple
                   accept=".pdf,.jpg,.jpeg,.png,.webp"
                   className="sr-only"
-                  onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
+                  onChange={(event) => {
+                    const incoming = Array.from(event.target.files ?? []);
+                    setFiles((prev) => {
+                      const existingNames = new Set(prev.map((f) => f.name));
+                      return [...prev, ...incoming.filter((f) => !existingNames.has(f.name))];
+                    });
+                    // reset input so the same file can be re-added after removal
+                    event.target.value = "";
+                  }}
                 />
               </label>
 
@@ -1807,7 +1816,17 @@ export function BudgetLinkedGrnForm({
                       className="flex items-center justify-between gap-2 rounded-[8px] border border-grn-line bg-grn-paper px-3 py-2 text-[12px]"
                     >
                       <span className="truncate text-grn-ink">{file.name}</span>
-                      <StatusStamp tone="neutral">Pending upload</StatusStamp>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <StatusStamp tone="neutral">Pending upload</StatusStamp>
+                        <button
+                          type="button"
+                          aria-label={`Remove ${file.name}`}
+                          className="ml-1 text-grn-ink-soft hover:text-grn-crit"
+                          onClick={() => setFiles((prev) => prev.filter((f) => f.name !== file.name))}
+                        >
+                          <XCircle className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </li>
                   ))}
                   {workspace?.documents?.map((document) => {
