@@ -1,5 +1,18 @@
 -- 1214_repair_live_payroll_schema_gaps.sql
 --
+-- ⚠️ SUPERSEDED — DO NOT SCHEDULE. Verified 2026-08-14: migrations 1211
+--    (salary_prep_run_incentives_applied_at.sql) and 1212
+--    (payslip_email_tracking_and_missing_indexes.sql) landed 10 minutes after this file was
+--    authored and are ALREADY in MIGRATION_MANIFEST — between them they create all four objects
+--    this file repairs (incentives_applied_at, payslip_emailed, payslip_emailed_at,
+--    idx_spl_payslip_gen). Confirmed live: none of the four exist yet, and 1211/1212 will create
+--    them on the next backend restart regardless of whether this file is ever scheduled.
+--
+--    This file's own guards (PREPARE/EXECUTE against information_schema, same pattern as
+--    1211/1212) make it a true no-op if it ever does run after 1211/1212 — it is not dangerous,
+--    just redundant. Left unscheduled and unremoved rather than deleted, so the investigation
+--    below stays available; do not register it in MIGRATION_MANIFEST.
+--
 -- ⚠️ NOT IN THE MANIFEST. Authored for review; it will not run until someone adds it to
 --    MIGRATION_MANIFEST in runPendingMigrations.ts. Registering it there means it executes on the
 --    next backend start, which is a production schema change and needs explicit approval.
