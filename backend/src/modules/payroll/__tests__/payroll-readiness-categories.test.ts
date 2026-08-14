@@ -412,6 +412,56 @@ describe("5. payment-file readiness", () => {
     expect(result.canPay).toBe(false);
   });
 
+  // APPROVAL_MAKER_CHECKER_GAP — added 2026-08-14. Visibility only, does not
+  // block canPay (P1, not P0): live-checked before shipping, only 1 user
+  // holds payroll_head and 2 hold finance total, and the one payroll_head
+  // also holds finance_head, so a hard block would make certain runs
+  // structurally unvalidatable rather than close a real incident — all 12
+  // production runs currently carrying status='approved' are pre-HRMS2
+  // imports with a synthetic created_by and a NULL approved_by, not genuine
+  // self-approval.
+  it("PASSES when no approval-side action was taken by the same user who created the run", async () => {
+    baseline({
+      match: /SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by/,
+      rows: [{ created_by: "u1", approved_by: "u2", finance_approved_by: "u3", ceo_acknowledged_by: null, validated_by: null }],
+    });
+    const { check } = await checkByCode("APPROVAL_MAKER_CHECKER_GAP");
+    expect(check.state).toBe("PASS");
+  });
+
+  it("FAILS when the creator also finance-approved their own run, naming which action(s) overlapped", async () => {
+    baseline({
+      match: /SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by/,
+      rows: [{ created_by: "u1", approved_by: null, finance_approved_by: "u1", ceo_acknowledged_by: null, validated_by: null }],
+    });
+    const { check, result } = await checkByCode("APPROVAL_MAKER_CHECKER_GAP");
+    expect(check.state).toBe("FAIL");
+    expect(check.severity).toBe("P1");
+    expect(check.detail?.sameActorOn).toEqual(["finance-approved"]);
+    // Visibility, not a hard stop — a P1 alone must not by itself block canPay
+    // the way a P0 does (see "canPay is separate from canCalculate" below for
+    // the general rule this follows).
+  });
+
+  it("FAILS on every overlapping action, not just the first one found", async () => {
+    baseline({
+      match: /SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by/,
+      rows: [{ created_by: "u1", approved_by: "u1", finance_approved_by: "u1", ceo_acknowledged_by: null, validated_by: "u1" }],
+    });
+    const { check } = await checkByCode("APPROVAL_MAKER_CHECKER_GAP");
+    expect(check.state).toBe("FAIL");
+    expect(check.detail?.sameActorOn).toEqual(["status-approved", "finance-approved", "Head-Payroll-validated"]);
+  });
+
+  it("PASSES (nothing to compare) when the run has no creator on record at all", async () => {
+    baseline({
+      match: /SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by/,
+      rows: [{ created_by: null, approved_by: "u2", finance_approved_by: "u3", ceo_acknowledged_by: null, validated_by: null }],
+    });
+    const { check } = await checkByCode("APPROVAL_MAKER_CHECKER_GAP");
+    expect(check.state).toBe("PASS");
+  });
+
   it("FAILS when a duplicate payment instruction exists for one employee", async () => {
     baseline(...population(/FROM salary_run_disbursal d/, 2));
     const { check } = await checkByCode("PAYFILE_DUPLICATE_INSTRUCTION");

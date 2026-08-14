@@ -1319,6 +1319,50 @@ async function paymentFileChecks(scope: RunScope): Promise<CategoryCheckResult[]
       );
     }),
 
+    // No maker-checker separation exists across create/approve/finance-approve/
+    // CEO-acknowledge/validate — role sets overlap (finance and super_admin can
+    // do all of them; live-checked 2026-08-14: user_roles has only 1
+    // payroll_head and 2 finance total, and the one payroll_head also holds
+    // finance_head), so a hard "must be a different person" block would lock
+    // out real, currently-working approval capability for the smallest of
+    // those role pools rather than close a gap anyone has hit. All 12 runs
+    // currently carrying status='approved' are pre-HRMS2 imports with a
+    // synthetic created_by and a NULL approved_by, not genuine self-approval —
+    // so there is no live incident to protect against retroactively, only a
+    // structural gap to make visible before one occurs. This check does that:
+    // it flags, at P1, the same actor appearing on both sides of any one
+    // approval relationship for a run, without blocking anything. Whether to
+    // additionally hard-block is a business/RBAC-policy decision — given the
+    // 1-person payroll_head pool, forcing it today would make certain runs
+    // structurally impossible to validate at all until a second person is
+    // granted the role, which is not this audit's call to make unilaterally.
+    runCheck({ code: "APPROVAL_MAKER_CHECKER_GAP", layer: "APPROVAL_LOCK", severity: "P1" }, async () => {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT created_by, approved_by, finance_approved_by, ceo_acknowledged_by, validated_by
+           FROM salary_prep_run WHERE id = ? LIMIT 1`,
+        [runId],
+      );
+      const run = rows[0] as Record<string, unknown> | undefined;
+      if (!run) return blocked("Run disappeared while the check was running.");
+      const creator = run.created_by ? String(run.created_by) : null;
+      const sameActorOn: string[] = [];
+      if (creator) {
+        if (run.approved_by && String(run.approved_by) === creator) sameActorOn.push("status-approved");
+        if (run.finance_approved_by && String(run.finance_approved_by) === creator) sameActorOn.push("finance-approved");
+        if (run.ceo_acknowledged_by && String(run.ceo_acknowledged_by) === creator) sameActorOn.push("CEO-acknowledged");
+        if (run.validated_by && String(run.validated_by) === creator) sameActorOn.push("Head-Payroll-validated");
+      }
+      return sameActorOn.length === 0
+        ? pass("No approval-side action on this run was taken by the same user who created it.")
+        : fail(
+            0,
+            `The user who created this run also ${sameActorOn.join(", ")} it — no maker-checker separation exists in the ` +
+              "approval workflow to prevent this (finance/super_admin roles can create, calculate and approve the same " +
+              "run). Not evidence the figures are wrong; a control gap, not a defect finding.",
+            { sameActorOn },
+          );
+    }),
+
     // Employees expected to be paid but with no payable amount.
     runCheck({ code: "PAYFILE_NO_PAYABLE_AMOUNT", layer: "PAYMENT_FILE", severity: "P1" }, async () => {
       const sql = `
