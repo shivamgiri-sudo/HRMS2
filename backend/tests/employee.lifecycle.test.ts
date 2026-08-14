@@ -326,11 +326,21 @@ describe("SECURITY — Assets: Employee A cannot read Employee B", () => {
 });
 
 describe("SECURITY — Helpdesk ticket privacy", () => {
+  // Mock call order below matches helpdesk.routes.ts's GET /tickets/:id as of the
+  // 2026-08-14 row-scope fix (delta-audit, Stage 5a): isAdminHr is now resolved via
+  // hasRoleForRequest BEFORE the ticket is fetched, not after — the scope-aware
+  // getTicket() call needs to know upfront whether to apply a scope condition to the
+  // SQL itself, since scope is enforced inside the query, not by filtering the result
+  // afterwards. That structurally requires the role check first. Previously: ticket,
+  // comments, role, employee. Now: role, ticket, comments, employee. Reordering an
+  // independent, unrelated pair of async lookups changes nothing about real request
+  // behavior (each query hits its own real data in production regardless of order) —
+  // only this test's hard-coded mock sequence needed updating to match.
   it("403 when employee reads another employee ticket", async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: "u-emp-a" } }, error: null });
+    mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
     mockExecute.mockResolvedValueOnce([[{ id: "t-1", employee_id: "emp-b", status: "open" }], []]);
     mockExecute.mockResolvedValueOnce([[], []]);
-    mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
     mockExecute.mockResolvedValueOnce([[{ id: "emp-a", employee_code: "E001" }], []]);
     const r = await request(app).get("/api/helpdesk/tickets/t-1").set(EMP_AUTH);
     expect(r.status).toBe(403);
@@ -344,12 +354,12 @@ describe("SECURITY — Helpdesk ticket privacy", () => {
   });
   it("internal comments stripped from employee ticket view", async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: "u-emp" } }, error: null });
+    mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
     mockExecute.mockResolvedValueOnce([[{ id: "t-1", employee_id: "emp-mine", status: "open" }], []]);
     mockExecute.mockResolvedValueOnce([[
       { id: "c-1", is_internal: 0, comment_text: "Public" },
       { id: "c-2", is_internal: 1, comment_text: "Secret HR note" },
     ], []]);
-    mockExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
     mockExecute.mockResolvedValueOnce([[{ id: "emp-mine", employee_code: "E001" }], []]);
     const r = await request(app).get("/api/helpdesk/tickets/t-1").set(EMP_AUTH);
     expect(r.status).toBe(200);
