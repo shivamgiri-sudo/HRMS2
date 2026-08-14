@@ -754,14 +754,31 @@ export const autoRosterSyncedService = {
     // — the column the schema defines specifically so a manual per-employee override
     // inside a draft plan survives the next "generate". A manager's manual edit was
     // silently destroyed the moment someone (re)ran generation. 'locked' is not
-    // currently set by any write path, so this is a no-op against today's data — it
-    // closes the gap for when it is, without changing current behavior.
+    // currently set by any write path, so that clause is a no-op against today's data
+    // — it closes the gap for when it is, without changing current behavior.
+    //
+    // Silent-failure sweep, 2026-08-13 (later same day): this DELETE ran completely
+    // outside roster-lock-guard.ts's reach even though the per-employee
+    // checkEmployeeDateNotLocked call below (in the assignment loop) creates the
+    // appearance that the whole regeneration flow is protected. A payroll-locked
+    // date's existing assignment row could be silently destroyed here — the later
+    // per-employee check only refuses to *recreate* it, which reads as "skipped"
+    // in the conflict log, not "an existing locked record was deleted". Added the
+    // same attendance_daily_record.is_locked signal roster-lock-guard.ts's own
+    // isRosterDateLocked() checks, via NOT EXISTS so a locked row is excluded from
+    // the DELETE outright rather than merely refused re-insertion afterward.
     await db.execute(
       `DELETE wra FROM wfm_roster_assignment wra
         LEFT JOIN wfm_roster_assignment_control wrac ON wrac.assignment_id = wra.id
         WHERE wra.plan_id = ?
           AND wra.publish_status <> 'published'
-          AND (wrac.change_lock_status IS NULL OR wrac.change_lock_status <> 'locked')`,
+          AND (wrac.change_lock_status IS NULL OR wrac.change_lock_status <> 'locked')
+          AND NOT EXISTS (
+            SELECT 1 FROM attendance_daily_record adr
+             WHERE adr.employee_id = wra.employee_id
+               AND adr.record_date = wra.roster_date
+               AND adr.is_locked = 1
+          )`,
       [planId],
     );
     await db.execute(
@@ -865,8 +882,12 @@ export const autoRosterSyncedService = {
           // Area 3 (2026-08-13): generateDraft() was one of three write paths
           // to wfm_roster_assignment still missing the shared attendance/
           // payroll-lock check (roster-lock-guard.ts) — already wired into
-          // manual assignment, the PM post-publish correction endpoint,
-          // manager realignment, and shift-swap apply, but not here.
+          // manual assignment, manager realignment, and shift-swap apply, but
+          // not here. (This comment previously also claimed the PM
+          // post-publish correction endpoint — changePublishedAssignment(),
+          // below in this file — was already covered; a same-day
+          // silent-failure sweep found no such call actually existed there.
+          // Fixed directly in that function, not by broadening this loop.)
           // Regeneration already refuses outright once the PLAN itself is
           // published/locked (the guard at the top of generateDraft), but
           // that doesn't cover a plan still in draft whose date range has
@@ -1206,6 +1227,18 @@ export const autoRosterSyncedService = {
     const control = await getPlanControl(old.plan_id);
     if (control.approval_status !== "published") {
       throw Object.assign(new Error("PM-only change control applies only after roster is published. Draft changes should use draft edit."), { statusCode: 409 });
+    }
+
+    // Silent-failure sweep, 2026-08-13 (later same day): this is the one place in the
+    // codebase that can rewrite a LIVE, PUBLISHED assignment's shift/times — a stale
+    // comment a few lines below already claimed roster-lock-guard.ts was "already wired
+    // into ... the PM post-publish correction endpoint", but no call existed anywhere in
+    // this function. A payroll-locked date's shift/time could be silently overwritten via
+    // this endpoint with the change fully queued as a normal, sanctioned notification.
+    // Added the same guard every other schedule-mutating write path in this program uses.
+    const dateLockResult = await checkEmployeeDateNotLocked(db, String(old.employee_id), String(old.roster_date).slice(0, 10));
+    if (dateLockResult.blocked) {
+      throw Object.assign(new Error(dateLockResult.error), { statusCode: 409, code: "ROSTER_DATE_LOCKED" });
     }
 
     const changeId = randomUUID();
