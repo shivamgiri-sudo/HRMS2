@@ -97,7 +97,10 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
       (b) => !b.isCostCentre && !b.isClosed && !b.flag && b.marginPct !== null,
     );
     if (trading.length === 0) return null;
-    return trading.reduce((total, b) => total + (b.marginPct ?? 0), 0) / trading.length;
+    // Revenue-weighted average margin (CA standard for multi-branch comparison)
+    const totalRev = trading.reduce((s, b) => s + b.revenue, 0);
+    if (totalRev <= 0) return trading.reduce((s, b) => s + (b.marginPct ?? 0), 0) / trading.length;
+    return trading.reduce((s, b) => s + (b.marginPct ?? 0) * b.revenue, 0) / totalRev;
   }, [data]);
 
   if (isLoading) {
@@ -299,7 +302,7 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
                 <th className="px-3 py-2 text-right font-semibold">Indirect</th>
                 <th className="px-3 py-2 text-right font-semibold">Op. profit</th>
                 {compare === "budget" && <th className="px-3 py-2 text-right font-semibold text-blue-700">Budget</th>}
-                {compare === "budget" && <th className="px-3 py-2 text-right font-semibold text-slate-500">vs Budget</th>}
+                {compare === "budget" && <th className="px-3 py-2 text-right font-semibold text-slate-500" title="Budget − Actual; positive = favourable">vs Budget (B−A)</th>}
                 <th className="px-3 py-2 text-right font-semibold">Margin</th>
                 <th className="px-3 py-2 text-right font-semibold">Rev / head</th>
               </tr>
@@ -539,9 +542,9 @@ function BranchRow({
       )}
       {compare === "budget" && (() => {
         if (row.budget <= 0) return <td className="px-3 py-2.5 text-right text-slate-400">—</td>;
-        const vb = row.indirectCost - row.budget;
+        const vb = row.budget - row.indirectCost; // Budget−Actual, positive = favourable (under budget)
         return (
-          <td className={`px-3 py-2.5 text-right tabular-nums text-[12px] font-semibold ${vb > 0 ? "text-rose-700" : "text-emerald-700"}`}>
+          <td className={`px-3 py-2.5 text-right tabular-nums text-[12px] font-semibold ${vb < 0 ? "text-rose-700" : "text-emerald-700"}`}>
             {vb > 0 ? "+" : ""}{lakh(vb)}
           </td>
         );
