@@ -1173,9 +1173,12 @@ export async function calculatePayrollRunScoped(
         // unavailable. It reads the same approved statutory_config, so this is a
         // different route to the same rates — not a laxer one.
         const annualGross = fyAnnualGross;
-        const declHra = decl ? Number(decl.declared_hra) : 0;
-        const decl80c = decl ? Number(decl.declared_80c) : 0;
-        const decl80d = decl ? Number(decl.declared_80d) : 0;
+        const isOldRegime = (decl?.regime ?? "new") === "old";
+        const declHra = isOldRegime && decl ? Number(decl.declared_hra) : 0;
+        const decl80c = isOldRegime && decl ? Number(decl.declared_80c) : 0;
+        const decl80d = isOldRegime && decl ? Number(decl.declared_80d) : 0;
+        // Old-regime employees can deduct HRA/80C/80D; new-regime cannot.
+        // Standard deduction is applied inside calculateTds for all regimes.
         const taxableIncome = Math.max(0, annualGross - declHra - decl80c - decl80d);
         const fallback = calculateTds(taxableIncome, statConfig);
 
