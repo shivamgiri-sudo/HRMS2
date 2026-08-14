@@ -116,7 +116,20 @@ describe("tripwire: no new ungated account-number export", () => {
       "A payroll endpoint reading bank account numbers was added or removed. " +
       "If added, gate it with hasOrgWideScope (payment file) or buildScopeWhereClause " +
       "(report) and update this count deliberately.";
-    expect(legacy, `${message} (legacy account_number reads)`).toBe(7);
+    // 2026-08-14 Excel-mangled-account fix: +3 legacy in payroll.routes.ts's /neft-summary.
+    // New totals: payroll.routes.ts 6+3, payroll-extended.routes.ts 4+4 = 10 legacy + 7 enc.
+    //
+    // The enc count did NOT move, and that asymmetry is the point rather than an oversight:
+    // account_number_enc is ciphertext, so it can only ever be presence-checked, while the
+    // plaintext column now also gets a format check — an IS NULL guard plus a REGEXP and a
+    // NOT REGEXP — to exclude values like "3.03801E+13". All three are guard clauses; none
+    // projects a value. Verified live: exactly one employee in the FINALIZED 2026-04 run carries
+    // such an account and was reaching the declared payment total with Rs 55,414, and 4,039
+    // employees org-wide hold one on an active primary record.
+    //
+    // neft-export-total-integrity.test.ts enforces the "guard-only, never projected" claim
+    // directly, so this count moving is not by itself evidence that anything is exposed.
+    expect(legacy, `${message} (legacy account_number reads)`).toBe(10);
     expect(enc, `${message} (encrypted account_number_enc reads)`).toBe(7);
   });
 });

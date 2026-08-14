@@ -88,21 +88,91 @@ async function getEmployeeRecord(employeeId: string) {
   return (rows as EmpRow[])[0] ?? null;
 }
 
-async function getLatestSalaryAssignment(employeeId: string) {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT basic_salary, gross_salary, net_salary, effective_from
-       FROM employee_salary_assignment
-      WHERE employee_id = ?
-      ORDER BY effective_from DESC
+/**
+ * Salary figures for a certificate.
+ *
+ * ⚠️ FIXED 2026-08-14. This previously read
+ *   SELECT basic_salary, gross_salary, net_salary FROM employee_salary_assignment
+ * and NONE of those three columns exists on that table — it carries ctc_annual, structure_id,
+ * effective_from and active_status, and nothing else monetary. Every call therefore threw
+ * ER_BAD_FIELD_ERROR straight into the route's .catch(next), so /api/payroll/salary-certificates
+ * /generate has returned 500 for every salary and CTC certificate since it shipped. Confirmed by
+ * the data: salary_certificate_request holds 0 rows — not one certificate has ever been issued.
+ * The page is live, in the nav, and reachable by the 'employee' role.
+ *
+ * WHERE EACH FIGURE NOW COMES FROM, AND WHY
+ *   Annual CTC   — employee_salary_assignment.ctc_annual, used directly. Verified live against
+ *                  302 full-month employees in the 2026-07 run: mean ctc_annual 273,023 against a
+ *                  mean monthly gross of 20,239, i.e. 13.5x — genuinely ANNUAL, and slightly over
+ *                  12x because it includes employer PF. (The "CTC is monthly" trap recorded for
+ *                  this estate is about db_bill's ctc_offered, a different column on a different
+ *                  system. Checked rather than assumed, because a 12x error on a document a bank
+ *                  reads is not a rounding problem.)
+ *   Monthly gross and net take-home — the employee's most recent CALCULATED payroll line. That is
+ *                  the only place a real net exists: net is gross less PF, ESI, PT and TDS, and
+ *                  none of that is derivable from an assignment row. Deriving it here would mean
+ *                  inventing a number and printing it on a certificate.
+ *   Basic        — the payroll line's own basic for the same reason.
+ *
+ * The month the figures come from is returned alongside them so the certificate can say which
+ * period it describes instead of implying a contractual constant.
+ *
+ * WHAT THIS DELIBERATELY DOES NOT DO
+ *   It does not fall back to zero. A certificate reading "monthly gross ₹0" is worse than no
+ *   certificate — the caller refuses to issue instead (see the generate route). Whether a salary
+ *   certificate ought to state contracted salary or actual last-paid salary is an HR/Payroll
+ *   decision, not one to settle inside a bug fix; actual-and-traceable is the conservative
+ *   reading and is what a bank is normally asking for.
+ */
+async function getCertificateSalaryFigures(employeeId: string) {
+  const [ctcRows] = await db.execute<RowDataPacket[]>(
+    `SELECT esa.ctc_annual, esa.effective_from,
+            ssm.basic_pct, ssm.hra_pct
+       FROM employee_salary_assignment esa
+       LEFT JOIN salary_structure_master ssm ON ssm.id = esa.structure_id
+      WHERE esa.employee_id = ?
+        AND esa.active_status = 1
+      ORDER BY esa.effective_from DESC
       LIMIT 1`,
     [employeeId]
   );
-  type SalRow = RowDataPacket & {
-    basic_salary: string | number; gross_salary: string | number; net_salary: string | number;
-    effective_from: string;
+  const ctc = (ctcRows as Array<RowDataPacket & {
+    ctc_annual: string | number | null; effective_from: string | null;
+    basic_pct: number | null; hra_pct: number | null;
+  }>)[0] ?? null;
+
+  // Most recent line that the engine actually calculated. Draft and cancelled runs are excluded
+  // because nothing was paid from them, as are excluded/blocked lines.
+  const [payRows] = await db.execute<RowDataPacket[]>(
+    `SELECT spl.gross_salary, spl.net_salary, spl.basic, spr.run_month
+       FROM salary_prep_line spl
+       JOIN salary_prep_run spr ON spr.id = spl.run_id
+      WHERE spl.employee_id = ?
+        AND spl.gross_salary > 0
+        AND LOWER(COALESCE(spl.status, '')) NOT IN ('excluded', 'blocked')
+        AND LOWER(COALESCE(spr.status, '')) NOT IN ('draft', 'cancelled')
+      ORDER BY spr.run_month DESC
+      LIMIT 1`,
+    [employeeId]
+  );
+  const paid = (payRows as Array<RowDataPacket & {
+    gross_salary: string | number; net_salary: string | number;
+    basic: string | number | null; run_month: string;
+  }>)[0] ?? null;
+
+  if (!ctc && !paid) return null;
+  return {
+    annual_ctc: ctc?.ctc_annual != null ? Number(ctc.ctc_annual) : null,
+    effective_from: ctc?.effective_from ?? null,
+    basic_pct: ctc?.basic_pct ?? null,
+    gross_salary: paid ? Number(paid.gross_salary) : null,
+    net_salary: paid ? Number(paid.net_salary) : null,
+    basic_salary: paid?.basic != null ? Number(paid.basic) : null,
+    figures_from_month: paid?.run_month ?? null,
   };
-  return (rows as SalRow[])[0] ?? null;
 }
+
+export type CertificateSalaryFigures = NonNullable<Awaited<ReturnType<typeof getCertificateSalaryFigures>>>;
 
 function formatINR(val: string | number | null | undefined): string {
   const n = Number(val ?? 0);
@@ -116,7 +186,7 @@ function todayStr(): string {
 function buildCertificateData(
   template: "salary" | "employment" | "ctc",
   emp: { employee_name: string; designation: string | null; branch_name: string | null; department_name: string | null; date_of_joining: string | null; employment_status: string | null },
-  sal: { basic_salary: string | number; gross_salary: string | number; net_salary: string | number } | null,
+  sal: CertificateSalaryFigures | null,
   addressee: string | null,
   purpose: string | null,
   periodFrom: string | null,
@@ -130,22 +200,31 @@ function buildCertificateData(
   let annualCtc: number | null = null;
 
   if (template === "salary") {
+    // Non-null by contract: the generate route refuses a salary certificate without these
+    // rather than letting a zero reach the document.
     const gross = Number(sal?.gross_salary ?? 0);
     const net = Number(sal?.net_salary ?? 0);
+    // Naming the month is the difference between a true statement and a misleading one: these
+    // are the figures for a specific payroll, not a standing contractual amount.
+    const period = sal?.figures_from_month ? ` for the payroll month of ${sal.figures_from_month}` : "";
     body = `This is to certify that ${emp.employee_name}, ${emp.designation ?? "Employee"} is employed with MAS Callnet Private Limited since ${doJ}. ` +
-      `Their monthly gross salary is ${formatINR(gross)} and net take-home salary is ${formatINR(net)}.` +
+      `Their gross salary${period} is ${formatINR(gross)} and net take-home salary is ${formatINR(net)}.` +
       (purpose ? ` This certificate is issued for the purpose of ${purpose}.` : "");
   } else if (template === "employment") {
     body = `This is to certify that ${emp.employee_name} is employed as ${emp.designation ?? "Employee"} at our ${emp.branch_name ?? "office"} branch since ${doJ} ` +
       `and their employment status is currently ${emp.employment_status ?? "Active"}.` +
       (purpose ? ` This certificate is issued for the purpose of ${purpose}.` : "");
   } else {
-    // ctc
-    const gross = Number(sal?.gross_salary ?? 0);
-    const basic = Number(sal?.basic_salary ?? 0);
-    const pfEmployerAnnual = basic * 0.12 * 12;
-    annualCtc = gross * 12 + pfEmployerAnnual;
-    const ctcLakhs = (annualCtc / 100000).toFixed(2);
+    // ctc — use the contracted annual CTC directly rather than reconstructing it.
+    //
+    // This used to compute gross*12 + basic*0.12*12, rebuilding CTC out of one month's payroll.
+    // That is both unnecessary (employee_salary_assignment.ctc_annual is the contracted figure)
+    // and wrong in the common case, because a month with any LWP or a mid-month join makes gross
+    // smaller than the contractual monthly rate — understating the CTC on the certificate by
+    // whatever that month happened to be. Verified live: ctc_annual averages 13.5x monthly gross
+    // across full-month employees, so it already includes employer PF and needs no addition.
+    annualCtc = sal?.annual_ctc ?? null;
+    const ctcLakhs = ((annualCtc ?? 0) / 100000).toFixed(2);
     body = `This is to certify that ${emp.employee_name}, ${emp.designation ?? "Employee"} is employed with MAS Callnet Private Limited since ${doJ}. ` +
       `Their annual Cost to Company (CTC) is ${formatINR(annualCtc)} (INR ${ctcLakhs} lakhs), inclusive of employer PF contribution.` +
       (purpose ? ` This certificate is issued for the purpose of ${purpose}.` : "");
@@ -340,7 +419,28 @@ payrollCertificatesRouter.post(
       return res.status(404).json({ success: false, message: "Employee not found" });
     }
 
-    const sal = template !== "employment" ? await getLatestSalaryAssignment(body.employee_id) : null;
+    const sal = template !== "employment" ? await getCertificateSalaryFigures(body.employee_id) : null;
+
+    // Refuse rather than issue a certificate with a fabricated or zero figure on it. A document
+    // stating someone's income to a bank or landlord is the last place a silent default belongs,
+    // and the previous code would happily have printed ₹0 had the query not been throwing.
+    if (template === "salary" && (sal?.gross_salary == null || sal?.net_salary == null)) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Cannot issue a salary certificate for this employee: no calculated payroll line exists for them, so " +
+          "their gross and net take-home cannot be stated from an authoritative source. Run payroll for this " +
+          "employee first, or issue an employment certificate instead.",
+      });
+    }
+    if (template === "ctc" && sal?.annual_ctc == null) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "Cannot issue a CTC certificate for this employee: no active salary assignment with an annual CTC exists, " +
+          "so the figure cannot be stated from an authoritative source.",
+      });
+    }
 
     const certData = buildCertificateData(
       template,
