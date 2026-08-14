@@ -135,8 +135,17 @@ function extractDiagnosisJson(answer: string): TriageDiagnosis {
   if (typeof p.suggestedNextStep !== 'string' || !p.suggestedNextStep.trim()) {
     throw new Error('"suggestedNextStep" must be a non-empty string');
   }
-  if (!VALID_CONFIDENCE.includes(p.confidence as (typeof VALID_CONFIDENCE)[number])) {
-    throw new Error(`"confidence" must be one of ${VALID_CONFIDENCE.join(', ')}`);
+  // Models occasionally return values like "medium_high" or "moderate"; normalise before rejecting.
+  let confidence = (typeof p.confidence === 'string' ? p.confidence.toLowerCase().trim() : '') as TriageDiagnosis['confidence'];
+  if (!VALID_CONFIDENCE.includes(confidence)) {
+    // Try prefix-match: "medium_high" → "medium", "very_high" → "high"
+    const normalised = VALID_CONFIDENCE.find((v) => confidence.startsWith(v));
+    if (normalised) {
+      confidence = normalised;
+    } else {
+      // Unrecognisable — default to 'low' (conservative) so the item still reaches human review.
+      confidence = 'low';
+    }
   }
 
   return {
@@ -144,7 +153,7 @@ function extractDiagnosisJson(answer: string): TriageDiagnosis {
     category: p.category as TriageDiagnosis['category'],
     rootCauseHypothesis: p.rootCauseHypothesis.trim().slice(0, 1000),
     suggestedNextStep: p.suggestedNextStep.trim().slice(0, 1000),
-    confidence: p.confidence as TriageDiagnosis['confidence'],
+    confidence,
   };
 }
 
