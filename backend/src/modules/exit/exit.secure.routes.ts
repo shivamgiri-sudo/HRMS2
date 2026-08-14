@@ -20,19 +20,56 @@ const EXIT_SCOPE_ROLES = ["manager", "assistant_manager", "tl", "branch_head", "
  * that router is mounted after this one and Express dispatches to the first handler that
  * matches, so its guard was dead code. Consolidated here, the one router that's actually
  * reachable for PATCH/POST /api/exit/:id/status.
+ *
+ * clearance_pending/fnf_pending/closed/withdrawn added 2026-08-14 (delta-audit Stage 5g,
+ * user-approved): resignation.routes.ts's /mark-clearance-pending, /mark-fnf-pending, /close
+ * and /withdraw wrote these four statuses directly via raw UPDATE with no transition check at
+ * all — a status vocabulary this FSM didn't even recognize, so those four endpoints could
+ * never have been guarded by it even in principle. Modeled as a second terminal chain off
+ * 'accepted' (accepted → clearance_pending → fnf_pending → closed), parallel to the existing
+ * accepted → notice_serving → exited chain — both are ways an accepted resignation concludes.
+ * 'withdrawn' mirrors 'revoked' exactly (same source states): resignation.routes.ts's own
+ * comment on /withdraw is "employee withdraws own resignation; HR/admin may withdraw on
+ * behalf", the self/HR-initiated-cancel counterpart to 'revoked'. Live DB verified before
+ * this change: exit_request has 2 rows in production, both already 'exited' — none in any of
+ * these four states, so extending the map changes no live transition.
  */
-const ALLOWED_EXIT_TRANSITIONS: Record<string, string[]> = {
-  draft: ["submitted", "revoked"],
-  submitted: ["manager_review", "hr_review", "rejected", "revoked"],
-  manager_review: ["hr_review", "rejected", "revoked"],
-  hr_review: ["admin_review", "accepted", "rejected", "revoked"],
-  admin_review: ["accepted", "rejected", "revoked"],
-  accepted: ["notice_serving", "revoked"],
-  notice_serving: ["exited", "revoked"],
+export const ALLOWED_EXIT_TRANSITIONS: Record<string, string[]> = {
+  draft: ["submitted", "revoked", "withdrawn"],
+  submitted: ["manager_review", "hr_review", "rejected", "revoked", "withdrawn"],
+  manager_review: ["hr_review", "rejected", "revoked", "withdrawn"],
+  hr_review: ["admin_review", "accepted", "rejected", "revoked", "withdrawn"],
+  admin_review: ["accepted", "rejected", "revoked", "withdrawn"],
+  accepted: ["notice_serving", "clearance_pending", "revoked", "withdrawn"],
+  notice_serving: ["exited", "revoked", "withdrawn"],
+  clearance_pending: ["fnf_pending", "revoked", "withdrawn"],
+  fnf_pending: ["closed", "revoked", "withdrawn"],
+  closed: [],
   rejected: [],
   revoked: [],
+  withdrawn: [],
   exited: [],
 };
+
+/** Shared by handleExitStatusUpdate below and resignation.routes.ts's status-writing endpoints
+ * — the single source of truth for whether a transition is legal, so the two files can't drift
+ * the way the four now-unmounted duplicate FSM guards did (see the file-header comment on
+ * handleExitStatusUpdate). */
+export function assertValidExitTransition(
+  currentStatus: unknown,
+  nextStatus: unknown,
+): { ok: true } | { ok: false; message: string } {
+  const from = normalizeExitStatus(currentStatus);
+  const to = normalizeExitStatus(nextStatus);
+  const allowed = ALLOWED_EXIT_TRANSITIONS[from] ?? [];
+  if (!allowed.includes(to)) {
+    return {
+      ok: false,
+      message: `Invalid exit transition: ${from} → ${to}. Allowed: ${allowed.join(", ") || "none"}`,
+    };
+  }
+  return { ok: true };
+}
 
 /**
  * Blockers for the final "exited" transition: open clearance tasks, and F&F not yet approved

@@ -4,6 +4,8 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { exitController } from "./exit.controller.js";
 import { exitService } from "./exit.service.js";
+import { assertValidExitTransition } from "./exit.secure.routes.js";
+import type { RowDataPacket } from "mysql2";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response, NextFunction } from "express";
 import { db } from "../../db/mysql.js";
@@ -337,6 +339,19 @@ resignationRouter.post(
         return res.status(403).json({ success: false, message: "You may only withdraw your own resignation" });
       }
     }
+
+    // Was a raw UPDATE with no precondition at all — a resignation already 'exited', 'closed'
+    // or itself already 'withdrawn' could be "withdrawn" again. Guarded against the same FSM
+    // exit.secure.routes.ts's /:id/status already enforces (delta-audit 2026-08-14, Stage 5g).
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
+      [req.params.exitId]
+    );
+    const current = (rows as RowDataPacket[])[0];
+    if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
+    const transition = assertValidExitTransition(current.status, "withdrawn");
+    if (!transition.ok) return res.status(409).json({ success: false, message: transition.message });
+
     await db.execute(
       `UPDATE exit_request SET status = 'withdrawn', updated_at = NOW() WHERE id = ?`,
       [req.params.exitId]
@@ -351,10 +366,25 @@ resignationRouter.post(
   "/:exitId/mark-clearance-pending",
   requireRole("admin", "hr"),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    // Was a raw UPDATE with no precondition and no audit entry at all — this action was
+    // reachable from ANY status (e.g. an exit still in 'draft', or already 'closed') and left
+    // no exit_approval_log trail, unlike its sibling /close and /withdraw further down this
+    // file. Both fixed together (delta-audit 2026-08-14, Stage 5g, user-approved: this status
+    // is now a real branch of the FSM in exit.secure.routes.ts, off 'accepted').
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
+      [req.params.exitId]
+    );
+    const current = (rows as RowDataPacket[])[0];
+    if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
+    const transition = assertValidExitTransition(current.status, "clearance_pending");
+    if (!transition.ok) return res.status(409).json({ success: false, message: transition.message });
+
     await db.execute(
       `UPDATE exit_request SET status = 'clearance_pending', updated_at = NOW() WHERE id = ?`,
       [req.params.exitId]
     );
+    await logExitStatusChange(req, "clearance_pending", "Status updated to clearance_pending");
     return res.json({ success: true, message: "Status updated to clearance_pending" });
   })
 );
@@ -364,10 +394,22 @@ resignationRouter.post(
   "/:exitId/mark-fnf-pending",
   requireRole("admin", "hr", "finance", "payroll"),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    // Same gap and same fix as /mark-clearance-pending above: no precondition, no audit entry
+    // (delta-audit 2026-08-14, Stage 5g).
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
+      [req.params.exitId]
+    );
+    const current = (rows as RowDataPacket[])[0];
+    if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
+    const transition = assertValidExitTransition(current.status, "fnf_pending");
+    if (!transition.ok) return res.status(409).json({ success: false, message: transition.message });
+
     await db.execute(
       `UPDATE exit_request SET status = 'fnf_pending', updated_at = NOW() WHERE id = ?`,
       [req.params.exitId]
     );
+    await logExitStatusChange(req, "fnf_pending", "Status updated to fnf_pending");
     return res.json({ success: true, message: "Status updated to fnf_pending" });
   })
 );
@@ -388,6 +430,20 @@ resignationRouter.post(
     // logExitStatusChange on the very next line, which writes the actor and
     // NOW() into exit_approval_log - the same audit every other transition on
     // this router uses. status is varchar(50), so 'closed' needs no enum change.
+    //
+    // Also had no precondition on the current status — an exit still in 'draft' could be
+    // "closed" directly. Guarded against the same FSM exit.secure.routes.ts's /:id/status
+    // enforces; 'closed' is now the terminal step of the clearance_pending → fnf_pending →
+    // closed chain (delta-audit 2026-08-14, Stage 5g, user-approved).
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
+      [req.params.exitId]
+    );
+    const current = (rows as RowDataPacket[])[0];
+    if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
+    const transition = assertValidExitTransition(current.status, "closed");
+    if (!transition.ok) return res.status(409).json({ success: false, message: transition.message });
+
     await db.execute(
       `UPDATE exit_request
        SET status = 'closed', updated_at = NOW()
