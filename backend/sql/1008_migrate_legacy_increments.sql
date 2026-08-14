@@ -13,8 +13,13 @@
 -- ============================================================================
 
 -- First, add effective_to column if not exists
-ALTER TABLE employee_salary_assignment
-ADD COLUMN IF NOT EXISTS effective_to DATE DEFAULT NULL AFTER effective_from;
+-- FIXED 2026-08-14: ADD COLUMN IF NOT EXISTS is MariaDB syntax, rejected by this production
+-- MySQL 8.0.42 build with ER_PARSE_ERROR. Column already exists on production (confirmed via
+-- information_schema before this fix) -- no-op guard rewrite. Every other statement in this
+-- file (the actual legacy-data migration logic) is byte-for-byte unchanged.
+SET @c1 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'employee_salary_assignment' AND COLUMN_NAME = 'effective_to');
+SET @sql = IF(@c1 = 0, 'ALTER TABLE employee_salary_assignment ADD COLUMN effective_to DATE DEFAULT NULL AFTER effective_from', 'SELECT "effective_to already exists" AS info');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- Temporary table to hold ordered legacy records with row numbers
 DROP TEMPORARY TABLE IF EXISTS tmp_legacy_ordered;

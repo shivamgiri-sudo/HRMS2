@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS communication_provider_config (
   updated_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   created_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY uq_channel (channel)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Seed disabled placeholder rows so GET always returns all 3 channels
 INSERT IGNORE INTO communication_provider_config (id, channel, provider_type, is_enabled)

@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS billing_unit (
   is_active       TINYINT(1) NOT NULL DEFAULT 1,
   INDEX idx_bu_process (process_id),
   INDEX idx_bu_contract (contract_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS billing_invoice (
   id              CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS billing_invoice (
   paid_at         DATETIME,
   created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_inv_process (process_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS expense_policy (
   id              CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS expense_policy (
   is_active       TINYINT(1) NOT NULL DEFAULT 1,
   updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_exp_category (category)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Seed default expense policies
 INSERT IGNORE INTO expense_policy (id, category, max_amount, requires_receipt_above, approval_required) VALUES

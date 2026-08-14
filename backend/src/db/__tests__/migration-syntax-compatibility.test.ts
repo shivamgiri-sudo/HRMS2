@@ -48,19 +48,8 @@ const SCRIPT_PATH = path.resolve(__dirname, "../../../scripts/audit-migration-co
  * been rewritten and reverified; never add a new one to make a failing test pass.
  */
 const KNOWN_LEGACY_VIOLATIONS = new Set([
-  "021_location_master.sql",
-  "033_kpi_process_config.sql",
-  "035_portal_published_data.sql",
-  "036_erp_billing.sql",
-  "071_communication_provider_config.sql",
-  "1002_fix_salary_register_audit_log_columns.sql",
-  "1004_role_catalog_names_scope_ui.sql",
   "1007_legacy_salary_snapshot.sql",
   "1007_legacy_salary_snapshot_FINAL.sql",
-  "1008_migrate_legacy_increments.sql",
-  "1014_regularization_spoc_columns.sql",
-  "1038_salary_prep_line_component_reason.sql",
-  "1064_celebration_post_type.sql",
   "204_personal_contact_fields.sql",
   "206_ats_recruiter_contact_details.sql",
   "206_leave_el_accrual_ledger.sql",
@@ -86,6 +75,21 @@ const KNOWN_LEGACY_VIOLATIONS = new Set([
   "341_onboarding_profile_missing_columns.sql",
   "391_payroll_validation_freeze_columns.sql",
   "396_statutory_config_history.sql",
+  // 021, 033, 035, 036, 071 fixed 2026-08-14 (batch 3a) — collation-only: CREATE TABLE IF NOT
+  // EXISTS was already valid syntax, these just lacked explicit COLLATE=utf8mb4_unicode_ci
+  // alongside DEFAULT CHARSET=utf8mb4 (the silent-drift trap, not the parse-error one). File-
+  // level fix only; no ALTER run against already-created tables' live collation.
+  //
+  // 1002, 1008, 1014, 1038, 1064 fixed 2026-08-14 (batch 3b) — same ADD COLUMN IF NOT EXISTS
+  // guard rewrite. All targets already existed on production; all four testable ones (not
+  // 1008, see below) re-verified executing 100% clean. 1008 is the legacy salary-increment
+  // data migration -- only its single schema line was touched (surgical, diffed to confirm
+  // no other byte changed); the data-migration logic itself was never run as part of this fix
+  // and remains exactly as authored.
+  //
+  // 1004 fixed 2026-08-14 (batch 3b) but deliberately NOT executed -- its three target columns
+  // (scope_label, assigned_at, category) are genuinely missing and confirmed unused by any
+  // application code. Syntax-only fix, same as 380 in batch 2.
   // 397, 398, 402, 404, 413 fixed 2026-08-14 — see backend/sql/{397,398,402,404,413}_*.sql.
   // 398 and 404 both targeted salary_prep_run.incentives_applied_at and were both recorded
   // success=1 since 2026-07-20 despite the column never existing; 402's payslip_emailed /

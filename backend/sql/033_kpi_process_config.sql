@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS kpi_process_config (
   UNIQUE KEY uq_process_metric (process_id, metric_id),
   INDEX idx_kpc_process (process_id),
   INDEX idx_kpc_metric (metric_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS kpi_rating_config (
   id              CHAR(36) NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS kpi_rating_config (
   max_score_pct   DECIMAL(5,2) NOT NULL,
   color_code      VARCHAR(16),
   INDEX idx_krc_process (process_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 INSERT IGNORE INTO kpi_rating_config (id, process_id, rating_label, min_score_pct, max_score_pct, color_code) VALUES
   (UUID(), NULL, 'S', 100, 120, '#16a34a'),
