@@ -21,15 +21,21 @@ export async function runPayrollWindowClosure(): Promise<void> {
   // Find runs past their closure date that haven't been auto-locked yet
   const today = getIstDateString();
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, run_month FROM salary_prep_run
-     WHERE window_close_date IS NOT NULL
-       AND window_close_date <= ?
-       AND status NOT IN (${CLOSED_RUN_STATUSES_SQL},'cancelled')
-       AND auto_closed_at IS NULL`,
+    `SELECT id, run_month, status,
+            approved_by, finance_approved_by, ceo_acknowledged_by, validated_by
+       FROM salary_prep_run
+      WHERE window_close_date IS NOT NULL
+        AND window_close_date <= ?
+        AND status NOT IN (${CLOSED_RUN_STATUSES_SQL},'cancelled')
+        AND auto_closed_at IS NULL`,
     [today]
   );
 
-  for (const row of rows as Array<{ id: string; run_month: string }>) {
+  for (const row of rows as Array<{
+    id: string; run_month: string; status: string;
+    approved_by: string | null; finance_approved_by: string | null;
+    ceo_acknowledged_by: string | null; validated_by: string | null;
+  }>) {
     await db.execute(
       `UPDATE salary_prep_run
           SET status = 'locked', auto_closed_at = NOW(), closed_by = 'system'
@@ -37,13 +43,32 @@ export async function runPayrollWindowClosure(): Promise<void> {
       [row.id]
     );
 
+    // Root-caused 2026-08-14: this cron does not check approved_by /
+    // finance_approved_by / ceo_acknowledged_by / validated_by before
+    // locking — by design, per its own stated purpose (a window-closing
+    // warning fires WINDOW_CLOSING_LEAD_DAYS earlier, so this deadline is
+    // not a surprise). That auto-close behaviour is unchanged here. What was
+    // missing is any way to tell, after the fact, whether a given
+    // auto-closure happened to a run someone had actually signed off on, or
+    // to one nobody ever approved at all — the two are auditable identically
+    // today, and the second is the one that most needs a human to look at
+    // it. Recorded, not blocked: the action_type and a boolean now make the
+    // distinction visible in the audit trail without changing what happens.
+    const hadNoApproval =
+      !row.approved_by && !row.finance_approved_by && !row.ceo_acknowledged_by && !row.validated_by;
+
     await logSensitiveAction({
       actor_user_id: 'system',
-      action_type: 'payroll_window_auto_closed',
+      action_type: hadNoApproval ? 'payroll_window_auto_closed_without_approval' : 'payroll_window_auto_closed',
       module_key: 'payroll',
       entity_type: 'salary_prep_run',
       entity_id: row.id,
-      change_summary: { run_month: row.run_month, reason: 'window_close_date reached' },
+      change_summary: {
+        run_month: row.run_month,
+        reason: 'window_close_date reached',
+        status_before_lock: row.status,
+        had_no_approval: hadNoApproval,
+      },
     }).catch((e: unknown) => console.error('[payroll-window-cron] audit log error:', e));
 
     // Lapse pending leave requests for all employees in this run
