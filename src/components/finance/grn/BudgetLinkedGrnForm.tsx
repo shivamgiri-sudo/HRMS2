@@ -1643,9 +1643,9 @@ export function BudgetLinkedGrnForm({
             <div className="p-4 space-y-1">
               <DenseSection title={isVendor ? "Invoice Details" : "Receipt Details"} />
 
-              {/* Row 1: Amount (vendor only), Branch, Company */}
-              <DenseFieldGroup cols={isVendor ? 3 : 2}>
-                {isVendor && (
+              {/* Row 1: Amount (vendor) / Branch / Company - always 3 columns */}
+              <DenseFieldGroup cols={3}>
+                {isVendor ? (
                   <DenseField label="Amount (incl. GST)" required error={err("amount")}>
                     <Input
                       id="grn-amount"
@@ -1661,6 +1661,8 @@ export function BudgetLinkedGrnForm({
                       }
                     />
                   </DenseField>
+                ) : (
+                  <div /> /* Empty cell for imprest - amount is in separate section */
                 )}
                 <DenseField label="Branch" required error={err("branchId")}>
                   <SearchableSelect
@@ -1689,7 +1691,7 @@ export function BudgetLinkedGrnForm({
                     searchPlaceholder="Type a branch name…"
                   />
                 </DenseField>
-                {companies.length > 1 && (
+                {companies.length > 1 ? (
                   <DenseField label="Company">
                     <SearchableSelect
                       id="grn-company"
@@ -1702,6 +1704,8 @@ export function BudgetLinkedGrnForm({
                       searchPlaceholder="Type company name…"
                     />
                   </DenseField>
+                ) : (
+                  <div /> /* Empty cell when single company */
                 )}
               </DenseFieldGroup>
 
@@ -1855,10 +1859,10 @@ export function BudgetLinkedGrnForm({
                 canCrossFy={canOverridePeriod}
               />
 
-              {/* Row 3: Vendor, GSTIN (vendor only) */}
+              {/* Row 3: Vendor, GSTIN, GST toggle (vendor only) */}
               {isVendor && (
                 <>
-                  <DenseFieldGroup cols={2}>
+                  <DenseFieldGroup cols={3}>
                     <DenseField label="Vendor" required error={err("vendorId")}>
                       <SearchableSelect
                         id="grn-vendor"
@@ -1903,11 +1907,7 @@ export function BudgetLinkedGrnForm({
                         }}
                       />
                     </DenseField>
-                  </DenseFieldGroup>
-
-                  {/* Row 4: GST toggle + states inline */}
-                  <DenseFieldGroup cols={4}>
-                    <DenseField label="GST" hint={form.gstEnabled === false ? "Non-GST vendor" : undefined}>
+                    <DenseField label="GST Applicable">
                       <div className="flex items-center gap-2 h-8">
                         <Switch
                           id="grn-gst-enabled"
@@ -1916,63 +1916,79 @@ export function BudgetLinkedGrnForm({
                             setForm((current) => ({ ...current, gstEnabled: checked }))
                           }
                         />
-                        <span className="text-[12px] text-grn-ink">{form.gstEnabled === false ? "No" : "Yes"}</span>
+                        <span className="text-[12px] text-grn-ink">{form.gstEnabled === false ? "No (International)" : "Yes"}</span>
                       </div>
                     </DenseField>
-                    {form.gstEnabled !== false && (
-                      <>
-                        <DenseField label="Vendor State">
-                          <GrnSelect
-                            className="h-8 text-[12px]"
-                            value={form.vendorStateCode}
-                            onChange={(e) => setForm((cur) => ({ ...cur, vendorStateCode: e.target.value }))}
-                          >
-                            <option value="">Select</option>
-                            {GST_STATE_CODES.map((sc) => (
-                              <option key={sc.value} value={sc.value}>{sc.label}</option>
-                            ))}
-                          </GrnSelect>
-                        </DenseField>
-                        <DenseField label="Billing State">
-                          <GrnSelect
-                            className="h-8 text-[12px]"
-                            value={form.billingStateCode}
-                            onChange={(e) => setForm((cur) => ({ ...cur, billingStateCode: e.target.value }))}
-                          >
-                            <option value="">Select</option>
-                            {GST_STATE_CODES.map((sc) => (
-                              <option key={sc.value} value={sc.value}>{sc.label}</option>
-                            ))}
-                          </GrnSelect>
-                        </DenseField>
-                        <DenseField label="GST Type">
-                          <div className="flex items-center h-8">
-                            {form.vendorStateCode && form.billingStateCode ? (
-                              <span className={cn(
-                                "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold",
-                                form.vendorStateCode === form.billingStateCode
-                                  ? "bg-emerald-100 text-emerald-700"
-                                  : "bg-amber-100 text-amber-700"
-                              )}>
-                                {form.vendorStateCode === form.billingStateCode ? "Intra (CGST/SGST)" : "Inter (IGST)"}
-                              </span>
-                            ) : (
-                              <span className="text-[11px] text-grn-ink-soft">Select states</span>
-                            )}
-                          </div>
-                        </DenseField>
-                      </>
-                    )}
                   </DenseFieldGroup>
 
-                  {/* Row 5: Place of supply, Contract ref */}
-                  <DenseFieldGroup cols={2}>
+                  {/* Row 4: GST states - always 3 columns for consistency */}
+                  <DenseFieldGroup cols={3}>
+                    <DenseField label="Vendor State">
+                      {form.gstEnabled !== false ? (
+                        <GrnSelect
+                          className="h-8 text-[12px]"
+                          value={form.vendorStateCode}
+                          onChange={(e) => setForm((cur) => ({ ...cur, vendorStateCode: e.target.value }))}
+                        >
+                          <option value="">Select state</option>
+                          {GST_STATE_CODES.map((sc) => (
+                            <option key={sc.value} value={sc.value}>{sc.label}</option>
+                          ))}
+                        </GrnSelect>
+                      ) : (
+                        <div className="flex items-center h-8 px-2 text-[12px] text-grn-ink-soft bg-grn-paper rounded-[8px] border border-grn-line">
+                          N/A — International
+                        </div>
+                      )}
+                    </DenseField>
+                    <DenseField label="Billing State">
+                      {form.gstEnabled !== false ? (
+                        <GrnSelect
+                          className="h-8 text-[12px]"
+                          value={form.billingStateCode}
+                          onChange={(e) => setForm((cur) => ({ ...cur, billingStateCode: e.target.value }))}
+                        >
+                          <option value="">Select state</option>
+                          {GST_STATE_CODES.map((sc) => (
+                            <option key={sc.value} value={sc.value}>{sc.label}</option>
+                          ))}
+                        </GrnSelect>
+                      ) : (
+                        <div className="flex items-center h-8 px-2 text-[12px] text-grn-ink-soft bg-grn-paper rounded-[8px] border border-grn-line">
+                          N/A — International
+                        </div>
+                      )}
+                    </DenseField>
+                    <DenseField label="Tax Type">
+                      <div className="flex items-center h-8">
+                        {form.gstEnabled === false ? (
+                          <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold bg-slate-100 text-slate-600">
+                            No GST (International)
+                          </span>
+                        ) : form.vendorStateCode && form.billingStateCode ? (
+                          <span className={cn(
+                            "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold",
+                            form.vendorStateCode === form.billingStateCode
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-amber-100 text-amber-700"
+                          )}>
+                            {form.vendorStateCode === form.billingStateCode ? "Intra (CGST/SGST)" : "Inter (IGST)"}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-grn-ink-soft">Select states above</span>
+                        )}
+                      </div>
+                    </DenseField>
+                  </DenseFieldGroup>
+
+                  {/* Row 5: Place of supply, Contract ref, empty for alignment */}
+                  <DenseFieldGroup cols={3}>
                     <DenseField label="Place of supply">
                       <Input
                         id="grn-place"
                         className={cn(inputClass, "h-8")}
                         value={form.placeOfSupply}
-                        placeholder="State or place"
+                        placeholder="State or country"
                         onChange={(event) =>
                           setForm((current) => ({ ...current, placeOfSupply: event.target.value }))
                         }
@@ -1989,11 +2005,12 @@ export function BudgetLinkedGrnForm({
                         }
                       />
                     </DenseField>
+                    <div /> {/* Empty cell for grid alignment */}
                   </DenseFieldGroup>
 
-                  {/* IRN fields (Finance only) */}
+                  {/* IRN fields (Finance only) - 3 columns */}
                   {canOverridePeriod && (
-                    <DenseFieldGroup cols={2}>
+                    <DenseFieldGroup cols={3}>
                       <DenseField label="IRN (e-invoice)" hint="From GSTN portal">
                         <Input
                           id="grn-irn"
@@ -2016,6 +2033,7 @@ export function BudgetLinkedGrnForm({
                           }
                         />
                       </DenseField>
+                      <div /> {/* Empty cell for grid alignment */}
                     </DenseFieldGroup>
                   )}
                 </>
