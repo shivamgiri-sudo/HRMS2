@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db as pool } from "../../db/mysql.js";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { canViewEmployee, resolveUserBusinessScope, buildEmployeeScopeCondition } from "../../shared/enterpriseScope.js";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 
 export const employeeReactivationRouter = Router();
@@ -60,7 +61,22 @@ employeeReactivationRouter.get("/reactivation/pending", async (req: Authenticate
       return res.json({ success: true, data: [] });
     }
 
-    let query = `
+    // branch_head previously saw every pending reactivation request company-wide — this
+    // handler's own prior comment admitted it ("branch heads see all for now"). Scoped via
+    // the same employee-scope mechanism (shared/enterpriseScope.ts) used across the rest of
+    // this delta-audit remediation (delta-audit 2026-08-14, P1). hr/admin/super_admin stay
+    // unrestricted (buildEmployeeScopeCondition's own admin/hr/super_admin/ceo bypass).
+    let scopeCondition: { sql: string; params: unknown[] } = { sql: "1=1", params: [] };
+    if (isBranchHead && !isHR) {
+      const scope = await resolveUserBusinessScope(userId!);
+      scopeCondition = buildEmployeeScopeCondition(scope, {
+        employeeId: "e.id",
+        branchId: "e.branch_id",
+        processId: "e.process_id",
+      });
+    }
+
+    const query = `
       SELECT
         r.*,
         e.employee_code,
@@ -68,15 +84,13 @@ employeeReactivationRouter.get("/reactivation/pending", async (req: Authenticate
       FROM employee_reactivation_requests r
       JOIN employees e ON r.employee_id = e.id
       WHERE r.status IN ('pending', 'branch_head_approved')
+        AND (${scopeCondition.sql})
       ORDER BY r.created_at DESC
     `;
 
-    const [rows] = await pool.execute<(ReactivationRow & RowDataPacket)[]>(query);
+    const [rows] = await pool.execute<(ReactivationRow & RowDataPacket)[]>(query, scopeCondition.params);
 
-    // Filter based on role if needed (future: add branch scope for branch heads)
-    const filtered = isHR ? rows : rows; // branch heads see all for now
-
-    res.json({ success: true, data: filtered });
+    res.json({ success: true, data: rows });
   } catch (err: any) {
     console.error("[Reactivation] Failed to fetch pending:", err);
     res.status(500).json({ success: false, message: err.message ?? "Failed to load pending requests" });
@@ -137,7 +151,14 @@ employeeReactivationRouter.get("/reactivation/all", async (req: AuthenticatedReq
 // ── GET /reactivation/:id ─────────────────────────────────────────────────────
 // Returns single request detail
 
-employeeReactivationRouter.get("/reactivation/:id", async (req: AuthenticatedRequest, res) => {
+employeeReactivationRouter.get(
+  "/reactivation/:id",
+  // This endpoint carried NO role check at all before this fix — any authenticated user of
+  // any role could fetch full detail (employee name, branch, cost centre, every actor's
+  // identity) of any reactivation request by guessing/incrementing :id (delta-audit
+  // 2026-08-14, P0: missing auth, not just missing scope).
+  requireRole("hr", "admin", "super_admin", "branch_head"),
+  async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
 
@@ -182,12 +203,20 @@ employeeReactivationRouter.get("/reactivation/:id", async (req: AuthenticatedReq
       return res.status(404).json({ success: false, message: "Request not found" });
     }
 
+    // branch_head previously had no scope check here either — combined with the missing
+    // role gate above, any branch_head (or, before this fix, any authenticated user at all)
+    // could read a reactivation request for an employee outside their own branch.
+    if (!(await canViewEmployee(req.authUser!.id, String(rows[0].employee_id)))) {
+      return res.status(403).json({ success: false, message: "This reactivation request is not in your assigned scope" });
+    }
+
     res.json({ success: true, data: rows[0] });
   } catch (err: any) {
     console.error("[Reactivation] Failed to fetch detail:", err);
     res.status(500).json({ success: false, message: err.message ?? "Failed to load request" });
   }
-});
+  }
+);
 
 // ── POST /reactivation/initiate ───────────────────────────────────────────────
 // Creates a new reactivation request
@@ -317,6 +346,14 @@ employeeReactivationRouter.post(
       }
 
       const request = rows[0];
+
+      // branch_head previously had no scope check at all here and could approve/reject any
+      // employee's reactivation in any branch, simply by supplying its :id (delta-audit
+      // 2026-08-14, P1). hr/admin/super_admin stay unrestricted, matching every other role
+      // in this module and canViewEmployee's own admin/hr/super_admin/ceo bypass.
+      if (!(await canViewEmployee(actionedBy, String(request.employee_id)))) {
+        return res.status(403).json({ success: false, message: "This reactivation request is not in your assigned scope" });
+      }
 
       if (request.status !== "pending") {
         return res.status(400).json({ success: false, message: "Request is not pending branch head action" });

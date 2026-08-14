@@ -5,6 +5,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { exitController } from "./exit.controller.js";
 import { ffService } from "./ff.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
+import { canViewEmployee } from "../../shared/enterpriseScope.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import type { Response, NextFunction } from "express";
@@ -65,6 +66,23 @@ exitRouter.get(
   "/:id/clearance",
   requireRole("admin", "hr", "manager", "finance", "payroll", "wfm"),
   h(async (req, res) => {
+    // manager/finance/payroll/wfm previously had no scope check at all here and could list
+    // clearance tasks for any exit request in any branch/process just by supplying its :id
+    // (delta-audit 2026-08-14, P1). admin/hr stay unrestricted (canViewEmployee's own
+    // admin/hr/super_admin/ceo bypass). Verified live: 16 clearance-task rows exist, all
+    // still 'pending' — no clearance has ever been recorded, so this changes no completed
+    // outcome. POST /:id/clearance/generate below is already admin/hr-only and needs no
+    // equivalent change.
+    const [exitRows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id FROM exit_request WHERE id = ?`,
+      [req.params.id]
+    );
+    const employeeId = (exitRows[0] as any)?.employee_id;
+    if (!employeeId) return res.status(404).json({ success: false, message: "Exit request not found" });
+    if (!(await canViewEmployee(req.authUser!.id, String(employeeId)))) {
+      return res.status(403).json({ success: false, message: "This exit request is outside your assigned scope" });
+    }
+
     const [rows] = await db.execute(
       `SELECT * FROM exit_clearance_task WHERE exit_request_id = ? ORDER BY FIELD(status,'blocked','pending','in_progress','cleared','waived'), clearance_area`,
       [req.params.id]
@@ -90,6 +108,23 @@ exitRouter.patch(
     const status = String(req.body?.status ?? "cleared");
     const allowed = new Set(["pending", "in_progress", "cleared", "blocked", "waived"]);
     if (!allowed.has(status)) return res.status(400).json({ success: false, message: "Invalid clearance status" });
+
+    // Same gap as GET /:id/clearance above, on the actual mutating/approval action this
+    // time: manager/finance/payroll/wfm could clear or waive any exit's clearance task in
+    // any branch/process (delta-audit 2026-08-14, P1). This does not gate on the task's own
+    // owner_role (e.g. an hr user clearing a wfm-owned task) — whether cross-functional
+    // clearance should be allowed is a business-policy question, out of scope for a row-scope
+    // fix; only the branch/process boundary is enforced here.
+    const [taskRows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id FROM exit_clearance_task WHERE id = ? AND exit_request_id = ?`,
+      [req.params.taskId, req.params.id]
+    );
+    const employeeId = (taskRows[0] as any)?.employee_id;
+    if (!employeeId) return res.status(404).json({ success: false, message: "Clearance task not found" });
+    if (!(await canViewEmployee(req.authUser!.id, String(employeeId)))) {
+      return res.status(403).json({ success: false, message: "This exit request is outside your assigned scope" });
+    }
+
     await db.execute(
       `UPDATE exit_clearance_task
           SET status = ?, remarks = ?, cleared_by = CASE WHEN ? IN ('cleared','waived') THEN ? ELSE cleared_by END,
