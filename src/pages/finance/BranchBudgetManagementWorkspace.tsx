@@ -31,6 +31,7 @@ import {
   Trash2,
   TrendingUp,
   XCircle,
+  Inbox,
 } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -100,6 +101,7 @@ import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { GST_RATES } from "@/lib/gst";
 import { BranchBudgetMatrixPanel } from "@/components/finance/pnl/BranchBudgetMatrixPanel";
 import { BudgetTopupPanel } from "@/components/finance/budget/BudgetTopupPanel";
+import { BudgetApprovalInbox } from "@/components/finance/budget/BudgetApprovalInbox";
 import { BranchBudgetImportDialog } from "@/components/finance/pnl/BranchBudgetImportDialog";
 import {
   BranchBudgetPlannerGrid, applyCopyForward, budgetLineKey, type PriorBudgetRow,
@@ -136,7 +138,7 @@ const ALLOCATION_DRIVERS = [
   ["direct_tagging", "Direct tagging"],
 ] as const;
 
-type WorkspaceTab = "plan" | "coverage" | "rollup" | "matrix" | "meters" | "readiness" | "approval" | "topups" | "master" | "variance" | "year";
+type WorkspaceTab = "plan" | "coverage" | "rollup" | "matrix" | "meters" | "readiness" | "approval" | "topups" | "master" | "variance" | "year" | "inbox";
 type CoverageDraft = Record<string, { status: BudgetPlanningStatus | ""; reason: string }>;
 type BudgetCapabilities = {
   roles: string[];
@@ -1409,6 +1411,9 @@ export default function BranchBudgetManagementWorkspace() {
               <TabsTrigger value="variance"><BarChart2 className="mr-2 h-4 w-4" />Variance</TabsTrigger>
               <TabsTrigger value="year"><Calendar className="mr-2 h-4 w-4" />Year</TabsTrigger>
               <TabsTrigger value="master"><Settings2 className="mr-2 h-4 w-4" />Expense Master</TabsTrigger>
+              {(capabilities?.canReviewBranchStage || capabilities?.canReviewFinanceStage || capabilities?.canReviewAccountsStage) && (
+                <TabsTrigger value="inbox"><Inbox className="mr-2 h-4 w-4" />My Approval Inbox</TabsTrigger>
+              )}
             </TabsList>
 
             {/* Context strip — always visible on every tab */}
@@ -2310,6 +2315,15 @@ export default function BranchBudgetManagementWorkspace() {
                 onDeleteSubHead={(_head, item) => {
                   setPendingDeleteMaster({ type: "subhead", head: _head, subHead: item });
                   setLines((prev) => prev.filter((l) => !(l.head === _head.headName && l.subHead === item.subHeadName)));
+                }}
+              />
+            </TabsContent>
+
+            <TabsContent value="inbox" className="space-y-5">
+              <BudgetApprovalInbox
+                onViewBudget={(id) => {
+                  setReviewingBudgetId(id);
+                  setTab("approval");
                 }}
               />
             </TabsContent>

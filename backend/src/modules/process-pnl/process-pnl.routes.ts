@@ -230,6 +230,17 @@ router.get(
   })
 );
 
+// Declared BEFORE /pnl/budgets/:id — Express matches in order.
+router.get(
+  "/pnl/budgets/pending-my-review",
+  requireRole(...BUDGET_REVIEW_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const data = await branchBudgetService.listPendingForReviewer(user.role);
+    res.json({ success: true, data });
+  })
+);
+
 router.get(
   "/pnl/budgets/:id",
   requireRole(...BUDGET_READ_ROLES),

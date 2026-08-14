@@ -875,6 +875,25 @@ export const branchBudgetService = {
     return rows;
   },
 
+  async listPendingForReviewer(actorRole: string) {
+    const targetStatus =
+      actorRole === "branch_head" ? "submitted" :
+      actorRole === "finance_head" ? "branch_head_approved" :
+      actorRole === "accounts_head" ? "finance_head_approved" : null;
+    if (!targetStatus) return [];
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT h.id, h.budget_number, h.period_code, h.status, h.gross_budget, h.pnl_budget,
+              h.revision_number, h.created_at, h.updated_at,
+              bm.branch_name
+         FROM finance_budget_header h
+         LEFT JOIN branch_master bm ON bm.id = h.branch_id
+        WHERE h.status = ?
+        ORDER BY h.updated_at ASC`,
+      [targetStatus]
+    );
+    return rows;
+  },
+
   async get(id: string) {
     const [headers] = await db.execute<RowDataPacket[]>(
       `SELECT h.*, bm.branch_name
