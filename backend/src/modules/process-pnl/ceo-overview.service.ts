@@ -1078,14 +1078,13 @@ export async function getYtdSummary(upToMonth: string, filters: CeoFilters = {})
   }
 
   const monthly: CeoYtdSummary["monthly"] = [];
-  let totalRevenue = 0, totalPeopleCost = 0, totalIndirectCost = 0, totalBudget = 0;
+  let totalRevenue = 0, totalPeopleCost = 0, totalIndirectCost = 0, totalBudget = 0, totalOp = 0;
 
   await Promise.all(
     months.map(async (period) => {
       const overview = await getCeoOverview(period, filters);
-      const op = overview.revenue - overview.peopleCost - overview.indirectCost;
       const budget = overview.branches.reduce((s, b) => s + (b.budget ?? 0), 0);
-      monthly.push({ period, revenue: overview.revenue, peopleCost: overview.peopleCost, indirectCost: overview.indirectCost, operatingProfit: op, budget });
+      monthly.push({ period, revenue: overview.revenue, peopleCost: overview.peopleCost, indirectCost: overview.indirectCost, operatingProfit: overview.operatingProfit, budget });
     })
   );
 
@@ -1095,8 +1094,9 @@ export async function getYtdSummary(upToMonth: string, filters: CeoFilters = {})
     totalPeopleCost += m.peopleCost;
     totalIndirectCost += m.indirectCost;
     totalBudget += m.budget;
+    totalOp += m.operatingProfit;
   }
-  const totalOperatingProfit = totalRevenue - totalPeopleCost - totalIndirectCost;
+  const totalOperatingProfit = totalOp;
 
   return {
     fy: `${fyStartYear}-${fyStartYear + 1}`,
