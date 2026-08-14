@@ -1658,6 +1658,17 @@ export async function calculatePayrollRunScoped(
           WHERE run_id = ? AND employee_id = ?`,
         [tdsAmt, tdsAmt, tdsAmt, tdsAmt, runId, row.employee_id]
       );
+      if (tdsAmt > 0) {
+        await conn.execute(
+          `INSERT INTO salary_prep_line_component
+             (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
+           SELECT UUID(), ?, spl.id, ?, 'TDS', 'Income Tax (TDS)', 'deduction', ?, 'manual', 0
+             FROM salary_prep_line spl
+            WHERE spl.run_id = ? AND spl.employee_id = ?
+           ON DUPLICATE KEY UPDATE amount = VALUES(amount)`,
+          [runId, row.employee_id, tdsAmt, runId, row.employee_id]
+        );
+      }
     }
     // Recalculate run totals after TDS application
     const [sumRows] = (await conn.execute(
