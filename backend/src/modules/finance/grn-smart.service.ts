@@ -90,6 +90,9 @@ export interface SmartGrnComponentSplitInput {
   recognitionCustomPercentages?: Record<string, number> | null;
   components: InvoiceComponentInput[];
   costCentreSplits: CostCentreSplitRowInput[];
+  /** Provided when invoice is >30 days old and the raiser is a branch-level role.
+   *  Stored on grn_request after migration 1219 (is_late_invoice, late_invoice_reason). */
+  lateInvoiceReason?: string | null;
 }
 
 /** Above this, the raiser must fix the invoice components themselves — a bigger mismatch
@@ -1160,7 +1163,9 @@ export const grnSmartService = {
                 invoice_number = ?, service_period_start = ?, service_period_end = ?,
                 purchase_reference = ?, vendor_gstin = ?, place_of_supply = ?,
                 irn = ?, irn_ack_no = ?,
-                accounting_period = COALESCE(?, accounting_period)
+                accounting_period = COALESCE(?, accounting_period),
+                is_late_invoice  = COALESCE(?, is_late_invoice),
+                late_invoice_reason = COALESCE(?, late_invoice_reason)
           WHERE id = ?`,
         [
           grid.length > 1 ? "split" : "single", first.budget_id, first.id,
@@ -1185,6 +1190,9 @@ export const grnSmartService = {
           /^\d{4}-(0[1-9]|1[0-2])$/.test(String(input.accountingPeriod ?? "").trim())
             ? String(input.accountingPeriod).trim()
             : null,
+          // Late invoice fields (migration 1219 columns) — null when invoice is current
+          input.lateInvoiceReason?.trim() ? 1 : null,
+          input.lateInvoiceReason?.trim() || null,
           grnId,
         ]
       );

@@ -168,6 +168,8 @@ type GrnFormState = {
   accountingPeriod: string;
   irn: string;
   irnAckNo: string;
+  /** Mandatory when bill date is >30 days old and user is not finance_head/accounts_head/super_admin */
+  lateInvoiceReason: string;
 };
 
 type CreatedGrn = { id: string; grnNumber: string; submitted: boolean };
@@ -218,6 +220,7 @@ const EMPTY_FORM: GrnFormState = {
   accountingPeriod: "",
   irn: "",
   irnAckNo: "",
+  lateInvoiceReason: "",
 };
 
 function newAllocation(): AllocationDraft {
@@ -484,6 +487,7 @@ export function BudgetLinkedGrnForm({
       subHead: String(g.sub_head ?? ""),
       paymentTermsDays: Number(g.payment_terms_days ?? 30),
       remarks: String(g.remarks ?? ""),
+      lateInvoiceReason: String(g.late_invoice_reason ?? ""),
     });
     setCreated({ id: String(g.id), grnNumber: String(g.grn_number ?? editGrnId ?? "") || "…", submitted: false });
     if (workspace.invoiceComponents?.length) {
@@ -811,6 +815,15 @@ export function BudgetLinkedGrnForm({
     if (!form.branchId) next.branchId = "Select the branch this spend belongs to.";
     if (!form.billDate) {
       next.billDate = isVendor ? "Invoice date is required." : "Receipt date is required.";
+    }
+    // Late invoice: require reason when >30 days old and raiser is not finance/accounts level
+    if (isVendor && !canOverridePeriod && form.billDate) {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const billD = new Date(form.billDate); billD.setHours(0, 0, 0, 0);
+      const daysOld = Math.floor((today.getTime() - billD.getTime()) / 86400000);
+      if (daysOld > 30 && !form.lateInvoiceReason.trim()) {
+        next.lateInvoiceReason = "Provide a reason for this late invoice.";
+      }
     }
     if (!form.remarks.trim()) next.remarks = "Add a short reason for this spend.";
     if (!(form.amount > 0)) {
@@ -1192,6 +1205,7 @@ export function BudgetLinkedGrnForm({
             budgetLineId: row.budgetLineId,
             percentage: Number(row.percentage),
           })),
+          lateInvoiceReason: form.lateInvoiceReason.trim() || undefined,
         });
       } else {
         await hrmsApi.put(`/api/finance/grns/${current.id}/allocations`, {
@@ -1553,6 +1567,7 @@ export function BudgetLinkedGrnForm({
                     head: "",
                     subHead: "",
                     budgetLineId: "",
+                    lateInvoiceReason: "",
                     dueDate:
                       current.dueDate || !billDate
                         ? current.dueDate
@@ -1564,19 +1579,30 @@ export function BudgetLinkedGrnForm({
               />
             </FieldRow>
 
-            {/* 3-D: Back-date warning — non-finance raisers see a warning for invoices >30 days old. */}
+            {/* 3-D: Late invoice — non-finance raisers must supply a reason for invoices >30 days old. */}
             {isVendor && !canOverridePeriod && form.billDate && (() => {
               const today = new Date(); today.setHours(0, 0, 0, 0);
               const billD = new Date(form.billDate); billD.setHours(0, 0, 0, 0);
               const daysOld = Math.floor((today.getTime() - billD.getTime()) / 86400000);
               if (daysOld <= 30) return null;
               return (
-                <div className="mx-4 mb-1 flex items-start gap-2 rounded-[8px] border border-rose-200 bg-rose-50 px-3 py-2.5 text-[11.5px] text-rose-800">
-                  <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-rose-600" />
-                  <span>
-                    This invoice is <strong>{daysOld} days old</strong> (older than the 30-day cut-off).
-                    You will not be able to save this GRN. Ask Finance Head to raise this entry.
-                  </span>
+                <div className="mx-4 mb-3 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2.5">
+                  <div className="flex items-start gap-2 text-[11.5px] text-amber-800">
+                    <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
+                    <span>
+                      This invoice is <strong>{daysOld} days old</strong>. Please provide a reason — Finance Head will see this flag during review.
+                    </span>
+                  </div>
+                  <textarea
+                    className="mt-2 w-full rounded-[6px] border border-amber-300 bg-white px-2.5 py-1.5 text-xs text-grn-ink placeholder:text-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                    placeholder="e.g. Invoice received late from vendor / delayed dispatch"
+                    rows={2}
+                    value={form.lateInvoiceReason}
+                    onChange={(e) => setForm((cur) => ({ ...cur, lateInvoiceReason: e.target.value }))}
+                  />
+                  {!form.lateInvoiceReason.trim() && (
+                    <p className="mt-1 text-[10.5px] text-amber-700">Required before saving</p>
+                  )}
                 </div>
               );
             })()}

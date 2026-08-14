@@ -180,7 +180,9 @@ smartGrnRouter.put(
   async (req: SmartRequest, res) => {
     try {
       const user = actor(req);
-      // 3-D: Period-end cut-off — non-finance roles cannot book invoices older than 30 days.
+      // 3-D: Period-end cut-off — non-finance roles are flagged (not blocked) for invoices older
+      // than 30 days. They must supply a lateInvoiceReason; Finance Head sees the flag in the
+      // approval queue. Hard block replaced with a soft require-reason gate.
       const grn = req.financeGrn;
       if (grn?.bill_date) {
         const billDateMs = new Date(String(grn.bill_date)).getTime();
@@ -188,11 +190,14 @@ smartGrnRouter.put(
         const isRestrictedRole = ["branch_admin", "branch_head"].includes(user.role)
           && !user.roles.some((r: string) => ["finance_head", "accounts_head", "super_admin"].includes(r));
         if (isRestrictedRole && billDateMs < cutoffMs) {
-          res.status(400).json({
-            success: false,
-            error: "Invoice is older than the 30-day cut-off period. Ask Finance Head to raise this entry.",
-          });
-          return;
+          const lateReason = req.body?.lateInvoiceReason?.toString().trim();
+          if (!lateReason) {
+            res.status(400).json({
+              success: false,
+              error: "LATE_INVOICE_REASON_REQUIRED: This invoice is older than 30 days. Please provide a reason in the 'lateInvoiceReason' field (e.g. 'Invoice received late from vendor').",
+            });
+            return;
+          }
         }
       }
       // Strip accountingPeriod for callers without finance-level authorization.
