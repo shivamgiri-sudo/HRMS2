@@ -1919,11 +1919,9 @@ export default function BranchBudgetManagementWorkspace() {
                         <Metric label="Consumed" value={money(Number(budget.consumed_amount))} tone="emerald" />
                         <Metric label="Available" value={money(available)} tone={available < 0 ? "rose" : "slate"} />
                         <div className="flex flex-wrap justify-end gap-2">
-                          {canReview(budget) && (
-                            <Button size="sm" variant="outline" onClick={() => setReviewingBudgetId(budget.id)}>
-                              <Eye className="mr-1 h-3.5 w-3.5" />Review
-                            </Button>
-                          )}
+                          <Button size="sm" variant="outline" onClick={() => setReviewingBudgetId(budget.id)}>
+                            <Eye className="mr-1 h-3.5 w-3.5" />{canReview(budget) ? "Review" : "View"}
+                          </Button>
                           {canAmendTax && budget.status === "active" && detailQuery.data?.lines && detailQuery.data.lines.length > 1 && (
                             <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => {
                               const lines = detailQuery.data!.lines;
