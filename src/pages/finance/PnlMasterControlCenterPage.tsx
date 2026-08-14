@@ -681,7 +681,8 @@ export default function PnlMasterControlCenterPage() {
       <div className="flex h-full flex-col">
         {/* 48px slim header */}
         <div className="flex items-center justify-between border-b px-4 h-12 shrink-0 bg-white">
-          <h1 className="text-base font-bold text-slate-900">P&L Master &amp; Control Center</h1>
+          <h1 className="text-base font-bold text-slate-900">P&L Master & Control Center</h1>
+          {/* Govern process mappings, contracts, hybrid billing, delivery evidence, cost classification */}
           <div className="flex items-center gap-3">
             {period && <Badge variant="outline" className="text-xs">{period}</Badge>}
             <Button variant="outline" size="sm" className="text-xs gap-1.5" onClick={() => setBulkUploadOpen(true)}>
