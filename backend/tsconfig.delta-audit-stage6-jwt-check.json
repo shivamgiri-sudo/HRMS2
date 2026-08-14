@@ -1,8 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": { "noEmit": true },
-  "include": [
-    "src/config/env.ts",
-    "src/modules/ats/candidate-portal.service.ts"
-  ]
-}

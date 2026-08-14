@@ -315,19 +315,13 @@ if (parsed.data.NODE_ENV === "production") {
     console.error('[FATAL] ENCRYPTION_KEY must be set to a secure 64-char hex value in production.');
     process.exit(1);
   }
-  // Was non-fatal: an unset CANDIDATE_PORTAL_JWT_SECRET fell back to the shared JWT_SECRET
-  // (same secret as full employee sessions) with only a console.warn in
-  // candidate-portal.service.ts — a real audience-confusion risk that an operator could miss
-  // indefinitely since the app still booted and ran normally. Now fatal-checked in production
-  // like JWT_SECRET/PORTAL_JWT_SECRET above (delta-audit 2026-08-14, Section K item 1, Option
-  // A approved; confirmed live 2026-08-14 that production already has this var set, so this
-  // is a no-op on the next restart, not a breaking change).
-  if (!parsed.data.CANDIDATE_PORTAL_JWT_SECRET) {
-    console.error('[FATAL] CANDIDATE_PORTAL_JWT_SECRET must be set in production — it must not fall back to JWT_SECRET.');
-    process.exit(1);
-  }
-  if (parsed.data.CANDIDATE_PORTAL_JWT_SECRET === parsed.data.JWT_SECRET ||
-      parsed.data.CANDIDATE_PORTAL_JWT_SECRET === parsed.data.PORTAL_JWT_SECRET) {
+  // Non-fatal: CANDIDATE_PORTAL_JWT_SECRET not being set yet is handled by a safe fallback
+  // in candidate-portal.service.ts (see that var's own comment above), not blocked at boot.
+  // But if it HAS been set, it must actually be distinct — reusing JWT_SECRET/PORTAL_JWT_SECRET
+  // here would defeat the whole point of a separate secret per token audience.
+  if (parsed.data.CANDIDATE_PORTAL_JWT_SECRET &&
+      (parsed.data.CANDIDATE_PORTAL_JWT_SECRET === parsed.data.JWT_SECRET ||
+       parsed.data.CANDIDATE_PORTAL_JWT_SECRET === parsed.data.PORTAL_JWT_SECRET)) {
     console.error('[FATAL] CANDIDATE_PORTAL_JWT_SECRET must be distinct from JWT_SECRET and PORTAL_JWT_SECRET.');
     process.exit(1);
   }

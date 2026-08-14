@@ -13,22 +13,16 @@ import { env } from '../../config/env.js';
 // secret full employee sessions are signed with, unlike the client portal (which already
 // has its own PORTAL_JWT_SECRET). A valid candidate-portal token could pass signature
 // verification inside requireAuth. Falls back to JWT_SECRET only when
-// CANDIDATE_PORTAL_JWT_SECRET isn't configured — but every candidate-portal token issued
-// while on the fallback is still cryptographically indistinguishable from an
-// employee-session token to anything that only checks the signature.
-//
-// env.ts now fatal-checks this var in production (delta-audit 2026-08-14, Section K item 1,
-// Option A approved), so in a production process this fallback can no longer actually be
-// reached — boot fails first. The fallback and warning stay here for dev/test, where
-// requiring every developer to set a 32-char secret before the app runs at all would be
-// pure friction with no real audience-confusion risk (dev tokens aren't production
-// employee-session tokens).
+// CANDIDATE_PORTAL_JWT_SECRET isn't configured yet, so an existing deploy isn't broken —
+// but every candidate-portal token issued while on the fallback is still cryptographically
+// indistinguishable from an employee-session token to anything that only checks the
+// signature. Set CANDIDATE_PORTAL_JWT_SECRET in production and restart to close this for
+// real; until then this is unchanged from before except for the loud warning below.
 if (!env.CANDIDATE_PORTAL_JWT_SECRET) {
   console.warn(
     '[SECURITY] CANDIDATE_PORTAL_JWT_SECRET is not set — ATS candidate-portal tokens are ' +
     'still signed with the shared JWT_SECRET (same secret as employee sessions). Set ' +
-    'CANDIDATE_PORTAL_JWT_SECRET in the environment and restart to use a fully separate secret. ' +
-    '(Production boot already fails without it — this warning path is dev/test only.)'
+    'CANDIDATE_PORTAL_JWT_SECRET in the environment and restart to use a fully separate secret.'
   );
 }
 const JWT_SECRET = env.CANDIDATE_PORTAL_JWT_SECRET || env.JWT_SECRET;
