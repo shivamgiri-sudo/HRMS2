@@ -1,21 +1,17 @@
 -- 1214_repair_live_payroll_schema_gaps.sql
 --
--- ⚠️ SUPERSEDED — DO NOT SCHEDULE. Verified 2026-08-14: migrations 1211
---    (salary_prep_run_incentives_applied_at.sql) and 1212
---    (payslip_email_tracking_and_missing_indexes.sql) landed 10 minutes after this file was
---    authored and are ALREADY in MIGRATION_MANIFEST — between them they create all four objects
---    this file repairs (incentives_applied_at, payslip_emailed, payslip_emailed_at,
---    idx_spl_payslip_gen). Confirmed live: none of the four exist yet, and 1211/1212 will create
---    them on the next backend restart regardless of whether this file is ever scheduled.
---
---    This file's own guards (PREPARE/EXECUTE against information_schema, same pattern as
---    1211/1212) make it a true no-op if it ever does run after 1211/1212 — it is not dangerous,
---    just redundant. Left unscheduled and unremoved rather than deleted, so the investigation
---    below stays available; do not register it in MIGRATION_MANIFEST.
---
--- ⚠️ NOT IN THE MANIFEST. Authored for review; it will not run until someone adds it to
---    MIGRATION_MANIFEST in runPendingMigrations.ts. Registering it there means it executes on the
---    next backend start, which is a production schema change and needs explicit approval.
+-- CORRECTION 2026-08-14, superseding the note that used to sit here: this file WAS scheduled
+-- (commit af976fc3, "migrations: schedule 1214 — restores the rebuild path for the payroll
+-- schema gaps"), landing concurrently with — and a few commits after — a now-outdated note here
+-- that said "SUPERSEDED — DO NOT SCHEDULE, not in the manifest." That note was accurate when
+-- written (1211/1212 alone covered the live-repair case) but missed the rebuild case af976fc3
+-- lays out: the four objects reached production BY HAND on 2026-08-14 with no schema_migrations
+-- row, so on a REBUILT database they still need a migration to create them, since 398/402/404
+-- cannot execute on MySQL 8 either way. 1211/1212 already close that same rebuild gap for their
+-- own objects, so scheduling this file too is belt-and-suspenders redundant rather than load-
+-- bearing — but redundant-and-scheduled is what actually shipped, not "leave it unscheduled."
+-- Confirmed in MIGRATION_MANIFEST (runPendingMigrations.ts), placed last, guarded per-object
+-- via information_schema so it is a true no-op wherever 1211/1212/prior-hand-fix already exist.
 --
 -- WHAT THIS REPAIRS
 --
