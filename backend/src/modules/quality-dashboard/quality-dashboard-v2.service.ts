@@ -98,29 +98,40 @@ class QualityDashboardV2Service {
     return map;
   }
 
+  /**
+   * Single source of truth for "can this scope see this employee's data" —
+   * shared by scopedUserRows (the branch/process/team/analyst drill levels)
+   * and analystCalls (the level-5 individual-call drill). analystCalls used
+   * to have no scope check at all for BRANCH_ALL/PROCESS_ALL/CUSTOM_SCOPE
+   * callers — only the route's own SELF_ONLY/TEAM_ONLY special case existed,
+   * so a BRANCH_ALL caller could pass any employeeId, including one outside
+   * their branch, and read that employee's individually audited calls
+   * (delta-audit 2026-08-14, P1). Extracted here so both call sites can
+   * never drift apart on what "in scope" means.
+   */
+  private isEmployeeInScope(scope: DashboardScope, info: EmployeeInfo): boolean {
+    if (!info.activeStatus) return false;
+    if (scope.level === "ORG_ALL") return true;
+    if (scope.level === "BRANCH_ALL") return !!info.branchId && scope.branchIds.includes(info.branchId);
+    if (scope.level === "PROCESS_ALL") return !!info.processId && scope.processIds.includes(info.processId);
+    if (scope.level === "TEAM_ONLY" || scope.level === "SELF_ONLY") return scope.employeeIds.includes(info.id);
+    if (scope.level === "CUSTOM_SCOPE") {
+      const branchOk = scope.branchIds.length === 0 || (!!info.branchId && scope.branchIds.includes(info.branchId));
+      const processOk = scope.processIds.length === 0 || (!!info.processId && scope.processIds.includes(info.processId));
+      return branchOk && processOk;
+    }
+    return false;
+  }
+
   /** Scope-filter + join per-user call aggregates against employee identity, in application code. */
   private async scopedUserRows(scope: DashboardScope, rangeDays: number): Promise<Array<PerUserAgg & EmployeeInfo>> {
     const aggs = await this.perUserAggregates(rangeDays);
     const employees = await this.employeesByCode(aggs.map((a) => a.user));
 
-    const inScope = (info: EmployeeInfo): boolean => {
-      if (!info.activeStatus) return false;
-      if (scope.level === "ORG_ALL") return true;
-      if (scope.level === "BRANCH_ALL") return !!info.branchId && scope.branchIds.includes(info.branchId);
-      if (scope.level === "PROCESS_ALL") return !!info.processId && scope.processIds.includes(info.processId);
-      if (scope.level === "TEAM_ONLY" || scope.level === "SELF_ONLY") return scope.employeeIds.includes(info.id);
-      if (scope.level === "CUSTOM_SCOPE") {
-        const branchOk = scope.branchIds.length === 0 || (!!info.branchId && scope.branchIds.includes(info.branchId));
-        const processOk = scope.processIds.length === 0 || (!!info.processId && scope.processIds.includes(info.processId));
-        return branchOk && processOk;
-      }
-      return false;
-    };
-
     const out: Array<PerUserAgg & EmployeeInfo> = [];
     for (const agg of aggs) {
       const info = employees.get(agg.user);
-      if (!info || !inScope(info)) continue;
+      if (!info || !this.isEmployeeInScope(scope, info)) continue;
       out.push({ ...agg, ...info });
     }
     return out;
@@ -235,7 +246,7 @@ class QualityDashboardV2Service {
   }
 
   /** Level-5 drill: an analyst's individually audited calls for the range. */
-  async analystCalls(employeeId: string, rangeDays: number): Promise<{
+  async analystCalls(employeeId: string, rangeDays: number, scope: DashboardScope): Promise<{
     employee: { id: string; fullName: string; employeeCode: string } | null;
     calls: Array<{
       id: number;
@@ -248,11 +259,21 @@ class QualityDashboardV2Service {
     }>;
   }> {
     const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, full_name, employee_code FROM employees WHERE id = ? LIMIT 1`,
+      `SELECT id, full_name, employee_code, branch_id, process_id, active_status
+         FROM employees WHERE id = ? LIMIT 1`,
       [employeeId],
     );
     const emp = (empRows as any[])[0];
-    if (!emp) return { employee: null, calls: [] };
+    // Out-of-scope reads identically to not-found, same information-hiding
+    // choice used elsewhere in this codebase's row-scope fixes — a caller
+    // cannot tell "exists outside my scope" from "doesn't exist".
+    if (!emp || !this.isEmployeeInScope(scope, {
+      id: emp.id, employeeCode: emp.employee_code, fullName: emp.full_name,
+      branchId: emp.branch_id, processId: emp.process_id, reportsTo: null,
+      activeStatus: !!emp.active_status,
+    })) {
+      return { employee: null, calls: [] };
+    }
 
     const calls = await querySource<{
       id: number; ClientId: string | null; CallDate: string; quality_percentage: string | null;

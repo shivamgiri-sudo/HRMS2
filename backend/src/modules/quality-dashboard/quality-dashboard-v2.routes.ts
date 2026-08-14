@@ -77,11 +77,12 @@ router.get(
       const ctx = await getUserRoleContext(userId);
       const scope = await resolveDashboardScope(userId, ctx.primaryRole);
 
-      if ((scope.level === "SELF_ONLY" || scope.level === "TEAM_ONLY") && !scope.employeeIds.includes(employeeId)) {
-        return res.status(403).json({ success: false, message: "Employee is outside your dashboard scope" });
-      }
-
-      const result = await qualityDashboardV2Service.analystCalls(employeeId, rangeDays);
+      // Scope is now enforced inside analystCalls itself, for every scope level
+      // (not just SELF_ONLY/TEAM_ONLY, which is all this route-level check used
+      // to cover — a BRANCH_ALL/PROCESS_ALL/CUSTOM_SCOPE caller had no check at
+      // all before this. Matches the /summary route's own stated architecture:
+      // "Security boundary is enforced inside the service."
+      const result = await qualityDashboardV2Service.analystCalls(employeeId, rangeDays, scope);
       return res.status(200).json({ success: true, data: result });
     } catch (error) {
       logger.error("GET /quality-dashboard-v2/analyst/:employeeId/calls error:", error);
