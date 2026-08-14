@@ -256,7 +256,18 @@ export async function triageWorkItem(workItemId: string, complaintText: string):
   }
 }
 
+// Remarks prefix written by a conclusive triage (success or deliberate safety rejection).
+// Transient failures ("AI diagnosis unavailable", "AI diagnosis failed") do NOT use these
+// prefixes, so those items remain in the untriaged queue and are automatically retried.
+const CONCLUSIVE_REMARKS_PREFIXES = [
+  'AI-drafted diagnosis',   // successful triage
+  'Not analysed',           // safety-gate rejection (injection or domain guard)
+] as const;
+
 export async function findUntriagedMiraFeedback(): Promise<Array<{ id: string; description: string }>> {
+  const prefixConditions = CONCLUSIVE_REMARKS_PREFIXES.map(() => 'al.remarks LIKE ?').join(' OR ');
+  const prefixArgs = CONCLUSIVE_REMARKS_PREFIXES.map((p) => `${p}%`);
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT wi.id, wi.description
        FROM work_item wi
@@ -264,9 +275,10 @@ export async function findUntriagedMiraFeedback(): Promise<Array<{ id: string; d
         AND NOT EXISTS (
           SELECT 1 FROM work_item_audit_log al
            WHERE al.work_item_id = wi.id AND al.action = ?
+             AND (${prefixConditions})
         )
       ORDER BY wi.created_at ASC`,
-    [TRIAGE_AUDIT_ACTION],
+    [TRIAGE_AUDIT_ACTION, ...prefixArgs],
   );
   return (rows as RowDataPacket[]).map((r) => ({ id: String(r.id), description: String(r.description ?? '') }));
 }
