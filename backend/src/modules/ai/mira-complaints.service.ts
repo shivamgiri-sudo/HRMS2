@@ -83,18 +83,16 @@ function triageStatus(remarks: string | null): ComplaintSummary['triage_status']
 }
 
 export async function listComplaints(limit = 200): Promise<ComplaintSummary[]> {
-  // Note: TRIAGE_AUDIT_ACTION is inlined as a string literal because MySQL doesn't support
-  // ? placeholders inside correlated subqueries (ER_WRONG_ARGUMENTS errno 1210)
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        wi.id, wi.title, wi.description, wi.priority, wi.status, wi.created_at,
        CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS reporter_name,
        e.employee_code AS reporter_code,
        (SELECT al.remarks FROM work_item_audit_log al
-         WHERE al.work_item_id = wi.id AND al.action = '${TRIAGE_AUDIT_ACTION}'
+         WHERE al.work_item_id = wi.id AND al.action = 'mira_ai_triage'
          ORDER BY al.performed_at DESC LIMIT 1) AS triage_remarks,
        (SELECT al.performed_at FROM work_item_audit_log al
-         WHERE al.work_item_id = wi.id AND al.action = '${TRIAGE_AUDIT_ACTION}'
+         WHERE al.work_item_id = wi.id AND al.action = 'mira_ai_triage'
          ORDER BY al.performed_at DESC LIMIT 1) AS triaged_at,
        (SELECT COUNT(*) FROM mira_fix_draft fd WHERE fd.work_item_id = wi.id) AS draft_count,
        (SELECT fd.status FROM mira_fix_draft fd
