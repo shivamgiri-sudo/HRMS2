@@ -6,6 +6,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { inboxService, getMyPending, getTimeline } from "./inbox.service.js";
 import { generateFixDraftForWorkItem } from "../ai/mira-fix-draft-generate.service.js";
 import { listFixDraftsForWorkItem } from "../ai/mira-fix-draft.service.js";
+import { deployFixDraft } from "../ai/mira-fix-deploy.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -93,6 +94,21 @@ router.get("/mira-fix-draft/:workItemId", requireRole("super_admin"), h(async (r
 // database, even though nothing can be deployed from it yet (see mira-fix-draft.service.ts).
 router.post("/mira-fix-draft/:workItemId/generate", requireRole("super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const outcome = await generateFixDraftForWorkItem(req.params.workItemId);
+  return res.json({ success: true, outcome });
+}));
+
+// POST /mira-fix-draft/deploy/:draftId — applies a drafted diff in a disposable worktree,
+// runs the verification command, and (only when MIRA_AUTO_DEPLOY_ENABLED) commits, pushes
+// and confirms it live, reverting automatically if confirmation fails. Same 200-with-status
+// contract as /generate: "the deny-list rejected it", "the tests failed" and "this was a dry
+// run because the pipeline is not armed" are all outcomes to read, not errors.
+//
+// super_admin only, and deliberately a separate call from /generate — generating a candidate
+// diff and shipping one are different decisions, and collapsing them into one endpoint would
+// mean the act of drafting could deploy.
+router.post("/mira-fix-draft/deploy/:draftId", requireRole("super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const actor = req.authUser?.email ?? req.authUser?.id ?? "super_admin";
+  const outcome = await deployFixDraft(req.params.draftId, String(actor));
   return res.json({ success: true, outcome });
 }));
 

@@ -246,6 +246,28 @@ const envSchema = z.object({
   UAT_BUILDS_ENABLED: z.string().default("false"),
   UAT_DAILY_LLM_USD_CAP: z.coerce.number().default(25),
 
+  // Mira fix pipeline (mira-fix-deploy.service.ts). MIRA_AUTO_DEPLOY_ENABLED is the arming
+  // switch for the only stage that can change production: false means apply + verify + record
+  // the result and stop, which is a useful dry run in its own right. It defaults to false and
+  // must be set deliberately, because "true" means AI-authored diffs reach main and deploy
+  // themselves — that is a decision an owner makes once, knowingly, not something a config
+  // copy-paste should be able to turn on by accident.
+  // Arm drafting first, deploying second — they are independent switches so the diffs this
+  // pipeline produces can be read for a while before any of them are allowed to ship.
+  MIRA_AUTO_DRAFT_ENABLED: z.string().default("false"),
+  MIRA_AUTO_DEPLOY_ENABLED: z.string().default("false"),
+  // The repository the pipeline creates its disposable worktrees FROM. Never the directory
+  // being served — assertSafeWorktree() refuses to apply a diff inside it either way.
+  MIRA_FIX_REPO_PATH: z.string().default(process.cwd()),
+  // Where to confirm the deploy actually landed. Loopback by default so confirmation does not
+  // depend on DNS, nginx vhost routing or the public certificate; note the port is 5055 here,
+  // not 5000.
+  MIRA_FIX_HEALTH_URL: z.string().default("http://127.0.0.1:5055"),
+  // The gate a drafted diff must pass before it can ship. Split into bin + args so it is
+  // execFile'd as an argv array and never string-interpolated into a shell.
+  MIRA_FIX_VERIFY_COMMAND_BIN: z.string().default("npx"),
+  MIRA_FIX_VERIFY_COMMAND_ARGS: z.string().default("vitest,run,--reporter=basic"),
+
   // AI provider — OpenAI Whisper (voice transcription fallback for Safari/iOS,
   // where the browser has no Web Speech API)
   OPENAI_API_KEY: z.string().default(""),
@@ -368,6 +390,13 @@ export const env = {
   ESIGN_RECONCILIATION_ENABLED: parsed.data.ESIGN_RECONCILIATION_ENABLED === "true",
   NCOSEC_RECONCILIATION_ENABLED: parsed.data.NCOSEC_RECONCILIATION_ENABLED !== "false",
   NCOSEC_RECONCILIATION_AUTO_FIX: parsed.data.NCOSEC_RECONCILIATION_AUTO_FIX === "true",
+  MIRA_AUTO_DRAFT_ENABLED: parsed.data.MIRA_AUTO_DRAFT_ENABLED === "true",
+  MIRA_AUTO_DEPLOY_ENABLED: parsed.data.MIRA_AUTO_DEPLOY_ENABLED === "true",
+  MIRA_FIX_REPO_PATH: parsed.data.MIRA_FIX_REPO_PATH,
+  MIRA_FIX_HEALTH_URL: parsed.data.MIRA_FIX_HEALTH_URL.replace(/\/+$/, ""),
+  MIRA_FIX_VERIFY_COMMAND_BIN: parsed.data.MIRA_FIX_VERIFY_COMMAND_BIN,
+  MIRA_FIX_VERIFY_COMMAND_ARGS: parsed.data.MIRA_FIX_VERIFY_COMMAND_ARGS
+    .split(",").map((a) => a.trim()).filter(Boolean),
   MCNMEET_ENABLED: parsed.data.MCNMEET_ENABLED === "true",
   MCNMEET_GOOGLE_BACKUP_ENABLED: parsed.data.MCNMEET_GOOGLE_BACKUP_ENABLED !== "false",
   MCNMEET_GOOGLE_AUTO_CREATE_ENABLED: parsed.data.MCNMEET_GOOGLE_AUTO_CREATE_ENABLED === "true",
