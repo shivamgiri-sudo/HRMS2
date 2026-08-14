@@ -31,6 +31,13 @@ import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
 import { processPnlService } from "./process-pnl.service.js";
+import {
+  listRewardPenalty,
+  createRewardPenaltyEntry,
+  approveRewardPenaltyEntry,
+  rejectRewardPenaltyEntry,
+  getRewardPenaltySummary,
+} from "./reward-penalty.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -1341,6 +1348,43 @@ router.post("/pnl/period/:periodId/signoff", requireWriteAccess, requireRole(...
 router.post("/pnl/period/:periodId/lock", requireWriteAccess, requireRole(...PNL_SIGNOFF_ROLES), h(async (req, res) => {
   const data = await canonicalPnlService.lockPeriod(req.params.periodId, req.authUser.id);
   res.json({ success: true, data });
+}));
+
+// ── Rewards & Penalties ─────────────────────────────────────────────────────
+
+const RP_READ_ROLES = [...PNL_READ_ROLES] as const;
+const RP_WRITE_ROLES = ["super_admin", "admin", "finance", "finance_head", "accounts_head"] as const;
+const RP_APPROVE_ROLES = ["super_admin", "finance_head", "accounts_head"] as const;
+
+router.get("/pnl/reward-penalty", requireAuth, requireRole(...RP_READ_ROLES), h(async (req, res) => {
+  const period = String(req.query.period ?? "");
+  const costCentreId = req.query.costCentreId ? String(req.query.costCentreId) : undefined;
+  const data = await listRewardPenalty(period, costCentreId);
+  res.json({ success: true, data });
+}));
+
+router.get("/pnl/reward-penalty/summary", requireAuth, requireRole(...RP_READ_ROLES), h(async (req, res) => {
+  const period = String(req.query.period ?? "");
+  const data = await getRewardPenaltySummary(period);
+  res.json({ success: true, data });
+}));
+
+router.post("/pnl/reward-penalty", requireAuth, requireWriteAccess, requireRole(...RP_WRITE_ROLES), h(async (req, res) => {
+  const entry = await createRewardPenaltyEntry(req.body, req.authUser.id);
+  res.status(201).json({ success: true, data: entry });
+}));
+
+router.put("/pnl/reward-penalty/:id/approve", requireAuth, requireWriteAccess, requireRole(...RP_APPROVE_ROLES), h(async (req, res) => {
+  const result = await approveRewardPenaltyEntry(req.params.id, req.authUser.id);
+  if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+  res.json({ success: true });
+}));
+
+router.put("/pnl/reward-penalty/:id/reject", requireAuth, requireWriteAccess, requireRole(...RP_APPROVE_ROLES), h(async (req, res) => {
+  const reason = String(req.body?.reason ?? "");
+  const result = await rejectRewardPenaltyEntry(req.params.id, req.authUser.id, reason);
+  if (!result.ok) return res.status(400).json({ success: false, error: result.error });
+  res.json({ success: true });
 }));
 
 export { router as processPnlRouter };

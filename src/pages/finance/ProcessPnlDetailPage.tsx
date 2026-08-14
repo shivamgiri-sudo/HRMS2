@@ -1,4 +1,6 @@
 import React, { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { hrmsApi } from "@/lib/hrmsApi";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -129,6 +131,20 @@ export default function ProcessPnlDetailPage() {
   const indirectQuery = useProcessPnlSection(processId, { period }, "indirect-allocation", activeTab === "costs" || activeTab === "grn-budget");
   const ledgerQuery = useProcessPnlSection(processId, { period }, "ledger", activeTab === "ledger");
   const reconciliationQuery = useProcessPnlSection(processId, { period }, "reconciliation", activeTab === "reconciliation");
+  const costCentreId = detailQuery.data?.costCentreId ?? null;
+  const rpQuery = useQuery({
+    queryKey: ["pnl-reward-penalty", period, costCentreId],
+    queryFn: async () => {
+      const params = new URLSearchParams({ period });
+      if (costCentreId) params.set("costCentreId", costCentreId);
+      const res = await hrmsApi.get<{ success: boolean; data: Array<Record<string, any>> }>(
+        `/api/finance/pnl/reward-penalty?${params.toString()}`
+      );
+      return res.data;
+    },
+    enabled: activeTab === "revenue" && !!period,
+    staleTime: 30_000,
+  });
 
   if (detailQuery.isLoading) {
     return (
@@ -403,6 +419,23 @@ export default function ProcessPnlDetailPage() {
                   ]}
                   rows={detail.revenueComponents}
                 />
+              </section>
+
+              <section className="rounded-lg border p-3">
+                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Rewards &amp; penalties (this cost centre)</h3>
+                {rpQuery.isLoading ? <Skeleton className="h-24 rounded-lg" /> : (
+                  <DataTable
+                    columns={[
+                      { key: "cost_centre_name", label: "Cost centre" },
+                      { key: "entry_type", label: "Type", formatter: (v) => String(v) === "reward" ? "Reward" : "Penalty" },
+                      { key: "description", label: "Description" },
+                      { key: "client_reference", label: "Client ref", formatter: (v) => String(v ?? "—") },
+                      { key: "amount_inr", label: "Amount", align: "right", formatter: (v, row) => `${row.entry_type === "reward" ? "+" : "-"}${currency(Number(v))}` },
+                      { key: "approval_status", label: "Status" },
+                    ]}
+                    rows={rpQuery.data ?? []}
+                  />
+                )}
               </section>
 
               <section className="rounded-lg border p-3">

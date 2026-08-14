@@ -50,7 +50,9 @@ import {
   type DeliveryActualPayload,
   type RevenueComponentPayload,
   type RevenueRulePayload,
+  type RewardPenaltyPayload,
 } from "@/hooks/useBpoPnlConfiguration";
+import { useCostCentreList } from "@/hooks/useCostCentreManagement";
 import {
   usePnlConfiguration,
   type SaveContractPayload,
@@ -345,6 +347,9 @@ export default function PnlMasterControlCenterPage() {
   // Delivery tab has two side-by-side SplitPanes; separate open states prevent both from opening simultaneously
   const [deliveryFormOpen, setDeliveryFormOpen] = useState(false);
   const [revenueFormOpen, setRevenueFormOpen] = useState(false);
+  const [rpFormOpen, setRpFormOpen] = useState(false);
+  const [rpRejectId, setRpRejectId] = useState<string | null>(null);
+  const [rpRejectReason, setRpRejectReason] = useState("");
 
   const legacy = usePnlConfiguration(period, processFilter || undefined);
   const bpo = useBpoPnlConfiguration(period, processFilter || undefined, branchFilter || undefined);
@@ -469,6 +474,24 @@ export default function PnlMasterControlCenterPage() {
     sourceReference: "finance-master",
     status: "approved",
   });
+
+  const [rpForm, setRpForm] = useState<RewardPenaltyPayload>({
+    cost_centre_id: "",
+    period_code: period,
+    entry_type: "reward",
+    description: "",
+    amount_inr: 0,
+    client_reference: "",
+  });
+
+  const rewardPenaltyEntries = bpo.rewardPenaltyQuery.data ?? [];
+  const costCentreList = useCostCentreList({ status: "active" });
+  const costCentres = costCentreList.data?.data ?? [];
+  const costCentreName = useMemo(
+    () => new Map(costCentres.map((cc: any) => [cc.id, cc.cost_centre_name as string])),
+    [costCentres]
+  );
+  const isApprover = useHasRole(["super_admin", "finance_head", "accounts_head"]);
 
   const [costForm, setCostForm] = useState<CostComponentPayload>({
     processId: null,
@@ -662,6 +685,7 @@ export default function PnlMasterControlCenterPage() {
     setRevenueComponentForm((current) => ({ ...current, periodCode: nextPeriod }));
     setCostForm((current) => ({ ...current, periodCode: nextPeriod }));
     setPlanForm((current) => ({ ...current, period_code: nextPeriod }));
+    setRpForm((current) => ({ ...current, period_code: nextPeriod }));
   }
 
   function closeForm() {
@@ -1133,6 +1157,123 @@ export default function PnlMasterControlCenterPage() {
                         </div>
                       }
                     />
+                  </div>
+                </div>
+
+                {/* ── Rewards & Penalties ── */}
+                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-800">Rewards &amp; Penalties</h3>
+                      <p className="text-xs text-slate-500 mt-0.5">Per cost centre, per period. Approved entries flow into the PnL engine.</p>
+                    </div>
+                    <Button size="sm" className="rounded-xl" onClick={() => { setRpForm((f) => ({ ...f, period_code: period, cost_centre_id: "", description: "", amount_inr: 0, client_reference: "" })); setRpFormOpen(true); }}>
+                      + Add entry
+                    </Button>
+                  </div>
+
+                  {rpFormOpen && (
+                    <div className="border-b border-slate-100 bg-slate-50 px-4 py-4">
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-4">
+                        <div>
+                          <Label className="text-xs text-slate-600 mb-1 block">Cost centre</Label>
+                          <select className={selectClass} value={rpForm.cost_centre_id} onChange={(e) => setRpForm((f) => ({ ...f, cost_centre_id: e.target.value }))}>
+                            <option value="">Select cost centre…</option>
+                            {costCentres.map((cc: any) => <option key={cc.id} value={cc.id}>{cc.cost_centre_name}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-slate-600 mb-1 block">Type</Label>
+                          <select className={selectClass} value={rpForm.entry_type} onChange={(e) => setRpForm((f) => ({ ...f, entry_type: e.target.value as "reward" | "penalty" }))}>
+                            <option value="reward">Reward</option>
+                            <option value="penalty">Penalty</option>
+                          </select>
+                        </div>
+                        <div>
+                          <Label className="text-xs text-slate-600 mb-1 block">Amount (₹)</Label>
+                          <Input className="rounded-xl" type="number" value={rpForm.amount_inr} onChange={(e) => setRpForm((f) => ({ ...f, amount_inr: numberValue(e.target.value) }))} />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-slate-600 mb-1 block">Client reference</Label>
+                          <Input className="rounded-xl" value={rpForm.client_reference ?? ""} onChange={(e) => setRpForm((f) => ({ ...f, client_reference: e.target.value }))} placeholder="Optional" />
+                        </div>
+                      </div>
+                      <div className="mb-4">
+                        <Label className="text-xs text-slate-600 mb-1 block">Description</Label>
+                        <Textarea className="rounded-xl" rows={2} value={rpForm.description} onChange={(e) => setRpForm((f) => ({ ...f, description: e.target.value }))} placeholder="Brief description of the reward or penalty…" />
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" className="rounded-xl" disabled={bpo.createRewardPenalty.isPending} onClick={() => saveWithToast(() => bpo.createRewardPenalty.mutateAsync(rpForm), "Entry submitted for approval.").then(() => setRpFormOpen(false))}>
+                          Submit for approval
+                        </Button>
+                        <Button size="sm" variant="outline" className="rounded-xl" onClick={() => setRpFormOpen(false)}>Cancel</Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {rpRejectId && (
+                    <div className="border-b border-slate-100 bg-red-50 px-4 py-3">
+                      <p className="text-sm font-medium text-red-800 mb-2">Rejection reason</p>
+                      <div className="flex gap-2">
+                        <Input className="rounded-xl flex-1" value={rpRejectReason} onChange={(e) => setRpRejectReason(e.target.value)} placeholder="Required reason…" />
+                        <Button size="sm" variant="destructive" className="rounded-xl" disabled={bpo.rejectRewardPenalty.isPending || !rpRejectReason.trim()} onClick={() => saveWithToast(() => bpo.rejectRewardPenalty.mutateAsync({ id: rpRejectId, reason: rpRejectReason }), "Entry rejected.").then(() => { setRpRejectId(null); setRpRejectReason(""); })}>
+                          Confirm reject
+                        </Button>
+                        <Button size="sm" variant="outline" className="rounded-xl" onClick={() => { setRpRejectId(null); setRpRejectReason(""); }}>Cancel</Button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="overflow-x-auto">
+                    {bpo.rewardPenaltyQuery.isLoading ? (
+                      <div className="p-4 space-y-2">{[1,2,3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+                    ) : rewardPenaltyEntries.length === 0 ? (
+                      <p className="p-6 text-center text-sm text-slate-400">No reward or penalty entries for this period.</p>
+                    ) : (
+                      <table className="min-w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-100 bg-slate-50">
+                            <th className="px-4 py-2 text-left text-xs font-medium text-slate-500">Cost centre</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-slate-500">Type</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-slate-500">Description</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-slate-500">Client ref</th>
+                            <th className="px-4 py-2 text-right text-xs font-medium text-slate-500">Amount</th>
+                            <th className="px-4 py-2 text-center text-xs font-medium text-slate-500">Status</th>
+                            {isApprover && <th className="px-4 py-2 text-center text-xs font-medium text-slate-500">Actions</th>}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rewardPenaltyEntries.map((row: any) => (
+                            <tr key={row.id} className="border-b border-slate-100 hover:bg-slate-50">
+                              <td className="px-4 py-2 text-slate-700">{row.cost_centre_name ?? costCentreName.get(row.cost_centre_id) ?? row.cost_centre_id}</td>
+                              <td className="px-4 py-2">
+                                <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${row.entry_type === "reward" ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
+                                  {row.entry_type === "reward" ? "Reward" : "Penalty"}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2 text-slate-600 max-w-xs truncate">{row.description}</td>
+                              <td className="px-4 py-2 text-slate-500 text-xs">{row.client_reference ?? "—"}</td>
+                              <td className="px-4 py-2 text-right font-mono">
+                                <span className={row.entry_type === "reward" ? "text-emerald-700" : "text-red-700"}>
+                                  {row.entry_type === "reward" ? "+" : "-"}₹{Number(row.amount_inr).toLocaleString("en-IN", { maximumFractionDigits: 0 })}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2 text-center"><StatusPill value={row.approval_status} /></td>
+                              {isApprover && (
+                                <td className="px-4 py-2 text-center">
+                                  {row.approval_status === "draft" && (
+                                    <div className="flex justify-center gap-1">
+                                      <button type="button" className="rounded-lg bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-50" disabled={bpo.approveRewardPenalty.isPending} onClick={() => saveWithToast(() => bpo.approveRewardPenalty.mutateAsync(row.id), "Entry approved.")}>Approve</button>
+                                      <button type="button" className="rounded-lg bg-red-50 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-100" onClick={() => { setRpRejectId(row.id); setRpRejectReason(""); }}>Reject</button>
+                                    </div>
+                                  )}
+                                </td>
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
                   </div>
                 </div>
               </TabsContent>

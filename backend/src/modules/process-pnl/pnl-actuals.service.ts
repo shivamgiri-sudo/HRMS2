@@ -214,27 +214,32 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
   if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
   if (!(await tableExists("billing_invoice_particular_snapshot"))) return emptyActuals();
 
-  // Invoiced revenue is a NET figure: invoices less approved credit notes. Without the second
-  // half every period reads high. Both sides are net of GST — verified at source, where
-  // total+igst+sgst+cgst = grnd on 17 of 17, exactly as the invoice table behaves.
+  // Revenue has two complementary sources that must both contribute:
   //
-  // Notes net into their SERVICE month, not the month the credit was raised, because that is the
-  // month whose revenue was overstated and the month this function is asked about. The two differ
-  // often enough to matter: of the 17 approved notes carrying finance_year 2026-27 (Rs 53.91 L
-  // in total), 4 worth Rs 34.72 L name service months Jan/Feb/Mar-26 and so land in the PRIOR
-  // financial year's periods. Only the remaining Rs 19.19 L touches FY2026-27 — Apr 12.75,
-  // May 5.30, Jun 0.64, Jul 0.50. Do not "fix" that gap by reaching for credit_date: those four
-  // are correctly filed, and re-dating them would move real money into the wrong year.
+  // SOURCE A — billing_invoice_particular_snapshot (inv_particulars in db_bill):
+  //   Per-invoice line items. Only ~540 rows exist for FY2026-27, covering invoices that have
+  //   detailed breakdowns in db_bill. These are authoritative when present, so they take priority
+  //   for cost centres that have any particular lines in the period.
   //
-  // Netted at period + cost centre, NOT per invoice: tbl_credit_note.proforma_bill_no matched
-  // 0 of 17 against tbl_invoice.bill_no, so there is no reliable per-invoice link to use. Period
-  // and cost centre are the grain both tables genuinely share.
+  // SOURCE B — billing_provision_snapshot (provision_master in db_bill):
+  //   Monthly billing confirmation per cost centre — 7,350 rows covering every actively-billed
+  //   cost centre for all historical periods. provision_amt is the estimate; billing_amt is the
+  //   confirmed billing (use billing_amt when > 0, otherwise fall back to provision_amt).
+  //   Amounts are stored as integer PAISE — divide by 100 to get rupees.
+  //   Used only for cost centres that have NO particular lines for the period (NOT EXISTS guard
+  //   prevents double-counting).
   //
-  // A credit note is emitted as a negative amount into the same accumulate() as the invoice
-  // lines, so it flows through the identical branch/process/cost-centre attribution rather than
-  // being subtracted from a total afterwards — which would have lost the attribution.
+  // SOURCE C — billing_credit_note_snapshot (credit notes from db_bill):
+  //   Negative adjustments. Applied to whichever source contributed the positive amount; netted
+  //   at period + cost_centre grain (no reliable per-invoice link available).
+  //
+  // Result is a net figure: (A or B) minus C, grouped by branch / process / cost centre.
+
+  const hasProvision = await tableExists("billing_provision_snapshot");
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT branch_id, cost_centre_id, process_id, SUM(amount) AS amount FROM (
+        -- SOURCE A: invoice line items (detailed breakdown where available)
         SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
                pc.process_id AS process_id, p.amount AS amount
           FROM billing_invoice_particular_snapshot p
@@ -243,7 +248,25 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
                   = p.cost_centre_code COLLATE utf8mb4_unicode_ci
           LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
          WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
+        ${hasProvision ? `
         UNION ALL
+        -- SOURCE B: monthly billing confirmation (primary source for most cost centres)
+        -- Excluded for cost centres already covered by SOURCE A to prevent double-counting.
+        SELECT ccm.branch_id, ccm.id AS cost_centre_id, pc.process_id,
+               (CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) / 100 AS amount
+          FROM billing_provision_snapshot ps
+          LEFT JOIN cost_centre_master ccm
+                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                  = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
+          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
+         WHERE ps.period_code = ? AND ps.revenue_active = 1 AND ${OWN_COMPANY_SQL}
+           AND NOT EXISTS (
+             SELECT 1 FROM billing_invoice_particular_snapshot p2
+              WHERE p2.cost_centre_code COLLATE utf8mb4_unicode_ci = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
+                AND p2.period_code = ps.period_code
+           )` : ''}
+        UNION ALL
+        -- SOURCE C: credit notes (always subtracted regardless of which source provided the positive)
         SELECT ccm.branch_id, ccm.id, pc.process_id, -cn.total_amt
           FROM billing_credit_note_snapshot cn
           LEFT JOIN cost_centre_master ccm
@@ -253,7 +276,7 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
          WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}
      ) netted
       GROUP BY branch_id, cost_centre_id, process_id`,
-    [periodCode, periodCode]
+    hasProvision ? [periodCode, periodCode, periodCode] : [periodCode, periodCode]
   );
   return accumulate(rows);
 }
@@ -431,9 +454,36 @@ export async function getSeatRevenueActuals(periodCode: string): Promise<SeatRev
   return out;
 }
 
+/**
+ * Net reward/penalty impact per cost centre for a period.
+ * Approved rewards add positive revenue; approved penalties subtract from revenue.
+ * Only `approved` entries are counted — drafts and rejections are excluded.
+ */
+export async function getRewardPenaltyActuals(periodCode: string): Promise<ActualsByKey> {
+  if (!/^\d{4}-\d{2}$/.test(periodCode)) return emptyActuals();
+  if (!(await tableExists("cost_centre_reward_penalty"))) return emptyActuals();
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ccm.branch_id AS branch_id,
+            rp.cost_centre_id AS cost_centre_id,
+            pc.process_id AS process_id,
+            SUM(CASE WHEN rp.entry_type = 'reward' THEN rp.amount_inr
+                     ELSE -rp.amount_inr END) AS amount
+       FROM cost_centre_reward_penalty rp
+       JOIN cost_centre_master ccm ON ccm.id = rp.cost_centre_id
+       LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
+      WHERE rp.period_code = ? AND rp.approval_status = 'approved'
+        AND ${OWN_COMPANY_SQL}
+      GROUP BY ccm.branch_id, rp.cost_centre_id, pc.process_id`,
+    [periodCode]
+  );
+  return accumulate(rows);
+}
+
 export const pnlActualsService = {
   getIndirectCostActuals,
   getDriverRevenueActuals,
   getInvoicedRevenueActuals,
   getSeatRevenueActuals,
+  getRewardPenaltyActuals,
 };

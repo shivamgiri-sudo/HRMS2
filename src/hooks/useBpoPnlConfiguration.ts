@@ -122,6 +122,15 @@ function useSaveMutation<T extends Record<string, unknown>>(
   });
 }
 
+export interface RewardPenaltyPayload {
+  cost_centre_id: string;
+  period_code: string;
+  entry_type: "reward" | "penalty";
+  description: string;
+  amount_inr: number;
+  client_reference?: string | null;
+}
+
 export function useBpoPnlConfiguration(period?: string, processId?: string, branchId?: string) {
   const queryClient = useQueryClient();
   const periodProcessQuery = queryString({ period, processId });
@@ -194,6 +203,18 @@ export function useBpoPnlConfiguration(period?: string, processId?: string, bran
     staleTime: 30_000,
   });
 
+  const rewardPenaltyQuery = useQuery({
+    queryKey: ["pnl-reward-penalty", period],
+    queryFn: async () => {
+      const response = await hrmsApi.get<{ success: boolean; data: Array<Record<string, any>> }>(
+        `/api/finance/pnl/reward-penalty${queryString({ period })}`
+      );
+      return response.data;
+    },
+    staleTime: 30_000,
+    enabled: !!period,
+  });
+
   const invalidate = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["bpo-pnl-revenue-rules"] }),
@@ -206,6 +227,47 @@ export function useBpoPnlConfiguration(period?: string, processId?: string, bran
       queryClient.invalidateQueries({ queryKey: ["bpo-process-pnl-detail"] }),
     ]);
   };
+
+  const invalidateRp = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["pnl-reward-penalty"] }),
+      queryClient.invalidateQueries({ queryKey: ["bpo-process-pnl"] }),
+      queryClient.invalidateQueries({ queryKey: ["bpo-process-pnl-detail"] }),
+    ]);
+  };
+
+  const createRewardPenalty = useMutation({
+    mutationFn: async (payload: RewardPenaltyPayload) => {
+      const response = await hrmsApi.post<{ success: boolean; data: Record<string, any> }>(
+        "/api/finance/pnl/reward-penalty",
+        payload
+      );
+      return response.data;
+    },
+    onSuccess: invalidateRp,
+  });
+
+  const approveRewardPenalty = useMutation({
+    mutationFn: async (id: string) => {
+      const response = await hrmsApi.put<{ success: boolean }>(
+        `/api/finance/pnl/reward-penalty/${id}/approve`,
+        {}
+      );
+      return response.data;
+    },
+    onSuccess: invalidateRp,
+  });
+
+  const rejectRewardPenalty = useMutation({
+    mutationFn: async ({ id, reason }: { id: string; reason: string }) => {
+      const response = await hrmsApi.put<{ success: boolean }>(
+        `/api/finance/pnl/reward-penalty/${id}/reject`,
+        { reason }
+      );
+      return response.data;
+    },
+    onSuccess: invalidateRp,
+  });
 
   const saveRevenueRule = useSaveMutation<RevenueRulePayload & Record<string, unknown>>(
     "/api/finance/pnl/bpo/revenue-rules",
@@ -239,11 +301,15 @@ export function useBpoPnlConfiguration(period?: string, processId?: string, bran
     costComponentsQuery,
     allocationPoliciesQuery,
     classificationRulesQuery,
+    rewardPenaltyQuery,
     saveRevenueRule,
     saveDeliveryActual,
     saveRevenueComponent,
     saveCostComponent,
     saveAllocationPolicy,
     saveClassificationRule,
+    createRewardPenalty,
+    approveRewardPenalty,
+    rejectRewardPenalty,
   };
 }

@@ -489,11 +489,13 @@ async function syncProvision(hrms, bill) {
   );
   log('  db_bill.provision_master rows: ' + billRows.length);
 
+  const now = new Date();
   const rows = billRows.map(r => ({
     bill_source_id:   r.id,
     cost_centre_code: trim(r.cost_center) || '',
     finance_year:     trim(r.finance_year) || '',
     month_label:      trim(r.month) || '',
+    period_code:      toPeriodCode(trim(r.finance_year) || '', trim(r.month) || ''),
     invoice_type:     trim(r.invoiceType1),
     provision_amt:    safeInt(r.provision),
     billing_amt:      safeInt(r.billing_amt),
@@ -505,19 +507,19 @@ async function syncProvision(hrms, bill) {
     bill_client_name: trim(r.cm_client),
     bill_stream:      trim(r.cm_stream),
     bill_branch:      trim(r.branch_name),
-    synced_at:        new Date(),
+    synced_at:        now,
   }));
 
   const n = await insertBatch(hrms, 'billing_provision_snapshot',
     rows,
-    ['bill_source_id','cost_centre_code','finance_year','month_label','invoice_type',
+    ['bill_source_id','cost_centre_code','finance_year','month_label','period_code','invoice_type',
      'provision_amt','billing_amt','billing_status','revenue_active',
      'agreement','acknowledgment','remarks','bill_client_name','bill_stream','bill_branch','synced_at'],
-    ['cost_centre_code','finance_year','month_label','invoice_type',
+    ['cost_centre_code','finance_year','month_label','period_code','invoice_type',
      'provision_amt','billing_amt','billing_status','revenue_active',
      'agreement','acknowledgment','remarks','bill_client_name','bill_stream','bill_branch','synced_at']
   );
-  log('  Upserted: ' + n);
+  log(`  billing_provision_snapshot: ${n} rows (${rows.filter(r => r.revenue_active).length} revenue-active, ${rows.filter(r => r.period_code).length} with resolved period_code)`);
 }
 
 // ── Sync 4: billing_invoice_snapshot ─────────────────────────────────────────

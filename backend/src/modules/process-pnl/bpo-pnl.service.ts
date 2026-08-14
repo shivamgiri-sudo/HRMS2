@@ -488,6 +488,31 @@ async function getRevenueComponents(processIds: string[], period: string) {
   return result;
 }
 
+async function getRewardPenaltyForPeriod(period: string): Promise<Map<string, { rewards: number; penalties: number }>> {
+  const result = new Map<string, { rewards: number; penalties: number }>();
+  if (!period || !(await tableExists("cost_centre_reward_penalty"))) return result;
+  const rows = await safeRows<RowDataPacket>(
+    `SELECT pc.process_id,
+            SUM(CASE WHEN rp.entry_type = 'reward' THEN rp.amount_inr ELSE 0 END) AS rewards,
+            SUM(CASE WHEN rp.entry_type = 'penalty' THEN rp.amount_inr ELSE 0 END) AS penalties
+       FROM cost_centre_reward_penalty rp
+       JOIN cost_centre_master ccm ON ccm.id = rp.cost_centre_id
+       LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
+      WHERE rp.period_code = ? AND rp.approval_status = 'approved'
+      GROUP BY pc.process_id`,
+    [period]
+  );
+  for (const row of rows) {
+    if (row.process_id) {
+      result.set(String(row.process_id), {
+        rewards: Number(row.rewards ?? 0),
+        penalties: Number(row.penalties ?? 0),
+      });
+    }
+  }
+  return result;
+}
+
 async function getMonthlyPlans(processIds: string[], period: string) {
   const result = new Map<string, RowDataPacket>();
   if (processIds.length === 0 || !(await tableExists("process_monthly_plan"))) return result;
@@ -1366,7 +1391,7 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
    * cost — leaving Rs 241.97 lakh of cost against no revenue and an EBITDA of MINUS Rs 242 lakh.
    * A plausible-looking catastrophe is worse than an obvious blank.
    */
-  const [rulesMap, deliveryMap, componentsMap, plans, people, costComponents, budgets, grnActuals, costCentres, invoiced] = await Promise.all([
+  const [rulesMap, deliveryMap, componentsMap, plans, people, costComponents, budgets, grnActuals, costCentres, invoiced, rpByProcess] = await Promise.all([
     getRevenueRules(processIds, normalized.period),
     getDeliveryActuals(processIds, normalized.period),
     getRevenueComponents(processIds, normalized.period),
@@ -1377,6 +1402,7 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
     getGrnVendorActuals(baseRows, normalized.period, policies, warnings),
     getCostCentres(processIds),
     getInvoicedRevenueActuals(normalized.period ?? ""),
+    getRewardPenaltyForPeriod(normalized.period ?? ""),
   ]);
 
   const rows: BpoPnlRow[] = baseRows.map((base) => {
@@ -1488,9 +1514,10 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
     });
 
     const incentiveRevenue = componentAmount(componentRows, "incentive", "increase");
-    const rewardRevenue = componentAmount(componentRows, "reward", "increase");
+    const rpEntry = rpByProcess.get(base.processId);
+    const rewardRevenue = componentAmount(componentRows, "reward", "increase") + (rpEntry?.rewards ?? 0);
     const trainingRevenue = componentAmount(componentRows, "training_revenue", "increase");
-    const penalty = componentAmount(componentRows, "penalty", "decrease");
+    const penalty = componentAmount(componentRows, "penalty", "decrease") + (rpEntry?.penalties ?? 0);
     const slaDeduction = componentAmount(componentRows, "sla_deduction", "decrease");
     const creditNote = componentAmount(componentRows, "credit_note", "decrease");
     const otherRevenueIncrease = otherComponentAmount(componentRows, "increase", ["incentive", "reward", "training_revenue"]);

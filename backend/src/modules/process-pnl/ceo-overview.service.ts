@@ -197,35 +197,75 @@ const OWN_COMPANY_SQL = `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name
 /**
  * Revenue by branch, resolved through the cost centre.
  *
- * The collation differs between the two tables — billing_invoice_particular_snapshot is
- * utf8mb4_0900_ai_ci and cost_centre_master is utf8mb4_unicode_ci — so the join needs an explicit
- * COLLATE or it dies with ER_CANT_AGGREGATE_2COLLATIONS.
+ * Two complementary sources are combined (same logic as pnl-actuals.service):
+ *   SOURCE A — billing_invoice_particular_snapshot: detailed per-invoice lines (~540 rows FY2026-27)
+ *   SOURCE B — billing_provision_snapshot: monthly billing confirmation per cost centre (7,350 rows)
+ *              Used only where SOURCE A has no lines, preventing double-counting.
+ *              Amounts are integer paise — divided by 100 to produce rupees.
+ *
+ * Both tables use utf8mb4_0900_ai_ci while cost_centre_master is utf8mb4_unicode_ci, so all
+ * cost_centre_code joins need explicit COLLATE.
  */
 async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (!(await tableExists("billing_invoice_particular_snapshot"))) return out;
-  const where: string[] = ["p.period_code = ?", OWN_COMPANY_SQL];
-  const params: unknown[] = [period];
+  const hasProvision = await tableExists("billing_provision_snapshot");
+
+  // Invoice particulars WHERE conditions
+  const invWhere: string[] = ["p.period_code = ?", OWN_COMPANY_SQL];
+  const invParams: unknown[] = [period];
   if (s.costCentreIds.length) {
-    where.push(`ccm.id IN (${marks(s.costCentreIds)})`);
-    params.push(...s.costCentreIds);
+    invWhere.push(`ccm.id IN (${marks(s.costCentreIds)})`);
+    invParams.push(...s.costCentreIds);
   }
   // Cost centre carries no process_id on any live row, so a process narrows revenue through the
   // employees actually posted to that cost centre — the same modal rule the actuals use.
   if (s.processIds.length) {
-    where.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
-                            WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
-    params.push(...s.processIds);
+    invWhere.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                               WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
+    invParams.push(...s.processIds);
   }
+
+  // Provision WHERE conditions — same scope filters plus extra guards
+  const provWhere: string[] = ["ps.period_code = ?", "ps.revenue_active = 1", OWN_COMPANY_SQL];
+  const provParams: unknown[] = [period];
+  if (s.costCentreIds.length) {
+    provWhere.push(`ccm.id IN (${marks(s.costCentreIds)})`);
+    provParams.push(...s.costCentreIds);
+  }
+  if (s.processIds.length) {
+    provWhere.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                                WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
+    provParams.push(...s.processIds);
+  }
+  provWhere.push(`NOT EXISTS (
+    SELECT 1 FROM billing_invoice_particular_snapshot p2
+    WHERE p2.cost_centre_code COLLATE utf8mb4_unicode_ci = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
+      AND p2.period_code = ps.period_code
+  )`);
+
+  const allParams = hasProvision ? [...invParams, ...provParams] : invParams;
+
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ccm.branch_id AS branch_id, SUM(p.amount) AS amount
-       FROM billing_invoice_particular_snapshot p
-       LEFT JOIN cost_centre_master ccm
-              ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-               = p.cost_centre_code COLLATE utf8mb4_unicode_ci
-      WHERE ${where.join(" AND ")}
-      GROUP BY ccm.branch_id`,
-    params,
+    `SELECT branch_id, SUM(amount) AS amount FROM (
+       SELECT ccm.branch_id AS branch_id, p.amount AS amount
+         FROM billing_invoice_particular_snapshot p
+         LEFT JOIN cost_centre_master ccm
+                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                 = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+        WHERE ${invWhere.join(" AND ")}
+     ${hasProvision ? `
+       UNION ALL
+       SELECT ccm.branch_id AS branch_id,
+              (CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) / 100 AS amount
+         FROM billing_provision_snapshot ps
+         LEFT JOIN cost_centre_master ccm
+                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                 = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
+        WHERE ${provWhere.join(" AND ")}` : ""}
+     ) combined
+     GROUP BY branch_id`,
+    allParams,
   );
   for (const r of rows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
   return out;
