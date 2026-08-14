@@ -48,6 +48,7 @@ const SuperAdminAccessControl       = lazy(() => import("@/pages/SuperAdminAcces
 const SuperAdminModuleAccess        = lazy(() => import("@/pages/SuperAdminModuleAccess"));
 const NativePolicyEngine            = lazy(() => import("@/pages/NativePolicyEngine"));
 const AIProviderSettings            = lazy(() => import("@/pages/AIProviderSettings"));
+const MiraComplaintsPage            = lazy(() => import("@/pages/ai/MiraComplaintsPage"));
 const PeopleOSCopilot               = lazy(() => import("@/pages/PeopleOSCopilot"));
 const NativeProcessConfig           = lazy(() => import("@/pages/NativeProcessConfig"));
 const NativePortalDataManager       = lazy(() => import("@/pages/NativePortalDataManager"));
@@ -184,6 +185,7 @@ export const platformRouteElements = (
 
       {/* AI / Copilot */}
       <Route path="/settings/ai-providers"       element={<ProtectedRoute roles={['super_admin']}><AIProviderSettings /></ProtectedRoute>} />
+      <Route path="/admin/mira-complaints"       element={<ProtectedRoute roles={['super_admin']}><MiraComplaintsPage /></ProtectedRoute>} />
       <Route path="/peopleos/copilot"            element={<ProtectedRoute><DashboardLayout><PeopleOSCopilot /></DashboardLayout></ProtectedRoute>} />
 
       {/* Customization */}

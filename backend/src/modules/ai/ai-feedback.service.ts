@@ -15,6 +15,7 @@
 import { randomUUID } from 'crypto';
 import { db } from '../../db/mysql.js';
 import type { AiAction, AiGenerateResponse } from './ai-provider.types.js';
+import { triageWorkItem } from './mira-issue-triage.service.js';
 
 export type FeedbackCategory = 'bug' | 'suggestion' | 'feedback' | 'complaint';
 
@@ -118,6 +119,14 @@ export async function logFeedback(userId: string, question: string, category: Fe
       dataConfidence: { overall: 0.3 },
     };
   }
+
+  // Fire triage immediately so the diagnosis is available in seconds, not after the 15-min
+  // scheduler cycle. Non-blocking: a triage failure never breaks the user's submit flow.
+  setImmediate(() => {
+    triageWorkItem(workItemId, trimmed.slice(0, 4000)).catch((err) =>
+      console.error('[Mira Feedback] immediate triage failed:', err instanceof Error ? err.message : String(err)),
+    );
+  });
 
   const actions: AiAction[] = [{ key: 'mira-feedback-logged', label: 'Open work inbox', url: '/work-inbox', priority: 'low' }];
   return {

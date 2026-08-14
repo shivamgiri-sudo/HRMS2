@@ -38,6 +38,7 @@ import {
 import { answerHowToQuestion } from './ai-howto.service.js';
 import { detectFeedbackIntent, describeFeedbackForHistory, logFeedback } from './ai-feedback.service.js';
 import { runTriagePass } from './mira-triage-scheduler.js';
+import { listComplaints, getComplaintDetail, retriageComplaint, getComplaintStats } from './mira-complaints.service.js';
 import { ruleBasedProvider } from './providers/ruleBased.provider.js';
 
 export const aiInsightsRouter = Router();
@@ -883,4 +884,33 @@ aiInsightsRouter.post('/triage/run', requireAuth, requireRole('super_admin'), h(
   const outcomes = await runTriagePass();
   const processed = Object.values(outcomes).reduce((sum, n) => sum + n, 0);
   return res.json(apiSuccess({ processed, outcomes }));
+}));
+
+// ── Mira Complaints Management ─────────────────────────────────────────────────
+
+/** GET /api/ai/complaints — paginated list of all MIRA_FEEDBACK items with triage state */
+aiInsightsRouter.get('/complaints', requireRole('super_admin'), h(async (req, res) => {
+  const limit = Math.min(500, Math.max(1, parseInt(String(req.query.limit ?? '200'), 10) || 200));
+  const complaints = await listComplaints(limit);
+  return res.json(apiSuccess(complaints));
+}));
+
+/** GET /api/ai/complaints/stats — summary counts for the dashboard header */
+aiInsightsRouter.get('/complaints/stats', requireRole('super_admin'), h(async (_req, res) => {
+  const stats = await getComplaintStats();
+  return res.json(apiSuccess(stats));
+}));
+
+/** GET /api/ai/complaints/:id — full detail: complaint + audit trail + fix drafts + usage */
+aiInsightsRouter.get('/complaints/:id', requireRole('super_admin'), h(async (req, res) => {
+  const detail = await getComplaintDetail(req.params.id);
+  if (!detail) return res.status(404).json(apiError('NOT_FOUND', 'Complaint not found', 404));
+  return res.json(apiSuccess(detail));
+}));
+
+/** POST /api/ai/complaints/:id/retriage — force re-triage on a specific complaint (for ai_error items) */
+aiInsightsRouter.post('/complaints/:id/retriage', requireRole('super_admin'), h(async (req, res) => {
+  const result = await retriageComplaint(req.params.id);
+  if (!result.ok) return res.status(404).json(apiError('NOT_FOUND', 'Complaint not found', 404));
+  return res.json(apiSuccess({ outcome: result.outcome }));
 }));
