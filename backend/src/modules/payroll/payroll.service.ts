@@ -666,7 +666,7 @@ export const payrollService = {
 
   async getStatutoryConfig(): Promise<Record<string, number>> {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT config_key, config_value FROM statutory_config"
+      "SELECT config_key, config_value FROM statutory_config WHERE is_active = 1"
     );
     const map: Record<string, number> = {};
     for (const row of rows as { config_key: string; config_value: number }[]) {

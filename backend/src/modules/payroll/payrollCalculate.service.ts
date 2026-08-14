@@ -419,8 +419,8 @@ export async function getPtFromSlab(
     `SELECT pt_amount FROM pt_slab_master
       WHERE (LOWER(state_code) = LOWER(?) OR LOWER(state_name) = LOWER(?))
         AND is_active = 1
-        AND income_from <= ?
-        AND (income_to IS NULL OR income_to >= ?)
+        AND income_from <= FLOOR(?)
+        AND (income_to IS NULL OR income_to >= FLOOR(?))
       ORDER BY income_from DESC
       LIMIT 1`,
     [stateCode, stateCode, monthlyIncome, monthlyIncome]

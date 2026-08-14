@@ -1082,8 +1082,11 @@ export async function getYtdSummary(upToMonth: string, filters: CeoFilters = {})
 
   await Promise.all(
     months.map(async (period) => {
-      const overview = await getCeoOverview(period, filters);
-      const budget = overview.branches.reduce((s, b) => s + (b.budget ?? 0), 0);
+      const [overview, budgetMap] = await Promise.all([
+        getCeoOverview(period, filters),
+        budgetByBranch(period),
+      ]);
+      const budget = Array.from(budgetMap.values()).reduce((s, v) => s + v, 0);
       monthly.push({ period, revenue: overview.revenue, peopleCost: overview.peopleCost, indirectCost: overview.indirectCost, operatingProfit: overview.operatingProfit, budget });
     })
   );
