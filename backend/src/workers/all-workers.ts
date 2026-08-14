@@ -54,6 +54,7 @@ import { startPayrollReadinessRefreshWorker, stopPayrollReadinessRefreshWorker }
 import { startAutoRosterSchedulerWorker, stopAutoRosterSchedulerWorker } from "./auto-roster-scheduler.worker.js";
 import { startUatJobRunner, stopUatJobRunner } from "../modules/uat-pipeline/uat-job-runner.js";
 import { registerUatJobHandlers } from "../modules/uat-pipeline/uat-jobs.handlers.js";
+import { startMiraTriageScheduler } from "../modules/ai/mira-triage-scheduler.js";
 import { clearAllTimers } from "./worker-utils.js";
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
@@ -266,6 +267,15 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // Handlers register before the runner starts: a claimed job whose type has no handler
     // goes straight to `dead`, so registering afterwards would kill the first tick's work.
     start: () => { registerUatJobHandlers(); startUatJobRunner(); return Promise.resolve(); },
+  },
+  {
+    // Was in server.ts only, never in this file. Production runs WORKERS_PROCESS=external,
+    // so the API didn't start it — and this file never started it either. Complaints sat
+    // untriaged for 15+ minutes (or forever) because the scheduler never ran at all.
+    // The scheduler fires once immediately on startup (so queued complaints get triaged
+    // without waiting a full interval), then every 15 minutes thereafter.
+    name: "mira-triage",
+    start: () => { startMiraTriageScheduler(); return Promise.resolve(); },
   },
 ];
 
