@@ -1,0 +1,17 @@
+{
+  // Typecheck for Stage 1 of the 2026-08-14 delta-audit remediation
+  // (legacy-sync kill switch + PIP row-scope). Scoped per repo convention —
+  // see tsconfig.attendance-check.json for why a full tsc run is avoided.
+  //
+  //     npx tsc -p tsconfig.delta-audit-stage1-check.json
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/workers/legacy-sync-worker.ts",
+    "src/modules/legacy/legacy.routes.ts",
+    "src/modules/career/career.routes.ts",
+    "src/modules/career/career.service.ts"
+  ]
+}

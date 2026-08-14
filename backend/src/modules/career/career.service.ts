@@ -122,6 +122,20 @@ export const careerService = {
 
   // ─── PIP ─────────────────────────────────────────────────────────────────────
 
+  /**
+   * True only if `targetEmployeeId` actually reports to `managerEmployeeId`
+   * (employees.reporting_manager_id). Used to scope GET /pip for non-privileged
+   * callers — an employee_id query param alone must never be trusted as proof
+   * of a manager relationship (HRMS2 delta-audit, 2026-08-14, P0).
+   */
+  async isManagerOf(managerEmployeeId: string, targetEmployeeId: string): Promise<boolean> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM employees WHERE id = ? AND reporting_manager_id = ?`,
+      [targetEmployeeId, managerEmployeeId]
+    );
+    return rows.length > 0;
+  },
+
   async listPips(filters: { employeeId?: string; status?: string }): Promise<PipRecord[]> {
     const conds: string[] = [];
     const params: unknown[] = [];

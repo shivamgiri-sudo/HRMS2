@@ -110,9 +110,15 @@ careerRouter.get(
       return res.json({ success: true, data: records });
     }
 
-    // Manager: can only see PIPs for specific employee they specify (or no results)
+    // Manager: can only see PIPs for an employee who actually reports to them.
+    // employee_id is caller-supplied — it must be verified against
+    // employees.reporting_manager_id, never trusted outright.
     if (!employee_id) {
       return res.json({ success: true, data: [] });
+    }
+    const caller = await getEmployeeForUser(userId);
+    if (!caller || !(await careerService.isManagerOf(caller.id, employee_id))) {
+      return res.status(403).json({ success: false, error: "Forbidden" });
     }
     const records = await careerService.listPips({ employeeId: employee_id, status });
     return res.json({ success: true, data: records });

@@ -112,8 +112,18 @@ export class LegacySyncWorker {
 
   /**
    * Trigger manual sync (for testing)
+   *
+   * The legacy sync subsystem is deliberately, permanently disabled in
+   * production (cross-contamination history with the legacy source). start()
+   * already refuses to schedule the interval when LEGACY_SYNC_ENABLED=false;
+   * this must refuse to run the sync cycle on demand for the same reason, or
+   * the kill switch does nothing against a manual trigger.
    */
   async triggerManualSync(): Promise<{ success: boolean; message: string }> {
+    if (!env.LEGACY_SYNC_ENABLED) {
+      return { success: false, message: 'Legacy sync is disabled (LEGACY_SYNC_ENABLED=false) — manual trigger refused' };
+    }
+
     if (this.isRunning) {
       return { success: false, message: 'Sync already running' };
     }
