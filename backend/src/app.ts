@@ -27,6 +27,7 @@ import { payrollLinesCompatRouter } from "./modules/payroll/payroll-lines.compat
 import { payrollExtendedRouter } from "./modules/payroll/payroll-extended.routes.js";
 import { payrollMoreRouter } from "./modules/payroll/payroll-more.routes.js";
 import { payrollBranchReadinessRouter } from "./modules/payroll/payroll-branch-readiness.routes.js";
+import { bankPaymentReadinessRouter } from "./modules/payroll/bank-payment-readiness.routes.js";
 import { payrollProcessReadinessRouter } from "./modules/payroll/payroll-process-readiness.routes.js";
 import { payrollReadinessCategoriesRouter } from "./modules/payroll/payroll-readiness-categories.routes.js";
 import { salaryVerificationRouter } from "./modules/payroll/salary-verification.routes.js";
@@ -359,6 +360,7 @@ app.use("/api/payroll", listEndpointLimiter, payrollRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollExtendedRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollMoreRouter);
 app.use("/api/payroll/branch-readiness", listEndpointLimiter, payrollBranchReadinessRouter);
+app.use("/api/payroll/bank-readiness", listEndpointLimiter, bankPaymentReadinessRouter);
 app.use("/api/payroll/process-readiness", listEndpointLimiter, payrollProcessReadinessRouter);
 app.use("/api/payroll/readiness-categories", listEndpointLimiter, payrollReadinessCategoriesRouter);
 app.use("/api/payroll/salary-verification", listEndpointLimiter, salaryVerificationRouter);

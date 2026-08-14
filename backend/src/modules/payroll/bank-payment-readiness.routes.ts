@@ -59,6 +59,36 @@ const ORG_WIDE_REQUIRED_MSG =
   "Organisation-wide payroll scope is required to read full bank account numbers. " +
   "Your access is limited to a subset of branches.";
 
+/**
+ * The full-number export's own org-wide test — deliberately NOT hasOrgWideScope().
+ *
+ * hasOrgWideScope() short-circuits to true for anyone holding `admin`
+ * (scopeAccess.ts:193) before it ever looks at a scope row. That is fine for the endpoints
+ * it already guards, but it silently defeats the rule stated at the top of this file: "The
+ * full-number export is NOT covered by that leniency: it requires an explicit
+ * scope_type = 'all'."
+ *
+ * It is not hypothetical. Measured against production on 2026-08-14, one active account holds
+ * `admin` + `branch_admin` with ZERO scope_type='all' rows. Routed through hasOrgWideScope, a
+ * branch administrator could download every employee's full bank account number for the whole
+ * organisation — the exact outcome the two-gate design above exists to prevent.
+ *
+ * So this asks the question the header promises: super_admin is org-wide by definition;
+ * everyone else needs a real scope_type='all' row against a payroll export role. Holding
+ * `admin` is not, by itself, org-wide payroll scope.
+ *
+ * Tightening here cannot regress anyone: bankPaymentReadinessRouter has never been mounted, so
+ * this endpoint has never served a request and nobody holds access it could take away. If a
+ * legitimate payroll operator gets ORG_WIDE_REQUIRED_MSG, the fix is to grant them the scope
+ * row — an auditable grant — not to widen this check.
+ */
+async function hasExportScope(userId: string): Promise<boolean> {
+  if (await hasAnyRole(userId, "super_admin")) return true;
+  if (!(await hasAnyRole(userId, ...PAYROLL_EXPORT_ROLES))) return false;
+  const scopes = await getUserAssignmentScopes(userId, PAYROLL_EXPORT_ROLES);
+  return scopes.some((s) => s.scope_type === "all");
+}
+
 /** Who may change an exception's owner or status. */
 const MANAGE_ROLES = ["super_admin", "admin", "payroll_head", "payroll", "payroll_admin", "finance_head", "hr"];
 
@@ -430,7 +460,7 @@ bankPaymentReadinessRouter.get(
     const runId = String(req.query.run_id ?? "").trim();
     if (!runId) return res.status(400).json({ success: false, message: "run_id is required" });
 
-    if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+    if (!(await hasExportScope(req.authUser!.id))) {
       return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
 

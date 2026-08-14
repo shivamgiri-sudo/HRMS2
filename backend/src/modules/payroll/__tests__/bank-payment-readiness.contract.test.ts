@@ -63,12 +63,27 @@ describe("only the payment file may emit a full account number", () => {
   });
 });
 
-describe("/payment-file carries the same gate as every other bank-file endpoint", () => {
+describe("/payment-file is gated MORE strictly than the other bank-file endpoints", () => {
   const body = handlerAt(ROUTES, "/payment-file", 9000);
 
-  it("calls hasOrgWideScope with PAYROLL_EXPORT_ROLES before querying", () => {
-    expect(body).toMatch(/hasOrgWideScope\(req\.authUser!\.id, PAYROLL_EXPORT_ROLES\)/);
+  // This used to pin hasOrgWideScope(), matching the NEFT exports. It no longer does, and the
+  // difference is the point. hasOrgWideScope() returns true for anyone holding `admin`
+  // (scopeAccess.ts:193) before it looks at a single scope row, and production has an active
+  // account holding `admin` + `branch_admin` with ZERO scope_type='all' rows — so routing the
+  // full-number export through it would hand a branch administrator every bank account number
+  // in the organisation, which is exactly what this router's header says must not happen.
+  it("gates on hasExportScope, never hasOrgWideScope, before querying", () => {
+    expect(body).toMatch(/hasExportScope\(req\.authUser!\.id\)/);
+    expect(body).not.toMatch(/hasOrgWideScope\(/);
     expect(body).toContain("ORG_WIDE_REQUIRED_MSG");
+  });
+
+  it("hasExportScope demands a real scope_type='all' row and does not trust `admin`", () => {
+    const from = ROUTES.slice(ROUTES.indexOf("async function hasExportScope"));
+    const fn = from.slice(0, from.indexOf("\n}"));
+    expect(fn).toMatch(/scope_type === "all"/);
+    expect(fn).toMatch(/super_admin/);      // org-wide by definition, still allowed
+    expect(fn).not.toMatch(/"admin"/);      // holding `admin` alone must never satisfy it
   });
 
   it("refuses to build a payment file from an uncommitted run", () => {
