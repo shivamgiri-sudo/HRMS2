@@ -134,7 +134,7 @@ export async function listComplaints(limit = 200): Promise<ComplaintSummary[]> {
 export async function getComplaintDetail(id: string): Promise<ComplaintDetail | null> {
   const [[wiRow]] = await db.execute<RowDataPacket[]>(
     `SELECT wi.*, CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS reporter_name,
-            e.employee_id AS reporter_code
+            e.employee_code AS reporter_code
        FROM work_item wi
        LEFT JOIN employees e ON e.id = wi.created_by
       WHERE wi.id = ? AND wi.item_type = 'MIRA_FEEDBACK'`,
