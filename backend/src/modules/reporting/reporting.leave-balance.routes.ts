@@ -1,6 +1,7 @@
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
+import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { db } from "../../db/mysql.js";
 import { resolveBranchScope } from "./reporting.scope.js";
 
@@ -10,6 +11,24 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 function scopeSql(scope: { isSuperAdmin: boolean; branchIds: string[] }) {
   if (scope.isSuperAdmin || scope.branchIds.length === 0) return { sql: "1=1", params: [] as unknown[] };
   return { sql: `e.branch_id IN (${scope.branchIds.map(() => "?").join(",")})`, params: scope.branchIds as unknown[] };
+}
+
+/**
+ * True if the caller has a real user_assignment_scope row (any scope_type) —
+ * i.e. resolveBranchScope's branch-visibility answer came from an actual
+ * management assignment, not its own "no assignment -> fall back to the
+ * caller's own employee branch" default. That fallback is deliberate and
+ * shared by every report using resolveBranchScope, so it is left untouched
+ * here; leave balances specifically must not let that fallback double as
+ * "see every colleague's individual leave balance in my branch" for a plain
+ * individual contributor (delta-audit 2026-08-14, P1, user-approved fix).
+ */
+async function hasRealManagementScope(userId: string): Promise<boolean> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM user_assignment_scope WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+    [userId]
+  );
+  return rows.length > 0;
 }
 
 reportingLeaveBalanceRouter.get("/leave-balances", requireAuth, h(async (req: any, res: any) => {
@@ -22,6 +41,15 @@ reportingLeaveBalanceRouter.get("/leave-balances", requireAuth, h(async (req: an
   const sc = scopeSql(scope);
   const extraConds: string[] = [];
   const extraParams: unknown[] = [];
+
+  if (!scope.isSuperAdmin && !(await hasRealManagementScope(req.authUser!.id))) {
+    // Plain individual contributor: resolveBranchScope's own branch fallback
+    // must not expose every colleague's leave balance — restrict to self.
+    const self = await getEmployeeForUser(req.authUser!.id);
+    if (!self) return res.status(403).json({ success: false, message: "No employee record" });
+    extraConds.push("e.id = ?");
+    extraParams.push(self.id);
+  }
 
   if (req.query.branchId) { extraConds.push("e.branch_id = ?"); extraParams.push(String(req.query.branchId)); }
   if (req.query.processId) { extraConds.push("e.process_id = ?"); extraParams.push(String(req.query.processId)); }
