@@ -611,6 +611,22 @@ export default function NativeWorkInbox() {
   const [triageRunning, setTriageRunning] = useState(false);
   const [triageMsg, setTriageMsg]         = useState<string | null>(null);
 
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await hrmsApi.get<{ success: boolean; items: PendingTask[]; summary: PendingSummary }>(
+        "/api/inbox/my-pending",
+      );
+      setItems(res.items ?? []);
+      setSummary(res.summary ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load pending tasks");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   const runTriage = useCallback(async () => {
     setTriageRunning(true);
     setTriageMsg(null);
@@ -633,22 +649,6 @@ export default function NativeWorkInbox() {
       setTriageRunning(false);
     }
   }, [load]);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const res = await hrmsApi.get<{ success: boolean; items: PendingTask[]; summary: PendingSummary }>(
-        "/api/inbox/my-pending",
-      );
-      setItems(res.items ?? []);
-      setSummary(res.summary ?? null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load pending tasks");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
   useEffect(() => { void load(); }, [load]);
 
