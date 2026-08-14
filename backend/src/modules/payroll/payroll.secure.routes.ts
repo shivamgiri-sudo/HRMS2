@@ -11,7 +11,22 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 
 router.use(requireAuth);
 
-const PAYROLL_READ_SCOPE_ROLES = ["hr", "finance", "payroll"];
+// finance_head/payroll_head/payroll_admin added 2026-08-14 (delta-audit, Stage 7
+// follow-up): absent from this file since it was created (16-Jun-2026), even though
+// all three roles already existed by then or shortly after, and are the standard
+// payroll-operator tier used across 20+ other live payroll routes (identical
+// composition already live as PAYROLL_REPORT_SCOPE_ROLES in
+// payroll-extended.routes.ts's GET /runs/:id/salary-sheet-export, gated the same
+// allowCeoAllRead-omitted way). git history shows no commit or comment ever
+// justified their absence — the 31-Jul-2026 CEO fix (see below) touched only
+// ceo/allowCeoAllRead and left this array otherwise untouched. Confirmed live before
+// fixing: 3 real accounts holding finance_head/payroll_head/payroll_admin (without
+// also holding admin/hr/finance/payroll) were 403'd from both endpoints, including
+// the organisation's only payroll_head. super_admin added to requireRole only, not
+// to this scope-roles array — matching every other live payroll route's convention
+// (super_admin/admin bypass via allowAdminBypass and requireRole's own unconditional
+// super_admin fast-path, so it never belongs in a scope-roles array).
+const PAYROLL_READ_SCOPE_ROLES = ["hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
 
 // `ceo` removed 31-Jul-2026 (CEO UAT, Critical).
 //
@@ -31,7 +46,14 @@ const PAYROLL_READ_SCOPE_ROLES = ["hr", "finance", "payroll"];
 // is intended; payroll is the exception, so it is switched off here rather than in
 // shared/scopeAccess.ts. requireRole already blocks the CEO before scope is
 // evaluated — the flag is set false as defence in depth, not as the only gate.
-router.get("/runs", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
+// `ceo` is still deliberately absent below — nothing about the 2026-08-14 role-list
+// widening changes the basis for this policy: no live user holds `ceo` together
+// with any of the newly-added roles (verified live), and this list has no effect on
+// allowCeoAllRead regardless (that flag keys off the caller's own role set, not this
+// array — see shared/scopeAccess.ts).
+router.get("/runs", requireRole(
+  "admin", "super_admin", "hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin",
+), h(async (req, res) => {
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
     PAYROLL_READ_SCOPE_ROLES,
@@ -46,8 +68,11 @@ router.get("/runs", requireRole("admin", "hr", "finance", "payroll"), h(async (r
 }));
 
 // `ceo` removed — see the note on /runs above. This one is the more sensitive of
-// the pair: it returns employee-level gross, net and deductions.
-router.get("/records", requireRole("admin", "hr", "finance", "payroll"), h(async (req, res) => {
+// the pair: it returns employee-level gross, net and deductions. Role list widened
+// 2026-08-14 for the same reason as /runs above.
+router.get("/records", requireRole(
+  "admin", "super_admin", "hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin",
+), h(async (req, res) => {
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
     PAYROLL_READ_SCOPE_ROLES,

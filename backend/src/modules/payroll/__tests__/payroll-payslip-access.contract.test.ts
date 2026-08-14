@@ -78,6 +78,56 @@ describe("payroll read endpoints exclude the CEO", () => {
   });
 });
 
+/**
+ * finance_head/payroll_head/payroll_admin/super_admin — delta-audit 2026-08-14, Stage 7
+ * follow-up. Absent from this file's role lists since it was created (16-Jun-2026), even
+ * though all four either predate or postdate creation by weeks and are the standard
+ * payroll-operator tier used across 20+ other live payroll routes (identical composition
+ * already live as PAYROLL_REPORT_SCOPE_ROLES in payroll-extended.routes.ts). No commit or
+ * comment ever justified the absence — confirmed live before fixing: 3 real accounts
+ * holding finance_head/payroll_head/payroll_admin (without also holding admin/hr/finance/
+ * payroll) were 403'd from both /runs and /records, including the organisation's only
+ * payroll_head.
+ *
+ * These roles being added must not reopen the CEO gap the describe block above guards —
+ * asserted together deliberately, in the same file, so a future edit can't fix one without
+ * running the other.
+ */
+describe("payroll read endpoints admit the standard payroll-operator tier", () => {
+  for (const path of ["/runs", "/records"]) {
+    it(`${path} admits finance_head, payroll_head, payroll_admin and super_admin`, () => {
+      const roles = rolesFor(secureRoutes, path);
+      expect(roles).toEqual(expect.arrayContaining([
+        "finance_head", "payroll_head", "payroll_admin", "super_admin",
+      ]));
+    });
+
+    it(`${path} still excludes ceo even with the wider role list`, () => {
+      // The CEO-leak fix's basis is unaffected by this widening: no live user holds ceo
+      // together with any of the four added roles, and PAYROLL_READ_SCOPE_ROLES has no
+      // bearing on allowCeoAllRead regardless (that flag keys off the caller's actual
+      // role set, not this array — shared/scopeAccess.ts).
+      expect(rolesFor(secureRoutes, path)).not.toContain("ceo");
+    });
+  }
+
+  it("PAYROLL_READ_SCOPE_ROLES (feeding buildScopeWhereClause) matches the requireRole widening", () => {
+    // The scope-roles array must carry the same operator tier as the role gate, or a
+    // finance_head/payroll_head/payroll_admin caller passes requireRole and then falls
+    // through buildScopeWhereClause's role check to 1=0 — a 200 with an empty result set,
+    // which reads as "no data" rather than "you can't do this".
+    const match = secureRoutes.match(/const PAYROLL_READ_SCOPE_ROLES = \[([^\]]*)\];/);
+    expect(match, "PAYROLL_READ_SCOPE_ROLES declaration not found").not.toBeNull();
+    const scopeRoles = [...match![1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+    expect(scopeRoles).toEqual(expect.arrayContaining(["finance_head", "payroll_head", "payroll_admin"]));
+    // super_admin belongs only in requireRole, not here — it bypasses buildScopeWhereClause
+    // unconditionally (shared/scopeAccess.ts), matching every other live payroll route's
+    // convention of never listing it in a scope-roles array.
+    expect(scopeRoles).not.toContain("super_admin");
+    expect(scopeRoles).not.toContain("ceo");
+  });
+});
+
 describe("payslip page dispatch", () => {
   const routeConfigRaw = readFileSync(
     resolve(process.cwd(), "../src/config/routes/payroll.routes.tsx"),
