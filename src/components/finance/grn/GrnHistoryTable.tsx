@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Clock, RefreshCw } from "lucide-react";
+import { Clock, Pencil, RefreshCw } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import {
@@ -75,7 +75,7 @@ function StageCell({ name, at, reachable }: { name?: string | null; at?: string 
   );
 }
 
-export function GrnHistoryTable() {
+export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void } = {}) {
   const [status, setStatus] = useState<(typeof STATUS_TABS)[number][0]>("_all");
   const [search, setSearch] = useState("");
   const [source, setSource] = useState<"new" | "legacy" | "all">("new");
@@ -147,6 +147,7 @@ export function GrnHistoryTable() {
               <GrnTh sticky={false}>Raised</GrnTh>
               <GrnTh sticky={false}>Branch Head</GrnTh>
               <GrnTh sticky={false}>Finance Head</GrnTh>
+              {onEdit && <GrnTh sticky={false} />}
             </tr>
           </thead>
           <tbody>
@@ -199,6 +200,19 @@ export function GrnHistoryTable() {
                     reachable={Boolean(row.branch_head_reviewed_at) && row.status !== "rejected"}
                   />
                 </GrnTd>
+                {onEdit && (
+                  <GrnTd>
+                    {row.status === "draft" && (
+                      <GrnIconButton
+                        title="Edit this GRN"
+                        aria-label="Edit this GRN"
+                        onClick={() => onEdit(row.id)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </GrnIconButton>
+                    )}
+                  </GrnTd>
+                )}
               </tr>
             ))}
           </tbody>

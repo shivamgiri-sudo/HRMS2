@@ -554,7 +554,9 @@ grnRouter.get(
         invoiceNumber:      req.query.invoiceNumber      ? String(req.query.invoiceNumber)      : undefined,
         vendorId:           req.query.vendorId           ? String(req.query.vendorId)           : undefined,
         billingCycleStatus: req.query.billingCycleStatus ? String(req.query.billingCycleStatus) : undefined,
-        createdBy:          req.query.createdBy          ? String(req.query.createdBy)          : undefined,
+        createdBy:          req.query.createdBy
+          ? (String(req.query.createdBy) === "me" ? String(user.id) : String(req.query.createdBy))
+          : undefined,
         multiMonth:
           req.query.multiMonth === undefined
             ? undefined

@@ -8,6 +8,7 @@ import {
   FileMinus2,
   FileText,
   Loader2,
+  Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -121,6 +122,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   const [grnType, setGrnType] = useState("_all");
   const [search, setSearch] = useState("");
   const [backDated, setBackDated] = useState(false);
+  const [myGrnsOnly, setMyGrnsOnly] = useState(false);
   const [filterBranch, setFilterBranch] = useState("");
   const [filterPeriod, setFilterPeriod] = useState("");
   const [page, setPage] = useState(1);
@@ -149,6 +151,10 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       setStatus("finance_head_approved");
     } else if (capabilities.canReviewFinanceStage && !capabilities.canReviewBranchStage) {
       setStatus("branch_head_approved");
+    } else if (capabilities.canCreate && !capabilities.canReviewBranchStage && !capabilities.canReviewFinanceStage) {
+      // Pure raiser (branch_admin who cannot review) — show all their own GRNs by default
+      setStatus("_all");
+      setMyGrnsOnly(true);
     }
     // branch stage reviewers stay on "submitted" — the default is already correct
   }, [capabilities]);
@@ -168,7 +174,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   const summary = useGrnSummary().data;
 
   const listQuery = useQuery({
-    queryKey: ["grn-list", status, grnType, search, filterBranch, filterPeriod, page],
+    queryKey: ["grn-list", status, grnType, search, filterBranch, filterPeriod, page, myGrnsOnly],
     queryFn: async () => {
       const params = new URLSearchParams({ limit: String(PAGE_SIZE), page: String(page) });
       if (status !== "_all") params.set("status", status);
@@ -176,6 +182,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       if (search.trim()) params.set("search", search.trim());
       if (filterBranch) params.set("branchId", filterBranch);
       if (filterPeriod) params.set("accountingPeriod", filterPeriod);
+      if (myGrnsOnly) params.set("createdBy", "me");
       const response = await hrmsApi.get<any>(`/api/finance/grns?${params}`);
       return (response?.data ?? response?.rows ?? []) as GrnRow[];
     },
@@ -434,6 +441,11 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
           <GrnChip active={backDated} onClick={() => setBackDated((v) => !v)}>
             Back-dated
           </GrnChip>
+          {capabilities?.canCreate && (
+            <GrnChip active={myGrnsOnly} onClick={() => setMyGrnsOnly((v) => !v)}>
+              My GRNs
+            </GrnChip>
+          )}
           <GrnIconButton onClick={() => void listQuery.refetch()} title="Refresh" aria-label="Refresh">
             <RefreshCw className={`h-3.5 w-3.5 ${listQuery.isFetching ? "animate-spin" : ""}`} />
           </GrnIconButton>
@@ -536,13 +548,22 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                       {/* Not in the redesign mock, but a real capability: a draft only leaves the
                           branch when someone submits it. */}
                       {row.status === "draft" && capabilities?.canCreate && (
-                        <GrnIconButton
-                          title="Submit to Branch Head"
-                          aria-label="Submit to Branch Head"
-                          onClick={(e) => { e.stopPropagation(); submitMutation.mutate(row.id); }}
-                        >
-                          <Send className="h-3.5 w-3.5" />
-                        </GrnIconButton>
+                        <>
+                          <GrnIconButton
+                            title="Edit this GRN"
+                            aria-label="Edit this GRN"
+                            onClick={(e) => { e.stopPropagation(); onReopenForEdit?.(row.id); }}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </GrnIconButton>
+                          <GrnIconButton
+                            title="Submit to Branch Head"
+                            aria-label="Submit to Branch Head"
+                            onClick={(e) => { e.stopPropagation(); submitMutation.mutate(row.id); }}
+                          >
+                            <Send className="h-3.5 w-3.5" />
+                          </GrnIconButton>
+                        </>
                       )}
                       {["draft", "submitted"].includes(row.status) && capabilities?.canCreate && (
                         <GrnIconButton

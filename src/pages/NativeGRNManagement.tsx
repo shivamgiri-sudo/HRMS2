@@ -165,7 +165,7 @@ export default function NativeGRNManagement() {
             <GrnSearchWorkspace />
           </TabsContent>
           <TabsContent value="history" className="mt-4">
-            <GrnHistoryTable />
+            <GrnHistoryTable onEdit={handleReopenForEdit} />
           </TabsContent>
         </Tabs>
       </div>
