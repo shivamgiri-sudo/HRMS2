@@ -70,7 +70,11 @@ type CommandCenterData = {
   support_health: { total_open: number; sla_breached: number; by_category: Bucket[]; by_priority: Bucket[]; by_status: Bucket[] };
   grievance_health: { restricted?: boolean; open?: number; anonymous?: number; critical?: number; by_category?: Bucket[] };
   recognition_health: { kudos_given: number; kudos_received: number; zero_recognition_90d: number };
-  pulse_health: { response_rate: number; average_mood_score: number; enps_score: number };
+  // average_mood_score is genuinely null when there's no submitted response to average — see
+  // people-experience.service.ts's pulseAverage(). This type used to say `number`, and the
+  // render site's `?? 0` silently turned that null into a displayed "0.0", indistinguishable
+  // from a real bad average.
+  pulse_health: { response_rate: number; average_mood_score: number | null; enps_score: number };
   action_queue: Array<{ id: string; employee_name: string; employee_code?: string; source_type: string; action_type: string; priority: string; due_date?: string; status: string; notes?: string }>;
 };
 
@@ -305,7 +309,12 @@ export default function NativePeopleExperienceCommandCenter() {
                   <MiniStat label="Kudos received" value={data.recognition_health.kudos_received} />
                   <MiniStat label="Zero recognition 90d" value={data.recognition_health.zero_recognition_90d} intent="warning" />
                   <MiniStat label="Pulse response" value={`${data.pulse_health.response_rate}%`} />
-                  <MiniStat label="Mood avg" value={Number(data.pulse_health.average_mood_score ?? 0).toFixed(1)} />
+                  <MiniStat
+                    label="Mood avg"
+                    value={data.pulse_health.average_mood_score === null
+                      ? "No data"
+                      : data.pulse_health.average_mood_score.toFixed(1)}
+                  />
                 </Panel>
               </div>
             </section>

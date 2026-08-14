@@ -604,6 +604,37 @@ router.post("/runs/:id/correct-weekoffs", payrollRunLimiter, requireRole("admin"
     await assertRunEditable(req.params.id);
     const actorId = req.authUser?.id ?? "system";
 
+    // Same gate as POST /runs/:id/calculate immediately above, and for the identical reason:
+    // this endpoint also calls into the recalculation path (calculatePayrollRunScoped), which
+    // clears finance/CEO/Head-Payroll sign-off stamps unconditionally when it changes figures
+    // (payrollCalculate.service.ts) — that clearing is correct and already shared, but doing it
+    // with no confirmation is not. Verified live 2026-08-14: this route had none of the two
+    // guards the sibling /calculate route was just given, so an approved/signed-off run's
+    // week-off correction proceeded silently instead of requiring force=true like recalculation
+    // does everywhere else.
+    const forceRecalc = req.body?.force === true || req.query?.force === "true";
+    if (!forceRecalc) {
+      const [approvalCheck] = await db.execute<RowDataPacket[]>(
+        `SELECT status, finance_approved_at, ceo_acknowledged_at, validation_status, incentives_applied_at
+           FROM salary_prep_run WHERE id = ? LIMIT 1`,
+        [req.params.id]
+      );
+      const runRow = (approvalCheck as RowDataPacket[])[0];
+      const approvalMarkers: string[] = [];
+      if (String(runRow?.status ?? "").toLowerCase() === "approved") approvalMarkers.push("status=approved");
+      if (runRow?.finance_approved_at) approvalMarkers.push("finance-approved");
+      if (runRow?.ceo_acknowledged_at) approvalMarkers.push("CEO-acknowledged");
+      if (runRow?.validation_status === "validated") approvalMarkers.push("Head-Payroll-validated");
+      if (runRow?.incentives_applied_at) approvalMarkers.push("incentives-applied");
+      if (approvalMarkers.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: `This run is already ${approvalMarkers.join(", ")}. Applying the week-off correction will change its figures and clear every one of those signatures, since a signature must never describe numbers other than the ones it was actually given for. Pass force=true to confirm and re-collect sign-off afterward.`,
+          data: { approvalMarkers },
+        });
+      }
+    }
+
     // Fetch all employee_ids in this run so we can scope the recalc and report count
     const [lineRows] = await db.execute<RowDataPacket[]>(
       `SELECT DISTINCT employee_id FROM salary_prep_line WHERE run_id = ?`,
