@@ -434,8 +434,20 @@ export async function getPayrollExposureSummary(): Promise<PayrollExposureSummar
   ).catch(() => [[{ gross_liability: 0, net_disbursable: 0, run_count: 0 }]] as any);
 
   const [incentiveRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COALESCE(SUM(total_amount),0) AS unclaimed FROM incentive_upload_batch WHERE batch_status = 'approved' AND disbursed_at IS NULL`
-  ).catch(() => [[{ unclaimed: 0 }]] as any);
+    // FIXED 2026-08-14: this named two columns incentive_upload_batch does not have —
+    // `batch_status` (the column is `status`) and `disbursed_at` (there is no such column at
+    // all). Every execution raised ER_BAD_FIELD_ERROR into the .catch below and the tile has
+    // always reported 0, which is indistinguishable from "nothing unclaimed".
+    //
+    // 'approved' is the unclaimed state: applyToRun moves a consumed batch to 'applied', so a
+    // batch still sitting at 'approved' is money authorised and not yet taken into a payroll run.
+    `SELECT COALESCE(SUM(total_amount),0) AS unclaimed FROM incentive_upload_batch WHERE status = 'approved'`
+  ).catch((err: unknown) => {
+    // Still non-fatal — one broken tile must not take down the BI dashboard — but no longer
+    // silent. A swallowed error here is exactly how the wrong column survived unnoticed.
+    console.error(`[bi] unclaimed-incentive tile failed, reporting 0: ${(err as Error).message}`);
+    return [[{ unclaimed: 0 }]] as any;
+  });
 
   const [ffRows] = await db.execute<RowDataPacket[]>(
     `SELECT COALESCE(SUM(net_payable_to_employee),0) AS ff_pending FROM ff_settlement WHERE status NOT IN ('paid','cancelled')`

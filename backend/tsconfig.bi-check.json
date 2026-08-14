@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/modules/business-intelligence/bi.service.ts", "src/modules/incentives/incentives.service.ts"],
+  "compilerOptions": { "noEmit": true }
+}
