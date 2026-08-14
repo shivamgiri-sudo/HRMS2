@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,6 +26,12 @@ function currentPeriod() {
   const now = new Date();
   const previous = new Date(Date.UTC(now.getFullYear(), now.getMonth() - 1, 1));
   return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function shiftMonth(period: string, delta: number): string {
+  const [y, m] = period.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function currency(value: number | null | undefined, compact = false) {
@@ -174,7 +180,20 @@ export default function ProcessPnlDetailPage() {
               ← Back
             </Button>
             <span className="text-sm font-semibold">{row.processName}</span>
-            {period && <Badge variant="outline" className="text-xs">{period}</Badge>}
+            {period && (
+              <div className="flex items-center gap-0.5">
+                <Button size="icon" variant="ghost" className="h-6 w-6" aria-label="Previous month"
+                  onClick={() => setSearchParams((p) => { const n = new URLSearchParams(p); n.set("period", shiftMonth(period, -1)); return n; })}>
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </Button>
+                <Badge variant="outline" className="text-xs">{period}</Badge>
+                <Button size="icon" variant="ghost" className="h-6 w-6" aria-label="Next month"
+                  disabled={period >= currentPeriod()}
+                  onClick={() => setSearchParams((p) => { const n = new URLSearchParams(p); n.set("period", shiftMonth(period, 1)); return n; })}>
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
           </div>
         </div>
 

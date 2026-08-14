@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { Download } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +47,12 @@ function defaultPeriod() {
   const now = new Date();
   const previous = new Date(Date.UTC(now.getFullYear(), now.getMonth() - 1, 1));
   return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function shiftMonth(period: string, delta: number): string {
+  const [y, m] = period.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function formatCurrency(value: number | null | undefined, compact = false) {
@@ -278,6 +284,13 @@ export default function ProcessPnlPage() {
                 )}
               </>
             )}
+            {bpoQuery.dataUpdatedAt > 0 && (
+              <span className="text-[11px] text-slate-400">
+                Data as of {new Date(bpoQuery.dataUpdatedAt).toLocaleTimeString()}
+                {" · "}
+                <button type="button" className="underline hover:text-slate-600" onClick={() => void bpoQuery.refetch()}>Refresh</button>
+              </span>
+            )}
             <Button size="sm" variant="outline" onClick={() => void downloadBpoPnlExport(filters)}>
               <Download className="mr-1.5 h-3.5 w-3.5" /> Export
             </Button>
@@ -289,11 +302,19 @@ export default function ProcessPnlPage() {
 
         {/* Filter bar */}
         <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2 shrink-0">
-          <MonthYearPicker
-            value={period}
-            onChange={(v) => updateFilters({ period: v })}
-            className="w-52"
-          />
+          <div className="flex items-center gap-1">
+            <Button size="icon" variant="ghost" className="h-8 w-8" aria-label="Previous month" onClick={() => updateFilters({ period: shiftMonth(period, -1) })}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <MonthYearPicker
+              value={period}
+              onChange={(v) => updateFilters({ period: v })}
+              className="w-52"
+            />
+            <Button size="icon" variant="ghost" className="h-8 w-8" aria-label="Next month" disabled={period >= defaultPeriod()} onClick={() => updateFilters({ period: shiftMonth(period, 1) })}>
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
           <select
             className="flex h-8 rounded-md border border-input bg-background px-2 py-0 text-xs"
             value={branchId}
