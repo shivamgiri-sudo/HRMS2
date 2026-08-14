@@ -33,7 +33,12 @@ export async function executeErasure(
   if (!reqRows.length) throw new Error("Erasure request not found");
 
   const request = reqRows[0];
-  if (request.status === "completed") {
+  // data_rights_request.status is ENUM('pending','in_review','resolved','rejected')
+  // — 'completed' is not a valid value and this check could never fire. The
+  // route this is now wired behind (privacy.routes.ts PATCH /rights/requests/:id)
+  // guards double-execution before calling in too, but this function must be
+  // safe to call directly as well (delta-audit 2026-08-14, P0).
+  if (request.status === "resolved") {
     throw new Error("Erasure request has already been executed");
   }
 

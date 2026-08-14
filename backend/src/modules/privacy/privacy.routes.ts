@@ -8,8 +8,10 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { privacyService } from "./privacy.service.js";
 import { db } from "../../db/mysql.js";
-import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { blankToNull } from "../../shared/sql-values.js";
+import { hasRole } from "../../shared/accessGuard.js";
+import { executeErasure } from "./dpdpErasure.service.js";
 /* eslint-enable @typescript-eslint/no-unused-vars */
 
 export const privacyRouter = Router();
@@ -208,6 +210,47 @@ privacyRouter.patch(
 
     if (!status) {
       return res.status(400).json({ success: false, message: "status is required" });
+    }
+
+    // An erasure request being resolved is not an ordinary status change — it is
+    // the trigger for actually anonymizing the principal's PII. That must run
+    // through executeErasure(), not the generic status updater, and needs a
+    // stricter gate than the admin/hr/dpo this route otherwise allows (delta-
+    // audit 2026-08-14, P0: this was previously a no-op — status flipped to
+    // "resolved" with zero data operation, for every request type alike).
+    const [existingRows] = await db.execute<RowDataPacket[]>(
+      `SELECT request_type, status FROM data_rights_request WHERE id = ? LIMIT 1`,
+      [req.params.id]
+    );
+    const existing = existingRows[0] as { request_type?: string; status?: string } | undefined;
+
+    if (existing?.request_type === "erasure" && status === "resolved") {
+      // hasRole('dpo') also passes for admin/super_admin (accessGuard.ts's own
+      // admin-superset rule) — verified live 2026-08-14: nobody currently holds
+      // the dpo role, so a strict dpo-only gate would make erasure unexecutable
+      // and leave the 30-day DPDP SLA breached with no path to close it. Once a
+      // real DPO is assigned this stays correct without any further change.
+      const isDpo = await hasRole(req.authUser!.id, "dpo");
+      if (!isDpo) {
+        return res.status(403).json({
+          success: false,
+          message: "Executing a data-erasure request requires the DPO role",
+        });
+      }
+      if (existing.status === "resolved") {
+        return res.status(409).json({
+          success: false,
+          message: "This erasure request has already been executed",
+        });
+      }
+
+      await executeErasure(req.params.id, req.authUser!.id);
+
+      const [afterRows] = await db.execute<RowDataPacket[]>(
+        `SELECT * FROM data_rights_request WHERE id = ? LIMIT 1`,
+        [req.params.id]
+      );
+      return res.json({ success: true, data: afterRows[0] });
     }
 
     const data = await privacyService.resolveRightsRequest(req.params.id, {
