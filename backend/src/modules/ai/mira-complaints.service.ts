@@ -87,7 +87,7 @@ export async function listComplaints(limit = 200): Promise<ComplaintSummary[]> {
     `SELECT
        wi.id, wi.title, wi.description, wi.priority, wi.status, wi.created_at,
        CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS reporter_name,
-       e.employee_id AS reporter_code,
+       e.employee_code AS reporter_code,
        (SELECT al.remarks FROM work_item_audit_log al
          WHERE al.work_item_id = wi.id AND al.action = ?
          ORDER BY al.performed_at DESC LIMIT 1) AS triage_remarks,
