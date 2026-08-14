@@ -51,6 +51,8 @@ const CONSUMED_GRN_STATUSES: GrnStatus[] = [
 export interface CreateGrnPayload {
   grnType: GrnType;
   branchId: string;
+  /** Legal entity (MAS / IDC / Pikquick). Stored on grn_request after migration 1218. */
+  companyCode?: string;
   budgetLineId: string;
   processId?: string;
   costCentreId?: string;
@@ -332,18 +334,19 @@ export const grnService = {
 
     await db.execute(
       `INSERT INTO grn_request
-       (id, grn_number, grn_type, branch_id, process_id, cost_centre_id, cost_class,
+       (id, grn_number, grn_type, branch_id, company_code, process_id, cost_centre_id, cost_class,
         vendor_id, vendor_name, head, sub_head, quantity, unit, unit_rate,
         tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
         amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount,
         bill_date, accounting_period, payment_terms_days, due_date, description, remarks, status,
         financial_year, budget_id, budget_line_id, created_by, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,NOW())`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,NOW())`,
       [
         id,
         grnNumber,
         payload.grnType,
         payload.branchId,
+        payload.companyCode?.trim() || null,
         budgetLine.process_id ?? null,
         budgetLine.cost_centre_id ?? null,
         costClass,

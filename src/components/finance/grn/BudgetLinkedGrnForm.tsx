@@ -170,6 +170,8 @@ type GrnFormState = {
   irnAckNo: string;
   /** Mandatory when bill date is >30 days old and user is not finance_head/accounts_head/super_admin */
   lateInvoiceReason: string;
+  /** Legal entity this GRN is raised under (MAS / IDC / Pikquick). */
+  companyCode: string;
 };
 
 type CreatedGrn = { id: string; grnNumber: string; submitted: boolean };
@@ -221,6 +223,7 @@ const EMPTY_FORM: GrnFormState = {
   irn: "",
   irnAckNo: "",
   lateInvoiceReason: "",
+  companyCode: "",
 };
 
 function newAllocation(): AllocationDraft {
@@ -389,6 +392,16 @@ export function BudgetLinkedGrnForm({
     queryFn: () => hrmsApi.get<any>("/api/org/branches?limit=200"),
   });
 
+  const { data: companiesResponse } = useQuery({
+    queryKey: ["finance-companies"],
+    queryFn: () => hrmsApi.get<any>("/api/finance/companies"),
+    staleTime: 60 * 60 * 1000,
+  });
+  const companies: Array<{ company_code: string; company_name: string }> = useMemo(
+    () => unwrapList(companiesResponse) as any[],
+    [companiesResponse]
+  );
+
   // Vendor master holds ~1.8k active rows, so the list is searched server-side
   // rather than dumped into the picker.
   const { data: vendorResponse, isFetching: vendorsLoading } = useQuery({
@@ -422,6 +435,19 @@ export function BudgetLinkedGrnForm({
       ),
   });
   const budgetLines = unwrapList(lineResponse) as BudgetLine[];
+
+  // Expense master: all active heads/subheads regardless of budget linkage.
+  // Used to show "No budget" indicator for heads not covered by the current period's budget.
+  const { data: expenseMasterResponse } = useQuery({
+    queryKey: ["expense-masters-all"],
+    queryFn: () => hrmsApi.get<any>("/api/finance/expense-masters"),
+    staleTime: 10 * 60 * 1000,
+  });
+  const allExpenseMasterHeads: string[] = useMemo(() => {
+    // API returns { success, data: [{headName, subHeads}, ...] }
+    const list = unwrapList(expenseMasterResponse) as Array<{ headName?: string }>;
+    return list.map((h) => String(h.headName ?? "")).filter(Boolean);
+  }, [expenseMasterResponse]);
 
   // Same monthly-driver data Branch Budget planning already fetches for this branch+period —
   // reused here so a split GRN's auto-split weighs cost centres the same way a budget line would.
@@ -488,6 +514,7 @@ export function BudgetLinkedGrnForm({
       paymentTermsDays: Number(g.payment_terms_days ?? 30),
       remarks: String(g.remarks ?? ""),
       lateInvoiceReason: String(g.late_invoice_reason ?? ""),
+      companyCode: String(g.company_code ?? ""),
     });
     setCreated({ id: String(g.id), grnNumber: String(g.grn_number ?? editGrnId ?? "") || "…", submitted: false });
     if (workspace.invoiceComponents?.length) {
@@ -627,23 +654,44 @@ export function BudgetLinkedGrnForm({
   // One classification per GRN; the cost-centre split editor below decides how much of that one
   // spend belongs to which cost centre, not a separate classification per cost centre.
 
-  const vendorHeadOptions = useMemo(
-    () => [...new Set(budgetLines.map((line) => line.head))].map((head) => ({ value: head, label: head })),
-    [budgetLines]
-  );
+  const vendorHeadOptions = useMemo(() => {
+    const budgetedHeads = new Set(budgetLines.map((line) => line.head));
+    // Merge: budgeted heads first (they already have lines), then unbudgeted master heads
+    const allHeads = [
+      ...budgetedHeads,
+      ...allExpenseMasterHeads.filter((h) => !budgetedHeads.has(h)),
+    ];
+    return allHeads.map((head) => ({
+      value: head,
+      label: head,
+      hasBudget: budgetedHeads.has(head),
+    }));
+  }, [budgetLines, allExpenseMasterHeads]);
 
   const vendorLinesInHead = useMemo(
     () => budgetLines.filter((line) => line.head === form.head),
     [budgetLines, form.head]
   );
 
-  const vendorSubHeadOptions = useMemo(
-    () =>
-      [...new Set(vendorLinesInHead.map((line) => line.sub_head || GENERAL_SUB_HEAD))].map(
-        (subHead) => ({ value: subHead, label: subHead })
-      ),
-    [vendorLinesInHead]
-  );
+  // Sub-heads from expense master for the selected head (for unbudgeted heads)
+  const allExpenseMasterSubHeads: string[] = useMemo(() => {
+    const list = unwrapList(expenseMasterResponse) as Array<{ headName?: string; subHeads?: Array<{ subHeadName?: string }> }>;
+    const headEntry = list.find((h) => h.headName === form.head);
+    return (headEntry?.subHeads ?? []).map((sh) => String(sh.subHeadName ?? "")).filter(Boolean);
+  }, [expenseMasterResponse, form.head]);
+
+  const vendorSubHeadOptions = useMemo(() => {
+    const budgetSubHeads = [...new Set(vendorLinesInHead.map((line) => line.sub_head || GENERAL_SUB_HEAD))];
+    const budgetSubHeadSet = new Set(budgetSubHeads);
+    // For unbudgeted heads: show master sub-heads; for budgeted: merge budget sub-heads with master
+    const allSubHeads = [
+      ...budgetSubHeads,
+      ...allExpenseMasterSubHeads.filter((sh) => !budgetSubHeadSet.has(sh)),
+    ];
+    return allSubHeads.length
+      ? allSubHeads.map((subHead) => ({ value: subHead, label: subHead }))
+      : allExpenseMasterSubHeads.map((sh) => ({ value: sh, label: sh }));
+  }, [vendorLinesInHead, allExpenseMasterSubHeads]);
 
   const vendorMatchingLines = useMemo(
     () =>
@@ -1155,6 +1203,7 @@ export function BudgetLinkedGrnForm({
           {
             grnType: form.grnType,
             branchId: form.branchId,
+            companyCode: form.companyCode || undefined,
             budgetLineId: firstLine.id,
             processId: firstLine.process_id ?? undefined,
             costCentreId: firstLine.cost_centre_id ?? undefined,
@@ -1541,6 +1590,21 @@ export function BudgetLinkedGrnForm({
                 searchPlaceholder="Type a branch name…"
               />
             </FieldRow>
+
+            {companies.length > 1 && (
+              <FieldRow label="Company" htmlFor="grn-company">
+                <SearchableSelect
+                  id="grn-company"
+                  aria-label="Legal entity"
+                  disabled={locked}
+                  options={companies.map((c) => ({ value: c.company_code, label: c.company_name }))}
+                  value={form.companyCode}
+                  onChange={(value) => setForm((current) => ({ ...current, companyCode: value }))}
+                  placeholder="Select company (MAS / IDC / Pikquick)"
+                  searchPlaceholder="Type company name…"
+                />
+              </FieldRow>
+            )}
 
             <FieldRow
               label={isVendor ? "Invoice date" : "Receipt date"}
@@ -1950,11 +2014,6 @@ export function BudgetLinkedGrnForm({
               <div className="flex items-center gap-2 px-4 py-6 text-[12px] text-grn-ink-soft">
                 <Loader2 className="h-4 w-4 animate-spin" /> Loading approved budgets…
               </div>
-            ) : !budgetLines.length ? (
-              <div className="px-4 py-4 text-[12px] text-grn-warn">
-                No approved budget line is available for {effectivePeriod}. Branch Head, Finance Head and
-                Accounts Head approval must be completed first.
-              </div>
             ) : isVendor ? (
               <>
                 <FieldRow label="Head" htmlFor="grn-head" required error={err("head")}>
@@ -1967,6 +2026,11 @@ export function BudgetLinkedGrnForm({
                     placeholder="Select head"
                     searchPlaceholder="Type a head…"
                   />
+                  {form.head && !vendorHeadOptions.find((o) => o.value === form.head)?.hasBudget && (
+                    <p className="mt-1 text-[11px] text-amber-600">
+                      No approved budget for this head in {effectivePeriod}. GRN will be flagged — Finance Head must link a budget line during approval.
+                    </p>
+                  )}
                 </FieldRow>
 
                 <FieldRow label="Sub-head" htmlFor="grn-subhead" required error={err("subHead")}>
@@ -1982,6 +2046,11 @@ export function BudgetLinkedGrnForm({
                   />
                 </FieldRow>
               </>
+            ) : !budgetLines.length ? (
+              <div className="px-4 py-4 text-[12px] text-grn-warn">
+                No approved budget line is available for {effectivePeriod}. Branch Head, Finance Head and
+                Accounts Head approval must be completed first.
+              </div>
             ) : splitMode ? (
               <div className="px-4 py-4 text-[12px] text-grn-ink-soft">
                 Budget lines are chosen per row in the split editor below.
