@@ -1078,7 +1078,7 @@ async function getBudgets(
     `SELECT
         fbh.branch_id,
         ${processExpr} AS process_id,
-        SUM(COALESCE(fbl.pnl_cost_amount, 0)) AS approved_budget,
+        SUM(COALESCE(fbl.gross_amount, 0)) AS approved_budget,
         SUM(COALESCE(fbl.reserved_amount, 0)) AS reserved_budget,
         SUM(COALESCE(fbl.consumed_amount, 0)) AS consumed_budget
        -- 'closed' is deliberately NOT in the status filter below. branchBudgetService's
