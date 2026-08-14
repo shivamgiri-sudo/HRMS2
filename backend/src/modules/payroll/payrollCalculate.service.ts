@@ -383,8 +383,8 @@ export function calculateTds(
     tax += (slabMax - slabMin) * slab.rate;
   }
 
-  // Section 87A rebate: nil tax if total income ≤ rebateLimit (₹12L FY2026-27)
-  if (annualTaxableIncome <= rebateLimit) {
+  // Section 87A rebate: nil tax if taxable income (post-standard-deduction) ≤ rebateLimit (₹12L FY2026-27)
+  if (taxableIncome <= rebateLimit) {
     tax = 0;
   } else {
     // 4% health and education cess on income tax (Section 112A / Finance Act)
