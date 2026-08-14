@@ -1382,14 +1382,25 @@ export async function calculatePayrollRunScoped(
     // an employee remains covered until that period ends — even if a mid-period
     // increment pushes their gross above the wage ceiling.
     //
-    // Previous code re-evaluated gross > esic_wage_limit every month, so a raise
-    // in month 3 of a 6-month period silently dropped ESI for months 3–6.
-    // This check forces coverage on for those months.
+    // esicOptOut and this continuity rule are NOT the same signal: opt-out means
+    // "never deduct ESI regardless of gross", continuity means "deduct ESI even
+    // though gross is now over the ceiling". A prior version of this block tried
+    // to express continuity by setting esicOptOut = false when coverage was
+    // found — which is a no-op, since esicOptOut only ever reaches this branch
+    // already false (esicOptOutDeclared gates entry). The actual eligibility
+    // gate in calculateNetSalary is `!esicOptOut && gross <= esicWageLimit`;
+    // nothing here overrode the second half of that AND, so an employee who
+    // crossed the ceiling still lost coverage the month they crossed, exactly
+    // the bug the ESI Act rule above exists to prevent (delta-audit 2026-08-14,
+    // P0). esicContinuityOverride is the real signal: calculateNetSalary ORs it
+    // into the ceiling check, touching only employees who were covered at
+    // period start and have since crossed — nobody else's deduction changes.
     //
     // The contribution-period start is the later of: the first month of the
     // current Apr-Sep / Oct-Mar window, or the employee's own first month on
     // record (they cannot be "carried over" from a period before they joined).
-    let esicOptOut = esicOptOutDeclared;
+    const esicOptOut = esicOptOutDeclared;
+    let esicContinuityOverride = false;
     if (!esicOptOutDeclared) {
       try {
         const periodStart = esiContributionPeriodStart(run.run_month);
@@ -1411,7 +1422,7 @@ export async function calculatePayrollRunScoped(
           );
           if ((esiPriorRows as any[]).length > 0) {
             // Covered at period start → must stay covered this month regardless of current gross
-            esicOptOut = false;
+            esicContinuityOverride = true;
           }
         }
       } catch {
@@ -1441,6 +1452,7 @@ export async function calculatePayrollRunScoped(
       hraPct: effectiveHraPct,
       pfOptOut,
       esicOptOut,
+      esicContinuityOverride,
       gratuityPct: statConfig["gratuity_pct"],
     });
 

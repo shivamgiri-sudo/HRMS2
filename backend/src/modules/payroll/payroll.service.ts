@@ -709,7 +709,11 @@ export const payrollService = {
 
     // ESIC: on full gross (including allowances), skip when gross > esicWageLimit
     // Also skipped when employee has an approved ESI opt-out (voluntary declaration).
-    const esicApplicable = !p.esicOptOut && gross <= p.esicWageLimit;
+    // esicContinuityOverride (ESI Act s.2(6A)/Reg 3): an employee covered at the
+    // start of their contribution period stays covered even after crossing the
+    // ceiling mid-period. Opt-out still wins over continuity — the && binds
+    // tighter than the ||, so esicOptOut=true short-circuits regardless.
+    const esicApplicable = !p.esicOptOut && (gross <= p.esicWageLimit || p.esicContinuityOverride === true);
     const esicEmp = esicApplicable ? r2(gross * (p.esicEmployeePct / 100)) : 0;
     const esicEmrPct = (p.esicEmployerPct ?? 3.25) / 100;
     const esicEmr = esicApplicable ? r2(gross * esicEmrPct) : 0;

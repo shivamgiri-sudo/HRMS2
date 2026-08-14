@@ -212,12 +212,25 @@ describe("P1-A — ESI mid-period fix is in calculatePayrollRun", () => {
     expect(CALCULATE).toContain("esicOptOutDeclared");
   });
 
-  it("forces esicOptOut=false when coverage is inherited from period start", () => {
-    const idx = CALCULATE.indexOf("esicOptOut = false");
+  it("sets esicContinuityOverride=true when coverage is inherited from period start", () => {
+    // Superseded 2026-08-14 (delta-audit P0): the original version of this
+    // assertion checked for "esicOptOut = false" here, which was itself the
+    // bug — esicOptOut is already false on every path that reaches this
+    // branch (gated by !esicOptOutDeclared), so re-setting it to false changed
+    // nothing and the ceiling check in calculateNetSalary never saw an
+    // override. esicContinuityOverride is the real signal now.
+    const idx = CALCULATE.indexOf("esicContinuityOverride = true");
     expect(idx).toBeGreaterThan(-1);
     // Should be inside the ESI period-start check, not the unconditional path
     const surrounding = CALCULATE.slice(Math.max(0, idx - 200), idx + 50);
     expect(surrounding).toContain("esiPriorRows");
+  });
+
+  it("passes esicContinuityOverride through to calculateNetSalary, independent of esicOptOut", () => {
+    expect(CALCULATE).toContain("esicContinuityOverride,");
+    // esicOptOut itself must stay a simple declared-only value now — the old
+    // `let esicOptOut = ...; ... esicOptOut = false` mutation pattern is gone.
+    expect(CALCULATE).toContain("const esicOptOut = esicOptOutDeclared;");
   });
 });
 

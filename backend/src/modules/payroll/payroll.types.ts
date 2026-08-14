@@ -143,6 +143,11 @@ export interface NetSalaryParams {
   allowances?: SalaryAllowance[]; // variable pay: night shift, incentives, etc.
   pfOptOut?: boolean;      // true = employee voluntarily opted out of PF deduction
   esicOptOut?: boolean;    // true = employee voluntarily opted out of ESI deduction
+  // true = employee was covered by ESI at the start of their current contribution
+  // period (Apr-Sep / Oct-Mar) and must stay covered even though this month's
+  // gross has since crossed esicWageLimit (ESI Act s.2(6A)/Reg 3). Independent
+  // of esicOptOut — opt-out always wins over continuity.
+  esicContinuityOverride?: boolean;
   esicEmployerPct?: number; // employer ESIC % of gross (default 3.25, from statutory_config)
   gratuityPct?: number;    // employer gratuity provision % of basic (default 4.81)
 }

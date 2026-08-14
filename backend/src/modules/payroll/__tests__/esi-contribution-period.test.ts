@@ -6,20 +6,30 @@ import { esiContributionPeriodStart } from "../payroll-governance.service.js";
 /**
  * ESI coverage attaches for a whole contribution period.
  *
- * calculateNetSalary decides ESI from that month's gross alone
- * (gross <= esic_wage_limit), re-evaluated on every run. Under the ESI Act a
- * person covered at the start of a contribution period — April-September or
- * October-March — remains covered to the end of it even if a mid-period raise
- * takes them past the ceiling. The code drops them the month they cross.
+ * Under the ESI Act a person covered at the start of a contribution period —
+ * April-September or October-March — remains covered to the end of it even if
+ * a mid-period raise takes them past the ceiling.
  *
- * The deduction logic is deliberately NOT changed here. Correcting it would alter
- * the statutory calculation for every employee on every run, and the affected
- * population is small. Instead the payroll readiness check reports exactly who is
- * affected, so those cases can be handled without touching anyone else's pay.
+ * UPDATE 2026-08-14 (delta-audit P0, user-approved fix, this session):
+ * calculateNetSalary's deduction logic now DOES enforce this — see
+ * esicContinuityOverride in payroll.types.ts / payroll.service.ts and its
+ * computation in payrollCalculate.service.ts, tested in
+ * esi-continuity-override.test.ts and payroll-audit-fixes.test.ts. This file's
+ * own scope stays what it always was (esiContributionPeriodStart's period-math
+ * correctness, and this readiness check's report-not-block behaviour) — the
+ * "does not alter any ESI deduction path" test below is about
+ * payroll-governance.service.ts specifically (the readiness check itself,
+ * which still only reports), not about payrollCalculate.service.ts, which is
+ * where the real fix now lives.
  *
- * Against production for July 2026 the check finds 27 employees who crossed
- * mid-period — e.g. 19,570 -> 22,580 and 18,500 -> 30,000 — all first paid in
- * 2026-04, inside the April-September period.
+ * The originally-cited rationale for leaving the deduction unfixed — "would
+ * alter the statutory calculation for every employee on every run" — turned
+ * out not to describe the actual fix once traced: esicContinuityOverride only
+ * changes the outcome for employees who were covered at period start and have
+ * since crossed the ceiling (the same population this readiness check already
+ * identifies), not everyone. Against production for July 2026 the check found
+ * 27 such employees — e.g. 19,570 -> 22,580 and 18,500 -> 30,000 — all first
+ * paid in 2026-04, inside the April-September period.
  */
 
 describe("esiContributionPeriodStart", () => {
