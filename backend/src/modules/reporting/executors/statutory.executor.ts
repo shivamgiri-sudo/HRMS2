@@ -248,7 +248,17 @@ export async function pfEcrFormat(
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS member_name,
            COALESCE(spl.basic, 0) AS pf_wages,
            COALESCE(spl.pf_employee, 0) AS epf_employee,
-           COALESCE(spl.pf_employer, 0) AS eps_employer,
+           -- pf_employer stores the FULL employer contribution (EPF 3.67% + EPS
+           -- 8.33% combined, per payroll.service.ts calculateNetSalary) — it was
+           -- being passed through as-is under the eps_employer column, mislabeling
+           -- the whole employer PF as EPS-only (delta-audit 2026-08-14, P1). Derive
+           -- the EPS-only share the same way pf-esic-salary-register already does
+           -- correctly below (8.33/12 of the combined total; EPF and EPS share the
+           -- same wage ceiling in the calculation, so this recovers the exact
+           -- split). Value fix only — column set stays exactly what it was
+           -- (identity-spine.contract.test.ts: this file's columns are dictated by
+           -- EPFO for direct upload; adding a column breaks it).
+           ROUND(COALESCE(spl.pf_employer, 0) * 8.33 / 12, 0) AS eps_employer,
            spr.run_month
       FROM salary_prep_line spl
       JOIN salary_prep_run spr ON spr.id = spl.run_id
@@ -960,6 +970,15 @@ export async function ptMonthlyRegister(
   params.push(runMonth);
   clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
   clauses.push("spl.professional_tax > 0");
+  /**
+   * On-roll only, matching pt-register (its own register-view sibling) and
+   * pf-contribution-register / esic-contribution-register. Statutory FILINGS
+   * are not headcount views: trainees, unclassified and off-roll staff do not
+   * belong in a PT return. Missing here meant this monthly-trend view and
+   * pt-register disagreed about "PT deducted this month" for the same
+   * population (delta-audit 2026-08-14, P1).
+   */
+  clauses.push("e.employment_type = 'ONROLL'");
 
   const base = `
     SELECT e.employee_code,
@@ -1020,6 +1039,15 @@ export async function pfEsicSalaryRegister(
   clauses.push("spr.run_month = ?");
   params.push(runMonth);
   clauses.push("LOWER(COALESCE(spr.status,'')) NOT IN ('draft','cancelled')");
+  /**
+   * On-roll only, matching pf-contribution-register / esic-contribution-register
+   * (this register combines exactly what those two cover). Statutory FILINGS
+   * are not headcount views: trainees, unclassified and off-roll staff do not
+   * belong in a PF/ESIC return. Missing here meant this register showed a
+   * different population than its own component registers for the same month
+   * (delta-audit 2026-08-14, P1).
+   */
+  clauses.push("e.employment_type = 'ONROLL'");
 
   const base = `
     SELECT e.employee_code,
