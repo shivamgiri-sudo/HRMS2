@@ -18,6 +18,50 @@ function dateOnly(value: Date): string {
 }
 
 /**
+ * The order the self-healing sweep visits days — yesterday first, then oldest to newest.
+ *
+ * WHY THE ORDER IS LOAD-BEARING
+ *
+ * The sweep used to walk strictly oldest-first (`for (i = backfillDays; i >= 0; i--)`),
+ * which put yesterday second-to-last, behind ~7 days of work. Each day costs 8-20 minutes,
+ * so reaching yesterday took one to two hours — and this process restarts every 9-14
+ * minutes under the deploy cadence, with the sweep bailing early whenever the 5-minute fast
+ * path claims the lock. Yesterday was therefore the day the sweep almost never got to.
+ *
+ * That is the one day that most needs it. A punch group assessed while its day is still
+ * open is assessed in `live` mode, where an odd punch count means "employee is still
+ * inside" and applies 0 minutes (cosec-punch-interpretation.service.ts). That verdict is
+ * correct at the time and wrong the moment the day closes — assessmentModeForPunchDate()
+ * switches to `historical` and uses the span instead. Nothing re-derives it except this
+ * sweep, so a day that never gets re-swept keeps its mid-shift verdict permanently.
+ *
+ * Measured on production 2026-08-14: 1,085 attendance_daily_record rows across 222
+ * employees since 2026-07-01 sit at attendance_status='absent' while biometric_status is
+ * 'present' with real minutes, each stamped `COSEC live review: odd_punch_count` on a date
+ * long closed — several with a 09:14→19:18 clock pair and ~600 biometric minutes in the
+ * same row. Absent pays zero.
+ *
+ * Yesterday first fixes that without starving the rest: the remaining days keep their
+ * oldest-first order behind it, and every write is an idempotent upsert, so a sweep cut
+ * short by a restart simply resumes next hour.
+ */
+export function backfillDayOrder(today: Date, backfillDays: number): string[] {
+  const dayAt = (offset: number) => {
+    const d = new Date(today);
+    d.setDate(today.getDate() - offset);
+    return dateOnly(d);
+  };
+  const yesterday = dayAt(1);
+  const rest: string[] = [];
+  for (let i = backfillDays; i >= 0; i--) {
+    const day = dayAt(i);
+    if (day !== yesterday) rest.push(day);
+  }
+  // backfillDays=0 means "today only" — there is no yesterday in the window to prioritise.
+  return backfillDays >= 1 ? [yesterday, ...rest] : rest;
+}
+
+/**
  * Shout when the biometric feed has gone quiet.
  *
  * This feed is the source every non-Operations employee's payroll attendance is built
@@ -197,12 +241,12 @@ export function startCosecSyncWorker() {
     if (cosecSyncService.isRunning()) return;
     const today = new Date();
     let migrated = 0, failedDays = 0, doneDays = 0;
-    for (let i = backfillDays; i >= 0; i--) {
+    // Yesterday first — see backfillDayOrder(). It is the day whose live-mode verdicts
+    // have just gone stale, and the day the old oldest-first order almost never reached.
+    const days = backfillDayOrder(today, backfillDays);
+    for (const day of days) {
       // Re-check each iteration: the 5-minute fast path may claim the lock mid-sweep.
       if (cosecSyncService.isRunning()) break;
-      const d = new Date(today);
-      d.setDate(today.getDate() - i);
-      const day = dateOnly(d);
       try {
         const result = await cosecSyncService.sync({ from: day, to: day });
         migrated += result.migratedDays;
