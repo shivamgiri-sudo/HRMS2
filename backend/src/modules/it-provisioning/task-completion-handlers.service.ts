@@ -129,7 +129,16 @@ export async function completeItProvisioningTask(
       );
 
       // Store credential hint in employee_documents (doc_type = 'it_credentials')
-      // This gives IT a record that credentials were issued without storing plaintext
+      // This gives IT a record that credentials were issued without storing plaintext.
+      //
+      // Was .catch(() => console.warn(...)) — swallowed on this same conn, inside the
+      // transaction this whole function runs in (beginTransaction above, commit below).
+      // A failure here didn't roll back or rethrow, so auth_user still got created, the
+      // task still got marked 'actioned', and the route still returned success — with the
+      // one write whose own comment says it exists specifically so IT has a record
+      // credentials were issued silently missing. Left unguarded so a failure here rolls
+      // back the same way every other statement in this transaction already does, and
+      // surfaces as a real error instead of a false success.
       await conn.execute(
         `INSERT INTO employee_documents
            (id, employee_id, doc_type, doc_category, doc_name, file_url,
@@ -141,9 +150,7 @@ export async function completeItProvisioningTask(
           `IT credentials issued — official email: ${officialEmail}`,
           actorUserId, actorUserId,
         ]
-      ).catch(() => {
-        console.warn('[IT] Could not log credentials in employee_documents');
-      });
+      );
     }
 
     // 3. Asset allocation using existing asset_master + asset_assignment tables
