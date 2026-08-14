@@ -856,6 +856,27 @@ export function BudgetLinkedGrnForm({
         } else if (Math.abs(componentsPreview.diff) > 1) {
           next.components = `Invoice components total ${money(componentsPreview.rawTotalGross)} — the declared invoice total is ${money(Number(form.amount || 0))}. Difference ${money(componentsPreview.diff)} exceeds the ₹1 auto-round-off limit.`;
         }
+
+        // Client-side budget cap per cost-centre split — catches over-budget vendor GRNs before the API call.
+        if (!next.costCentreSplit && !next.components && costCentreSplits.length > 0 && componentsPreview.rawTotalGross > 0) {
+          const overBudgetMessages: string[] = [];
+          for (const split of costCentreSplits) {
+            const group = vendorCostCentreGroups.find((g) => g.costCentreKey === split.costCentreKey);
+            const line = group?.lines.find((l) => l.id === split.budgetLineId);
+            if (line) {
+              const splitGross = componentsPreview.rawTotalGross * (split.percentage / 100);
+              const available = Number(line.available_gross_amount);
+              if (splitGross > available + 0.01) {
+                overBudgetMessages.push(
+                  `"${group!.costCentreName}": ${money(splitGross)} requested but only ${money(available)} available.`
+                );
+              }
+            }
+          }
+          if (overBudgetMessages.length > 0) {
+            next.costCentreSplit = `Budget exceeded: ${overBudgetMessages.join(" ")} Reduce the amounts or ask Finance to revise the budget.`;
+          }
+        }
       }
     } else {
       // Imprest keeps the exact single-line / split-mode behaviour, untouched.
