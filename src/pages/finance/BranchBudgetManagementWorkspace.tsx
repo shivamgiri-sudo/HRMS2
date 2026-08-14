@@ -563,18 +563,6 @@ export default function BranchBudgetManagementWorkspace() {
     onError: (error: Error) => toast.error(error.message ?? "Transfer failed"),
   });
 
-  // Fetch pending/recent transfers for the active budget.
-  const transfersQuery = useQuery({
-    queryKey: ["budget-transfers", detailId],
-    queryFn: () =>
-      hrmsApi.get<{ success: boolean; data: Array<Record<string, unknown>> }>(
-        `/api/finance/pnl/budgets/${detailId}/transfers`
-      ),
-    enabled: Boolean(detailId),
-    staleTime: 30_000,
-  });
-  const transferRows = (transfersQuery.data as any)?.data ?? [];
-
   const approveTransferMutation = useMutation({
     mutationFn: ({ id, decision, remarks }: { id: string; decision: "approve" | "reject"; remarks?: string }) =>
       hrmsApi.post(`/api/finance/pnl/budget-transfers/${id}/review`, { decision, remarks }),
@@ -597,6 +585,17 @@ export default function BranchBudgetManagementWorkspace() {
   // lines they are approving. Every line editor is gated on canEdit, which stays false while locked,
   // so this loads the detail read-only rather than opening it for edit.
   const detailId = savedBudgetId ?? editableBudget?.id ?? currentBudget?.id ?? null;
+  // Fetch pending/recent transfers for the active budget — must come after detailId is declared.
+  const transfersQuery = useQuery({
+    queryKey: ["budget-transfers", detailId],
+    queryFn: () =>
+      hrmsApi.get<{ success: boolean; data: Array<Record<string, unknown>> }>(
+        `/api/finance/pnl/budgets/${detailId}/transfers`
+      ),
+    enabled: Boolean(detailId),
+    staleTime: 30_000,
+  });
+  const transferRows = (transfersQuery.data as any)?.data ?? [];
   const detailQuery = useBranchBudgetDetail(detailId);
   // Separate detail query for the review dialog — fetches only when a budget is being reviewed.
   const reviewDetailQuery = useBranchBudgetDetail(reviewingBudgetId);
