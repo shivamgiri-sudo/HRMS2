@@ -84,9 +84,6 @@ const KNOWN_LEGACY_VIOLATIONS = new Set([
   "336_dpdp_compliance_gaps.sql",
   "339_payroll_validation_status.sql",
   "341_onboarding_profile_missing_columns.sql",
-  "364_ats_substitute_interviewer.sql",
-  "375_salary_prep_line_attendance_source.sql",
-  "380_requisition_extend_deadline_audit.sql",
   "391_payroll_validation_freeze_columns.sql",
   "396_statutory_config_history.sql",
   // 397, 398, 402, 404, 413 fixed 2026-08-14 — see backend/sql/{397,398,402,404,413}_*.sql.
@@ -95,13 +92,17 @@ const KNOWN_LEGACY_VIOLATIONS = new Set([
   // payslip_emailed_at were the same drift. All four columns/indexes now genuinely exist —
   // verified via information_schema before and after, and all five files re-run clean and
   // idempotent against the now-migrated schema.
+  //
+  // 364, 375, 380, 470, 504 fixed 2026-08-14 (batch 2) — same guard rewrite. 364/375/470/504
+  // targets already existed on production (no-op fixes, all re-verified executing clean).
+  // 380's target (job_requisition.last_overdue_notified_at) is genuinely missing and unused
+  // by any application code (confirmed) — syntax fixed, deliberately NOT executed; adding the
+  // column is a decision for whoever owns the requisition overdue-notification cron.
   "400_payroll_branch_readiness.sql",
   "401_payroll_calendar.sql",
   "403_payroll_run_signoff.sql",
   "450_policy_engine_config.sql",
   "451_company_feed_foundation.sql",
-  "470_company_post_engagement.sql",
-  "504_auth_account_lockout.sql",
   "508_ats_onboarding_bridge_code_columns.sql",
   "521_security_audit_event_table.sql",
   "534_db_bill_snapshot_enrichment.sql",
@@ -159,6 +160,7 @@ describe("migration DDL syntax & collation compatibility (production MySQL 8.0.4
       );
     }
     // Informational, not a failure: fixing a file ahead of removing it from the list is fine.
+    // This just keeps the drift visible in test output.
     expect(true).toBe(true);
   });
 });

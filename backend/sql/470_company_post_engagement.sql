@@ -1,6 +1,11 @@
 -- Migration 470: Company post engagement (likes/dislikes + comments)
 -- Additive only — no existing tables modified except adding columns to company_posts
-
+--
+-- FIXED 2026-08-14: the ADD COLUMN clauses used `IF NOT EXISTS` — MariaDB syntax, rejected by
+-- this production MySQL 8.0.42 build with ER_PARSE_ERROR (`CREATE TABLE IF NOT EXISTS` above
+-- is standard MySQL and was never the problem). All target tables/columns already exist on
+-- production (confirmed via information_schema before this fix) and this file is not yet in
+-- MIGRATION_MANIFEST, so this is a syntax-only correction, not a live schema change.
 CREATE TABLE IF NOT EXISTS company_post_likes (
   id         CHAR(36)                      NOT NULL,
   post_id    CHAR(36)                      NOT NULL,
@@ -31,7 +36,14 @@ CREATE TABLE IF NOT EXISTS company_post_comments (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Add denormalised counters to company_posts for fast feed queries
-ALTER TABLE company_posts
-  ADD COLUMN IF NOT EXISTS like_count    INT NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS dislike_count INT NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS comment_count INT NOT NULL DEFAULT 0;
+SET @c1 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'company_posts' AND COLUMN_NAME = 'like_count');
+SET @sql = IF(@c1 = 0, 'ALTER TABLE company_posts ADD COLUMN like_count INT NOT NULL DEFAULT 0', 'SELECT "like_count already exists" AS info');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @c2 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'company_posts' AND COLUMN_NAME = 'dislike_count');
+SET @sql = IF(@c2 = 0, 'ALTER TABLE company_posts ADD COLUMN dislike_count INT NOT NULL DEFAULT 0', 'SELECT "dislike_count already exists" AS info');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @c3 = (SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'company_posts' AND COLUMN_NAME = 'comment_count');
+SET @sql = IF(@c3 = 0, 'ALTER TABLE company_posts ADD COLUMN comment_count INT NOT NULL DEFAULT 0', 'SELECT "comment_count already exists" AS info');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
