@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -78,7 +78,7 @@ function DataTable({
   columns,
   rows,
 }: {
-  columns: Array<{ key: string; label: string; align?: "left" | "right"; formatter?: (value: any, row: Record<string, any>) => string }>;
+  columns: Array<{ key: string; label: string; align?: "left" | "right"; formatter?: (value: any, row: Record<string, any>) => React.ReactNode }>;
   rows: Array<Record<string, any>>;
 }) {
   return (
@@ -523,7 +523,26 @@ export default function ProcessPnlDetailPage() {
                   {directCostQuery.isLoading ? <Skeleton className="h-64 rounded-lg" /> : (
                     <DataTable
                       columns={[
-                        { key: "reference", label: "Reference" },
+                        {
+                          key: "reference",
+                          label: "Reference",
+                          formatter: (value, row) => {
+                            const isGrn = String(row.sourceType ?? "").includes("grn");
+                            if (isGrn && row.id) {
+                              return (
+                                <a
+                                  href={`/finance/grn?grn=${row.id}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-700 underline hover:text-blue-900"
+                                >
+                                  {String(value ?? "-")}
+                                </a>
+                              );
+                            }
+                            return String(value ?? "-");
+                          },
+                        },
                         { key: "entryDate", label: "Date", formatter: (value) => date(value) },
                         { key: "category", label: "Head" },
                         { key: "subCategory", label: "Sub-head" },
@@ -596,7 +615,26 @@ export default function ProcessPnlDetailPage() {
                   <DataTable
                     columns={[
                       { key: "sourceType", label: "Source", formatter: (value) => String(value ?? "").replaceAll("_", " ") },
-                      { key: "reference", label: "Reference" },
+                      {
+                        key: "reference",
+                        label: "Reference",
+                        formatter: (value, row) => {
+                          const isGrn = String(row.sourceType ?? "").includes("grn");
+                          if (isGrn && row.id) {
+                            return (
+                              <a
+                                href={`/finance/grn?grn=${row.id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-700 underline hover:text-blue-900"
+                              >
+                                {String(value ?? "-")}
+                              </a>
+                            );
+                          }
+                          return String(value ?? "-");
+                        },
+                      },
                       { key: "entryDate", label: "Recognition date", formatter: (value) => date(value) },
                       { key: "category", label: "Head" },
                       { key: "subCategory", label: "Sub-head" },

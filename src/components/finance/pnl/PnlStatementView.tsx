@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, RefreshCw } from "lucide-react";
+import { Download, Loader2, RefreshCw } from "lucide-react";
 import type { PnlStatement, PnlStatementViewBy } from "@/hooks/usePnlStatement";
 import { useRefreshRunningSalarySnapshot } from "@/hooks/usePnlStatement";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
@@ -50,6 +50,27 @@ export function PnlStatementView({
   const isStale = !!asOf && asOf < istToday();
   const canRefresh = hasAnyRole(...PNL_REFRESH_ROLES);
 
+  function exportCsv() {
+    if (!statement) return;
+    const headers = ["P&L Component", ...statement.columns.map((c) => c.name), "Total"];
+    const lines = [headers.map((h) => `"${h}"`).join(",")];
+    for (const row of statement.rows) {
+      const values = statement.columns.map((col) => {
+        const cell = row.values?.[col.id];
+        return cell != null ? String(Number(cell).toFixed(2)) : "0";
+      });
+      const total = values.reduce((s, v) => s + Number(v), 0).toFixed(2);
+      lines.push([`"${row.displayName}"`, ...values, total].join(","));
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pnl-statement-${period ?? "export"}-${viewBy}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   function toggleSection(section: string) {
     setCollapsedSections((current) => {
       const next = new Set(current);
@@ -89,6 +110,15 @@ export function PnlStatementView({
             </span>
           )}
 
+          <button
+            type="button"
+            onClick={exportCsv}
+            disabled={!statement}
+            title="Export P&L Statement as CSV"
+            className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <Download className="h-3.5 w-3.5" />Export CSV
+          </button>
           {canRefresh && (
             <button
               type="button"

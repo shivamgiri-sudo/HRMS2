@@ -298,6 +298,8 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
                 <th className="px-3 py-2 text-right font-semibold">Staff</th>
                 <th className="px-3 py-2 text-right font-semibold">Indirect</th>
                 <th className="px-3 py-2 text-right font-semibold">Op. profit</th>
+                {compare === "budget" && <th className="px-3 py-2 text-right font-semibold text-blue-700">Budget</th>}
+                {compare === "budget" && <th className="px-3 py-2 text-right font-semibold text-slate-500">vs Budget</th>}
                 <th className="px-3 py-2 text-right font-semibold">Margin</th>
                 <th className="px-3 py-2 text-right font-semibold">Rev / head</th>
               </tr>
@@ -530,6 +532,20 @@ function BranchRow({
       <td className={`px-3 py-2.5 text-right tabular-nums ${row.operatingProfit < 0 ? "text-rose-700 dark:text-rose-400" : ""}`}>
         {lakh(row.operatingProfit)}
       </td>
+      {compare === "budget" && (
+        <td className="px-3 py-2.5 text-right tabular-nums text-blue-700">
+          {row.budget > 0 ? lakh(row.budget) : "—"}
+        </td>
+      )}
+      {compare === "budget" && (() => {
+        if (row.budget <= 0) return <td className="px-3 py-2.5 text-right text-slate-400">—</td>;
+        const vb = row.indirectCost - row.budget;
+        return (
+          <td className={`px-3 py-2.5 text-right tabular-nums text-[12px] font-semibold ${vb > 0 ? "text-rose-700" : "text-emerald-700"}`}>
+            {vb > 0 ? "+" : ""}{lakh(vb)}
+          </td>
+        );
+      })()}
       <td className="px-3 py-2.5 text-right">
         <span className="mr-2 inline-block h-[7px] w-16 overflow-hidden rounded bg-slate-100 align-middle dark:bg-slate-800">
           <span
