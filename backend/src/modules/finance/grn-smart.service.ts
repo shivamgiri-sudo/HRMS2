@@ -216,6 +216,32 @@ async function writeAudit(
   });
 }
 
+async function writeAuditInTransaction(
+  connection: PoolConnection,
+  action: string,
+  grnId: string,
+  actorUserId: string,
+  actorRole: string,
+  changes: Record<string, unknown>
+) {
+  await connection.execute(
+    `INSERT INTO sensitive_action_log
+       (id, actor_user_id, action_type, module_key, entity_type, entity_id,
+        actor_role, change_summary)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      randomUUID(),
+      actorUserId,
+      `GRN_${action}`,
+      "FINANCE",
+      "grn_request",
+      grnId,
+      actorRole,
+      JSON.stringify(changes),
+    ]
+  );
+}
+
 function parseModelJson(text: string) {
   const cleaned = text.trim().replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
   return JSON.parse(cleaned) as Record<string, unknown>;
@@ -819,8 +845,7 @@ export const grnSmartService = {
       // inside this transaction means a split that does not reconcile rolls the invoice back.
       const periodSplit = await writePeriodSplits(connection, grnId, grn, input, actorUserId, actorRole);
 
-      await connection.commit();
-      await writeAudit("ALLOCATIONS_SAVED", grnId, actorUserId, actorRole, {
+      await writeAuditInTransaction(connection, "ALLOCATIONS_SAVED", grnId, actorUserId, actorRole, {
         recognition_months: periodSplit?.eligibleCount ?? 1,
         allocation_count: prepared.length,
         amount_without_tax: totalBase,
@@ -828,6 +853,7 @@ export const grnSmartService = {
         amount_with_tax: totalGross,
         pnl_cost_amount: totalPnl,
       });
+      await connection.commit();
       return this.getWorkspace(grnId);
     } catch (error) {
       await connection.rollback();
@@ -1180,8 +1206,7 @@ export const grnSmartService = {
       // inside this transaction means a split that does not reconcile rolls the invoice back.
       const periodSplit = await writePeriodSplits(connection, grnId, grn, input, actorUserId, actorRole);
 
-      await connection.commit();
-      await writeAudit("INVOICE_COMPONENTS_SAVED", grnId, actorUserId, actorRole, {
+      await writeAuditInTransaction(connection, "INVOICE_COMPONENTS_SAVED", grnId, actorUserId, actorRole, {
         recognition_months: periodSplit?.eligibleCount ?? 1,
         component_count: components.length,
         cost_centre_count: resolvedSplits.length,
@@ -1190,6 +1215,7 @@ export const grnSmartService = {
         amount_with_tax: totalGrossFinal,
         round_off_amount: diff,
       });
+      await connection.commit();
       return this.getWorkspace(grnId);
     } catch (error) {
       await connection.rollback();
@@ -1611,6 +1637,13 @@ export const grnSmartService = {
         connection
       );
 
+      await writeAuditInTransaction(connection, decision.toUpperCase(), grnId, actorUserId, actorRole, {
+        review_note: reviewNote,
+        new_status: newStatus,
+        payment_id: paymentId,
+        allocation_aware: true,
+      });
+
       await connection.commit();
     } catch (error) {
       await connection.rollback();
@@ -1618,12 +1651,6 @@ export const grnSmartService = {
     } finally {
       connection.release();
     }
-    await writeAudit(decision.toUpperCase(), grnId, actorUserId, actorRole, {
-      review_note: reviewNote,
-      new_status: newStatus,
-      payment_id: paymentId,
-      allocation_aware: true,
-    });
     if (paymentId) await vendorPaymentService.notifyPaymentPending(paymentId).catch(() => undefined);
     return { success: true, newStatus, paymentId };
   },
