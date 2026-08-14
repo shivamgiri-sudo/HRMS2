@@ -1,5 +1,6 @@
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
+import { sqlLimit } from '../../db/pagination.js';
 import { triageWorkItem, TRIAGE_AUDIT_ACTION, findUntriagedMiraFeedback } from './mira-issue-triage.service.js';
 import { FIX_DRAFT_AUDIT_ACTION, parseDiagnosisRemark } from './mira-fix-draft-generate.service.js';
 
@@ -83,6 +84,10 @@ function triageStatus(remarks: string | null): ComplaintSummary['triage_status']
 }
 
 export async function listComplaints(limit = 200): Promise<ComplaintSummary[]> {
+  // LIMIT must be interpolated, not bound. mas_hrms (MySQL 8.0.42) rejects a NUMBER bound into
+  // LIMIT on a prepared statement with ER_WRONG_ARGUMENTS (1210), and the route hands this a
+  // parseInt result — so /api/ai/complaints threw on every call and the page never loaded.
+  // sqlLimit is the repo's single place that guarantees the interpolated value is an integer.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        wi.id, wi.title, wi.description, wi.priority, wi.status, wi.created_at,
@@ -101,8 +106,7 @@ export async function listComplaints(limit = 200): Promise<ComplaintSummary[]> {
      LEFT JOIN employees e ON e.id = wi.created_by
      WHERE wi.item_type = 'MIRA_FEEDBACK'
      ORDER BY wi.created_at DESC
-     LIMIT ?`,
-    [limit],
+     ${sqlLimit(limit, { defaultLimit: 200, maxLimit: 500 })}`,
   );
 
   return (rows as RowDataPacket[]).map((r) => {
@@ -162,7 +166,12 @@ export async function getComplaintDetail(id: string): Promise<ComplaintDetail | 
   );
 
   const [usageRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, provider_key, model_name, request_source, input_tokens, output_tokens,
+    // ai_provider_usage_log stores these as input_token_count / output_token_count (see
+    // ai-audit.service.ts, which writes them). Selecting input_tokens/output_tokens threw
+    // ER_BAD_FIELD_ERROR, and the page swallows detail errors — so the right-hand panel
+    // (audit trail, fix drafts, token usage) silently rendered nothing for every complaint.
+    `SELECT id, provider_key, model_name, request_source,
+            input_token_count AS input_tokens, output_token_count AS output_tokens,
             latency_ms, success, safety_blocked, created_at
        FROM ai_provider_usage_log
       WHERE entity_id = ? AND entity_type = 'mira_feedback'
