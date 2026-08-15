@@ -32,7 +32,17 @@ describe("bank-export classifies and excludes corrupted account numbers", () => 
   });
 
   it("builds the CSV only from rows classified 'ok' (excludes corrupt/missing/unrecognised)", () => {
-    expect(source).toMatch(/payableRows\s*=\s*rows\.filter\(\(r\)\s*=>\s*r\.account_number_status\s*===\s*"ok"\)/);
+    // The payable filter moved from account-status-only to a combined verdict on
+    // 2026-08-15, when IFSC validation was added alongside the existing account checks
+    // (an employee with a good account and a broken IFSC was previously written into the
+    // file). payability_reason is null ONLY when the account status is "ok" AND the IFSC
+    // is "ok", so this is strictly narrower than the account-only filter it replaced —
+    // nothing that was excluded before is included now.
+    expect(source).toMatch(/payableRows\s*=\s*rows\.filter\(\(r\)\s*=>\s*r\.payability_reason\s*===\s*null\)/);
+    // Account-number corruption must still be what drives the verdict for its own class —
+    // this is the assertion that would catch the account checks being dropped or bypassed
+    // while the combined filter kept the test green.
+    expect(source).toMatch(/r\.account_number_status\s*!==\s*"ok"\s*\?\s*`account:\$\{r\.account_number_status\}`/);
     // The two CSV builders (sbi / generic) must iterate the filtered set, not the raw rows.
     expect(source).toMatch(/for \(const r of payableRows\)/);
     expect(source).toMatch(/payableRows\.forEach\(/);

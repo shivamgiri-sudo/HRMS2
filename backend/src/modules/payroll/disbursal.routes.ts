@@ -236,6 +236,12 @@ router.get(
       // Resolve encrypted account numbers and classify in JS (col moved from SQL)
       const VALID_ACCOUNT_RE_D = /^[0-9]{6,20}$/;
       const SCIENTIFIC_RE_D = /[Ee][+-]/;
+      /**
+       * RBI IFSC: 4 letters, a literal ZERO, then 6 alphanumerics. Same expression the
+       * canonical exporter uses (payroll.routes.ts /runs/:id/neft-export) — the two must
+       * agree on who is payable or they produce different answers for the same run.
+       */
+      const IFSC_RE_D = /^[A-Z]{4}0[A-Z0-9]{6}$/;
       rows.forEach((r: any) => {
         const acct = resolveAccountNumber({ account_number_enc: r.account_number_enc, account_number: r.account_number_legacy });
         r.account_number = acct ?? "";
@@ -243,17 +249,49 @@ router.get(
         else if (SCIENTIFIC_RE_D.test(acct)) r.account_number_status = "corrupt_scientific_notation";
         else if (!VALID_ACCOUNT_RE_D.test(acct)) r.account_number_status = "unrecognised_format";
         else r.account_number_status = "ok";
+
+        // IFSC was never validated here at all — only the account number was. An employee
+        // with a good account and a missing or malformed IFSC was written straight into the
+        // bank file, where the bank rejects the row and the file's declared total stops
+        // matching what actually moved. Verified live 2026-08-14 against active primary
+        // bank rows: 188 have no IFSC and 874 fail this format, out of 12,858 — so the two
+        // exporters disagreed about ~1,062 employees.
+        //
+        // The reason is classified rather than lumped into one bucket because the classes
+        // need different remediation, and 514 of the 874 are a single recoverable typo:
+        // 'looks_like_letter_O_for_zero' is position 5 carrying the letter O where RBI
+        // mandates a zero (BARBOSFSMAN for BARB0SFSMAN — one bad import, by the shape of
+        // it). Those are almost certainly fixable in the data; 'wrong_length' ones
+        // (20437, PUNB079700) are not.
+        //
+        // Deliberately NOT auto-corrected here. Rewriting a bank routing code at export
+        // time is a money-path transformation with no audit trail, however obvious the
+        // correction looks. The exporter refuses what it cannot verify and names the
+        // reason; repairing employee_bank_detail is a separate, approved data change.
+        const ifscRaw = String(r.ifsc_code ?? "").trim().toUpperCase();
+        r.ifsc_code_normalised = ifscRaw;
+        if (!ifscRaw) r.ifsc_status = "missing";
+        else if (IFSC_RE_D.test(ifscRaw)) r.ifsc_status = "ok";
+        else if (ifscRaw.length === 11 && ifscRaw[4] === "O" && IFSC_RE_D.test(ifscRaw.slice(0, 4) + "0" + ifscRaw.slice(5))) {
+          r.ifsc_status = "looks_like_letter_O_for_zero";
+        } else if (ifscRaw.length !== 11) r.ifsc_status = "wrong_length";
+        else r.ifsc_status = "unrecognised_format";
+
+        r.payability_reason =
+          r.account_number_status !== "ok" ? `account:${r.account_number_status}`
+          : r.ifsc_status !== "ok" ? `ifsc:${r.ifsc_status}`
+          : null;
       });
       // Never write a corrupt/unreadable account number into a real bank file — exclude
       // and surface it instead. The digits behind 'corrupt_scientific_notation' are
       // genuinely gone (Excel precision loss upstream), not recoverable from this data.
-      const payableRows = rows.filter((r) => r.account_number_status === "ok");
-      const unpayableRows = rows.filter((r) => r.account_number_status !== "ok");
+      const payableRows = rows.filter((r) => r.payability_reason === null);
+      const unpayableRows = rows.filter((r) => r.payability_reason !== null);
 
       if (!payableRows.length) {
         return res.status(422).json({
           success: false,
-          error: "No employees in this run have a payable account number.",
+          error: "No employees in this run have both a payable account number and a valid IFSC.",
           unpayableCount: unpayableRows.length,
           unpayableEmployeeCodes: unpayableRows.map((r) => r.employee_code),
         });
@@ -267,7 +305,7 @@ router.get(
         for (const r of payableRows) {
           const name    = String(r.full_name).toUpperCase().replace(/,/g, " ");
           const acct    = String(r.account_number ?? "").replace(/,/g, "");
-          const ifsc    = String(r.ifsc_code ?? "").replace(/,/g, "");
+          const ifsc    = String(r.ifsc_code_normalised ?? "").replace(/,/g, "");
           const amount  = Number(r.net_salary).toFixed(2);
           const narr    = `Salary ${monthLabel}`;
           csvLines.push(`P,${name},${acct},${ifsc},${amount},${narr}`);
@@ -278,7 +316,7 @@ router.get(
         payableRows.forEach((r, i) => {
           const name    = `"${String(r.full_name).toUpperCase().replace(/"/g, "'")}"`;
           const acct    = String(r.account_number ?? "").replace(/,/g, "");
-          const ifsc    = String(r.ifsc_code ?? "").replace(/,/g, "");
+          const ifsc    = String(r.ifsc_code_normalised ?? "").replace(/,/g, "");
           const bank    = `"${String(r.bank_name ?? "").replace(/"/g, "'")}"`;
           const amount  = Number(r.net_salary).toFixed(2);
           const narr    = `Salary ${monthLabel} - ${r.employee_code}`;
@@ -290,9 +328,9 @@ router.get(
       // this download is a plain link today (no pre-download UI to show them first).
       if (unpayableRows.length) {
         csvLines.push("");
-        csvLines.push(`# ${unpayableRows.length} employee(s) EXCLUDED from this file — unusable account number:`);
+        csvLines.push(`# ${unpayableRows.length} employee(s) EXCLUDED from this file — unusable account number or IFSC:`);
         for (const r of unpayableRows) {
-          csvLines.push(`# ${r.employee_code},${String(r.full_name ?? "").replace(/,/g, " ")},${r.account_number_status}`);
+          csvLines.push(`# ${r.employee_code},${String(r.full_name ?? "").replace(/,/g, " ")},${r.payability_reason}`);
         }
       }
 
