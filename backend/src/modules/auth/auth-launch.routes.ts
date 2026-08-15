@@ -196,7 +196,30 @@ router.post("/bootstrap-existing-users", h(async (req, res) => {
       }
 
       const [existing] = await db.execute<RowDataPacket[]>("SELECT id FROM auth_user WHERE email=? LIMIT 1", [email]);
-      let userId = emp.user_id ? String(emp.user_id) : null;
+
+      // employees.user_id can point at an auth_user row that does not exist. Verified
+      // live 2026-08-15: 51 active employees carry a dangling user_id, and they share
+      // just TWO values between them — 5af2cd7b-159e-46e0-ac05-605508347e3f alone is
+      // referenced by 177 employee rows. It is migration residue, not 51 real accounts.
+      //
+      // Trusting the column alone sent those employees down the "already provisioned"
+      // branch below, whose `UPDATE auth_user ... WHERE id=?` matches ZERO rows. The
+      // run then logged them as provisioned while they still had no account and could
+      // not log in — a silent no-op reported as success, on the one tool whose whole
+      // job is to confirm every employee can get in.
+      //
+      // Only 1 of the 51 reaches this line today; the other 50 are skipped above for
+      // having email 'NA'. That is exactly why this must be fixed now rather than when
+      // it bites: as HR fills in the 389 missing official emails, each of those rows
+      // stops being skipped and starts hitting this branch instead.
+      let userId: string | null = null;
+      if (emp.user_id) {
+        const [linked] = await db.execute<RowDataPacket[]>(
+          "SELECT id FROM auth_user WHERE id=? LIMIT 1",
+          [String(emp.user_id)],
+        );
+        if (linked[0]?.id) userId = String(emp.user_id);
+      }
       let status: "created" | "updated" = "updated";
       if (!userId && existing[0]?.id) userId = String(existing[0].id);
 
