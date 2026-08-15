@@ -221,6 +221,41 @@ exitRouter.post(
 // clearance tasks or is_ff_provisional, unlike the guarded version that actually runs.
 // Confirm any future F&F-approval change lands in ff-approval-guard.compat.routes.ts.
 
+/**
+ * POST /ff/:id/paid — record that an approved settlement has actually been disbursed.
+ *
+ * Completes the lifecycle that stopped at 'approved'. Until migration 1220 and
+ * ffService.markFfPaid, 'paid' was both unreachable and unrecordable, which left
+ * FF_PAID_BUT_EMPLOYEE_ACTIVE (a P0 check) unable to fail and the "already paid" re-approval
+ * guards as dead branches.
+ *
+ * Role list is NOT a new policy: it is the same admin/finance/payroll set that already gates
+ * F&F approval (ff-approval-guard.compat.routes.ts) and /ff/:id/verify directly below. `hr` is
+ * deliberately absent — HR verifies and approves, but recording a disbursement is a
+ * finance/payroll act, and the approval route this mirrors excludes hr for the same reason.
+ *
+ * The real separation of duty is enforced in the service, not here: markFfPaid refuses when
+ * the payer is the same person who approved, so holding both roles still cannot collapse the
+ * two controls into one.
+ */
+exitRouter.post(
+  "/ff/:id/paid",
+  requireRole("admin", "finance", "payroll"),
+  h(async (req, res) => {
+    const paymentReference = String(req.body?.paymentReference ?? req.body?.payment_reference ?? "").trim();
+    if (!paymentReference) {
+      return res.status(400).json({
+        success: false,
+        message: "paymentReference is required — a settlement cannot be recorded paid without the bank/UTR/cheque reference",
+      });
+    }
+    const data = await ffService.markFfPaid(req.params.id, req.authUser!.id, paymentReference, req);
+    // markFfPaid writes its own FULL_FINAL_PAID sensitive-action entry carrying the amount and
+    // reference, so this route deliberately does not log a second, thinner one.
+    return res.json({ success: true, data, message: "F&F recorded as paid" });
+  })
+);
+
 exitRouter.post(
   "/ff/:id/verify",
   requireRole("admin", "hr", "finance", "payroll"),
