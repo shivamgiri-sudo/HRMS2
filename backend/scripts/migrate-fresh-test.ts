@@ -21,7 +21,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import mysql from "mysql2/promise";
 import type { RowDataPacket } from "mysql2";
-import { splitSql } from "../src/db/runPendingMigrations.js";
+import { splitSql, MIGRATION_MANIFEST } from "../src/db/runPendingMigrations.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SQL_DIR = path.resolve(__dirname, "../sql");
@@ -78,124 +78,11 @@ const connBase = {
   password: process.env.DB_PASSWORD ?? "",
 };
 
-// Canonical migration manifest (must stay in sync with runPendingMigrations.ts)
-const MIGRATION_MANIFEST: string[] = [
-  "001_core_org.sql",
-  "002_employees.sql",
-  "003_access_control.sql",
-  "004_ats.sql",
-  "005_attendance_wfm.sql",
-  "006_leave.sql",
-  "007_payroll.sql",
-  "008_integration_hub.sql",
-  "009_dialer_ispark.sql",
-  "010_kpi.sql",
-  "010_kpi_migration.sql",
-  "011_exit_management.sql",
-  "012_client_portal.sql",
-  "012_roster_shift_times.sql",
-  "015_platform_foundation.sql",
-  "016_employee_lifecycle.sql",
-  "017_ats_wfm_completion.sql",
-  "018_payroll_exit_completion.sql",
-  "019_performance_surfaces.sql",
-  "020_lms_integration.sql",
-  "020b_roster_governance.sql",
-  "021_location_master.sql",
-  "021b_attendance_leave_rta.sql",
-  "022_benefits_claims.sql",
-  "022b_account_control_workforce_mandate.sql",
-  "023_career_pip.sql",
-  "024_erp.sql",
-  "025_goals_skills.sql",
-  "026_notifications_transfer.sql",
-  "027_jobs_reports.sql",
-  "028_statutory_compliance.sql",
-  "029_labour_law.sql",
-  "030_dpdp_privacy.sql",
-  "031_breach_log.sql",
-  "032_consent_text_versions.sql",
-  "033_kpi_process_config.sql",
-  "034_kpi_families.sql",
-  "035_portal_published_data.sql",
-  "036_erp_billing.sql",
-  "037_performance_feedback.sql",
-  "037_performance_feedback_fix.sql",
-  "038_engagement_gamification.sql",
-  "039_engagement_activity_badges.sql",
-  "040_communication.sql",
-  "041_schema_gap_fill.sql",
-  "042_maternity_schema_patch.sql",
-  "044_attendance_engine.sql",
-  "045_role_compat.sql",
-  "046_call_centre_code.sql",
-  "047_roster_preference.sql",
-  "048_offerletter_cc.sql",
-  "049_report_master.sql",
-  "050_auth_mysql.sql",
-  "051_ats_form_config.sql",
-  "052_legacy_migration_tables.sql",
-  "053_password_reset.sql",
-  "054_ats_onboarding_flow.sql",
-  "060_roster_master.sql",
-  "061_roster_capacity.sql",
-  "062_ats_candidate_created_by.sql",
-  "064_leave_type_updated_at.sql",
-  "065_department_description.sql",
-  "066_company_events.sql",
-  "067_org_settings.sql",
-  "068_upload_batch.sql",
-  "069_upload_batch_row_unique.sql",
-  "070_attendance_clock_columns.sql",
-  "071_communication_provider_config.sql",
-  "102_biometric_tables.sql",
-  "060_legacy_sync_schema.sql",
-  "062_employees_legacy_fields.sql",
-  "067_employee_task_system.sql",
-  "099_ats_candidate_uploads.sql",
-  "100_user_page_access.sql",
-  "125_kpi_process_role_engine.sql",
-  "134_external_db_credentials.sql",
-  "135_payroll_masters.sql",
-  "137_schema_gaps.sql",
-  "141_branch_head_approval.sql",
-  "142_offer_letter_system.sql",
-  "143_report_builder.sql",
-  "150_leave_policy_engine.sql",
-  "160_kpi_master_config.sql",
-  "170_access_improvements.sql",
-  "171_attendance_regularization_v2.sql",
-  "172_employee_photo.sql",
-  "173_employees_ctc_column.sql",
-  "174_apr_attendance_rule.sql",
-  "176_employee_work_schedule.sql",
-  "177_employee_profile_sensitive_details.sql",
-  "178_tax_declaration_form12bb.sql",
-  "179_super_admin_access.sql",
-  "180_ats_registration_onboarding_repair.sql",
-  "181_careers_super_admin.sql",
-  "182_user_notification_preferences.sql",
-  "183_launch_data_repairs.sql",
-  "184_master_data_integrity.sql",
-  "185_integration_run_integrity.sql",
-  "186_runtime_configuration_integrity.sql",
-  "187_employee_official_email.sql",
-  "188_integration_table_header_mapping.sql",
-  "189_integration_call_daily.sql",
-  "190_integration_biometric_daily.sql",
-  "191_attendance_source_lineage.sql",
-  "192_seed_current_leave_balances.sql",
-  "193_kpi_live_data_bridge.sql",
-  "194_kpi_process_reconciliation.sql",
-  "195_reporting_manager_role_alignment.sql",
-  "196_seed_call_master_header_mappings.sql",
-  "197_salary_increment_governance.sql",
-  "198_cosec_punch_evidence.sql",
-  "199_employee_directory_indexes.sql",
-  "200_employee_directory_process_index.sql",
-  "350_joining_document_public_token_hash_only.sql",
-  "351_sanitize_internal_sign_links.sql",
-];
+// The manifest is imported from runPendingMigrations.ts, NOT copied. This file used to
+// hold its own duplicate under a "must stay in sync" comment; it drifted to 115 entries
+// against the real 524, so this test silently skipped ~400 migrations - every recent one
+// included - and still printed "All migrations passed". A fresh-database check that
+// cannot see most migrations is worse than none, because it is believed.
 
 async function main() {
   // Connect without a database to create/drop the test DB
@@ -287,8 +174,74 @@ async function main() {
   }
 
   console.log(
-    `\n[migrate-fresh-test] All migrations passed.\n` +
+    `\n[migrate-fresh-test] Pass 1 (fresh database) passed.\n` +
       `  Applied: ${applied}  Skipped: ${skipped}  MySQL: ${mysqlVersion}\n`
+  );
+
+  // ---------------------------------------------------------------------------
+  // Pass 2 — idempotency.
+  //
+  // Every migration is replayed against the database pass 1 just built, where all
+  // its objects now exist. A migration that is not re-runnable fails here with
+  // ER_DUP_FIELDNAME (1060), ER_DUP_KEYNAME (1061) or ER_TABLE_EXISTS (1050).
+  //
+  // This matters because migrations run at boot on this deployment, and because
+  // objects have repeatedly reached production out of band - so the FIRST scheduled
+  // run of a migration is frequently against a database that already has everything
+  // it declares. Pass 1 alone cannot see that: it only ever runs against an empty
+  // schema, which is the one case that is never true in production.
+  //
+  // 1218_grn_phase_a_columns.sql is the worked example. It was a single multi-column
+  // ALTER plus four bare CREATE INDEX, applied out of band, absent from the manifest.
+  // Pass 1 would have said OK. Pass 2 is what says no.
+  //
+  // schema_migrations is deliberately NOT consulted: the point is to re-execute the
+  // SQL itself, not to confirm the runner would skip it.
+  // ---------------------------------------------------------------------------
+  let replayed = 0;
+
+  for (const file of MIGRATION_MANIFEST) {
+    const filePath = path.join(SQL_DIR, file);
+    if (!fs.existsSync(filePath)) continue;
+
+    const rawSql = fs.readFileSync(filePath, "utf8");
+    const statements = splitSql(rawSql).filter((stmt) => {
+      const upper = stmt.toUpperCase();
+      return !upper.startsWith("SOURCE ") && !upper.startsWith("USE ");
+    });
+
+    const conn = await mysql.createConnection(connConfig);
+    try {
+      for (let i = 0; i < statements.length; i++) {
+        const stmt = statements[i];
+        try {
+          await conn.query(stmt);
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`\n[migrate-fresh-test] NOT IDEMPOTENT: ${file}`);
+          console.error(`  Statement #${i + 1} failed on the SECOND run:`);
+          console.error("  " + stmt.replace(/\n/g, "\n  "));
+          console.error(`\n  Error: ${message}`);
+          console.error(`  MySQL version: ${mysqlVersion}`);
+          console.error(
+            `\n  This migration applies cleanly to an empty database but cannot be re-run.\n` +
+              `  Guard each object with information_schema + PREPARE/EXECUTE (MySQL 8.0\n` +
+              `  rejects ADD COLUMN IF NOT EXISTS), as the other migrations here do.\n`
+          );
+          await conn.end();
+          process.exit(1);
+        }
+      }
+      replayed++;
+    } finally {
+      await conn.end();
+    }
+  }
+
+  console.log(
+    `\n[migrate-fresh-test] Pass 2 (idempotency replay) passed.\n` +
+      `  Replayed: ${replayed}  MySQL: ${mysqlVersion}\n\n` +
+      `[migrate-fresh-test] All migrations passed both passes.\n`
   );
 }
 

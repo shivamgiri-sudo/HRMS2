@@ -1,0 +1,83 @@
+# Replays the FULL migration manifest against an empty MySQL, twice.
+#
+# Pass 1 proves every migration applies to a rebuilt database, in manifest order.
+# Pass 2 replays them against the database pass 1 just built and proves each one is
+# re-runnable. Migrations run at boot on this deployment and objects have repeatedly
+# reached production out of band, so a migration's first scheduled run is often against
+# a database that already has everything it declares - the case pass 1 can never see.
+#
+# MySQL 8.0 deliberately, not 8.4: production is 8.0.42, and the differences bite here
+# (8.0 rejects ADD COLUMN IF NOT EXISTS at the token, which is why the migrations use
+# information_schema + PREPARE/EXECUTE instead).
+#
+# This gate exists because the checks it replaces could not fail. migrate-fresh-test.ts
+# kept a private copy of the manifest that had drifted to 115 entries against the real
+# 524, so it skipped ~400 migrations - every recent one included - and still reported
+# "All migrations passed". It now imports the manifest from runPendingMigrations.ts.
+
+name: Migration replay (fresh + idempotency)
+
+on:
+  pull_request:
+    paths:
+      - "backend/sql/**"
+      - "backend/src/db/runPendingMigrations.ts"
+      - "backend/scripts/migrate-fresh-test.ts"
+      - ".github/workflows/migration-replay.yml"
+  push:
+    branches: [main]
+    paths:
+      - "backend/sql/**"
+      - "backend/src/db/runPendingMigrations.ts"
+      - "backend/scripts/migrate-fresh-test.ts"
+  workflow_dispatch:
+
+jobs:
+  replay:
+    name: MySQL 8.0 replays every migration, twice
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: mas_hrms_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install backend dependencies
+        run: npm --prefix backend ci
+
+      - name: Wait for MySQL
+        run: |
+          for i in $(seq 1 30); do
+            if mysqladmin ping -h 127.0.0.1 -P 3306 -uroot -proot --silent; then
+              echo "MySQL is up"; mysql -h 127.0.0.1 -uroot -proot -e "SELECT VERSION();"; exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL did not become ready"; exit 1
+
+      - name: Replay full manifest (fresh database, then idempotency)
+        working-directory: backend
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: "3306"
+          DB_USER: root
+          DB_PASSWORD: root
+          DB_NAME: mas_hrms_ci
+          TEST_DB_NAME: mas_hrms_ci_replay
+        run: npm run migrate:fresh:test

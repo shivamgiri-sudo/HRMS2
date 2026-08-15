@@ -32,6 +32,11 @@ const SQL_DIR = resolveSqlDir();
 // Non-b duplicates (020, 021, 022) are excluded — only b-variants are sourced.
 // Duplicate numeric prefixes (010/010, 012/012, 198/198, 204/204, 271/271, 504/504) are intentional —
 // tracking is by full filename in schema_migrations, so each file runs independently.
+// Exported so scripts/migrate-fresh-test.ts replays THIS list rather than a copy of it.
+// It previously kept its own duplicate under a "must stay in sync with
+// runPendingMigrations.ts" comment; the copy drifted to 115 entries against 524 here, so
+// the fresh-database test silently skipped ~400 migrations - including every recent one -
+// while still reporting "All migrations passed".
 const MIGRATION_MANIFEST: string[] = [
   "001_core_org.sql",
   "002_employees.sql",
