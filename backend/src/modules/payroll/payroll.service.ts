@@ -618,7 +618,7 @@ export const payrollService = {
     return rec;
   },
 
-  async updateLine(id: string, input: UpdatePrepLineInput, _userId: string): Promise<SalaryPrepLine> {
+  async updateLine(id: string, input: UpdatePrepLineInput, userId: string): Promise<SalaryPrepLine> {
     const line = await this.getLine(id);
     const [runRows] = await db.execute<RowDataPacket[]>("SELECT status FROM salary_prep_run WHERE id = ? LIMIT 1", [(line as any).run_id]);
     const runStatus = (runRows as any[])[0]?.status as RunStatus | undefined;
@@ -627,14 +627,41 @@ export const payrollService = {
     }
     const sets: string[] = [];
     const params: unknown[] = [];
-    if (input.presentDays  !== undefined) { sets.push("present_days = ?");  params.push(input.presentDays); }
-    if (input.lwpDays      !== undefined) { sets.push("lwp_days = ?");      params.push(input.lwpDays); }
-    if (input.lateMark     !== undefined) { sets.push("late_marks = ?");    params.push(input.lateMark); }
-    if (input.dialerHours  !== undefined) { sets.push("dialer_hours = ?");  params.push(input.dialerHours); }
-    if (input.remarks      !== undefined) { sets.push("remarks = ?");       params.push(input.remarks ?? null); }
+    // Before/after accumulators, filled in lockstep with the SET clauses below so the
+    // audited values can never drift from what was actually written.
+    const oldValues: Record<string, unknown> = {};
+    const newValues: Record<string, unknown> = {};
+    const track = (column: string, next: unknown) => {
+      oldValues[column] = (line as any)[column] ?? null;
+      newValues[column] = next;
+    };
+    if (input.presentDays  !== undefined) { sets.push("present_days = ?");  params.push(input.presentDays);      track("present_days", input.presentDays); }
+    if (input.lwpDays      !== undefined) { sets.push("lwp_days = ?");      params.push(input.lwpDays);          track("lwp_days", input.lwpDays); }
+    if (input.lateMark     !== undefined) { sets.push("late_marks = ?");    params.push(input.lateMark);         track("late_marks", input.lateMark); }
+    if (input.dialerHours  !== undefined) { sets.push("dialer_hours = ?");  params.push(input.dialerHours);      track("dialer_hours", input.dialerHours); }
+    if (input.remarks      !== undefined) { sets.push("remarks = ?");       params.push(input.remarks ?? null);  track("remarks", input.remarks ?? null); }
     if (sets.length > 0) {
       params.push(id);
       await db.execute(`UPDATE salary_prep_line SET ${sets.join(", ")} WHERE id = ?`, params);
+
+      // The actor id was received and discarded (`_userId`, unused), so an edit to a
+      // payroll line's attendance-derived inputs left no record of who made it —
+      // present_days and lwp_days feed straight into payable days. Mirrors the audit
+      // updateRunStatus writes a few methods above, and is awaited for the same reason:
+      // on a money path the audit row is part of the action, not a side effect of it.
+      // Written only when something was actually changed, and only for the fields the
+      // caller changed, so the log carries the edit rather than the whole line.
+      const { logSensitiveAction } = await import("../../shared/auditLog.js");
+      await logSensitiveAction({
+        actor_user_id: userId,
+        action_type: "PAYROLL_LINE_UPDATE",
+        module_key: "payroll",
+        entity_type: "salary_prep_line",
+        entity_id: id,
+        employee_id: (line as any).employee_id,
+        old_value_json: oldValues,
+        new_value_json: newValues,
+      });
     }
     return this.getLine(id);
   },
