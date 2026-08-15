@@ -29,7 +29,6 @@ interface AttendanceStateRow extends RowDataPacket {
   id: string;
   attendance_status: string | null;
   lwp_value: number | null;
-  shift_id: string | null;
   is_locked: number | null;
 }
 
@@ -105,7 +104,18 @@ async function assertPayrollAccess(userId: string): Promise<{ actorRole: string 
 /** Fetch the attendance_daily_record current state for a given employee+date. */
 async function getCurrentAttendance(employeeId: string, date: string): Promise<AttendanceStateRow | null> {
   const [rows] = await db.execute<AttendanceStateRow[]>(
-    `SELECT id, attendance_status, lwp_value, shift_id, is_locked
+    // No shift_id: attendance_daily_record does not have one, and has no shift column
+    // at all. Verified live 2026-08-15 against all 45 of its columns. Selecting it
+    // raised ER_BAD_FIELD_ERROR, and because both the create and the approve path go
+    // through this helper, the entire manual-override feature threw on first contact —
+    // attendance_manual_override holds 0 rows against 128,963 attendance records,
+    // which is what "never once completed" looks like.
+    //
+    // The override table's old_shift_id is nullable and now stays NULL, which is the
+    // honest value: the attendance record genuinely carries no shift to capture. If
+    // recording the shift matters, it has to be sourced from the roster, and that is a
+    // feature decision rather than a column rename.
+    `SELECT id, attendance_status, lwp_value, is_locked
        FROM attendance_daily_record
       WHERE employee_id = ? AND record_date = ?
       LIMIT 1`,
@@ -248,7 +258,7 @@ attendanceManualOverrideRouter.post("/manual-overrides", h(async (req, res) => {
       current.attendance_status,        // old_status — from live record
       null,                             // old_payable_days (future: derive from payroll line)
       current.lwp_value ?? null,        // old_lwp
-      current.shift_id ?? null,         // old_shift_id
+      null,                             // old_shift_id — attendance_daily_record has no shift column
       new_status.trim(),
       new_payable_days ?? null,
       new_lwp ?? null,
@@ -277,7 +287,6 @@ attendanceManualOverrideRouter.post("/manual-overrides", h(async (req, res) => {
     old_value_json: {
       attendance_status: current.attendance_status,
       lwp_value:         current.lwp_value ?? null,
-      shift_id:          current.shift_id ?? null,
     },
     new_value_json: {
       new_status:              new_status.trim(),
