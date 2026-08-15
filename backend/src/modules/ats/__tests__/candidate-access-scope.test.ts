@@ -12,6 +12,11 @@
  * and that the list path's behaviour is unchanged by the extraction.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const CONTROLLER = readFileSync(resolve(process.cwd(), "src/modules/ats/ats.controller.ts"), "utf8");
+const ROUTES = readFileSync(resolve(process.cwd(), "src/modules/ats/ats.routes.ts"), "utf8");
 
 const mockDb = { execute: vi.fn() };
 vi.mock("../../../db/mysql.js", () => ({ db: mockDb }));
@@ -98,6 +103,45 @@ describe("an out-of-scope candidate is refused on the by-id path", () => {
     mockRoleKeys.mockResolvedValue(["admin"]);
     mockDb.execute.mockResolvedValueOnce([[{ 1: 1 }], []]);
     expect(await canAccessCandidate("u1", "cand-x")).toBe(true);
+  });
+});
+
+describe("every by-id candidate surface carries the guard", () => {
+  // Source-level, because these are route/controller wiring rather than pure functions.
+  // Pins that the guard was actually applied, and that the mutating paths check BEFORE
+  // they parse or write.
+  it.each([
+    ["getCandidate", "async getCandidate"],
+    ["updateCandidate", "async updateCandidate"],
+    ["moveStage", "async moveStage"],
+    ["listStageLogs", "async listStageLogs"],
+  ])("%s asserts scope", (_label, marker) => {
+    const body = CONTROLLER.slice(CONTROLLER.indexOf(marker), CONTROLLER.indexOf(marker) + 1200);
+    expect(body).toMatch(/assertCandidateInScope/);
+  });
+
+  it("updateCandidate and moveStage guard BEFORE parsing the body", () => {
+    for (const marker of ["async updateCandidate", "async moveStage"]) {
+      const body = CONTROLLER.slice(CONTROLLER.indexOf(marker), CONTROLLER.indexOf(marker) + 1200);
+      expect(body.indexOf("assertCandidateInScope")).toBeLessThan(body.indexOf(".parse(req.body)"));
+    }
+  });
+
+  it.each([
+    "/queue-tokens/candidate/:candidateId",
+    "/convert/:candidateId",
+    "/candidates/:id/reassign",
+  ])("route %s asserts scope", (route) => {
+    const at = ROUTES.indexOf(route);
+    expect(at).toBeGreaterThan(-1);
+    expect(ROUTES.slice(at, at + 1400)).toMatch(/assertCandidateInScope/);
+  });
+
+  it("the PUBLIC candidate upload is deliberately NOT staff-scoped", () => {
+    // atsPublicRouter — the candidate uploading their own resume/selfie, proven by mobile,
+    // not a recruiter acting on someone. Applying staff scope here would break self-upload.
+    const at = ROUTES.indexOf('"/candidates/:id/upload"');
+    expect(ROUTES.slice(at - 200, at)).toMatch(/atsPublicRouter/);
   });
 });
 

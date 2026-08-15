@@ -51,6 +51,11 @@ export const atsController = {
   },
 
   async updateCandidate(req: AuthenticatedRequest, res: Response) {
+    // Scope BEFORE parsing the body: an out-of-scope caller must get the same 404 whether
+    // their payload is valid or not, or the validation error itself confirms the candidate.
+    const { assertCandidateInScope } = await import("./candidate-access.js");
+    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res))) return;
+
     const input = updateCandidateSchema.parse(req.body);
     // Convert numeric boolean fields to strings for CreateCandidateInput type compatibility
     const normalizedInput = {
@@ -67,6 +72,11 @@ export const atsController = {
   },
 
   async moveStage(req: AuthenticatedRequest, res: Response) {
+    // The most consequential of these: move-stage MUTATES a candidate's pipeline position,
+    // so without scope a recruiter could advance or reject someone else's candidate.
+    const { assertCandidateInScope } = await import("./candidate-access.js");
+    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res))) return;
+
     const input = moveStagingSchema.parse(req.body);
     const data  = await atsService.moveStage(
       req.params.id, input.toStage, req.authUser!.id, input.remarks ?? undefined
@@ -75,6 +85,11 @@ export const atsController = {
   },
 
   async listStageLogs(req: AuthenticatedRequest, res: Response) {
+    // Stage history names the candidate's process/branch movement and the actors involved,
+    // so it discloses as much as the record itself.
+    const { assertCandidateInScope } = await import("./candidate-access.js");
+    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res))) return;
+
     const data = await atsService.listStageLogs(req.params.id);
     return res.json({ success: true, data });
   },

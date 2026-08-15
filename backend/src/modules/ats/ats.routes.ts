@@ -201,6 +201,12 @@ atsRouter.post(
   "/convert/:candidateId",
   requireRole("admin", "hr"),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    // Defence in depth: admin and hr are both wide roles today, so this guard passes for
+    // every caller who can currently reach the route. It is here so that widening the role
+    // list later cannot silently hand conversion of any candidate to a scoped role.
+    const { assertCandidateInScope } = await import("./candidate-access.js");
+    if (!(await assertCandidateInScope(req.authUser!.id, req.params.candidateId, res))) return;
+
     const result = await convertCandidateToEmployee(
       req.params.candidateId,
       req.authUser!.id
@@ -261,6 +267,11 @@ atsRouter.post("/queue-tokens", requireRole("admin", "hr", "super_admin", "recru
 
 // GET /api/ats/queue-tokens/candidate/:candidateId â€” active token for a candidate
 atsRouter.get("/queue-tokens/candidate/:candidateId", requireRole("admin", "hr", "super_admin", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // recruiter is a scoped role, so this needs the same candidate guard as the by-id routes:
+  // a walk-in token names the candidate and their queue position.
+  const { assertCandidateInScope } = await import("./candidate-access.js");
+  if (!(await assertCandidateInScope(req.authUser!.id, req.params.candidateId, res))) return;
+
   const data = await atsQueueService.getTokenByCandidateId(req.params.candidateId);
   return res.json({ success: true, data });
 }));
@@ -695,6 +706,12 @@ atsRouter.patch("/recruiter-roster/:id/deactivate", requireRole("admin", "hr", "
 
 // PATCH /api/ats/candidates/:id/reassign — HR/Admin formal reassignment with audit
 atsRouter.patch("/candidates/:id/reassign", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // Defence in depth, as with /convert: every role admitted here is wide today, so this
+  // guard is currently a no-op. It exists so the route cannot become scoped-role-reachable
+  // without the candidate check coming with it.
+  const { assertCandidateInScope } = await import("./candidate-access.js");
+  if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res))) return;
+
   const { newRecruiterId, reason } = req.body;
   if (!newRecruiterId || typeof newRecruiterId !== "string") {
     return res.status(400).json({ success: false, message: "newRecruiterId is required" });
