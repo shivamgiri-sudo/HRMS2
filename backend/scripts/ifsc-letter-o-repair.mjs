@@ -19,6 +19,11 @@
  *  - It will not touch the other 360 malformed rows (326 wrong-length like '20437' or
  *    'PUNB079700', plus ~34 malformed some other way). Those are not mechanically recoverable
  *    and guessing at them would move money on an invention.
+ *  - It will not touch the 47 rows whose branch code ALSO carries the O-for-0 corruption
+ *    (SBINOO11554, IOBAOOO1137). Fixing position 5 alone would make those pass the format
+ *    check while remaining wrong — worse than leaving them, because a malformed code is
+ *    correctly held out of the payment file and a well-formed wrong one is not. See the
+ *    exclusion clause in CANDIDATE_SQL. Those 47 need the RBI IFSC list to resolve.
  *  - It will not touch rows that are already valid.
  *  - It will not write a value that does not itself pass the RBI format after substitution.
  *  - It changes position 5 ONLY. Every other character is preserved byte-for-byte.
@@ -56,7 +61,60 @@ const CANDIDATE_SQL = `
      AND SUBSTRING(ifsc_code, 5, 1) = 'O'
      AND ifsc_code NOT REGEXP '^[A-Z]{4}0[A-Z0-9]{6}$'
      AND CONCAT(LEFT(ifsc_code, 4), '0', SUBSTRING(ifsc_code, 6)) REGEXP '^[A-Z]{4}0[A-Z0-9]{6}$'
+     -- Position 5 is structural, but 47 rows carry the SAME O-for-0 corruption further
+     -- into the branch code (SBINOO11554, IOBAOOO1137, YESBOOOO139). Correcting position
+     -- 5 alone makes those PASS the RBI format while still being wrong, which promotes
+     -- them from "malformed, correctly excluded from the payment file" to "well-formed,
+     -- included, and unroutable at the bank". That is strictly worse than leaving them.
+     --
+     -- Nor can they be fixed by replacing every O: UTBIOCON702 would become UTBI0C0N702,
+     -- destroying what is plausibly a real branch abbreviation. Telling those two cases
+     -- apart needs the RBI IFSC list, not a rule, so they are held back for manual
+     -- resolution rather than guessed at.
+     --
+     -- A branch code mixing O with digits is exactly that ambiguous case. BINARY so a
+     -- case-insensitive collation cannot fold a lowercase o into the test.
+     AND NOT (
+           INSTR(BINARY SUBSTRING(CONCAT(LEFT(ifsc_code, 4), '0', SUBSTRING(ifsc_code, 6)), 6), 'O') > 0
+       AND SUBSTRING(CONCAT(LEFT(ifsc_code, 4), '0', SUBSTRING(ifsc_code, 6)), 6) REGEXP '[0-9]'
+     )
    ORDER BY ifsc_code`;
+
+/**
+ * The rows the clause above deliberately holds back. Reported every run: an exclusion
+ * nobody can see reads as "we covered everything", and these are employees who still
+ * cannot be paid after this script reports success.
+ */
+const HELD_BACK_SQL = `
+  SELECT id, employee_id, ifsc_code
+    FROM employee_bank_detail
+   WHERE active_status = 1
+     AND is_primary = 1
+     AND ifsc_code IS NOT NULL
+     AND CHAR_LENGTH(ifsc_code) = 11
+     AND SUBSTRING(ifsc_code, 5, 1) = 'O'
+     AND ifsc_code NOT REGEXP '^[A-Z]{4}0[A-Z0-9]{6}$'
+     AND CONCAT(LEFT(ifsc_code, 4), '0', SUBSTRING(ifsc_code, 6)) REGEXP '^[A-Z]{4}0[A-Z0-9]{6}$'
+     AND INSTR(BINARY SUBSTRING(CONCAT(LEFT(ifsc_code, 4), '0', SUBSTRING(ifsc_code, 6)), 6), 'O') > 0
+     AND SUBSTRING(CONCAT(LEFT(ifsc_code, 4), '0', SUBSTRING(ifsc_code, 6)), 6) REGEXP '[0-9]'
+   ORDER BY ifsc_code`;
+
+async function reportHeldBack(conn) {
+  const [held] = await conn.execute(HELD_BACK_SQL);
+  if (held.length === 0) return;
+  console.log(
+    `\nHELD BACK   : ${held.length} rows this script will NOT repair.\n` +
+      `  Each carries the O-for-0 corruption in the branch code too, so fixing position 5\n` +
+      `  alone would make it pass the RBI format while still being wrong — moving it from\n` +
+      `  "correctly excluded from the payment file" to "included and unroutable".\n` +
+      `  Replacing every O is not safe either (UTBIOCON702 -> UTBI0C0N702 destroys a real\n` +
+      `  branch abbreviation). These need the RBI IFSC list, employee by employee.\n`,
+  );
+  for (const r of held) {
+    console.log(`  ${r.ifsc_code}  employee_id=${r.employee_id}`);
+  }
+  console.log(`\n  ${held.length} employees remain unpayable by NEFT after this repair.`);
+}
 
 async function main() {
   const conn = await mysql.createConnection({
@@ -75,6 +133,7 @@ async function main() {
 
   if (rows.length === 0) {
     console.log("Nothing to repair.");
+    await reportHeldBack(conn);
     await conn.end();
     return;
   }
@@ -100,6 +159,8 @@ async function main() {
     console.log(`  UPDATE employee_bank_detail SET ifsc_code='${r.ifsc_code}' WHERE id='${r.id}';`);
   }
   if (rows.length > 5) console.log(`  ... and ${rows.length - 5} more (full set written below on --apply)`);
+
+  await reportHeldBack(conn);
 
   if (!APPLY) {
     console.log("\nDRY RUN — nothing was written. Re-run with --apply only after owner approval.\n");
