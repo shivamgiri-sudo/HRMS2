@@ -146,7 +146,9 @@ describe("importRosterAssignmentBatch transaction handling", () => {
       [],
       [],
       [{ id: "policy-1", scope_type: "organization", scope_id: null, minimum_rest_minutes: 600, allows_emergency_override: 0 }],
-      [{ roster_date: "2026-08-16", shift_end_time: "22:00:00" }],
+      // start_time/end_time are the query's aliases now that findAdjacentShifts
+      // COALESCEs the assignment snapshot with the shift template's own times.
+      [{ roster_date: "2026-08-16", start_time: "13:00:00", end_time: "22:00:00" }],
       [],
       [],
       [],

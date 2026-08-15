@@ -181,6 +181,31 @@ export async function resolveRestPolicy(ctx: RestPolicyContext, executor: Execut
  *  cross-calendar-day safe. UTC construction throughout (Date.UTC), same
  *  timezone-independence pattern as computeScheduledMinutes/dateRange
  *  elsewhere in this module — never a local-timezone Date constructor. */
+/** UTC-only day arithmetic, matching the Date.UTC discipline used throughout this module. */
+function addDays(date: string, days: number): string {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+/**
+ * The calendar date a shift actually ENDS on.
+ *
+ * A shift whose end time is not after its start time ran through midnight, so it ends on the
+ * following day. Rest was previously measured from the end time placed on the shift's own
+ * roster_date, which puts the end of a 21:00-06:00 shift at 06:00 that MORNING — roughly a
+ * full day before it really finished. Every gap after a night shift was therefore overstated
+ * by about 24 hours and could never breach any threshold.
+ *
+ * That is not an edge case here: 10 of the 23 configured shift templates cross midnight, and
+ * 202 employees sit on 21:00-06:00 alone. Night workers are exactly the population a minimum
+ * rest rule exists to protect, and they were the population it could not see.
+ */
+export function shiftEndDate(rosterDate: string, startTime: string, endTime: string): string {
+  const start = startTime.slice(0, 5);
+  const end = endTime.slice(0, 5);
+  return end <= start ? addDays(rosterDate, 1) : rosterDate;
+}
+
 export function restGapMinutes(prev: ShiftTimeRef, next: ShiftTimeRef): number {
   const [py, pm, pd] = prev.date.split("-").map(Number);
   const [ph, pmin] = prev.time.split(":").map(Number);
@@ -202,29 +227,55 @@ export async function findAdjacentShifts(
   excludeAssignmentId?: string | null,
   executor: Executor = db
 ): Promise<{ previous: ShiftTimeRef | null; next: ShiftTimeRef | null }> {
-  const excludeClause = excludeAssignmentId ? "AND id <> ?" : "";
+  const excludeClause = excludeAssignmentId ? "AND a.id <> ?" : "";
   const excludeParam = excludeAssignmentId ? [excludeAssignmentId] : [];
 
+  // Times come from the assignment's own snapshot columns when it has them, and otherwise
+  // from the shift template it points at.
+  //
+  // Reading only the snapshot columns made this blind to the real roster: all 1,354
+  // cycle-bound assignments in production carry shift_start_time and shift_end_time NULL and
+  // hold their times solely in shift_template_id. The 412,032 rows that DO populate the
+  // snapshot are a single-window synthetic backfill. So the guard evaluated seed data and
+  // skipped every genuine assignment — silently, because a NULL time simply filtered the row
+  // out of these two queries and the employee looked like they had no neighbouring shift.
   const [prevRows] = await executor.execute<RowDataPacket[]>(
-    `SELECT roster_date, shift_end_time FROM wfm_roster_assignment
-      WHERE employee_id = ? AND roster_date < ? AND is_week_off = 0
-        AND shift_end_time IS NOT NULL ${excludeClause}
-      ORDER BY roster_date DESC LIMIT 1`,
+    `SELECT a.roster_date,
+            COALESCE(a.shift_start_time, t.start_time) AS start_time,
+            COALESCE(a.shift_end_time,   t.end_time)   AS end_time
+       FROM wfm_roster_assignment a
+       LEFT JOIN wfm_shift_template t ON t.id = a.shift_template_id
+      WHERE a.employee_id = ? AND a.roster_date < ? AND a.is_week_off = 0
+        AND COALESCE(a.shift_start_time, t.start_time) IS NOT NULL
+        AND COALESCE(a.shift_end_time,   t.end_time)   IS NOT NULL ${excludeClause}
+      ORDER BY a.roster_date DESC LIMIT 1`,
     [employeeId, rosterDate, ...excludeParam]
   );
   const [nextRows] = await executor.execute<RowDataPacket[]>(
-    `SELECT roster_date, shift_start_time FROM wfm_roster_assignment
-      WHERE employee_id = ? AND roster_date > ? AND is_week_off = 0
-        AND shift_start_time IS NOT NULL ${excludeClause}
-      ORDER BY roster_date ASC LIMIT 1`,
+    `SELECT a.roster_date,
+            COALESCE(a.shift_start_time, t.start_time) AS start_time
+       FROM wfm_roster_assignment a
+       LEFT JOIN wfm_shift_template t ON t.id = a.shift_template_id
+      WHERE a.employee_id = ? AND a.roster_date > ? AND a.is_week_off = 0
+        AND COALESCE(a.shift_start_time, t.start_time) IS NOT NULL ${excludeClause}
+      ORDER BY a.roster_date ASC LIMIT 1`,
     [employeeId, rosterDate, ...excludeParam]
   );
 
+  // The previous shift's END is dated by when it actually finished, not by its roster_date.
   const prev = prevRows[0]
-    ? { date: String(prevRows[0].roster_date).slice(0, 10), time: String(prevRows[0].shift_end_time).slice(0, 5) }
+    ? {
+        date: shiftEndDate(
+          String(prevRows[0].roster_date).slice(0, 10),
+          String(prevRows[0].start_time).slice(0, 5),
+          String(prevRows[0].end_time).slice(0, 5)
+        ),
+        time: String(prevRows[0].end_time).slice(0, 5),
+      }
     : null;
+  // A shift always STARTS on its own roster_date, so no roll is needed here.
   const next = nextRows[0]
-    ? { date: String(nextRows[0].roster_date).slice(0, 10), time: String(nextRows[0].shift_start_time).slice(0, 5) }
+    ? { date: String(nextRows[0].roster_date).slice(0, 10), time: String(nextRows[0].start_time).slice(0, 5) }
     : null;
   return { previous: prev, next: next };
 }
@@ -248,8 +299,13 @@ export async function validateMinimumRest(
   if (!policy) return { ok: false, reason: "REST_POLICY_MISSING", policy: null };
 
   const { previous, next } = await findAdjacentShifts(ctx.employeeId, ctx.forDate, excludeAssignmentId, executor);
-  const candidateStart: ShiftTimeRef = { date: ctx.forDate, time: candidateShift.startTime };
-  const candidateEnd: ShiftTimeRef = { date: ctx.forDate, time: candidateShift.endTime };
+  const candidateStart: ShiftTimeRef = { date: ctx.forDate, time: candidateShift.startTime.slice(0, 5) };
+  // The candidate can itself run through midnight — a 22:00-07:00 shift ends the next morning,
+  // which is what the following shift has to be measured against.
+  const candidateEnd: ShiftTimeRef = {
+    date: shiftEndDate(ctx.forDate, candidateShift.startTime, candidateShift.endTime),
+    time: candidateShift.endTime.slice(0, 5),
+  };
 
   if (previous) {
     const gap = restGapMinutes(previous, candidateStart);

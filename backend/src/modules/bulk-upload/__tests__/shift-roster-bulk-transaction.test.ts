@@ -186,8 +186,11 @@ describe("importShiftRosterBatch transaction handling", () => {
       [], [], [],
       [{ id: "policy-1", scope_type: "organization", scope_id: null, minimum_rest_minutes: 600, allows_emergency_override: 0 }],
       // findAdjacentShifts: previous ends 18:00 the same day (only 4h before
-      // the candidate's 22:00 start), next -> none
-      [{ roster_date: "2026-08-17", shift_end_time: "18:00:00" }],
+      // the candidate's 22:00 start), next -> none.
+      // start_time/end_time are the query's aliases now that it COALESCEs the
+      // assignment's snapshot columns with the shift template's own times —
+      // production roster rows carry the snapshot NULL and the times on the template.
+      [{ roster_date: "2026-08-17", start_time: "09:00:00", end_time: "18:00:00" }],
       [],
     );
 

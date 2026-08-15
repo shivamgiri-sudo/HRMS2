@@ -144,8 +144,8 @@ describe("findAdjacentShifts", () => {
     let call = 0;
     execute.mockImplementation(async () => {
       call += 1;
-      if (call === 1) return [[{ roster_date: "2026-08-16", shift_end_time: "18:00:00" }], []];
-      return [[{ roster_date: "2026-08-19", shift_start_time: "09:00:00" }], []];
+      if (call === 1) return [[{ roster_date: "2026-08-16", start_time: "09:00:00", end_time: "18:00:00" }], []];
+      return [[{ roster_date: "2026-08-19", start_time: "09:00:00" }], []];
     });
     const result = await findAdjacentShifts("emp-1", "2026-08-17");
     expect(result.previous).toEqual({ date: "2026-08-16", time: "18:00" });
@@ -169,8 +169,8 @@ describe("validateMinimumRest", () => {
     execute.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes("INFORMATION_SCHEMA.TABLES")) return [[{ TABLE_NAME: "wfm_rest_policy" }], []];
       if (sql.includes("FROM wfm_rest_policy")) return [[policyRow({ minimum_rest_minutes: 600 })], []]; // 10h
-      if (sql.includes("roster_date < ?")) return [[{ roster_date: "2026-08-16", shift_end_time: "18:00:00" }], []];
-      if (sql.includes("roster_date > ?")) return [[{ roster_date: "2026-08-18", shift_start_time: "09:00:00" }], []];
+      if (sql.includes("roster_date < ?")) return [[{ roster_date: "2026-08-16", start_time: "09:00:00", end_time: "18:00:00" }], []];
+      if (sql.includes("roster_date > ?")) return [[{ roster_date: "2026-08-18", start_time: "09:00:00" }], []];
       return [[], []];
     });
     // Candidate: 09:00-18:00 on 2026-08-17. Prev ends 18:00 on 08-16 -> 15h gap. Next starts 09:00 on 08-18 -> 15h gap.
@@ -184,7 +184,7 @@ describe("validateMinimumRest", () => {
       if (sql.includes("INFORMATION_SCHEMA.TABLES")) return [[{ TABLE_NAME: "wfm_rest_policy" }], []];
       if (sql.includes("FROM wfm_rest_policy")) return [[policyRow({ minimum_rest_minutes: 600, allows_emergency_override: 1 })], []];
       // Previous shift ends 22:00 the day before; candidate starts 04:00 -> only 6h gap, below the 10h minimum.
-      if (sql.includes("roster_date < ?")) return [[{ roster_date: "2026-08-16", shift_end_time: "22:00:00" }], []];
+      if (sql.includes("roster_date < ?")) return [[{ roster_date: "2026-08-16", start_time: "13:00:00", end_time: "22:00:00" }], []];
       if (sql.includes("roster_date > ?")) return [[], []];
       return [[], []];
     });
@@ -201,7 +201,7 @@ describe("validateMinimumRest", () => {
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("INFORMATION_SCHEMA.TABLES")) return [[{ TABLE_NAME: "wfm_rest_policy" }], []];
       if (sql.includes("FROM wfm_rest_policy")) return [[policyRow({ minimum_rest_minutes: 600, allows_emergency_override: 0 })], []];
-      if (sql.includes("roster_date < ?")) return [[{ roster_date: "2026-08-16", shift_end_time: "22:00:00" }], []];
+      if (sql.includes("roster_date < ?")) return [[{ roster_date: "2026-08-16", start_time: "13:00:00", end_time: "22:00:00" }], []];
       if (sql.includes("roster_date > ?")) return [[], []];
       return [[], []];
     });
