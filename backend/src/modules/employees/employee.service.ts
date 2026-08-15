@@ -175,11 +175,16 @@ export const employeeService = {
     // salary_start_date defaults to date_of_joining when not explicitly set
     const salaryStartDate = input.salaryStartDate ?? input.dateOfJoining;
     await db.execute(
+      // cost_centre_id is written here because updateEmployee already accepts costCentreId:
+      // without it, an employee added through this path could not have a cost centre until
+      // someone reopened them in the Edit dialog and set it by hand. Same field, same
+      // request shape, two different answers depending on which screen created the row.
       `INSERT INTO employees
          (id, employee_code, first_name, last_name, email, mobile, gender,
           date_of_birth, date_of_joining, salary_start_date, employment_type,
-          branch_id, department_id, process_id, designation_id, reporting_manager_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          branch_id, department_id, process_id, designation_id, cost_centre_id,
+          reporting_manager_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         input.employeeCode,
@@ -196,6 +201,7 @@ export const employeeService = {
         input.departmentId ?? null,
         input.processId ?? null,
         input.designationId ?? null,
+        (input as any).costCentreId ?? null,
         input.reportingManagerId ?? null,
       ]
     );

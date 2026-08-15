@@ -310,6 +310,47 @@ export async function createEmployeeFromCandidate(
 
     const salaryStartDate = offer.date_of_salary ?? offer.date_of_joining;
 
+    /**
+     * Cost centre — captured at onboarding, and until now dropped here.
+     *
+     * The offer form makes "Cost Centre" a required field and stores the chosen
+     * cost_centre_master.id on ats_employment_offer.cost_centre, which is then mirrored to
+     * ats_payroll_hr_validation.cost_centre_id. Neither reached the employee: this INSERT
+     * never named the column, and no other creation path writes it either, so
+     * employees.cost_centre_id arrived only if someone opened the Edit Employee dialog by
+     * hand. 185 active employees were NULL on 2026-08-15 because of this.
+     *
+     * Resolved rather than assigned straight through, for two reasons:
+     *   - ats_employment_offer.cost_centre is VARCHAR(100) with NO foreign key, while
+     *     employees.cost_centre_id is CHAR(36) WITH one. Passing an unmatched value would
+     *     raise ER_NO_REFERENCED_ROW and roll back the whole conversion — turning a blank
+     *     field into a candidate who cannot be onboarded at all. A cost centre that cannot
+     *     be resolved must leave the employee unassigned, exactly as today, not block them.
+     *   - the same defensive shape is already used above for branch_id and process_id,
+     *     which hold an id on some rows and a name on others.
+     *
+     * The validation row is consulted as a fallback because the payroll-HR path can write
+     * ats_payroll_hr_validation.cost_centre_id directly.
+     */
+    const rawCostCentre = offer.cost_centre ?? null;
+    const [ccRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT cm.id
+         FROM cost_centre_master cm
+        WHERE cm.id = COALESCE(
+                ?,
+                (SELECT v.cost_centre_id FROM ats_payroll_hr_validation v
+                  WHERE v.candidate_id = ? LIMIT 1)
+              )
+        LIMIT 1`,
+      [rawCostCentre, candidateId]
+    );
+    const costCentreId = (ccRows[0] as { id?: string } | undefined)?.id ?? null;
+    if (!costCentreId) {
+      result.warnings.push(
+        'No cost centre could be resolved for this employee; it must be set manually.'
+      );
+    }
+
     // Create employee record (active_status=0, no auth_user yet)
     await conn.execute(
       // employment_status must be written explicitly: the column defaults to
@@ -320,10 +361,10 @@ export async function createEmployeeFromCandidate(
           personal_email, personal_phone, alternate_mobile,
           gender, date_of_birth, father_name, marital_status,
           address1, permanent_address1,
-          branch_id, process_id, department_id, designation_id,
+          branch_id, process_id, department_id, designation_id, cost_centre_id,
           date_of_joining, salary_start_date, employment_type, reporting_manager_id,
           user_id, active_status, employment_status)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
       [
         employeeId, employeeCode, firstName, lastName,
         candRow?.personal_email ?? null,
@@ -341,6 +382,7 @@ export async function createEmployeeFromCandidate(
         candRow?.process_id ?? null,
         offer.department_id ?? null,
         offer.designation_id ?? null,
+        costCentreId,
         offer.date_of_joining,
         salaryStartDate,
         offer.emp_type,
