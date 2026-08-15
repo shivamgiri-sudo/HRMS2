@@ -25,6 +25,7 @@ import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-re
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
 import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
 import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
+import { startMobilityTransferWorker } from "./workers/mobility-transfer.worker.js";
 import { startAnnualLeaveWorker } from "./workers/leave-annual-el-credit.worker.js";
 import { startLeaveMonthlyWorker } from "./workers/leave-monthly-credit.worker.js";
 import { legacySyncWorker } from "./workers/legacy-sync-worker.js";
@@ -197,6 +198,7 @@ function startServer() {
         startCosecSyncWorker();
         legacySyncWorker.start();
         startAccessExpiryScheduler();
+        startMobilityTransferWorker();
         startITProvisioningLockScheduler();
         startLeaveMonthlyWorker();
         startAnnualLeaveWorker();

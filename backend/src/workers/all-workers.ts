@@ -2,6 +2,7 @@ import "dotenv/config";
 import { readBuildInfo } from "../shared/buildInfo.js";
 
 import { startAccessExpiryScheduler, stopAccessExpiryScheduler } from "./access-expiry.worker.js";
+import { startMobilityTransferWorker, stopMobilityTransferWorker } from "./mobility-transfer.worker.js";
 import { startIntegrationScheduler, stopIntegrationScheduler } from "./integration-scheduler.worker.js";
 import { startKpiDailySyncWorker, stopKpiDailySyncWorker } from "./kpi-daily-sync.worker.js";
 import { startAnnualLeaveWorker, stopAnnualLeaveWorker } from "./leave-annual-el-credit.worker.js";
@@ -69,6 +70,12 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "access-expiry",
     start: () => { startAccessExpiryScheduler(); return Promise.resolve(); },
+  },
+  {
+    // Applies approved transfers on their effective_date. Registered here AND in server.ts:
+    // a worker present in only one of the two never runs in the deployment that uses the other.
+    name: "mobility-transfer",
+    start: () => { startMobilityTransferWorker(); return Promise.resolve(); },
   },
   {
     name: "tenure-badge",

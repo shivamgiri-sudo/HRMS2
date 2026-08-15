@@ -241,18 +241,54 @@ export const mobilityService = {
           AND effective_date <= CURDATE()`
     );
     let applied = 0;
+    let failed = 0;
+
     for (const row of pending as RowDataPacket[]) {
+      const transferId = String(row.id);
+
+      // Claim the row BEFORE moving the employee, with an expected-state UPDATE.
+      //
+      // The SELECT above and the apply below are not atomic together: two workers (or a
+      // worker and a manual invocation) can both read the same pending row. Whoever wins
+      // this UPDATE gets affectedRows 1; the loser gets 0 and skips, so the employee master
+      // is never moved twice by the same transfer. Claiming first also means a crash between
+      // the employee UPDATE and the stamp can no longer leave a transfer that re-applies on
+      // every subsequent run.
+      const [claim] = await db.execute<import("mysql2").ResultSetHeader>(
+        `UPDATE transfer_record SET applied_at = NOW() WHERE id = ? AND applied_at IS NULL`,
+        [transferId]
+      );
+      if (claim.affectedRows !== 1) {
+        console.warn(`[mobility] deferred transfer ${transferId} already claimed by another run — skipping`);
+        continue;
+      }
+
       try {
         await mobilityService.applyTransferToEmployee(
           String(row.employee_id),
           String(row.transfer_type),
           String(row.to_value),
-          String(row.id)
+          transferId
         );
         applied++;
       } catch (err) {
-        console.error(`[mobility] Failed to apply deferred transfer ${row.id}:`, err);
+        // Release the claim so a later run retries, rather than leaving the transfer
+        // permanently marked applied when the employee was never actually moved.
+        failed++;
+        await db.execute(
+          `UPDATE transfer_record SET applied_at = NULL WHERE id = ?`,
+          [transferId]
+        ).catch((releaseErr) => {
+          console.error(`[mobility] could not release claim on ${transferId} — it will not retry:`, releaseErr);
+        });
+        console.error(`[mobility] Failed to apply deferred transfer ${transferId}:`, err);
       }
+    }
+
+    if (failed > 0) {
+      // Surfaced, not swallowed: a deferred transfer that silently never lands is a person
+      // whose branch, manager and payroll scope are wrong for as long as nobody notices.
+      console.error(`[mobility] applyPendingTransfers: ${applied} applied, ${failed} FAILED and will be retried`);
     }
     return applied;
   },
