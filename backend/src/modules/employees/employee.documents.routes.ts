@@ -153,10 +153,21 @@ router.patch("/:employeeId/:docId/verify", requireRole("admin", "hr", "super_adm
   }
 
   const verified = action === "verified" ? 1 : 0;
+  // No updated_at here: employee_documents does not have that column. Verified live
+  // 2026-08-15 — it holds id, employee_id, doc_type, doc_category, legacy_source,
+  // legacy_ref_id, doc_name, file_url, verified, uploaded_by, created_at, expiry_date,
+  // verified_by, verification_date, verification_remarks, and nothing else. Setting it
+  // raised ER_BAD_FIELD_ERROR, so this endpoint 500'd on every call and no document
+  // could ever be verified or rejected through it.
+  //
+  // Dropped rather than added as a column: nothing in the codebase reads
+  // employee_documents.updated_at, and verification_date = NOW() already records when
+  // the decision was made. Adding an unread column to a 207,616-row table to satisfy
+  // one statement is the wrong trade.
   await db.execute(
     `UPDATE employee_documents
      SET verified = ?, verified_by = ?, verification_date = NOW(),
-         verification_remarks = ?, updated_at = NOW()
+         verification_remarks = ?
      WHERE id = ? AND employee_id = ?`,
     [verified, req.authUser!.id, remarks ?? null, req.params.docId, req.params.employeeId]
   );
