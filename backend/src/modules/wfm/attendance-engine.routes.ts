@@ -10,6 +10,7 @@ import type { Response } from 'express';
 import { z } from 'zod';
 import { getEmployeeForUser, hasRole } from '../../shared/accessGuard.js';
 import { buildScopeWhereClause } from '../../shared/scopeAccess.js';
+import { CLOSED_RUN_STATUSES_SQL } from '../payroll/run-status.js';
 import { toIST } from '../../shared/timezone.js';
 import { getAprMonthly, resolveAprUserIds } from './apr-attendance.service.js';
 import {
@@ -1038,6 +1039,49 @@ router.post('/:employeeId/:date/unlock', requireRole('admin', 'wfm', 'super_admi
   const record = checkRows[0] as any;
   const wasLocked = Number(record.is_locked) === 1;
 
+  // A reason is mandatory, matching the reason-still-required->400 half of the Part A.3
+  // manager-override contract (2026-08-13 business-decision sign-off). Unlocking a day
+  // payroll has consumed is exactly the action that most needs a recorded justification,
+  // and this endpoint previously took none at all.
+  const reason = typeof req.body?.reason === "string" ? req.body.reason.trim() : "";
+  if (reason.length < 10) {
+    return res.status(400).json({
+      success: false,
+      error: 'A reason of at least 10 characters is required to unlock an attendance record',
+    });
+  }
+
+  // Refuse when the day belongs to a payroll run that is already closed.
+  //
+  // attendance_daily_record.is_locked is the signal the whole Part A.3 lock-guard family
+  // keys on (roster-lock-guard.ts: isRosterDateLocked / checkAssignmentDateNotLocked /
+  // checkEmployeeDateNotLocked), which refuses roster writes above the lock and tells the
+  // caller to use "the payroll correction/reopen workflow instead". This endpoint is what
+  // clears that flag - so with no closure check it was the one call that neutralises every
+  // one of those guards at once, after which the ordinary write paths accept edits to a
+  // month already finalised, paid and filed.
+  //
+  // run_month is VARCHAR 'YYYY-MM', not DATE, so it is compared string-to-string via
+  // DATE_FORMAT - comparing it against a DATE matches zero rows and merely raises a warning.
+  const [closedRuns] = await db.execute<RowDataPacket[]>(
+    `SELECT id, run_month, status
+       FROM salary_prep_run
+      WHERE run_month = DATE_FORMAT(?, '%Y-%m')
+        AND LOWER(COALESCE(status,'')) IN (${CLOSED_RUN_STATUSES_SQL})
+      LIMIT 1`,
+    [date]
+  );
+  const closedRun = (closedRuns as RowDataPacket[])[0] as any;
+  if (closedRun) {
+    return res.status(409).json({
+      success: false,
+      error:
+        `Attendance for ${date} belongs to payroll run ${closedRun.run_month}, which is ` +
+        `already ${closedRun.status}. A closed run cannot be reopened by unlocking a day it ` +
+        `has already paid — use the payroll correction/reopen workflow instead.`,
+    });
+  }
+
   // Unlock the record
   await db.execute(
     `UPDATE attendance_daily_record
@@ -1046,6 +1090,24 @@ router.post('/:employeeId/:date/unlock', requireRole('admin', 'wfm', 'super_admi
      WHERE employee_id = ? AND record_date = ?`,
     [employeeId, date]
   );
+
+  // Durable audit. This previously wrote only a console.log, which is not an audit trail:
+  // it is not queryable, not retained, and invisible to the screens that read
+  // sensitive_action_log. Awaited, matching payroll.service.ts's own pattern — for a
+  // control action the record is part of the action, not a side effect of it.
+  const { logSensitiveAction } = await import("../../shared/auditLog.js");
+  await logSensitiveAction({
+    actor_user_id: req.authUser!.id,
+    action_type: "ATTENDANCE_RECORD_UNLOCKED",
+    module_key: "wfm",
+    entity_type: "attendance_daily_record",
+    entity_id: String(record.id),
+    employee_id: employeeId,
+    reason,
+    old_value_json: { is_locked: wasLocked ? 1 : 0, attendance_status: record.attendance_status },
+    new_value_json: { is_locked: 0 },
+    change_summary: { employee_id: employeeId, record_date: date, was_locked: wasLocked },
+  });
 
   console.log(`[AttendanceEngine] Record unlocked by user ${req.authUser!.id}: ${employeeId}/${date} (was_locked=${wasLocked})`);
 
