@@ -1060,6 +1060,40 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAu
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/my-weekoff  — employee sees their own roster assignments pending ack
+/**
+ * Close the employee's roster work item once nothing in that cycle still needs their answer.
+ *
+ * The item is raised per cycle, not per assignment, so it must not disappear on the first of
+ * seven days being acknowledged — otherwise the remaining six become invisible work with no
+ * inbox entry pointing at them.
+ */
+async function closeRosterAckInboxItem(
+  dbConn: { execute: (sql: string, params?: unknown[]) => Promise<[unknown, unknown]> },
+  employeeId: string,
+  assignmentId: string
+): Promise<void> {
+  try {
+    await dbConn.execute(
+      `UPDATE work_inbox_item w
+          JOIN employees e ON e.user_id = w.user_id
+          SET w.is_actioned = 1
+        WHERE e.id = ?
+          AND w.type = 'ROSTER_ACK_PENDING'
+          AND w.is_actioned = 0
+          AND w.entity_id = (SELECT cycle_id FROM wfm_roster_assignment WHERE id = ?)
+          AND NOT EXISTS (
+              SELECT 1 FROM wfm_roster_assignment a
+               WHERE a.employee_id = e.id
+                 AND a.cycle_id = w.entity_id
+                 AND a.final_roster_status = 'pending_employee_ack')`,
+      [employeeId, assignmentId]
+    );
+  } catch {
+    // Non-fatal: the employee's answer is already recorded, and a stale inbox row is far
+    // less harmful than failing their acknowledgement because the inbox table misbehaved.
+  }
+}
+
 wfmRouter.get("/my-weekoff", requireAuth, h(async (req: any, res: any) => {
   const emp = await getEmployeeForUser(req.authUser!.id);
   if (!emp) return res.status(403).json({ error: "No employee record" });
@@ -1094,13 +1128,23 @@ wfmRouter.post("/my-weekoff/:assignmentId/acknowledge", requireAuth, h(async (re
   ) as any;
   if (!(rows as any[])[0]) return res.status(403).json({ error: "Assignment not found or not yours" });
 
-  await dbConn.execute(
+  // Guarded on pending_employee_ack. Without the predicate this would happily "acknowledge"
+  // an assignment the manager had already realigned or force-approved, silently overwriting
+  // their decision with the employee's, and would let a double-submit re-stamp employee_ack_at.
+  const [ackResult] = await dbConn.execute<ResultSetHeader>(
     `UPDATE wfm_roster_assignment
         SET employee_ack_status = 'acknowledged', employee_ack_at = NOW(),
             final_roster_status = 'acknowledged'
-      WHERE id = ? AND employee_id = ?`,
+      WHERE id = ? AND employee_id = ? AND final_roster_status = 'pending_employee_ack'`,
     [req.params.assignmentId, (emp as any).id]
   );
+  if (ackResult.affectedRows !== 1) {
+    return res.status(409).json({
+      success: false,
+      error: "This assignment is no longer awaiting your acknowledgement",
+    });
+  }
+  await closeRosterAckInboxItem(dbConn, (emp as any).id, req.params.assignmentId);
   return res.json({ success: true, message: "Acknowledged" });
 }));
 
@@ -1118,16 +1162,134 @@ wfmRouter.post("/my-weekoff/:assignmentId/reject", requireAuth, h(async (req: an
   ) as any;
   if (!(rows as any[])[0]) return res.status(403).json({ error: "Assignment not found or not yours" });
 
-  await dbConn.execute(
+  const [rejectResult] = await dbConn.execute<ResultSetHeader>(
     `UPDATE wfm_roster_assignment
         SET employee_ack_status = 'rejected',
             employee_rejection_reason = ?,
             final_roster_status = 'pending_manager_action'
-      WHERE id = ? AND employee_id = ?`,
+      WHERE id = ? AND employee_id = ? AND final_roster_status = 'pending_employee_ack'`,
     [String(reason).trim(), req.params.assignmentId, (emp as any).id]
   );
+  if (rejectResult.affectedRows !== 1) {
+    return res.status(409).json({
+      success: false,
+      error: "This assignment is no longer awaiting your acknowledgement",
+    });
+  }
+  await closeRosterAckInboxItem(dbConn, (emp as any).id, req.params.assignmentId);
+  // The message promised the manager had been notified; nothing had told them. The assignment
+  // now sits in pending_manager_action, which is what GET /manager/weekoff-review lists.
   return res.json({ success: true, message: "Rejection recorded. Your reporting manager has been notified." });
 }));
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PUBLISH TO EMPLOYEES  /api/wfm/roster/publish-to-employees
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Move a cycle's assignments into pending_employee_ack and tell the employees.
+ *
+ * THIS IS THE STEP THAT DID NOT EXIST. Everything downstream of it was already built —
+ * GET /my-weekoff, the acknowledge and reject handlers, the manager review queue with
+ * realign / force-approve / escalate, publish-final and the RTA feed — and every one of them
+ * was unreachable, because nothing anywhere wrote 'pending_employee_ack'. Verified live
+ * 2026-08-16: the enum allows 11 values, only four had any writer, and all 413,386
+ * assignments sat in 'generated'. Zero acknowledgements existed because none could.
+ *
+ * Owner decision (2026-08-16), Rule 10 option A: acknowledgement is requested when the roster
+ * is published, for the whole cycle at once, rather than N days before the shift or only where
+ * the roster contradicts a stated preference.
+ *
+ * Only 'generated' rows move. That makes re-publishing safe: an assignment already
+ * acknowledged, rejected or sitting in the manager queue is left exactly where it is instead
+ * of being dragged back to pending and losing the employee's answer.
+ */
+wfmRouter.post(
+  "/roster/publish-to-employees",
+  requireAuth,
+  requireRole("admin", "super_admin", "wfm", "hr"),
+  h(async (req: any, res: any) => {
+    const cycleId = String(req.body?.cycleId ?? "").trim();
+    if (!cycleId) return res.status(400).json({ success: false, error: "cycleId is required" });
+    const ackDeadline = req.body?.ackDeadline ? String(req.body.ackDeadline) : null;
+
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [cycleRows] = await conn.execute<RowDataPacket[]>(
+        "SELECT id, status FROM weekly_roster_cycle WHERE id = ? FOR UPDATE",
+        [cycleId]
+      );
+      if (!cycleRows[0]) {
+        const err: any = new Error("Roster cycle not found");
+        err.statusCode = 404;
+        throw err;
+      }
+
+      const [moved] = await conn.execute<ResultSetHeader>(
+        `UPDATE wfm_roster_assignment
+            SET final_roster_status = 'pending_employee_ack',
+                employee_ack_status = NULL,
+                employee_ack_at = NULL,
+                employee_rejection_reason = NULL
+          WHERE cycle_id = ?
+            AND final_roster_status = 'generated'`,
+        [cycleId]
+      );
+
+      await conn.execute(
+        `UPDATE weekly_roster_cycle
+            SET status = 'published', published_by = ?, published_at = NOW(),
+                ack_deadline = COALESCE(?, ack_deadline), updated_at = NOW()
+          WHERE id = ?`,
+        [req.authUser!.id, ackDeadline, cycleId]
+      );
+
+      // One work item per employee for the whole cycle, not one per assignment — a week is
+      // seven rows per person, and an inbox that lists them separately is an inbox nobody
+      // reads. INSERT ... SELECT so the employee -> auth_user join happens in the database
+      // rather than as 1,300 round trips, and NOT EXISTS so re-publishing does not stack
+      // duplicates on people who have not answered yet.
+      const [notified] = await conn.execute<ResultSetHeader>(
+        `INSERT INTO work_inbox_item
+           (id, user_id, type, title, description, entity_type, entity_id, action_url, priority)
+         SELECT UUID(), e.user_id, 'ROSTER_ACK_PENDING',
+                'Acknowledge your roster',
+                CONCAT('Your roster for the week has been published. Please acknowledge or raise a concern',
+                       COALESCE(CONCAT(' by ', DATE_FORMAT(?, '%d %b %Y')), ''), '.'),
+                'weekly_roster_cycle', ?, '/my-roster', 'normal'
+           FROM (SELECT DISTINCT employee_id FROM wfm_roster_assignment
+                  WHERE cycle_id = ? AND final_roster_status = 'pending_employee_ack') a
+           JOIN employees e ON e.id = a.employee_id
+           JOIN auth_user au ON au.id = e.user_id
+          WHERE NOT EXISTS (
+                SELECT 1 FROM work_inbox_item w
+                 WHERE w.user_id = e.user_id
+                   AND w.type = 'ROSTER_ACK_PENDING'
+                   AND w.entity_id = ?
+                   AND w.is_actioned = 0)`,
+        [ackDeadline, cycleId, cycleId, cycleId]
+      );
+
+      await conn.commit();
+      return res.json({
+        success: true,
+        data: {
+          cycleId,
+          assignmentsPublished: moved.affectedRows,
+          employeesNotified: notified.affectedRows,
+        },
+      });
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      // 45 workers share this pool; one connection left unreleased has starved all of them.
+      conn.release();
+    }
+  })
+);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // FINAL ROSTER PUBLISH  /api/wfm/roster/publish-final
