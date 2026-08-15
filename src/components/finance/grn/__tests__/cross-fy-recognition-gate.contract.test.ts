@@ -83,7 +83,11 @@ describe("BudgetLinkedGrnForm refuses to submit what the server will reject", ()
   });
 
   it("passes the capability down to the panel", () => {
-    expect(FORM).toMatch(/canCrossFy=\{canOverridePeriod\}/);
+    // Both panel capabilities mirror assertMayOverrideRecognition, whose docstring gates
+    // custom percentages and a cross-FY window together on RECOGNITION_OVERRIDE_ROLES.
+    // Neither is the accounting-period override, so neither may use the wider flag.
+    expect(FORM).toMatch(/canCrossFy=\{isFinanceLead\}/);
+    expect(FORM).toMatch(/canCustomSplit=\{isFinanceLead\}/);
   });
 
   it("uses the same three roles the server enforces", () => {
@@ -120,6 +124,21 @@ describe("BudgetLinkedGrnForm refuses to submit what the server will reject", ()
     expect(FORM).toMatch(/crossFyBlocked\s*=\s*\n?\s*!isFinanceLead/);
     // The late-invoice reason requirement mirrors isRestrictedRole, which NAMES branch_admin.
     expect(FORM).toMatch(/isVendor && !isFinanceLead && form\.billDate/);
+  });
+
+  /**
+   * The same conflation was repeated one level down. InvoiceComponentsEditor took a prop
+   * literally named canOverridePeriod and used it for nothing but the round-off limit — its
+   * own comment said "Finance Head / Accounts Head" while its name said period. A reader
+   * fixing the parent would not have found it, and the first pass of this fix did not.
+   * The prop is now named after what it actually gates.
+   */
+  it("does not smuggle the wider list into the child component's money control", () => {
+    expect(FORM).not.toMatch(/canOverridePeriod=\{canOverridePeriod\}/);
+    expect(FORM).toMatch(/isFinanceLead=\{isFinanceLead\}/);
+    expect(FORM).toMatch(/const roundoffLimit = isFinanceLead \? 500 : 1/);
+    // No round-off limit anywhere may read the period list.
+    expect(FORM).not.toMatch(/roundoffLimit = canOverridePeriod/);
   });
 
   it("keeps the accounting-period override on the wider list, matching the server", () => {

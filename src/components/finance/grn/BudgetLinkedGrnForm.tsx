@@ -1915,8 +1915,10 @@ export function BudgetLinkedGrnForm({
                 amount={Number(form.amount) || 0}
                 accountingPeriod={period}
                 disabled={locked}
-                canCustomSplit={canOverridePeriod}
-                canCrossFy={canOverridePeriod}
+                // Both mirror assertMayOverrideRecognition / RECOGNITION_OVERRIDE_ROLES, which
+                // excludes branch_admin — not the wider period-override list.
+                canCustomSplit={isFinanceLead}
+                canCrossFy={isFinanceLead}
               />
 
               {/* Row 3: Vendor, GSTIN, GST toggle (vendor only) */}
@@ -2061,7 +2063,7 @@ export function BudgetLinkedGrnForm({
                   </DenseFieldGroup>
 
                   {/* IRN fields (Finance only) - 3 columns */}
-                  {canOverridePeriod && (
+                  {isFinanceLead && (
                     <DenseFieldGroup cols={3}>
                       <DenseField label="IRN (e-invoice)" hint="From GSTN portal">
                         <Input
@@ -2387,7 +2389,7 @@ export function BudgetLinkedGrnForm({
               error={err("components")}
               remarks={form.remarks}
               remarksError={err("remarks")}
-              canOverridePeriod={canOverridePeriod}
+              isFinanceLead={isFinanceLead}
               onUpdate={updateInvoiceComponent}
               onAdd={addInvoiceComponent}
               onRemove={removeInvoiceComponent}
@@ -3249,7 +3251,7 @@ function InvoiceComponentsEditor({
   error,
   remarks,
   remarksError,
-  canOverridePeriod,
+  isFinanceLead,
   onUpdate,
   onAdd,
   onRemove,
@@ -3262,15 +3264,17 @@ function InvoiceComponentsEditor({
   error?: string;
   remarks: string;
   remarksError?: string;
-  canOverridePeriod: boolean;
+  isFinanceLead: boolean;
   onUpdate: (key: string, patch: Partial<InvoiceComponentDraft>) => void;
   onAdd: () => void;
   onRemove: (key: string) => void;
   canRemove: boolean;
   onRemarksChange: (value: string) => void;
 }) {
-  // G8: Finance Head / Accounts Head can accept up to ₹500 round-off; others limited to ₹1
-  const roundoffLimit = canOverridePeriod ? 500 : 1;
+  // G8: Finance Head / Accounts Head can accept up to ₹500 round-off; others limited to ₹1.
+  // Mirrors isElevatedRole in grn-smart.service.ts, whose own comment reads "Branch-level roles
+  // are still limited to ₹1" — so this must NOT be the wider canOverridePeriod list.
+  const roundoffLimit = isFinanceLead ? 500 : 1;
   const withinAutoRoundoff = Math.abs(preview.diff) <= roundoffLimit;
   const reconciled = Math.abs(preview.diff) <= 0.01;
 
