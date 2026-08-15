@@ -23,6 +23,12 @@ export const atsController = {
   },
 
   async getCandidate(req: AuthenticatedRequest, res: Response) {
+    // Row scope on the by-id path. listCandidates has always scoped; this did not, and the
+    // SELECT behind it returns mobile, email, date_of_birth and gender. Same canonical rule
+    // as the list route, so a recruiter cannot read a candidate outside their branches.
+    const { assertCandidateInScope } = await import("./candidate-access.js");
+    if (!(await assertCandidateInScope(req.authUser!.id, req.params.id, res))) return;
+
     const data = await atsService.getCandidate(req.params.id);
     return res.json({ success: true, data });
   },

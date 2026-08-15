@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "noEmit": true },
+  "include": ["src/modules/ats/candidate-access.ts","src/modules/ats/ats.controller.ts","src/modules/ats/ats.routes.ts"] }

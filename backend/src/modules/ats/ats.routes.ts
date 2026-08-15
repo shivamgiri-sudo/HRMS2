@@ -183,56 +183,12 @@ atsRouter.use(requireAuth);
 // buildScopeWhereClause which compares against UUID branch_id from user_assignment_scope.
 // admin/hr/manager/super_admin see all; recruiter scope is resolved via branch_master name lookup.
 atsRouter.get("/candidates", requireRole("admin", "hr", "recruiter", "manager", "super_admin"), h(async (req, res) => {
-  const { getUserRoleKeys, getUserAssignmentScopes } = await import("../../shared/scopeAccess.js");
-  const userId = req.authUser!.id;
-  const roleKeys = await getUserRoleKeys(userId);
-
-  const isWideRole = roleKeys.some(r => ["super_admin", "admin", "hr", "manager", "ceo"].includes(r));
-  if (isWideRole) {
-    // Full access — no scope filter
-    (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter = { sql: "1=1", params: [] };
-    return c.listCandidates.bind(c)(req, res);
-  }
-
-  // Recruiter: scope to branches they are assigned to (resolve UUID → name via branch_master)
-  const scopes = await getUserAssignmentScopes(userId, ["recruiter"]);
-  if (scopes.length === 0) {
-    (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter = { sql: "1=0", params: [] };
-    return c.listCandidates.bind(c)(req, res);
-  }
-  const hasAll = scopes.some(s => s.scope_type === "all");
-  if (hasAll) {
-    (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter = { sql: "1=1", params: [] };
-    return c.listCandidates.bind(c)(req, res);
-  }
-
-  // Build branch name list from branch UUIDs in scope
-  const branchIds = [...new Set(scopes.filter(s => s.branch_id).map(s => s.branch_id as string))];
-  const processNames: string[] = [...new Set(scopes.filter(s => s.process_id).map(s => s.process_id as string))];
-
-  const sqlParts: string[] = [];
-  const params: unknown[] = [];
-
-  if (branchIds.length > 0) {
-    const { db: dbConn } = await import("../../db/mysql.js");
-    const [bmRows] = await dbConn.execute<import("mysql2").RowDataPacket[]>(
-      `SELECT branch_name FROM branch_master WHERE id IN (${branchIds.map(() => "?").join(",")})`,
-      branchIds
-    );
-    const branchNames = (bmRows as { branch_name: string }[]).map(r => r.branch_name);
-    if (branchNames.length > 0) {
-      sqlParts.push(`applied_for_branch IN (${branchNames.map(() => "?").join(",")})`);
-      params.push(...branchNames);
-    }
-  }
-
-  if (processNames.length > 0) {
-    sqlParts.push(`applied_for_process IN (${processNames.map(() => "?").join(",")})`);
-    params.push(...processNames);
-  }
-
-  const sql = sqlParts.length > 0 ? sqlParts.join(" OR ") : "1=0";
-  (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter = { sql, params };
+  // Scope comes from the shared resolver in candidate-access.ts, which is the same rule the
+  // by-id routes now use. It was previously resolved inline here, which is why the by-id
+  // paths had no scope at all: there was nothing to reuse.
+  const { resolveCandidateScope } = await import("./candidate-access.js");
+  const scopeFilter = await resolveCandidateScope(req.authUser!.id);
+  (req as AuthenticatedRequest & { scopeFilter?: unknown }).scopeFilter = scopeFilter;
   return c.listCandidates.bind(c)(req, res);
 }));
 atsRouter.get("/candidates/:id",                 requireRole("admin", "hr", "recruiter", "manager"), h(c.getCandidate.bind(c)));
