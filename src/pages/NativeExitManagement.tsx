@@ -150,6 +150,13 @@ export default function NativeExitManagement() {
   const [empQuery, setEmpQuery] = useState("");
   const [empResults, setEmpResults] = useState<Array<{ id: string; employee_code: string; name: string }>>([]);
   const [empSearching, setEmpSearching] = useState(false);
+  // How many INACTIVE employees also match the query. The picker deliberately searches
+  // active staff only, which on an offboarding page hides most of the population: searching
+  // "PREM" against production returns 3 active people and 93 inactive ones. Reported as
+  // "employee search is not working" (Mira complaint 59a1ce75) — the search was working, it
+  // was silently answering a narrower question than the user asked. Showing the count turns
+  // a wrong-looking empty result into an explanation.
+  const [empInactiveCount, setEmpInactiveCount] = useState(0);
 
   const [form, setForm] = useState({
     employeeId: "",
@@ -187,21 +194,30 @@ export default function NativeExitManagement() {
   // uses, so scope and permissions are whatever that route already enforces.
   useEffect(() => {
     const q = empQuery.trim();
-    if (q.length < 2) { setEmpResults([]); return; }
+    if (q.length < 2) { setEmpResults([]); setEmpInactiveCount(0); return; }
     let cancelled = false;
     const t = setTimeout(async () => {
       setEmpSearching(true);
       try {
-        const res = await hrmsApi.get<{ data: Array<Record<string, unknown>> }>(
-          `/api/employees?recordStatus=active&limit=10&search=${encodeURIComponent(q)}`,
-        );
+        // Two requests, not one: the picker must keep offering active employees only, so the
+        // inactive tally is counted separately rather than mixed into the selectable list.
+        // limit=1 because only `total` is read — the rows are discarded.
+        const [res, inactive] = await Promise.all([
+          hrmsApi.get<{ data: Array<Record<string, unknown>> }>(
+            `/api/employees?recordStatus=active&limit=10&search=${encodeURIComponent(q)}`,
+          ),
+          hrmsApi.get<{ total?: number }>(
+            `/api/employees?recordStatus=inactive&limit=1&search=${encodeURIComponent(q)}`,
+          ).catch(() => ({ total: 0 })),
+        ]);
         if (cancelled) return;
         setEmpResults((res?.data ?? []).map((e) => ({
           id: String(e.id ?? ""),
           employee_code: String(e.employee_code ?? ""),
           name: [e.first_name, e.last_name].filter(Boolean).join(" ") || String(e.full_name ?? ""),
         })).filter((e) => e.id));
-      } catch { if (!cancelled) setEmpResults([]); }
+        setEmpInactiveCount(Number(inactive?.total ?? 0));
+      } catch { if (!cancelled) { setEmpResults([]); setEmpInactiveCount(0); } }
       finally { if (!cancelled) setEmpSearching(false); }
     }, 300);
     return () => { cancelled = true; clearTimeout(t); };
@@ -376,6 +392,17 @@ export default function NativeExitManagement() {
                         {empSearching && <div className="px-4 py-3 text-sm text-slate-500">Searching…</div>}
                         {!empSearching && empResults.length === 0 && (
                           <div className="px-4 py-3 text-sm text-slate-500">No active employee matches “{empQuery.trim()}”.</div>
+                        )}
+                        {/* Why the count is shown even when there ARE results: the reported case
+                            had 3 active matches and 93 inactive ones, so a non-empty list is
+                            exactly when a user concludes "my person isn't in here, search is
+                            broken". Stating the number names the reason instead. */}
+                        {!empSearching && empInactiveCount > 0 && (
+                          <div className="border-t bg-amber-50/70 px-4 py-2.5 text-xs text-amber-900">
+                            {empInactiveCount} inactive employee{empInactiveCount === 1 ? "" : "s"} also match
+                            {" "}“{empQuery.trim()}”. Exits can only be raised for active employees — if the
+                            person you want is already deactivated, reactivate them first.
+                          </div>
                         )}
                         {empResults.map((emp) => (
                           <button
