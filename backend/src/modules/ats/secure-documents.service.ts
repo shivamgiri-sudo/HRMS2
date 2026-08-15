@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import type { RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
+import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 
 export type CandidateDocument = {
   id: string;
@@ -220,6 +221,30 @@ export async function getDocumentAudit(documentId: string, actorId: string | nul
 export function resolveDocumentPath(document: CandidateDocument): string {
   const raw = document.raw_path || document.raw_url || "";
   if (!raw) throw Object.assign(new Error("Document file path is missing"), { statusCode: 404 });
+
+  // Onboarding documents record an absolute file_path, so the stored value depends on
+  // which machine and working directory wrote it. Verified live 2026-08-16: 25 of 470
+  // candidate_onboarding_document rows hold a foreign path — 22 Windows, 3 POSIX.
+  //
+  // The branch below cannot cope with the Windows ones on a Linux server, and fails in
+  // the least obvious way: path.isAbsolute() is platform-specific, so on Linux
+  // "C:\Users\ADMIN\..." is NOT absolute (a backslash is an ordinary filename character
+  // there). It therefore falls through to the relative branch and resolves to
+  // <cwd>/C:\Users\ADMIN\..., which can never exist — the caller then reports
+  // "Document file is not available on server" for a file that is present on disk.
+  //
+  // resolveOnboardingDocumentFile already solves exactly this and is used by
+  // onboarding-full.{routes,service}.ts; this reader was simply never switched over to
+  // it. Applied only to the onboarding source: portal documents come from
+  // ats_candidate_documents, whose raw_path is always NULL, so they carry a URL through
+  // raw_url and must keep the original handling.
+  if (document.source === "onboarding") {
+    const resolved = resolveOnboardingDocumentFile(raw);
+    if (resolved) return resolved;
+    // Fall through when nothing readable is found, so a genuinely missing file still
+    // produces the existing 404 rather than a different error.
+  }
+
   if (path.isAbsolute(raw)) return raw;
   const cleaned = raw.replace(/^[/\\]+/, "");
   return path.resolve(process.cwd(), cleaned);
