@@ -108,6 +108,29 @@ function attachLmsSessionParams(url: string, lmsToken: string, lmsUserType: stri
   return next.toString();
 }
 
+/**
+ * Refuse a launch rather than hand the caller somebody else's LMS identity.
+ *
+ * The coordinator and trainee resolvers used to fall back to "the first active row" when
+ * the signed-in user matched nothing — ORDER BY created_at ASC LIMIT 1. An unmapped HRMS
+ * user was therefore minted a session as the OLDEST active coordinator or trainee: their
+ * courses, their progress, their completions, under that person's LMS identity. The
+ * secondary `?? employeeCode ?? email` fallback was the same mistake in a quieter form,
+ * minting a session for an LMS id that was never verified to exist.
+ *
+ * There is no safe default here. An identity resolver that cannot identify someone must
+ * stop, not guess.
+ */
+function lmsIdentityNotMapped(portal: LmsPortal): Error & { statusCode: number; code: string } {
+  const err = new Error(
+    `Your HRMS account is not linked to an LMS ${portal} profile yet. ` +
+      `Ask HR or the LMS administrator to map your employee code in the LMS before launching it.`,
+  ) as Error & { statusCode: number; code: string };
+  err.statusCode = 409;
+  err.code = "LMS_IDENTITY_NOT_MAPPED";
+  return err;
+}
+
 async function resolveDirectLmsIdentity(
   portal: LmsPortal,
   ctx: NonNullable<Awaited<ReturnType<typeof currentLmsContext>>>,
@@ -140,15 +163,7 @@ async function resolveDirectLmsIdentity(
     if (rows[0]?.login_id) {
       return { userId: String(rows[0].login_id), userType: "coordinator" };
     }
-    const [fallbackRows] = await pool.execute<RowDataPacket[]>(
-      `SELECT login_id
-         FROM role_access_matrix
-        WHERE active = 1
-        ORDER BY created_at ASC
-        LIMIT 1`
-    );
-    const loginId = String(fallbackRows[0]?.login_id ?? employeeCode ?? email ?? "");
-    return { userId: loginId, userType: "coordinator" };
+    throw lmsIdentityNotMapped("coordinator");
   }
 
   const [rows] = await pool.execute<RowDataPacket[]>(
@@ -162,15 +177,7 @@ async function resolveDirectLmsIdentity(
   if (rows[0]?.employee_id) {
     return { userId: String(rows[0].employee_id), userType: "trainee" };
   }
-  const [fallbackRows] = await pool.execute<RowDataPacket[]>(
-    `SELECT employee_id
-       FROM user_master
-      WHERE active = 1
-      ORDER BY created_at ASC
-      LIMIT 1`
-  );
-  const employeeId = String(fallbackRows[0]?.employee_id ?? employeeCode ?? email ?? "");
-  return { userId: employeeId, userType: "trainee" };
+  throw lmsIdentityNotMapped("trainee");
 }
 
 async function buildLmsSession(
@@ -312,6 +319,19 @@ router.get("/launch-context", h(async (req: AuthenticatedRequest, res: Response)
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "LMS launch unavailable";
     console.error("[lms/launch-context] direct LMS session mint failed:", message);
+
+    // One curated exception to the generic 502 below: an unmapped identity is not an
+    // outage, it is a data gap only HR or the LMS admin can close, and the caller can do
+    // nothing with "LMS launch unavailable". This message is authored here (it names no
+    // table, column or internal detail), so it does not reopen the leak the comment below
+    // describes.
+    if ((err as { code?: string })?.code === "LMS_IDENTITY_NOT_MAPPED") {
+      return res.status((err as { statusCode?: number }).statusCode ?? 409).json({
+        success: false,
+        code: "LMS_IDENTITY_NOT_MAPPED",
+        message,
+      });
+    }
     // `error` is deliberately not returned. hrmsApi.ts prefers payload.error over
     // payload.message, so anything put here is what the user reads — which is how
     // "Field 'session_family_id' doesn't have a default value" reached the CEO's screen.
