@@ -893,8 +893,16 @@ export const branchBudgetService = {
       params.push(branchScope);
     }
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT h.id, h.budget_number, h.period_code, h.status, h.gross_budget, h.pnl_budget,
-              h.revision_number, h.created_at, h.updated_at,
+      // The three money/revision columns are selected under their real names and aliased
+      // back to what BudgetApprovalInbox.tsx reads. finance_budget_header has never had
+      // gross_budget / pnl_budget / revision_number — live it is gross_budget_amount,
+      // pnl_budget_amount and revision_no — so this SELECT raised ER_BAD_FIELD_ERROR and
+      // the approval inbox 500'd on every call for every reviewer role.
+      `SELECT h.id, h.budget_number, h.period_code, h.status,
+              h.gross_budget_amount AS gross_budget,
+              h.pnl_budget_amount   AS pnl_budget,
+              h.revision_no         AS revision_number,
+              h.created_at, h.updated_at,
               bm.branch_name
          FROM finance_budget_header h
          LEFT JOIN branch_master bm ON bm.id = h.branch_id
