@@ -24,12 +24,47 @@ vi.mock('mysql2/promise', async (importOriginal) => {
   return { ...actual, default: { ...actual.default, createConnection: mocks.createConnection } };
 });
 
+/**
+ * These four must be present or verifySchemaVersion never reaches the code under test.
+ *
+ * It guards on config before it connects:
+ *   if (!host || !user || !password || !dbName) { state = "error"; return ... }
+ * and only then calls mysql.createConnection. With no DB env set, both tests below were
+ * asserting against a function that had already returned — createConnection was called 0
+ * times, and the failure read as "the connectTimeout guard is missing" when the guard is
+ * present and correct (connectTimeout: VERIFY_SCHEMA_TIMEOUT_MS). The docstring above says
+ * "no live database is involved", which is true and was the trap: mocking mysql2 is
+ * necessary but not sufficient, because the early return happens first.
+ *
+ * The values are deliberately non-routable. mysql2 is mocked, so nothing dials them — they
+ * exist only to get past the guard.
+ */
+const FAKE_DB_ENV = {
+  DB_HOST: '127.0.0.1',
+  DB_PORT: '3306',
+  DB_USER: 'test-user',
+  DB_PASSWORD: 'test-password',
+  DB_NAME: 'test_db',
+} as const;
+
 describe('verifySchemaVersion — bounded against a hanging DB connection', () => {
+  const savedEnv: Record<string, string | undefined> = {};
+
   beforeEach(() => {
+    for (const [k, v] of Object.entries(FAKE_DB_ENV)) {
+      savedEnv[k] = process.env[k];
+      process.env[k] = v;
+    }
     mocks.createConnection.mockReset();
     vi.resetModules();
   });
-  afterEach(() => vi.useRealTimers());
+  afterEach(() => {
+    for (const [k, v] of Object.entries(savedEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    vi.useRealTimers();
+  });
 
   it('passes an explicit connectTimeout to createConnection, not the mysql2 default of none', async () => {
     const destroy = vi.fn();
