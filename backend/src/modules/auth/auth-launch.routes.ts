@@ -10,6 +10,15 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { authService } from "./auth.service.js";
 import { emailService } from "../communication/email.service.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import {
+  BLOCKING_STATES,
+  classifyLaunchEmployee,
+  loadAuthUserEmailIndex,
+  loadLaunchPopulation,
+  normalizeEmail,
+  summariseLaunchEligibility,
+  type LaunchEligibility,
+} from "./launch-eligibility.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -46,11 +55,6 @@ function tempPassword(): string {
   return crypto.randomBytes(12).toString("base64url") + "A1!";
 }
 
-function normalizeEmail(value: unknown): string | null {
-  const email = String(value ?? "").trim().toLowerCase();
-  return email.includes("@") ? email : null;
-}
-
 function employeeName(row: Partial<EmployeeRow | InviteRow>): string {
   const name = `${row.first_name ?? ""} ${row.last_name ?? ""}`.trim();
   return name || "Team Member";
@@ -84,16 +88,52 @@ function inviteEmailText(input: { name: string; employeeCode?: string | null; li
 }
 
 
+/**
+ * The ONLY role this tool may grant.
+ *
+ * Owner decision, 2026-08-16: launch bootstrap provisions logins, not privilege.
+ * Anything above baseline access comes from a reviewed designation -> role ->
+ * scope mapping with maker-checker, not from this endpoint.
+ */
+const BOOTSTRAP_GRANTABLE_ROLES: ReadonlySet<string> = new Set(["employee"]);
+
 async function assignRole(userId: string, roleKey: string, _actorUserId: string) {
+  // Hard allowlist. A privileged role must never be reachable from here, no
+  // matter what a future caller passes in.
+  if (!BOOTSTRAP_GRANTABLE_ROLES.has(roleKey)) {
+    throw new Error(`launch bootstrap may not grant role '${roleKey}'`);
+  }
   const [roleRows] = await db.execute<RowDataPacket[]>("SELECT role_key FROM workforce_role_catalog WHERE role_key=? AND active_status=1 LIMIT 1", [roleKey]);
   if (!roleRows[0]) return;
+  // ON DUPLICATE KEY reactivation is safe only because the allowlist above keeps
+  // this to the baseline role. It previously ran for inferred privileged roles,
+  // which silently revived 27 grants that had been deliberately revoked.
+  //
+  // _actorUserId is still unused: user_roles has no granted_by/granted_at column
+  // (id, user_id, role_key, active_status, created_at). Recording the actor needs
+  // a migration — do not write a column that does not exist.
   await db.execute(
     "INSERT INTO user_roles (id, user_id, role_key, active_status) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE active_status=1",
     [randomUUID(), userId, roleKey]
   );
 }
 
-function inferRoles(row: EmployeeRow): string[] {
+/**
+ * Role codes used ONLY to pick a KPI template — never to grant access.
+ *
+ * This is the old inferRoles() string matching, kept because kpi_role_template is
+ * keyed by these codes and the KPI assignment it drives works. It is deliberately
+ * not wired to user_roles: measured against the live population it would have
+ * created 113 privileged grants from department names alone — every one of the 26
+ * people in "TRAINING AND QUALITY" picking up both `trainer` and `qa`, three
+ * FINANCE managers picking up the Operations role `process_manager`, and an
+ * "SR. EXECUTIVE - MIS" picking up `finance`. 127 route files gate on one of
+ * those roles with no scope resolver at all, so each grant is org-wide there.
+ *
+ * If you need this for anything other than a KPI template lookup, you need the
+ * approved mapping table instead.
+ */
+function inferKpiRoleCodes(row: { designation_name?: string | null; department_name?: string | null }): string[] {
   const text = `${row.designation_name ?? ""} ${row.department_name ?? ""}`.toLowerCase();
   const roles = new Set<string>(["employee"]);
   if (text.includes("payroll")) roles.add("payroll");
@@ -154,44 +194,84 @@ router.post("/email-config/test", h(async (req, res) => {
   res.json({ success: true, data: result });
 }));
 
-router.get("/launch-readiness", h(async (_req, res) => {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       COUNT(*) AS active_employees,
-       SUM(CASE WHEN e.user_id IS NULL THEN 1 ELSE 0 END) AS employees_without_user,
-       SUM(CASE WHEN COALESCE(e.email, '') = '' THEN 1 ELSE 0 END) AS employees_without_email,
-       SUM(CASE WHEN e.reporting_manager_id IS NULL THEN 1 ELSE 0 END) AS missing_manager,
-       SUM(CASE WHEN e.branch_id IS NULL THEN 1 ELSE 0 END) AS missing_branch,
-       SUM(CASE WHEN e.process_id IS NULL THEN 1 ELSE 0 END) AS missing_process
-     FROM employees e
-     WHERE e.active_status = 1`
+/**
+ * Readiness is now derived from the SAME resolver the bootstrap runs on, so the
+ * two can no longer disagree. It used to count `e.user_id IS NULL` and treat any
+ * non-blank string as an email, which reported 53 employees as launch-ready that
+ * the bootstrap could not provision — 51 of them pointing at an auth_user row
+ * that does not exist, and 52 holding the literal value 'NA'.
+ *
+ * `verdict` is RED while any single active employee lacks a usable login path.
+ */
+router.get("/launch-readiness", h(async (req, res) => {
+  const allowPersonalEmailFallback = String(req.query?.allowPersonalEmailFallback ?? "") === "true";
+  const [rows, authUserEmails] = await Promise.all([loadLaunchPopulation(), loadAuthUserEmailIndex()]);
+  const classified = rows.map((row) => classifyLaunchEmployee(row, authUserEmails, { allowPersonalEmailFallback }));
+  const summary = summariseLaunchEligibility(classified);
+
+  res.json({
+    success: true,
+    data: {
+      ...summary,
+      // Retained so any existing caller keeps working — but computed from the
+      // resolver, so these numbers are now the true ones.
+      active_employees: summary.activePopulation,
+      employees_without_user: classified.filter((r) => r.authUserId === null).length,
+      employees_without_email: classified.filter((r) => r.loginEmail === null).length,
+      missing_branch: classified.filter((r) => !r.branch).length,
+      missing_process: classified.filter((r) => !r.process).length,
+    },
+  });
+}));
+
+/**
+ * The per-employee sheet behind the readiness aggregate: who is blocked, why,
+ * and where they sit. Without this an admin can see "217 blocked" and have no
+ * way to act on it.
+ */
+router.get("/launch-readiness/employees", h(async (req, res) => {
+  const allowPersonalEmailFallback = String(req.query?.allowPersonalEmailFallback ?? "") === "true";
+  const stateFilter = String(req.query?.state ?? "").trim().toUpperCase();
+  const blockedOnly = String(req.query?.blockedOnly ?? "") === "true";
+
+  const [rows, authUserEmails] = await Promise.all([loadLaunchPopulation(), loadAuthUserEmailIndex()]);
+  let classified: LaunchEligibility[] = rows.map((row) =>
+    classifyLaunchEmployee(row, authUserEmails, { allowPersonalEmailFallback })
   );
-  res.json({ success: true, data: rows[0] });
+  if (stateFilter) classified = classified.filter((r) => r.state === stateFilter);
+  if (blockedOnly) classified = classified.filter((r) => BLOCKING_STATES.has(r.state));
+
+  res.json({ success: true, data: { count: classified.length, employees: classified } });
 }));
 
 router.post("/bootstrap-existing-users", h(async (req, res) => {
   const dryRun = req.body?.dryRun === true;
+  // Option C: a non-company address is usable but must be approved explicitly.
+  // Default false so no reset link is ever mailed to a personal inbox by accident.
+  const allowPersonalEmailFallback = req.body?.allowPersonalEmailFallback === true;
   const runId = randomUUID();
-  const [employees] = await db.execute<EmployeeRow[]>(
-    `SELECT e.*, d.designation_name, dep.dept_name AS department_name
-       FROM employees e
-       LEFT JOIN designation_master d ON d.id = e.designation_id
-       LEFT JOIN department_master dep ON dep.id = e.department_id
-      WHERE e.active_status = 1
-      ORDER BY e.employee_code`
-  );
+
+  // Same resolver, same population query as GET /launch-readiness.
+  const [employees, authUserEmails] = await Promise.all([loadLaunchPopulation(), loadAuthUserEmailIndex()]);
 
   const result = { runId, created: 0, updated: 0, skipped: 0, failed: 0, kpiAssigned: 0, kpiMissing: 0, invitesQueued: 0 };
+  const skippedByState: Record<string, number> = {};
   const hasKpiTables = await tableExists("kpi_employee_assignment") && await tableExists("kpi_role_template");
 
   for (const emp of employees) {
-    const email = normalizeEmail(emp.email);
+    const eligibility = classifyLaunchEmployee(emp, authUserEmails, { allowPersonalEmailFallback });
+    const email = eligibility.loginEmail;
     const employeeId = String(emp.id);
     const employeeCode = String(emp.employee_code ?? "");
     try {
-      if (!email || !employeeCode) {
+      // Skip on any state the bootstrap cannot resolve by itself. Previously this
+      // was a bare "no email or no code" test that silently lumped together very
+      // different problems; the state now says which one it is.
+      const unprovisionable: string[] = ["BLOCKED", "NO_EMPLOYEE_CODE", "NO_LOGIN_IDENTITY", "INVALID_EMAIL", "EMAIL_NEEDS_APPROVAL"];
+      if (!email || unprovisionable.includes(eligibility.state)) {
         result.skipped++;
-        if (!dryRun) await db.execute("INSERT INTO hrms_launch_bootstrap_log (id, run_id, employee_id, employee_code, status, message) VALUES (?, ?, ?, ?, 'skipped', ?)", [randomUUID(), runId, employeeId, employeeCode, "Missing official email or employee code"]);
+        skippedByState[eligibility.state] = (skippedByState[eligibility.state] ?? 0) + 1;
+        if (!dryRun) await db.execute("INSERT INTO hrms_launch_bootstrap_log (id, run_id, employee_id, employee_code, status, message) VALUES (?, ?, ?, ?, 'skipped', ?)", [randomUUID(), runId, employeeId, employeeCode, `${eligibility.state}: ${eligibility.reason}`]);
         continue;
       }
 
@@ -234,13 +314,15 @@ router.post("/bootstrap-existing-users", h(async (req, res) => {
 
       if (!dryRun) {
         await db.execute("UPDATE employees SET user_id=? WHERE id=?", [userId, employeeId]);
-        for (const role of inferRoles(emp)) await assignRole(userId, role, req.authUser!.id);
-        await db.execute("INSERT INTO hrms_launch_invite_log (id, employee_id, user_id, email, invite_status, message) VALUES (?, ?, ?, ?, 'pending', ?)", [randomUUID(), employeeId, userId, email, "Account prepared. Invite email pending."]);
+        // Baseline access only. Privilege comes from the approved designation ->
+        // role -> scope mapping, never from a department name.
+        await assignRole(userId, "employee", req.authUser!.id);
+        await db.execute("INSERT INTO hrms_launch_invite_log (id, employee_id, user_id, email, invite_status, message) VALUES (?, ?, ?, ?, 'pending', ?)", [randomUUID(), employeeId, userId, email, `Account prepared on ${eligibility.emailSource} (${eligibility.companyEmail ? "company" : "approved personal"}). Invite email pending.`]);
         result.invitesQueued++;
         await addJourney(employeeId, "login_account_prepared", "HRMS login account prepared", req.authUser!.id);
 
         if (hasKpiTables && emp.process_id) {
-          const roleCodes = inferRoles(emp);
+          const roleCodes = inferKpiRoleCodes(emp);
           const placeholders = roleCodes.map(() => "?").join(",");
           const [templates] = await db.execute<RowDataPacket[]>(
             `SELECT rt.id FROM kpi_role_template rt JOIN kpi_process_template pt ON pt.id=rt.process_template_id
@@ -266,7 +348,7 @@ router.post("/bootstrap-existing-users", h(async (req, res) => {
     }
   }
 
-  res.json({ success: true, data: result, dryRun });
+  res.json({ success: true, data: { ...result, skippedByState }, dryRun });
 }));
 
 router.post("/send-invites", h(async (req, res) => {
