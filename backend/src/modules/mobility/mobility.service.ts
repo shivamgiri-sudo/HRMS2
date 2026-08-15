@@ -1,7 +1,91 @@
 import { randomUUID } from "crypto";
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+
+/**
+ * The pool wrapper or a single transaction-bound connection — whichever the caller has.
+ *
+ * The employee-row move has to run both standalone (the deferred worker, which claims each
+ * row first and applies it in autocommit) and inside the approval transaction below, without
+ * the logic existing twice. Only execute() is needed, and the two types spell its overloads
+ * differently, so this is deliberately the narrowest shape both satisfy.
+ */
+type SqlExecutor = {
+  execute(sql: string, params?: unknown[]): Promise<[unknown, unknown]>;
+};
+
+/**
+ * A transfer refusal the operator needs to read — already actioned, gone, or a master value
+ * that does not resolve. The production error handler replaces the message of any throw
+ * carrying no statusCode, so these arrived as a bare 500 with the reason stripped.
+ */
+function mobilityError(statusCode: number, message: string): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode });
+}
+
+/**
+ * Move the employee for one approved transfer, on whichever executor is given.
+ *
+ * The master lookup deliberately throws rather than writing NULL: a transfer naming a branch
+ * that does not resolve must fail loudly, not quietly detach the employee from every
+ * branch-scoped query in the app. Run inside the approval transaction, that throw now also
+ * rolls the transfer back out of 'completed'.
+ */
+async function applyTransferOn(
+  exec: SqlExecutor,
+  employee_id: string,
+  transfer_type: string,
+  to_value: string
+): Promise<void> {
+  const resolveMaster = async (sql: string, label: string, table: string): Promise<string> => {
+    const [r] = await exec.execute(sql, [to_value, to_value]);
+    const masterId = ((r as RowDataPacket[])[0] as { id?: unknown } | undefined)?.id ?? null;
+    // Message wording preserved: existing callers and logs key off "not found in <table>".
+    if (!masterId) throw mobilityError(422, `Transfer: ${label} '${to_value}' not found in ${table}`);
+    return String(masterId);
+  };
+
+  if (transfer_type === "branch") {
+    const masterId = await resolveMaster(
+      "SELECT id FROM branch_master WHERE id = ? OR branch_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
+      "branch",
+      "branch_master"
+    );
+    await exec.execute("UPDATE employees SET branch_id = ? WHERE id = ?", [masterId, employee_id]);
+
+  } else if (transfer_type === "department") {
+    const masterId = await resolveMaster(
+      "SELECT id FROM department_master WHERE id = ? OR dept_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
+      "department",
+      "department_master"
+    );
+    await exec.execute("UPDATE employees SET department_id = ? WHERE id = ?", [masterId, employee_id]);
+
+  } else if (transfer_type === "designation") {
+    const masterId = await resolveMaster(
+      "SELECT id FROM designation_master WHERE id = ? OR designation_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
+      "designation",
+      "designation_master"
+    );
+    await exec.execute("UPDATE employees SET designation_id = ? WHERE id = ?", [masterId, employee_id]);
+
+  } else if (transfer_type === "process") {
+    const masterId = await resolveMaster(
+      "SELECT id FROM process_master WHERE id = ? OR process_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
+      "process",
+      "process_master"
+    );
+    await exec.execute("UPDATE employees SET process_id = ? WHERE id = ?", [masterId, employee_id]);
+
+  } else if (transfer_type === "reporting_manager") {
+    // to_value is the new manager's employee_id for RM transfers.
+    await exec.execute(
+      `UPDATE employees SET reporting_manager_id = ? WHERE id = ?`,
+      [to_value, employee_id]
+    );
+  }
+}
 
 interface TransferFilters {
   employee_id?: string;
@@ -85,62 +169,130 @@ export const mobilityService = {
     return (rows as RowDataPacket[])[0];
   },
 
+  /**
+   * Approve or reject a transfer, and — when it is already due — move the employee.
+   *
+   * These were four unrelated autocommit statements: the status UPDATE, a re-SELECT, the
+   * employee-row move, then the journey log. The status went to 'completed' first and on its
+   * own, so any failure after it left the record saying the transfer had happened while the
+   * employee was still in their old branch, process or reporting line.
+   *
+   * That was not a theoretical window. applyTransferToEmployee throws by design when a master
+   * lookup misses — "branch 'X' not found in branch_master" — precisely so a FK is never
+   * silently nulled. On that throw the transfer stayed 'completed', the employee never moved,
+   * AND neither the journey log nor the TRANSFER_APPROVED audit ran, so nothing recorded that
+   * anything had gone wrong. The record simply read as a completed transfer that never
+   * happened.
+   *
+   * Status, employee move and journey log now share one transaction. The row is locked and
+   * the status re-checked under that lock, so two approvers cannot both action the same
+   * transfer — previously both succeeded, moving the employee twice and writing two audits.
+   *
+   * The future-dated rule is unchanged: a transfer whose effective_date has not arrived is
+   * approved and held, and mobility-transfer.worker.ts applies it on the day.
+   */
   async updateTransfer(id: string, data: ApproveRejectData) {
     const finalStatus = data.action === "approved" ? "completed" : "rejected";
+    const today = new Date().toISOString().slice(0, 10);
 
-    await db.execute(
-      `UPDATE transfer_record SET status = ?, approved_by = ?, updated_at = NOW() WHERE id = ?`,
-      [finalStatus, data.approved_by, id]
-    );
+    let approvedContext:
+      | { employee_id: string; transfer_type: string; from_value: string; to_value: string; effectiveDateStr: string; isDue: boolean }
+      | null = null;
 
-    const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM transfer_record WHERE id = ? LIMIT 1",
-      [id]
-    );
-    const record = (rows as RowDataPacket[])[0] ?? null;
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
 
-    if (data.action === "approved" && record) {
-      const { employee_id, transfer_type, from_value, to_value, effective_date } = record as {
-        employee_id: string;
-        transfer_type: string;
-        from_value: string;
-        to_value: string;
-        effective_date: string | null;
-      };
-
-      // Only apply the employee-row update when the effective date has been reached.
-      // Future-dated transfers are approved but held; a nightly job (or re-calling
-      // applyPendingTransfers) will apply them on effective_date.
-      const today = new Date().toISOString().slice(0, 10);
-      const effectiveDateStr = effective_date ? String(effective_date).slice(0, 10) : today;
-      const isDue = effectiveDateStr <= today;
-
-      if (isDue) {
-        await mobilityService.applyTransferToEmployee(employee_id, transfer_type, to_value, id);
-      }
-      // else: employee row stays unchanged until effective_date arrives.
-
-      await db.execute(
-        `INSERT INTO employee_journey_log
-           (id, employee_id, event_type, event_date, description, module, triggered_by, metadata)
-         VALUES (?, ?, 'transfer', ?, ?, 'MOBILITY', ?, ?)`,
-        [
-          randomUUID(),
-          employee_id,
-          effectiveDateStr,
-          `Transfer: ${from_value} → ${to_value}${isDue ? "" : ` (effective ${effectiveDateStr})`}`,
-          data.approved_by,
-          JSON.stringify({ transfer_id: id, transfer_type, from_value, to_value, effective_date: effectiveDateStr, applied: isDue }),
-        ]
+      const [lockedRows] = await conn.execute<RowDataPacket[]>(
+        "SELECT * FROM transfer_record WHERE id = ? FOR UPDATE",
+        [id]
       );
+      const record = (lockedRows as RowDataPacket[])[0] ?? null;
+      if (!record) throw mobilityError(404, "Transfer record not found");
 
+      const currentStatus = String((record as { status?: unknown }).status ?? "");
+      if (currentStatus !== "pending") {
+        throw mobilityError(409, `Transfer has already been actioned — it is '${currentStatus}'`);
+      }
+
+      const [statusResult] = await conn.execute<ResultSetHeader>(
+        `UPDATE transfer_record SET status = ?, approved_by = ?, updated_at = NOW()
+          WHERE id = ? AND status = ?`,
+        [finalStatus, data.approved_by, id, currentStatus]
+      );
+      if (statusResult.affectedRows !== 1) {
+        throw mobilityError(409, "Transfer was actioned by someone else while this approval was in flight");
+      }
+
+      if (data.action === "approved") {
+        const { employee_id, transfer_type, from_value, to_value, effective_date } = record as unknown as {
+          employee_id: string;
+          transfer_type: string;
+          from_value: string;
+          to_value: string;
+          effective_date: string | null;
+        };
+
+        // Only move the employee once the effective date has been reached. Future-dated
+        // transfers are approved but held; mobility-transfer.worker.ts applies them on the day.
+        const effectiveDateStr = effective_date ? String(effective_date).slice(0, 10) : today;
+        const isDue = effectiveDateStr <= today;
+
+        if (isDue) {
+          // Claimed the same way the deferred sweep claims: whoever stamps applied_at wins,
+          // so the worker and this path can never both move the same employee.
+          const [claim] = await conn.execute<ResultSetHeader>(
+            `UPDATE transfer_record SET applied_at = NOW() WHERE id = ? AND applied_at IS NULL`,
+            [id]
+          );
+          if (claim.affectedRows !== 1) {
+            throw mobilityError(409, "Transfer has already been applied to the employee record");
+          }
+          await applyTransferOn(conn, employee_id, transfer_type, to_value);
+        }
+
+        await conn.execute(
+          `INSERT INTO employee_journey_log
+             (id, employee_id, event_type, event_date, description, module, triggered_by, metadata)
+           VALUES (?, ?, 'transfer', ?, ?, 'MOBILITY', ?, ?)`,
+          [
+            randomUUID(),
+            employee_id,
+            effectiveDateStr,
+            `Transfer: ${from_value} → ${to_value}${isDue ? "" : ` (effective ${effectiveDateStr})`}`,
+            data.approved_by,
+            JSON.stringify({ transfer_id: id, transfer_type, from_value, to_value, effective_date: effectiveDateStr, applied: isDue }),
+          ]
+        );
+
+        approvedContext = { employee_id, transfer_type, from_value, to_value, effectiveDateStr, isDue };
+      }
+
+      await conn.commit();
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      // 45 workers share this pool; one connection left unreleased has starved all of them.
+      conn.release();
+    }
+
+    // Post-commit. The audit writer is non-throwing and cannot join a transaction, so it runs
+    // only once the move it describes is durable — never for one that rolled back.
+    if (approvedContext) {
       await logSensitiveAction({
         actor_user_id: data.approved_by,
         action_type: "TRANSFER_APPROVED",
         module_key: "MOBILITY",
         entity_type: "employee",
-        entity_id: employee_id,
-        change_summary: { transfer_type, from_value, to_value, effective_date: effectiveDateStr, applied: isDue },
+        entity_id: approvedContext.employee_id,
+        change_summary: {
+          transfer_type: approvedContext.transfer_type,
+          from_value: approvedContext.from_value,
+          to_value: approvedContext.to_value,
+          effective_date: approvedContext.effectiveDateStr,
+          applied: approvedContext.isDue,
+        },
       });
     }
 
@@ -153,7 +305,7 @@ export const mobilityService = {
   },
 
   // Applies a single approved transfer's employee-row update. Called at approval
-  // time when effective_date <= today, and by the nightly deferred-transfer job.
+  // time when effective_date <= today, and by the deferred-transfer worker.
   // Throws if the master-table lookup returns NULL — callers must not silently null a FK.
   async applyTransferToEmployee(
     employee_id: string,
@@ -161,51 +313,11 @@ export const mobilityService = {
     to_value: string,
     transfer_id: string
   ): Promise<void> {
-    if (transfer_type === "branch") {
-      const [r] = await db.execute<RowDataPacket[]>(
-        "SELECT id FROM branch_master WHERE id = ? OR branch_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
-        [to_value, to_value]
-      );
-      const masterId = (r[0] as any)?.id ?? null;
-      if (!masterId) throw new Error(`Transfer: branch '${to_value}' not found in branch_master`);
-      await db.execute("UPDATE employees SET branch_id = ? WHERE id = ?", [masterId, employee_id]);
+    await applyTransferOn(db, employee_id, transfer_type, to_value);
 
-    } else if (transfer_type === "department") {
-      const [r] = await db.execute<RowDataPacket[]>(
-        "SELECT id FROM department_master WHERE id = ? OR dept_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
-        [to_value, to_value]
-      );
-      const masterId = (r[0] as any)?.id ?? null;
-      if (!masterId) throw new Error(`Transfer: department '${to_value}' not found in department_master`);
-      await db.execute("UPDATE employees SET department_id = ? WHERE id = ?", [masterId, employee_id]);
-
-    } else if (transfer_type === "designation") {
-      const [r] = await db.execute<RowDataPacket[]>(
-        "SELECT id FROM designation_master WHERE id = ? OR designation_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
-        [to_value, to_value]
-      );
-      const masterId = (r[0] as any)?.id ?? null;
-      if (!masterId) throw new Error(`Transfer: designation '${to_value}' not found in designation_master`);
-      await db.execute("UPDATE employees SET designation_id = ? WHERE id = ?", [masterId, employee_id]);
-
-    } else if (transfer_type === "process") {
-      const [r] = await db.execute<RowDataPacket[]>(
-        "SELECT id FROM process_master WHERE id = ? OR process_name COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
-        [to_value, to_value]
-      );
-      const masterId = (r[0] as any)?.id ?? null;
-      if (!masterId) throw new Error(`Transfer: process '${to_value}' not found in process_master`);
-      await db.execute("UPDATE employees SET process_id = ? WHERE id = ?", [masterId, employee_id]);
-
-    } else if (transfer_type === "reporting_manager") {
-      // to_value is the new manager's employee_id for RM transfers.
-      await db.execute(
-        `UPDATE employees SET reporting_manager_id = ? WHERE id = ?`,
-        [to_value, employee_id]
-      );
-    }
-
-    // Mark applied so the deferred job does not re-apply.
+    // Mark applied so the deferred job does not re-apply. The deferred sweep has already
+    // claimed the row before calling this, so the stamp is a confirmation there; on any
+    // other path it is the claim itself.
     await db.execute(
       `UPDATE transfer_record SET applied_at = NOW() WHERE id = ?`,
       [transfer_id]
@@ -216,21 +328,20 @@ export const mobilityService = {
    * Apply all approved transfers whose effective_date has been reached but whose applied_at
    * is still NULL.
    *
-   * NOT CURRENTLY SCHEDULED. This previously claimed it was "called by a nightly scheduled
-   * job" — it is not. Verified 2026-08-15: it is registered in neither server.ts nor
-   * all-workers.ts, and the only other mention of it anywhere in the repo is a comment in
-   * createTransfer above. Nothing calls it.
+   * SCHEDULED as of 2026-08-15 by mobility-transfer.worker.ts, which is registered in BOTH
+   * server.ts and all-workers.ts — a worker present in only one of those never runs in every
+   * deployment shape, so both registrations matter. An earlier version of this comment said
+   * the function was unscheduled and called by nothing; that was true when written and is not
+   * now. Left corrected rather than deleted because "nothing calls this" is exactly the claim
+   * a future reader would act on.
    *
-   * The consequence is that a FUTURE-DATED transfer is approved, recorded, and then never
-   * applied — the employee stays in their old branch/process/manager indefinitely, with the
-   * transfer_record sitting due and unactioned. Immediate transfers (effective_date <= today)
-   * are unaffected; those apply inline from createTransfer.
+   * What it fixes: a FUTURE-DATED transfer used to be approved, recorded, and then never
+   * applied — the employee stayed in their old branch/process/manager indefinitely while the
+   * transfer_record sat due and unactioned. Immediate transfers (effective_date <= today)
+   * apply inline from updateTransfer at approval time.
    *
-   * Deliberately left unscheduled rather than wired up here. This sweep moves employees
-   * between branches and processes, and turning on an unexercised job that mutates employee
-   * rows in bulk is a decision with an owner, not a side effect of a bug fix. Migration 1221
-   * makes it *capable* of running (applied_at did not exist, so every statement in it raised
-   * ER_BAD_FIELD_ERROR); scheduling it is the separate, deliberate step.
+   * Migration 1221 is what made it capable of running at all: applied_at did not exist, so
+   * every statement here raised ER_BAD_FIELD_ERROR.
    */
   async applyPendingTransfers(): Promise<number> {
     const [pending] = await db.execute<RowDataPacket[]>(
