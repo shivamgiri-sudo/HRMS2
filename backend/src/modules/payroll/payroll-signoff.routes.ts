@@ -204,6 +204,37 @@ router.post(
       return res.status(409).json({ success: false, message: "Run is already finance-approved" });
     }
 
+    // This handler SELECTed status and then never looked at it, so finance sign-off could be
+    // stamped on any run in any state — including a 'draft' whose calculation FAILED
+    // (payrollCalculate.service.ts resets to 'draft' on failure) and a 'FINALIZED' run from
+    // closed history. GET /runs above already refuses to list either as pending sign-off; the
+    // mutation simply did not agree with the query that decides what is approvable.
+    //
+    // Deny-list rather than allow-list, deliberately. 'processing' is what the queue lists, but
+    // 12 live runs sit at status 'approved' and nothing in this module proves that is not a
+    // legitimate pre-finance state — allow-listing 'processing' alone would silently strand
+    // them. These two are unambiguous: approving a failed calculation or 2021 closed history
+    // is wrong under any reading.
+    //
+    // LOWER() because this column mixes casing — 'FINALIZED' is uppercase while every other
+    // value is lowercase, and a case-sensitive comparison has already caused production
+    // defects elsewhere in this module.
+    //
+    // Verified live 2026-08-15: 0 of 66 runs have EVER been finance-approved (FINALIZED 51,
+    // approved 12, processing 2, draft 1), so this blocks nothing that has happened — it
+    // closes a hole before the first real sign-off goes through it.
+    const runStatus = String(run.status ?? "").toLowerCase();
+    if (runStatus === "draft" || runStatus === "finalized") {
+      return res.status(409).json({
+        success: false,
+        message:
+          runStatus === "draft"
+            ? "Cannot finance-approve a draft run — its calculation has not completed successfully."
+            : "Cannot finance-approve a finalized run — it is closed history, not a pending sign-off.",
+        runStatus: run.status,
+      });
+    }
+
     await db.execute(
       `UPDATE salary_prep_run
           SET finance_approved_by = ?,
