@@ -75,7 +75,20 @@ export const createRunSchema = z.object({
 });
 
 export const updateRunStatusSchema = z.object({
-  status: z.enum(["processing", "reviewed", "approved", "locked", "disbursed"]),
+  // Exactly the statuses this endpoint can actually reach, per payroll-lifecycle.ts.
+  //
+  // It previously also accepted "processing" and "reviewed", neither of which any
+  // transition targets, so both were guaranteed to fail after validation had passed -
+  // surfacing as a 500 from the service rather than a 400 from the schema. "reviewed" is
+  // never written to salary_prep_run by anything in the codebase at all (the only writer
+  // of that value targets kpi_score_period, a different module), and "processing" is
+  // written solely by the calculator, directly, never through this endpoint.
+  //
+  // Narrowing does not disable any working flow: no request using either value has ever
+  // been able to succeed. It only makes the failure honest and immediate. NOTE this is
+  // the TARGET status - 'processing' remains fully valid as a SOURCE status and is
+  // untouched everywhere it is read (sign-off queue, is_draft, isProvisional).
+  status: z.enum(["approved", "locked", "disbursed"]),
   disbursedAt: z.string().regex(DATE_REGEX).optional(),
 });
 
