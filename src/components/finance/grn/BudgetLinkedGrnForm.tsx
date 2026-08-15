@@ -407,10 +407,10 @@ export function BudgetLinkedGrnForm({
 
   const isVendor = form.grnType === "vendor";
   const period = form.billDate ? form.billDate.slice(0, 7) : "";
-  // Finance Head / Accounts Head / Super Admin may override the accounting month — e.g. to book
-  // a late March invoice into February's period after month-end close. The override only changes
-  // which budget lines are queried and which period is consumed; the invoice date stays as typed.
-  const canOverridePeriod = useHasRole("finance_head", "accounts_head", "super_admin");
+  // Finance Head / Accounts Head / Super Admin / Branch Admin may override the accounting month —
+  // e.g. to book a late March invoice into February's period after month-end close. The override
+  // only changes which budget lines are queried and which period is consumed; the invoice date stays as typed.
+  const canOverridePeriod = useHasRole("finance_head", "accounts_head", "super_admin", "branch_admin");
   const effectivePeriod = form.accountingPeriod || period;
 
   const { data: branchResponse } = useQuery({
