@@ -1,10 +1,24 @@
-export type RunStatus = "draft" | "calculating" | "calculated" | "under_review" | "finalized" | "approved" | "locked" | "disbursed" | "cancelled";
+export type RunStatus = "draft" | "calculating" | "calculated" | "under_review" | "processing" | "finalized" | "approved" | "locked" | "disbursed" | "cancelled";
 
 const ALLOWED_TRANSITIONS: Record<RunStatus, RunStatus[]> = {
   draft:        ["calculating", "cancelled"],
   calculating:  ["calculated", "draft"],
   calculated:   ["under_review", "draft"],
   under_review: ["approved", "calculated", "draft"],
+  // 'processing' is what the MAINLINE calculator writes when a run finishes computing
+  // (payrollCalculate.service.ts sets it on success, resets to 'draft' on failure), and
+  // it is what payroll-signoff.routes.ts filters its pending-sign-off queue on. The
+  // calculating/calculated/under_review chain above is a parallel vocabulary that this
+  // engine does not write, so without an entry here the real forward path out of the
+  // calculator was blocked: validateTransition("processing", "approved") found no key and
+  // rejected. One forward target only.
+  //
+  // No 'draft' target on purpose. The calculator's own failure reset UPDATEs status to
+  // 'draft' directly in SQL, guarded by CLOSED_RUN_STATUSES, and never passes through this
+  // map — so it needs nothing here, and adding it would create a new API route back into
+  // an editable state for an already-computed run. Nothing lists 'processing' as a target
+  // either: only the calculator may produce that state.
+  processing:   ["approved"],
   // 'finalized' is the status payroll actually finishes runs in — 51 of 66 live
   // salary_prep_run rows hold it, stored uppercase as 'FINALIZED'. It had no entry
   // here at all, so ALLOWED_TRANSITIONS[from] came back undefined and validateTransition
