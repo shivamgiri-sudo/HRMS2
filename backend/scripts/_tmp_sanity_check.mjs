@@ -1,6 +1,6 @@
 import mysql from "mysql2/promise";
 const conn = await mysql.createConnection({
-  host: "122.184.128.90", port: 3306, user: "shivam_user", password: "qwersdfg!@#hjk", database: "mas_hrms",
+  host: "122.184.128.90", port: 3306, user: "shivam_user", password: process.env.DB_PASSWORD, database: "mas_hrms",
 });
 try {
   const [[stats]] = await conn.execute(`

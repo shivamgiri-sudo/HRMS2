@@ -4,7 +4,7 @@ const mysql = require('mysql2/promise');
     host: '192.168.10.6',
     port: 3306,
     user: 'shivam_user',
-    password: 'qwersdfg!@#hjk',
+    password: process.env.DB_PASSWORD,
     database: 'mas_hrms',
   });
   for (const table of ['wfm_rest_policy', 'week_off_policy_default']) {

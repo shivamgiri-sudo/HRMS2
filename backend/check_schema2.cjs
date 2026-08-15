@@ -1,7 +1,7 @@
 const mysql = require('mysql2/promise');
 (async () => {
   const conn = await mysql.createConnection({
-    host: '192.168.10.6', port: 3306, user: 'shivam_user', password: 'qwersdfg!@#hjk', database: 'mas_hrms',
+    host: '192.168.10.6', port: 3306, user: 'shivam_user', password: process.env.DB_PASSWORD, database: 'mas_hrms',
   });
   const [rows] = await conn.query(`
     SELECT COLUMN_NAME, GENERATION_EXPRESSION
