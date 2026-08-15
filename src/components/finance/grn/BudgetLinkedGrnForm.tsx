@@ -473,11 +473,15 @@ export function BudgetLinkedGrnForm({
 
   // Same monthly-driver data Branch Budget planning already fetches for this branch+period —
   // reused here so a split GRN's auto-split weighs cost centres the same way a budget line would.
-  const { monthlyDriversQuery } = useBranchBudgetAllocations(form.branchId || null, period || null);
+  // Also fetch costCentresQuery to get ALL active cost centres for the branch (not just from budget lines).
+  const { monthlyDriversQuery, costCentresQuery } = useBranchBudgetAllocations(form.branchId || null, period || null);
   const driversByCostCentre = useMemo(
     () => Object.fromEntries((monthlyDriversQuery.data ?? []).map((driver) => [driver.costCentreId, driver])),
     [monthlyDriversQuery.data]
   );
+  /** All active cost centres for this branch — used for vendor GRN cost-centre split when the
+   *  budget line is branch-common (no specific cost centre). This mirrors Branch Budget's behavior. */
+  const activeCostCentres = useMemo(() => costCentresQuery.data ?? [], [costCentresQuery.data]);
 
   const workspaceQuery = useQuery({
     queryKey: ["smart-grn-workspace", created?.id ?? editGrnId],
@@ -726,25 +730,35 @@ export function BudgetLinkedGrnForm({
     [vendorLinesInHead, form.subHead]
   );
 
-  /** One entry per cost centre that has at least one line matching Head/Sub-head — the candidate
-   *  rows for the cost-centre split editor. A cost centre with more than one matching line needs
-   *  its own item picker, exactly like the single-line cascade's `needsItemChoice`.
-   *  Budget lines without a cost centre (NULL cost_centre_id) are indirect/branch-common expenses
-   *  and are excluded — GRN vendor splits should target named cost centres only. */
+  /** All active cost centres for the branch, with their matching budget lines (if any).
+   *  This follows Branch Budget's pattern: when there are matching budget lines (even branch-common
+   *  ones without cost_centre_id), the user can split the expense across ANY active cost centre.
+   *  The budget line info is used to show available amounts where applicable. */
   const vendorCostCentreGroups = useMemo(() => {
-    const map = new Map<string, BudgetLine[]>();
+    if (!vendorMatchingLines.length || !activeCostCentres.length) return [];
+
+    // Map of cost centre ID → matching budget lines
+    const linesByCC = new Map<string, BudgetLine[]>();
     vendorMatchingLines.forEach((line) => {
-      // Skip branch-common / indirect expense lines (no cost centre)
-      if (!line.cost_centre_id) return;
-      const key = line.cost_centre_id;
-      map.set(key, [...(map.get(key) ?? []), line]);
+      if (!line.cost_centre_id) return; // Branch-common lines apply to ALL cost centres
+      linesByCC.set(line.cost_centre_id, [...(linesByCC.get(line.cost_centre_id) ?? []), line]);
     });
-    return [...map.entries()].map(([costCentreKey, lines]) => ({
-      costCentreKey,
-      costCentreName: lines[0].cost_centre_name ?? "Unknown cost centre",
-      lines,
-    }));
-  }, [vendorMatchingLines]);
+
+    // For branch-common expenses, ALL matching lines apply to every cost centre
+    const branchCommonLines = vendorMatchingLines.filter((line) => !line.cost_centre_id);
+
+    // Build groups from ALL active cost centres (not just ones with budget lines)
+    return activeCostCentres.map((cc) => {
+      const ccLines = linesByCC.get(cc.id) ?? [];
+      // Branch-common lines are available to all cost centres
+      const allLines = [...ccLines, ...branchCommonLines];
+      return {
+        costCentreKey: cc.id,
+        costCentreName: cc.costCentreName || cc.costCentreCode || "Unknown",
+        lines: allLines,
+      };
+    });
+  }, [vendorMatchingLines, activeCostCentres]);
 
   // Clear a stale vendor Head/Sub-head the same way the single-line cascade already does above.
   useEffect(() => {
@@ -767,6 +781,8 @@ export function BudgetLinkedGrnForm({
   // picked, or the underlying budget lines changed). Preserves an already-set percentage/item
   // choice for a cost centre that reappears (e.g. toggling Sub-head back and forth) rather than
   // wiping the whole split every time.
+  // When budget lines are branch-common (no specific cost centre), all active cost centres are shown
+  // and the user can split to any of them.
   useEffect(() => {
     if (!isVendor) return;
     setCostCentreSplits((current) => {
@@ -774,11 +790,13 @@ export function BudgetLinkedGrnForm({
       const equalPct = Math.round((100 / vendorCostCentreGroups.length) * 1_000_000) / 1_000_000;
       return vendorCostCentreGroups.map((group) => {
         const existing = current.find((row) => row.costCentreKey === group.costCentreKey);
-        const stillValid = existing && group.lines.some((line) => line.id === existing.budgetLineId);
+        // For branch-common expenses, lines may not have a specific budget line ID per CC
+        const firstLineId = group.lines[0]?.id ?? "";
+        const stillValid = existing && (group.lines.length === 0 || group.lines.some((line) => line.id === existing.budgetLineId));
         return {
           key: existing?.key ?? crypto.randomUUID(),
           costCentreKey: group.costCentreKey,
-          budgetLineId: stillValid ? existing!.budgetLineId : group.lines[0].id,
+          budgetLineId: stillValid ? existing!.budgetLineId : firstLineId,
           percentage: existing?.percentage ?? equalPct,
         };
       });
@@ -2320,11 +2338,10 @@ export function BudgetLinkedGrnForm({
             />
           )}
 
-          {/* Show InvoiceComponentsEditor when:
-              - Cost centre splits are done, OR
-              - Branch-common expenses (matching lines exist but no cost centres assigned) */}
-          {isVendor && Boolean(form.branchId) && Boolean(effectivePeriod) &&
-           (costCentreSplits.length > 0 || (vendorMatchingLines.length > 0 && vendorCostCentreGroups.length === 0)) && (
+          {/* Show InvoiceComponentsEditor when cost centre splits exist — the split section now
+              uses ALL active cost centres (Branch Budget pattern), so it always appears when there
+              are matching budget lines. */}
+          {isVendor && Boolean(form.branchId) && Boolean(effectivePeriod) && costCentreSplits.length > 0 && (
             <InvoiceComponentsEditor
               components={invoiceComponents}
               preview={componentsPreview}
@@ -3264,13 +3281,6 @@ function InvoiceComponentsEditor({
               </div>
               <Input
                 className="mt-2"
-                value={component.hsnSacCode}
-                placeholder="HSN / SAC code (optional)"
-                maxLength={10}
-                onChange={(event) => onUpdate(component.key, { hsnSacCode: event.target.value })}
-              />
-              <Input
-                className="mt-2"
                 value={component.remarks}
                 placeholder="Optional note for this component"
                 onChange={(event) => onUpdate(component.key, { remarks: event.target.value })}
@@ -3293,7 +3303,6 @@ function InvoiceComponentsEditor({
               <GrnTh sticky={false} align="right" className="w-36">Amount without tax</GrnTh>
               <GrnTh sticky={false} align="right" className="w-24">GST slab</GrnTh>
               <GrnTh sticky={false} align="right" className="w-32">Incl. GST</GrnTh>
-              <GrnTh sticky={false} className="w-28">HSN / SAC</GrnTh>
               <GrnTh sticky={false}>Note</GrnTh>
               <GrnTh sticky={false} className="w-12" />
             </tr>
@@ -3328,15 +3337,6 @@ function InvoiceComponentsEditor({
                     </GrnSelect>
                   </GrnTd>
                   <GrnTd align="right" className="font-semibold">{money(gross)}</GrnTd>
-                  <GrnTd>
-                    <Input
-                      value={component.hsnSacCode}
-                      placeholder="998313…"
-                      maxLength={10}
-                      className="w-full"
-                      onChange={(event) => onUpdate(component.key, { hsnSacCode: event.target.value })}
-                    />
-                  </GrnTd>
                   <GrnTd className="min-w-[160px]">
                     <Input
                       value={component.remarks}
