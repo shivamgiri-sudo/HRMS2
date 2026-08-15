@@ -17,6 +17,62 @@ import { emailService } from "../communication/email.service.js";
 import { buildJoiningDocEsignEmailHtml, buildEpfComplianceReviewEmailHtml } from "../ats/ats.email.service.js";
 
 const STORAGE_ROOT = path.resolve(process.cwd(), "private-storage", "employee-joining-documents");
+
+/**
+ * True when a stored joining-document file is readable on THIS machine.
+ *
+ * storage_path is written absolute, so the recorded value depends on which machine
+ * and working directory wrote it. Verified live 2026-08-16: 9 of 51 rows hold a
+ * foreign path (8 generated, 1 kit_source).
+ *
+ * WHY THIS IS NOT MERELY A 404, unlike the sibling readers fixed in 2e07eeee and
+ * 3d2fe716. The two callers use this to decide whether a usable file already exists;
+ * a false negative makes ensureGeneratedFile() REGENERATE the document and rewrite
+ * the checklist status back to pending_candidate_esign / uploaded_pending_review,
+ * recording a fresh DOCUMENT_GENERATED audit row. Its lookup prefers file_role
+ * 'signed', so on the wrong row that silently replaces a completed e-signature with
+ * a new unsigned draft and asks the employee to sign again.
+ *
+ * CURRENT EXPOSURE IS ZERO, and this is deliberate hardening rather than a repair:
+ * checked per checklist with the same ordering the caller uses (signed first, then
+ * newest), all 30 winning rows resolve locally and none of the 9 foreign rows is
+ * currently selected — each is superseded by a newer local row. The guard exists
+ * because pre-launch uploads from developer machines keep writing foreign paths, and
+ * the day one becomes the newest row for its checklist, the failure is destructive
+ * and silent.
+ *
+ * Files live at STORAGE_ROOT/<employeeId>/<documentCode>/<file>, so the fallback is
+ * rebuilt from those parts. Splitting on BOTH separators is required: a backslash is
+ * an ordinary filename character on Linux, so path.basename() on a Windows path
+ * returns the whole string.
+ */
+function resolveJoiningDocumentFile(
+  storedPath: unknown,
+  employeeId: string,
+  documentCode: string,
+): string | null {
+  const raw = String(storedPath ?? "").trim();
+  if (raw && isReadableFile(raw)) return raw;
+
+  const fileName = raw.split(/[\\/]/).pop();
+  if (!fileName || !employeeId || !documentCode) return null;
+
+  const candidate = path.join(
+    STORAGE_ROOT,
+    employeeId,
+    String(documentCode).toLowerCase(),
+    fileName,
+  );
+  return isReadableFile(candidate) ? candidate : null;
+}
+
+function isReadableFile(candidate: string): boolean {
+  try {
+    return fs.existsSync(candidate) && fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
 const ALLOWED_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".webp", ".doc", ".docx"]);
 const HR_SCOPE_ROLES = ["hr", "manager", "branch_head", "process_manager", "assistant_manager", "tl"];
 const PAYROLL_SCOPE_ROLES = ["payroll_hr", "payroll"];
@@ -628,7 +684,10 @@ async function generateAgreementPdf(checklist: ChecklistRow, target: EmployeeDoc
     try {
       await generateChecklistDraft(checklist.id, actorUserId ?? null);
       const generatedDraft = await latestChecklistFile(checklist.id);
-      if (generatedDraft && fs.existsSync(generatedDraft.storage_path)) {
+      if (
+        generatedDraft &&
+        resolveJoiningDocumentFile(generatedDraft.storage_path, checklist.employee_id, checklist.document_code)
+      ) {
         return generatedDraft;
       }
     } catch (err: unknown) {
@@ -729,7 +788,15 @@ async function ensureGeneratedFile(checklist: ChecklistRow, target: EmployeeDocu
     [checklist.id],
   );
   const existing = (rows as unknown as LatestFileRow[])[0] ?? null;
-  if (existing && fs.existsSync(existing.storage_path)) return existing;
+  // Resolve rather than trusting storage_path: a false negative here does not 404,
+  // it regenerates the document and resets the checklist status. See
+  // resolveJoiningDocumentFile.
+  if (
+    existing &&
+    resolveJoiningDocumentFile(existing.storage_path, checklist.employee_id, checklist.document_code)
+  ) {
+    return existing;
+  }
 
   const [templateRows] = await db.execute<RowDataPacket[]>(
     `SELECT template_storage_path
