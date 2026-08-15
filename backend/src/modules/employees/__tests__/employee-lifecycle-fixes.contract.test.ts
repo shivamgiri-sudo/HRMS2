@@ -162,41 +162,58 @@ describe('mobility.service — applyTransferToEmployee is NULL-safe', () => {
 });
 
 // ── Task 8: exit propagation completeness ───────────────────────────────────
+/**
+ * These three read the `exited` branch of exit.service.ts as source text.
+ *
+ * They used to slice a fixed character count from the anchor, which measures prose as well
+ * as code: a later session added an explanatory comment inside the branch and pushed
+ * `date_of_exit` from inside the 2,000-char window to 2,444 chars away, so the guard began
+ * failing on main while the behaviour it protects was still perfectly correct. A test that
+ * breaks when someone writes a comment trains people to ignore it.
+ *
+ * Comments are now stripped before the window is taken, so the distance measured is code,
+ * and the window runs to the end of the file rather than a magic number.
+ */
+const exitedBranch = (): string => {
+  const src = fs.readFileSync(path.resolve(__dirname, '../../exit/exit.service.ts'), 'utf8');
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const i = code.indexOf('nextStatus === "exited"');
+  expect(i, 'the exited branch is gone from exit.service.ts').toBeGreaterThan(-1);
+  return code.slice(i);
+};
+
 describe('exit.service — exited status propagation', () => {
   it('exit.service must set date_of_exit on employees on exited', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../../exit/exit.service.ts'),
-      'utf8'
-    );
-    const exitedBlock = src.slice(
-      src.indexOf('nextStatus === "exited"'),
-      src.indexOf('nextStatus === "exited"') + 2000
-    );
-    expect(exitedBlock).toContain('date_of_exit');
+    // Asserts the actual write, not that the string appears somewhere nearby: the point is
+    // that the employees row is stamped, and `date_of_exit` could otherwise be satisfied by
+    // a SELECT or an unrelated table.
+    expect(exitedBranch()).toMatch(/UPDATE\s+employees[\s\S]{0,400}?date_of_exit\s*=/);
   });
 
-  it('exit.service must cancel open leave requests on exited', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../../exit/exit.service.ts'),
-      'utf8'
-    );
-    const exitedBlock = src.slice(
-      src.indexOf('nextStatus === "exited"'),
-      src.indexOf('nextStatus === "exited"') + 5000
-    );
-    expect(exitedBlock).toMatch(/leave_requests|leave_request/);
+  /**
+   * These two asserted `leave_requests` and `employee_asset_assignment` appeared near the
+   * anchor. Both did — inside a COMMENT, and specifically inside the comment explaining that
+   * those very statements had been REMOVED because they named tables that do not exist. So
+   * the guards went green off the removal note describing their own deletion. Stripping
+   * comments exposed it: neither term occurs in the branch's code at all.
+   *
+   * They now assert the mechanism that actually replaced those statements —
+   * deprovisionEmployeeAccess — so they fail if exit stops revoking access, rather than if
+   * someone edits a comment.
+   *
+   * The behaviour itself was never lost, only moved: the inline statements named
+   * `leave_requests` (plural) and `employee_asset_assignment`, neither of which exists, so
+   * they had never worked. employeeDeprovisioning.ts does both properly against the real
+   * `leave_request` (singular) table, and routes cancellation through the balance-restore
+   * path rather than flipping status directly. Asserting the call therefore covers strictly
+   * more than the two dead statements did.
+   */
+  it('exit.service revokes access on exited via deprovisionEmployeeAccess', () => {
+    expect(exitedBranch()).toMatch(/await\s+deprovisionEmployeeAccess\s*\(/);
   });
 
-  it('exit.service must flag asset assignments on exited', () => {
-    const src = fs.readFileSync(
-      path.resolve(__dirname, '../../exit/exit.service.ts'),
-      'utf8'
-    );
-    const exitedBlock = src.slice(
-      src.indexOf('nextStatus === "exited"'),
-      src.indexOf('nextStatus === "exited"') + 5000
-    );
-    expect(exitedBlock).toMatch(/asset_assignment|employee_asset_assignment/);
+  it('exit.service revokes live sessions on exited', () => {
+    expect(exitedBranch()).toMatch(/await\s+revokeSessionsForEmployee\s*\(/);
   });
 
   it('exit.service must create clearance tasks for all exit paths including exited', () => {
