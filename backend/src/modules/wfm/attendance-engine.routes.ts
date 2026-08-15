@@ -1063,13 +1063,32 @@ router.post('/:employeeId/:date/unlock', requireRole('admin', 'wfm', 'super_admi
   //
   // run_month is VARCHAR 'YYYY-MM', not DATE, so it is compared string-to-string via
   // DATE_FORMAT - comparing it against a DATE matches zero rows and merely raises a warning.
+  //
+  // The JOIN to salary_prep_line is what makes this per-EMPLOYEE rather than per-MONTH.
+  //
+  // The first version of this guard matched any closed run sharing the target month. That
+  // over-blocked, because a run does not contain every employee - joiners, leavers and
+  // anyone outside the run's selection simply have no line in it. Measured live 2026-08-15:
+  // for 2026-04 the month-only guard blocked all 1,326 active employees while only 1,085
+  // actually had a line in that closed run, so 241 people could not have a genuine
+  // attendance error corrected despite no closed run ever having paid them for that day.
+  // 2026-03 was 186. (salary_prep_run also supports branch_filter/process_filter scoping,
+  // which would widen this further, though both are NULL on all 66 runs today.)
+  //
+  // Over-blocking a correction path is not a safe default: it drives legitimate fixes out
+  // of this audited, reason-required endpoint and into direct SQL, which is exactly what the
+  // guard exists to prevent. salary_prep_line is the per-employee row proving the run really
+  // did consume this person for that period.
   const [closedRuns] = await db.execute<RowDataPacket[]>(
-    `SELECT id, run_month, status
-       FROM salary_prep_run
-      WHERE run_month = DATE_FORMAT(?, '%Y-%m')
-        AND LOWER(COALESCE(status,'')) IN (${CLOSED_RUN_STATUSES_SQL})
+    `SELECT r.id, r.run_month, r.status
+       FROM salary_prep_run r
+       JOIN salary_prep_line l
+         ON l.run_id = r.id
+        AND l.employee_id = ?
+      WHERE r.run_month = DATE_FORMAT(?, '%Y-%m')
+        AND LOWER(COALESCE(r.status,'')) IN (${CLOSED_RUN_STATUSES_SQL})
       LIMIT 1`,
-    [date]
+    [employeeId, date]
   );
   const closedRun = (closedRuns as RowDataPacket[])[0] as any;
   if (closedRun) {

@@ -58,6 +58,40 @@ describe("attendance unlock refuses a day belonging to a closed payroll run", ()
   });
 });
 
+describe("the closed-run guard must prove THIS employee was in THAT run", () => {
+  /**
+   * The first version of this guard (28484a04) matched any closed salary_prep_run whose
+   * run_month equalled the target date's month, with no employee correlation at all. That
+   * over-blocks, because a run does not contain every employee - joiners, leavers and anyone
+   * outside its selection have no line in it. Measured live 2026-08-15: for 2026-04 the
+   * month-only guard blocked all 1,326 active employees while only 1,085 had a line in the
+   * closed run, so 241 people could not have a genuine attendance error corrected. 2026-03
+   * was 186.
+   *
+   * Over-blocking a correction path is not a safe default. It pushes legitimate attendance
+   * fixes out of the audited, reason-required endpoint and into direct SQL, which is the
+   * outcome the guard exists to prevent.
+   *
+   * The correlation must come from salary_prep_line — the per-employee row that proves the
+   * run actually consumed that employee — not from the run's month alone.
+   */
+  it("joins salary_prep_line, so the block is per-employee and not per-month", () => {
+    expect(UNLOCK_BLOCK).toMatch(/salary_prep_line/);
+  });
+
+  it("correlates that line to the employee being unlocked", () => {
+    expect(UNLOCK_BLOCK).toMatch(/employee_id\s*=\s*\?/);
+  });
+
+  it("still restricts the match to closed runs only", () => {
+    expect(UNLOCK_BLOCK).toMatch(/CLOSED_RUN_STATUSES_SQL/);
+  });
+
+  it("still compares run_month as a string, since it is VARCHAR", () => {
+    expect(UNLOCK_BLOCK).toMatch(/run_month\s*=\s*DATE_FORMAT\(\?,\s*'%Y-%m'\)/);
+  });
+});
+
 describe("attendance unlock requires a recorded justification", () => {
   it("rejects a missing or too-short reason with 400", () => {
     expect(UNLOCK_BLOCK).toMatch(/reason/);
