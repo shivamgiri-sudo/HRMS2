@@ -47,6 +47,65 @@ export function hashBuffer(buffer: Buffer): string {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
+/**
+ * Resolve a stored candidate-file path to a file that exists on THIS machine.
+ *
+ * storage_path is written absolute at upload time, so a file uploaded from a
+ * developer's Windows box against the shared database records e.g.
+ *
+ *   C:\Users\ADMIN\Desktop\HRMS2-latest\backend\private\ats-candidate-files\<id>\<file>
+ *
+ * which can never exist on the Linux production server. Verified live 2026-08-16:
+ * 5 of 2,238 ats_candidate_file rows carry such a path. For those, the download
+ * route's fs.existsSync() returns false and the caller gets a 404 "File not found"
+ * that is indistinguishable from a genuinely deleted file — and the denial is
+ * audited as "Stored file missing on disk", so the log agrees with the wrong story.
+ *
+ * This mirrors resolveTemplateFile() in employees/joiningDocumentTemplatePath.ts,
+ * which already solved exactly this for document templates after foreign absolute
+ * paths there blocked e-signing for three weeks.
+ *
+ * The fallback is rebuilt from candidate_id + stored_filename rather than by
+ * parsing storage_path: both are authoritative columns, and buildCandidateFilePath
+ * composes the location from precisely those two values. Parsing would also have to
+ * split on both separators, since a backslash is an ordinary filename character on
+ * Linux and path.basename() would return the whole string.
+ *
+ * Returns null when nothing readable is found, so callers keep their existing
+ * not-found behaviour rather than proceeding with a bad path.
+ */
+export function resolveCandidateFilePath(file: {
+  storage_path?: unknown;
+  candidate_id?: unknown;
+  stored_filename?: unknown;
+}): string | null {
+  const stored = String(file.storage_path ?? "").trim();
+  if (stored && safeIsFile(stored)) return stored;
+
+  const candidateId = String(file.candidate_id ?? "").trim();
+  const fileName = String(file.stored_filename ?? "").trim();
+  if (!candidateId || !fileName) return null;
+
+  // Guard against a stored_filename that somehow carries separators — the joined
+  // path must stay inside the candidate's own directory.
+  const safeName = fileName.split(/[\\/]/).pop();
+  if (!safeName) return null;
+
+  const candidate = path.join(CANDIDATE_FILES_ROOT, candidateId, safeName);
+  const expectedDir = path.join(CANDIDATE_FILES_ROOT, candidateId);
+  if (!path.resolve(candidate).startsWith(path.resolve(expectedDir))) return null;
+
+  return safeIsFile(candidate) ? candidate : null;
+}
+
+function safeIsFile(candidate: string): boolean {
+  try {
+    return fs.existsSync(candidate) && fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
 export async function persistCandidateFile(input: {
   candidateId: string;
   fileType: CandidateFileRecord["file_type"];

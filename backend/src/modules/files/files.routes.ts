@@ -14,6 +14,7 @@ import { verifyToken as verifyCandidatePortalToken } from "../ats/candidate-port
 import {
   auditCandidateFileAccess,
   findCandidateFileById,
+  resolveCandidateFilePath,
 } from "../ats/candidate-file.service.js";
 import {
   registerUpload,
@@ -175,7 +176,13 @@ router.get(
       return res.status(403).json({ error: "Access denied" });
     }
 
-    if (!fs.existsSync(file.storage_path)) {
+    // Resolve rather than trusting storage_path: it is stored absolute, so a row
+    // written from a Windows dev box against the shared DB names a path that cannot
+    // exist here. resolveCandidateFilePath falls back to the file's own location
+    // rebuilt from candidate_id + stored_filename, so those rows serve correctly
+    // instead of 404-ing as "missing on disk".
+    const resolvedPath = resolveCandidateFilePath(file);
+    if (!resolvedPath) {
       await auditCandidateFileAccess({
         fileId: file.id,
         candidateId: file.candidate_id,
@@ -208,7 +215,7 @@ router.get(
       res.set("Content-Disposition", `attachment; filename="${path.basename(file.stored_filename)}"`);
     }
     res.set("Cache-Control", "private, no-store, max-age=0");
-    res.sendFile(file.storage_path);
+    res.sendFile(resolvedPath);
   })
 );
 
