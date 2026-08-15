@@ -21,6 +21,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 // SearchableSelect deliberately stays: vendor picking is server-side searched (search /
 // onSearchChange drive a query against a ~1.8k-row master), and it also supplies the hint /
 // keywords matching, the mobile bottom-sheet rendering and the loading and empty states. A plain
@@ -135,6 +136,9 @@ type CostCentreSplitDraft = {
   costCentreKey: string;
   budgetLineId: string;
   percentage: number;
+  /** Whether this cost centre is included in the split. Defaults to true.
+   *  User can uncheck to exclude specific cost centres from the split calculation. */
+  included: boolean;
 };
 
 type InvoiceComponentDraft = {
@@ -798,6 +802,7 @@ export function BudgetLinkedGrnForm({
           costCentreKey: group.costCentreKey,
           budgetLineId: stillValid ? existing!.budgetLineId : firstLineId,
           percentage: existing?.percentage ?? equalPct,
+          included: existing?.included ?? true, // Default to included
         };
       });
     });
@@ -829,12 +834,16 @@ export function BudgetLinkedGrnForm({
     setCostCentreSplits((current) => current.map((row) => (row.key === key ? { ...row, ...patch } : row)));
   }
 
-  /** Resets every row to an equal percentage share — the common case, and a one-click recovery
-   *  from manual edits that drifted away from 100%. */
+  /** Resets every INCLUDED row to an equal percentage share — the common case, and a one-click
+   *  recovery from manual edits that drifted away from 100%. Excluded rows get 0%. */
   function splitCostCentresEvenly() {
     if (!costCentreSplits.length) return;
-    const equalPct = Math.round((100 / costCentreSplits.length) * 1_000_000) / 1_000_000;
-    setCostCentreSplits((current) => current.map((row) => ({ ...row, percentage: equalPct })));
+    const includedCount = costCentreSplits.filter((row) => row.included).length;
+    if (includedCount === 0) return;
+    const equalPct = Math.round((100 / includedCount) * 1_000_000) / 1_000_000;
+    setCostCentreSplits((current) =>
+      current.map((row) => ({ ...row, percentage: row.included ? equalPct : 0 }))
+    );
   }
 
   // G15: Direct cost centre selection — which CC gets 100% of the spend
@@ -843,16 +852,17 @@ export function BudgetLinkedGrnForm({
   /** G15: Why "Auto-split by" is disabled for vendor cost-centre split right now, if it is. */
   const costCentreSplitReadiness = useMemo((): { ready: boolean; reason: string } => {
     if (!costCentreSplits.length) return { ready: false, reason: "No cost centres available." };
+    const includedRows = costCentreSplits.filter((row) => row.included);
     // "Direct to cost centre" needs at least 1 CC and a selection
     if (costCentreSplitMethod === "direct") {
       if (!directCostCentreKey) return { ready: false, reason: "Select which cost centre receives this spend." };
       return { ready: true, reason: "" };
     }
-    // Other split methods need at least 2 cost centres
-    if (costCentreSplits.length < 2) return { ready: false, reason: "Need at least 2 cost centres to split." };
+    // Other split methods need at least 2 INCLUDED cost centres
+    if (includedRows.length < 2) return { ready: false, reason: "Need at least 2 included cost centres to split." };
     if (costCentreSplitMethod === "equal_split") return { ready: true, reason: "" };
-    // Check if all cost centres have driver data for the chosen method
-    const missingDrivers = costCentreSplits.some((row) => {
+    // Check if all INCLUDED cost centres have driver data for the chosen method
+    const missingDrivers = includedRows.some((row) => {
       const ccKey = row.costCentreKey === NO_COST_CENTRE ? null : row.costCentreKey;
       const driver = driversByCostCentre[ccKey ?? ""];
       return !driver || weightFor(costCentreSplitMethod, driver) <= 0;
@@ -861,7 +871,7 @@ export function BudgetLinkedGrnForm({
       const methodLabel = GRN_AUTO_SPLIT_METHODS.find((m) => m.value === costCentreSplitMethod)?.label ?? costCentreSplitMethod;
       return {
         ready: false,
-        reason: `${methodLabel} data not available for one or more cost centres. Set monthly drivers in Branch Budget → Plan Builder.`,
+        reason: `${methodLabel} data not available for one or more included cost centres. Set monthly drivers in Branch Budget → Plan Builder.`,
       };
     }
     return { ready: true, reason: "" };
@@ -891,20 +901,22 @@ export function BudgetLinkedGrnForm({
       splitCostCentresEvenly();
       return;
     }
+    // Driver-based split: only include rows where included=true, set excluded rows to 0%
     const weights = costCentreSplits.map((row) => {
+      if (!row.included) return 0; // Excluded cost centres get 0 weight
       const ccKey = row.costCentreKey === NO_COST_CENTRE ? null : row.costCentreKey;
       const driver = driversByCostCentre[ccKey ?? ""];
       return weightFor(costCentreSplitMethod, driver ?? {});
     });
     const totalWeight = weights.reduce((sum, w) => sum + w, 0);
     if (totalWeight <= 0) {
-      toast({ title: "No driver data", description: `${costCentreSplitMethod} data not available for these cost centres.`, variant: "destructive" });
+      toast({ title: "No driver data", description: `${costCentreSplitMethod} data not available for the included cost centres.`, variant: "destructive" });
       return;
     }
     setCostCentreSplits((current) =>
       current.map((row, i) => ({
         ...row,
-        percentage: Math.round((weights[i] / totalWeight) * 100 * 1_000_000) / 1_000_000,
+        percentage: row.included ? Math.round((weights[i] / totalWeight) * 100 * 1_000_000) / 1_000_000 : 0,
       }))
     );
   }
@@ -3017,17 +3029,24 @@ function CostCentreSplitEditor({
           const line = group?.lines.find((item) => item.id === row.budgetLineId);
           const nonTaxable = line && ["exempt", "non_gst"].includes(line.tax_treatment);
           return (
-            <div key={row.key} className="rounded-[10px] border border-grn-line p-3">
+            <div key={row.key} className={cn("rounded-[10px] border border-grn-line p-3", !row.included && "opacity-50")}>
               <div className="mb-2 flex items-start justify-between gap-2">
-                <div>
-                  <span className="font-grn-mono text-[12px] font-bold text-grn-ink-soft">
-                    {group?.costCentreName ?? "Cost centre"}
-                  </span>
-                  {line && (
-                    <GrnCellSub>
-                      {money(Number(line.available_gross_amount))} available
-                    </GrnCellSub>
-                  )}
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    checked={row.included}
+                    onCheckedChange={(checked) => onUpdate(row.key, { included: Boolean(checked) })}
+                    aria-label={`Include ${group?.costCentreName ?? "cost centre"} in split`}
+                  />
+                  <div>
+                    <span className="font-grn-mono text-[12px] font-bold text-grn-ink-soft">
+                      {group?.costCentreName ?? "Cost centre"}
+                    </span>
+                    {line && (
+                      <GrnCellSub>
+                        {money(Number(line.available_gross_amount))} available
+                      </GrnCellSub>
+                    )}
+                  </div>
                 </div>
                 {line && (
                   <span
@@ -3075,9 +3094,10 @@ function CostCentreSplitEditor({
 
       {/* Table from md up. */}
       <div className="hidden md:block">
-        <GrnTable minWidth={600}>
+        <GrnTable minWidth={650}>
           <thead>
             <tr>
+              <GrnTh sticky={false} className="w-10">Include</GrnTh>
               <GrnTh sticky={false} className="w-8">#</GrnTh>
               <GrnTh sticky={false}>Cost centre</GrnTh>
               <GrnTh sticky={false}>Item</GrnTh>
@@ -3092,7 +3112,14 @@ function CostCentreSplitEditor({
               const line = group?.lines.find((item) => item.id === row.budgetLineId);
               const nonTaxable = line && ["exempt", "non_gst"].includes(line.tax_treatment);
               return (
-                <tr key={row.key} className={GRN_TR}>
+                <tr key={row.key} className={cn(GRN_TR, !row.included && "opacity-50")}>
+                  <GrnTd>
+                    <Checkbox
+                      checked={row.included}
+                      onCheckedChange={(checked) => onUpdate(row.key, { included: Boolean(checked) })}
+                      aria-label={`Include ${group?.costCentreName ?? "cost centre"} in split`}
+                    />
+                  </GrnTd>
                   <GrnTd className="font-grn-mono text-grn-ink-soft">{index + 1}</GrnTd>
                   <GrnTd className="font-semibold">{group?.costCentreName ?? "—"}</GrnTd>
                   <GrnTd className="min-w-[200px]">
