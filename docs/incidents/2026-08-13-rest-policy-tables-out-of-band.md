@@ -5,6 +5,29 @@
 **Status:** OPEN. Root actor unidentified. Restart/deploy frozen pending reconciliation.
 **Affected objects:** `wfm_rest_policy`, `wfm_rest_override_log` (production `mas_hrms`)
 
+> ### ⚠ READ THIS FIRST — the gates below are STALE (added 2026-08-15)
+>
+> **The `Restart: NO-GO` / `Deploy: NO-GO` entries in the disposition table are no longer
+> true, and have not been for some time.** Production has been restarted and deployed many
+> times since this document was written — 128+ commits landed on `main`, several of them
+> explicitly to unblock deploys. Anyone reading this page in isolation would either believe a
+> freeze that is not in force, or dismiss the whole document as out of date and miss the part
+> that still matters.
+>
+> **What is genuinely resolved:** the schema-drift hazard. Six of the seven roster migrations
+> (1200/1201/1202/1210/1211/1212) are now registered in `MIGRATION_MANIFEST` and applied by
+> the sanctioned runner — exactly the reconciliation sequence this document prescribes below.
+> 1213 is deliberately in `knownUnlisted`. The "loaded gun" described in the impact assessment
+> is disarmed.
+>
+> **What is still open:** who executed the DDL, and the absence of any detective control that
+> would surface a recurrence. That question has never been answered.
+>
+> **This document is deliberately left otherwise unedited** — it is the forensic record, and
+> the evidence should not be rewritten after the fact. The delta since it was written, the
+> three closure options, and a recommendation live in the companion note:
+> **[`2026-08-13-rest-policy-tables-out-of-band-CLOSURE.md`](./2026-08-13-rest-policy-tables-out-of-band-CLOSURE.md)**
+
 ## Framing
 
 Migration `1210_minimum_rest_policy.sql` carries an explicit, unambiguous header:
