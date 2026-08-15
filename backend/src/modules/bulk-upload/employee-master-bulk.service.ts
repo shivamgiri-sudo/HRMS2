@@ -71,6 +71,47 @@ export async function importEmployeeMasterBatch(
         designationId = des?.id ?? null;
       }
 
+      // Resolve cost centre.
+      //
+      // Added because this INSERT, like every other employee-creation path, omitted
+      // cost_centre_id entirely — leaving the manual Edit Employee dialog as the column's
+      // only writer in the backend and 185 active employees with no cost centre at all.
+      // Restricted to active_status = 1 so a bulk sheet cannot attach staff to a closed
+      // cost centre, and left NULL when the code does not match rather than failing the
+      // row: an unknown cost centre should not stop an employee being loaded.
+      let costCentreId: string | null = null;
+      if (data.cost_centre_code) {
+        const [[cc]] = await db.execute<RowDataPacket[]>(
+          `SELECT id FROM cost_centre_master WHERE cost_centre_code = ? AND active_status = 1 LIMIT 1`,
+          [String(data.cost_centre_code).trim()]
+        );
+        costCentreId = cc?.id ?? null;
+      }
+
+      // Resolve process and LOB.
+      //
+      // The EMPLOYEE_MASTER template has advertised process_code and lob_code as accepted
+      // columns all along, and this importer silently ignored both — so an operator filling
+      // the sheet in good faith got an employee with no process, and no error to say why.
+      // Same defect as the cost centre above, on columns the template already promises.
+      let processId: string | null = null;
+      if (data.process_code) {
+        const [[pr]] = await db.execute<RowDataPacket[]>(
+          `SELECT id FROM process_master WHERE process_code = ? AND active_status = 1 LIMIT 1`,
+          [String(data.process_code).trim()]
+        );
+        processId = pr?.id ?? null;
+      }
+
+      let lobId: string | null = null;
+      if (data.lob_code) {
+        const [[lb]] = await db.execute<RowDataPacket[]>(
+          `SELECT id FROM lob_master WHERE lob_code = ? AND active_status = 1 LIMIT 1`,
+          [String(data.lob_code).trim()]
+        );
+        lobId = lb?.id ?? null;
+      }
+
       const doj = data.date_of_joining
         ? String(data.date_of_joining).slice(0, 10)
         : null;
@@ -86,8 +127,9 @@ export async function importEmployeeMasterBatch(
         `INSERT INTO employees
            (employee_code, first_name, last_name, mobile, official_email,
             gender, date_of_joining, branch_id, department_id, designation_id,
-            employment_type, active_status, employment_status, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,1,'active',?)
+            cost_centre_id, process_id, lob_id, employment_type, active_status,
+            employment_status, created_by)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active',?)
          ON DUPLICATE KEY UPDATE
            first_name = VALUES(first_name),
            last_name = VALUES(last_name),
@@ -98,11 +140,18 @@ export async function importEmployeeMasterBatch(
            branch_id = COALESCE(VALUES(branch_id), branch_id),
            department_id = COALESCE(VALUES(department_id), department_id),
            designation_id = COALESCE(VALUES(designation_id), designation_id),
+           -- COALESCE, matching every other org column here: a sheet that omits the
+           -- cost centre column must not wipe a value already on the record. 184 of these
+           -- were recovered by hand from db_bill, and a routine re-upload silently
+           -- blanking them would undo that without anyone noticing.
+           cost_centre_id = COALESCE(VALUES(cost_centre_id), cost_centre_id),
+           process_id = COALESCE(VALUES(process_id), process_id),
+           lob_id = COALESCE(VALUES(lob_id), lob_id),
            employment_type = VALUES(employment_type)`,
         [
           employeeCode, firstName, lastName, mobile, email,
           gender, doj, branchId, departmentId, designationId,
-          employmentType, importedByUserId,
+          costCentreId, processId, lobId, employmentType, importedByUserId,
         ]
       );
 
