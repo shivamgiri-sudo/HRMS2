@@ -467,6 +467,17 @@ export const payrollService = {
         run_month: run.run_month,
         previous_status: run.status,
         new_status: input.status,
+        // Approval and finance sign-off are two independent tracks: payroll-signoff.routes.ts
+        // writes finance_approved_by/at and never touches status, while this endpoint writes
+        // status and never checks sign-off. So a run can reach 'approved' — and thereby leave
+        // the pending-sign-off queue, which filters on status='processing' — with sign-off
+        // never given. Recorded rather than blocked: finance_approved_by is NULL on all 66
+        // live runs, so refusing approval without it would make approval impossible for every
+        // run. Whether to harden this into a real precondition is a payroll/finance ruling;
+        // until then the exception is at least visible in the audit trail instead of invisible.
+        ...(input.status === "approved"
+          ? { finance_signed_off: (run as any).finance_approved_by != null }
+          : {}),
       },
     });
 
