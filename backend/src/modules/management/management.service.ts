@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { columnExists, ifObjectExists, tableExists } from "../../shared/schema-object-cache.js";
+import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
 import {
   EXPECTED_TO_WORK_EXCLUSIONS,
   HALF_DAY_STATUS,
@@ -475,6 +476,12 @@ export const managementService = {
         [[{ count: null }]] as any,
       ),
       db.execute<RowDataPacket[]>(
+        // Deliberately NOT filtered by record_type, unlike the candidate-pipeline counts
+        // elsewhere in this file. This UNION reports how many ROWS each module's table holds
+        // (a data-volume/activity metric sitting beside salary_prep_run, leave_request and
+        // attendance_daily_record row counts) — not how many genuine candidates exist. The
+        // 29,926 legacy employee rows are real rows in this table and belong in a row count;
+        // excluding them here would make "ATS records" disagree with the table it names.
         `SELECT 'ATS' AS module_name, COUNT(*) AS record_count, MAX(updated_at) AS last_activity, 0 AS error_count
            FROM ats_candidate
          UNION ALL
@@ -641,9 +648,13 @@ export const managementService = {
         scopeParams,
       ),
       db.execute<RowDataPacket[]>(
+        // Same legacy-employee contamination as the open-pipeline count below: without the
+        // exclusion this chart is ~34,900 'Applied' rows of staff roster drowning the few
+        // thousand real candidates in every other stage.
         `SELECT COALESCE(NULLIF(current_stage, ''), 'Unspecified') AS stage, COUNT(*) AS value
            FROM ats_candidate
           WHERE active_status = 1
+            AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}
             AND LOWER(COALESCE(current_stage,'')) NOT IN (
               'joined','converted','onboarded','rejected','declined','withdrawn','absconded'
             )
@@ -672,9 +683,15 @@ export const managementService = {
                AND joining_date <= CURDATE()
                AND COALESCE(training_end_date, DATE_ADD(joining_date, INTERVAL training_period_days DAY)) >= CURDATE()
            ) AS ats_training,
+           -- Zero impact today (no legacy row carries a training-shaped stage, verified live
+           -- 2026-08-15: 0 before and after) but filtered for the same reason as its siblings —
+           -- record_type defaults to 'candidate', so the next bulk load of employee-shaped rows
+           -- would silently rejoin this count if the exclusion were left off.
            (SELECT COUNT(DISTINCT id)
               FROM ats_candidate
-             WHERE active_status = 1 AND LOWER(current_stage) LIKE '%train%'
+             WHERE active_status = 1
+               AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}
+               AND LOWER(current_stage) LIKE '%train%'
            ) AS training_stage_candidates,
            (SELECT COUNT(DISTINCT employee_id)
               FROM training_need
@@ -1318,12 +1335,21 @@ export const managementService = {
       ),
       // 6. Open hiring pipeline
       db.execute<RowDataPacket[]>(
+        // ats_candidate holds 29,926 legacy EMPLOYEE rows bulk-imported at some point,
+        // against 7,889 genuine candidates. They all sit in stage 'Applied', which the
+        // NOT IN list below does not exclude, so this counted the entire staff roster as
+        // open hiring pipeline: measured live 2026-08-15, open_candidates reported 37,815
+        // against a true 7,889 — a 379% overstatement on a CEO-facing figure.
+        // excludeEmployeeShapedCandidatesSql is the established filter (migration 1130's
+        // record_type, backfilled 2026-08-11) already used by ~20 other reporting sites;
+        // this service simply never adopted it.
         `SELECT
            COUNT(*) AS open_candidates,
            SUM(CASE WHEN current_stage IN ('offer_sent','offer_accepted') THEN 1 ELSE 0 END) AS offers_pending_joining,
            SUM(CASE WHEN current_stage IN ('screened','interview_scheduled','interview_done') THEN 1 ELSE 0 END) AS in_pipeline
          FROM ats_candidate
          WHERE active_status = 1
+           AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}
            AND current_stage NOT IN ('joined','rejected','declined','withdrawn','absconded')`
       ),
       // 7. F&F pending liability

@@ -133,6 +133,49 @@ describe("live call sites are wired to the exclusion helper", () => {
   });
 
   /**
+   * management.service.ts — the CEO/management dashboards. Missed by the original sweep and
+   * caught by the 2026-08-14 delta-audit. Measured live 2026-08-15 before the fix:
+   * open_candidates reported 37,815 against a true 7,889, a 379% overstatement, because every
+   * legacy employee row sits in stage 'Applied' and none of these queries' NOT IN lists
+   * exclude it.
+   */
+  it("management.service.ts's open hiring pipeline excludes", () => {
+    const source = read("src/modules/management/management.service.ts");
+    const block = source.match(/COUNT\(\*\) AS open_candidates[\s\S]*?`\s*\)/);
+    expect(block, "open_candidates query not found").toBeTruthy();
+    expect(block![0]).toContain("excludeEmployeeShapedCandidatesSql");
+  });
+
+  it("management.service.ts's candidate stage distribution excludes", () => {
+    const source = read("src/modules/management/management.service.ts");
+    const block = source.match(/AS stage, COUNT\(\*\) AS value[\s\S]*?ORDER BY value DESC`/);
+    expect(block, "stage distribution query not found").toBeTruthy();
+    expect(block![0]).toContain("excludeEmployeeShapedCandidatesSql");
+  });
+
+  it("management.service.ts's training_stage_candidates excludes", () => {
+    const source = read("src/modules/management/management.service.ts");
+    const block = source.match(/FROM ats_candidate[\s\S]{0,320}?AS training_stage_candidates/);
+    expect(block, "training_stage_candidates subquery not found").toBeTruthy();
+    expect(block![0]).toContain("excludeEmployeeShapedCandidatesSql");
+  });
+
+  /**
+   * The deliberate exception, pinned so it reads as a decision rather than a miss. The module
+   * UNION reports how many ROWS each module's table holds — it sits beside salary_prep_run and
+   * leave_request row counts — so the legacy rows belong in it. Filtering there would make
+   * "ATS records" disagree with the table it names.
+   */
+  it("management.service.ts's module row-count UNION deliberately does NOT exclude", () => {
+    const source = read("src/modules/management/management.service.ts");
+    const block = source.match(/'ATS' AS module_name[\s\S]*?FROM ats_candidate/);
+    expect(block, "module row-count UNION not found").toBeTruthy();
+    expect(block![0]).not.toContain("excludeEmployeeShapedCandidatesSql");
+    // The reasoning must travel with it, or a later reader "fixes" it.
+    expect(source).toMatch(/Deliberately NOT filtered by record_type/);
+  });
+
+  /**
    * The named metrics leadership actually reads. Both aggregate ats_candidate directly and
    * neither excluded, so both were roughly 4x inflated.
    */
