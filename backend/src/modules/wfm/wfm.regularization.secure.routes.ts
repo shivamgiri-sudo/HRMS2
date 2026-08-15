@@ -76,7 +76,45 @@ async function listScope(userId: string) {
   return { sql: "1=0", params: [] as unknown[] };
 }
 
-async function regularizationReviewRole(userId: string, regularizationId: string): Promise<"super_admin" | "manager" | "wfm" | null> {
+/**
+ * Roles that may give the FINAL approval on a correction whose month payroll has already
+ * frozen. Payroll owns that decision because a post-freeze correction changes a figure they
+ * have already signed off on.
+ */
+const PAYROLL_APPROVAL_ROLES = ["payroll", "payroll_head", "payroll_admin"];
+
+/** Waiting for Payroll's third-stage sign-off. Not terminal. */
+const PAYROLL_PENDING_STATUS = "payroll_pending";
+
+/**
+ * Has payroll already frozen the month this correction falls in?
+ *
+ * NOT read from attendance_daily_record.is_locked. That flag means "a correction has already
+ * been applied to this day" — verified live 2026-08-16, where all 36 locked ADR rows are
+ * exactly the 36 days carrying an approved regularization. Using it as the freeze signal
+ * would gate corrections on whether someone had already corrected the day, which is a
+ * different question entirely.
+ *
+ * The real signal is the run for that month: attendance_snapshot_locked, or a closed status.
+ * run_month is VARCHAR('YYYY-MM'), so it is matched as a formatted string — comparing it to a
+ * DATE silently matches zero rows.
+ */
+async function isPayrollFrozenForDate(sessionDate: string): Promise<boolean> {
+  if (!sessionDate) return false;
+  const month = String(sessionDate).slice(0, 7);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 AS frozen
+       FROM salary_prep_run
+      WHERE run_month = ?
+        AND (attendance_snapshot_locked = 1
+             OR LOWER(status) IN ('finalized','locked','disbursed','approved'))
+      LIMIT 1`,
+    [month],
+  );
+  return rows.length > 0;
+}
+
+async function regularizationReviewRole(userId: string, regularizationId: string): Promise<"super_admin" | "manager" | "wfm" | "payroll" | null> {
   if (await hasAnyRole(userId, "super_admin")) return "super_admin";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ar.employee_id,
@@ -97,6 +135,13 @@ async function regularizationReviewRole(userId: string, regularizationId: string
   if (!target) return null;
   const callerEmp = await getEmployeeForUser(userId);
   if (callerEmp?.id === target.employee_id) return null;
+
+  // Payroll is the third stage and only acts once WFM has handed the request over, so it is
+  // resolved by the status rather than competing with the manager/WFM checks below — a user
+  // holding both payroll and wfm still reviews as WFM at the WFM stage.
+  if (String(target.status ?? "") === PAYROLL_PENDING_STATUS) {
+    return (await hasAnyRole(userId, ...PAYROLL_APPROVAL_ROLES)) ? "payroll" : null;
+  }
   const { approverId } = await resolveEffectiveApprover(target.employee_id);
   if (callerEmp?.id && approverId !== null && callerEmp.id === approverId) {
     return "manager";
@@ -126,16 +171,53 @@ async function regularizationReviewRole(userId: string, regularizationId: string
 // discarded request must be raised afresh, not flipped back to approved.
 const TERMINAL_REGULARIZATION_STATUSES = ["approved", "rejected", "discarded"];
 
-function nextRegularizationStatus(role: "super_admin" | "manager" | "wfm", currentStatus: string, requestedStatus: string): string | null {
+/**
+ * pending -> manager_approved -> approved, with a third stage inserted when the month is
+ * already frozen: manager -> WFM -> PAYROLL.
+ *
+ * Owner decision, 2026-08-16 (Rule 12). Before freeze the flow is unchanged. After freeze,
+ * WFM approval no longer reaches `approved` on its own — it parks the request at
+ * payroll_pending for Payroll to finish, because a correction to a month payroll has signed
+ * off changes a number they own. This replaces the previous handling, where a locked day only
+ * added +30 to a risk score and a WFM approver could clear it with `force: true`.
+ *
+ * Rejection is never deferred: any stage can reject outright, since rejecting changes no
+ * payroll figure.
+ */
+function nextRegularizationStatus(
+  role: "super_admin" | "manager" | "wfm" | "payroll",
+  currentStatus: string,
+  requestedStatus: string,
+  payrollFrozen = false,
+): string | null {
   if (!["approved", "rejected", "manager_approved"].includes(requestedStatus)) return null;
   if (TERMINAL_REGULARIZATION_STATUSES.includes(currentStatus)) return null;
-  if (role === "super_admin") return requestedStatus === "manager_approved" ? "approved" : requestedStatus;
+
+  if (role === "super_admin") {
+    if (requestedStatus === "manager_approved") return "approved";
+    // super_admin is not a way around the Payroll stage — an approval into a frozen month
+    // still parks for Payroll. Rejection is unaffected.
+    if (requestedStatus === "approved" && payrollFrozen && currentStatus !== PAYROLL_PENDING_STATUS) {
+      return PAYROLL_PENDING_STATUS;
+    }
+    return requestedStatus;
+  }
+
   if (role === "manager") {
     if (currentStatus !== "pending") return null;
     return requestedStatus === "rejected" ? "rejected" : "manager_approved";
   }
+
+  if (role === "payroll") {
+    if (currentStatus !== PAYROLL_PENDING_STATUS) return null;
+    return requestedStatus === "manager_approved" ? null : requestedStatus;
+  }
+
+  // wfm
   if (currentStatus !== "manager_approved") return null;
-  return requestedStatus === "manager_approved" ? null : requestedStatus;
+  if (requestedStatus === "manager_approved") return null;
+  if (requestedStatus === "approved" && payrollFrozen) return PAYROLL_PENDING_STATUS;
+  return requestedStatus;
 }
 
 function formatPreviewTime(value: unknown): string | null {
@@ -321,7 +403,8 @@ async function _performReview(req: any, regularizationId: string): Promise<Revie
   const pre = (preRows as RowDataPacket[])[0] as any;
   if (!pre) return { httpStatus: 404, payload: { success: false, message: "Regularization not found" } };
 
-  const status = nextRegularizationStatus(reviewRole, String(pre.reg_status ?? ""), requestedReviewStatus);
+  const payrollFrozen = await isPayrollFrozenForDate(String(pre.session_date ?? "").slice(0, 10));
+  const status = nextRegularizationStatus(reviewRole, String(pre.reg_status ?? ""), requestedReviewStatus, payrollFrozen);
   if (!status) {
     return { httpStatus: 400, payload: { success: false, message: "Invalid approval step for current regularization status" } };
   }
@@ -353,7 +436,9 @@ async function _performReview(req: any, regularizationId: string): Promise<Revie
     ? "REGULARIZATION_APPROVED"
     : status === "manager_approved"
       ? "REGULARIZATION_MANAGER_APPROVED"
-      : "REGULARIZATION_REJECTED";
+      : status === PAYROLL_PENDING_STATUS
+        ? "REGULARIZATION_PAYROLL_APPROVAL_PENDING"
+        : "REGULARIZATION_REJECTED";
 
   // Email notification (fire-and-forget), alongside the audit log below. A final
   // decision tells the employee; manager_approved tells the WFM chain. Shadow.
@@ -363,6 +448,9 @@ async function _performReview(req: any, regularizationId: string): Promise<Revie
     } else if (status === "manager_approved") {
       void notifyRegularizationStage2Pending(regularizationId);
     }
+    // payroll_pending deliberately sends no employee-facing mail: nothing has been decided
+    // yet, and telling the employee "approved" here would be the same false-success this
+    // stage exists to prevent. The queue is what Payroll works from.
   });
 
   void logSensitiveAction({
