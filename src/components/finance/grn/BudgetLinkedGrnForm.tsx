@@ -2320,7 +2320,11 @@ export function BudgetLinkedGrnForm({
             />
           )}
 
-          {isVendor && Boolean(form.branchId) && Boolean(effectivePeriod) && costCentreSplits.length > 0 && (
+          {/* Show InvoiceComponentsEditor when:
+              - Cost centre splits are done, OR
+              - Branch-common expenses (matching lines exist but no cost centres assigned) */}
+          {isVendor && Boolean(form.branchId) && Boolean(effectivePeriod) &&
+           (costCentreSplits.length > 0 || (vendorMatchingLines.length > 0 && vendorCostCentreGroups.length === 0)) && (
             <InvoiceComponentsEditor
               components={invoiceComponents}
               preview={componentsPreview}
