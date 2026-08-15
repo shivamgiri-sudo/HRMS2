@@ -1164,9 +1164,33 @@ async function fullFinalChecks(scope: RunScope): Promise<CategoryCheckResult[]> 
            AND e.active_status = 1
            AND LOWER(COALESCE(e.employment_status, 'active')) = 'active'`;
       const { count, sample } = await population(sql, []);
-      return count === 0
-        ? pass("No employee is active again after their settlement was paid.")
-        : fail(count, `${count} employees are active with a settlement already marked paid — a conflicting state that risks a second settlement or duplicate salary.`, undefined, sample);
+      if (count > 0) {
+        return fail(count, `${count} employees are active with a settlement already marked paid — a conflicting state that risks a second settlement or duplicate salary.`, undefined, sample);
+      }
+      // Zero rows here does NOT mean the control is satisfied — it may mean the control
+      // cannot run at all. full_final_calculation.status is enum('draft','verified',
+      // 'approved','paid'), but no code path in this repo ever writes 'paid' or 'verified':
+      // ff.service.ts's only status write is `SET status = 'approved'` (line ~330). So this
+      // P0 check queries a state the application cannot produce, finds nothing, and reports
+      // a clean pass — a structurally guaranteed green that says nothing about reality.
+      // Verified live 2026-08-15: full_final_calculation holds 1 row, status 'draft'; zero
+      // rows have ever been 'paid'.
+      //
+      // Distinguish the two cases rather than passing blindly. If a settlement has genuinely
+      // reached 'paid', a zero count is a real pass. If none ever has, say so — an honest
+      // "cannot evaluate" beats a false green, and it surfaces the actual gap: the paid
+      // transition is missing, so nothing records that a settlement was ever disbursed.
+      // (Restoring that transition is a money-path workflow decision — who may mark paid and
+      // on what evidence — not something to infer here.)
+      const [paidRows] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS paid_ever FROM full_final_calculation WHERE status = 'paid'`,
+      );
+      const paidEver = Number((paidRows[0] as Record<string, unknown>)?.paid_ever ?? 0);
+      return paidEver === 0
+        ? sourceMissing(
+            "No settlement has ever reached status 'paid' — nothing in the application writes that state, so this check cannot detect the condition it exists for. It is not passing; it is unevaluable until the F&F paid transition exists.",
+          )
+        : pass("No employee is active again after their settlement was paid.");
     }),
 
     // Attendance through the last working day.

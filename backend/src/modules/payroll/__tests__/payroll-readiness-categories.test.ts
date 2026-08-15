@@ -331,6 +331,36 @@ describe("4. full & final readiness", () => {
     expect(check.state).toBe("FAIL");
     expect(check.severity).toBe("P0");
   });
+
+  /**
+   * A zero count on this P0 check has two very different meanings, and it used to report
+   * both as PASS.
+   *
+   * full_final_calculation.status is enum('draft','verified','approved','paid'), but no code
+   * path writes 'paid' — ff.service.ts's only status write is `SET status = 'approved'`.
+   * Verified live 2026-08-15: the table holds 1 row, status 'draft'; nothing has ever been
+   * paid. So the check queried a state the application cannot produce, found nothing, and
+   * declared "No employee is active again after their settlement was paid" — a green that
+   * was structurally guaranteed and told the reader nothing.
+   */
+  it("does NOT report a clean pass when no settlement has ever been paid — it cannot evaluate", async () => {
+    // Default baseline: no populations, so both the conflict query and the paid-ever probe
+    // return zero — i.e. the real production shape today.
+    const { check } = await checkByCode("FF_PAID_BUT_EMPLOYEE_ACTIVE");
+    expect(check.state).not.toBe("PASS");
+    expect(check.state).toBe("SOURCE_MISSING");
+    expect(check.message).toMatch(/never reached status 'paid'|cannot detect/i);
+  });
+
+  it("PASSES honestly once settlements do reach 'paid' and none conflicts", async () => {
+    // paid_ever > 0 but the conflict population is still empty — now a zero count is a
+    // real, meaningful pass rather than an artefact of the transition not existing.
+    // A direct rule, not population(): the probe is a plain db.execute, not wrapped in the
+    // COUNT(*) FROM (...) subquery that population() builds for issue-row queries.
+    baseline({ match: /COUNT\(\*\) AS paid_ever/, rows: [{ paid_ever: 7 }] });
+    const { check } = await checkByCode("FF_PAID_BUT_EMPLOYEE_ACTIVE");
+    expect(check.state).toBe("PASS");
+  });
 });
 
 describe("payroll-calculation readiness reads the column the engine actually maintains", () => {
