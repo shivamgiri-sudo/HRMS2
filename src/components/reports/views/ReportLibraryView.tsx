@@ -192,6 +192,28 @@ const STATUS_FILTER: FilterDef = {
     { value: "rejected", label: "Rejected" },
   ],
 };
+const COST_CENTRE_FILTER: FilterDef = { key: "costCentreId", label: "Cost Centre", type: "text", placeholder: "Cost Centre ID" };
+/**
+ * The slice for attrition-deep-dive. Values match the allow-list keys in the backend
+ * executor, which selects from a fixed map — nothing typed here reaches the SQL text, and
+ * an unrecognised value falls back to source rather than erroring.
+ */
+const AON_DIMENSION_FILTER: FilterDef = {
+  key: "dimension", label: "Slice By", type: "select",
+  options: [
+    { value: "source", label: "Source of Hire" },
+    { value: "branch", label: "Branch" },
+    { value: "cost_centre", label: "Cost Centre" },
+    { value: "department", label: "Department" },
+    { value: "designation", label: "Designation" },
+    { value: "reporting_manager", label: "Reporting Manager" },
+    { value: "age_band", label: "Age Band" },
+    { value: "gender", label: "Gender" },
+    { value: "ctc_band", label: "CTC Band" },
+    { value: "exit_type_proxy", label: "Exit Type (proxy)" },
+    { value: "process", label: "Process (9.7% coverage on exits)" },
+  ],
+};
 // break_sessions lifecycle values — not the generic approval states above.
 const BREAK_STATUS_FILTER: FilterDef = {
   key: "status", label: "Break Status", type: "select",
@@ -294,6 +316,13 @@ function buildFiltersForReport(code: string): FilterDef[] {
     "exit-reason-analysis": [...dateFilters, ...branchProcess],
     "tenure-distribution": branchProcess,
     "early-attrition-report": [...dateFilters, ...branchProcess],
+    // AON analytics — cost centre is offered alongside branch and process because these
+    // reports group by all three.
+    "aon-bucket-headcount": [...branchProcess, COST_CENTRE_FILTER],
+    "aon-bucket-attrition": [...dateFilters, ...branchProcess, COST_CENTRE_FILTER],
+    "aon-bucket-shrinkage": [...dateFilters, ...branchProcess, COST_CENTRE_FILTER],
+    "aon-cohort-survival": [...dateFilters, ...branchOnly, COST_CENTRE_FILTER],
+    "attrition-deep-dive": [...dateFilters, AON_DIMENSION_FILTER, ...branchProcess, COST_CENTRE_FILTER],
     "recruitment-pipeline": branchProcess,
     "ats-pipeline-summary": branchProcess,
     "candidate-tracker": [...dateFilters, ...branchProcess],

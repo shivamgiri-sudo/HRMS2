@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/reports/views/AonAnalyticsView.tsx",
+    "src/components/reports/views/ReportLibraryView.tsx",
+    "src/pages/ReportsHub.tsx",
+    "src/lib/report-catalog.ts",
+    "src/vite-env.d.ts"
+  ]
+}

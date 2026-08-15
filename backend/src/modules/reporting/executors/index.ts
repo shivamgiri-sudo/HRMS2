@@ -125,6 +125,15 @@ import {
   ffSettlementRegister,
 } from "./exit.executor.js";
 
+// ─── AON (Age on Network) & Attrition Analytics ──────────────────────────────
+import {
+  aonBucketHeadcount,
+  aonBucketAttrition,
+  aonBucketShrinkage,
+  aonCohortSurvival,
+  attritionDeepDive,
+} from "./aon.executor.js";
+
 // ─── Recruitment ─────────────────────────────────────────────────────────────
 import {
   recruitmentPipeline,
@@ -301,6 +310,15 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "exit-reason-analysis":      exitReasonAnalysis,
   "tenure-distribution":       tenureDistribution,
   "early-attrition-report":    earlyAttritionReport,
+
+  // AON (Age on Network) & Attrition Analytics — tenure buckets 0-30/31-60/61-90/90+
+  // derived from date_of_joining at read time. No inline block claims these codes, so the
+  // executor is what serves both the screen and the download.
+  "aon-bucket-headcount":      aonBucketHeadcount,
+  "aon-bucket-attrition":      aonBucketAttrition,
+  "aon-bucket-shrinkage":      aonBucketShrinkage,
+  "aon-cohort-survival":       aonCohortSurvival,
+  "attrition-deep-dive":       attritionDeepDive,
 
   // Recruitment
   "recruitment-pipeline":      recruitmentPipeline,

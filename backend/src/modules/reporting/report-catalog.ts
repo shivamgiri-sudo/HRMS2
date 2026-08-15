@@ -102,6 +102,30 @@ const F_BRANCH: FilterDef = { key: "branchId", label: "Branch", type: "select" }
 const F_PROCESS: FilterDef = { key: "processId", label: "Process", type: "select" };
 const F_DEPT: FilterDef = { key: "departmentId", label: "Department", type: "select" };
 const F_COST_CENTRE: FilterDef = { key: "costCentreId", label: "Cost Centre", type: "select" };
+/**
+ * The slice for attrition-deep-dive. The values here are the keys of the allow-list in
+ * executors/aon.executor.ts — they select an entry there and are never interpolated into
+ * SQL. An unrecognised value falls back to `source` rather than erroring.
+ *
+ * Process is offered but is last on purpose: process_id is populated on only 272 of 2,796
+ * recent exits, so that slice is ~90% UNASSIGNED, unlike the same field on active employees.
+ */
+const F_AON_DIMENSION: FilterDef = {
+  key: "dimension", label: "Slice By", type: "select",
+  options: [
+    { value: "source", label: "Source of Hire" },
+    { value: "branch", label: "Branch" },
+    { value: "cost_centre", label: "Cost Centre" },
+    { value: "department", label: "Department" },
+    { value: "designation", label: "Designation" },
+    { value: "reporting_manager", label: "Reporting Manager" },
+    { value: "age_band", label: "Age Band" },
+    { value: "gender", label: "Gender" },
+    { value: "ctc_band", label: "CTC Band" },
+    { value: "exit_type_proxy", label: "Exit Type (proxy)" },
+    { value: "process", label: "Process (9.7% coverage on exits)" },
+  ],
+};
 const F_MONTH: FilterDef = { key: "month", label: "Month", type: "month", required: true };
 const F_YEAR: FilterDef = { key: "year", label: "Year", type: "year" };
 const F_DATE_FROM: FilterDef = { key: "from", label: "From Date", type: "date" };
@@ -3026,6 +3050,236 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     calculationNotes: "Includes exits where tenure_days <= 90",
     branchScoped: true,
     processScoped: true,
+  },
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // AON (Age on Network) & Attrition Analytics
+  //
+  // AON is days since date_of_joining, bucketed 0-30 / 31-60 / 61-90 / 90+. It is
+  // derived at read time and never stored: date_of_joining is NOT NULL on all 58,840
+  // rows, so a new joiner is bucketed the moment they exist, with no job to run and
+  // nothing to go stale. See executors/aon.executor.ts for the full reasoning.
+  // ─────────────────────────────────────────────────────────────────────────────
+  {
+    code: "aon-bucket-headcount",
+    name: "AON Bucket Headcount",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Active headcount by AON bucket (0-30/31-60/61-90/90+) per branch, cost centre and process",
+    rowGrain: "One row per branch per cost centre per process per AON bucket",
+    primaryKey: ["branch_name", "cost_centre_code", "process_name", "aon_bucket"],
+    columns: [
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "aon_bucket", label: "AON Bucket", format: "text", width: 100 },
+      { key: "headcount", label: "Headcount", format: "number", width: 100, align: "right" },
+      { key: "pct_of_group", label: "% of Group", format: "percentage", width: 110, align: "right" },
+      { key: "min_aon_days", label: "Min AON (days)", format: "number", width: 120, align: "right" },
+      { key: "max_aon_days", label: "Max AON (days)", format: "number", width: 120, align: "right" },
+    ],
+    filters: [F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "cost_centre_master", "process_master"],
+    calculationNotes:
+      "AON = DATEDIFF(CURDATE(), date_of_joining). Active = active_status = 1 alone; " +
+      "employment_status is mixed-case free text and is not used. pct_of_group is the " +
+      "bucket's share of its own branch/cost-centre/process group, not of total headcount. " +
+      "Reconciles live 2026-08-15 to 198 / 159 / 135 / 835 across the four buckets. " +
+      "Cost centre and process are UNASSIGNED for every 0-30 employee. The cause is not a " +
+      "broken feed: onboarding does capture a cost centre (a required field on the " +
+      "employment offer, stored on ats_employment_offer.cost_centre and " +
+      "ats_payroll_hr_validation.cost_centre_id), but no employee-creation path writes " +
+      "employees.cost_centre_id — the orchestrator INSERT, bulk upload, createEmployee and " +
+      "both sync handlers all omit the column, leaving updateEmployee (the manual Edit " +
+      "Employee dialog) as its only writer. Historic 100% coverage came from legacy sync, " +
+      "which is off. Branch is unaffected at 198/198, so group by branch for a complete view.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "aon-bucket-attrition",
+    name: "AON Bucket Attrition",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Exits by AON-at-exit bucket per month, branch, cost centre and process",
+    rowGrain: "One row per month per branch per cost centre per process per AON bucket",
+    primaryKey: ["month", "branch_name", "cost_centre_code", "process_name", "aon_bucket"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 90 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "aon_bucket", label: "AON Bucket", format: "text", width: 100 },
+      { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
+      { key: "avg_tenure_days", label: "Avg Tenure (days)", format: "number", width: 130, align: "right" },
+      { key: "min_tenure_days", label: "Min Tenure (days)", format: "number", width: 130, align: "right" },
+      { key: "max_tenure_days", label: "Max Tenure (days)", format: "number", width: 130, align: "right" },
+      { key: "pct_of_month_exits", label: "% of Month Exits", format: "percentage", width: 130, align: "right" },
+      { key: "process_coverage_pct", label: "Process Coverage %", format: "percentage", width: 140, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "cost_centre_master", "process_master"],
+    calculationNotes:
+      "AON at exit = DATEDIFF(date_of_exit, date_of_joining). Counts DATED exits only — " +
+      "28,426 inactive employees carry no date_of_exit and are excluded, because tenure at " +
+      "exit is unknowable without one. Safe for rolling windows: only 22 of those have a " +
+      "date_of_joining on or after 2025-08-01. Reconciles live 2026-08-15 over the twelve " +
+      "months to that date to 1,210 / 399 / 291 / 896, total 2,796, matching a plain COUNT " +
+      "over the same window (no join fan-out). process_coverage_pct is emitted because " +
+      "process_id is populated on only 272 of 2,796 recent exits (9.7%), so a " +
+      "process-grouped row is usually UNASSIGNED.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "aon-bucket-shrinkage",
+    name: "AON Bucket Shrinkage",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Shrinkage by AON bucket per month, branch, cost centre and process, with data coverage",
+    rowGrain: "One row per month per branch per cost centre per process per AON bucket",
+    primaryKey: ["month", "branch_name", "cost_centre_code", "process_name", "aon_bucket"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 90 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "aon_bucket", label: "AON Bucket", format: "text", width: 100 },
+      { key: "emp_days", label: "Employee Days", format: "number", width: 120, align: "right" },
+      { key: "employees_with_attendance", label: "Employees w/ Attendance", format: "number", width: 170, align: "right" },
+      { key: "present_days", label: "Present", format: "number", width: 90, align: "right" },
+      { key: "half_days", label: "Half Day", format: "number", width: 90, align: "right" },
+      { key: "week_off_worked_days", label: "Week Off Worked", format: "number", width: 130, align: "right" },
+      { key: "absent_days", label: "Absent", format: "number", width: 90, align: "right" },
+      { key: "leave_days", label: "Leave", format: "number", width: 90, align: "right" },
+      { key: "missing_punch_days", label: "Missing Punch", format: "number", width: 120, align: "right" },
+      { key: "week_off_days", label: "Week Off", format: "number", width: 100, align: "right" },
+      { key: "holiday_days", label: "Holiday", format: "number", width: 90, align: "right" },
+      { key: "total_shrinkage_pct", label: "Total Shrinkage %", format: "percentage", width: 140, align: "right" },
+      { key: "unplanned_shrinkage_pct", label: "Unplanned Shrinkage %", format: "percentage", width: 160, align: "right" },
+      { key: "missing_punch_pct", label: "Missing Punch %", format: "percentage", width: 130, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_WFM,
+    sourceTables: ["attendance_daily_record", "employees", "branch_master", "cost_centre_master", "process_master"],
+    calculationNotes:
+      "AON at the measured date = DATEDIFF(record_date, date_of_joining). Formula is copied " +
+      "character for character from daily-shrinkage-report so the two reconcile: total = " +
+      "(days - present - half_day - week_off_worked) / days; unplanned = absent / days. " +
+      "missing_punch therefore sits INSIDE total and OUTSIDE unplanned — deliberate, and " +
+      "broken out as its own column because at 9,851 rows it was the second-largest status " +
+      "in Jul-2026. Reconciles live for Jul-2026 to 38.04 / 39.30 / 33.91 / 48.08% over " +
+      "42,181 employee-days. Shrinkage is computed over employee-days that EXIST: 79 of the " +
+      "198 employees in the 0-30 bucket had no attendance row at all that month, so read " +
+      "employees_with_attendance alongside the percentage.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "aon-cohort-survival",
+    name: "AON Cohort Survival",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Per joining-cohort survival at 30, 60 and 90 days, by branch and cost centre",
+    rowGrain: "One row per joining cohort month per branch per cost centre",
+    primaryKey: ["cohort_month", "branch_name", "cost_centre_code"],
+    columns: [
+      { key: "cohort_month", label: "Cohort (Joined)", format: "text", width: 120 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "joined", label: "Joined", format: "number", width: 90, align: "right" },
+      { key: "still_active", label: "Still Active", format: "number", width: 110, align: "right" },
+      { key: "left_by_30", label: "Left by 30d", format: "number", width: 110, align: "right" },
+      { key: "left_by_60", label: "Left by 60d", format: "number", width: 110, align: "right" },
+      { key: "left_by_90", label: "Left by 90d", format: "number", width: 110, align: "right" },
+      { key: "survival_30_pct", label: "Survival @30d", format: "percentage", width: 130, align: "right" },
+      { key: "survival_60_pct", label: "Survival @60d", format: "percentage", width: 130, align: "right" },
+      { key: "survival_90_pct", label: "Survival @90d", format: "percentage", width: 130, align: "right" },
+      { key: "avg_tenure_days_of_leavers", label: "Avg Tenure of Leavers", format: "number", width: 160, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "cost_centre_master"],
+    calculationNotes:
+      "The cohort is every joiner in that month, INCLUDING those who have since left — " +
+      "filtering to currently-active employees would make survival 100% by construction. " +
+      "Employees who are inactive with no date_of_exit are excluded (fate unknowable); that " +
+      "is why cohort 2026-04 counts 302 and not the 303 a raw COUNT gives. A survival " +
+      "figure is emitted as blank until the cohort is old enough to have reached that " +
+      "horizon, rather than printing a flattering 100% for a cohort that joined last week. " +
+      "Measured live 2026-08-15: every cohort from 2025-08 to 2026-05 lost 36.9-48.5% of " +
+      "its joiners within 30 days and roughly two-thirds within 90.",
+    branchScoped: true,
+    processScoped: false,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "attrition-deep-dive",
+    name: "Attrition Deep Dive",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Exits by AON bucket sliced by source of hire, designation, department, manager, age, gender or CTC band",
+    rowGrain: "One row per dimension value per AON bucket",
+    primaryKey: ["dimension", "dimension_value", "aon_bucket"],
+    columns: [
+      { key: "dimension_label", label: "Dimension", format: "text", width: 140 },
+      { key: "dimension_value", label: "Value", format: "text", width: 220 },
+      { key: "aon_bucket", label: "AON Bucket", format: "text", width: 100 },
+      { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
+      { key: "avg_tenure_days", label: "Avg Tenure (days)", format: "number", width: 130, align: "right" },
+      { key: "share_pct", label: "% of Value's Exits", format: "percentage", width: 140, align: "right" },
+      { key: "early_quit_rate", label: "Early Quit Rate %", format: "percentage", width: 140, align: "right" },
+      { key: "reason_captured_pct", label: "Reason Captured %", format: "percentage", width: 140, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_AON_DIMENSION, F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_HR_MANAGER,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "exit_request", "branch_master", "cost_centre_master", "process_master", "department_master", "designation_master"],
+    calculationNotes:
+      "The dimension is chosen from a fixed allow-list in the executor; nothing from the " +
+      "request reaches the SQL text, and an unrecognised value falls back to source. " +
+      "early_quit_rate is the share of a dimension value's exits that went within 30 days " +
+      "and is constant across that value's four bucket rows, so values can be ranked on it. " +
+      "Source of hire is normalised — 'WALKI IN' (1,222 exits) and 'WALK IN' (961) are the " +
+      "same channel behind a typo and are collapsed to 2,183 under 'Walk-in'. " +
+      "reason_captured_pct is emitted deliberately and reads ~0: exit reason is not captured " +
+      "in this database (exit_request holds 2 rows, exit_interview_response and " +
+      "attrition_record are empty, legacy_history_snapshot yields a reason for 10 of 2,796 " +
+      "recent exits). This report answers what kind of joiner leaves and when, NOT why. " +
+      "exit_type_proxy is a proxy from the absence of resignation_date on 128 exits and is " +
+      "never a recorded exit type — the average gap between resignation_date and " +
+      "date_of_exit is 0.0 days, so it mirrors the exit rather than recording notice.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
   },
 
   // ═══════════════════════════════════════════════════════════════════════════════

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Library, Brain, Building2, Clock, Shield, ScrollText } from "lucide-react";
+import { Library, Brain, Building2, Clock, Shield, ScrollText, CalendarClock } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -12,9 +12,10 @@ const BpoMasterView        = lazy(() => import("@/components/reports/views/BpoMa
 const ReportRequestsView   = lazy(() => import("@/components/reports/views/ReportRequestsView"));
 const SourceValidationView = lazy(() => import("@/components/reports/views/SourceValidationView"));
 const AuditTrailView       = lazy(() => import("@/components/reports/views/AuditTrailView"));
+const AonAnalyticsView     = lazy(() => import("@/components/reports/views/AonAnalyticsView"));
 
 // ── View and role constants ───────────────────────────────────────────────────
-const VIEWS = ['library', 'control-room', 'bpo', 'requests', 'validation', 'audit'] as const;
+const VIEWS = ['library', 'control-room', 'bpo', 'aon', 'requests', 'validation', 'audit'] as const;
 type ReportView = typeof VIEWS[number];
 
 const REPORT_ROLES = [
@@ -41,6 +42,7 @@ function resolvePermittedView(requested: string | null, userRoles: string[]): Re
   if (view === 'library'      && !hasAnyRole(userRoles, REPORT_ROLES))            return def;
   if (view === 'control-room' && !hasAnyRole(userRoles, REPORT_ROLES))            return def;
   if (view === 'bpo'          && !hasAnyRole(userRoles, REPORT_ROLES))            return def;
+  if (view === 'aon'          && !hasAnyRole(userRoles, REPORT_ROLES))            return def;
   if (view === 'validation'   && !hasAnyRole(userRoles, REPORT_VALIDATION_ROLES)) return def;
   if (view === 'audit'        && !hasAnyRole(userRoles, AUDIT_ROLES))             return def;
   return view;
@@ -58,6 +60,7 @@ const TABS: TabDef[] = [
   { key: 'library',      label: 'Report Library',  Icon: Library,     requiredRoles: REPORT_ROLES },
   { key: 'control-room', label: 'Decision Center',  Icon: Brain,       requiredRoles: REPORT_ROLES },
   { key: 'bpo',          label: 'BPO Reports',      Icon: Building2,   requiredRoles: REPORT_ROLES },
+  { key: 'aon',          label: 'AON & Attrition',  Icon: CalendarClock, requiredRoles: REPORT_ROLES },
   { key: 'requests',     label: 'My Requests',      Icon: Clock },
   { key: 'validation',   label: 'Source Validation',Icon: Shield,      requiredRoles: REPORT_VALIDATION_ROLES },
   { key: 'audit',        label: 'Audit Trail',      Icon: ScrollText,  requiredRoles: AUDIT_ROLES },
@@ -131,6 +134,7 @@ export default function ReportsHub() {
               {activeView === 'library'      && <ReportLibraryView    preselectedReport={preselectedReport} />}
               {activeView === 'control-room' && <DecisionCenterView />}
               {activeView === 'bpo'          && <BpoMasterView />}
+              {activeView === 'aon'          && <AonAnalyticsView />}
               {activeView === 'requests'     && <ReportRequestsView />}
               {activeView === 'validation'   && <SourceValidationView />}
               {activeView === 'audit'        && <AuditTrailView />}
