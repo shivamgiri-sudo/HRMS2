@@ -759,9 +759,16 @@ export function BudgetLinkedGrnForm({
   /** All active cost centres for the branch, with their matching budget lines (if any).
    *  This follows Branch Budget's pattern: when there are matching budget lines (even branch-common
    *  ones without cost_centre_id), the user can split the expense across ANY active cost centre.
-   *  The budget line info is used to show available amounts where applicable. */
+   *  The budget line info is used to show available amounts where applicable.
+   *
+   *  UNBUDGETED EXPENSES: Even when no budget lines exist for the selected HEAD/SUB-HEAD,
+   *  we still show all active cost centres to allow unbudgeted GRN creation. These will be
+   *  flagged as is_unbudgeted=1 and routed through stricter approval. */
   const vendorCostCentreGroups = useMemo(() => {
-    if (!vendorMatchingLines.length || !activeCostCentres.length) return [];
+    // Allow cost centre selection even without budget lines (for unbudgeted expenses)
+    if (!activeCostCentres.length) return [];
+    // Need HEAD and SUB-HEAD selected before showing cost centres
+    if (!form.head || !form.subHead) return [];
 
     // Map of cost centre ID → matching budget lines
     const linesByCC = new Map<string, BudgetLine[]>();
@@ -784,7 +791,14 @@ export function BudgetLinkedGrnForm({
         lines: allLines,
       };
     });
-  }, [vendorMatchingLines, activeCostCentres]);
+  }, [vendorMatchingLines, activeCostCentres, form.head, form.subHead]);
+
+  /** True when no budget exists for the selected HEAD/SUB-HEAD — expense is unbudgeted */
+  const isUnbudgetedExpense = useMemo(() => {
+    if (!isVendor || !form.head || !form.subHead) return false;
+    // Check if ANY cost centre has a budget line for this HEAD/SUB-HEAD
+    return vendorCostCentreGroups.length > 0 && vendorCostCentreGroups.every((g) => g.lines.length === 0);
+  }, [isVendor, form.head, form.subHead, vendorCostCentreGroups]);
 
   // Clear a stale vendor Head/Sub-head the same way the single-line cascade already does above.
   useEffect(() => {
@@ -813,18 +827,24 @@ export function BudgetLinkedGrnForm({
     if (!isVendor) return;
     setCostCentreSplits((current) => {
       if (!vendorCostCentreGroups.length) return current.length ? [] : current;
-      const equalPct = Math.round((100 / vendorCostCentreGroups.length) * 1_000_000) / 1_000_000;
+      // Only count cost centres WITH budget lines for the equal split
+      const groupsWithBudgetLines = vendorCostCentreGroups.filter((g) => g.lines.length > 0);
+      const equalPct = groupsWithBudgetLines.length > 0
+        ? Math.round((100 / groupsWithBudgetLines.length) * 1_000_000) / 1_000_000
+        : 0;
       return vendorCostCentreGroups.map((group) => {
         const existing = current.find((row) => row.costCentreKey === group.costCentreKey);
         // For branch-common expenses, lines may not have a specific budget line ID per CC
         const firstLineId = group.lines[0]?.id ?? "";
+        const hasBudgetLine = group.lines.length > 0;
         const stillValid = existing && (group.lines.length === 0 || group.lines.some((line) => line.id === existing.budgetLineId));
         return {
           key: existing?.key ?? crypto.randomUUID(),
           costCentreKey: group.costCentreKey,
           budgetLineId: stillValid ? existing!.budgetLineId : firstLineId,
-          percentage: existing?.percentage ?? equalPct,
-          included: existing?.included ?? true, // Default to included
+          percentage: existing?.percentage ?? (hasBudgetLine ? equalPct : 0),
+          // Auto-exclude cost centres without budget lines; preserve user choice for existing rows
+          included: existing?.included ?? hasBudgetLine,
         };
       });
     });
@@ -1411,10 +1431,14 @@ export function BudgetLinkedGrnForm({
               remarks: item.remarks || undefined,
               hsnSacCode: item.hsnSacCode?.trim() || undefined,
             })),
-          costCentreSplits: costCentreSplits.map((row) => ({
-            budgetLineId: row.budgetLineId,
-            percentage: Number(row.percentage),
-          })),
+          costCentreSplits: costCentreSplits
+            .filter((row) => row.included && (row.budgetLineId || isUnbudgetedExpense)) // Include unbudgeted rows
+            .map((row) => ({
+              budgetLineId: row.budgetLineId || undefined, // undefined for unbudgeted
+              costCentreId: row.costCentreKey, // Always send cost centre for unbudgeted allocation
+              percentage: Number(row.percentage),
+            })),
+          isUnbudgeted: isUnbudgetedExpense || undefined, // Flag for stricter approval workflow
           lateInvoiceReason: form.lateInvoiceReason.trim() || undefined,
           gstEnabled: form.gstEnabled,
           vendorStateCode: form.vendorStateCode || undefined,
@@ -2361,6 +2385,24 @@ export function BudgetLinkedGrnForm({
           {/* Vendor GRNs: cost-centre split, then invoice GST components, in that order — the
               unified flow. Each is its own card for the same reason SplitAllocationEditor already
               is: its own toolbar and its own reconciliation footer. */}
+          {/* Unbudgeted expense warning */}
+          {isVendor && isUnbudgetedExpense && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
+              <div className="flex items-start gap-2">
+                <svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div>
+                  <p className="font-medium">Unbudgeted Expense</p>
+                  <p className="text-sm text-amber-700">
+                    No budget exists for "{form.head} → {form.subHead}" in this period.
+                    This GRN will be flagged as unbudgeted and require Finance Head approval.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {isVendor && Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading && vendorCostCentreGroups.length > 0 && (
             <CostCentreSplitEditor
               groups={vendorCostCentreGroups}
@@ -2375,6 +2417,7 @@ export function BudgetLinkedGrnForm({
               splitReadiness={costCentreSplitReadiness}
               directCostCentreKey={directCostCentreKey}
               onDirectCostCentreChange={setDirectCostCentreKey}
+              isUnbudgeted={isUnbudgetedExpense}
             />
           )}
 
@@ -2984,6 +3027,7 @@ function CostCentreSplitEditor({
   splitReadiness,
   directCostCentreKey,
   onDirectCostCentreChange,
+  isUnbudgeted,
 }: {
   groups: Array<{ costCentreKey: string; costCentreName: string; lines: BudgetLine[] }>;
   rows: CostCentreSplitDraft[];
@@ -2997,6 +3041,8 @@ function CostCentreSplitEditor({
   splitReadiness: { ready: boolean; reason: string };
   directCostCentreKey: string;
   onDirectCostCentreChange: (key: string) => void;
+  /** True when no budget exists for the selected HEAD/SUB-HEAD */
+  isUnbudgeted?: boolean;
 }) {
   const reconciled = Math.abs(total - 100) <= 0.5;
   const isDirectMethod = splitMethod === "direct";

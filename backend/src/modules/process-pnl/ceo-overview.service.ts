@@ -735,29 +735,41 @@ async function marginTrend(endPeriod: string, s: CeoScope): Promise<CeoTrendPoin
 /** Only offer a filter value that has data behind it — an option that returns an empty page is
  *  indistinguishable from a broken one. */
 async function filterOptions(period: string) {
-  const [processes] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT pm.id AS id, pm.process_name AS name
-       FROM salary_prep_line l
-       JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
-       JOIN employees e ON e.id = l.employee_id
-       JOIN process_master pm ON pm.id = e.process_id
-      WHERE pm.active_status = 1
-      ORDER BY pm.process_name`,
-    [period],
-  );
-  const [costCentres] = await db.execute<RowDataPacket[]>(
-    `SELECT DISTINCT ccm.id AS id, ccm.cost_centre_code AS code
-       FROM billing_invoice_particular_snapshot p
-       JOIN cost_centre_master ccm
-         ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-          = p.cost_centre_code COLLATE utf8mb4_unicode_ci
-      WHERE p.period_code = ?
-      ORDER BY ccm.cost_centre_code`,
-    [period],
-  );
+  // Guard: tables may not exist if mirrors haven't synced yet for this period
+  const [hasSalaryPrep, hasInvoice] = await Promise.all([
+    tableExists("salary_prep_line"),
+    tableExists("billing_invoice_particular_snapshot"),
+  ]);
+
+  const processes = hasSalaryPrep
+    ? (await db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT pm.id AS id, pm.process_name AS name
+           FROM salary_prep_line l
+           JOIN salary_prep_run r ON r.id = l.run_id AND r.run_month = ?
+           JOIN employees e ON e.id = l.employee_id
+           JOIN process_master pm ON pm.id = e.process_id
+          WHERE pm.active_status = 1
+          ORDER BY pm.process_name`,
+        [period],
+      ))[0]
+    : [];
+
+  const costCentres = hasInvoice
+    ? (await db.execute<RowDataPacket[]>(
+        `SELECT DISTINCT ccm.id AS id, ccm.cost_centre_code AS code
+           FROM billing_invoice_particular_snapshot p
+           JOIN cost_centre_master ccm
+             ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+              = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+          WHERE p.period_code = ?
+          ORDER BY ccm.cost_centre_code`,
+        [period],
+      ))[0]
+    : [];
+
   return {
-    processes: processes.map((r) => ({ id: String(r.id), name: String(r.name) })),
-    costCentres: costCentres.map((r) => ({ id: String(r.id), code: String(r.code) })),
+    processes: processes.map((r: RowDataPacket) => ({ id: String(r.id), name: String(r.name) })),
+    costCentres: costCentres.map((r: RowDataPacket) => ({ id: String(r.id), code: String(r.code) })),
   };
 }
 
@@ -825,31 +837,43 @@ async function buildFocus(
 
   if (codeList.length > 0) {
     const codeMarks = marks(codeList);
-    const [inv] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS n FROM billing_invoice_particular_snapshot
-        WHERE period_code = ? AND cost_centre_code IN (${codeMarks})`,
-      [period, ...codeList],
-    );
-    invoiceLines = n(inv[0]?.n);
+
+    // Guard: snapshot tables may not exist for this period
+    const [hasInvoiceSnap, hasBudgetSnap, hasGrnSnap] = await Promise.all([
+      tableExists("billing_invoice_particular_snapshot"),
+      tableExists("finance_budget_line_snapshot"),
+      tableExists("grn_entry_line_snapshot"),
+    ]);
+
+    if (hasInvoiceSnap) {
+      const [inv] = await db.execute<RowDataPacket[]>(
+        `SELECT COUNT(*) AS n FROM billing_invoice_particular_snapshot
+          WHERE period_code = ? AND cost_centre_code IN (${codeMarks})`,
+        [period, ...codeList],
+      );
+      invoiceLines = n(inv[0]?.n);
+    }
 
     // Approved budgets only — see budgetByBranch. Summing every mirrored row counts 367 rows
     // that never got past the first approval.
-    const [bud] = await db.execute<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(l.amount), 0) AS a
-         FROM finance_budget_line_snapshot l
-         JOIN finance_budget_snapshot b
-           ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
-        WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
-          AND l.expense_type_name IN (${codeMarks})
-          AND b.active_status = 1 AND b.is_rejected = 0`,
-      [period, ...codeList],
-    );
-    budget = n(bud[0]?.a);
+    if (hasBudgetSnap) {
+      const [bud] = await db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(SUM(l.amount), 0) AS a
+           FROM finance_budget_line_snapshot l
+           JOIN finance_budget_snapshot b
+             ON b.bill_source_id = l.budget_source_id AND b.period_code = l.period_code
+          WHERE l.period_code = ? AND l.expense_type = 'CostCenter'
+            AND l.expense_type_name IN (${codeMarks})
+            AND b.active_status = 1 AND b.is_rejected = 0`,
+        [period, ...codeList],
+      );
+      budget = n(bud[0]?.a);
+    }
 
     // Does this cost centre carry its whole branch's overhead? If so the margin is a contribution,
     // not a standalone P&L, and saying so is the difference between a usable figure and a wrong one.
     const branchId = codes[0]?.branch_id ? String(codes[0].branch_id) : null;
-    if (branchId && totals.indirectCost > 0) {
+    if (branchId && totals.indirectCost > 0 && hasGrnSnap) {
       const [branchGrn] = await db.execute<RowDataPacket[]>(
         `SELECT COALESCE(SUM(l.total), 0) AS a
            FROM grn_entry_line_snapshot l

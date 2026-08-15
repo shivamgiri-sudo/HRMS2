@@ -62,7 +62,10 @@ export interface InvoiceComponentInput {
 }
 
 export interface CostCentreSplitRowInput {
-  budgetLineId: string;
+  /** Budget line ID — required for budgeted expenses, omit for unbudgeted */
+  budgetLineId?: string;
+  /** Cost centre ID — required for unbudgeted expenses (when budgetLineId is missing) */
+  costCentreId?: string;
   percentage: number;
   remarks?: string;
 }
@@ -99,6 +102,9 @@ export interface SmartGrnComponentSplitInput {
   vendorStateCode?: string | null;
   /** 2-digit GST state code of the billing branch (e.g., "07" for Delhi). */
   billingStateCode?: string | null;
+  /** True when no budget line exists for the selected HEAD/SUB-HEAD.
+   *  Unbudgeted GRNs route through stricter approval workflow (Finance Head must approve). */
+  isUnbudgeted?: boolean;
 }
 
 /** Above this, the raiser must fix the invoice components themselves — a bigger mismatch
@@ -919,28 +925,61 @@ export const grnSmartService = {
         throw new Error("Invoice-component GRNs are only supported for vendor GRNs");
       }
 
+      // UNBUDGETED EXPENSES: When no budget line exists for the selected HEAD/SUB-HEAD,
+      // the frontend sends isUnbudgeted=true and costCentreId instead of budgetLineId.
+      // These GRNs are flagged and route through stricter approval.
+      const isUnbudgeted = Boolean(input.isUnbudgeted);
+
       // Resolve every cost-centre split row against its approved budget line — same lock,
       // period-match, and period-lock checks saveAllocations() already applies per row.
+      // For unbudgeted expenses, we use costCentreId directly instead of budgetLineId.
       const resolvedSplits: any[] = [];
       let percentageSum = 0;
       for (let index = 0; index < splits.length; index += 1) {
         const split = splits[index];
-        if (!split?.budgetLineId) throw new Error(`Cost centre ${index + 1}: budget line is required`);
         const percentage = Number(split.percentage);
         if (!Number.isFinite(percentage) || percentage <= 0) {
           throw new Error(`Cost centre ${index + 1}: split percentage must be greater than zero`);
         }
-        const line = await lockBudgetLine(connection, split.budgetLineId, String(grn.branch_id));
-        if (consumptionPeriodOf(grn) !== String(line.period_code)) {
-          throw new Error(`Cost centre ${index + 1}: budget period ${line.period_code} does not match the accounting month`);
-        }
-        if (await isPeriodLocked(line.period_code)) {
-          throw new Error(
-            `Cost centre ${index + 1}: ${line.period_code} is locked for P&L close. Raise this against the current open period.`
+
+        if (isUnbudgeted) {
+          // Unbudgeted expense: use costCentreId directly, no budget line validation
+          if (!split?.costCentreId) throw new Error(`Cost centre ${index + 1}: cost centre ID is required for unbudgeted expenses`);
+          // Verify cost centre exists and belongs to the branch
+          const [ccRows] = await connection.execute<RowDataPacket[]>(
+            `SELECT id, cost_centre_code, cost_centre_name, branch_id
+             FROM cost_centre_master WHERE id = ? AND active_status = 1 LIMIT 1`,
+            [split.costCentreId]
           );
+          if (!ccRows.length) throw new Error(`Cost centre ${index + 1}: cost centre not found or inactive`);
+          const cc = ccRows[0];
+          if (String(cc.branch_id) !== String(grn.branch_id)) {
+            throw new Error(`Cost centre ${index + 1}: cost centre does not belong to this branch`);
+          }
+          percentageSum += percentage;
+          resolvedSplits.push({
+            line: null, // No budget line for unbudgeted expenses
+            costCentreId: split.costCentreId,
+            costCentreCode: cc.cost_centre_code,
+            percentage,
+            remarks: split.remarks?.trim() || null,
+            isUnbudgeted: true,
+          });
+        } else {
+          // Budgeted expense: normal budget line validation
+          if (!split?.budgetLineId) throw new Error(`Cost centre ${index + 1}: budget line is required`);
+          const line = await lockBudgetLine(connection, split.budgetLineId, String(grn.branch_id));
+          if (consumptionPeriodOf(grn) !== String(line.period_code)) {
+            throw new Error(`Cost centre ${index + 1}: budget period ${line.period_code} does not match the accounting month`);
+          }
+          if (await isPeriodLocked(line.period_code)) {
+            throw new Error(
+              `Cost centre ${index + 1}: ${line.period_code} is locked for P&L close. Raise this against the current open period.`
+            );
+          }
+          percentageSum += percentage;
+          resolvedSplits.push({ line, percentage, remarks: split.remarks?.trim() || null });
         }
-        percentageSum += percentage;
-        resolvedSplits.push({ line, percentage, remarks: split.remarks?.trim() || null });
       }
       if (Math.abs(percentageSum - 100) > 0.5) {
         throw new Error(`Cost-centre split percentages must total 100% (currently ${roundMoney(percentageSum)}%)`);
@@ -951,10 +990,44 @@ export const grnSmartService = {
 
       // One Head/Sub-head classification per GRN — the split only decides how much of that
       // one spend belongs to which cost centre, not a mix of different expense categories.
-      const distinctHeads = new Set(resolvedSplits.map((item) => String(item.line.head)));
-      const distinctSubHeads = new Set(resolvedSplits.map((item) => String(item.line.sub_head || "")));
-      if (distinctHeads.size > 1 || distinctSubHeads.size > 1) {
-        throw new Error("All cost-centre splits must share the same expense head and sub-head");
+      // For unbudgeted expenses, head/sub-head comes from the GRN itself (set during creation).
+      if (!isUnbudgeted) {
+        const distinctHeads = new Set(resolvedSplits.map((item) => String(item.line.head)));
+        const distinctSubHeads = new Set(resolvedSplits.map((item) => String(item.line.sub_head || "")));
+        if (distinctHeads.size > 1 || distinctSubHeads.size > 1) {
+          throw new Error("All cost-centre splits must share the same expense head and sub-head");
+        }
+      }
+
+      // For unbudgeted expenses, create synthetic "line" objects so downstream code works unchanged
+      if (isUnbudgeted) {
+        for (const split of resolvedSplits) {
+          // Create synthetic line from GRN head/sub_head and cost centre
+          split.line = {
+            id: null,
+            budget_id: null,
+            head: String(grn.head || "Unbudgeted"),
+            sub_head: String(grn.sub_head || null),
+            item_name: String(grn.head || "Unbudgeted Expense"),
+            cost_centre_id: split.costCentreId,
+            cost_centre_name: split.costCentreCode,
+            process_id: null,
+            unit: "amount",
+            unit_rate: 1, // For unbudgeted, we use 1:1 mapping
+            quantity: declaredTotal, // Full amount as "available"
+            tax_treatment: "exclusive",
+            gst_rate: 0,
+            gst_type: "cgst_sgst", // Default, will be overridden by component
+            recoverable_tax_pct: 100,
+            justification: "Unbudgeted expense",
+            // No budget capacity constraints for unbudgeted
+            gross_amount: declaredTotal * 1000, // Effectively unlimited
+            reserved_amount: 0,
+            consumed_amount: 0,
+            reserved_quantity: 0,
+            consumed_quantity: 0,
+          };
+        }
       }
 
       // Invoice GST rates are ground truth. Budget line tax_treatment is a planning-time
@@ -1179,7 +1252,8 @@ export const grnSmartService = {
                 late_invoice_reason = COALESCE(?, late_invoice_reason),
                 gst_enabled = COALESCE(?, gst_enabled),
                 vendor_state_code = COALESCE(?, vendor_state_code),
-                billing_state_code = COALESCE(?, billing_state_code)
+                billing_state_code = COALESCE(?, billing_state_code),
+                is_unbudgeted = ?
           WHERE id = ?`,
         [
           grid.length > 1 ? "split" : "single", first.budget_id, first.id,
@@ -1211,6 +1285,7 @@ export const grnSmartService = {
           input.gstEnabled != null ? (input.gstEnabled ? 1 : 0) : null,
           input.vendorStateCode?.trim() || null,
           input.billingStateCode?.trim() || null,
+          isUnbudgeted ? 1 : 0,
           grnId,
         ]
       );
