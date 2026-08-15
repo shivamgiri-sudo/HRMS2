@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { employmentStatusForExit } from "./exitEmploymentStatus.js";
 import nodemailer from "nodemailer";
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { logger } from "../../lib/logger.js";
@@ -48,6 +48,18 @@ async function notifyManagerOfResignation(employeeId: string, exitRequestId: str
 
 function normalizeStatus(status: string) {
   return status === "exit_confirmed" ? "exited" : status;
+}
+
+/**
+ * A concurrent actor moved the exit request out from under this request.
+ *
+ * statusCode is mandatory, not decoration: the production error handler replaces the
+ * message of any throw that does not carry one, so a bare Error would reach the user
+ * as a generic 500 and the caller would have no way to tell "someone else already
+ * actioned this" from "the server broke".
+ */
+function exitStateChanged(message: string): Error & { statusCode: number; code: string } {
+  return Object.assign(new Error(message), { statusCode: 409, code: "EXIT_STATE_CHANGED" });
 }
 
 export const exitService = {
@@ -231,7 +243,14 @@ export const exitService = {
     id: string,
     status: string,
     remarks: string,
-    userId: string
+    userId: string,
+    /**
+     * The status the caller believed the request was in. The route's FSM check has
+     * already read it; passing it here lets the transaction below reject the write
+     * if anything moved in between, instead of silently applying a transition the
+     * caller never actually validated.
+     */
+    expectedStatus?: string
   ): Promise<ExitRequest> {
     const existing = await this.getExitRequest(id);
     const nextStatus = normalizeStatus(status);
@@ -246,16 +265,92 @@ export const exitService = {
     const timestampCol = stageMap[nextStatus];
     const tsClause = timestampCol ? `, ${timestampCol} = NOW()` : "";
 
-    await db.execute(
-      `UPDATE exit_request SET status = ?${tsClause}, updated_at = NOW() WHERE id = ?`,
-      [nextStatus, id]
-    );
+    const exitRecord = existing as any;
+    const employeeIdForExit: string = exitRecord.employee_id;
 
-    await db.execute(
-      `INSERT INTO exit_approval_log (id, exit_request_id, stage, action, action_by, discussion_remarks)
-       VALUES (UUID(), ?, ?, ?, ?, ?)`,
-      [id, nextStatus, "status_update", userId, remarks]
-    );
+    // Values needed inside the transaction, computed before it opens so the lock
+    // is held for as short a time as possible.
+    //
+    // employment_status used to be hardcoded 'inactive' here, so an involuntary
+    // termination and an ordinary resignation were indistinguishable on the employee
+    // record — the reason survived only inside exit_request. Six files already filtered on
+    // 'terminated' / 'absconded' / 'offboarded', all dead branches guarding a state nothing
+    // could produce. Derived from the exit itself now; see exitEmploymentStatus.ts for why
+    // the mapper and the activation guard's exclusion list must stay in one place.
+    const nextEmploymentStatus = employmentStatusForExit(exitRecord.exit_type, exitRecord.exit_sub_type);
+    const lastWorkingDay = exitRecord.last_working_day_proposed ?? new Date().toISOString().slice(0, 10);
+
+    // ONE transaction for the whole core state change.
+    //
+    // These were three separate autocommit statements: exit_request -> 'exited', then the
+    // approval-log INSERT, then employees -> inactive. The employees UPDATE was deliberately
+    // left to throw rather than be swallowed, which stopped the deprovisioning below from
+    // running against a still-active employee — but it did NOT undo the exit_request UPDATE,
+    // which had already committed. So the failure mode it was written to prevent survived:
+    // exit_request says 'exited' while the employee is still active_status=1, which is the
+    // exact 93-employee mismatch recorded live on 2026-08-06. A loud failure, but the same
+    // split state. Now either all three land or none do.
+    //
+    // The row is locked and re-checked here, not just in the route's FSM check. That check
+    // does SELECT-then-UPDATE across two statements with nothing held in between, so two
+    // approvers clicking at once both read the same current status, both pass the FSM, and
+    // both proceed — writing two approval-log rows and running the employee deactivation
+    // twice. SELECT ... FOR UPDATE plus an expected-state predicate on the UPDATE closes it.
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+
+      const [lockedRows] = await conn.execute<RowDataPacket[]>(
+        `SELECT status FROM exit_request WHERE id = ? FOR UPDATE`,
+        [id]
+      );
+      const locked = lockedRows[0];
+      if (!locked) throw exitStateChanged("Exit request no longer exists");
+
+      const lockedStatus = String(locked.status);
+      if (expectedStatus && normalizeStatus(expectedStatus) !== normalizeStatus(lockedStatus)) {
+        throw exitStateChanged(
+          `Exit request changed to '${normalizeStatus(lockedStatus)}' while this action was in flight`
+        );
+      }
+
+      const [statusResult] = await conn.execute<ResultSetHeader>(
+        `UPDATE exit_request SET status = ?${tsClause}, updated_at = NOW() WHERE id = ? AND status = ?`,
+        [nextStatus, id, lockedStatus]
+      );
+      // Never report success on a transition that did not happen.
+      if (statusResult.affectedRows !== 1) {
+        throw exitStateChanged("Exit request status changed before this update could be applied");
+      }
+
+      await conn.execute(
+        `INSERT INTO exit_approval_log (id, exit_request_id, stage, action, action_by, discussion_remarks)
+         VALUES (UUID(), ?, ?, ?, ?, ?)`,
+        [id, nextStatus, "status_update", userId, remarks]
+      );
+
+      if (nextStatus === "exited") {
+        // active_status is what every headcount/payroll-eligibility query in the app filters
+        // on — employment_status alone was previously updated here, leaving an exited employee
+        // still counted as active everywhere else.
+        const [employeeResult] = await conn.execute<ResultSetHeader>(
+          `UPDATE employees SET active_status = 0, employment_status = ?, date_of_exit = ?, updated_at = NOW()
+            WHERE id = ?`,
+          [nextEmploymentStatus, lastWorkingDay, employeeIdForExit]
+        );
+        if (employeeResult.affectedRows !== 1) {
+          throw exitStateChanged("Employee record could not be deactivated for this exit");
+        }
+      }
+
+      await conn.commit();
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      // 45 workers share this pool; a connection left unreleased here starves all of them.
+      conn.release();
+    }
 
     // Email only on the outcomes the employee is entitled to hear about. The
     // intermediate review stages are internal queue movements.
@@ -275,40 +370,21 @@ export const exitService = {
     }
 
     if (nextStatus === "exited") {
-      const exitRec = existing as any;
-      const employeeId: string = exitRec.employee_id;
+      const exitRec = exitRecord;
+      const employeeId: string = employeeIdForExit;
 
-      // active_status is what every headcount/payroll-eligibility query in the app filters
-      // on — employment_status alone was previously updated here, leaving an exited employee
-      // still counted as active everywhere else. Confirmed live 2026-08-06: 93 employees with
-      // an exit date recorded still carried active_status=1.
-      const lastWorkingDay = (existing as any).last_working_day_proposed ?? new Date().toISOString().slice(0, 10);
-
-      // employment_status used to be hardcoded 'inactive' here, so an involuntary
-      // termination and an ordinary resignation were indistinguishable on the employee
-      // record — the reason survived only inside exit_request. Six files already filtered on
-      // 'terminated' / 'absconded' / 'offboarded', all dead branches guarding a state nothing
-      // could produce. Derived from the exit itself now; see exitEmploymentStatus.ts for why
-      // the mapper and the activation guard's exclusion list must stay in one place.
-      const nextEmploymentStatus = employmentStatusForExit(exitRec.exit_type, exitRec.exit_sub_type);
-
-      // Not caught-and-continued like the deprovisioning steps below this point are
-      // deliberately meant to be (see deprovisionEmployeeAccess's own docstring) — this is
-      // the one write the whole "exited" outcome exists to make, and it was previously
-      // silently swallowed: a failure here (deadlock, dropped connection, pool exhaustion —
-      // this codebase has a documented history of DB-pool starvation) still let the
-      // function fall through to session revocation, F&F creation and deprovisioning, then
-      // return success. exit_request.status was already 'exited' at that point, so HR saw a
-      // success toast while the employee stayed active_status=1 — the exact 93-employee
-      // mismatch the comment above this describes, just reintroduced with a new cause.
-      // Left unprotected here so it throws like the exit_request.status UPDATE immediately
-      // above it, which stops the rest of this branch from running against an employee who
-      // was never actually deactivated, and surfaces a real error instead of a false
-      // "Exit request status updated to exited".
-      await db.execute(
-        `UPDATE employees SET active_status = 0, employment_status = ?, date_of_exit = ?, updated_at = NOW() WHERE id = ?`,
-        [nextEmploymentStatus, lastWorkingDay, employeeId]
-      );
+      // EVERYTHING BELOW THIS POINT IS POST-COMMIT.
+      //
+      // exit_request, the approval log and employees.active_status are already durable by
+      // now. These steps reach outside the core state — sessions, LMS, IT provisioning,
+      // notifications — and must never sit inside the transaction that owns it: a slow or
+      // unreachable external system would otherwise hold the exit_request row lock for the
+      // length of a network timeout.
+      //
+      // The trade-off is that a failure here leaves the employee exited with some cleanup
+      // undone. Failures are logged loudly, but there is still no durable retry: nothing
+      // re-attempts a failed deprovisioning and no work item is raised for a human. That
+      // gap is recorded rather than papered over — see the audit note on retryability.
 
       // Sessions outlive the status change: the access token in the leaver's
       // browser is valid for up to 24h after active_status goes to 0, and

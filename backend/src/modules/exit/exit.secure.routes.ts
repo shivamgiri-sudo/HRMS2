@@ -268,7 +268,17 @@ async function handleExitStatusUpdate(req: any, res: any) {
     }
   }
 
-  const data = await exitService.updateExitStatus(req.params.id, nextStatus, remarks, req.authUser!.id);
+  // currentStatus is the value the FSM check above was decided on. Handing it to the
+  // service lets the transaction there refuse the write if another approver moved the
+  // request in the gap between that SELECT and the UPDATE — the two are separate
+  // statements with no lock held in between, so without this both actors succeed.
+  const data = await exitService.updateExitStatus(
+    req.params.id,
+    nextStatus,
+    remarks,
+    req.authUser!.id,
+    currentStatus,
+  );
   return res.json({ success: true, data, message: `Exit request status updated to ${nextStatus}` });
 }
 
