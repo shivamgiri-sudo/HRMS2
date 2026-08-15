@@ -47,12 +47,21 @@ function ffRow(over: Record<string, unknown> = {}) {
   };
 }
 
-/** First SELECT returns the record; everything after is the UPDATE and the getFF re-read. */
-function stub(row: Record<string, unknown> | null) {
+/**
+ * First SELECT returns the record; everything after is the UPDATE and the getFF re-read.
+ *
+ * The UPDATE must report affectedRows: the service reads it to tell a real transition from
+ * one that matched no row because a concurrent actor got there first. `updateAffectedRows: 0`
+ * simulates losing that race.
+ */
+function stub(row: Record<string, unknown> | null, opts: { updateAffectedRows?: number } = {}) {
   execute.mockReset();
   execute.mockImplementation((sql: string) => {
     if (String(sql).includes("SELECT * FROM full_final_calculation")) {
       return Promise.resolve([row ? [row] : [], []]);
+    }
+    if (/^\s*UPDATE full_final_calculation/i.test(String(sql))) {
+      return Promise.resolve([{ affectedRows: opts.updateAffectedRows ?? 1 }, []]);
     }
     return Promise.resolve([[], []]);
   });
@@ -121,5 +130,77 @@ describe("markFfPaid — the transition that did not exist", () => {
   it("404s a settlement that does not exist", async () => {
     stub(null);
     await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toThrow(/not found/i);
+  });
+});
+
+/**
+ * 2026-08-16 — Rule 7 concurrency.
+ *
+ * The expected-state predicate on the UPDATE was already correct; its RESULT was never read.
+ * Two payers recording the same settlement both passed the SELECT-time guards and both issued
+ * the UPDATE; only the first matched a row. The second silently discarded its own payment
+ * reference, then wrote a FULL_FINAL_PAID audit naming itself as payer and returned success —
+ * producing an audit trail showing one settlement disbursed twice, under two references, one
+ * of which was never recorded anywhere.
+ */
+describe("markFfPaid — a payment that did not happen is not recorded as one", () => {
+  it("refuses with 409 when another payer won the race", async () => {
+    stub(ffRow(), { updateAffectedRows: 0 });
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  it("writes NO audit entry when the transition matched no row", async () => {
+    stub(ffRow(), { updateAffectedRows: 0 });
+    await ffService.markFfPaid(FF_ID, PAYER, "UTR1").catch(() => undefined);
+    expect(logSensitiveAction).not.toHaveBeenCalled();
+  });
+
+  it("carries a statusCode on every governance refusal, so the reason survives production", async () => {
+    // Without one the error handler replaces the message and Finance sees a bare 500 —
+    // a maker-checker refusal then reads as a broken screen instead of a control working.
+    stub(ffRow({ approved_by: PAYER }));
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toMatchObject({ statusCode: 403 });
+
+    stub(ffRow({ status: "draft" }));
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toMatchObject({ statusCode: 409 });
+
+    stub(ffRow());
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "  ")).rejects.toMatchObject({ statusCode: 400 });
+
+    stub(null);
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR1")).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe("approveFF — approval is guarded on the state it was decided on", () => {
+  it("carries the observed status in the WHERE, so a paid settlement cannot be reverted", async () => {
+    // Was `WHERE id = ?` with no predicate: if another actor marked the settlement paid
+    // between the SELECT and this UPDATE, this statement wrote it back to 'approved' while
+    // ff_paid_by / ff_payment_reference stayed populated — leaving a disbursed settlement
+    // sitting in 'approved', eligible to be paid a second time.
+    stub(ffRow({ status: "verified" }));
+    await ffService.approveFF(FF_ID, APPROVER).catch(() => undefined);
+
+    const update = execute.mock.calls.find(([s]) => String(s).includes("SET status = 'approved'"));
+    expect(update, "no approval UPDATE was issued").toBeTruthy();
+    expect(String(update![0])).toContain("AND status = ?");
+    expect(update![1]).toContain("verified");
+  });
+
+  it("refuses with 409, and writes no audit, when the row moved first", async () => {
+    stub(ffRow({ status: "verified" }), { updateAffectedRows: 0 });
+    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toMatchObject({ statusCode: 409 });
+    expect(logSensitiveAction).not.toHaveBeenCalled();
+  });
+
+  it("still refuses to re-approve a paid settlement", async () => {
+    // Rule 8 governance — unchanged, and must stay that way.
+    stub(ffRow({ status: "paid" }));
+    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toThrow(/already paid/i);
+  });
+
+  it("still refuses a provisional calculation", async () => {
+    stub(ffRow({ is_ff_provisional: 1 }));
+    await expect(ffService.approveFF(FF_ID, APPROVER)).rejects.toThrow(/provisional/i);
   });
 });

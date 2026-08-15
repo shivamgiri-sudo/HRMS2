@@ -1,10 +1,22 @@
 import { randomUUID } from "crypto";
 import type { Request } from "express";
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { calculateGratuity } from "../payroll/payrollCalculate.service.js";
 import { notifyFullFinalReady } from "./exit.notifications.js";
+
+/**
+ * Every refusal in this file is a governance decision the operator needs to read: the
+ * settlement is not approved, the payment reference is missing, you approved this one so
+ * you may not also pay it. All of them were bare `new Error(...)`, and the production error
+ * handler replaces the message of any throw that carries no statusCode — so in production
+ * the maker-checker refusal reached Finance as a generic 500 with no reason attached, which
+ * reads as a broken screen rather than a control doing its job.
+ */
+function ffError(statusCode: number, message: string): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode });
+}
 
 export interface FfInput {
   calculationDate: string;
@@ -315,22 +327,34 @@ export const ffService = {
       [id]
     );
     const rec = (rows as any[])[0];
-    if (!rec) throw new Error("F&F calculation not found");
-    if (rec.status === "paid") throw new Error("F&F already paid — cannot re-approve");
+    if (!rec) throw ffError(404, "F&F calculation not found");
+    if (rec.status === "paid") throw ffError(409, "F&F already paid — cannot re-approve");
 
     if (Number(rec.is_ff_provisional) === 1) {
-      throw new Error(
+      throw ffError(
+        409,
         "Cannot approve F&F: calculation contains provisional statutory values. " +
         "Verify and recalculate with approved configuration before approving."
       );
     }
 
-    await db.execute(
+    // WHERE carries the status this decision was made on. It was `WHERE id = ?` alone, with
+    // no predicate at all, which made the guard above advisory: between that SELECT and this
+    // UPDATE another actor could mark the settlement paid, and this statement would then
+    // write it back to 'approved' while ff_paid_by / ff_paid_at / ff_payment_reference stayed
+    // populated. A disbursed settlement would be sitting in 'approved', eligible to be paid a
+    // second time. The predicate makes that lost update impossible.
+    const [approveResult] = await db.execute<ResultSetHeader>(
       `UPDATE full_final_calculation
           SET status = 'approved', approved_by = ?, approved_at = NOW(), updated_at = NOW()
-        WHERE id = ?`,
-      [approvedBy, id]
+        WHERE id = ? AND status = ?`,
+      [approvedBy, id, rec.status]
     );
+
+    // No FULL_FINAL_APPROVED entry may be written for an approval that did not happen.
+    if (approveResult.affectedRows !== 1) {
+      throw ffError(409, "F&F changed while this approval was in flight — reload and retry");
+    }
 
     void logSensitiveAction({
       actor_user_id: approvedBy,
@@ -389,31 +413,48 @@ export const ffService = {
       [id]
     );
     const rec = (rows as any[])[0];
-    if (!rec) throw new Error("F&F calculation not found");
+    if (!rec) throw ffError(404, "F&F calculation not found");
 
-    if (rec.status === "paid") throw new Error("F&F is already marked paid");
+    if (rec.status === "paid") throw ffError(409, "F&F is already marked paid");
     if (rec.status !== "approved") {
-      throw new Error(`Cannot mark paid: F&F is '${rec.status}', not 'approved'`);
+      throw ffError(409, `Cannot mark paid: F&F is '${rec.status}', not 'approved'`);
     }
 
     const reference = String(paymentReference ?? "").trim();
     if (!reference) {
-      throw new Error("A payment reference (bank/UTR/cheque) is required to mark an F&F paid");
+      throw ffError(400, "A payment reference (bank/UTR/cheque) is required to mark an F&F paid");
     }
 
     if (rec.approved_by && String(rec.approved_by) === String(paidBy)) {
-      throw new Error(
+      throw ffError(
+        403,
         "Payment must be recorded by someone other than the person who approved this settlement"
       );
     }
 
-    await db.execute(
+    const [payResult] = await db.execute<ResultSetHeader>(
       `UPDATE full_final_calculation
           SET status = 'paid', ff_paid_by = ?, ff_paid_at = NOW(),
               ff_payment_reference = ?, updated_at = NOW()
         WHERE id = ? AND status = 'approved'`,
       [paidBy, reference, id]
     );
+
+    // The expected-state predicate above was already right; its result was never read.
+    //
+    // Two payers recording the same settlement at once both passed the SELECT-time checks,
+    // both issued this UPDATE, and only the first matched a row. The second changed nothing
+    // — its payment reference was silently discarded — yet still fell through to write a
+    // FULL_FINAL_PAID entry naming itself as payer and carrying its own reference, and
+    // returned success. The audit trail would then show a settlement disbursed twice, under
+    // two references, one of which was never recorded anywhere. On the one control whose
+    // entire purpose is to reconcile a payment against a bank statement.
+    if (payResult.affectedRows !== 1) {
+      throw ffError(
+        409,
+        "F&F was already marked paid by someone else — this payment was not recorded"
+      );
+    }
 
     void logSensitiveAction({
       actor_user_id: paidBy,
