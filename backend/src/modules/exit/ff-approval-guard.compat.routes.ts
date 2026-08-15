@@ -23,6 +23,8 @@ ffApprovalGuardCompatRouter.post(
     );
     const ff = ffRows[0];
     if (!ff) return res.status(404).json({ success: false, message: "F&F calculation not found" });
+    // No longer a dead branch: markFfPaid (ff.service.ts) makes 'paid' reachable as of
+    // migration 1220, so this guard can now actually fire.
     if (String(ff.status) === "paid") return res.status(400).json({ success: false, message: "F&F already paid" });
 
     const [clearanceRows] = await db.execute<RowDataPacket[]>(

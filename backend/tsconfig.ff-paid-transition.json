@@ -1,0 +1,2 @@
+{ "extends": "./tsconfig.json", "compilerOptions": { "noEmit": true },
+  "include": ["src/modules/exit/ff.service.ts","src/db/runPendingMigrations.ts","src/modules/exit/ff-approval-guard.compat.routes.ts"] }

@@ -347,6 +347,91 @@ export const ffService = {
     return this.getFF(rec.exit_request_id);
   },
 
+  /**
+   * Record that an approved settlement has actually been disbursed.
+   *
+   * This transition did not exist. full_final_calculation.status is
+   * enum('draft','verified','approved','paid') but nothing ever wrote 'paid', and the table
+   * had no columns to record a payment at all — so the state was unreachable AND
+   * unrecordable. Migration 1220 adds ff_paid_by / ff_paid_at / ff_payment_reference.
+   *
+   * Two things depended on 'paid' and were silently inert as a result:
+   *   - FF_PAID_BUT_EMPLOYEE_ACTIVE, labelled P0, queries status='paid' and so could never
+   *     fail — it reported a clean pass on a control that had never been evaluated.
+   *   - The "already paid, cannot re-approve" guards in approveFF above and in
+   *     ff-approval-guard.compat.routes.ts were dead branches guarding a state nothing could
+   *     produce. They become live the moment this method is used.
+   *
+   * THREE POLICY CHOICES ARE ENCODED HERE. They follow the nearest established patterns in
+   * this codebase rather than being invented, and each is a single line to change if the
+   * payroll/finance owner decides otherwise:
+   *
+   *   1. Only an APPROVED settlement can be paid. Mirrors approveFF's own status gate, and
+   *      means a draft or provisional calculation cannot be marked disbursed.
+   *   2. A payment reference is REQUIRED. "Paid" without evidence is an assertion, not a
+   *      record — and this field is the only thing that later reconciles the settlement
+   *      against a bank statement. disbursal.routes.ts already carries bank_ref on the same
+   *      reasoning.
+   *   3. Maker-checker: the person who APPROVED cannot also mark it paid. Identical guard to
+   *      cost-centre-management.service.ts's approveL1/approveL2, for the identical reason —
+   *      approval and disbursement are two controls, and one person holding both collapses
+   *      them into one. Legacy rows with a NULL approved_by are not blocked, matching how
+   *      that guard treats its own legacy rows.
+   */
+  async markFfPaid(
+    id: string,
+    paidBy: string,
+    paymentReference: string,
+    req?: Request
+  ): Promise<FullFinalCalculation> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM full_final_calculation WHERE id = ? LIMIT 1",
+      [id]
+    );
+    const rec = (rows as any[])[0];
+    if (!rec) throw new Error("F&F calculation not found");
+
+    if (rec.status === "paid") throw new Error("F&F is already marked paid");
+    if (rec.status !== "approved") {
+      throw new Error(`Cannot mark paid: F&F is '${rec.status}', not 'approved'`);
+    }
+
+    const reference = String(paymentReference ?? "").trim();
+    if (!reference) {
+      throw new Error("A payment reference (bank/UTR/cheque) is required to mark an F&F paid");
+    }
+
+    if (rec.approved_by && String(rec.approved_by) === String(paidBy)) {
+      throw new Error(
+        "Payment must be recorded by someone other than the person who approved this settlement"
+      );
+    }
+
+    await db.execute(
+      `UPDATE full_final_calculation
+          SET status = 'paid', ff_paid_by = ?, ff_paid_at = NOW(),
+              ff_payment_reference = ?, updated_at = NOW()
+        WHERE id = ? AND status = 'approved'`,
+      [paidBy, reference, id]
+    );
+
+    void logSensitiveAction({
+      actor_user_id: paidBy,
+      action_type: "FULL_FINAL_PAID",
+      module_key: "exit",
+      entity_type: "full_final_calculation",
+      entity_id: id,
+      change_summary: {
+        exit_request_id: rec.exit_request_id,
+        net_payable: rec.net_payable,
+        payment_reference: reference,
+      },
+      req,
+    });
+
+    return this.getFF(rec.exit_request_id);
+  },
+
   async setProvisionalFalse(
     id: string,
     verifiedBy: string,
