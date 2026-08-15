@@ -1,8 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]) },
-}));
+/**
+ * updateExitStatus runs its three core writes - exit_request, the approval log and the
+ * employees deactivation - inside one transaction on a pooled connection (2026-08-16), so the
+ * mock has to supply getConnection. The connection's execute is the SAME stub as the pool's,
+ * which keeps every SQL expectation in this file working unchanged: what is asserted is which
+ * statements ran, not which handle issued them.
+ */
+vi.mock("../src/db/mysql.js", () => {
+  const execute = vi.fn().mockResolvedValue([[], []]);
+  return {
+    db: {
+      execute,
+      getConnection: vi.fn().mockResolvedValue({
+        execute,
+        beginTransaction: vi.fn().mockResolvedValue(undefined),
+        commit: vi.fn().mockResolvedValue(undefined),
+        rollback: vi.fn().mockResolvedValue(undefined),
+        release: vi.fn(),
+      }),
+    },
+  };
+});
 vi.mock("../src/modules/exit/exit-intelligence.service.js", () => ({
   createExitHealthSnapshot: vi.fn().mockResolvedValue(undefined),
   createDefaultClearanceTasks: vi.fn().mockResolvedValue(undefined),
@@ -149,13 +168,16 @@ describe("exitService.updateExitStatus", () => {
 
   it("updates status and inserts approval log", async () => {
     mockExecute.mockResolvedValueOnce([[fakeRequest]]); // getExitRequest
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // UPDATE
+    // The transaction opens with SELECT status ... FOR UPDATE, so the caller's observed
+    // status can be re-checked under the lock before anything is written.
+    mockExecute.mockResolvedValueOnce([[{ status: "draft" }]]); // lock + re-read
+    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // UPDATE (expected-state guarded)
     mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT log
     mockExecute.mockResolvedValueOnce([[{ ...fakeRequest, status: "submitted" }]]); // re-fetch
     const result = await exitService.updateExitStatus("exit-1", "submitted", "Looks good", "user-1");
     expect(result.status).toBe("submitted");
     // Verify log insert was called
-    expect(mockExecute).toHaveBeenCalledTimes(4);
+    expect(mockExecute).toHaveBeenCalledTimes(5);
   });
 
   it("throws when exit request not found", async () => {

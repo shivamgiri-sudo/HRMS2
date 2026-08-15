@@ -126,30 +126,57 @@ router.get("/me", h(async (req: any, res: any) => {
   const emp = rows[0];
   const empId = emp.id;
 
+  /**
+   * Optional profile sections load independently, and a failure is reported as a failure.
+   *
+   * Each of these four used to end in `.catch(() => [])`, which made a dropped connection,
+   * a missing table or a renamed column render exactly like "the employee never supplied
+   * this". Those are opposite facts: one is a blank the employee can fill in, the other is a
+   * system fault nobody is told about. On the bank section that difference is a payment
+   * instruction quietly appearing absent.
+   *
+   * The catch stays — one broken optional section must not take down the whole profile, which
+   * is the other half of the requirement — but the outcome is now recorded per section and
+   * emitted as section_status, so a caller can tell LOADED from NOT_PROVIDED from UNAVAILABLE.
+   */
+  const sectionStatus: Record<string, "LOADED" | "NOT_PROVIDED" | "UNAVAILABLE"> = {};
+  const loadSection = async (name: string, sql: string): Promise<any[]> => {
+    try {
+      const [rows]: any = await db.execute(sql, [empId]);
+      sectionStatus[name] = (rows as any[]).length ? "LOADED" : "NOT_PROVIDED";
+      return rows as any[];
+    } catch (err) {
+      // Loud, because the whole point is that this stops being invisible.
+      console.error(`[employee-profile] section '${name}' unavailable for ${empId}:`, err);
+      sectionStatus[name] = "UNAVAILABLE";
+      return [];
+    }
+  };
+
   const [bankRows, statRows, emergRows, nomineeRows] = await Promise.all([
     // Bank details — read both columns; account_number_enc preferred over legacy plaintext
-    db.execute(
-      "SELECT bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number, account_number_enc, verified FROM employee_bank_detail WHERE employee_id = ? AND active_status = 1 LIMIT 1",
-      [empId]
-    ).then(([r]: any) => r).catch(() => []),
+    loadSection(
+      "bank_details",
+      "SELECT bank_name, account_holder_name, bank_branch, ifsc_code, account_type, account_number, account_number_enc, verified FROM employee_bank_detail WHERE employee_id = ? AND active_status = 1 LIMIT 1"
+    ),
 
     // Statutory details
-    db.execute(
-      "SELECT epf_number, esi_number, uan_number, pan_number, aadhaar_id, pf_eligible, esi_eligible, epf_date FROM employee_statutory_info WHERE employee_id = ? LIMIT 1",
-      [empId]
-    ).then(([r]: any) => r).catch(() => []),
+    loadSection(
+      "statutory_details",
+      "SELECT epf_number, esi_number, uan_number, pan_number, aadhaar_id, pf_eligible, esi_eligible, epf_date FROM employee_statutory_info WHERE employee_id = ? LIMIT 1"
+    ),
 
     // Emergency contact — prefer is_primary=1, fall back to first row
-    db.execute(
-      "SELECT name, relationship, mobile, address FROM employee_emergency_contact WHERE employee_id = ? ORDER BY is_primary DESC, contact_seq ASC LIMIT 1",
-      [empId]
-    ).then(([r]: any) => r).catch(() => []),
+    loadSection(
+      "emergency_contact",
+      "SELECT name, relationship, mobile, address FROM employee_emergency_contact WHERE employee_id = ? ORDER BY is_primary DESC, contact_seq ASC LIMIT 1"
+    ),
 
     // Nominee (primary / first)
-    db.execute(
-      "SELECT nominee_name, relationship, date_of_birth, mobile, address FROM employee_nominee WHERE employee_id = ? ORDER BY created_at ASC LIMIT 1",
-      [empId]
-    ).then(([r]: any) => r).catch(() => []),
+    loadSection(
+      "nominee",
+      "SELECT nominee_name, relationship, date_of_birth, mobile, address FROM employee_nominee WHERE employee_id = ? ORDER BY created_at ASC LIMIT 1"
+    ),
   ]);
 
   // Build masked statutory — primary source is employees row (pan_number, uan_number,
@@ -208,6 +235,9 @@ router.get("/me", h(async (req: any, res: any) => {
   return res.json({
     success: true,
     data: {
+      // Per-section load outcome: LOADED / NOT_PROVIDED / UNAVAILABLE. A section reported
+      // UNAVAILABLE failed to read and its absence below means nothing.
+      section_status:           sectionStatus,
       // Identity
       id:                       emp.id,
       employee_code:            emp.employee_code,

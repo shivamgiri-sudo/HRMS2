@@ -135,13 +135,28 @@ describe('mobility.service — updatePromotion is transactional', () => {
 });
 
 // ── Task 7: transfer NULL-safe master lookup ────────────────────────────────
-describe('mobility.service — applyTransferToEmployee is NULL-safe', () => {
-  it('must not use inline correlated subquery that could silently null the FK', () => {
+/**
+ * The employee-row move moved out of applyTransferToEmployee into applyTransferOn(exec, ...)
+ * on 2026-08-16, so that approval could run it inside its transaction while the deferred
+ * worker keeps running it in autocommit — one implementation, two callers. These two cases
+ * previously sliced from `async applyTransferToEmployee(` to end-of-file; the implementation
+ * now sits ABOVE that method, so the slice no longer contained it and the assertions passed
+ * over an empty region. They are repointed at the real implementation, unchanged in intent:
+ * a master lookup that misses must throw, never write NULL into the FK.
+ */
+describe('mobility.service — the transfer master lookup is NULL-safe', () => {
+  const applyImpl = () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../../mobility/mobility.service.ts'),
       'utf8'
     );
-    const applyFn = src.slice(src.indexOf('async applyTransferToEmployee('));
+    const start = src.indexOf('async function applyTransferOn(');
+    expect(start, 'applyTransferOn not found — has the transfer apply logic moved again?').toBeGreaterThan(-1);
+    return src.slice(start);
+  };
+
+  it('must not use inline correlated subquery that could silently null the FK', () => {
+    const applyFn = applyImpl();
     expect(applyFn).not.toMatch(/branch_id\s*=\s*\(SELECT\s+id\s+FROM\s+branch_master/);
     expect(applyFn).not.toMatch(/department_id\s*=\s*\(SELECT\s+id\s+FROM\s+department_master/);
     expect(applyFn).not.toMatch(/designation_id\s*=\s*\(SELECT\s+id\s+FROM\s+designation_master/);
@@ -149,15 +164,23 @@ describe('mobility.service — applyTransferToEmployee is NULL-safe', () => {
   });
 
   it('must throw when master lookup returns null instead of silently nulling FK', () => {
+    // The four messages are now produced by one shared resolver rather than written out
+    // four times, so the guarantee is: a miss throws, the message names the master table,
+    // and every transfer type still routes through it.
+    const applyFn = applyImpl();
+    expect(applyFn).toMatch(/if \(!masterId\) throw mobilityError\(\d+, `Transfer: \$\{label\} '\$\{to_value\}' not found in \$\{table\}`\)/);
+    for (const table of ['branch_master', 'department_master', 'designation_master', 'process_master']) {
+      expect(applyFn, `${table} is no longer resolved before the FK is written`).toContain(`"${table}"`);
+    }
+  });
+
+  it('applyTransferToEmployee still delegates to it, so the worker path is covered too', () => {
     const src = fs.readFileSync(
       path.resolve(__dirname, '../../mobility/mobility.service.ts'),
       'utf8'
     );
-    const applyFn = src.slice(src.indexOf('async applyTransferToEmployee('));
-    expect(applyFn).toContain('not found in branch_master');
-    expect(applyFn).toContain('not found in department_master');
-    expect(applyFn).toContain('not found in designation_master');
-    expect(applyFn).toContain('not found in process_master');
+    const method = src.slice(src.indexOf('async applyTransferToEmployee('));
+    expect(method).toMatch(/await applyTransferOn\(db,/);
   });
 });
 
