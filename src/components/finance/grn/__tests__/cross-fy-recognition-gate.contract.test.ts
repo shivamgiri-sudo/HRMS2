@@ -72,7 +72,10 @@ describe("MonthSplitPanel tells the user which side of the gate they are on", ()
 describe("BudgetLinkedGrnForm refuses to submit what the server will reject", () => {
   it("computes the block from the same exported rule, not a second copy", () => {
     expect(FORM).toContain("windowCrossesFinancialYear");
-    expect(FORM).toMatch(/const crossFyBlocked =\s*\n?\s*!canOverridePeriod/);
+    // isFinanceLead since 2026-08-15, not canOverridePeriod: the server gates a cross-FY
+    // window on RECOGNITION_OVERRIDE_ROLES, which excludes branch_admin, while
+    // canOverridePeriod now includes it. See the split explained further down this file.
+    expect(FORM).toMatch(/const crossFyBlocked =\s*\n?\s*!isFinanceLead/);
   });
 
   it("folds it into canSubmit", () => {
@@ -84,8 +87,44 @@ describe("BudgetLinkedGrnForm refuses to submit what the server will reject", ()
   });
 
   it("uses the same three roles the server enforces", () => {
+    // isFinanceLead is the flag that must mirror RECOGNITION_OVERRIDE_ROLES
+    // (grn-smart.service.ts) — finance_head / accounts_head / super_admin, exactly.
     expect(FORM).toMatch(
-      /useHasRole\("finance_head",\s*"accounts_head",\s*"super_admin"\)/,
+      /const isFinanceLead = useHasRole\("finance_head",\s*"accounts_head",\s*"super_admin"\)/,
     );
+  });
+
+  /**
+   * These two flags were ONE flag until 2026-08-15, and conflating them shipped a form that
+   * promised permissions the API refuses.
+   *
+   * 139ee3b7 added branch_admin to the single canOverridePeriod flag so a branch admin could
+   * set the accounting period. But that flag was also gating three OTHER server checks, none
+   * of which the server widened:
+   *   round-off tolerance 500/1  -> isElevatedRole            (branch_admin: no)
+   *   late-invoice reason needed -> isRestrictedRole          (branch_admin: explicitly YES,
+   *                                                            it is a restricted role there)
+   *   cross-FY recognition       -> RECOGNITION_OVERRIDE_ROLES (branch_admin: no)
+   *
+   * So a branch_admin saw a Rs 500 round-off allowance, no late-invoice justification, and an
+   * unblocked cross-FY window — then had the submission rejected. The split keeps the one
+   * permission that commit intended and takes back the three it granted by accident.
+   */
+  it("does not let the period-override role list leak into the finance-lead checks", () => {
+    expect(FORM).toMatch(
+      /const canOverridePeriod = useHasRole\("finance_head",\s*"accounts_head",\s*"super_admin",\s*"branch_admin"\)/,
+    );
+    // The round-off limit mirrors isElevatedRole, which excludes branch_admin.
+    expect(FORM).toMatch(/roundoffLimit = isFinanceLead \? 500 : 1/);
+    // The cross-FY block mirrors RECOGNITION_OVERRIDE_ROLES, which excludes branch_admin.
+    expect(FORM).toMatch(/crossFyBlocked\s*=\s*\n?\s*!isFinanceLead/);
+    // The late-invoice reason requirement mirrors isRestrictedRole, which NAMES branch_admin.
+    expect(FORM).toMatch(/isVendor && !isFinanceLead && form\.billDate/);
+  });
+
+  it("keeps the accounting-period override on the wider list, matching the server", () => {
+    // grn-smart.routes.ts's canOverridePeriod now includes branch_admin, so this is the one
+    // place the wider flag is correct.
+    expect(FORM).toMatch(/accountingPeriod: canOverridePeriod && form\.accountingPeriod/);
   });
 });

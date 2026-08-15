@@ -202,8 +202,28 @@ smartGrnRouter.put(
       }
       // Strip accountingPeriod for callers without finance-level authorization.
       // UI gate alone is not security — enforce at the API layer.
+      //
+      // branch_admin added 2026-08-15 to match BudgetLinkedGrnForm.tsx's canOverridePeriod,
+      // which 139ee3b7 ("feat(grn): allow branch_admin to override accounting period")
+      // widened on the client without the server. The two had diverged, so a branch_admin saw
+      // the control enabled, used it, and had accountingPeriod silently stripped here — the
+      // request "succeeded" with the period they set quietly discarded, which is worse than a
+      // 403 because nothing tells them it was ignored.
+      // cross-fy-recognition-gate.contract.test.ts exists precisely to catch that divergence
+      // and did; this closes it in the direction that commit intended.
+      //
+      // SCOPE IS ONLY THIS CHECK. Two other role lists in this module read identically and are
+      // deliberately NOT changed, because they gate different things:
+      //   grn-smart.routes.ts:191  — whether a late-invoice reason is REQUIRED. branch_admin
+      //                              is named there as a RESTRICTED role; adding it to the
+      //                              elevated set would exempt them from justifying a
+      //                              >30-day-old invoice.
+      //   grn-smart.service.ts:993 — the round-off tolerance, Rs 500 for finance leads vs
+      //                              Rs 1 for everyone else. Widening that hands branch_admin
+      //                              a 500x allowance on invoice-total mismatches.
+      // Neither is what "override the accounting period" means, and both are money controls.
       const canOverridePeriod = user.roles.some((r: string) =>
-        ["finance_head", "accounts_head", "super_admin"].includes(r)
+        ["finance_head", "accounts_head", "super_admin", "branch_admin"].includes(r)
       );
       const body = canOverridePeriod ? req.body : { ...req.body, accountingPeriod: undefined };
       const data = await grnSmartService.saveComponentAllocations(

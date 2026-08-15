@@ -410,7 +410,29 @@ export function BudgetLinkedGrnForm({
   // Finance Head / Accounts Head / Super Admin / Branch Admin may override the accounting month —
   // e.g. to book a late March invoice into February's period after month-end close. The override
   // only changes which budget lines are queried and which period is consumed; the invoice date stays as typed.
+  /**
+   * TWO FLAGS, because the server enforces two different things and this file used to conflate
+   * them into one.
+   *
+   * 139ee3b7 ("feat(grn): allow branch_admin to override accounting period") added
+   * branch_admin to the single canOverridePeriod flag. But that one flag was gating THREE
+   * separate server authorizations, and the server only widened for one of them:
+   *
+   *   accounting-period override -> grn-smart.routes.ts canOverridePeriod  (branch_admin: YES)
+   *   round-off tolerance 500/1  -> grn-smart.service.ts isElevatedRole    (branch_admin: NO)
+   *   late-invoice reason needed -> grn-smart.routes.ts isRestrictedRole   (branch_admin: NO,
+   *                                 it is named there as a RESTRICTED role)
+   *
+   * So a branch_admin was shown a form that promised a Rs 500 round-off allowance and no
+   * late-invoice justification, then had the submission rejected server-side — a UI writing
+   * cheques the API does not honour. Splitting the flag is what makes that commit's intent
+   * (period override for branch_admin) true without silently granting two money controls
+   * nobody asked for.
+   *
+   * Keep these in step with their named server counterparts, not with each other.
+   */
   const canOverridePeriod = useHasRole("finance_head", "accounts_head", "super_admin", "branch_admin");
+  const isFinanceLead = useHasRole("finance_head", "accounts_head", "super_admin");
   const effectivePeriod = form.accountingPeriod || period;
 
   const { data: branchResponse } = useQuery({
@@ -996,7 +1018,7 @@ export function BudgetLinkedGrnForm({
       next.billDate = isVendor ? "Invoice date is required." : "Receipt date is required.";
     }
     // Late invoice: require reason when >30 days old and raiser is not finance/accounts level
-    if (isVendor && !canOverridePeriod && form.billDate) {
+    if (isVendor && !isFinanceLead && form.billDate) {
       const today = new Date(); today.setHours(0, 0, 0, 0);
       const billD = new Date(form.billDate); billD.setHours(0, 0, 0, 0);
       const daysOld = Math.floor((today.getTime() - billD.getTime()) / 86400000);
@@ -1033,7 +1055,7 @@ export function BudgetLinkedGrnForm({
           next.components = "Add at least one invoice component.";
         } else {
           // G8: Finance Head / Accounts Head can accept up to ₹500 round-off; others are limited to ₹1
-          const roundoffLimit = canOverridePeriod ? 500 : 1;
+          const roundoffLimit = isFinanceLead ? 500 : 1;
           if (Math.abs(componentsPreview.diff) > roundoffLimit) {
             next.components = `Invoice components total ${money(componentsPreview.rawTotalGross)} — the declared invoice total is ${money(Number(form.amount || 0))}. Difference ${money(componentsPreview.diff)} exceeds the ₹${roundoffLimit} round-off limit.`;
           }
@@ -1121,8 +1143,12 @@ export function BudgetLinkedGrnForm({
    * refusal is visible while the window is being chosen, not after a full form is
    * submitted; the server remains the authority either way.
    */
+  // isFinanceLead, not canOverridePeriod: the server gates a cross-FY recognition window on
+  // RECOGNITION_OVERRIDE_ROLES (grn-smart.service.ts), which is finance_head / accounts_head /
+  // super_admin and does NOT include branch_admin. Overriding the accounting period and moving
+  // cost into another financial year are different permissions that happened to share a flag.
   const crossFyBlocked =
-    !canOverridePeriod &&
+    !isFinanceLead &&
     windowCrossesFinancialYear(period, monthSplit.startPeriod, monthSplit.endPeriod);
 
   const canSubmit =
@@ -1814,7 +1840,7 @@ export function BudgetLinkedGrnForm({
               </DenseFieldGroup>
 
               {/* Late invoice warning (non-finance raisers, >30 days old) */}
-              {isVendor && !canOverridePeriod && form.billDate && (() => {
+              {isVendor && !isFinanceLead && form.billDate && (() => {
                 const today = new Date(); today.setHours(0, 0, 0, 0);
                 const billD = new Date(form.billDate); billD.setHours(0, 0, 0, 0);
                 const daysOld = Math.floor((today.getTime() - billD.getTime()) / 86400000);
