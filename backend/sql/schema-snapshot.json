@@ -1,12 +1,24 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 944,
-  "columnCount": 13295,
+  "tableCount": 946,
+  "columnCount": 13339,
   "tables": {
     "_migrations": [
       "migration_id",
       "applied_at",
       "checksum"
+    ],
+    "absence_penalty_config": [
+      "id",
+      "config_key",
+      "penalty_days",
+      "effective_from",
+      "effective_to",
+      "approved_by",
+      "approved_at",
+      "created_by",
+      "created_at",
+      "notes"
     ],
     "access_requests": [
       "id",
@@ -2455,6 +2467,7 @@
       "bill_source_id",
       "finance_year",
       "month_label",
+      "period_code",
       "invoice_type",
       "provision_amt",
       "billing_amt",
@@ -4116,6 +4129,22 @@
       "ship_to_pincode",
       "association_date"
     ],
+    "cost_centre_reward_penalty": [
+      "id",
+      "cost_centre_id",
+      "period_code",
+      "entry_type",
+      "description",
+      "amount_inr",
+      "client_reference",
+      "approval_status",
+      "submitted_by",
+      "approved_by",
+      "approved_at",
+      "rejection_reason",
+      "created_at",
+      "updated_at"
+    ],
     "cost_centre_seat_rate": [
       "id",
       "cost_centre_id",
@@ -4892,23 +4921,22 @@
       "metadata_json"
     ],
     "employee_bank_detail": [
-      "account_holder_name",
-      "account_number",
-      "account_number_blind_index",
-      "account_number_enc",
-      "account_seq",
-      "account_type",
-      "active_status",
-      "bank_branch",
-      "bank_name",
-      "created_at",
-      "employee_id",
       "id",
-      "ifsc_code",
+      "employee_id",
       "is_primary",
-      "updated_at",
+      "account_seq",
+      "bank_name",
+      "account_holder_name",
+      "bank_branch",
+      "account_number",
+      "account_number_enc",
+      "ifsc_code",
+      "account_type",
       "upi_id",
-      "verified"
+      "verified",
+      "created_at",
+      "updated_at",
+      "active_status"
     ],
     "employee_biometric_enrollment": [
       "id",
@@ -7172,7 +7200,10 @@
       "updated_at",
       "is_ff_provisional",
       "nominee_distribution_status",
-      "gratuity_distribution_id"
+      "gratuity_distribution_id",
+      "ff_paid_by",
+      "ff_paid_at",
+      "ff_payment_reference"
     ],
     "funnel_daily_snapshot": [
       "id",
@@ -7442,6 +7473,7 @@
       "id",
       "grn_request_id",
       "sequence_no",
+      "is_unbudgeted",
       "budget_id",
       "budget_line_id",
       "invoice_component_id",
@@ -7598,6 +7630,10 @@
       "provision_reversal_period",
       "reversal_grn_id",
       "branch_id",
+      "company_code",
+      "vendor_state_code",
+      "billing_state_code",
+      "gst_enabled",
       "vendor_id",
       "vendor_name",
       "invoice_number",
@@ -7667,6 +7703,9 @@
       "document_match_status",
       "billing_cycle_status",
       "accounting_period",
+      "is_late_invoice",
+      "is_unbudgeted",
+      "late_invoice_reason",
       "is_multi_month",
       "imprest_manager_id",
       "imprest_ledger_entry_id",
@@ -8139,7 +8178,8 @@
       "created_at",
       "updated_at",
       "pay_month",
-      "cost_centre_id"
+      "cost_centre_id",
+      "remarks"
     ],
     "incentive_upload_line": [
       "id",
@@ -9037,6 +9077,15 @@
       "action_at",
       "remarks",
       "approval_level"
+    ],
+    "leave_balance_deduction": [
+      "id",
+      "leave_request_id",
+      "leave_type_id",
+      "balance_year",
+      "days_deducted",
+      "is_primary_type",
+      "created_at"
     ],
     "leave_balance_ledger": [
       "id",
@@ -10016,6 +10065,17 @@
       "created_at",
       "updated_at"
     ],
+    "payroll_bank_exception": [
+      "id",
+      "employee_id",
+      "owner_user_id",
+      "workflow_status",
+      "notes",
+      "created_by",
+      "updated_by",
+      "created_at",
+      "updated_at"
+    ],
     "payroll_branch_readiness": [
       "id",
       "process_month",
@@ -10236,18 +10296,18 @@
       "error_message"
     ],
     "payroll_register_export_log": [
-      "content_sha256",
-      "excluded_amount",
-      "excluded_count",
-      "file_name",
-      "filter_json",
-      "generated_at",
-      "generated_by",
       "id",
-      "register_type",
-      "row_count",
       "run_id",
-      "total_amount"
+      "register_type",
+      "filter_json",
+      "generated_by",
+      "generated_at",
+      "row_count",
+      "file_name",
+      "content_sha256",
+      "total_amount",
+      "excluded_count",
+      "excluded_amount"
     ],
     "payroll_salary_slabs": [
       "id",
@@ -12460,6 +12520,7 @@
       "pf_employer",
       "esic_employee",
       "esic_employer",
+      "gratuity",
       "professional_tax",
       "tds",
       "remarks",
@@ -12501,7 +12562,9 @@
       "payslip_generated",
       "payslip_generated_at",
       "bank_transfer_initiated",
-      "bank_transfer_initiated_at"
+      "bank_transfer_initiated_at",
+      "payslip_emailed",
+      "payslip_emailed_at"
     ],
     "salary_prep_line_adjustment": [
       "id",
@@ -12614,6 +12677,7 @@
       "branch_filter",
       "process_filter",
       "status",
+      "incentives_applied_at",
       "total_employees",
       "total_gross",
       "total_deductions",
@@ -14751,6 +14815,7 @@
       "id",
       "employee_id",
       "shift_id",
+      "shift_version_id",
       "plan_id",
       "cycle_id",
       "shift_template_id",
@@ -14777,7 +14842,8 @@
       "manager_action_at",
       "manager_action_reason",
       "system_decision_reason",
-      "published_to_rta_at"
+      "published_to_rta_at",
+      "scheduled_minutes"
     ],
     "wfm_roster_assignment_control": [
       "assignment_id",
@@ -14926,21 +14992,23 @@
       "updated_at"
     ],
     "wfm_roster_swap_request": [
-      "after_state_json",
-      "applied_at",
-      "before_state_json",
-      "created_at",
       "id",
+      "requester_emp_id",
+      "swap_with_emp_id",
+      "swap_date",
       "reason",
       "requester_assignment_id",
-      "requester_emp_id",
-      "rest_override_used",
-      "reviewed_at",
-      "reviewed_by",
+      "target_assignment_id",
       "status",
-      "swap_date",
-      "swap_with_emp_id",
-      "target_assignment_id"
+      "counterpart_status",
+      "counterpart_responded_at",
+      "reviewed_by",
+      "reviewed_at",
+      "applied_at",
+      "before_state_json",
+      "after_state_json",
+      "rest_override_used",
+      "created_at"
     ],
     "wfm_shift": [
       "id",
@@ -14951,23 +15019,24 @@
       "active_status"
     ],
     "wfm_shift_master": [
-      "active_status",
-      "branch_name",
-      "created_at",
-      "created_by",
-      "effective_from",
-      "effective_to",
-      "end_time",
       "id",
-      "is_locked",
-      "parent_shift_id",
-      "process_name",
-      "required_minutes",
       "shift_code",
+      "parent_shift_id",
       "shift_name",
       "start_time",
+      "end_time",
+      "required_minutes",
+      "branch_name",
+      "process_name",
+      "active_status",
+      "created_at",
       "updated_at",
-      "version"
+      "version",
+      "effective_from",
+      "effective_to",
+      "is_locked",
+      "created_by",
+      "approved_by"
     ],
     "wfm_shift_template": [
       "id",
@@ -15164,27 +15233,6 @@
       "donor_value",
       "active_status",
       "backed_up_at"
-    ],
-    "leave_balance_deduction": [
-      "balance_year",
-      "created_at",
-      "days_deducted",
-      "id",
-      "is_primary_type",
-      "leave_request_id",
-      "leave_type_id"
-    ],
-    "absence_penalty_config": [
-      "approved_at",
-      "approved_by",
-      "config_key",
-      "created_at",
-      "created_by",
-      "effective_from",
-      "effective_to",
-      "id",
-      "notes",
-      "penalty_days"
     ]
   }
 }

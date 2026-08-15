@@ -123,5 +123,10 @@ if (CHECK_ONLY) {
   process.exit(1);
 }
 
-writeFileSync(SNAPSHOT, JSON.stringify(next) + "\n");
+// Pretty-printed, matching the format the committed snapshot has always been in. Minified
+// output turned every regeneration into a single-line file, so a two-table drift rendered as
+// "1 insertion, 15190 deletions" — a diff nobody can review, on the one artefact whose whole
+// job is to be compared against reality. Indentation costs nothing here and keeps the change
+// legible.
+writeFileSync(SNAPSHOT, JSON.stringify(next, null, 2) + "\n");
 console.log(`wrote ${SNAPSHOT}: ${next.tableCount} tables, ${next.columnCount} columns`);
