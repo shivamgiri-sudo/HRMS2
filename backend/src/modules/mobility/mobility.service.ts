@@ -212,8 +212,26 @@ export const mobilityService = {
     );
   },
 
-  // Apply all approved transfers whose effective_date has been reached but
-  // whose applied_at is still NULL. Called by a nightly scheduled job.
+  /**
+   * Apply all approved transfers whose effective_date has been reached but whose applied_at
+   * is still NULL.
+   *
+   * NOT CURRENTLY SCHEDULED. This previously claimed it was "called by a nightly scheduled
+   * job" — it is not. Verified 2026-08-15: it is registered in neither server.ts nor
+   * all-workers.ts, and the only other mention of it anywhere in the repo is a comment in
+   * createTransfer above. Nothing calls it.
+   *
+   * The consequence is that a FUTURE-DATED transfer is approved, recorded, and then never
+   * applied — the employee stays in their old branch/process/manager indefinitely, with the
+   * transfer_record sitting due and unactioned. Immediate transfers (effective_date <= today)
+   * are unaffected; those apply inline from createTransfer.
+   *
+   * Deliberately left unscheduled rather than wired up here. This sweep moves employees
+   * between branches and processes, and turning on an unexercised job that mutates employee
+   * rows in bulk is a decision with an owner, not a side effect of a bug fix. Migration 1221
+   * makes it *capable* of running (applied_at did not exist, so every statement in it raised
+   * ER_BAD_FIELD_ERROR); scheduling it is the separate, deliberate step.
+   */
   async applyPendingTransfers(): Promise<number> {
     const [pending] = await db.execute<RowDataPacket[]>(
       `SELECT id, employee_id, transfer_type, to_value
