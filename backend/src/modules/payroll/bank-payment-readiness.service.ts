@@ -510,7 +510,70 @@ interface EmployeeBankRow extends RowDataPacket {
  * account_number is varbinary(500) on this table, so it is CAST to CHAR before it reaches JS —
  * without the cast mysql2 returns a Buffer and every string comparison below fails open.
  */
-async function loadEmployeeBankRows(): Promise<EmployeeBankRow[]> {
+/**
+ * THE PAYMENT POPULATION. One definition, used by the readiness screen and the exporter.
+ *
+ * Owner ruling 2026-08-16 (decision 6): readiness follows the payroll RUN, not the staff list.
+ *
+ * This used to end `WHERE e.active_status = 1` unconditionally — "every active employee" — while
+ * the payment file contains whoever has a payable line in the run. Two different lists judged by
+ * one indicator. Measured on the live 2026-07 run: 1,273 positive-net lines, of which 161
+ * (Rs 1,49,692.69) belong to employees who are no longer active_status = 1 and were therefore
+ * never classified at all — they fell into a synthetic "NOT_ACTIVE" bucket produced by a `??`
+ * fallback rather than by the classifier. Meanwhile 215 active employees with no payable line
+ * in that run were counted, and could hold the gate red over money nobody was paying them.
+ *
+ * With a runId the population is the run's own payable lines. Without one it stays the
+ * org-wide list, which is still the right answer for the standing bank-exceptions queue.
+ *
+ * `net_salary > 0` mirrors what the exporters treat as payable; run_id is matched explicitly
+ * rather than by run_month, because two runs can share a month (2026-03 has twins) and joining
+ * on the month alone doubles every row.
+ */
+async function loadEmployeeBankRows(runId?: string | null): Promise<EmployeeBankRow[]> {
+  if (runId) {
+    const [runRows] = await db.query<EmployeeBankRow[]>(
+      `SELECT
+         e.id                                                          AS employee_id,
+         e.employee_code,
+         COALESCE(NULLIF(TRIM(e.full_name), ''),
+                  CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS employee_name,
+         e.branch_id,
+         b.branch_name,
+         e.official_email,
+         e.personal_email,
+         CAST(e.bank_account_number AS CHAR)                            AS legacy_employee_column_account,
+         ebd.id                                                         AS bank_detail_id,
+         ebd.account_number_enc,
+         CAST(ebd.account_number AS CHAR)                               AS account_number_legacy,
+         ebd.ifsc_code,
+         ebd.bank_name,
+         ebd.account_holder_name,
+         (SELECT COUNT(*) FROM employee_bank_detail x
+           WHERE x.employee_id = e.id AND x.active_status = 1 AND x.is_primary = 1)
+                                                                        AS active_primary_count,
+         (SELECT COUNT(*) FROM profile_update_approval p
+           WHERE p.employee_id = e.id AND p.request_type = 'bank_details' AND p.status = 'pending')
+                                                                        AS open_change_requests
+       -- DISTINCT on the line side rather than GROUP BY on the result: an employee can hold
+       -- more than one payable line in a run, and grouping the joined rows would both trip
+       -- only_full_group_by and quietly change which bank row survives. This keeps the join
+       -- shape byte-identical to the org-wide query below, so both populations classify the
+       -- same way — including the multiple-active-primary case the classifier reports as
+       -- CONFLICT rather than collapsing.
+       FROM (SELECT DISTINCT employee_id
+               FROM salary_prep_line
+              WHERE run_id = ? AND COALESCE(net_salary, 0) > 0) pay
+       JOIN employees e ON e.id = pay.employee_id
+       LEFT JOIN employee_bank_detail ebd
+              ON ebd.employee_id = e.id AND ebd.active_status = 1 AND ebd.is_primary = 1
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+      ORDER BY e.employee_code`,
+      [runId],
+    );
+    return runRows;
+  }
+
   const [rows] = await db.query<EmployeeBankRow[]>(
     `SELECT
        e.id                                                          AS employee_id,
@@ -546,6 +609,8 @@ async function loadEmployeeBankRows(): Promise<EmployeeBankRow[]> {
 
 export interface BankReadinessReport {
   as_of: string;
+  /** The run this population was scoped to, or null for the org-wide exceptions queue. */
+  run_id: string | null;
   verification_source: VerificationSource;
   totals: Record<BankReadinessClass, number>;
   total_employees: number;
@@ -561,10 +626,10 @@ export interface BankReadinessReport {
  * as_of is stamped once, here, and carried onto the response. A page that recomputes it per
  * section can show two different answers on one screen.
  */
-export async function buildBankReadinessReport(): Promise<BankReadinessReport> {
+export async function buildBankReadinessReport(runId?: string | null): Promise<BankReadinessReport> {
   const as_of = new Date().toISOString();
   const [employeeRows, { source, credits }] = await Promise.all([
-    loadEmployeeBankRows(),
+    loadEmployeeBankRows(runId),
     loadCreditedAccounts(),
   ]);
 
@@ -630,6 +695,7 @@ export async function buildBankReadinessReport(): Promise<BankReadinessReport> {
 
   return {
     as_of,
+    run_id: runId ?? null,
     verification_source: source,
     totals,
     total_employees: rows.length,

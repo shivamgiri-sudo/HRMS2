@@ -188,7 +188,11 @@ bankPaymentReadinessRouter.get(
   "/summary",
   requireRole(...READ_ROLES),
   h(async (req, res) => {
-    const report = await buildBankReadinessReport();
+    // Optional run_id. Supplied, this reports on exactly the population the payment file for
+    // that run would contain; omitted, it stays the org-wide bank-exceptions queue, which is
+    // still the right view for standing remediation work.
+    const summaryRunId = String(req.query.run_id ?? "").trim() || null;
+    const report = await buildBankReadinessReport(summaryRunId);
     const visible = await resolveVisibleBranchIds(req.authUser!.id);
     const rows = visible ? report.rows.filter((r) => r.branch_id && visible.has(r.branch_id)) : report.rows;
 
@@ -481,7 +485,13 @@ bankPaymentReadinessRouter.get(
       });
     }
 
-    const report = await buildBankReadinessReport();
+    // Scoped to THIS run — the same population the file below is built from.
+    //
+    // This previously judged every active employee while the file contained the run's payable
+    // lines, so the two disagreed by construction. On the live 2026-07 run that meant 161
+    // payable employees (Rs 1,49,692.69) were never classified at all, and 215 employees with
+    // no payable line could hold the gate red over money nobody was paying them.
+    const report = await buildBankReadinessReport(runId);
     if (!report.verification_source.available) {
       return res.status(503).json({
         success: false,
