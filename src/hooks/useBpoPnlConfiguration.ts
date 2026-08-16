@@ -253,7 +253,7 @@ export function useBpoPnlConfiguration(period?: string, processId?: string, bran
         `/api/finance/pnl/reward-penalty/${id}/approve`,
         {}
       );
-      return response.data;
+      return response;
     },
     onSuccess: invalidateRp,
   });
@@ -264,7 +264,7 @@ export function useBpoPnlConfiguration(period?: string, processId?: string, bran
         `/api/finance/pnl/reward-penalty/${id}/reject`,
         { reason }
       );
-      return response.data;
+      return response;
     },
     onSuccess: invalidateRp,
   });

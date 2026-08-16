@@ -8,7 +8,7 @@ import type { MonthlyDriverInput } from "@/hooks/useBranchBudget";
  */
 
 /** The weight each method divides by, read from the same drivers the server uses. */
-export function weightFor(method: string, driver: MonthlyDriverInput | undefined): number {
+export function weightFor(method: string, driver: Partial<MonthlyDriverInput> | undefined): number {
   if (!driver) return 0;
   switch (method) {
     case "total_manpower":

@@ -756,7 +756,7 @@ export default function BranchBudgetManagementWorkspace() {
       const resp = await hrmsApi.get<{ success: boolean; data: TaxAmendmentRecord[] }>(
         `/api/finance/pnl/budget-tax-amendments?budgetId=${id}`
       );
-      return resp.data.data ?? [];
+      return resp.data ?? [];
     },
     enabled: Boolean(savedBudgetId ?? detailId),
   });
@@ -2457,10 +2457,10 @@ export default function BranchBudgetManagementWorkspace() {
                 busy={saveHead.isPending || saveSubHead.isPending || deleteHead.isPending || deleteSubHead.isPending}
                 onSaveHead={async (payload) => { await saveHead.mutateAsync(payload); toast.success("Expense Head saved"); }}
                 onSaveSubHead={async (payload) => { await saveSubHead.mutateAsync(payload); toast.success("Expense Sub-head saved"); }}
-                onDeleteHead={(head) => {
+                onDeleteHead={async (head) => {
                   setPendingDeleteMaster({ type: "head", head });
                 }}
-                onDeleteSubHead={(_head, item) => {
+                onDeleteSubHead={async (_head, item) => {
                   setPendingDeleteMaster({ type: "subhead", head: _head, subHead: item });
                   setLines((prev) => prev.filter((l) => !(l.head === _head.headName && l.subHead === item.subHeadName)));
                 }}
@@ -3647,7 +3647,7 @@ function TaxAmendmentDialog({
       const resp = await hrmsApi.get<{ success: boolean; data: TaxAmendmentPreflight }>(
         `/api/finance/pnl/budgets/${budgetId}/lines/${lineId}/tax-amendment-preflight`
       );
-      return resp.data.data;
+      return resp.data;
     },
     staleTime: 0,
   });
@@ -3830,7 +3830,7 @@ export function TaxAmendmentApprovalQueue({
       const resp = await hrmsApi.get<{ success: boolean; data: TaxAmendmentRecord[] }>(
         `/api/finance/pnl/budget-tax-amendments?budgetId=${budgetId}`
       );
-      return resp.data.data ?? [];
+      return resp.data ?? [];
     },
   });
 

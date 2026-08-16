@@ -592,11 +592,19 @@ export function BudgetLinkedGrnForm({
         ccMap.set(ccKey, existing);
       }
       setCostCentreSplits(
+        // included must be set here, not left to the re-seed effect. These rows are rebuilt from
+        // allocations already PERSISTED against the GRN, so by definition each was included when
+        // the GRN was saved. Omitting the field left it undefined, and the submit filter
+        // (`row.included && ...`) treats undefined as excluded — so whenever the re-seed effect
+        // did not happen to run after this prefill, editing a saved GRN dropped every
+        // cost-centre allocation on save. The re-seed effect's own default is
+        // `existing?.included ?? hasBudgetLine`, which preserves whatever is set here.
         [...ccMap.entries()].map(([ccKey, data]) => ({
           key: crypto.randomUUID(),
           costCentreKey: ccKey,
           budgetLineId: data.budgetLineId,
           percentage: Math.round(data.pct * 1000) / 1000,
+          included: true,
         }))
       );
     }
@@ -3075,7 +3083,6 @@ function CostCentreSplitEditor({
                 value={directCostCentreKey}
                 onChange={(event) => onDirectCostCentreChange(event.target.value)}
                 className="h-9 min-w-[200px] text-[12px]"
-                placeholder="Select cost centre"
               >
                 <option value="">Select cost centre</option>
                 {groups.map((group) => (

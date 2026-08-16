@@ -135,7 +135,10 @@ export default function ProcessPnlDetailPage() {
   const indirectQuery = useProcessPnlSection(processId, { period }, "indirect-allocation", activeTab === "costs" || activeTab === "grn-budget");
   const ledgerQuery = useProcessPnlSection(processId, { period }, "ledger", activeTab === "ledger");
   const reconciliationQuery = useProcessPnlSection(processId, { period }, "reconciliation", activeTab === "reconciliation");
-  const costCentreId = detailQuery.data?.costCentreId ?? null;
+  // costCentreId lives on the detail's row (BpoPnlRow), not on BpoProcessPnlDetail itself.
+  // Read off the wrong level it was always undefined, so the reward/penalty query below was
+  // never scoped to this process's cost centre.
+  const costCentreId = detailQuery.data?.row?.costCentreId ?? null;
   const rpQuery = useQuery({
     queryKey: ["pnl-reward-penalty", period, costCentreId],
     queryFn: async () => {

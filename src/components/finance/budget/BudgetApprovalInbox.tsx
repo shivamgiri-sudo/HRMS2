@@ -52,7 +52,7 @@ export function BudgetApprovalInbox({
       const response = await hrmsApi.get<{ success: boolean; data: PendingBudget[] }>(
         "/api/finance/pnl/budgets/pending-my-review"
       );
-      return response.data.data;
+      return response.data;
     },
     staleTime: 30_000,
     refetchInterval: 60_000,

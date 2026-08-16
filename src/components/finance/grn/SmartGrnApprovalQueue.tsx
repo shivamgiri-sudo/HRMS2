@@ -590,7 +590,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
           <div className="flex items-center justify-between px-4 py-3 text-xs text-grn-ink-soft">
             <span>Showing {displayRows.length} result{displayRows.length !== 1 ? "s" : ""}</span>
             {rows.length === PAGE_SIZE && (
-              <GrnButton variant="secondary" size="sm" onClick={() => setPage((p) => p + 1)}>
+              <GrnButton variant="default" size="sm" onClick={() => setPage((p) => p + 1)}>
                 Load more
               </GrnButton>
             )}

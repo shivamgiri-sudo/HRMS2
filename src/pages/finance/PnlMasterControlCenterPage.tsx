@@ -491,7 +491,10 @@ export default function PnlMasterControlCenterPage() {
     () => new Map(costCentres.map((cc: any) => [cc.id, cc.cost_centre_name as string])),
     [costCentres]
   );
-  const isApprover = useHasRole(["super_admin", "finance_head", "accounts_head"]);
+  // useHasRole is variadic (...roles: string[]). Passing an array made roles === [[...]],
+  // which expandRoleKeys can never match against a role key, so isApprover was permanently
+  // false and the reward/penalty approval controls were hidden from every approver.
+  const isApprover = useHasRole("super_admin", "finance_head", "accounts_head");
 
   const [costForm, setCostForm] = useState<CostComponentPayload>({
     processId: null,
