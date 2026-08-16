@@ -126,7 +126,10 @@ export default function ProcessPnlPage() {
     queryKey: ["pnl-ytd-summary", period],
     queryFn: async () => {
       const response = await hrmsApi.get<{ success: boolean; data: any }>(`/api/finance/pnl/ytd-summary?upTo=${period}`);
-      return response.data.data;
+      // hrmsApi returns the envelope itself, so the payload is one level in. Typing data as
+      // `any` meant the extra unwrap here type-checked while still being undefined at runtime,
+      // which is why this one survived the sweep that fixed the rest.
+      return response.data;
     },
     enabled: showYtd,
     staleTime: 5 * 60_000,
