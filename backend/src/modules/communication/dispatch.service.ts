@@ -91,6 +91,13 @@ interface RetryLogRow extends RowDataPacket {
   body_preview: string | null;
 }
 
+/**
+ * How much of a rendered message dispatch_log keeps. It is a preview for the admin history screen,
+ * not the message — retry() checks against this same constant so the writer and the guard cannot
+ * drift apart and quietly re-enable sending truncated messages.
+ */
+const BODY_PREVIEW_LIMIT = 500;
+
 class DispatchService {
   private humanizeTemplateName(name: string): string {
     return name
@@ -333,7 +340,7 @@ class DispatchService {
               contact,
               channel,
               rendered.subject ?? portalRendered.subject ?? this.humanizeTemplateName(resolvedTemplateName),
-              (channel === 'email' ? rendered.html : rendered.text ?? rendered.html).slice(0, 500),
+              (channel === 'email' ? rendered.html : rendered.text ?? rendered.html).slice(0, BODY_PREVIEW_LIMIT),
               dto.is_critical ? 1 : 0,
               dto.is_critical ? 'critical' : 'standard',
             ]
@@ -409,13 +416,48 @@ class DispatchService {
       'SELECT channel, recipient_contact, body_preview FROM dispatch_log WHERE id = ?',
       [dispatchId]
     );
-    if (!rows[0]) throw new Error('Dispatch not found');
+    if (!rows[0]) {
+      throw Object.assign(new Error('Dispatch not found'), {
+        statusCode: 404,
+        code: 'DISPATCH_NOT_FOUND',
+      });
+    }
     const log = rows[0];
+
+    // body_preview is a PREVIEW. It is written as .slice(0, BODY_PREVIEW_LIMIT), so replaying it
+    // as the message body sends the first 500 characters and drops the rest.
+    //
+    // This is not a rare edge. Measured live 2026-08-16: all 947 email rows in dispatch_log are
+    // at the limit — every one, because a rendered HTML mail always exceeds 500 characters. So on
+    // the only channel that has ever delivered anything, this button always sent a truncated
+    // message, reported success, and set status='sent'. Nothing downstream could tell that the
+    // employee received half an email.
+    //
+    // A faithful re-render is not possible from the log: renderTemplate needs the original
+    // dto.data context, and only template_id, template_name and the recipient are stored. So the
+    // honest answer is to refuse rather than to send something mangled — the sender is told to
+    // re-trigger the source event, which renders the message properly.
+    //
+    // SMS and WhatsApp bodies are all well under the limit (0 of 1,823 truncated), so retry stays
+    // available there and this is not a blanket disablement.
+    const body = log.body_preview ?? '';
+    if (body.length >= BODY_PREVIEW_LIMIT) {
+      throw Object.assign(
+        new Error(
+          'This message cannot be resent: only a 500-character preview of it was retained, so a ' +
+          'retry would deliver a truncated message. Re-trigger the original event to send it in full.',
+        ),
+        { statusCode: 409, code: 'DISPATCH_BODY_NOT_RETAINED' },
+      );
+    }
+
     await db.execute(
       "UPDATE dispatch_log SET status = 'queued', retry_count = retry_count + 1 WHERE id = ?",
       [dispatchId]
     );
-    this._deliver(dispatchId, log.channel, log.recipient_contact, { html: log.body_preview ?? "" }).catch(err =>
+    // text as well as html: _deliver picks `text ?? html` for sms/whatsapp, and the stored preview
+    // for those channels is already the text rendering, not markup.
+    this._deliver(dispatchId, log.channel, log.recipient_contact, { html: body, text: body }).catch(err =>
       console.error(`[dispatch] retry delivery failed for ${dispatchId}:`, err)
     );
   }
