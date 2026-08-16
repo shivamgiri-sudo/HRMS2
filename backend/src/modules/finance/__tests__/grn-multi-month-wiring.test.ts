@@ -103,10 +103,31 @@ describe("writePeriodSplits", () => {
     const calls = [...SRC.matchAll(/await writePeriodSplits\(connection, grnId, grn, input, actorUserId[^)]*\);/g)];
     expect(calls, "saveAllocations and saveComponentAllocations both author the schedule")
       .toHaveLength(2);
+
+    // Checked structurally rather than inside a fixed character window. This assertion used to
+    // slice 400 characters after each call and look for the commit in there; both call sites are
+    // still correct, but the code between call and commit grew to 444 and 510 characters, so the
+    // window stopped reaching and the test failed against working code. A magic number that
+    // encodes "how much code happens to sit here today" rots by design.
+    //
+    // What actually matters is ordering: the commit must be the next transaction-terminating
+    // statement after the call, with no rollback or early return in between, so a split that
+    // fails to reconcile takes the invoice save down with it.
     for (const call of calls) {
-      const following = SRC.slice(call.index ?? 0, (call.index ?? 0) + 400);
-      expect(following).toContain("await connection.commit();");
-      expect(following.indexOf("await connection.commit();")).toBeGreaterThan(0);
+      const after = SRC.slice(call.index ?? 0);
+      const commitAt = after.indexOf("await connection.commit();");
+      const rollbackAt = after.indexOf("await connection.rollback();");
+
+      expect(commitAt, "a commit must follow this writePeriodSplits call").toBeGreaterThan(0);
+      // A rollback may appear later in the catch block; it must not come first.
+      if (rollbackAt !== -1) {
+        expect(rollbackAt, "rollback must not precede the commit for this call").toBeGreaterThan(commitAt);
+      }
+      // And the commit must belong to the same function — no later call site may satisfy it.
+      const nextCallAt = after.indexOf("await writePeriodSplits(connection", 1);
+      if (nextCallAt !== -1) {
+        expect(commitAt, "each call must reach its own commit, not a later one").toBeLessThan(nextCallAt);
+      }
     }
   });
 

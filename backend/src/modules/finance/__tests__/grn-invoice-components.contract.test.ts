@@ -49,17 +49,44 @@ describe("GRN invoice-GST-components (unified vendor-GRN flow)", () => {
     expect(service).toContain("All cost-centre splits must share the same expense head and sub-head");
   });
 
-  it("blocks a GST-bearing component against an exempt/non-GST budget line, without silently coercing to 0%", () => {
+  /**
+   * This used to assert a hard block: a GST-bearing component against an exempt/non_gst budget
+   * line threw. `388b5aa9` (2026-08-14) removed that block deliberately — "gross-amount
+   * consumption is correct regardless of tax_treatment label" — and the assertion was never
+   * updated, so it has been failing against intended behaviour rather than catching a defect.
+   *
+   * Restoring the block would revert another session's decision, so what is pinned now is the
+   * property that makes removing it safe: tax comes from the COMPONENT's own declared base and
+   * rate, while the characteristics that decide how tax is treated — IGST vs CGST/SGST, and how
+   * much is recoverable — still come from the budget line and are not invented per component.
+   *
+   * `taxTreatment: "exclusive"` is not the coercion the old title implied. The component supplies
+   * amountWithoutTax and its own gstRate, so "exclusive" is simply the correct reading of those
+   * two inputs — GST is added on top of a stated base.
+   */
+  it("takes the GST rate from the component, but gst_type and recoverability from the budget line", () => {
     const service = read("src/modules/finance/grn-smart.service.ts");
-    expect(service).toContain('["exempt", "non_gst"].includes(String(item.line.tax_treatment))');
-    expect(service).toContain("cannot carry a GST-bearing invoice component");
+    expect(service).toContain("gstRate: Number(component.gstRate)");
+    expect(service).toContain("gstType: String(line.gst_type) as BudgetGstType");
+    expect(service).toContain("recoverableTaxPct: Number(line.recoverable_tax_pct)");
+    // The rate is still constrained — removing the exempt block did not open the rate up.
+    expect(service).toContain("ALLOWED_GST_RATES = new Set([0, 5, 12, 18, 28])");
   });
 
-  it("reconciliation: ≤₹1 auto-absorbs into round_off_amount, >₹1 blocks submission", () => {
+  /**
+   * The ₹1 limit is no longer absolute. `f922f44f` (2026-08-14, "G8") lets Finance Head, Accounts
+   * Head and Super Admin accept up to ₹500. That is a deliberate, role-gated policy change, so
+   * this asserts the gate rather than the old constant — including that the elevated ceiling is
+   * restricted to those three roles, which is the part that actually matters. An unrestricted
+   * ₹500 would silently absorb half a thousand rupees of unexplained difference per invoice.
+   */
+  it("reconciliation: round-off auto-absorbs to the actor's limit and blocks beyond it", () => {
     const service = read("src/modules/finance/grn-smart.service.ts");
     expect(service).toContain("GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT = 1.00");
-    expect(service).toContain("Math.abs(diff) > GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT");
-    expect(service).toContain("exceeds the ₹1.00 auto-round-off limit");
+    expect(service).toContain('["finance_head", "accounts_head", "super_admin"].includes(actorRole)');
+    expect(service).toContain("const roundoffLimit = isElevatedRole ? 500 : GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT;");
+    expect(service).toContain("Math.abs(diff) > roundoffLimit");
+    expect(service).toContain("round-off limit");
     // The round-off is folded into one grid cell's own amount, not layered on top — so
     // Σ grn_cost_allocation.amount_with_tax stays exactly equal to grn_request.amount_with_tax
     // and the pre-existing ALLOCATION_AMOUNT_RECONCILIATION check keeps passing unmodified.

@@ -671,7 +671,13 @@ describe("submitTransfer idempotency — runtime (DB mocked)", () => {
   });
 
   it("proceeds when no duplicate pending transfer exists", async () => {
-    // idempotency → empty; header → active; period lock → open; lines; INSERT; getTransfer
+    // idempotency → empty; header → active; period lock → open; lines; then getTransfer.
+    //
+    // The INSERT is deliberately absent from this queue. submitTransfer now writes inside a
+    // transaction, so the INSERT goes to conn.execute, not db.execute. While it was still queued
+    // here it was never consumed, which pushed everything after it along by one: getTransfer read
+    // the [{ insertId: 1 }] entry, whose [0] is undefined, and threw "Transfer not found" — a
+    // failure that looked like a missing row rather than a stale harness.
     mockExecute
       .mockResolvedValueOnce([[], []])
       .mockResolvedValueOnce([[{ id: "bgt-1", status: "active", period_code: "2026-07" }], []])
@@ -680,8 +686,8 @@ describe("submitTransfer idempotency — runtime (DB mocked)", () => {
         { id: "line-a", budget_id: "bgt-1", gross_amount: 10000, reserved_amount: 0, consumed_amount: 0 },
         { id: "line-b", budget_id: "bgt-1", gross_amount: 5000,  reserved_amount: 0, consumed_amount: 0 },
       ], []])
-      .mockResolvedValueOnce([{ insertId: 1 }, []])
       .mockResolvedValueOnce([[{ id: "new-transfer", status: "pending" }], []]);
+    mockConnection.execute.mockResolvedValue([{ insertId: 1 }, []]);
     const { branchBudgetService } = await import(
       "../../process-pnl/branch-budget.service.js"
     );
