@@ -40,20 +40,23 @@ const run = (over: Record<string, unknown> = {}) => ({
 });
 
 /**
- * getRun -> SELECT *, the PT-blocker gate, then the guarded UPDATE, then a re-read.
+ * getRun -> SELECT *, the closer-role check, the PT-blocker gate, the guarded UPDATE, a re-read.
  *
- * ptBlocked defaults to none: these cases are about sign-off and separation of duties, and a
- * blocked employee would refuse the transition before either is reached.
+ * Defaults describe a run that is fine except for whatever the case under test breaks: the actor
+ * holds a closing role, and nobody is PT-blocked. Otherwise every case would fail on the first
+ * gate rather than the one it is about.
  */
 function stub(
   row: Record<string, unknown>,
   updateAffected = 1,
-  ptBlocked: Array<{ employee_code: string }> = [],
+  opts: { ptBlocked?: Array<{ employee_code: string }>; canClose?: boolean } = {},
 ) {
+  const { ptBlocked = [], canClose = true } = opts;
   mockExecute.mockReset();
   mockExecute.mockImplementation(async (sql: unknown) => {
     const s = String(sql ?? "");
     if (/^\s*SELECT \* FROM salary_prep_run/i.test(s)) return [[row], []];
+    if (/FROM user_roles/i.test(s)) return [canClose ? [{ 1: 1 }] : [], []];
     if (/NULLIF\(TRIM\(b\.state\)/i.test(s)) return [ptBlocked, []];
     if (/^\s*UPDATE salary_prep_run SET status/i.test(s)) return [{ affectedRows: updateAffected }, []];
     return [[], []];
@@ -153,6 +156,61 @@ describe("break-glass is a third pair of hands, not a way round your own control
 });
 
 /**
+ * Decision 5's remaining half: closing a run is a different capability from preparing one.
+ *
+ * The route gate could not express this. PATCH /runs/:id/status carries every transition, so its
+ * requireRole is necessarily the union of everyone who moves a run at all — which is why it is
+ * character-for-character identical to POST /runs and POST /runs/:id/calculate. The capability
+ * only becomes separable once the target status is known.
+ *
+ * Verified live 2026-08-16 that this locks nobody out: finance_head (2), payroll_head (1), admin
+ * (9) and super_admin (3) can close; payroll (3) and finance (2) keep every preparation right.
+ */
+describe("preparing a run and closing it are different capabilities", () => {
+  it("refuses LOCK by someone who may prepare but holds no head-level role", async () => {
+    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, { canClose: false });
+    await expect(
+      payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
+    ).rejects.toMatchObject({ statusCode: 403, code: "PAYROLL_CLOSE_NOT_AUTHORISED" });
+  });
+
+  it("refuses DISBURSE for the same reason", async () => {
+    stub(run({ status: "locked", finance_approved_at: "2026-08-16 10:00:00" }), 1, { canClose: false });
+    await expect(
+      payrollService.updateRunStatus("run-1", { status: "disbursed" } as never, OUTSIDER),
+    ).rejects.toMatchObject({ code: "PAYROLL_CLOSE_NOT_AUTHORISED" });
+  });
+
+  it("break-glass does not substitute for the authority to close", async () => {
+    // The ruling asks for an "independently authorized actor". Independence is tested elsewhere;
+    // this is the authorisation half, and a reason string is not a grant.
+    stub(run({ status: "approved" }), 1, { canClose: false });
+    await expect(
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "locked", breakGlassReason: "Bank cut-off in 20 minutes; CFO approved verbally on call" } as never,
+        OUTSIDER,
+      ),
+    ).rejects.toMatchObject({ code: "PAYROLL_CLOSE_NOT_AUTHORISED" });
+  });
+
+  it("asks only for the heads and the two admin roles", async () => {
+    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }));
+    await payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER);
+    const roleQuery = mockExecute.mock.calls.find(([s]) => /FROM user_roles/i.test(String(s)));
+    expect(String(roleQuery![0])).toMatch(/'finance_head','payroll_head','admin','super_admin'/);
+    expect(roleQuery![1]).toEqual([OUTSIDER]); // the actor's own roles, not the run's
+  });
+
+  it("leaves preparation alone — 'approved' is not a closing step", async () => {
+    stub(run({ status: "processing", approved_by: null }), 1, { canClose: false });
+    await expect(
+      payrollService.updateRunStatus("run-1", { status: "approved" } as never, APPROVER),
+    ).resolves.toBeDefined();
+  });
+});
+
+/**
  * Owner ruling 2026-08-16 (decision 9), second half. The calculator no longer aborts the whole
  * run when one employee's Professional Tax cannot be resolved — it blocks that employee and
  * carries on. On its own that trades a loud failure for a quiet omission: the blocked employee
@@ -165,21 +223,21 @@ describe("a run cannot close while a payable employee was excluded", () => {
   const blocked = [{ employee_code: "MAS63079" }, { employee_code: "MAS63080" }];
 
   it("refuses LOCK while an employee has no resolvable PT state", async () => {
-    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, blocked);
+    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, { ptBlocked: blocked });
     await expect(
       payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
     ).rejects.toMatchObject({ statusCode: 409, code: "PAYROLL_BLOCKED_PT_STATE_UNKNOWN" });
   });
 
   it("refuses DISBURSE for the same reason", async () => {
-    stub(run({ status: "locked", finance_approved_at: "2026-08-16 10:00:00" }), 1, blocked);
+    stub(run({ status: "locked", finance_approved_at: "2026-08-16 10:00:00" }), 1, { ptBlocked: blocked });
     await expect(
       payrollService.updateRunStatus("run-1", { status: "disbursed" } as never, OUTSIDER),
     ).rejects.toMatchObject({ code: "PAYROLL_BLOCKED_PT_STATE_UNKNOWN" });
   });
 
   it("names the employees, so the message is actionable by HR", async () => {
-    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, blocked);
+    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, { ptBlocked: blocked });
     await expect(
       payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
     ).rejects.toThrow(/MAS63079, MAS63080/);
@@ -188,7 +246,7 @@ describe("a run cannot close while a payable employee was excluded", () => {
   it("outranks break-glass — an omitted employee is not a sign-off problem", async () => {
     // Break-glass exists to bypass a missing Finance signature, not to close a run that is
     // incomplete. Supplying a reason must not get past this.
-    stub(run({ status: "approved" }), 1, blocked);
+    stub(run({ status: "approved" }), 1, { ptBlocked: blocked });
     await expect(
       payrollService.updateRunStatus(
         "run-1",
@@ -199,14 +257,14 @@ describe("a run cannot close while a payable employee was excluded", () => {
   });
 
   it("allows the transition once nobody is blocked", async () => {
-    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, []);
+    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, { ptBlocked: [] });
     await expect(
       payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
     ).resolves.toBeDefined();
   });
 
   it("does not gate 'approved' — an incomplete run may still be reviewed", async () => {
-    stub(run({ status: "processing", approved_by: null }), 1, blocked);
+    stub(run({ status: "processing", approved_by: null }), 1, { ptBlocked: blocked });
     await expect(
       payrollService.updateRunStatus("run-1", { status: "approved" } as never, APPROVER),
     ).resolves.toBeDefined();

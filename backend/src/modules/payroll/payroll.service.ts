@@ -462,6 +462,36 @@ export const payrollService = {
     }
 
     if (input.status === "locked" || input.status === "disbursed") {
+      // Closing a run is a different capability from preparing one.
+      //
+      // The route gate cannot express this: PATCH /runs/:id/status carries every transition, so
+      // requireRole there is necessarily the union of everyone who moves a run at all — the same
+      // list as POST /runs and POST /runs/:id/calculate. The capability only becomes separable
+      // once the target status is known, which is here.
+      //
+      // 'payroll' and 'finance' prepare. Closing needs a head-level grant. Verified live
+      // 2026-08-16 that this locks nobody out: finance_head (2), payroll_head (1), plus admin (9)
+      // and super_admin (3), against payroll (3) and finance (2) who keep every preparation right
+      // they had. This is also what makes break-glass meaningful — the ruling requires an
+      // "independently authorized actor", and independence alone is not authorisation.
+      const [closerRoles] = await db.execute<RowDataPacket[]>(
+        `SELECT 1
+           FROM user_roles
+          WHERE user_id = ? AND active_status = 1
+            AND role_key IN ('finance_head','payroll_head','admin','super_admin')
+          LIMIT 1`,
+        [userId],
+      );
+      if (closerRoles.length === 0) {
+        throw Object.assign(
+          new Error(
+            `You can prepare and approve payroll, but ${input.status === "locked" ? "locking" : "disbursing"} ` +
+            `a run is reserved for Finance or Payroll heads. Ask a head to complete this step.`,
+          ),
+          { statusCode: 403, code: "PAYROLL_CLOSE_NOT_AUTHORISED" },
+        );
+      }
+
       // No run closes while a payable employee was silently left out of it.
       //
       // Owner ruling 2026-08-16 (decision 9). The calculator no longer aborts the whole run
