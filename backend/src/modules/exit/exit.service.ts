@@ -10,6 +10,7 @@ import type { ExitRequest, ExitStats, PaginatedResult } from "./exit.types.js";
 import { createDefaultClearanceTasks, createExitHealthSnapshot } from "./exit-intelligence.service.js";
 import { notifyResignationSubmitted, notifyResignationDecision } from "./exit.notifications.js";
 import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
+import { recordExitFollowUpFailure } from "./exit-followup-recovery.js";
 import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
 
 // Singleton transporter — created once at module load, not per-call
@@ -415,7 +416,11 @@ export const exitService = {
             advances_recovery, net_payable, status, is_ff_provisional, prepared_by)
          VALUES (UUID(), ?, ?, CURDATE(), 0, 0, 0, 0, 0, 0, 0, 0, 'draft', 1, ?)`,
         [id, employeeId, userId]
-      ).catch((err: unknown) => logger.warn({ err }, '[exit] F&F record creation failed'));
+      ).catch(async (err: unknown) => {
+        logger.warn({ err }, '[exit] F&F record creation failed');
+        // Post-commit: the exit stands, so this becomes payroll's work rather than a log line.
+        await recordExitFollowUpFailure('FF_DRAFT_CREATION', id, employeeId, err);
+      });
 
       // Nullify reporting_manager_id for direct reports so they are not orphaned
       await db.execute(
@@ -423,7 +428,10 @@ export const exitService = {
             SET reporting_manager_id = NULL, updated_at = NOW()
           WHERE reporting_manager_id = ? AND active_status = 1`,
         [employeeId]
-      ).catch((err: unknown) => logger.warn({ err, employeeId }, '[exit] Direct-report RM nullification failed'));
+      ).catch(async (err: unknown) => {
+        logger.warn({ err, employeeId }, '[exit] Direct-report RM nullification failed');
+        await recordExitFollowUpFailure('DIRECT_REPORT_REPARENT', id, employeeId, err);
+      });
 
       // Withdraw LMS access and future leave, and count kit still out on loan.
       //
@@ -443,6 +451,9 @@ export const exitService = {
           { exitRequestId: id, employeeId, failures: deprovision.failures },
           '[exit] Deprovisioning steps failed — access may persist'
         );
+        // "Failures surface" previously meant this log line only. Access persisting after an
+        // exit is a security outcome, so it has to become work somebody is holding.
+        await recordExitFollowUpFailure('ACCESS_DEPROVISION', id, employeeId, deprovision.failures);
       }
 
       // Fire IT exit provisioning tasks — fire-and-forget, must not throw
@@ -455,8 +466,14 @@ export const exitService = {
           lastWorkingDay: exitRec.last_working_day_proposed ?? null,
           exitRequestId:  id,
           actorUserId:    userId,
-        }).catch((err: unknown) => logger.error({ err }, '[it-provisioning] exit dispatch failed'));
-      }).catch((err: unknown) => logger.error({ err }, '[it-provisioning] module load failed'));
+        }).catch((err: unknown) => {
+          logger.error({ err }, '[it-provisioning] exit dispatch failed');
+          void recordExitFollowUpFailure('IT_DEPROVISION_DISPATCH', id, employeeId, err);
+        });
+      }).catch((err: unknown) => {
+        logger.error({ err }, '[it-provisioning] module load failed');
+        void recordExitFollowUpFailure('IT_DEPROVISION_DISPATCH', id, employeeId, err);
+      });
     }
 
     return this.getExitRequest(id);
