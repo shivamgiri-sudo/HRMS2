@@ -29,6 +29,7 @@ import { isRunClosed, runRankSql } from "./run-status.js";
 import { payslipService } from "./payslip.service.js";
 import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
+import { buildBankReadinessReport } from "./bank-payment-readiness.service.js";
 import { payrollAttendanceControlService } from "./payroll-attendance-control.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
@@ -2284,6 +2285,26 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
     return res.status(403).json({ success: false, message: "Payroll must be validated before generating NEFT export. Current status: " + run.validation_status });
   }
 
+  // FINANCE SIGN-OFF (payment gate requirement E).
+  //
+  // A closed, validated run still is not a mandate to move money — that is a separate act by a
+  // separate person, which is why salary_prep_run carries finance_approved_by/at at all. Nothing
+  // read those columns before this, so the only thing standing between a FINALIZED run and a bank
+  // file was validation_status. Verified live 2026-08-17: finance_approved_by is NULL on ALL 66
+  // runs, so no run in this system has ever actually been signed off for payment.
+  //
+  // Deliberately checked as a distinct 409 rather than folded into the run-state check above:
+  // "not signed off" is a workflow state a human resolves, not a malformed request.
+  if (!run.finance_approved_by) {
+    return res.status(409).json({
+      success: false,
+      code: "FINANCE_SIGNOFF_MISSING",
+      message:
+        "Finance sign-off is required before a payment file can be generated. " +
+        "This run has no finance_approved_by. Record the sign-off, then export.",
+    });
+  }
+
   // Active primary account only — see the identical filter on /neft-lines. Unfiltered, this
   // emits one CSV row per employee_bank_detail row, each carrying the FULL net_salary and each
   // added to the declared total, so an employee with two bank rows is instructed to be paid
@@ -2345,6 +2366,8 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
   // headers so a caller can reconcile without parsing the CSV. No employee's pay changes; only
   // what is asserted to be payable right now.
   const unpayable: Array<{ code: string; name: string; amount: number; reason: string }> = [];
+  /** Employees actually written as payment instructions — the set reconciled against readiness. */
+  const paidEmployeeIds: string[] = [];
 
   for (const line of lines as RowDataPacket[]) {
     const accountNo = resolveAccountNumber({ account_number_enc: (line as any).account_number_enc, account_number: (line as any).account_number_legacy });
@@ -2367,6 +2390,7 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
 
     const remarks = `SALARY ${run.run_month as string}`;
     csvRows.push(`${srNo},${code},${name},${bank},${ifsc},${accountNo},${net.toFixed(2)},${remarks}`);
+    paidEmployeeIds.push(String(line.employee_id));
     srNo++;
     totalAmount += net;
   }
@@ -2382,6 +2406,79 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
       csvRows.push(`${u.code},${u.name},${u.amount.toFixed(2)},${u.reason}`);
     }
     csvRows.push(`EXCLUDED_TOTAL,,${excludedTotal.toFixed(2)},`);
+  }
+
+  // POPULATION RECONCILIATION (payment gate requirement B).
+  //
+  // Until this, two independent payment populations existed and nothing compared them. This route
+  // derives its own from salary_prep_line; bank-payment-readiness.service.ts derives another and
+  // is what the Bank Payment Readiness page reports. Measured on the FINALIZED 2026-04 run
+  // (2026-08-17): this exporter 982 employees / Rs 1,76,04,080, readiness 712 / Rs 1,38,70,123 —
+  // a 270-employee, Rs 37,33,957 divergence, entirely employees.active_status = 0.
+  //
+  // That divergence is not self-evidently wrong: those 270 held April payroll lines and left
+  // afterwards, so the exporter answers "who was owed money in this run" while readiness answers
+  // "who can we pay right now". Both are defensible readings. What is NOT defensible is shipping
+  // a bank file while the two disagree and nobody has said which is correct — so this refuses the
+  // file and hands a human the exact difference to adjudicate.
+  //
+  // buildBankReadinessReport() is CALLED rather than re-implemented on purpose. Deriving the
+  // comparison population here would create a third one, which is the very failure being closed.
+  const readinessReport = await buildBankReadinessReport(runId);
+
+  // Readiness verifies accounts against db_bill's confirmed credits. That host is LAN-only, and
+  // when it is unreachable the report DEGRADES — every row falls out of READY. Measured
+  // 2026-08-17 from off-LAN: db_bill ETIMEDOUT and the report returned 0 READY out of 837
+  // otherwise-payable employees.
+  //
+  // Refusing is still correct — an unverifiable payment population must not become a bank file —
+  // but reporting it as a population MISMATCH would be a confident wrong answer: it names the
+  // employee data as the problem when the actual fault is a database nobody can reach. Whoever
+  // reads that error would go looking for 837 bad bank records that do not exist.
+  if (!readinessReport.verification_source.available) {
+    return res.status(409).json({
+      success: false,
+      code: "PAYMENT_READINESS_UNVERIFIABLE",
+      message:
+        "Bank payment readiness could not be verified — its verification source is unavailable, " +
+        "so the payment population cannot be reconciled. No file has been generated. This is not " +
+        "a problem with the employee data.",
+      verification_source: readinessReport.verification_source,
+    });
+  }
+
+  const readyIds = new Set(
+    readinessReport.rows.filter((r) => r.readiness_class === "READY").map((r) => r.employee_id),
+  );
+  const paidNotReady = paidEmployeeIds.filter((id) => !readyIds.has(id));
+  const readyNotPaid = [...readyIds].filter((id) => !paidEmployeeIds.includes(id));
+
+  if (paidNotReady.length > 0 || readyNotPaid.length > 0) {
+    const amountByEmployee = new Map(
+      (lines as RowDataPacket[]).map((l) => [String(l.employee_id), Number(l.net_salary) || 0]),
+    );
+    const sumOf = (ids: string[]) => ids.reduce((s, id) => s + (amountByEmployee.get(id) ?? 0), 0);
+    return res.status(409).json({
+      success: false,
+      code: "PAYMENT_POPULATION_MISMATCH",
+      message:
+        "The payment file population does not reconcile against bank payment readiness. " +
+        "No file has been generated. Resolve the difference, then export.",
+      reconciliation: {
+        exporter_payable_count: paidEmployeeIds.length,
+        exporter_payable_total: Number(totalAmount.toFixed(2)),
+        readiness_ready_count: readyIds.size,
+        would_pay_but_not_ready: {
+          count: paidNotReady.length,
+          amount: Number(sumOf(paidNotReady).toFixed(2)),
+          sample: paidNotReady.slice(0, 20),
+        },
+        ready_but_would_not_pay: {
+          count: readyNotPaid.length,
+          sample: readyNotPaid.slice(0, 20),
+        },
+      },
+    });
   }
 
   const csv = csvRows.join("\n");
