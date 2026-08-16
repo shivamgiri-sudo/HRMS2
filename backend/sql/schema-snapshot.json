@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 947,
-  "columnCount": 13350,
+  "tableCount": 948,
+  "columnCount": 13358,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -9570,7 +9570,9 @@
       "score",
       "status",
       "last_accessed",
-      "synced_at"
+      "synced_at",
+      "due_date",
+      "course_duration_hours"
     ],
     "lms_mapping_audit": [
       "id",
@@ -9588,6 +9590,14 @@
       "final_hrms_employee_id",
       "success",
       "error_reason"
+    ],
+    "lms_reminder_log": [
+      "id",
+      "employee_id",
+      "course_id",
+      "reminder_type",
+      "sent_at",
+      "email_to"
     ],
     "lms_sync_audit": [
       "id",
