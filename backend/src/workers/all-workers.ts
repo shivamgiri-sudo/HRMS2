@@ -12,6 +12,7 @@ import { startSLABreachWorker, stopSLABreachWorker } from "./sla-breach-worker.j
 import { startInterviewDelayAlertWorker, stopInterviewDelayAlertWorker } from "./interview-delay-alert.worker.js";
 import { startLmsSyncWorker, stopLmsSyncWorker } from "./lms-sync.worker.js";
 import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./payroll-nightly-recalc.worker.js";
+import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from "./payroll-recalc-drainer.worker.js";
 import { startDbBillFinanceSyncWorker, stopDbBillFinanceSyncWorker } from "./db-bill-finance-sync.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
@@ -149,6 +150,14 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   {
     name: "payroll-nightly-recalc",
     start: startPayrollNightlyRecalcWorker,
+  },
+  {
+    // Drains payroll_recalculation_queue. Distinct from payroll-nightly-recalc above, which
+    // recalculates whole open runs and never reads that queue. The queue's only drain was a
+    // 200-row call at the tail of a COSEC sync, so it backlogged by construction: 912 pending for
+    // 270 active employees when this was written, oldest 12 days.
+    name: "payroll-recalc-drainer",
+    start: () => { startPayrollRecalcDrainerWorker(); return Promise.resolve(); },
   },
   {
     name: "kpi-daily-sync",
@@ -345,6 +354,7 @@ function shutdown(): void {
   stopInterviewDelayAlertWorker();
   stopLmsSyncWorker();
   stopPayrollNightlyRecalcWorker();
+  stopPayrollRecalcDrainerWorker();
   stopDbBillFinanceSyncWorker();
   stopPayrollPrepReminderWorker();
   stopPayrollReadinessRefreshWorker();

@@ -34,8 +34,10 @@ import { startIntegrationScheduler, stopIntegrationScheduler } from "./workers/i
 import { startAprVicidialSyncWorker } from "./workers/apr-vicidial-sync.worker.js";
 import { startKpiDailySyncWorker } from "./workers/kpi-daily-sync.worker.js";
 import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./workers/payroll-nightly-recalc.worker.js";
+import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from "./workers/payroll-recalc-drainer.worker.js";
 import { startSLABreachWorker } from "./workers/sla-breach-worker.js";
 import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
+import { startLmsRemindersScheduler } from "./modules/lms/lms-reminders.cron.js";
 import { startMiraTriageScheduler } from "./modules/ai/mira-triage-scheduler.js";
 import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
@@ -87,6 +89,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
     // Stop workers with exported stop functions
     stopIntegrationScheduler();
     stopPayrollNightlyRecalcWorker();
+    stopPayrollRecalcDrainerWorker();
     stopPerformanceIngestionScheduler();
     stopDailyGamesScheduler();
 
@@ -263,6 +266,15 @@ function startServer() {
         startLmsSyncWorker().catch((error) =>
           console.error("[lms-sync] startup error:", error instanceof Error ? error.message : String(error)),
         );
+        // Sends due-date reminder emails at 7d / 3d / 1d before batch end.
+        // Gated explicitly: the first sweep emails every qualifying learner.
+        // Set LMS_REMINDERS_ENABLED=true once reminders have been reviewed.
+        if (process.env.LMS_REMINDERS_ENABLED === "true") {
+          startLmsRemindersScheduler();
+        }
+        // Drains payroll_recalculation_queue. Registered in all-workers.ts too — a worker in only
+        // one of the two files silently never runs in the other topology.
+        startPayrollRecalcDrainerWorker();
         startMiraTriageScheduler();
 
         console.log(
