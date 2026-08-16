@@ -90,7 +90,37 @@ export const taxEngineService = {
       [financialYear, regime]
     );
 
-    if (rows.length) return rows as SlabRow[];
+    if (rows.length) {
+      // Two active rows for the same band is not a slab table, it is an ambiguity.
+      //
+      // calculateSlabTax below sums EVERY row it is handed, so a duplicated band is charged
+      // twice and the result is a clean, plausible, silently doubled tax figure. Verified live
+      // 2026-08-16: every FY2026-27 band is present twice in payroll_tax_slab_master, and the
+      // table has no unique key on (financial_year, regime, slab_from) to prevent it.
+      //
+      // Deduplicating here would mean picking a winner, and the duplicates are not guaranteed
+      // to agree on rate_pct or slab_to — choosing silently would swap a visible doubling for
+      // an invisible wrong rate. This throws for the same reason the missing-slab branch below
+      // throws: an unapproved or unresolvable slab set must stop payroll, not guess at it.
+      const seen = new Map<string, number>();
+      for (const row of rows as SlabRow[]) {
+        const key = String(row.slab_from);
+        seen.set(key, (seen.get(key) ?? 0) + 1);
+      }
+      const duplicated = [...seen.entries()].filter(([, n]) => n > 1).map(([from]) => from);
+      if (duplicated.length) {
+        throw Object.assign(
+          new Error(
+            `Ambiguous tax slabs for financial year ${financialYear}, ${regime} regime: ` +
+            `slab_from ${duplicated.join(", ")} each have more than one active row in ` +
+            `payroll_tax_slab_master. Every duplicated band would be taxed more than once. ` +
+            `Deactivate the extra rows before running payroll for this year.`
+          ),
+          { statusCode: 409, code: "TAX_SLABS_AMBIGUOUS" }
+        );
+      }
+      return rows as SlabRow[];
+    }
 
     // No hardcoded slab table, for the same reason as getConfig above. The old-regime
     // literals removed here were the pre-2023 bands (250k/500k/1000k) and had already
