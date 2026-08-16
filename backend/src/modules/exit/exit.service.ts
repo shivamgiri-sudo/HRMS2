@@ -278,7 +278,15 @@ export const exitService = {
     // could produce. Derived from the exit itself now; see exitEmploymentStatus.ts for why
     // the mapper and the activation guard's exclusion list must stay in one place.
     const nextEmploymentStatus = employmentStatusForExit(exitRecord.exit_type, exitRecord.exit_sub_type);
-    const lastWorkingDay = exitRecord.last_working_day_proposed ?? new Date().toISOString().slice(0, 10);
+    // Confirmed before proposed — the same precedence payroll's employment-end-date resolver
+    // applies. Owner ruling 2026-08-16 (decision 1): the LWD written here IS the value payroll
+    // reads, so employee master and payroll cannot disagree about when someone stopped being
+    // paid. Writing `proposed` here while payroll preferred `confirmed` would put a leaver's
+    // final day one value apart in two systems.
+    const lastWorkingDay =
+      (exitRecord.last_working_day_confirmed as string | null) ??
+      (exitRecord.last_working_day_proposed as string | null) ??
+      new Date().toISOString().slice(0, 10);
 
     // ONE transaction for the whole core state change.
     //

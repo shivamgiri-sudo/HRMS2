@@ -6,6 +6,11 @@ import { missingTdsConfigKeys } from "./statutory-regime.js";
 // production — runs finish as FINALIZED — so this guard never fired.
 import { isRunClosed, CLOSED_RUN_STATUSES_SQL } from "./run-status.js";
 import { isProfessionalTaxExempt } from "./professional-tax-states.js";
+import {
+  EMPLOYMENT_END_DATE_SELECT,
+  employmentWindowPredicate,
+  payableThrough,
+} from "./employment-end-date.js";
 import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 import { getStatutoryConfigForPeriod } from "./statutory-config.resolver.js";
 import { payrollService, breakSpecialAllowance } from "./payroll.service.js";
@@ -486,7 +491,11 @@ interface EmployeeRow {
   hra_pct: number;
   state_code: string | null;
   salary_start_date: string | null;
-  date_of_leaving: string | null;
+  /**
+   * Resolved Last Working Day as 'YYYY-MM-DD' — see employment-end-date.ts. Replaces
+   * date_of_leaving, which this query used to select and which is NULL on every row.
+   */
+  employment_end_date: string | null;
   date_of_birth: string | null;
   process_id: string | null;
   branch_id: string | null;
@@ -640,11 +649,15 @@ export async function calculatePayrollRunScoped(
   //
   // Both bounds are inclusive so mid-month movers keep their pro-rated pay: someone joining
   // on the 20th is still in that month's run, and a leaver is paid for the days worked
-  // before date_of_leaving.
-  empConds.push("COALESCE(e.salary_start_date, e.date_of_joining) <= LAST_DAY(CONCAT(?, '-01'))");
-  empParams.push(run.run_month);
-  empConds.push("(e.date_of_leaving IS NULL OR e.date_of_leaving >= CONCAT(?, '-01'))");
-  empParams.push(run.run_month);
+  // through their Last Working Day.
+  //
+  // The leaver bound used to read `e.date_of_leaving IS NULL OR e.date_of_leaving >= ...`.
+  // That column is NULL on all 58,840 employee rows — no write path has ever populated it — so
+  // the bound was inert and the only thing excluding leavers was the employment_status filter
+  // below, which asks a different question. See employment-end-date.ts for what replaced it and
+  // why the end-date-NULL arm of the predicate cannot be dropped.
+  empConds.push(employmentWindowPredicate());
+  empParams.push(run.run_month, run.run_month);
 
   if (run.process_filter) {
     empConds.push("(pm.process_name = ? OR e.process_id IN (SELECT id FROM process_master WHERE process_name = ?))");
@@ -686,7 +699,10 @@ export async function calculatePayrollRunScoped(
             bm.state AS state_code,
             e.process_id, e.branch_id,
             COALESCE(e.salary_start_date, e.date_of_joining) AS salary_start_date,
-            e.date_of_leaving,
+            -- Formatted in SQL, never handed to JS as a DATE: mysql2 returns a DATE as a
+            -- host-timezone JS Date, and on a leaver bound a one-day shift is the difference
+            -- between a paid and an unpaid final working day.
+            ${EMPLOYMENT_END_DATE_SELECT} AS employment_end_date,
             e.date_of_birth,
             TRIM(COALESCE(e.pan_number, '')) AS pan_number
        FROM employees e
@@ -710,7 +726,10 @@ export async function calculatePayrollRunScoped(
        LEFT JOIN branch_master bm           ON bm.id = e.branch_id
        LEFT JOIN salary_prep_line spl_existing
               ON spl_existing.run_id = ? AND spl_existing.employee_id = e.id
-      WHERE LOWER(e.employment_status) = 'active' AND ${empConds.join(" AND ")}`,
+      -- No standalone employment_status filter. It is folded into the window predicate above,
+      -- where it applies ONLY to employees with no resolvable end date. Filtering on it here as
+      -- well would re-exclude exactly the mid-month leavers this change exists to include.
+      WHERE ${empConds.join(" AND ")}`,
     // run_month feeds the point-in-time salary join, which appears before the
     // spl_existing join in the statement, so it binds first.
     [run.run_month, runId, ...empParams]
@@ -996,8 +1015,11 @@ export async function calculatePayrollRunScoped(
     const activeCals = (() => {
       const effectiveStart = emp.salary_start_date && emp.salary_start_date > monthStart
         ? emp.salary_start_date : monthStart;
-      const effectiveEnd = emp.date_of_leaving && emp.date_of_leaving < monthEnd
-        ? emp.date_of_leaving : monthEnd;
+      // Prorated through the resolved Last Working Day, not through date_of_leaving — which
+      // is NULL on every row, so this bound never once fired and every leaver was measured to
+      // month end. Same resolver as the selection predicate, so a leaver cannot be selected on
+      // one definition and paid on another.
+      const effectiveEnd = payableThrough(emp.employment_end_date, monthEnd);
       const days = Math.round(
         (new Date(effectiveEnd).getTime() - new Date(effectiveStart).getTime()) / 86400000
       ) + 1;
