@@ -16,8 +16,27 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * quiet edit.
  */
 
-const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
-vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
+/**
+ * markFfPaid now runs the UPDATE and its audit row in ONE transaction on a pooled connection,
+ * so the harness has to offer one. The connection's execute is the SAME mock as the pool's, so
+ * the stub() routing below still matches the UPDATE wherever it is issued from.
+ */
+const { execute, conn } = vi.hoisted(() => {
+  const execute = vi.fn();
+  return {
+    execute,
+    conn: {
+      execute,
+      beginTransaction: vi.fn().mockResolvedValue(undefined),
+      commit: vi.fn().mockResolvedValue(undefined),
+      rollback: vi.fn().mockResolvedValue(undefined),
+      release: vi.fn(),
+    },
+  };
+});
+vi.mock("../../../db/mysql.js", () => ({
+  db: { execute, getConnection: vi.fn().mockResolvedValue(conn) },
+}));
 
 const { logSensitiveAction } = vi.hoisted(() => ({ logSensitiveAction: vi.fn() }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
@@ -70,6 +89,10 @@ function stub(row: Record<string, unknown> | null, opts: { updateAffectedRows?: 
 beforeEach(() => {
   execute.mockReset();
   logSensitiveAction.mockReset();
+  conn.beginTransaction.mockClear();
+  conn.commit.mockClear();
+  conn.rollback.mockClear();
+  conn.release.mockClear();
 });
 
 describe("markFfPaid — the transition that did not exist", () => {
@@ -83,6 +106,60 @@ describe("markFfPaid — the transition that did not exist", () => {
     expect(update![1]).toContain("UTR123456789");
     // Guarded on the expected prior state, so a concurrent change cannot be overwritten.
     expect(String(update![0])).toContain("AND status = 'approved'");
+  });
+
+  /**
+   * §16 — irreversible money events audit strictly.
+   *
+   * The audit row is written on the SAME connection inside the SAME transaction as the status
+   * change, and is awaited. Previously this was `void logSensitiveAction(...)` — neither awaited
+   * nor throwing — so a settlement could commit as PAID with no audit row while the caller saw
+   * success. A payment with no record cannot be reconciled against a bank statement or attributed
+   * to a payer, and FF_PAID_BUT_EMPLOYEE_ACTIVE reads that same trail.
+   *
+   * Strict is the right trade HERE and not generally: "payment not recorded" is retryable
+   * (the UPDATE is guarded on status='approved', so a retry applies once or 409s), whereas
+   * "paid with no audit" is not even detectable.
+   */
+  it("writes the audit row inside the paying transaction, and commits once", async () => {
+    stub(ffRow());
+    await ffService.markFfPaid(FF_ID, PAYER, "UTR123456789").catch(() => undefined);
+
+    const auditInsert = execute.mock.calls.find(([s]) =>
+      /INSERT INTO sensitive_action_log/i.test(String(s))
+    );
+    expect(auditInsert, "FULL_FINAL_PAID audit row was not written on the connection").toBeTruthy();
+    expect(auditInsert![1]).toContain("FULL_FINAL_PAID");
+    // The reference travels inside the JSON-bound change_summary, not as a bare parameter.
+    expect(JSON.stringify(auditInsert![1])).toContain("UTR123456789");
+
+    // Ordering: the audit must land before the commit, not after it.
+    const updateIdx = execute.mock.calls.findIndex(([s]) => String(s).includes("SET status = 'paid'"));
+    const auditIdx = execute.mock.calls.findIndex(([s]) => /INSERT INTO sensitive_action_log/i.test(String(s)));
+    expect(auditIdx).toBeGreaterThan(updateIdx);
+    expect(conn.commit).toHaveBeenCalledTimes(1);
+    expect(conn.rollback).not.toHaveBeenCalled();
+    expect(conn.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls the payment back when the audit write fails — never paid-but-unrecorded", async () => {
+    stub(ffRow());
+    // Everything succeeds except the audit insert.
+    const base = execute.getMockImplementation()!;
+    execute.mockImplementation((sql: string, params?: unknown) => {
+      if (/INSERT INTO sensitive_action_log/i.test(String(sql))) {
+        return Promise.reject(new Error("audit sink unavailable"));
+      }
+      return base(sql, params);
+    });
+
+    await expect(ffService.markFfPaid(FF_ID, PAYER, "UTR999")).rejects.toThrow(/audit sink unavailable/);
+
+    // The UPDATE was issued, but inside a transaction that was rolled back — so the settlement
+    // is NOT recorded as paid, and the caller is told so rather than being given a false success.
+    expect(conn.rollback).toHaveBeenCalledTimes(1);
+    expect(conn.commit).not.toHaveBeenCalled();
+    expect(conn.release).toHaveBeenCalledTimes(1);
   });
 
   it("refuses a settlement that is not approved yet", async () => {
@@ -115,16 +192,35 @@ describe("markFfPaid — the transition that did not exist", () => {
     expect(execute.mock.calls.some(([s]) => String(s).includes("SET status = 'paid'"))).toBe(true);
   });
 
+  /**
+   * Same claim as before — the audit entry carries who paid, how much and against what
+   * reference — but asserted against the mechanism that now writes it. This used to read
+   * logSensitiveAction's call args; the entry is now written by recordMoneyEventAudit as a
+   * real INSERT on the paying connection, so the assertion reads the bound parameters.
+   *
+   * logSensitiveAction must NOT also fire here: a second, non-transactional copy of the same
+   * event would reintroduce exactly the write that could go missing.
+   */
   it("writes a sensitive-action audit entry carrying the amount and reference", async () => {
     stub(ffRow());
     await ffService.markFfPaid(FF_ID, PAYER, "UTR999").catch(() => undefined);
 
-    expect(logSensitiveAction).toHaveBeenCalledTimes(1);
-    const entry = logSensitiveAction.mock.calls[0][0];
-    expect(entry.action_type).toBe("FULL_FINAL_PAID");
-    expect(entry.actor_user_id).toBe(PAYER);
-    expect(entry.change_summary.payment_reference).toBe("UTR999");
-    expect(entry.change_summary.net_payable).toBe(50000);
+    const insert = execute.mock.calls.find(([s]) =>
+      /INSERT INTO sensitive_action_log/i.test(String(s))
+    );
+    expect(insert, "no FULL_FINAL_PAID audit insert was issued").toBeTruthy();
+    const params = insert![1] as unknown[];
+    expect(params).toContain("FULL_FINAL_PAID");
+    expect(params).toContain(PAYER);
+
+    // change_summary is bound as JSON, so read it back rather than matching the raw array.
+    const summary = JSON.parse(
+      params.find((p) => typeof p === "string" && p.startsWith("{")) as string
+    );
+    expect(summary.payment_reference).toBe("UTR999");
+    expect(summary.net_payable).toBe(50000);
+
+    expect(logSensitiveAction).not.toHaveBeenCalled();
   });
 
   it("404s a settlement that does not exist", async () => {

@@ -3,6 +3,7 @@ import type { Request } from "express";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { recordMoneyEventAudit } from "../../shared/moneyEventAudit.js";
 import { calculateGratuity } from "../payroll/payrollCalculate.service.js";
 import { notifyFullFinalReady } from "./exit.notifications.js";
 
@@ -432,13 +433,25 @@ export const ffService = {
       );
     }
 
-    const [payResult] = await db.execute<ResultSetHeader>(
-      `UPDATE full_final_calculation
-          SET status = 'paid', ff_paid_by = ?, ff_paid_at = NOW(),
-              ff_payment_reference = ?, updated_at = NOW()
-        WHERE id = ? AND status = 'approved'`,
-      [paidBy, reference, id]
-    );
+    // The state change and its audit row go in ONE transaction. Previously the UPDATE ran on
+    // the pool and the audit was `void logSensitiveAction(...)` — not awaited, and internally
+    // catching — so a settlement could commit as PAID with no audit row at all while the route
+    // still returned success. A disbursement that leaves no record cannot be reconciled against
+    // a bank statement or attributed to a payer, and FF_PAID_BUT_EMPLOYEE_ACTIVE reads that
+    // same trail. Strict audit is the correct trade here specifically because the alternative
+    // failure — payment not recorded — is retryable, and this one is not detectable.
+    const conn = await db.getConnection();
+    let payResult: ResultSetHeader;
+    try {
+      await conn.beginTransaction();
+
+      [payResult] = await conn.execute<ResultSetHeader>(
+        `UPDATE full_final_calculation
+            SET status = 'paid', ff_paid_by = ?, ff_paid_at = NOW(),
+                ff_payment_reference = ?, updated_at = NOW()
+          WHERE id = ? AND status = 'approved'`,
+        [paidBy, reference, id]
+      );
 
     // The expected-state predicate above was already right; its result was never read.
     //
@@ -449,26 +462,38 @@ export const ffService = {
     // returned success. The audit trail would then show a settlement disbursed twice, under
     // two references, one of which was never recorded anywhere. On the one control whose
     // entire purpose is to reconcile a payment against a bank statement.
-    if (payResult.affectedRows !== 1) {
-      throw ffError(
-        409,
-        "F&F was already marked paid by someone else — this payment was not recorded"
-      );
-    }
+      if (payResult.affectedRows !== 1) {
+        throw ffError(
+          409,
+          "F&F was already marked paid by someone else — this payment was not recorded"
+        );
+      }
 
-    void logSensitiveAction({
-      actor_user_id: paidBy,
-      action_type: "FULL_FINAL_PAID",
-      module_key: "exit",
-      entity_type: "full_final_calculation",
-      entity_id: id,
-      change_summary: {
-        exit_request_id: rec.exit_request_id,
-        net_payable: rec.net_payable,
-        payment_reference: reference,
-      },
-      req,
-    });
+      // Strict and awaited, on the same connection: if this throws, the payment rolls back
+      // rather than committing unrecorded. See shared/moneyEventAudit.ts for why this one
+      // call site does not use the non-throwing logSensitiveAction that every other does.
+      await recordMoneyEventAudit(conn, {
+        actor_user_id: paidBy,
+        action_type: "FULL_FINAL_PAID",
+        module_key: "exit",
+        entity_type: "full_final_calculation",
+        entity_id: id,
+        change_summary: {
+          exit_request_id: rec.exit_request_id,
+          net_payable: rec.net_payable,
+          payment_reference: reference,
+        },
+        employee_id: rec.employee_id ?? null,
+        req,
+      });
+
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    } finally {
+      conn.release();
+    }
 
     return this.getFF(rec.exit_request_id);
   },
