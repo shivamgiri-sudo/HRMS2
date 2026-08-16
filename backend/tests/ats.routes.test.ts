@@ -42,6 +42,25 @@ vi.mock("../src/shared/scopeAccess.js", () => ({
   AccessDeniedError: class AccessDeniedError extends Error {},
   BadRequestAccessError: class BadRequestAccessError extends Error {},
 }));
+/**
+ * Candidate row-scope moved out of scopeAccess into its own module when the by-id ATS routes
+ * were scoped — the P0 that let any recruiter open any candidate. This file mocks scopeAccess
+ * but not candidate-access, so the real guard ran against the db.execute stub, resolved an
+ * empty scope, and answered 404 on all six by-id cases.
+ *
+ * assertCandidateInScope returns a BOOLEAN — true means in scope — and sends the 404 itself
+ * when it returns false. A mock resolving undefined is therefore read as "not in scope" while
+ * sending no response at all, and the request hangs until the test times out. It must resolve
+ * true explicitly.
+ *
+ * The guard's own behaviour is covered by candidate-access-scope.test.ts; these cases are about
+ * the handlers behind it.
+ */
+vi.mock("../src/modules/ats/candidate-access.js", () => ({
+  resolveCandidateScope: vi.fn().mockResolvedValue({ sql: "1=1", params: [] }),
+  canAccessCandidate: vi.fn().mockResolvedValue(true),
+  assertCandidateInScope: vi.fn().mockResolvedValue(true),
+}));
 vi.mock("../src/middleware/scopeMiddleware.js", () => ({
   requireScopedRole: () => (_req: any, _res: any, next: any) => next(),
   requireScopedAccess: () => (_req: any, _res: any, next: any) => next(),
