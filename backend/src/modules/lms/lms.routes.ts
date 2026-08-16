@@ -547,9 +547,27 @@ router.get("/progress-summary", requireRole("admin", "hr", "super_admin", "opera
 
 // GET /api/lms/sso-session
 // HRMS2 backend calls LMS /api/auth/bridge with backend-only secret.
+//
+// This route mints an LMS **admin** session — the portal argument below is hardcoded — and
+// its only guard was the router-level requireAuth. Every other native route here checks the
+// capability it is about to hand out (`/native/employee` gates on ctx.access.access.employee,
+// `/native/coordinator` on .coordinator, and both 403 without it); this one checked nothing.
+// So any of the 1,327 active employees could call it and be issued an LMS administrator
+// session, with buildLmsSession writing a user_type='admin' row into the LMS's own
+// portal_sessions table and returning the token and /admin launch URL to the browser.
+//
+// The shipped UI path happened to be narrower — the page it sits behind has no page_catalog
+// row, so only super_admin reaches it through the app — but a page gate is a client-side
+// convenience, not the authorization boundary. 48 sessions have been minted by 8 users.
+//
+// Gated on the same computed capability its siblings use, rather than a fresh role list, so
+// there is one definition of "may act as LMS admin" instead of two that can drift.
 router.get("/sso-session", h(async (req: AuthenticatedRequest, res: Response) => {
   const ctx = await currentLmsContext(req, res);
   if (!ctx) return;
+  if (!ctx.access.access.admin) {
+    return res.status(403).json({ success: false, message: "LMS administrator access is not assigned to this HRMS user" });
+  }
   try {
     const session = await buildLmsSession(req, ctx, "admin");
     res.json({ success: true, ...session });

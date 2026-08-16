@@ -1,5 +1,5 @@
 import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 
 const VALID_TYPES = new Set(["frozen", "weekly", "daily", "rotating"]);
 
@@ -9,9 +9,9 @@ interface BatchRow extends RowDataPacket {
   normalized_data: unknown;
 }
 
-interface UpdateResultRow extends RowDataPacket {
-  affectedRows: number;
-}
+// An UPDATE does not return rows. mysql2 resolves a non-SELECT to a ResultSetHeader, so typing
+// the result as a RowDataPacket[] and reading result[0].affectedRows read an index that is
+// always undefined — see the call site below for what that produced.
 
 export async function importShiftRotationTypeBatch(
   batchId: string,
@@ -55,11 +55,17 @@ export async function importShiftRotationTypeBatch(
       continue;
     }
 
-    const [result] = await db.execute<UpdateResultRow[]>(
+    const [result] = await db.execute<ResultSetHeader>(
       "UPDATE employees SET shift_rotation_type = ?, updated_by = ? WHERE employee_code = ? AND employment_status = 'active'",
       [shift_rotation_type.toLowerCase(), userId, employee_code]
     );
-    const affected = result[0]?.affectedRows ?? 0;
+    // Was `result[0]?.affectedRows ?? 0` against a RowDataPacket[] type. result IS the header,
+    // so result[0] was always undefined and `affected` was always 0 — not a race, deterministic.
+    // Every row therefore took the branch below: the UPDATE genuinely landed on the employee,
+    // and the batch then reported "employee_code not found or inactive" for all of them and
+    // imported_rows = 0. The natural response to that message is to fix the sheet and upload
+    // again, which applies the same change a second time.
+    const affected = result.affectedRows ?? 0;
     if (affected === 0) {
       const msg = `Row ${batchRow.row_no}: employee_code '${employee_code}' not found or inactive`;
       errors.push(msg);

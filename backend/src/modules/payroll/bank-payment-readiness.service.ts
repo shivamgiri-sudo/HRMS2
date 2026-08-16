@@ -282,7 +282,20 @@ export function classifyBankReadiness(input: BankReadinessInput): BankReadinessR
       "The encrypted and legacy account columns hold different numbers — HR must confirm which is correct",
     );
   }
-  if (input.duplicate_of_employee_code) {
+  // A corrupt account is never a duplicate, however identical two of them look.
+  //
+  // Excel mangles long account numbers into scientific notation on import, and every distinct
+  // number that rounds to the same mantissa collapses to the same string. Verified live
+  // 2026-08-16: all three "shared" accounts among active employees are exactly that —
+  // 6.276E+15 (MAS20525, MAS27845), 8.5962E+12 (MAS26744, MAS27953) and 9.0901E+14
+  // (MAS07170, MAS07629). 32 of 944 active primary accounts carry the corruption.
+  //
+  // Because this check ran before the quality check below, all six were reported as
+  // "account_shared_with_another_employee" — sending HR to investigate a shared-account fraud
+  // that does not exist, when the actual defect is that six account numbers were destroyed on
+  // import and none of the six people can be paid. Payability is unchanged either way; the
+  // reason code is the whole point of the report.
+  if (input.duplicate_of_employee_code && !isCorruptAccount(account)) {
     return out(
       "CONFLICT",
       ["account_shared_with_another_employee"],

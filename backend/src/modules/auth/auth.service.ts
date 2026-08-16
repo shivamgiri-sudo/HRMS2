@@ -1000,14 +1000,31 @@ export const authService = {
 
   async resetPassword(rawToken: string, newPassword: string): Promise<void> {
     const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-    const [rows] = await db.execute<AuthUserRow[]>(
-      'SELECT user_id FROM auth_password_reset WHERE token_hash = ? AND used = 0 AND expires_at > UTC_TIMESTAMP() LIMIT 1',
+    // Consume the token FIRST, and let the UPDATE be the check.
+    //
+    // This used to SELECT the token, hash the new password, write it, and only then mark the
+    // token used — three statements, no transaction, and the `used = 0` test lived in the
+    // SELECT rather than in the write. bcrypt sits in the middle of that gap, so the window is
+    // ~100ms wide, not microseconds. Anyone who observed a reset link could submit alongside
+    // the legitimate user: both SELECTs see used = 0, both proceed, and whichever UPDATE lands
+    // second owns the account. The real user sees a successful reset and has no signal at all.
+    //
+    // Making the consume the guard closes it: exactly one caller can move the row from
+    // used = 0, and only that caller goes on to set a password.
+    const [claim] = await db.execute<ResultSetHeader>(
+      'UPDATE auth_password_reset SET used = 1 WHERE token_hash = ? AND used = 0 AND expires_at > UTC_TIMESTAMP()',
       [tokenHash]
     );
-    if (!rows[0]) throw new Error('Invalid or expired reset token');
+    if (claim.affectedRows !== 1) {
+      throw Object.assign(new Error('Invalid or expired reset token'), { statusCode: 400 });
+    }
+    const [rows] = await db.execute<AuthUserRow[]>(
+      'SELECT user_id FROM auth_password_reset WHERE token_hash = ? LIMIT 1',
+      [tokenHash]
+    );
+    if (!rows[0]) throw Object.assign(new Error('Invalid or expired reset token'), { statusCode: 400 });
     const hash = await bcrypt.hash(newPassword, 10);
     await db.execute('UPDATE auth_user SET password_hash = ?, must_change_password = 0 WHERE id = ?', [hash, rows[0].user_id]);
-    await db.execute('UPDATE auth_password_reset SET used = 1 WHERE token_hash = ?', [tokenHash]);
     writeSecurityEvent({
       event_type: 'PASSWORD_RESET',
       severity: 'info',

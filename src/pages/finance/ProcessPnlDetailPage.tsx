@@ -120,7 +120,11 @@ function DataTable({
 
 export default function ProcessPnlDetailPage() {
   const { processId = "" } = useParams();
-  const [searchParams] = useSearchParams();
+  // setSearchParams was never destructured, yet the period arrows below call it — so both
+  // buttons threw ReferenceError on click rather than moving the period. tsc caught it as
+  // TS2552, but the frontend typecheck gates the Build job in ci.yml, and Build is skipped
+  // whenever typecheck fails, so nothing downstream reported it.
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const period = searchParams.get("period") ?? currentPeriod();
   const [activeTab, setActiveTab] = useState("statement");
