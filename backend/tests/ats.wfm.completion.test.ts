@@ -9,7 +9,31 @@ vi.mock("../src/db/supabaseAdmin.js", () => ({
   supabaseAdmin: {},
   supabaseAuthClient: { auth: { getUser: vi.fn() } },
 }));
-vi.mock("../src/db/mysql.js", () => ({ db: { execute: vi.fn().mockResolvedValue([[], []]) }, pingDb: vi.fn() }));
+// wfm-ext''s roster-swap review runs inside withEmployeeRosterLock, which takes a MySQL named
+// advisory lock on a dedicated connection — so db.getConnection() must exist here, and the
+// lock statements go through .query() rather than .execute(). GET_LOCK has to report
+// acquired = 1, or the service throws ROSTER_LOCK_TIMEOUT before reaching the behaviour under
+// test. The connection shares the pool''s execute stub, so existing SQL expectations are
+// unaffected.
+vi.mock("../src/db/mysql.js", () => {
+  const execute = vi.fn().mockResolvedValue([[], []]);
+  const query = vi.fn().mockResolvedValue([[{ acquired: 1 }], []]);
+  return {
+    db: {
+      execute,
+      query,
+      getConnection: vi.fn().mockResolvedValue({
+        execute,
+        query,
+        beginTransaction: vi.fn().mockResolvedValue(undefined),
+        commit: vi.fn().mockResolvedValue(undefined),
+        rollback: vi.fn().mockResolvedValue(undefined),
+        release: vi.fn(),
+      }),
+    },
+    pingDb: vi.fn(),
+  };
+});
 
 import { app } from "../src/app.js";
 import { db } from "../src/db/mysql.js";
@@ -224,7 +248,19 @@ describe("POST /api/wfm-ext/roster/swaps/:id/review", () => {
   });
 
   it("approves swap for manager", async () => {
-    const auth = mockManager();
+    // The review path now locks the swap row with SELECT ... FOR UPDATE and refuses a request
+    // it cannot find, one that is not pending, or one whose counterpart has not accepted. The
+    // test previously seeded no rows at all, so the lookup returned nothing and the route
+    // answered 404. Seeding a genuine pending, counterpart-accepted swap is what makes this an
+    // approval test rather than a not-found test.
+    const auth = mockManager([{
+      id: "sw-1",
+      status: "pending",
+      counterpart_status: "accepted",
+      requester_emp_id: "emp-1",
+      swap_with_emp_id: "emp-2",
+      process_id: "proc-1",
+    }]);
     const r = await request(app).post("/api/wfm-ext/roster/swaps/sw-1/review").set(auth)
       .send({ status: "approved" });
     expect(r.status).toBe(200);

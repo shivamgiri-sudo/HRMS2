@@ -1,8 +1,35 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("../src/db/mysql.js", () => ({
-  db: { execute: vi.fn().mockResolvedValue([[], []]) },
-}));
+/**
+ * roster.service.ts wraps its critical section in withEmployeeRosterLock, which takes a
+ * MySQL named advisory lock on a dedicated connection (rest-policy.service.ts) so two
+ * concurrent roster writes for the same employee cannot both pass validation and commit.
+ * That means db.getConnection() has to exist here, and the lock statements go through
+ * .query() rather than .execute().
+ *
+ * The connection's execute is the SAME stub as the pool's, so every SQL expectation in this
+ * file keeps working unchanged — what these tests assert is which statements run, not which
+ * handle issued them. GET_LOCK must report acquired=1 or the service throws
+ * ROSTER_LOCK_TIMEOUT before reaching any of the behaviour under test.
+ */
+vi.mock("../src/db/mysql.js", () => {
+  const execute = vi.fn().mockResolvedValue([[], []]);
+  const query = vi.fn().mockResolvedValue([[{ acquired: 1 }], []]);
+  return {
+    db: {
+      execute,
+      query,
+      getConnection: vi.fn().mockResolvedValue({
+        execute,
+        query,
+        beginTransaction: vi.fn().mockResolvedValue(undefined),
+        commit: vi.fn().mockResolvedValue(undefined),
+        rollback: vi.fn().mockResolvedValue(undefined),
+        release: vi.fn(),
+      }),
+    },
+  };
+});
 
 import { db } from "../src/db/mysql.js";
 import { rosterService } from "../src/modules/wfm/roster.service.js";
@@ -82,12 +109,40 @@ describe("rosterService.listPlans", () => {
   });
 });
 
+/**
+ * assignEmployee and bulkAssign now run inside withEmployeeRosterLock and issue three
+ * infrastructure reads before the write they are actually about: the attendance-lock check,
+ * a hasTable probe for the minimum-rest feature, and a column-list lookup.
+ *
+ * A positional mockResolvedValueOnce queue silently mis-feeds those — the second queued value
+ * landed on the INFORMATION_SCHEMA.TABLES probe, which made hasTable report the rest feature
+ * as ACTIVE, which then failed the assignment with REST_POLICY_MISSING. Stubbing by SQL shape
+ * instead means a future guard added ahead of the write cannot quietly re-break these.
+ *
+ * The rest feature is deliberately left inactive here: this file covers roster assignment, and
+ * the rest rule has its own suites in rest-policy.test.ts, rest-policy-night-shift.test.ts and
+ * rest-policy-warn-mode.test.ts.
+ */
+function stubRosterSql(opts: { failInsertOnce?: boolean } = {}) {
+  let insertFailuresLeft = opts.failInsertOnce ? 1 : 0;
+  mockExecute.mockReset();
+  mockExecute.mockImplementation(async (sql?: unknown) => {
+    const s = String(sql ?? "");
+    if (/INSERT INTO wfm_roster_assignment/i.test(s)) {
+      if (insertFailuresLeft > 0) { insertFailuresLeft--; throw new Error("DB error"); }
+      return [{ affectedRows: 1 }, []];
+    }
+    if (/SELECT \* FROM wfm_roster_assignment/i.test(s)) return [[fakeAssignment], []];
+    if (/INSERT INTO sensitive_action_log/i.test(s)) return [{ affectedRows: 1 }, []];
+    return [[], []]; // is_locked, INFORMATION_SCHEMA probes, everything else
+  });
+}
+
 describe("rosterService.assignEmployee", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("upserts assignment and returns it", async () => {
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
-    mockExecute.mockResolvedValueOnce([[fakeAssignment]]);
+    stubRosterSql();
     const result = await rosterService.assignEmployee(
       { employeeId: "emp-1", rosterDate: "2026-05-20", shiftId: "shift-1", planId: "plan-1", shiftStartTime: "09:00", shiftEndTime: "18:00" },
       "user-1"
@@ -100,7 +155,7 @@ describe("rosterService.bulkAssign", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("upserts multiple rows and returns count", async () => {
-    mockExecute.mockResolvedValue([{ affectedRows: 1 }]);
+    stubRosterSql();
     const rows = [
       { employeeId: "emp-1", rosterDate: "2026-05-20", shiftId: "shift-1", shiftStartTime: "09:00", shiftEndTime: "18:00" },
       { employeeId: "emp-2", rosterDate: "2026-05-20", shiftId: "shift-1", shiftStartTime: "09:00", shiftEndTime: "18:00" },
@@ -111,8 +166,9 @@ describe("rosterService.bulkAssign", () => {
   });
 
   it("counts failed rows when DB throws", async () => {
-    mockExecute.mockRejectedValueOnce(new Error("DB error"));
-    mockExecute.mockResolvedValueOnce([{ affectedRows: 1 }]);
+    // The first employee's INSERT fails; the second succeeds. Targeting the INSERT by shape
+    // rather than by position means the failure lands on the write, not on a probe.
+    stubRosterSql({ failInsertOnce: true });
     const rows = [
       { employeeId: "emp-1", rosterDate: "2026-05-20", shiftId: "shift-1", shiftStartTime: "09:00", shiftEndTime: "18:00" },
       { employeeId: "emp-2", rosterDate: "2026-05-20", shiftId: "shift-1", shiftStartTime: "09:00", shiftEndTime: "18:00" },

@@ -70,8 +70,20 @@ describe("createRunSchema", () => {
 
 describe("updateRunStatusSchema", () => {
   it("accepts valid statuses", () => {
-    for (const s of ["processing", "reviewed", "approved", "locked", "disbursed"]) {
+    // "processing" and "reviewed" were removed from this schema deliberately: no transition
+    // targets either, so both were guaranteed to fail after validation passed, surfacing as a
+    // 500 from the service rather than a 400 from the schema. "reviewed" is never written to
+    // salary_prep_run by anything in the codebase, and "processing" is written only by the
+    // calculator, directly, never through this endpoint. Note "processing" remains perfectly
+    // valid as a SOURCE status — this schema describes the TARGET.
+    for (const s of ["approved", "locked", "disbursed"]) {
       expect(() => updateRunStatusSchema.parse({ status: s })).not.toThrow();
+    }
+  });
+
+  it("rejects the two statuses that were removed, so the narrowing cannot regress", () => {
+    for (const s of ["processing", "reviewed"]) {
+      expect(() => updateRunStatusSchema.parse({ status: s }), `${s} should no longer be accepted`).toThrow();
     }
   });
   it("rejects draft (can only move forward)", () => {

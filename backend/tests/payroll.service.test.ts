@@ -64,7 +64,22 @@ const fakeAdvance = { id: "adv-1", employee_id: "emp-1", amount: 5000, status: "
 beforeEach(() => {
   vi.clearAllMocks();
   exec.mockReset().mockResolvedValue([[], []]);
-  txExecute.mockReset().mockResolvedValue([{ affectedRows: 1 }, []]);
+  // createRun serialises itself with a MySQL named lock on this connection, closing the TOCTOU
+  // race that let two full-company runs exist for one month (2026-03 had a 226-line run and a
+  // 1,140-line run coexisting). GET_LOCK has to report acquired = 1 or the service refuses with
+  // "Another request is creating a payroll run" before reaching anything these cases assert.
+  // Every other statement keeps the previous default, so no queued response shifts.
+  txExecute.mockReset().mockImplementation(async (sql?: unknown, params?: unknown) => {
+    const s = String(sql ?? "");
+    if (/GET_LOCK/i.test(s)) return [[{ acquired: 1 }], []];
+    if (/RELEASE_LOCK/i.test(s)) return [[{ released: 1 }], []];
+    // createRun's duplicate check and INSERT moved onto this connection when the named lock
+    // was added, so they must still consume the responses their tests queue on the pool stub.
+    // Scoped to salary_prep_run: the salary-assignment tests below run their own writes on
+    // this connection and rely on the affectedRows default, which delegating would break.
+    if (/salary_prep_run/i.test(s)) return exec(sql as never, params as never);
+    return [{ affectedRows: 1 }, []];
+  });
   beginTransaction.mockReset().mockResolvedValue(undefined);
   commit.mockReset().mockResolvedValue(undefined);
   rollback.mockReset().mockResolvedValue(undefined);
