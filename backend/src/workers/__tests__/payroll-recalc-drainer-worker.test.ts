@@ -72,13 +72,26 @@ describe("properties the loop must hold, pinned at source", () => {
   it("stops on no progress, not on an empty read", () => {
     // Keying the loop on rows SEEN would spin forever against rows another drainer has claimed
     // between the SELECT and the UPDATE.
-    expect(SOURCE).toMatch(/const moved = result\.processed \+ result\.failed \+ result\.skipped_locked/);
-    expect(SOURCE).toMatch(/if \(moved === 0\) break/);
+    expect(SOURCE).toMatch(/const movedThisBatch = result\.processed \+ result\.failed \+ result\.skipped_locked/);
+    expect(SOURCE).toMatch(/if \(movedThisBatch === 0\) break/);
+  });
+
+  it("never drains more than was pending when the tick began", () => {
+    // Draining is self-feeding: recalculateOpenPayrollForEmployee re-queues a fresh pending row
+    // whenever it cannot recalculate, so one row out is one row in. "Stop when nothing moved"
+    // cannot detect that — rows really do move every pass. Observed live 2026-08-16:
+    // pending_at_start 11 produced skipped_locked 110, the same eleven rows cycled ten times.
+    expect(SOURCE).toMatch(/const startingBacklog = Number\(pending\)/);
+    expect(SOURCE).toMatch(/moved < startingBacklog/);
+  });
+
+  it("says so when a month only ever skips, instead of looking busy forever", () => {
+    expect(SOURCE).toMatch(/totalProcessed === 0 && totalSkipped > 0/);
   });
 
   it("bounds how much payroll recalculation one tick can trigger", () => {
     expect(SOURCE).toMatch(/MAX_BATCHES_PER_MONTH/);
-    expect(SOURCE).toMatch(/while \(batches < MAX_BATCHES_PER_MONTH\)/);
+    expect(SOURCE).toMatch(/while \(batches < MAX_BATCHES_PER_MONTH && moved < startingBacklog\)/);
   });
 
   it("says so when it hits the cap, so a capped drain is not read as a finished one", () => {

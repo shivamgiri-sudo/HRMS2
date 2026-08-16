@@ -62,19 +62,38 @@ async function drainAllPendingMonths(): Promise<void> {
     let totalFailed = 0;
     let totalSkipped = 0;
 
-    while (batches < MAX_BATCHES_PER_MONTH) {
+    // Never drain more than was already waiting when this tick began.
+    //
+    // Draining is SELF-FEEDING. recalculateOpenPayrollForEmployee re-queues a fresh pending row
+    // whenever it cannot recalculate — when no salary_prep_line exists for the employee/month, and
+    // when every run for the month is closed — so that the divergence is recorded rather than
+    // lost. The drainer then marks the original skipped_locked. Net effect: one row out, one row
+    // in, forever.
+    //
+    // "Stop when nothing moved" cannot see this, because rows genuinely do move on every pass.
+    // Observed live 2026-08-16: pending_at_start 11 produced skipped_locked 110 — the same eleven
+    // rows cycled ten times until the batch cap stopped it. A single call per COSEC sync hid this
+    // for as long as that was the only caller; looping exposed it immediately.
+    //
+    // Bounding by the starting backlog is what actually terminates. Anything re-queued during this
+    // tick is next tick's work, which is also the honest reading: it did not get done.
+    const startingBacklog = Number(pending);
+    let moved = 0;
+
+    while (batches < MAX_BATCHES_PER_MONTH && moved < startingBacklog) {
       const result = await drainPayrollRecalcQueue(month);
-      const moved = result.processed + result.failed + result.skipped_locked;
+      const movedThisBatch = result.processed + result.failed + result.skipped_locked;
 
       totalProcessed += result.processed;
       totalFailed += result.failed;
       totalSkipped += result.skipped_locked;
+      moved += movedThisBatch;
       batches++;
 
-      // Stop on no progress rather than on an empty SELECT. A row can be read as pending and then
-      // claimed by another drainer, leaving rows pending that this loop will never move; keying
-      // the loop on rows-seen instead of rows-moved would spin forever against them.
-      if (moved === 0) break;
+      // Still needed alongside the backlog bound: a row can be read as pending and then claimed by
+      // another drainer between the SELECT and the UPDATE, so a batch can legitimately move
+      // nothing while rows remain pending. Keying on rows-seen would spin against exactly those.
+      if (movedThisBatch === 0) break;
     }
 
     logger.info(
@@ -87,6 +106,17 @@ async function drainAllPendingMonths(): Promise<void> {
       logger.warn(
         { month, batches },
         `[${WORKER_NAME}] hit the per-tick batch cap for ${month}; remaining entries will drain on the next tick`,
+      );
+    }
+
+    // Re-queue outpacing the drain is worth naming. It is not an error — recording an
+    // unrecalculable divergence is deliberate — but a month that only ever skips is a month with
+    // no open run to write to, and no amount of draining will change that. Left silent, the queue
+    // looks busy forever while nothing is actually being recalculated.
+    if (totalProcessed === 0 && totalSkipped > 0) {
+      logger.warn(
+        { month, skipped_locked: totalSkipped, processed: 0 },
+        `[${WORKER_NAME}] ${month}: every entry skipped, none recalculated — no open run for this month, so these re-queue as fast as they drain`,
       );
     }
   }
