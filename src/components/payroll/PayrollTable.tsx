@@ -149,30 +149,12 @@ export function PayrollTable({
   };
 
   const selectedRecords = records.filter((r) => selectedIds.has(r.id));
-  const canMarkProcessed = selectedRecords.some((r) => r.status === "pending");
   const canMarkPaid = selectedRecords.some((r) => r.status === "pending" || r.status === "processing");
-  const canRevert = selectedRecords.some((r) => r.status === "processing" || r.status === "paid");
-
-  const handleBulkProcessed = () => {
-    const eligibleIds = selectedRecords.filter((r) => r.status === "pending").map((r) => r.lineId);
-    if (eligibleIds.length > 0) {
-      onBulkMarkProcessed?.(eligibleIds);
-      clearSelection();
-    }
-  };
 
   const handleBulkPaid = () => {
     const eligibleIds = selectedRecords.filter((r) => r.status === "pending" || r.status === "processing").map((r) => r.lineId);
     if (eligibleIds.length > 0) {
       onBulkMarkPaid?.(eligibleIds);
-      clearSelection();
-    }
-  };
-
-  const handleBulkRevert = () => {
-    const eligibleIds = selectedRecords.filter((r) => r.status === "processing" || r.status === "paid").map((r) => r.lineId);
-    if (eligibleIds.length > 0) {
-      onBulkRevertToPending?.(eligibleIds);
       clearSelection();
     }
   };
@@ -303,17 +285,11 @@ export function PayrollTable({
             </Button>
           </div>
           <div className="flex items-center gap-2">
-            {canMarkProcessed && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleBulkProcessed}
-                disabled={isBulkUpdating}
-              >
-                {isBulkUpdating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CreditCard className="mr-2 h-4 w-4" />}
-                Mark as Processed
-              </Button>
-            )}
+            {/*
+              Bulk "Mark as Processed" and "Revert to Pending" removed for first release
+              (owner ruling 2026-08-16) — same reason as the per-row items below: both sent
+              a run status the backend deliberately stopped accepting, so every click 400'd.
+            */}
             {canMarkPaid && (
               <Button
                 size="sm"
@@ -322,18 +298,6 @@ export function PayrollTable({
               >
                 {isBulkUpdating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}
                 Mark as Paid
-              </Button>
-            )}
-            {canRevert && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="text-amber-600 border-amber-600/30 hover:bg-amber-500/10"
-                onClick={handleBulkRevert}
-                disabled={isBulkUpdating}
-              >
-                {isBulkUpdating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Clock className="mr-2 h-4 w-4" />}
-                Revert to Pending
               </Button>
             )}
           </div>
@@ -505,29 +469,27 @@ export function PayrollTable({
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        {record.status === "pending" && (
-                          <DropdownMenuItem onClick={() => onMarkProcessed?.(record)}>
-                            <CreditCard className="mr-2 h-4 w-4" />
-                            Mark as Processed
-                          </DropdownMenuItem>
-                        )}
+                        {/*
+                          "Mark as Processed" and "Revert to Pending" removed for first release
+                          (owner ruling 2026-08-16).
+
+                          Both sent a run status the backend deliberately stopped accepting.
+                          useUpdatePayrollStatus maps "processed" to `reviewed` and "draft" to
+                          `processing`, and updateRunStatusSchema accepts only
+                          approved | locked | disbursed — so every click 400'd. They were not
+                          remapped to a working status because that would invent payroll
+                          semantics: "processed" is not "approved", and reopening a computed
+                          run needs its own controlled correction workflow rather than a casual
+                          status write.
+
+                          "Mark as Paid" stays, and is now subject to the Finance sign-off and
+                          separation-of-duties rules in payroll.service.ts updateRunStatus.
+                        */}
                         {(record.status === "pending" || record.status === "processing") && (
                           <DropdownMenuItem onClick={() => onMarkPaid?.(record)}>
                             <CheckCircle className="mr-2 h-4 w-4" />
                             Mark as Paid
                           </DropdownMenuItem>
-                        )}
-                        {(record.status === "processing" || record.status === "paid") && (
-                          <>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem 
-                              onClick={() => onRevertToPending?.(record)}
-                              className="text-amber-600"
-                            >
-                              <Clock className="mr-2 h-4 w-4" />
-                              Revert to Pending
-                            </DropdownMenuItem>
-                          </>
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>

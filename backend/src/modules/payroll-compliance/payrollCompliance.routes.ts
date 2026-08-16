@@ -80,7 +80,39 @@ router.get("/employees/:employeeId/component-snapshot", requireRole("admin", "hr
   return res.json({ success: true, data: rows });
 }));
 
-router.post("/lines/:lineId/manual-adjustment", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+/**
+ * DISABLED FOR FIRST RELEASE — owner ruling 2026-08-16 (decision 3).
+ *
+ * The adjustment is recorded correctly, permissioned correctly and audited correctly. It just
+ * never reaches anyone's pay: salary_prep_line_adjustment is not read by
+ * payroll/payrollCalculate.service.ts, the only engine wired to POST /runs/:id/calculate. The
+ * sole other reader is payroll-compliance/payrollCalculate.service.ts, which is dead code that
+ * throws immediately if called, pinned by its own dead-payroll-engine.test.ts.
+ *
+ * Refused at the API, not merely hidden in the UI. A CSS-hidden button still leaves a
+ * reachable endpoint that writes a row users can reasonably mistake for payable salary, and
+ * this one already carries a warning message saying so — a warning nobody reads on a direct
+ * request. Zero rows exist in production, so disabling it now costs nothing and closes the
+ * window before someone relies on it.
+ *
+ * The table, its audit history and the implementation below are all preserved for phase 2.
+ * Reactivation requires integration into the canonical engine with maker-checker, component
+ * code, taxability, PF/ESIC impact, effective run, reversal, payslip component reconciliation
+ * and gross/net reconciliation — never simply adding the amount to net pay.
+ */
+router.post("/lines/:lineId/manual-adjustment", requireRole("admin", "finance", "payroll"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  return res.status(503).json({
+    success: false,
+    code: "MANUAL_ADJUSTMENT_DISABLED",
+    message:
+      "Manual payroll adjustments are disabled for this release. They were never applied to net pay by any " +
+      "calculation path, so recording one would create a payroll correction that does not exist. Raise the " +
+      "correction through payroll recalculation instead.",
+  });
+}));
+
+/** Preserved for phase 2 — see the ruling above. Not routed. */
+export const manualAdjustmentHandlerForPhase2 = h(async (req: AuthenticatedRequest, res: Response) => {
   const schema = z.object({
     adjustmentType: z.enum(["earning", "deduction", "lwp_override", "attendance_override", "statutory_override"]),
     componentCode: z.string().min(1).max(80),
@@ -127,7 +159,7 @@ router.post("/lines/:lineId/manual-adjustment", requireRole("admin", "finance", 
       "intended behaviour. Do not treat this as a completed correction to the employee's pay until Payroll/Engineering " +
       "confirms this adjustment has actually reached salary_prep_line.net_salary.",
   });
-}));
+});
 
 router.get("/runs/:runId/components", requireRole("admin", "hr", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
