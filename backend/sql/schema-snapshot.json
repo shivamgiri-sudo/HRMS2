@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 946,
-  "columnCount": 13339,
+  "tableCount": 947,
+  "columnCount": 13350,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -4936,7 +4936,8 @@
       "verified",
       "created_at",
       "updated_at",
-      "active_status"
+      "active_status",
+      "account_number_blind_index"
     ],
     "employee_biometric_enrollment": [
       "id",
@@ -9497,6 +9498,16 @@
       "call_centre_code",
       "approval_required"
     ],
+    "lms_admin_identity_map": [
+      "id",
+      "hrms_employee_code",
+      "lms_admin_id",
+      "active",
+      "mapped_by",
+      "mapped_at",
+      "updated_at",
+      "remarks"
+    ],
     "lms_assessment_scores": [
       "id",
       "employee_id",
@@ -13505,7 +13516,8 @@
       "status",
       "initiated_by",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "applied_at"
     ],
     "uat_approval": [
       "id",
@@ -14781,6 +14793,7 @@
       "scope_type",
       "scope_id",
       "minimum_rest_minutes",
+      "enforcement_mode",
       "allows_emergency_override",
       "effective_from",
       "effective_to",
