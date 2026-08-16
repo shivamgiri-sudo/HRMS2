@@ -467,6 +467,14 @@ export interface CalculateResult {
   total_gross: number;
   total_deductions: number;
   total_net: number;
+  /**
+   * Employees excluded from this run because their Professional Tax could not be resolved —
+   * their branch has no state. They produced no salary_prep_line and no PT was invented for
+   * them. Present so a caller cannot mistake "not in the run" for "nothing owed": a run
+   * carrying any of these is incomplete and must not be finalised or disbursed.
+   */
+  pt_blocked_employees: Array<{ employee_id: string; employee_code: string; reason: string }>;
+  blocked_count: number;
 }
 
 interface EmployeeRow {
@@ -770,6 +778,25 @@ export async function calculatePayrollRunScoped(
   const batchComponents:   unknown[][] = [];
   const batchAdvUpdates:   { id: string; newRecovered: number; newStatus: string }[] = [];
   const batchAuditRows:    unknown[][] = [];
+
+  /**
+   * Employees this run could not compute Professional Tax for.
+   *
+   * Owner ruling 2026-08-16 (decision 9). resolveProfessionalTax throws when the employee's
+   * branch has no state, which is correct — PT is levied per state and inventing a default
+   * silently deducts from someone who may owe nothing. But that throw sat inside this
+   * per-employee loop while the try/rollback sits outside it, so ONE unresolvable employee
+   * abandoned the entire run for everybody.
+   *
+   * Verified live 2026-08-16: three active employees have no branch at all — MAS63079,
+   * MAS63080 and MAS63084, all joined 2026-06-30. On the first launch run they would have
+   * rolled back all ~1,324 lines. It has not fired yet only because no 2026-08 run exists and
+   * the nightly worker touches the current month only.
+   *
+   * So: no PT is invented, the employee gets no line, the engine continues for everyone else,
+   * and the affected employees are named in the result so nobody is silently omitted.
+   */
+  const ptBlockedEmployees: Array<{ employee_id: string; employee_code: string; reason: string }> = [];
 
   try {
   for (const emp of employees) {
@@ -1363,9 +1390,23 @@ export async function calculatePayrollRunScoped(
     //
     // Stopping and naming the branch is recoverable in one edit. Silently
     // deducting from someone who owes nothing is not.
-    const professionalTax = await resolveProfessionalTax(
-      emp.employee_code, emp.state_code, grossAfterLwp,
-    );
+    //
+    // Blocked per employee, not per run. Nothing has been written for this employee yet —
+    // every batch push happens further down — so skipping here leaves no partial line behind.
+    let professionalTax: number;
+    try {
+      professionalTax = await resolveProfessionalTax(
+        emp.employee_code, emp.state_code, grossAfterLwp,
+      );
+    } catch (err) {
+      ptBlockedEmployees.push({
+        employee_id: emp.employee_id,
+        employee_code: emp.employee_code,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+      processedCount--; // counted at the top of the loop; this employee produced no line
+      continue;
+    }
 
     // Check for approved PF / ESI opt-outs (employee voluntary declaration approved by Payroll HO)
     const [overrideRows] = await conn.execute<RowDataPacket[]>(
@@ -1796,5 +1837,9 @@ export async function calculatePayrollRunScoped(
     total_gross: totalGross,
     total_deductions: totalDed,
     total_net: totalNet,
+    // Named, not swallowed. A caller that ignores this is omitting people from payroll
+    // silently, which is the failure this replaced a whole-run abort to avoid.
+    pt_blocked_employees: ptBlockedEmployees,
+    blocked_count: ptBlockedEmployees.length,
   };
 }
