@@ -1817,6 +1817,16 @@ export async function calculatePayrollRunScoped(
   // but every approval stamp this run carries is cleared in the same
   // statement that changes its figures, so a stale signature can never
   // describe numbers other than the ones it was actually given for.
+  //
+  // validation_status is cleared to 'pending', NOT to NULL. The column is
+  // enum('pending','validated','rejected') NOT NULL DEFAULT 'pending', and the server runs
+  // STRICT_TRANS_TABLES, so `= NULL` is a hard ER_BAD_NULL_ERROR rather than a silent coercion —
+  // it aborted the whole transaction and rolled the recalculation back. Measured live 2026-08-16:
+  // 793 queued recalculations failed on exactly this, every one reading "Column
+  // 'validation_status' cannot be null", the moment a scheduled drainer started working the
+  // backlog. The four sibling columns beside it ARE nullable, which is why only this one bit.
+  // 'pending' is the enum's own "not yet validated" state, so the intent — drop the validation
+  // stamp when the figures move — is unchanged.
   await conn.execute(
     `UPDATE salary_prep_run
         SET status = 'processing', total_employees = ?,
@@ -1824,7 +1834,7 @@ export async function calculatePayrollRunScoped(
             payroll_model_version = ?,
             finance_approved_by = NULL, finance_approved_at = NULL, finance_remarks = NULL,
             ceo_acknowledged_by = NULL, ceo_acknowledged_at = NULL, ceo_remarks = NULL,
-            validation_status = NULL, validated_by = NULL, validated_at = NULL
+            validation_status = 'pending', validated_by = NULL, validated_at = NULL
       WHERE id = ?`,
     [processedCount, totalGross, totalDed, totalNet, CALCULATION_ENGINE_VERSION, runId]
   );
