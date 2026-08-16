@@ -462,6 +462,42 @@ export const payrollService = {
     }
 
     if (input.status === "locked" || input.status === "disbursed") {
+      // No run closes while a payable employee was silently left out of it.
+      //
+      // Owner ruling 2026-08-16 (decision 9). The calculator no longer aborts the whole run
+      // when one employee's Professional Tax cannot be resolved — it blocks that employee,
+      // invents no PT, and carries on for everyone else. That is the right behaviour, but on
+      // its own it converts a loud failure into a quiet omission: the blocked employee has no
+      // salary_prep_line, so nothing downstream can tell they are missing rather than simply
+      // not owed anything.
+      //
+      // So the run itself stays open while any such employee exists. Detected the same way the
+      // calculator does — PT is levied per state, and an employee whose branch carries no state
+      // (or who has no branch at all) has no resolvable rate. Verified live 2026-08-16: exactly
+      // three, MAS63079, MAS63080 and MAS63084, all with no branch. This is not a code fix —
+      // HR must supply the real branches, because a wrong one produces a wrong statutory
+      // deduction that looks entirely correct on the payslip.
+      const [ptBlocked] = await db.execute<RowDataPacket[]>(
+        `SELECT e.employee_code
+           FROM employees e
+           LEFT JOIN branch_master b ON b.id = e.branch_id
+          WHERE e.active_status = 1
+            AND NULLIF(TRIM(b.state), '') IS NULL
+          ORDER BY e.employee_code
+          LIMIT 25`,
+      );
+      if (ptBlocked.length > 0) {
+        const codes = ptBlocked.map((r) => String((r as { employee_code: unknown }).employee_code)).join(", ");
+        throw Object.assign(
+          new Error(
+            `Cannot ${input.status} this run: ${ptBlocked.length} active employee(s) have no resolvable ` +
+            `Professional Tax state and were excluded from calculation — ${codes}. ` +
+            `Assign their branch and recalculate, so nobody is silently omitted from payroll.`,
+          ),
+          { statusCode: 409, code: "PAYROLL_BLOCKED_PT_STATE_UNKNOWN" },
+        );
+      }
+
       if (!runRecord.finance_approved_at) {
         if (!breakGlassReason) {
           throw Object.assign(

@@ -39,12 +39,22 @@ const run = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-/** getRun -> SELECT *, then the guarded UPDATE, then a re-read. */
-function stub(row: Record<string, unknown>, updateAffected = 1) {
+/**
+ * getRun -> SELECT *, the PT-blocker gate, then the guarded UPDATE, then a re-read.
+ *
+ * ptBlocked defaults to none: these cases are about sign-off and separation of duties, and a
+ * blocked employee would refuse the transition before either is reached.
+ */
+function stub(
+  row: Record<string, unknown>,
+  updateAffected = 1,
+  ptBlocked: Array<{ employee_code: string }> = [],
+) {
   mockExecute.mockReset();
   mockExecute.mockImplementation(async (sql: unknown) => {
     const s = String(sql ?? "");
     if (/^\s*SELECT \* FROM salary_prep_run/i.test(s)) return [[row], []];
+    if (/NULLIF\(TRIM\(b\.state\)/i.test(s)) return [ptBlocked, []];
     if (/^\s*UPDATE salary_prep_run SET status/i.test(s)) return [{ affectedRows: updateAffected }, []];
     return [[], []];
   });
@@ -139,6 +149,67 @@ describe("break-glass is a third pair of hands, not a way round your own control
         APPROVER,
       ),
     ).rejects.toMatchObject({ code: "PAYROLL_BREAKGLASS_NOT_INDEPENDENT" });
+  });
+});
+
+/**
+ * Owner ruling 2026-08-16 (decision 9), second half. The calculator no longer aborts the whole
+ * run when one employee's Professional Tax cannot be resolved — it blocks that employee and
+ * carries on. On its own that trades a loud failure for a quiet omission: the blocked employee
+ * has no salary_prep_line, so nothing downstream can distinguish "left out" from "owed
+ * nothing". The run therefore stays open while any such employee exists.
+ *
+ * Verified live: exactly three — MAS63079, MAS63080, MAS63084 — all with no branch at all.
+ */
+describe("a run cannot close while a payable employee was excluded", () => {
+  const blocked = [{ employee_code: "MAS63079" }, { employee_code: "MAS63080" }];
+
+  it("refuses LOCK while an employee has no resolvable PT state", async () => {
+    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, blocked);
+    await expect(
+      payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
+    ).rejects.toMatchObject({ statusCode: 409, code: "PAYROLL_BLOCKED_PT_STATE_UNKNOWN" });
+  });
+
+  it("refuses DISBURSE for the same reason", async () => {
+    stub(run({ status: "locked", finance_approved_at: "2026-08-16 10:00:00" }), 1, blocked);
+    await expect(
+      payrollService.updateRunStatus("run-1", { status: "disbursed" } as never, OUTSIDER),
+    ).rejects.toMatchObject({ code: "PAYROLL_BLOCKED_PT_STATE_UNKNOWN" });
+  });
+
+  it("names the employees, so the message is actionable by HR", async () => {
+    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, blocked);
+    await expect(
+      payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
+    ).rejects.toThrow(/MAS63079, MAS63080/);
+  });
+
+  it("outranks break-glass — an omitted employee is not a sign-off problem", async () => {
+    // Break-glass exists to bypass a missing Finance signature, not to close a run that is
+    // incomplete. Supplying a reason must not get past this.
+    stub(run({ status: "approved" }), 1, blocked);
+    await expect(
+      payrollService.updateRunStatus(
+        "run-1",
+        { status: "locked", breakGlassReason: "Bank cut-off in 20 minutes; CFO approved verbally on call" } as never,
+        OUTSIDER,
+      ),
+    ).rejects.toMatchObject({ code: "PAYROLL_BLOCKED_PT_STATE_UNKNOWN" });
+  });
+
+  it("allows the transition once nobody is blocked", async () => {
+    stub(run({ status: "approved", finance_approved_at: "2026-08-16 10:00:00" }), 1, []);
+    await expect(
+      payrollService.updateRunStatus("run-1", { status: "locked" } as never, OUTSIDER),
+    ).resolves.toBeDefined();
+  });
+
+  it("does not gate 'approved' — an incomplete run may still be reviewed", async () => {
+    stub(run({ status: "processing", approved_by: null }), 1, blocked);
+    await expect(
+      payrollService.updateRunStatus("run-1", { status: "approved" } as never, APPROVER),
+    ).resolves.toBeDefined();
   });
 });
 
