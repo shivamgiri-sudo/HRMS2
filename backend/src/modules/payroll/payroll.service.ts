@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { sqlLimitOffset } from "../../db/pagination.js";
-import type { RowDataPacket } from "mysql2";
+import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { assertSalaryAssignmentAllowed } from "./salary-governance.guard.js";
@@ -434,12 +434,76 @@ export const payrollService = {
       throw new Error(result.reason!);
     }
 
+    // ── Separation of duties, and Finance sign-off before money can move ──────────────
+    //
+    // Owner ruling 2026-08-16. Preparing, calculating, approving, locking and disbursing were
+    // one effective permission held by 16 people, so the same person could create a run and
+    // walk it all the way to disbursed unaccompanied. And sign-off was a parallel track this
+    // endpoint never consulted: 0 of 66 runs have ever been finance-approved, yet 12 reached
+    // 'approved' — and because the sign-off queue filters on status='processing', those 12
+    // left the queue permanently without anyone signing them.
+    //
+    // Deliberately NOT applied to 'approved': payroll approval is the checker step, and
+    // requiring sign-off before it would make approval impossible for every run. Sign-off is
+    // required at the point money can actually leave — LOCK and DISBURSE.
+    const runRecord = run as unknown as {
+      created_by: string | null;
+      approved_by: string | null;
+      finance_approved_by: string | null;
+      finance_approved_at: string | null;
+    };
+    const breakGlassReason = (input as { breakGlassReason?: string }).breakGlassReason?.trim() || null;
+
+    if (input.status === "approved" && runRecord.created_by && String(runRecord.created_by) === String(userId)) {
+      throw Object.assign(
+        new Error("You prepared this payroll run, so it must be approved by someone else"),
+        { statusCode: 403, code: "PAYROLL_SELF_APPROVAL" },
+      );
+    }
+
+    if (input.status === "locked" || input.status === "disbursed") {
+      if (!runRecord.finance_approved_at) {
+        if (!breakGlassReason) {
+          throw Object.assign(
+            new Error(
+              `Finance sign-off is required before a run can be ${input.status}. ` +
+              `Obtain sign-off, or supply a break-glass reason if this is an emergency.`,
+            ),
+            { statusCode: 409, code: "PAYROLL_FINANCE_SIGNOFF_REQUIRED" },
+          );
+        }
+        // Break-glass is a third pair of hands, not a way round your own control.
+        const isPreparer = runRecord.created_by && String(runRecord.created_by) === String(userId);
+        const isApprover = runRecord.approved_by && String(runRecord.approved_by) === String(userId);
+        if (isPreparer || isApprover) {
+          throw Object.assign(
+            new Error(
+              "Break-glass must be invoked by someone who neither prepared nor approved this run",
+            ),
+            { statusCode: 403, code: "PAYROLL_BREAKGLASS_NOT_INDEPENDENT" },
+          );
+        }
+      }
+    }
+
     const sets = ["status = ?"];
     const params: unknown[] = [input.status];
     if (input.status === "approved")  { sets.push("approved_by = ?");  params.push(userId); }
     if (input.status === "disbursed") { sets.push("disbursed_by = ?", "disbursed_at = NOW()"); params.push(userId); }
-    params.push(id);
-    await db.execute(`UPDATE salary_prep_run SET ${sets.join(", ")} WHERE id = ?`, params);
+    params.push(id, run.status);
+    // Expected-state predicate: the status read at the top of this function must still be the
+    // status on the row. Two approvers previously both passed validateTransition and both wrote,
+    // each returning 200, with the audit naming two different actors for one transition.
+    const [statusResult] = await db.execute<ResultSetHeader>(
+      `UPDATE salary_prep_run SET ${sets.join(", ")} WHERE id = ? AND status = ?`,
+      params,
+    );
+    if (statusResult.affectedRows !== 1) {
+      throw Object.assign(
+        new Error("This payroll run was changed by someone else — reload and try again"),
+        { statusCode: 409, code: "PAYROLL_RUN_STATE_CHANGED" },
+      );
+    }
 
     // Audit every transition through this endpoint.
     //
@@ -458,7 +522,13 @@ export const payrollService = {
     const { logSensitiveAction } = await import("../../shared/auditLog.js");
     await logSensitiveAction({
       actor_user_id: userId,
-      action_type: `PAYROLL_RUN_${String(input.status).toUpperCase()}`,
+      // A break-glass lock or disbursement is not an ordinary transition and must not read
+      // like one in the audit trail. Whoever reviews this later should be able to find every
+      // one of them by action_type alone.
+      action_type: breakGlassReason && (input.status === "locked" || input.status === "disbursed")
+        ? `PAYROLL_RUN_${String(input.status).toUpperCase()}_BREAKGLASS`
+        : `PAYROLL_RUN_${String(input.status).toUpperCase()}`,
+      reason: breakGlassReason ?? undefined,
       module_key: "payroll",
       entity_type: "salary_prep_run",
       entity_id: id,

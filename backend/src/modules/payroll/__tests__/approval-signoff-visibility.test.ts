@@ -6,10 +6,14 @@
  * silently removes it from that queue whether or not finance ever signed.
  *
  * Verified live 2026-08-15: finance_approved_by is NULL on all 66 salary_prep_run rows -
- * sign-off has never been used once. So this is deliberately RECORDED, not blocked: a
- * precondition requiring sign-off would make approval impossible for every run, including
- * the two 'processing' months this audit just unblocked. Hardening it is a payroll/finance
- * ruling; making the exception visible is not.
+ * sign-off has never been used once.
+ *
+ * UPDATED 2026-08-16 by owner ruling. Sign-off is now MANDATORY before LOCK or DISBURSE, with
+ * an audited break-glass - see payroll-signoff-separation.test.ts. It is still deliberately NOT
+ * required for 'approved', for the reason this file already gave: approval is the checker step,
+ * and gating it on sign-off would make every run unapprovable. So the cases below still stand
+ * exactly as written - approval records the flag rather than refusing on it. What changed is
+ * only that the two states which move money are no longer reachable without it.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -76,7 +80,12 @@ describe("approving a run records whether finance had signed off", () => {
   });
 
   it("adds the flag only for approval, leaving other transitions' audit shape untouched", async () => {
-    arrange(runRow({ status: "locked", finance_approved_by: null }));
+    // finance_approved_at is now set on this fixture because DISBURSE is gated on sign-off as
+    // of the 2026-08-16 ruling. The assertion below is unchanged and still about audit SHAPE -
+    // that finance_signed_off is an approval-only field - not about whether disbursement is
+    // allowed. Without a signed-off fixture the call would fail on the gate before ever
+    // reaching the audit, and this case would be testing the wrong thing.
+    arrange(runRow({ status: "locked", finance_approved_by: "finance-user-9", finance_approved_at: "2026-08-16 10:00:00" }));
 
     await payrollService.updateRunStatus("run-1", { status: "disbursed" } as any, "actor-1");
 

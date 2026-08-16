@@ -89,6 +89,15 @@ export const updateRunStatusSchema = z.object({
   // the TARGET status - 'processing' remains fully valid as a SOURCE status and is
   // untouched everywhere it is read (sign-off queue, is_draft, isProvisional).
   status: z.enum(["approved", "locked", "disbursed"]),
+  /**
+   * Break-glass past the mandatory Finance sign-off on LOCK / DISBURSE.
+   *
+   * Owner ruling 2026-08-16: allowed only for an exceptional operational emergency, requires
+   * a reason, records who invoked it and when, and must be invoked by someone who is neither
+   * the run's preparer nor its approver. A minimum length is enforced because "ok" is not a
+   * reason anyone can audit later.
+   */
+  breakGlassReason: z.string().trim().min(20).max(500).optional(),
   disbursedAt: z.string().regex(DATE_REGEX).optional(),
 });
 
