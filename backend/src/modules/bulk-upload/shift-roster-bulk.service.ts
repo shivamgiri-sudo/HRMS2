@@ -3,7 +3,7 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { logRosterChange } from "../roster/roster-change-log.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
-import { isRestPolicyFeatureActive, resolveRestPolicy, restGapMinutes, validateMinimumRest, withEmployeeRosterLock } from "../wfm/rest-policy.service.js";
+import { applyRestDecision, isRestPolicyFeatureActive, resolveRestPolicy, restGapMinutes, validateMinimumRest, withEmployeeRosterLock } from "../wfm/rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 
 const DAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
@@ -308,7 +308,16 @@ export async function importShiftRosterBatch(
               { startTime: shiftStartTime.slice(0, 5), endTime: shiftEndTime.slice(0, 5) },
               null, conn
             );
-            if (!restCheck.ok) {
+            // Same shared decision as every other roster write path. In WARN the row is
+            // accepted and a REST_GAP_WARNING is recorded against it; in BLOCK it is refused
+            // exactly as before. Bulk upload still has no emergency-override path — WARN is a
+            // policy state, not an override.
+            const restDecision = await applyRestDecision(
+              restCheck,
+              { employeeId: String(employeeId), rosterDate: rosterDateStr },
+              conn,
+            );
+            if (!restCheck.ok && !restDecision.allowed) {
               rowErrors.push(restCheck.reason === "REST_POLICY_MISSING"
                 ? `${DAYS[i].toUpperCase()}: no minimum-rest policy configured for this employee/process/branch/organization`
                 : `${DAYS[i].toUpperCase()}: only ${restCheck.actualRestMinutes}min rest against the ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`);

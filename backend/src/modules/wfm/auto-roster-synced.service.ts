@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { loadWeekoffRules } from "../roster/weekoff-rule.service.js";
 import { computeScheduledMinutes } from "./shift-scheduling.util.js";
-import { isRestPolicyFeatureActive, hasAnyRestPolicyConfigured, validateMinimumRest, logRestOverride } from "./rest-policy.service.js";
+import { applyRestDecision, isRestPolicyFeatureActive, hasAnyRestPolicyConfigured, validateMinimumRest, logRestOverride } from "./rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 import { resolveWeekOffScopeDefault } from "../roster/weekoff-policy.service.js";
 
@@ -917,7 +917,16 @@ export const autoRosterSyncedService = {
               { employeeId: String(emp.id), processId: plan.process_id, branchId: plan.branch_id, forDate: rosterDate },
               { startTime: slotStart, endTime: slotEnd }
             );
-            if (!restCheck.ok) {
+            // Shared decision, same as generation and bulk upload. In WARN the employee IS
+            // assigned and a REST_GAP_WARNING is recorded instead of leaving the slot
+            // understaffed; in BLOCK the existing critical conflict is raised and the slot is
+            // skipped exactly as before.
+            const restDecision = await applyRestDecision(restCheck, {
+              employeeId: String(emp.id),
+              rosterDate,
+              planId,
+            });
+            if (!restCheck.ok && !restDecision.allowed) {
               await insertConflict({
                 plan_id: planId,
                 employee_id: String(emp.id),

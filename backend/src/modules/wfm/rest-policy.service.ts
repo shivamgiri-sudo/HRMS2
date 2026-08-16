@@ -92,12 +92,28 @@ export async function isRestPolicyFeatureActive(executor: Executor = db): Promis
 
 export type RestPolicyScopeType = "organization" | "branch" | "process" | "employee";
 
+/**
+ * WARN records the shortfall and lets the roster write proceed; BLOCK refuses it.
+ *
+ * Owner ruling 2026-08-16 (decision 2): activate the 11-hour rule in WARN first, remediate the
+ * 139 NOIDA-2 turnarounds through the warning report, then flip the SAME policy row to BLOCK
+ * with no code rewrite. The mode lives on the policy and is resolved once here, so all four
+ * roster write paths obey one decision — the ruling is explicit that enforcement must not be
+ * weakened separately in generation, manual assignment or bulk upload.
+ */
+export type RestEnforcementMode = "warn" | "block";
+
 export interface RestPolicy {
   id: string;
   scopeType: RestPolicyScopeType;
   scopeId: string | null;
   minimumRestMinutes: number;
   allowsEmergencyOverride: boolean;
+  /**
+   * Defaults to "block" whenever the column is missing or holds anything unexpected, so an
+   * un-migrated database or a stray value can never silently loosen enforcement.
+   */
+  enforcementMode: RestEnforcementMode;
 }
 
 export interface RestPolicyContext {
@@ -142,6 +158,10 @@ function mapPolicyRow(row: RowDataPacket): RestPolicy {
     scopeId: row.scope_id ? String(row.scope_id) : null,
     minimumRestMinutes: Number(row.minimum_rest_minutes),
     allowsEmergencyOverride: Boolean(row.allows_emergency_override),
+    // Anything other than an explicit 'warn' is treated as 'block'. A database that has not
+    // taken migration 1224 yet returns undefined here, and the safe reading of "I don't know
+    // what mode this policy is in" is the stricter one.
+    enforcementMode: String(row.enforcement_mode ?? "").toLowerCase() === "warn" ? "warn" : "block",
   };
 }
 
@@ -341,6 +361,113 @@ export async function validateMinimumRest(
  * isRestPolicyFeatureActive() is true — see that function's docstring for why
  * the two are kept separate.
  */
+/**
+ * Should this write be refused, or allowed with a warning recorded?
+ *
+ * The single place that answers it. A caller asks once and either proceeds or refuses; it never
+ * inspects enforcementMode itself, because four paths each reading the mode is four chances to
+ * read it differently.
+ *
+ * REST_POLICY_MISSING always blocks regardless of mode — there is no policy to be lenient
+ * about, and a caller that cannot determine the rule must never write. Only a measured
+ * INSUFFICIENT_REST can be warned through.
+ */
+export async function applyRestDecision(
+  result: RestValidationResult,
+  context: {
+    employeeId: string;
+    rosterDate: string;
+    assignmentId?: string | null;
+    planId?: string | null;
+  },
+  executor: Executor = db,
+): Promise<{ allowed: boolean; warned: boolean }> {
+  if (result.ok) return { allowed: true, warned: false };
+  if (result.reason !== "INSUFFICIENT_REST") return { allowed: false, warned: false };
+  if (result.policy?.enforcementMode !== "warn") return { allowed: false, warned: false };
+
+  await recordRestGapWarning(
+    {
+      employeeId: context.employeeId,
+      rosterDate: context.rosterDate,
+      actualRestMinutes: result.actualRestMinutes ?? 0,
+      requiredRestMinutes: result.requiredRestMinutes ?? 0,
+      against: result.against ?? "previous",
+      neighborShift: result.neighborShift ?? null,
+      assignmentId: context.assignmentId ?? null,
+      planId: context.planId ?? null,
+    },
+    executor,
+  );
+  return { allowed: true, warned: true };
+}
+
+/**
+ * Record a rest shortfall that was ALLOWED through because the policy is in WARN mode.
+ *
+ * Owner ruling 2026-08-16 (decision 2): in WARN the write proceeds, but the violation must
+ * persist, carry the actual rest against the required rest, name the conflicting neighbouring
+ * assignment, and be visible to WFM review and reporting. It must not silently disappear.
+ *
+ * Written to wfm_roster_conflict_log rather than a new table — it already carries exactly this
+ * shape (employee, roster_date, conflict_type, severity, message, resolution_status) and is the
+ * queue WFM review already reads. Severity is 'high': a warned-through shortfall is not
+ * informational, it is a breach someone chose to accept and must come back to.
+ *
+ * Lives here, next to the resolver, so every write path records the same thing the same way.
+ * The ruling is explicit that enforcement must not diverge between generation, manual
+ * assignment and bulk upload, and a per-path logging helper is how that divergence starts.
+ *
+ * Non-throwing on purpose: the roster write has already been allowed by the time this is
+ * called, and failing it here would turn a warning into a lost assignment. A failure is logged
+ * loudly instead.
+ */
+export async function recordRestGapWarning(
+  input: {
+    employeeId: string;
+    rosterDate: string;
+    actualRestMinutes: number;
+    requiredRestMinutes: number;
+    against: "previous" | "next";
+    neighborShift?: ShiftTimeRef | null;
+    assignmentId?: string | null;
+    planId?: string | null;
+  },
+  executor: Executor = db,
+): Promise<void> {
+  const neighbour = input.neighborShift
+    ? `${input.neighborShift.date} ${input.neighborShift.time}`
+    : "unknown";
+  const shortfall = input.requiredRestMinutes - input.actualRestMinutes;
+  const message =
+    `Only ${input.actualRestMinutes} min rest against the ${input.against} shift ` +
+    `(${neighbour}); policy requires ${input.requiredRestMinutes} min — short by ${shortfall} min. ` +
+    `Allowed because the minimum-rest policy is in WARN mode.`;
+
+  try {
+    await executor.execute(
+      `INSERT INTO wfm_roster_conflict_log
+         (id, plan_id, assignment_id, employee_id, conflict_date, roster_date,
+          conflict_type, severity, description, message, resolved, resolution_status, detected_at)
+       VALUES (UUID(), ?, ?, ?, ?, ?, 'REST_GAP_WARNING', 'high', ?, ?, 0, 'open', NOW())`,
+      [
+        input.planId ?? null,
+        input.assignmentId ?? null,
+        input.employeeId,
+        input.rosterDate,
+        input.rosterDate,
+        message,
+        message,
+      ],
+    );
+  } catch (err) {
+    console.error(
+      `[rest-policy] REST_GAP_WARNING could not be recorded for employee ${input.employeeId} on ${input.rosterDate}:`,
+      err,
+    );
+  }
+}
+
 export async function hasAnyRestPolicyConfigured(
   ctx: { processId?: string | null; branchId?: string | null; forDate: string },
   executor: Executor = db

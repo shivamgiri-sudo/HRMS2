@@ -8,7 +8,7 @@ import type { Request } from "express";
 import { loadWeekoffRules, applyWeekoffRules, sortBySeniorPriority } from "./weekoff-rule.service.js";
 import type { WeekoffRule } from "./weekoff-rule.service.js";
 import { computeScheduledMinutes, rosterAssignmentColumns, shiftMasterColumns } from "../wfm/shift-scheduling.util.js";
-import { isRestPolicyFeatureActive, validateMinimumRest } from "../wfm/rest-policy.service.js";
+import { applyRestDecision, isRestPolicyFeatureActive, validateMinimumRest } from "../wfm/rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "./roster-lock-guard.js";
 import {
   resolveWeekOffScopeDefault,
@@ -816,7 +816,14 @@ async function syncGeneratedToLiveAssignments(
         { employeeId: row.employee_id, processId: cycle.process_id, branchId: cycle.branch_id, forDate: String(row.roster_date).slice(0, 10) },
         { startTime: shiftStart, endTime: shiftEnd }
       );
-      if (!restCheck.ok) {
+      // WARN mode records the shortfall and lets the row through; BLOCK refuses it. Decided by
+      // the shared resolver, never by reading enforcementMode here — four write paths each
+      // interpreting the mode is four chances to interpret it differently.
+      const restDecision = await applyRestDecision(restCheck, {
+        employeeId: String(row.employee_id),
+        rosterDate: String(row.roster_date).slice(0, 10),
+      });
+      if (!restCheck.ok && !restDecision.allowed) {
         blockedEmployeeCodes.push(
           restCheck.reason === "REST_POLICY_MISSING"
             ? `${row.employee_code} — no minimum-rest policy configured for this employee/process/branch/organization`
