@@ -13,6 +13,7 @@ import { startInterviewDelayAlertWorker, stopInterviewDelayAlertWorker } from ".
 import { startLmsSyncWorker, stopLmsSyncWorker } from "./lms-sync.worker.js";
 import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./payroll-nightly-recalc.worker.js";
 import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from "./payroll-recalc-drainer.worker.js";
+import { startLmsRemindersScheduler, stopLmsRemindersScheduler } from "../modules/lms/lms-reminders.cron.js";
 import { startDbBillFinanceSyncWorker, stopDbBillFinanceSyncWorker } from "./db-bill-finance-sync.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
@@ -158,6 +159,19 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // 270 active employees when this was written, oldest 12 days.
     name: "payroll-recalc-drainer",
     start: () => { startPayrollRecalcDrainerWorker(); return Promise.resolve(); },
+  },
+  {
+    // Registered here to restore parity with server.ts, which starts this. Not this session's
+    // feature: the server.ts registration arrived as another session's in-flight edit and was
+    // swept into 720f4724 by mistake. Removing it there would discard their work, so the honest
+    // repair is to complete the registration rather than undo it — with server.ts's env gate
+    // reproduced EXACTLY, because the first sweep emails every qualifying learner and dropping
+    // the gate here would un-gate it under WORKERS_PROCESS=external.
+    name: "lms-reminders",
+    start: () => {
+      if (process.env.LMS_REMINDERS_ENABLED === "true") startLmsRemindersScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "kpi-daily-sync",
@@ -355,6 +369,7 @@ function shutdown(): void {
   stopLmsSyncWorker();
   stopPayrollNightlyRecalcWorker();
   stopPayrollRecalcDrainerWorker();
+  stopLmsRemindersScheduler();
   stopDbBillFinanceSyncWorker();
   stopPayrollPrepReminderWorker();
   stopPayrollReadinessRefreshWorker();
