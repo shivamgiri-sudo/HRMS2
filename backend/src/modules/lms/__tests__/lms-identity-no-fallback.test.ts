@@ -74,10 +74,73 @@ describe("an unmapped user is refused, explicitly and actionably", () => {
   });
 });
 
-describe("the admin branch is deliberately left alone", () => {
-  // The shared LMS-ADMIN identity is a separate business/security decision and is
-  // reported rather than silently removed.
-  it("still resolves an admin identity", () => {
-    expect(RESOLVER).toMatch(/admin_user_master/);
+/**
+ * The admin branch was reported and left alone by the pass above, because who may hold an LMS
+ * administrator identity is a business decision rather than a code one. Owner ruling 2026-08-16
+ * (decision 7) took it: LMS admin identity is per person.
+ *
+ * What was there was not a resolver. The pick was
+ *   ORDER BY CASE WHEN admin_id = 'LMS-ADMIN' THEN 0 ELSE 1 END, created_at ASC LIMIT 1
+ * so while the shared 'LMS-ADMIN' account is active it is returned unconditionally, for everyone.
+ * The LMS's audit_log, login_session_log and content history then record "LMS Admin" against every
+ * administrative change and no action can be attributed to a person. Verified read-only against the
+ * LMS database 2026-08-16: four real named administrators are active and not one of them could ever
+ * be selected. The `?? "LMS-ADMIN"` default went further still — with no active admin row at all it
+ * minted a session for an id the LMS had not confirmed exists, the same fault the trainee and
+ * coordinator branches were fixed for.
+ */
+describe("LMS admin identity is per person, not one shared account", () => {
+  const ADMIN_BRANCH_RAW = RESOLVER.slice(
+    RESOLVER.indexOf('if (portal === "admin")'),
+    RESOLVER.indexOf('if (portal === "coordinator")'),
+  );
+
+  // Comments stripped for the absence assertions. The branch documents the query it replaced, and
+  // a bare source-text search cannot tell "this is the bug" from "this is why the bug was fixed" —
+  // which is exactly how this test first failed against the corrected code.
+  const ADMIN_BRANCH = ADMIN_BRANCH_RAW.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  it("has an admin branch to test — the slice above is not empty", () => {
+    // Guards the assertions below: a renamed branch would make every `not.toMatch` pass vacuously.
+    expect(ADMIN_BRANCH.length).toBeGreaterThan(200);
+    expect(ADMIN_BRANCH).toMatch(/admin_user_master/);
+    expect(ADMIN_BRANCH_RAW.length).toBeGreaterThan(ADMIN_BRANCH.length); // comments really were stripped
+  });
+
+  it("no longer prefers the shared LMS-ADMIN account", () => {
+    expect(ADMIN_BRANCH).not.toMatch(/CASE WHEN admin_id = 'LMS-ADMIN'/);
+  });
+
+  it("does not default to a hardcoded admin id when nothing matches", () => {
+    expect(ADMIN_BRANCH).not.toMatch(/\?\?\s*"LMS-ADMIN"/);
+  });
+
+  it("selects the admin account bound to the caller's own employee code", () => {
+    expect(ADMIN_BRANCH).toMatch(/FROM lms_admin_identity_map/);
+    expect(ADMIN_BRANCH).toMatch(/hrms_employee_code = \?/);
+  });
+
+  it("re-checks the mapped account against the LMS, so a stale row cannot mint a session", () => {
+    // The mapping is HRMS-side; the LMS deactivates its own accounts. A row here must never be
+    // sufficient on its own.
+    expect(ADMIN_BRANCH).toMatch(/FROM admin_user_master\s+WHERE active = 1 AND admin_id = \?/);
+  });
+
+  it("refuses rather than guessing when the caller has no mapping", () => {
+    expect(ADMIN_BRANCH).toMatch(/throw lmsIdentityNotMapped\("admin"\)/);
+  });
+
+  it("refuses when the caller has no employee code to map on", () => {
+    expect(ADMIN_BRANCH).toMatch(/if \(!employeeCode\) throw lmsIdentityNotMapped\("admin"\)/);
+  });
+
+  it("does not create the mapping as a side effect of a launch", () => {
+    // Self-mapping on first launch would reintroduce the defect: whoever launches first takes the
+    // identity, and the mapping is then indistinguishable from a deliberate one.
+    expect(ADMIN_BRANCH).not.toMatch(/INSERT INTO lms_admin_identity_map/i);
+  });
+
+  it("points the administrator at HRMS, where the mapping actually lives", () => {
+    expect(SOURCE).toMatch(/lms_admin_identity_map\), so your actions in the LMS are recorded as yours/);
   });
 });

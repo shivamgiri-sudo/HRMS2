@@ -122,9 +122,16 @@ function attachLmsSessionParams(url: string, lmsToken: string, lmsUserType: stri
  * stop, not guess.
  */
 function lmsIdentityNotMapped(portal: LmsPortal): Error & { statusCode: number; code: string } {
+  // The admin mapping is held HRMS-side, so pointing an administrator at the LMS to fix it would
+  // send them to the wrong system.
+  const remedy =
+    portal === "admin"
+      ? `Ask the LMS administrator to record your own LMS admin account against your employee code ` +
+        `in HRMS (lms_admin_identity_map), so your actions in the LMS are recorded as yours.`
+      : `Ask HR or the LMS administrator to map your employee code in the LMS before launching it.`;
+
   const err = new Error(
-    `Your HRMS account is not linked to an LMS ${portal} profile yet. ` +
-      `Ask HR or the LMS administrator to map your employee code in the LMS before launching it.`,
+    `Your HRMS account is not linked to an LMS ${portal} profile yet. ${remedy}`,
   ) as Error & { statusCode: number; code: string };
   err.statusCode = 409;
   err.code = "LMS_IDENTITY_NOT_MAPPED";
@@ -140,15 +147,41 @@ async function resolveDirectLmsIdentity(
   const email = String(ctx.access.user.email ?? "").trim();
 
   if (portal === "admin") {
-    const [rows] = await pool.execute<RowDataPacket[]>(
+    // The admin portal used to be resolved with
+    //   ORDER BY CASE WHEN admin_id = 'LMS-ADMIN' THEN 0 ELSE 1 END, created_at ASC LIMIT 1
+    // which is not a resolver at all: whenever the shared 'LMS-ADMIN' account is active it is
+    // returned unconditionally, so every HRMS admin who launched the LMS acted as one identity.
+    // The LMS's audit_log, login_session_log and content history then attribute every
+    // administrative change to "LMS Admin", and nothing can say who made it. Verified read-only
+    // 2026-08-16: four real named administrators are active in the LMS and none was ever selected.
+    //
+    // Mapping is held HRMS-side (lms_admin_identity_map) because admin_user_master carries no
+    // employee_code or email to join on and the LMS is a protected system we do not alter.
+    if (!employeeCode) throw lmsIdentityNotMapped("admin");
+
+    const [mapRows] = await db.execute<RowDataPacket[]>(
+      `SELECT lms_admin_id
+         FROM lms_admin_identity_map
+        WHERE active = 1 AND hrms_employee_code = ?
+        LIMIT 1`,
+      [employeeCode],
+    );
+    const mappedAdminId = String(mapRows[0]?.lms_admin_id ?? "").trim();
+    if (!mappedAdminId) throw lmsIdentityNotMapped("admin");
+
+    // Re-checked against the LMS every launch. The mapping table is HRMS-side and the LMS
+    // deactivates its own accounts, so a row here must never be sufficient on its own to mint a
+    // session for an account the LMS has since switched off.
+    const [adminRows] = await pool.execute<RowDataPacket[]>(
       `SELECT admin_id
          FROM admin_user_master
-        WHERE active = 1
-        ORDER BY CASE WHEN admin_id = 'LMS-ADMIN' THEN 0 ELSE 1 END, created_at ASC
-        LIMIT 1`
+        WHERE active = 1 AND admin_id = ?
+        LIMIT 1`,
+      [mappedAdminId],
     );
-    const adminId = String(rows[0]?.admin_id ?? "LMS-ADMIN");
-    return { userId: adminId, userType: "admin" };
+    if (!adminRows[0]?.admin_id) throw lmsIdentityNotMapped("admin");
+
+    return { userId: String(adminRows[0].admin_id), userType: "admin" };
   }
 
   if (portal === "coordinator") {
