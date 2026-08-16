@@ -37,7 +37,8 @@ import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from 
 import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from "./workers/payroll-recalc-drainer.worker.js";
 import { startSLABreachWorker } from "./workers/sla-breach-worker.js";
 import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
-import { startLmsRemindersScheduler } from "./modules/lms/lms-reminders.cron.js";
+// NOTE: the LMS due-date reminder scheduler is PARKED, not deleted — see the
+// block at its former start site below for what is missing and how to restore it.
 import { startMiraTriageScheduler } from "./modules/ai/mira-triage-scheduler.js";
 import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
@@ -266,12 +267,36 @@ function startServer() {
         startLmsSyncWorker().catch((error) =>
           console.error("[lms-sync] startup error:", error instanceof Error ? error.message : String(error)),
         );
-        // Sends due-date reminder emails at 7d / 3d / 1d before batch end.
-        // Gated explicitly: the first sweep emails every qualifying learner.
-        // Set LMS_REMINDERS_ENABLED=true once reminders have been reviewed.
-        if (process.env.LMS_REMINDERS_ENABLED === "true") {
-          startLmsRemindersScheduler();
-        }
+        // LMS due-date reminders (7d / 3d / 1d before batch end) are PARKED.
+        //
+        // This import was committed without its implementation: modules/lms/lms-reminders.cron.ts
+        // has never existed in any commit or ref of this repository — it lives only as an untracked
+        // file in a shared working tree. So tracked main did not typecheck and `npm run build`
+        // could not produce dist at all (TS2307 here and in workers/all-workers.ts). The env gate
+        // below it was never the protection it looked like: a missing module is a COMPILE-time
+        // failure, and LMS_REMINDERS_ENABLED only ever gated RUNTIME.
+        //
+        // Deliberately parked rather than reconstructed, because the feature is incomplete on four
+        // independent counts, any one of which is disqualifying:
+        //   1. the cron source is untracked (in no git object anywhere);
+        //   2. it calls lmsCourseReminderEmail(), which tracked professional-email-templates.ts
+        //      does not export — a second dangling dependency, also untracked;
+        //   3. its migration 1223_lms_reminder_log.sql is untracked AND absent from
+        //      MIGRATION_MANIFEST (so it would never run at boot) AND written with
+        //      ADD COLUMN IF NOT EXISTS / CREATE INDEX IF NOT EXISTS, which this MySQL 8.0.42
+        //      rejects with ER_PARSE_ERROR while still recording the migration as applied;
+        //   4. lms_learning_progress_snapshot.due_date does not exist. Not merely unwritten —
+        //      absent from the base table (020_lms_integration.sql) AND absent from production:
+        //      sql/schema-snapshot.json (mas_hrms, 946 tables) lists exactly 10 columns for it,
+        //      id/employee_id/lms_learner_id/course_id/course_name/completion_pct/score/status/
+        //      last_accessed/synced_at. The sweep filters on `s.due_date IS NOT NULL`, so with
+        //      1223 unapplied every run raises ER_BAD_FIELD_ERROR, and with it applied the column
+        //      has no writer anywhere and stays NULL. Broken either way.
+        //
+        // To restore: land the cron, the email template and a MySQL-8-guarded 1223 as one reviewed
+        // commit with a manifest entry, tests, and a writer for due_date; re-add the start call
+        // here AND the WORKERS entry in all-workers.ts together (parity test), keeping this exact
+        // env gate — the first sweep emails every qualifying learner.
         // Drains payroll_recalculation_queue. Registered in all-workers.ts too — a worker in only
         // one of the two files silently never runs in the other topology.
         startPayrollRecalcDrainerWorker();

@@ -13,7 +13,8 @@ import { startInterviewDelayAlertWorker, stopInterviewDelayAlertWorker } from ".
 import { startLmsSyncWorker, stopLmsSyncWorker } from "./lms-sync.worker.js";
 import { startPayrollNightlyRecalcWorker, stopPayrollNightlyRecalcWorker } from "./payroll-nightly-recalc.worker.js";
 import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from "./payroll-recalc-drainer.worker.js";
-import { startLmsRemindersScheduler, stopLmsRemindersScheduler } from "../modules/lms/lms-reminders.cron.js";
+// NOTE: the LMS due-date reminder scheduler is PARKED, not deleted — see the WORKERS
+// array below for what is missing and how to restore it.
 import { startDbBillFinanceSyncWorker, stopDbBillFinanceSyncWorker } from "./db-bill-finance-sync.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
@@ -160,19 +161,17 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "payroll-recalc-drainer",
     start: () => { startPayrollRecalcDrainerWorker(); return Promise.resolve(); },
   },
-  {
-    // Registered here to restore parity with server.ts, which starts this. Not this session's
-    // feature: the server.ts registration arrived as another session's in-flight edit and was
-    // swept into 720f4724 by mistake. Removing it there would discard their work, so the honest
-    // repair is to complete the registration rather than undo it — with server.ts's env gate
-    // reproduced EXACTLY, because the first sweep emails every qualifying learner and dropping
-    // the gate here would un-gate it under WORKERS_PROCESS=external.
-    name: "lms-reminders",
-    start: () => {
-      if (process.env.LMS_REMINDERS_ENABLED === "true") startLmsRemindersScheduler();
-      return Promise.resolve();
-    },
-  },
+  // "lms-reminders" is PARKED here, matching server.ts. 4128d4d6 added this registration to
+  // restore parity with the server.ts start call — but the module both sides import,
+  // modules/lms/lms-reminders.cron.ts, exists in no commit or ref of this repository, so
+  // parity was restored onto a file that was never tracked and this file stopped compiling
+  // too (TS2307). Re-adding it here doubled the breakage rather than fixing it.
+  //
+  // The cron source, its lmsCourseReminderEmail template and migration 1223 are all untracked,
+  // 1223 is unmanifested and uses MySQL-8-invalid ADD COLUMN IF NOT EXISTS, and nothing writes
+  // the due_date column the sweep filters on — see the long note at the parked start site in
+  // server.ts. Restore both registrations together, never one alone: a job registered in only
+  // one of these two files silently never runs in the other topology.
   {
     name: "kpi-daily-sync",
     start: startKpiDailySyncWorker,
@@ -369,7 +368,6 @@ function shutdown(): void {
   stopLmsSyncWorker();
   stopPayrollNightlyRecalcWorker();
   stopPayrollRecalcDrainerWorker();
-  stopLmsRemindersScheduler();
   stopDbBillFinanceSyncWorker();
   stopPayrollPrepReminderWorker();
   stopPayrollReadinessRefreshWorker();
