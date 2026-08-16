@@ -649,6 +649,11 @@ describe("Legacy grn.service.ts reviewGrn — STATE_CHANGED runtime paths (DB mo
 describe("submitTransfer idempotency — runtime (DB mocked)", () => {
   beforeEach(() => {
     mockExecute.mockReset();
+    // The connection mock is asserted on below, so its call counts must not carry over from
+    // the earlier describe blocks in this file.
+    mockConnection.execute.mockClear();
+    mockConnection.commit.mockClear();
+    mockConnection.rollback.mockClear();
     vi.resetModules();
   });
 
@@ -700,5 +705,14 @@ describe("submitTransfer idempotency — runtime (DB mocked)", () => {
       actorId: "user-fh",
     });
     expect(result).toBeDefined();
+
+    // Exactly two writes on the connection, both inside the transaction: the transfer INSERT
+    // and the TRANSFER_SUBMIT row from auditInTransaction. Asserted because moving the INSERT
+    // onto the connection took it out of the db.execute queue, and nothing else in this test
+    // would now notice if the audit write were dropped — a virement that commits without its
+    // audit row is precisely what this contract file exists to catch.
+    expect(mockConnection.execute).toHaveBeenCalledTimes(2);
+    expect(mockConnection.commit).toHaveBeenCalledTimes(1);
+    expect(mockConnection.rollback).not.toHaveBeenCalled();
   });
 });
