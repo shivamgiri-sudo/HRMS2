@@ -94,6 +94,31 @@ describe("GRN invoice-GST-components (unified vendor-GRN flow)", () => {
     expect(service).toContain("round_off_amount = ?");
   });
 
+  /**
+   * Owner ruling 2026-08-16: keep G8's ₹500 ceiling, but stop it being silent.
+   *
+   * Using the elevated ceiling folded up to ₹500 into a cost-allocation amount, after which the
+   * invoice reconciled perfectly — so nothing afterwards distinguished "the numbers agreed" from
+   * "someone senior accepted that they didn't". The ceiling is Finance's decision and is
+   * unchanged; what is new is that exercising it leaves a record naming the actor, the invoice
+   * and the amount.
+   */
+  it("records an elevated round-off as a sensitive action, and leaves ordinary rounding silent", () => {
+    const service = read("src/modules/finance/grn-smart.service.ts");
+    expect(service).toContain('action_type: "GRN_ELEVATED_ROUNDOFF_ACCEPTED"');
+    // Gated on the ORDINARY limit, not the elevated one: everything above plain arithmetic
+    // rounding is what needs a name against it. Gating on roundoffLimit would record nothing,
+    // since anything above that already throws.
+    expect(service).toContain("if (Math.abs(diff) > GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT) {");
+    // The amount and both limits are on the record, so a reviewer can see how far past ordinary
+    // rounding the call went without re-deriving it.
+    expect(service).toContain("difference: diff,");
+    expect(service).toContain("ordinary_limit: GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT,");
+    expect(service).toContain("elevated_limit: roundoffLimit,");
+    // An audit write must not be able to fail a GRN save that is otherwise valid.
+    expect(service).toContain("void logSensitiveAction({");
+  });
+
   it("fans out N cost-centre splits × M components into individual grn_cost_allocation rows", () => {
     const service = read("src/modules/finance/grn-smart.service.ts");
     const bodyStart = service.indexOf("async saveComponentAllocations(");

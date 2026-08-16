@@ -1072,6 +1072,37 @@ export const grnSmartService = {
         );
       }
 
+      // An absorption only a senior role could authorise is a judgement call, so record it.
+      //
+      // G8's ceiling is Finance's decision and is left exactly where they set it. What was missing
+      // is that using it left no trace: a gap of up to ₹500 was folded into a cost-allocation
+      // amount and the invoice then reconciled perfectly, so afterwards nothing distinguished
+      // "the numbers agreed" from "someone senior accepted that they didn't". Anything within the
+      // ordinary ₹1 is arithmetic rounding and stays silent; beyond it, the actor, the invoice and
+      // the amount are on the record.
+      //
+      // Deliberately not awaited into the caller's critical path failure — see the catch: an audit
+      // write must not be able to fail a GRN save that is otherwise valid.
+      if (Math.abs(diff) > GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT) {
+        void logSensitiveAction({
+          actor_user_id: actorUserId,
+          actor_role: actorRole,
+          action_type: "GRN_ELEVATED_ROUNDOFF_ACCEPTED",
+          module_key: "FINANCE",
+          entity_type: "grn_request",
+          entity_id: grnId,
+          change_summary: {
+            difference: diff,
+            ordinary_limit: GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT,
+            elevated_limit: roundoffLimit,
+            components_total: rawTotalGross,
+            declared_invoice_total: declaredTotal,
+          },
+        }).catch((err: unknown) => {
+          console.error("[grn] failed to record elevated round-off:", err instanceof Error ? err.message : String(err));
+        });
+      }
+
       // Fan out N cost-centre rows x M components. Each grid cell's tax uses the component's
       // own rate/type (gst_type/recoverable_tax_pct still inherited from the budget line,
       // unchanged from today — only the rate itself is invoice-driven).
