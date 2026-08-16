@@ -7,7 +7,11 @@ describe("validateStatutoryFields", () => {
       pan_number: "ABCDE1234F",
       aadhaar_id: "123456789012",
       uan_number: "100200300400",
-      esi_number: "12345678901234567",
+      // 10 digits: the ESIC Insured Person number. This fixture used to be 17, which is the
+      // employer's ESIC registration width — so the validator accepted only values no employee
+      // actually holds. Live 2026-08-16: 382 of 394 active employees with an esic_number carry
+      // 10 digits, and none carries 17.
+      esi_number: "1234567890",
       epf_number: "KA/BLR/12345/000/0000123",
     })).toEqual([]);
   });
@@ -19,7 +23,9 @@ describe("validateStatutoryFields", () => {
     ["aadhaar_id", "12345", "not 12 digits"],
     ["aadhaar_id", "1234567890AB", "contains letters"],
     ["uan_number", "1234567890", "not 12 digits"],
-    ["esi_number", "123456789012345", "not 17 digits"],
+    ["esi_number", "123456789", "not 10 digits"],
+    // The old width must now be rejected too, or the change has not actually landed.
+    ["esi_number", "12345678901234567", "17 digits is the employer registration, not the IP number"],
   ])("rejects malformed %s (%s): %s", (field, value) => {
     const errors = validateStatutoryFields({ [field]: value });
     expect(errors.some((e) => e.field === field)).toBe(true);

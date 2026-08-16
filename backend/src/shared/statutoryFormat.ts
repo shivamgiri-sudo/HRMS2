@@ -11,7 +11,19 @@
 export const PAN_FORMAT = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 export const AADHAAR_FORMAT = /^\d{12}$/;
 export const UAN_FORMAT = /^\d{12}$/;
-export const ESI_FORMAT = /^\d{17}$/;
+/**
+ * The ESIC Insured Person number is 10 digits.
+ *
+ * This was /^\d{17}$/, which is the width of the employer's ESIC REGISTRATION code, not the
+ * IP number held per employee. The effect was that the validator rejected every correct value
+ * and accepted only wrong ones: verified live 2026-08-16, of 394 active employees carrying an
+ * esic_number, 382 are 10 digits and ZERO are 17.
+ *
+ * Kept in step with the CSV bulk-upload validator in employee.compliance.routes.ts, which
+ * carried the same 17 and is corrected in the same change — the comment at the top of this
+ * file points at that validator as the reference, so the two must not drift.
+ */
+export const ESI_FORMAT = /^\d{10}$/;
 export const IFSC_FORMAT = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 export const BANK_ACCOUNT_FORMAT = /^\d{6,20}$/;
 
@@ -50,7 +62,7 @@ export function validateStatutoryFields(values: Record<string, unknown>): Format
   }
   if (values.esi_number !== undefined && values.esi_number !== null && values.esi_number !== "") {
     if (!ESI_FORMAT.test(String(values.esi_number))) {
-      errors.push({ field: "esi_number", message: "ESI number must be exactly 17 digits" });
+      errors.push({ field: "esi_number", message: "ESI number must be exactly 10 digits" });
     }
   }
   if (values.epf_number !== undefined && values.epf_number !== null && values.epf_number !== "") {

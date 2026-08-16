@@ -1377,7 +1377,7 @@ payrollEpfComplianceRouter.post("/epf-compliance/:employeeId/review", h(async (r
  *   - Rows are validated and REPORTED individually. One malformed UAN fails its own row and
  *     the rest still apply — the alternative, aborting the batch, is what makes people paste
  *     numbers straight into the database.
- *   - Format is enforced rather than trusted: UAN is 12 digits and ESIC is 17. Writing a
+ *   - Format is enforced rather than trusted: UAN is 12 digits and ESIC is 10. Writing a
  *     malformed identifier is worse than leaving the cell empty, because a register that is
  *     blank is visibly incomplete while one carrying a wrong number files cleanly and fails at
  *     the department.
@@ -1434,8 +1434,12 @@ payrollEpfComplianceRouter.post(
       const uan  = pick(idx.uan);
 
       // Digits only for the two that have a fixed statutory width.
-      if (esic && !/^\d{17}$/.test(esic.replace(/\D/g, "")) ) {
-        errors.push(`Row ${i + 1} (${code}): ESIC number must be 17 digits, got "${esic}"`); continue;
+      // 10, not 17. 17 is the employer's ESIC registration width, not the per-employee
+      // Insured Person number this CSV carries — so the old check rejected every correct
+      // value. Live 2026-08-16: 382 of the 394 active employees with an esic_number hold
+      // 10 digits, and none holds 17. Kept in step with ESI_FORMAT in shared/statutoryFormat.ts.
+      if (esic && !/^\d{10}$/.test(esic.replace(/\D/g, "")) ) {
+        errors.push(`Row ${i + 1} (${code}): ESIC number must be 10 digits, got "${esic}"`); continue;
       }
       if (uan && !/^\d{12}$/.test(uan.replace(/\D/g, ""))) {
         errors.push(`Row ${i + 1} (${code}): UAN must be 12 digits, got "${uan}"`); continue;
