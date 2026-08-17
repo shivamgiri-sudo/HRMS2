@@ -5,6 +5,39 @@ Everything already done — removing the values from 79 tracked files, adding a 
 their return — stops *future* reads. It does nothing about the copies already taken from a
 public repository, and it never will.
 
+---
+
+## Burn status, re-verified 2026-08-17
+
+Two things changed since this was written, and one did not.
+
+**The repository is now PRIVATE** (`isPrivate: true`, confirmed against the GitHub API). Several
+passages below still read as though it were public — they are left as written rather than
+quietly edited, because the reasoning they record is still the reasoning that applies to
+anyone who cloned during the public window.
+
+**The credentials are still burned.** Private-now does not undo public-then:
+
+- The retired database password is reachable in **76 commits** of history. Making the
+  repository private removes it from *future* clones and from nobody's existing one.
+- Anyone who cloned, forked or CI-mirrored the repository while it was public holds the entire
+  history, including every value, permanently and undetectably.
+- There is no revocation mechanism for a git object already copied. **Rotation remains the only
+  action that helps**, exactly as the original scan concluded.
+
+**The containment claim was re-checked and holds.** A history scan finds the retired fragment in
+exactly two tracked files today:
+`backend/src/db/__tests__/no-hardcoded-credentials.contract.test.ts` and
+`backend/src/db/__tests__/lms-mysql-no-hardcoded-fallback.test.ts`. Both are the regression
+guards, which carry the fragment deliberately in order to assert it never reappears in source.
+The "79 tracked files → 0" figure below is therefore accurate; those two are the watchers, not a
+regression.
+
+**What changed in urgency, honestly:** private repo + closed ports would reduce this from
+"actively reachable by anyone" to "reachable by whoever already has a copy". That is a real
+reduction and it is not zero risk. It does not make rotation optional before a first full
+employee release.
+
 Fifteen secrets are exposed. They are **not** interchangeable: three of them log every user
 out, five of them break inbound traffic from an outside company, and four of them are the
 same value wearing different names. Rotating them in the wrong order turns a security fix
@@ -133,6 +166,45 @@ We authenticate to them, so the provider generates the new value; we just store 
    first: it invalidates nothing already cloned, and it rewrites every SHA — this repository
    has roughly a dozen concurrent worktrees, and a force-push here has destroyed merged work
    before. Coordinate it so everyone re-clones.
+
+---
+
+## Owner and rollback
+
+The sequence above says what to do and in what order. It did not say **who does it** or **how to
+undo a rotation that goes wrong**, and a runbook without both is a plan nobody can execute under
+pressure. Owners are roles, not names, so this does not rot when someone changes jobs.
+
+| Group | Rotation owner | Must be on the call | Rollback |
+|---|---|---|---|
+| A — database passwords | IT / infrastructure | — | Restore the previous value in `backend/.env` and restart both pm2 apps. The old password keeps working until it is changed **at the database**, so stage it: set the new password at the DB *last*, and until you do, rollback is a file edit and a restart. |
+| B — session secrets | IT / infrastructure | Service desk (expect a login-support spike) | Restore the previous secret and restart. Anyone issued a token under the new secret is logged out a second time — unavoidable, and the reason to rotate these in a quiet window. |
+| C — inbound webhook secrets | Integration owner per counterparty | The counterparty's engineer, live | Per integration, not in bulk. Restore the old secret and restart; the counterparty reverts on their side. **Rotate one at a time** — a bulk rollback across five counterparties cannot be coordinated in an incident. |
+| D — outbound provider credentials | The team that owns the provider relationship | Provider support, if they must issue the value | Usually irreversible: many providers invalidate the old value the moment they issue a new one. Treat as forward-only and verify immediately (see below). Keep the old value recorded until the new one is proven, in case the provider can reinstate. |
+
+Two rules that apply to every group:
+
+- **Never rotate two groups in the same window.** If something breaks you must be able to say
+  which change caused it. This has to stay diagnosable.
+- **`FIELD_ENCRYPTION_KEY` and `FIELD_BLIND_INDEX_KEY` are NOT in any group above, and must not
+  be rotated as part of this exercise.** They are not access credentials — they are the keys the
+  stored data was encrypted and indexed *with*. Changing either does not lock an attacker out; it
+  makes roughly 110,000 encrypted values undecryptable and every blind index unmatchable. They
+  need a re-encryption plan of their own, and that is a different piece of work.
+
+---
+
+## Verification — how you know each rotation actually took
+
+A rotation nobody verified is a rotation you will discover failed at the worst moment. Check the
+specific thing, not "the app still loads".
+
+| Group | Verify by |
+|---|---|
+| A | `GET /api/health/version` returns `schema.valid: true` with a non-zero `applied` count — that response requires a live DB connection, so it proves the pool authenticated. Then confirm **both** pm2 apps restarted; the workers hold their own pools and a backend-only restart leaves them on the old value until they next reconnect. |
+| B | Sign in, then confirm an **old** token is now rejected. A successful new login alone does not prove the old secret stopped working. |
+| C | Wait for a **real inbound request** from the counterparty and confirm it lands. Do not accept a synthetic test — a self-signed probe verifies your own code, not their configuration. Biometric is the one to watch hardest: it feeds payroll attendance. |
+| D | Send one real outbound message per provider and confirm delivery, not just a 200 from the API. `dispatch_log` records `sent` on the provider call returning success, which is not the same as delivered. |
 
 ---
 
