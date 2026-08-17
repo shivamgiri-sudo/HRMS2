@@ -130,6 +130,17 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 function startServer() {
   httpServer = app.listen(env.PORT, () => {
+    // Tells PM2 (ecosystem.config.cjs sets wait_ready:true) that the port is bound and
+    // this instance can actually take traffic. Without this call, PM2 has no real
+    // readiness signal and falls back to "process spawned" as its cue to consider a
+    // restart complete — which can be true well before the app is actually listening,
+    // widening the real user-facing gap during any restart. No-op outside PM2 (process.send
+    // is undefined when not launched by a process manager), so this is safe in every
+    // environment including plain `node dist/src/server.js` and local dev.
+    if (process.send) {
+      process.send("ready");
+    }
+
     // GOVERNANCE: These always run (essential schedulers)
     // Binds the notification gateway to SMTP. Without it a live event throws NOT_WIRED
     // rather than silently doing nothing. Events are still individually gated by
