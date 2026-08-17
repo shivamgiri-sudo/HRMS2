@@ -294,17 +294,13 @@ router.get("/agents", requireRole(...ALLOWED_ROLES), h(async (req: Authenticated
       FROM db_audit.call_quality_assessment cqa
       LEFT JOIN mas_hrms.employees e
         ON e.employee_code = cqa.User COLLATE utf8mb4_unicode_ci
+        AND e.active_status = 1
       WHERE cqa.CallDate BETWEEN ? AND ?
         AND cqa.User IS NOT NULL AND cqa.User != ''
-        AND NOT EXISTS (
-          SELECT 1 FROM mas_hrms.employees ex
-          WHERE ex.employee_code = cqa.User COLLATE utf8mb4_unicode_ci
-            AND ex.status NOT IN ('active', 'probation', 'notice_period')
-        )
         ${clientCond}${scopeCond}
       GROUP BY cqa.User
       HAVING COUNT(*) >= 3
-        AND ANY_VALUE(COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), cqa.User)) NOT LIKE 'Codex E2E%'
+        AND agent_name NOT LIKE 'Codex E2E%'
       ORDER BY avg_score DESC
       ${sqlLimit(limit, { maxLimit: 100 })}
     `, params);
