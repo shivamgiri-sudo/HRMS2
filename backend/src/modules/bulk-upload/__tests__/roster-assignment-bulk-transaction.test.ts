@@ -167,6 +167,63 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     expect(conn.rollback).not.toHaveBeenCalled();
   });
 
+  it("allows a row through in WARN mode, recording a REST_GAP_WARNING instead of refusing it", async () => {
+    // Same shortfall as the BLOCK test above, but the organization policy's
+    // enforcement_mode is 'warn'. Regression guard for the gap where this file
+    // hard-blocked on any shortfall regardless of enforcementMode, unlike its
+    // sibling shift-roster-bulk.service.ts, which already honored WARN.
+    //
+    // 1: upload_batch_row  2: employees  3: wfm_shift_template
+    // 4: attendance_daily_record -> not locked
+    // 5: INFORMATION_SCHEMA.TABLES -> wfm_rest_policy EXISTS
+    // 6-8: wfm_rest_policy (employee/process/branch scope) -> none
+    // 9: wfm_rest_policy (organization scope) -> WARN mode, 600min minimum
+    // 10: findAdjacentShifts previous -> only 6h gap    11: findAdjacentShifts next -> none
+    // 12: INSERT wfm_roster_conflict_log (recordRestGapWarning, inside applyRestDecision)
+    // 13: SELECT existing wfm_roster_assignment (before-value lookup)
+    // 14: INFORMATION_SCHEMA.COLUMNS (shift-versioning probe)
+    // 15: INSERT wfm_roster_assignment    16: UPDATE upload_batch_row (imported)
+    // 17: UPDATE upload_batch
+    queueRows(
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
+        shift_code: "NGT", is_week_off: "0", notes: null,
+      }) }],
+      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      [{ id: "shift-1", start_time: "04:00:00", end_time: "13:00:00" }],
+      [],
+      [{ TABLE_NAME: "wfm_rest_policy" }],
+      [],
+      [],
+      [],
+      [{ id: "policy-1", scope_type: "organization", scope_id: null, minimum_rest_minutes: 600, allows_emergency_override: 0, enforcement_mode: "warn" }],
+      [{ roster_date: "2026-08-16", start_time: "13:00:00", end_time: "22:00:00" }],
+      [],
+      [], // recordRestGapWarning's INSERT into wfm_roster_conflict_log
+      [], // existing wfm_roster_assignment (before-value lookup) -> none
+      [], // shift-versioning column probe -> none
+      [], // INSERT wfm_roster_assignment
+      [], // UPDATE upload_batch_row (imported)
+      [], // UPDATE upload_batch
+    );
+
+    const result = await importRosterAssignmentBatch("batch-1", "user-1");
+
+    expect(result.errors).toHaveLength(0);
+    expect(result.skipped).toBe(0);
+    expect(result.imported).toBe(1);
+    const warningInsert = conn.execute.mock.calls.find(
+      ([sql]: [string]) => typeof sql === "string" && sql.includes("wfm_roster_conflict_log") && sql.includes("REST_GAP_WARNING"),
+    );
+    expect(warningInsert, "a WARN-mode shortfall must persist a REST_GAP_WARNING, not disappear silently").toBeDefined();
+    const insertCall = conn.execute.mock.calls.find(
+      ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
+    );
+    expect(insertCall, "WARN mode must let the row through, not refuse it").toBeDefined();
+    expect(conn.commit).toHaveBeenCalledTimes(1);
+    expect(conn.rollback).not.toHaveBeenCalled();
+  });
+
   it("blocks a row whose date is already locked for payroll (closure #2), before ever reaching the rest-policy check", async () => {
     // 1: upload_batch_row  2: employees  3: wfm_shift_template
     // 4: attendance_daily_record -> is_locked=1

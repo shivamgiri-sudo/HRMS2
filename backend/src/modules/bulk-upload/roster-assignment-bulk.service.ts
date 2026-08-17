@@ -3,7 +3,7 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { logRosterChange } from "../roster/roster-change-log.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "../wfm/shift-scheduling.util.js";
-import { isRestPolicyFeatureActive, validateMinimumRest, withEmployeeRosterLock } from "../wfm/rest-policy.service.js";
+import { applyRestDecision, isRestPolicyFeatureActive, validateMinimumRest, withEmployeeRosterLock } from "../wfm/rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 
 export async function importRosterAssignmentBatch(
@@ -137,6 +137,15 @@ export async function importRosterAssignmentBatch(
         // can't legitimately grant. Only runs for non-week-off rows with a
         // resolved shift time, and only once the feature is actually turned
         // on (migration 1210 applied) — otherwise this is a no-op.
+        //
+        // Same shared decision as every other roster write path (matches
+        // shift-roster-bulk.service.ts, the other bulk path). In WARN the row is
+        // accepted and a REST_GAP_WARNING is recorded against it; in BLOCK it is
+        // refused exactly as before. Bulk upload still has no emergency-override
+        // path — WARN is a policy state, not an override — this file previously
+        // hard-blocked on any shortfall regardless of enforcementMode, which was
+        // the one write path in the program not honoring the org's WARN/BLOCK
+        // setting, contradicting the same shared resolver every other path uses.
         if (!isWeekOff && shiftStartTime && shiftEndTime && (await isRestPolicyFeatureActive(conn))) {
           const restCheck = await validateMinimumRest(
             { employeeId, processId: employeeRow.process_id ?? null, branchId: employeeRow.branch_id ?? null, forDate: roster_date },
@@ -144,7 +153,8 @@ export async function importRosterAssignmentBatch(
             null,
             conn
           );
-          if (!restCheck.ok) {
+          const restDecision = await applyRestDecision(restCheck, { employeeId, rosterDate: roster_date }, conn);
+          if (!restCheck.ok && !restDecision.allowed) {
             const message = restCheck.reason === "REST_POLICY_MISSING"
               ? `Row ${batchRow.row_no}: no minimum-rest policy configured for this employee/process/branch/organization`
               : `Row ${batchRow.row_no}: only ${restCheck.actualRestMinutes}min rest against the ${restCheck.against} shift (minimum ${restCheck.requiredRestMinutes}min) — bulk upload does not support emergency override, use manual assignment instead`;
