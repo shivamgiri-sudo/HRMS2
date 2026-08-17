@@ -20,7 +20,7 @@ router.use(requireAuth);
 
 router.get(
   "/vendors",
-  requireRole("admin", "hr", "finance"),
+  requireRole("admin", "hr", "finance", "finance_head", "accounts_head", "branch_head", "branch_admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const query = req.query as {
       is_active?: string;
@@ -56,7 +56,7 @@ router.post(
 
 router.get(
   "/vendors/:id",
-  requireRole("admin", "hr", "finance"),
+  requireRole("admin", "hr", "finance", "finance_head", "accounts_head", "branch_head", "branch_admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const data = await vendorService.getById(req.params.id);
     if (!data) return res.status(404).json({ error: "Vendor not found" });
