@@ -7,6 +7,7 @@ import { useGeoCapture } from "@/hooks/useGeoCapture";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useSearchParams } from "react-router-dom";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import BulkBranchCorrection from "@/components/attendance/BulkBranchCorrection";
 import { useCanDiscard } from "@/hooks/useDiscard";
 import { DiscardDialog } from "@/components/discard/DiscardDialog";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -1418,6 +1419,23 @@ export default function AttendanceRegularization() {
             </div>
           </div>
         </div>
+
+        {/* Branch-wide bulk correction — approvers only.
+            Sits above "My Requests" because it is a clearing task done under month-end time
+            pressure, not something to scroll past. Reuses canBulkApprove: the people who
+            approve regularizations are the people who raise them in bulk. The backend enforces
+            scope per employee regardless — this only decides who is offered the control. */}
+        {canBulkApprove && (
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-3">
+              <h2 className="text-sm font-semibold text-slate-950">Bulk correction across a branch</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Clear a device outage or a whole branch-month in one pass. Raises requests for approval; it does not edit attendance.
+              </p>
+            </div>
+            <BulkBranchCorrection />
+          </div>
+        )}
 
         {/* Requests List */}
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
