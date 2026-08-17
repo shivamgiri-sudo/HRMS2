@@ -51,7 +51,12 @@ function safeFormat(dateStr: string | null | undefined, fmt: string, fallback = 
 }
 
 export function LeaveRequestHistory({ employeeId }: LeaveRequestHistoryProps) {
-  const { data: hrmsRequests, isLoading: loadingHrms } = useQuery({
+  // GET /api/leave/requests/legacy (a separate db_bill-backed query this component used to
+  // merge in and de-dup by legacy_leave_id) was removed 2026-08-17 — all leave history
+  // (2018-2026, 27,209 records) is now migrated into mas_hrms.leave_request, so
+  // /api/leave/requests alone is the complete, sole source of truth. See leave.routes.ts's
+  // own comment at the removed route's former location.
+  const { data: hrmsRequests, isLoading } = useQuery({
     queryKey: ["leave-requests", employeeId],
     queryFn: async () => {
       const res = await hrmsApi.get<{success:boolean;data:any}>(`/api/leave/requests?employeeId=${employeeId}`);
@@ -60,30 +65,8 @@ export function LeaveRequestHistory({ employeeId }: LeaveRequestHistoryProps) {
     enabled: !!employeeId,
   });
 
-  const { data: legacyRequests, isLoading: loadingLegacy } = useQuery({
-    queryKey: ["leave-requests-legacy", employeeId],
-    queryFn: async () => {
-      const res = await hrmsApi.get<{success:boolean;data:any}>(`/api/leave/requests/legacy?employeeId=${employeeId}`);
-      return ((res.data ?? []) as LeaveRequest[]).map(r => ({
-        ...r,
-        leave_type_name: r.leave_type_code ?? null,
-        source: "legacy" as const,
-      }));
-    },
-    enabled: !!employeeId,
-  });
-
-  const isLoading = loadingHrms || loadingLegacy;
-
-  // Merge: hrms requests take priority; de-dup by legacy_leave_id if present
-  const hrmsLegacyIds = new Set(
-    (hrmsRequests ?? []).map((r: any) => r.legacy_leave_id).filter(Boolean)
-  );
-  const filteredLegacy = (legacyRequests ?? []).filter(r => !hrmsLegacyIds.has(r.id));
-  const requests: LeaveRequest[] = [
-    ...(hrmsRequests ?? []),
-    ...filteredLegacy,
-  ].sort((a, b) => new Date(normalizeDate(b.from_date)).getTime() - new Date(normalizeDate(a.from_date)).getTime());
+  const requests: LeaveRequest[] = [...(hrmsRequests ?? [])]
+    .sort((a, b) => new Date(normalizeDate(b.from_date)).getTime() - new Date(normalizeDate(a.from_date)).getTime());
 
   if (isLoading) {
     return (

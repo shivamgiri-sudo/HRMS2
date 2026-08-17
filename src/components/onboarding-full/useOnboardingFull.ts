@@ -46,6 +46,7 @@ export type StatusData = {
     status?: string;
     verification_url?: string | null;
     client_transaction_id?: string | null;
+    stale?: boolean;
   };
   esign?: {
     status?: string;
@@ -128,7 +129,7 @@ export type StatutoryForm = {
 // Raw PAN/Aadhaar/account numbers are never returned to the browser — the server
 // only sends masked forms ("XXXXXXXX0118"). Some legacy rows hold a literal "0",
 // which must not count as a saved value.
-function hasSavedMaskedValue(masked: unknown): boolean {
+export function hasSavedMaskedValue(masked: unknown): boolean {
   const s = String(masked ?? "").trim();
   return s.length > 1 && s !== "0";
 }
@@ -238,6 +239,10 @@ export function useOnboardingFull(token: string) {
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autosaveClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const geoCapture = useGeoCapture();
+  // Applied once per page load, not on every load() call — load() re-runs after nearly
+  // every save, and re-applying the server's saved step on each of those would yank the
+  // candidate back to wherever they last clicked "Next" from, undoing in-session progress.
+  const initialStepAppliedRef = useRef(false);
 
   const load = useCallback(async () => {
     if (!token) { setError("No onboarding token."); setLoading(false); return; }
@@ -255,6 +260,18 @@ export function useOnboardingFull(token: string) {
       setStatus(s);
       setOtpVerified(Boolean(sp.otp_verified));
       setPrivacyConsentAccepted(Boolean(sp.dpdp_consent));
+
+      // Resume on the step the candidate was last on (e.g. returning from DigiLocker, or
+      // reopening the link after closing the tab) instead of always restarting at Step 1.
+      // current_step_idx is written by saveProgress() on every "Next" click but was never
+      // read back — every reload silently discarded it.
+      if (!initialStepAppliedRef.current) {
+        initialStepAppliedRef.current = true;
+        const savedStepIdx = Math.floor(Number(sp.current_step_idx ?? 0));
+        if (savedStepIdx >= 1 && savedStepIdx <= 10) {
+          setStep(savedStepIdx as Step);
+        }
+      }
 
       // BGV status is non-blocking — page still loads if it fails
       let bgvConsent = false;
@@ -583,7 +600,18 @@ export function useOnboardingFull(token: string) {
       return;
     }
     if (!employee.panNumber || employee.panNumber.trim().length !== 10) {
-      setError("Please enter your 10-character PAN number in Step 3 (DigiLocker & KYC) before verification.");
+      // The raw PAN is never sent back by the server (security), so `employee.panNumber`
+      // is blank on every reload even when a PAN was already saved — checking it alone
+      // told a candidate who HAD saved a PAN that they hadn't. Distinguish "never saved"
+      // from "saved, but needs retyping to run this verification call" using the signal
+      // that survives reloads: the persisted masked value (same source `sp` in load() reads).
+      const savedProfile = status?.saved_profile ?? (status?.token as any)?.saved_profile ?? {};
+      const panAlreadySaved = hasSavedMaskedValue(savedProfile.pan_number_masked);
+      setError(
+        panAlreadySaved
+          ? "Your PAN was already saved in Step 3. Please retype it here to run this verification."
+          : "Please enter your 10-character PAN number in Step 3 (DigiLocker & KYC) before verification.",
+      );
       return;
     }
     setSaving(true);
@@ -926,6 +954,10 @@ export function useOnboardingFull(token: string) {
     digilockerSyncing,
     digilockerSessionState: String(status?.digilocker?.status ?? "not_started"),
     digilockerConnected: String(status?.digilocker?.status ?? "") === "completed",
+    // A session Luckpay never reports back on (e.g. tab closed mid-flow) otherwise leaves
+    // "already started" showing forever with no way out — this flags it stale so Step 3 can
+    // offer Start Over instead.
+    digilockerStale: Boolean(status?.digilocker?.stale),
     updateSectionStatus, getBlockers, saveFamily, saveNominees, recordPrivacyConsent,
     autosaveStatus, sectionComplete,
   };

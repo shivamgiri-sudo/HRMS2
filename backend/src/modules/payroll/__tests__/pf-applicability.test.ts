@@ -126,12 +126,20 @@ describe("summary keeps unresolved visible", () => {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Two db.execute calls happen per resolution: (1) resolvePfApplicabilityForPeriod's own
- * employee_statutory_info fallback, (2) this resolver's UAN query. Order matters for the mock.
+ * Three db.execute calls happen per resolution, in order:
+ *   (1) resolveStatutoryApplicabilityForPeriod's HRMS-native pf/esi fallback
+ *   (2) resolveStatutoryApplicabilityForPeriod's approved-statutory-override check (added
+ *       when PF/ESIC opt-out overrides were wired in as a third applicability source —
+ *       see statutory-applicability.service.ts step 3)
+ *   (3) this resolver's own UAN store query
+ * Order matters for the mock; missing one shifts every later mockResolvedValueOnce down by
+ * one slot, so the real UAN query silently gets the beforeEach default ([[], []]) instead of
+ * `rows` — which reads as "UAN never found" rather than a wiring mistake in the test.
  */
 function mockUanQuery(rows: Array<Record<string, unknown>>) {
-  execute.mockResolvedValueOnce([[], []]); // (1) HRMS-native PF fallback — empty, db_bill decides
-  execute.mockResolvedValueOnce([rows, []]); // (2) the UAN query itself
+  execute.mockResolvedValueOnce([[], []]); // (1) HRMS-native PF/ESI fallback — empty, db_bill decides
+  execute.mockResolvedValueOnce([[], []]); // (2) approved statutory-override check — none for this test
+  execute.mockResolvedValueOnce([rows, []]); // (3) the UAN query itself
 }
 
 describe("UAN filing readiness — READY only when applicable AND a valid UAN exists", () => {

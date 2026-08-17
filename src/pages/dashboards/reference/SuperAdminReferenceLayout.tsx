@@ -57,6 +57,8 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
   const systemMetrics = (read(data.system, "metrics") ?? {}) as Record<string, unknown>;
   const active = asNumber(systemMetrics.activeEmployees) ?? metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
   const present = metricDetail(m, "att", "present");
+  const livePresent = metricDetail(m, "att", "livePresent");
+  const displayPresent = livePresent ?? present;
   const absent = metricDetail(m, "att", "absent");
   const attendance = metricDetail(m, "att", "attendanceRate") ?? metricValue(m, "att");
   const onLeave = metricDetail(m, "att", "onLeave") ?? asNumber(data.workforce.on_leave ?? numberAt(data.workforce, "summary", "on_leave"));
@@ -81,7 +83,7 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
 
       <ReferenceMetricGrid columns={7} loading={data.loading} metrics={[
         { label: "Total Employees", value: active, helper: "vs last month", icon: Users, tone: "blue", unavailableReason: metricUnavailableReason(m, "hc"), ...drill("hc") },
-        { label: "Present Today", value: present, helper: attendance === null ? "Today" : `${attendance}%`, icon: UserCheck, tone: "green" },
+        { label: "Present Today", value: displayPresent, helper: attendance === null ? "Today" : `${attendance}%`, icon: UserCheck, tone: "green" },
         { label: "On Leave Today", value: onLeave, helper: "Approved leave", icon: CalendarDays, tone: "red", ...drill("att") },
         { label: "Absent Today", value: absent, helper: "Attendance status", icon: UserMinus, tone: "red", ...drill("att") },
         { label: "Total Branches", value: branches, helper: "Active", icon: Building2, tone: "green" },
@@ -92,7 +94,7 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
       <div className="grid gap-4 xl:grid-cols-[0.82fr_0.78fr_0.78fr_1.22fr]">
         <ReferencePanel title="Attendance Overview">
           <ReferenceDonut compact centerValue={attendance === null ? null : `${attendance}%`} centerLabel="Present" data={[
-            { name: "Present", value: present ?? 0 },
+            { name: "Present", value: displayPresent ?? 0 },
             { name: "On Leave", value: onLeave ?? 0 },
             { name: "Absent", value: absent ?? 0 },
           ]} />

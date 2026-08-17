@@ -13,7 +13,7 @@ import type {
   QualForm, ExperienceForm, FamilyForm, LanguageRow, FamilyMemberRow,
   StatutoryForm, StatusData, BgvStatus, BankForm,
 } from "./useOnboardingFull";
-import { EMPTY_QUAL, FAMILY_MEMBER_LIMIT } from "./useOnboardingFull";
+import { EMPTY_QUAL, FAMILY_MEMBER_LIMIT, hasSavedMaskedValue } from "./useOnboardingFull";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -795,10 +795,24 @@ export function Step10Statutory({
 
         {/* Review Summary */}
         <SectionHead sub="Quick check before final submission">Submission Checklist</SectionHead>
+        {/*
+          The server never returns the raw PAN (security), so employee.panNumber is blank on
+          every reload — even right after it was saved in Step 3. Checking that field alone told
+          candidates who HAD saved a PAN that they hadn't. Fall back to the persisted masked value,
+          which survives reloads, before calling it "Not entered".
+        */}
+        {(() => {
+          const savedProfile = (status?.saved_profile ?? (status?.token as any)?.saved_profile ?? {}) as Record<string, unknown>;
+          const panSavedMasked = hasSavedMaskedValue(savedProfile.pan_number_masked) ? String(savedProfile.pan_number_masked) : null;
+          const panDisplay = employee.panNumber
+            ? `${employee.panNumber.slice(0, 3)}XXXXX${employee.panNumber.slice(-2)}`
+            : panSavedMasked ?? "Not entered";
+          const panOk = Boolean(employee.panNumber) || Boolean(panSavedMasked);
+          return (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {[
             { label: "Name", value: employee.employeeName, ok: Boolean(employee.employeeName) },
-            { label: "PAN", value: employee.panNumber ? `${employee.panNumber.slice(0, 3)}XXXXX${employee.panNumber.slice(-2)}` : "Not entered", ok: Boolean(employee.panNumber) },
+            { label: "PAN", value: panDisplay, ok: panOk },
             { label: "Documents", value: `${status?.documents.length || 0} uploaded`, ok: (status?.documents.length ?? 0) >= 3 },
             { label: "BGV Status", value: bgv?.overall_status || "Not run / Manual", ok: true },
             { label: "Bank", value: bank.bankName || "Not saved", ok: Boolean(bank.bankName) },
@@ -816,6 +830,8 @@ export function Step10Statutory({
             </div>
           ))}
         </div>
+          );
+        })()}
 
         {/* Submit section */}
         <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50 p-5 space-y-4">

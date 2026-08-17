@@ -158,8 +158,9 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
     [candidateId, checkType]
   );
   const existingRows = existing as Array<RowDataPacket & { id: string }>;
+  let checkId: string;
   if (existingRows.length > 0) {
-    const existingId = existingRows[0].id;
+    checkId = existingRows[0].id;
     await db.execute(
       `UPDATE candidate_bgv_check
          SET status = ?, source_document_id = ?, provider_key = ?, provider_request_id = ?,
@@ -180,73 +181,51 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
         input.resultJson ? JSON.stringify(input.resultJson) : null,
         input.riskFlags ? JSON.stringify(input.riskFlags) : null,
         verifiedAt,
-        existingId,
+        checkId,
       ]
     );
-    await propagate();
-    return existingId;
+  } else {
+    checkId = randomUUID();
+    await db.execute(
+      `INSERT INTO candidate_bgv_check
+         (id, candidate_id, check_type, source_document_id, provider_key, provider_request_id,
+          provider_reference_id, status, match_score, matched_name, matched_dob, result_summary,
+          result_json, risk_flags_json, verified_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        checkId,
+        candidateId,
+        checkType,
+        input.sourceDocumentId ?? null,
+        input.providerKey ?? null,
+        input.providerRequestId ?? null,
+        input.providerReferenceId ?? null,
+        status,
+        input.matchScore ?? null,
+        input.matchedName ?? null,
+        input.matchedDob ?? null,
+        input.resultSummary ?? null,
+        input.resultJson ? JSON.stringify(input.resultJson) : null,
+        input.riskFlags ? JSON.stringify(input.riskFlags) : null,
+        verifiedAt,
+      ]
+    );
   }
-  const checkId = randomUUID();
-  await db.execute(
-    `INSERT INTO candidate_bgv_check
-       (id, candidate_id, check_type, source_document_id, provider_key, provider_request_id,
-        provider_reference_id, status, match_score, matched_name, matched_dob, result_summary,
-        result_json, risk_flags_json, verified_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      checkId,
-      candidateId,
-      checkType,
-      input.sourceDocumentId ?? null,
-      input.providerKey ?? null,
-      input.providerRequestId ?? null,
-      input.providerReferenceId ?? null,
-      status,
-      input.matchScore ?? null,
-      input.matchedName ?? null,
-      input.matchedDob ?? null,
-      input.resultSummary ?? null,
-      input.resultJson ? JSON.stringify(input.resultJson) : null,
-      input.riskFlags ? JSON.stringify(input.riskFlags) : null,
-      verifiedAt,
-    ]
-  );
 
-  // Sync report status columns + score after every check write, fire-and-forget
+  // Sync report status columns + score after every check write, fire-and-forget.
+  // Runs on BOTH the update and insert paths now — it used to run only on first insert
+  // (guarded by an early `return existingId` on the update branch), so a check that
+  // changed status later — e.g. HR flipping manual_review to verified on review — never
+  // moved the score. Calls the single exported computeAndSaveScore (bgv-verification.service.ts)
+  // instead of a duplicate nested copy that could drift from it — see that function for the
+  // one canonical set of weights, also now used by getBgvStatusForCandidate.
   setImmediate(() => {
     void syncBgvChecksToReport(candidateId).catch(() => {});
-    if (status === "verified" || status === "waived") {
-      void computeAndSaveScoreInternal(candidateId).catch(() => {});
-    }
+    void computeAndSaveScore(candidateId).catch(() => {});
   });
 
   await propagate();
   return checkId;
-
-  // Internal helper to avoid hoisting issues
-  async function computeAndSaveScoreInternal(candId: string) {
-    const [checks] = await db.execute<RowDataPacket[]>(
-      `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ?`,
-      [candId]
-    );
-    let score = 0;
-    const weights: Record<string, number> = { aadhaar: 25, aadhaar_offline: 25, pan: 20, bank: 15, education: 10, employment: 10, experience: 10, address: 10, address_doc: 10, criminal: 10, court: 10 };
-    const seenTypes = new Set<string>();
-    for (const check of checks as RowDataPacket[]) {
-      const checkT = String(check.check_type);
-      const normalizedT = checkT.replace(/_offline$/, "").replace(/^address_doc$/, "address");
-      if (seenTypes.has(normalizedT)) continue;
-      if (check.status === "verified" || check.status === "waived") {
-        score += weights[checkT] ?? 0;
-        seenTypes.add(normalizedT);
-      }
-    }
-    await db.execute(
-      `INSERT INTO candidate_bgv_report (candidate_id, bgv_score, updated_at) VALUES (?, ?, NOW())
-       ON DUPLICATE KEY UPDATE bgv_score = VALUES(bgv_score), updated_at = NOW()`,
-      [candId, score]
-    );
-  }
 }
 
 // Score weights matching frontend (NativeBGVReport.tsx line 143)
@@ -324,10 +303,23 @@ export async function getBgvStatusForCandidate(candidateId: string) {
     `SELECT id, consent_version, consent_status, granted_at, withdrawn_at FROM candidate_bgv_consent WHERE candidate_id = ? ORDER BY granted_at DESC`,
     [candidateId]
   );
-  const [checks] = await db.execute<RowDataPacket[]>(
+  const [rawChecks] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM candidate_bgv_check WHERE candidate_id = ? ORDER BY updated_at DESC`,
     [candidateId]
   );
+  // Defense in depth: candidate_bgv_check has no unique constraint on (candidate_id,
+  // check_type), and recordFaceMatchSkipped used to insert a fresh photo_match row on
+  // every identity-image upload (fixed in onboarding-full.service.ts, but existing
+  // production rows need a one-time cleanup). Rows are already ordered by updated_at
+  // DESC, so keeping the first occurrence per check_type keeps the most recent one and
+  // masks any leftover duplicates from every consumer of this response.
+  const seenCheckTypes = new Set<string>();
+  const checks = (rawChecks as RowDataPacket[]).filter((c) => {
+    const t = String(c.check_type);
+    if (seenCheckTypes.has(t)) return false;
+    seenCheckTypes.add(t);
+    return true;
+  });
   const [documents] = await db.execute<RowDataPacket[]>(
     `SELECT id, doc_type, doc_name, document_status, verification_method, verification_ref, uploaded_at
        FROM candidate_onboarding_document
@@ -345,15 +337,13 @@ export async function getBgvStatusForCandidate(candidateId: string) {
   const criticalMismatch = checks.some((c) => ["aadhaar", "pan", "bank"].includes(String(c.check_type)) && String(c.status) === "mismatch");
   const bankClear = bankRows.some((b) => ["verified", "waived"].includes(String(b.verification_status)));
   const missing = required.filter((check) => !clearChecks.has(check));
-  const score = Math.max(0, Math.min(100,
-    (clearChecks.has("aadhaar") ? 25 : 0) +
-    (clearChecks.has("pan") ? 20 : 0) +
-    (bankClear ? 20 : 0) +
-    (clearChecks.has("address") ? 10 : 0) +
-    (clearChecks.has("education") ? 10 : 0) +
-    (clearChecks.has("employment") ? 10 : 0) +
-    (clearChecks.has("photo_match") ? 5 : 0)
-  ));
+  // Was a second, disagreeing formula (bank weighted 20 here vs 15 in computeAndSaveScore,
+  // and this was the only one crediting photo_match — a check that can never reach
+  // verified/waived today, so that term was always dead). Two formulas meant the wizard,
+  // the admin Onboarding Request page, and the BGV Report view could each show a
+  // different score for the same candidate. computeAndSaveScore is the single canonical
+  // formula now; call it here too instead of recalculating independently.
+  const score = await computeAndSaveScore(candidateId);
 
   return {
     candidate_id: candidateId,

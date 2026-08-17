@@ -383,7 +383,7 @@ export function Step2Personal({
 
 export function Step3AddressKyc({
   employee, setEmployee, saving, onSave, digilockerStatus, onDigilocker, digilockerRedirectUrl,
-  consentAccepted = false, onConsent, onSyncDigilocker, digilockerSyncing = false,
+  consentAccepted = false, onConsent, onSyncDigilocker, digilockerSyncing = false, digilockerStale = false,
 }: {
   employee: EmployeeForm;
   setEmployee: React.Dispatch<React.SetStateAction<EmployeeForm>>;
@@ -398,6 +398,9 @@ export function Step3AddressKyc({
   /** Re-asks the provider whether the documents are ready. */
   onSyncDigilocker?: () => void;
   digilockerSyncing?: boolean;
+  /** True once an in-flight session has gone quiet long enough that it's unlikely to
+   *  ever resolve — Luckpay never reliably reports failure for an abandoned session. */
+  digilockerStale?: boolean;
 }) {
   // The session table records 'created' | 'completed' | 'failed' | 'expired',
   // while the BGV bridge uses 'documents_received' / 'passed'. Both feed this
@@ -505,6 +508,8 @@ export function Step3AddressKyc({
             <p className="text-xs text-amber-800 leading-relaxed">
               {digilockerSyncing
                 ? "Checking with DigiLocker for your documents…"
+                : digilockerStale
+                ? "This DigiLocker attempt has been open a while with no update. If you finished on the government portal, check below first — if not, you can safely start over."
                 : "If you finished on the government portal, your documents are collected automatically — there is no need to start again. If you did not finish, use the link below to continue where you left off."}
             </p>
             <div className="flex flex-wrap gap-2 pt-1">
@@ -524,6 +529,17 @@ export function Step3AddressKyc({
                 >
                   Continue on DigiLocker
                 </a>
+              )}
+              {digilockerStale && (
+                <Button
+                  onClick={onDigilocker}
+                  disabled={saving}
+                  size="sm"
+                  variant="outline"
+                  className="border-amber-500 text-amber-900 bg-amber-100 hover:bg-amber-200"
+                >
+                  Start Over
+                </Button>
               )}
             </div>
           </div>
