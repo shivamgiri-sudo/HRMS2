@@ -39,21 +39,48 @@ describe("hasOrgWideScope is a real org-wide check, not a role check", () => {
 
 describe("bank-file endpoints in payroll.routes.ts are gated (duplicates of the extended-router ones)", () => {
   for (const path of ["/runs/:id/neft-export", "/runs/:runId/neft-lines"]) {
-    it(`${path} calls hasOrgWideScope before querying`, () => {
+    it(`${path} calls hasExportScope before querying, never the raw hasOrgWideScope`, () => {
       const body = handlerAt(ROUTES, path);
-      expect(body).toMatch(/hasOrgWideScope\(req\.authUser!\.id, PAYROLL_EXPORT_ROLES\)/);
+      expect(body).toMatch(/hasExportScope\(req\.authUser!\.id\)/);
       expect(body).toContain("ORG_WIDE_REQUIRED_MSG");
     });
   }
+
+  it("hasOrgWideScope is not called anywhere in this file — every export site uses hasExportScope", () => {
+    expect(ROUTES).not.toMatch(/hasOrgWideScope\(req/);
+  });
+
+  it("hasExportScope demands a real scope_type='all' row and does not trust `admin`", () => {
+    const from = ROUTES.slice(ROUTES.indexOf("async function hasExportScope"));
+    const fn = from.slice(0, from.indexOf("\n}"));
+    expect(fn).toMatch(/scope_type === "all"/);
+    expect(fn).toMatch(/super_admin/);
+    expect(fn).not.toMatch(/"admin"/);
+  });
 });
 
 describe("bank-file endpoints in payroll-extended.routes.ts are gated", () => {
-  for (const path of ["/runs/:id/neft-summary", "/runs/:id/neft-export"]) {
-    it(`${path} calls hasOrgWideScope before querying`, () => {
+  for (const path of [
+    "/runs/:id/neft-summary", "/runs/:id/neft-export",
+    "/runs/:runId/bank-exception-report", "/runs/:runId/golden-month-reconcile",
+  ]) {
+    it(`${path} calls hasExportScope before querying, never the raw hasOrgWideScope`, () => {
       const body = handlerAt(EXTENDED, path);
-      expect(body).toMatch(/hasOrgWideScope\(req\.authUser!\.id, PAYROLL_EXPORT_ROLES\)/);
+      expect(body).toMatch(/hasExportScope\(req\.authUser!\.id\)/);
     });
   }
+
+  it("hasOrgWideScope is not called anywhere in this file — every export site uses hasExportScope", () => {
+    expect(EXTENDED).not.toMatch(/hasOrgWideScope\(req/);
+  });
+
+  it("hasExportScope demands a real scope_type='all' row and does not trust `admin`", () => {
+    const from = EXTENDED.slice(EXTENDED.indexOf("async function hasExportScope"));
+    const fn = from.slice(0, from.indexOf("\n}"));
+    expect(fn).toMatch(/scope_type === "all"/);
+    expect(fn).toMatch(/super_admin/);
+    expect(fn).not.toMatch(/"admin"/);
+  });
 });
 
 describe("the salary register filters rather than denies", () => {

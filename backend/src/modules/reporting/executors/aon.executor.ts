@@ -143,6 +143,27 @@ const ACTIVE = "e.active_status = 1";
  */
 const RELIABLE_POPULATION = "(e.active_status = 1 OR e.date_of_exit IS NOT NULL)";
 
+/**
+ * Exits whose tenure is arithmetically possible.
+ *
+ * 297 employees carry a date_of_exit EARLIER than their date_of_joining (measured live
+ * 2026-08-17, all-time; 17 of them inside a rolling twelve months). Because every bucket
+ * here is `DATEDIFF(exit, joining) <= 30 THEN '0-30'`, a negative tenure satisfies the
+ * FIRST branch and lands in the 0-30 bucket — silently inflating the single number this
+ * whole report exists to produce, early attrition.
+ *
+ * The joining date is not the wrong side of that comparison. db_bill.masjclrentry.DOJ was
+ * checked for all 297 and agrees with mas_hrms on essentially every one, so date_of_exit is
+ * the unreliable field. Many share one exit date across a whole batch of joiners (twenty
+ * people "exiting" 31 May with June joining dates), which reads as a migration artefact
+ * writing a period-end rather than a real last working day.
+ *
+ * Excluded rather than corrected: inventing a plausible exit date would fabricate the very
+ * tenure this report measures. Excluding them makes the buckets arithmetically sound and
+ * leaves the underlying data wrong-but-visible.
+ */
+const POSSIBLE_TENURE = "e.date_of_exit >= e.date_of_joining";
+
 // ---------------------------------------------------------------------------
 // aon-bucket-headcount  (aggregate — no row-level cursor)
 // ---------------------------------------------------------------------------
@@ -248,6 +269,7 @@ export async function aonBucketAttrition(
   clauses.push(
     "e.date_of_exit IS NOT NULL",
     "e.date_of_joining IS NOT NULL",
+    POSSIBLE_TENURE,
     "e.date_of_exit BETWEEN ? AND ?"
   );
   params.push(from, to);
@@ -464,6 +486,10 @@ export async function aonCohortSurvival(
   clauses.push(
     "e.date_of_joining IS NOT NULL",
     RELIABLE_POPULATION,
+    // Same exclusion as the attrition reports: a leaver whose exit precedes their joining
+    // date would be counted as having left within 30 days of a cohort they were never in,
+    // understating that month's survival.
+    `(e.date_of_exit IS NULL OR ${POSSIBLE_TENURE})`,
     "e.date_of_joining >= ?",
     "e.date_of_joining <= ?"
   );
@@ -484,6 +510,9 @@ export async function aonCohortSurvival(
            COALESCE(b.branch_name, 'UNASSIGNED')        AS branch_name,
            COALESCE(cc.cost_centre_code, 'UNASSIGNED')  AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED')  AS cost_centre_name,
+           -- Process was absent here while every other AON report carried it, so a cohort
+           -- could not be read per process — the dimension WFM actually plans against.
+           COALESCE(p.process_name, 'UNASSIGNED')       AS process_name,
            COUNT(*)                        AS joined,
            SUM(e.active_status = 1)        AS still_active,
            ${leftBy(30)} AS left_by_30,
@@ -501,10 +530,11 @@ export async function aonCohortSurvival(
       FROM employees e
       LEFT JOIN branch_master b       ON b.id  = e.branch_id
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+      LEFT JOIN process_master p      ON p.id  = e.process_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY DATE_FORMAT(e.date_of_joining, '%Y-%m'),
-              b.branch_name, cc.cost_centre_code, cc.cost_centre_name
-     ORDER BY cohort_month DESC, b.branch_name, cc.cost_centre_code`;
+              b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name
+     ORDER BY cohort_month DESC, b.branch_name, cc.cost_centre_code, p.process_name`;
 
   try {
     const paged = await fetchPageWithTotal(base, params, options, query, count);
@@ -671,6 +701,7 @@ export async function attritionDeepDive(
   clauses.push(
     "e.date_of_exit IS NOT NULL",
     "e.date_of_joining IS NOT NULL",
+    POSSIBLE_TENURE,
     "e.date_of_exit BETWEEN ? AND ?"
   );
   params.push(from, to);

@@ -240,8 +240,18 @@ export async function getClientRepeat(f: ClientDrillFilters) {
   }));
 }
 
-/** One call's transcript. */
-export async function getClientTranscript(leadId: string) {
+/**
+ * One call's transcript.
+ *
+ * clientId is required and enforced in the WHERE, not just accepted — every sibling function
+ * in this file scopes to SCOPE (q.ClientId = ?). This one didn't (Section M RBAC audit,
+ * 2026-08-17): a caller holding any of this router's roles (process_manager, manager, qa,
+ * quality_analyst, operations_manager — none inherently org-wide) could pass ANY leadId and
+ * read the call transcript + agent name for any client/process, not just their own, by
+ * guessing or enumerating lead ids. Fixed by requiring the same clientId the rest of the drill
+ * already scopes on.
+ */
+export async function getClientTranscript(leadId: string, clientId: string) {
   const rows = await querySource<Record<string, unknown>>(
     `SELECT q.lead_id,
             DATE_FORMAT(q.CallDate,'%Y-%m-%d') AS date,
@@ -251,9 +261,9 @@ export async function getClientTranscript(leadId: string) {
             ${FATAL_PARAMETERS.map(({ column }) => `q.${column}`).join(", ")}
        FROM db_audit.call_quality_assessment q
        LEFT JOIN mas_hrms.employees e ON e.employee_code = q.User
-      WHERE q.lead_id = ?
+      WHERE q.lead_id = ? AND q.ClientId = ?
       LIMIT 1`,
-    [leadId]
+    [leadId, clientId]
   );
   const row = rows[0];
   if (!row) return null;

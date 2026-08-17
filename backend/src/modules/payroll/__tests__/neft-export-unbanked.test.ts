@@ -21,14 +21,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const RUN_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const AUTH_USER_ID = "33333333-3333-3333-3333-333333333333";
 
-const { execute, hasOrgWideScope, buildScopeWhereClause } = vi.hoisted(() => ({
+const { execute, hasOrgWideScope, hasAnyRole, getUserAssignmentScopes, buildScopeWhereClause } = vi.hoisted(() => ({
   execute: vi.fn(),
   hasOrgWideScope: vi.fn(),
+  // Fixed 2026-08-17 (Section M RBAC audit): /neft-export now gates on a local
+  // hasExportScope() built from these two primitives instead of the raw hasOrgWideScope —
+  // see bank-export-gating.contract.test.ts and payroll-bulk-export-scope.test.ts.
+  hasAnyRole: vi.fn(),
+  getUserAssignmentScopes: vi.fn(),
   buildScopeWhereClause: vi.fn(),
 }));
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../../../shared/scopeAccess.js", () => ({ hasOrgWideScope, buildScopeWhereClause }));
+vi.mock("../../../shared/scopeAccess.js", () => ({ hasOrgWideScope, hasAnyRole, getUserAssignmentScopes, buildScopeWhereClause }));
 vi.mock("../../../shared/accessGuard.js", () => ({ hasRole: vi.fn(), getEmployeeForUser: vi.fn() }));
 vi.mock("../../../config/env.js", () => ({ env: { PAYROLL_BANK_KEY: "test-bank-key" } }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
@@ -63,9 +68,15 @@ const LINES: [Array<Record<string, unknown>>] = [[
     bank_name: "ICICI", ifsc_code: "ICIC0004", account_number: "9876543210" },
 ]];
 
+/** hasExportScope: holds a payroll-export role with an explicit scope_type='all' row. */
+function mockOrgWideCaller() {
+  hasAnyRole.mockImplementation(async (_userId, ...roles) => !roles.includes("super_admin"));
+  getUserAssignmentScopes.mockResolvedValue([{ scope_type: "all" }]);
+}
+
 async function fetchCsv() {
   execute.mockReset();
-  hasOrgWideScope.mockResolvedValue(true);
+  mockOrgWideCaller();
   execute.mockResolvedValueOnce(RUN_ROW).mockResolvedValueOnce(LINES);
   return request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/neft-export`);
 }
@@ -74,6 +85,8 @@ describe("NEFT export excludes employees who cannot be paid", () => {
   beforeEach(() => {
     execute.mockReset();
     hasOrgWideScope.mockReset();
+    hasAnyRole.mockReset();
+    getUserAssignmentScopes.mockReset();
     buildScopeWhereClause.mockReset();
   });
 
@@ -124,7 +137,7 @@ describe("NEFT export excludes employees who cannot be paid", () => {
 
   it("emits no exclusion block when everyone is payable", async () => {
     execute.mockReset();
-    hasOrgWideScope.mockResolvedValue(true);
+    mockOrgWideCaller();
     execute.mockResolvedValueOnce(RUN_ROW).mockResolvedValueOnce([[LINES[0][0], LINES[0][3]]]);
 
     const res = await request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/neft-export`);

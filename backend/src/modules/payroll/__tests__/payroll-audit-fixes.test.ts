@@ -106,10 +106,12 @@ describe("P0-B — bank-exception-report endpoint", () => {
     expect(EXTENDED).toContain('"/runs/:runId/bank-exception-report"');
   });
 
-  it("endpoint checks hasOrgWideScope before querying", () => {
+  it("endpoint checks hasExportScope before querying", () => {
+    // Fixed 2026-08-17 (Section M RBAC audit): was hasOrgWideScope, which trusts bare `admin`
+    // membership with no scope row — see bank-export-gating.contract.test.ts.
     const idx = EXTENDED.indexOf('"/runs/:runId/bank-exception-report"');
     const body = EXTENDED.slice(idx, idx + 800);
-    expect(body).toMatch(/hasOrgWideScope\(/);
+    expect(body).toMatch(/hasExportScope\(/);
   });
 
   it("uses resolveAccountNumberWithConflict (not just resolveAccountNumber)", () => {
@@ -157,14 +159,19 @@ describe("P0-D — golden-month-reconcile endpoint", () => {
     expect(before).toContain(".post(");
   });
 
-  it("checks hasOrgWideScope", () => {
+  it("checks hasExportScope", () => {
+    // Fixed 2026-08-17 (Section M RBAC audit): was hasOrgWideScope, which trusts bare `admin`
+    // membership with no scope row — see bank-export-gating.contract.test.ts.
     const idx = EXTENDED.indexOf('"/runs/:runId/golden-month-reconcile"');
     const body = EXTENDED.slice(idx, idx + 600);
-    expect(body).toMatch(/hasOrgWideScope\(/);
+    expect(body).toMatch(/hasExportScope\(/);
   });
 
   it("computes system figures from salary_prep_line not just run totals column", () => {
-    const idx = EXTENDED.indexOf("golden-month-reconcile");
+    // Anchored on the quoted route path, not the bare substring: a bare "golden-month-reconcile"
+    // can match an EARLIER, unrelated mention of the same words in a docstring/comment elsewhere
+    // in the file, which silently widens this slice into the wrong region.
+    const idx = EXTENDED.indexOf('"/runs/:runId/golden-month-reconcile"');
     const body = EXTENDED.slice(idx, idx + 2000);
     expect(body).toContain("FROM salary_prep_line WHERE run_id");
   });

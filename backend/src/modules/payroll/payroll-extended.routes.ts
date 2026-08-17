@@ -4,14 +4,14 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { db } from "../../db/mysql.js";
 import { isRunClosed } from "./run-status.js";
-import { hasOrgWideScope, buildScopeWhereClause } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync, getUserAssignmentScopes } from "../../shared/scopeAccess.js";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import * as XLSX from "xlsx";
 import { resolveAccountNumber, resolveAccountNumberWithConflict } from "../../shared/fieldEncryption.js";
 
 /**
- * Roles whose payroll authority can be org-wide. Used with hasOrgWideScope for
+ * Roles whose payroll authority can be org-wide. Used with hasExportScope (below) for
  * the bank-file endpoints below, which refuse a branch-scoped caller rather than
  * emit a partial payment instruction.
  */
@@ -20,6 +20,34 @@ const PAYROLL_EXPORT_ROLES = ["finance", "payroll", "finance_head", "payroll_hea
 const PAYROLL_REPORT_SCOPE_ROLES = ["hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
 const ORG_WIDE_REQUIRED_MSG =
   "This export requires org-wide payroll scope. A branch-scoped export would produce a partial payment file, which is indistinguishable from a complete one once downloaded.";
+
+/**
+ * The bank/NEFT export's own org-wide test — deliberately NOT hasOrgWideScope().
+ *
+ * hasOrgWideScope() short-circuits to true for anyone holding `admin` (scopeAccess.ts:~192)
+ * before it ever looks at a scope row. Fixed 2026-08-17 (Section M RBAC audit): this file's
+ * neft-summary, neft-export, bank-exception-report and golden-month-reconcile endpoints were
+ * still using the raw hasOrgWideScope check, even though the identical vulnerability was
+ * already found and fixed for /payment-file in bank-payment-readiness.routes.ts (c202fe10,
+ * 2026-08-14), whose own commit message names this exact gap as an unfixed follow-up: "the
+ * admin-implies-org-wide shortcut in hasOrgWideScope() still applies to every other endpoint
+ * that uses it." Measured against production 2026-08-14: one active account holds `admin` +
+ * `branch_admin` with ZERO scope_type='all' rows. Routed through hasOrgWideScope, that branch
+ * administrator could pull org-wide NEFT/bank data and payroll totals through THIS file's
+ * endpoints.
+ *
+ * super_admin is org-wide by definition; everyone else needs a real scope_type='all' row
+ * against a payroll export role. Holding `admin` is not, by itself, org-wide payroll scope.
+ * Same helper/logic as bank-payment-readiness.routes.ts's hasExportScope and
+ * payroll.routes.ts's — duplicated per-file rather than shared, to keep this a minimal,
+ * targeted fix on the files that were still vulnerable rather than a cross-file refactor.
+ */
+async function hasExportScope(userId: string): Promise<boolean> {
+  if (await hasAnyRoleAsync(userId, "super_admin")) return true;
+  if (!(await hasAnyRoleAsync(userId, ...PAYROLL_EXPORT_ROLES))) return false;
+  const scopes = await getUserAssignmentScopes(userId, PAYROLL_EXPORT_ROLES);
+  return scopes.some((s) => s.scope_type === "all");
+}
 
 export const payrollExtendedRouter = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -103,7 +131,7 @@ payrollExtendedRouter.get("/minimum-wages", requireRole("admin", "hr", "finance"
 payrollExtendedRouter.get("/runs/:id/neft-summary", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   // Gated the same way as the export it precedes: these totals are org-wide payroll
   // figures, and showing them to a caller who cannot produce the file is incoherent.
-  if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+  if (!(await hasExportScope(req.authUser!.id))) {
     return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
   }
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -125,7 +153,7 @@ payrollExtendedRouter.get("/runs/:id/neft-export", requireRole("admin", "finance
   // requireRole alone let a branch-scoped payroll user download decrypted bank account
   // numbers for the entire organisation. Denying rather than row-filtering is deliberate:
   // a silently branch-filtered bank file would be uploaded as if it paid everyone.
-  if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+  if (!(await hasExportScope(req.authUser!.id))) {
     return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
   }
   const [runRows] = await db.execute<RowDataPacket[]>("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);
@@ -516,7 +544,7 @@ payrollExtendedRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
 
-    if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+    if (!(await hasExportScope(req.authUser!.id))) {
       return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
 
@@ -643,7 +671,7 @@ payrollExtendedRouter.post(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { runId } = req.params;
 
-    if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+    if (!(await hasExportScope(req.authUser!.id))) {
       return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
 

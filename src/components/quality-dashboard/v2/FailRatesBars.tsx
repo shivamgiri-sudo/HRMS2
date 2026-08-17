@@ -6,12 +6,25 @@ interface Props {
   loading: boolean;
 }
 
-const PARAMS = [
-  { key: "fail_rate_call_open"       as const, label: "Call Opening"    },
-  { key: "fail_rate_professionalism" as const, label: "Professionalism" },
-  { key: "fail_rate_active_listening"as const, label: "Active Listening"},
-  { key: "fail_rate_call_closure"    as const, label: "Call Closure"    },
-  { key: "fail_rate_accuracy"        as const, label: "Accuracy"        },
+/**
+ * Only the numeric fail-rate fields of QDSummary, so the lookup below needs no cast.
+ *
+ * This was indexed via `(s as Record<string, unknown>)[key]`, which TypeScript rejects — QDSummary
+ * has no index signature, so the two types do not overlap enough to convert. Widening it further
+ * (`as unknown as Record<string, unknown>`, which the compiler suggests) would compile by
+ * discarding the type instead of using it: a key renamed in QDSummary would then read undefined
+ * and the bar would silently render 0%, which is indistinguishable from a genuine 0% fail rate.
+ *
+ * Deriving the key type instead makes a stale key a compile error.
+ */
+type FailRateKey = Extract<keyof QDSummary, `fail_rate_${string}`>;
+
+const PARAMS: ReadonlyArray<{ key: FailRateKey; label: string }> = [
+  { key: "fail_rate_call_open",        label: "Call Opening"    },
+  { key: "fail_rate_professionalism",  label: "Professionalism" },
+  { key: "fail_rate_active_listening", label: "Active Listening"},
+  { key: "fail_rate_call_closure",     label: "Call Closure"    },
+  { key: "fail_rate_accuracy",         label: "Accuracy"        },
 ];
 
 function barColor(val: number) {
@@ -34,7 +47,8 @@ export function FailRatesBars({ summary: s, loading }: Props) {
       ) : (
         <div className="space-y-3.5">
           {PARAMS.map(({ key, label }) => {
-            const val = Number((s as Record<string, unknown>)[key]) || 0;
+            // `|| 0` still guards the runtime case the type cannot: the API may omit a rate.
+            const val = s[key] || 0;
             return (
               <div key={key}>
                 <div className="mb-1 flex items-center justify-between">

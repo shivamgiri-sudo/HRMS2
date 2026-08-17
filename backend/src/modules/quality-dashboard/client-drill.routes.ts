@@ -62,11 +62,18 @@ clientDrillRouter.get("/repeat", h(async (req, res) =>
   res.json({ success: true, data: await svc.getClientRepeat(filters(req)) })));
 
 clientDrillRouter.get("/transcript", h(async (req, res) => {
+  // Fixed 2026-08-17 (Section M RBAC audit): this was the one endpoint in the file with no
+  // clientId scope at all — every sibling above requires it via filters(). A leadId alone let
+  // any caller with router access read another client's call transcript + agent name.
+  const clientId = String(req.query.clientId ?? "").trim();
+  if (!clientId) {
+    throw Object.assign(new Error("clientId is required"), { statusCode: 400 });
+  }
   const leadId = String(req.query.leadId ?? "").trim();
   if (!leadId) {
     throw Object.assign(new Error("leadId is required"), { statusCode: 400 });
   }
-  const data = await svc.getClientTranscript(leadId);
+  const data = await svc.getClientTranscript(leadId, clientId);
   // null rather than 404: the modal opens on a row the user just clicked, and a missing
   // transcript is an empty panel, not a broken page.
   return res.json({ success: true, data });
