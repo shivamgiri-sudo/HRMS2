@@ -328,14 +328,36 @@ const maskAccount = (value: unknown) => {
  * look at this person.
  */
 async function recordFaceMatchSkipped(candidateId: string, reason: string) {
-  await db.execute(
-    `INSERT INTO candidate_bgv_check
-       (id, candidate_id, check_type, provider_key, status, result_summary, result_json)
-     VALUES (?, ?, 'photo_match', 'system', 'manual_review', ?, CAST(? AS JSON))`,
-    [randomUUID(), candidateId, reason.slice(0, 240), JSON.stringify({ skipped: true, reason })],
-  ).catch((error) => {
+  // Upsert, not a bare INSERT: triggerFaceMatch runs once per identity-image upload
+  // (selfie, then again on Aadhaar, then again on PAN Card via faceMatchOnIdDocumentUpload),
+  // so a plain INSERT here left 3 separate 'photo_match' rows per candidate — no unique
+  // constraint on (candidate_id, check_type) stopped it, and every consumer's unfiltered
+  // SELECT * surfaced all 3. One row per candidate, most recent reason wins.
+  try {
+    const [existing] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = 'photo_match' LIMIT 1`,
+      [candidateId],
+    );
+    const existingId = (existing as RowDataPacket[])[0]?.id as string | undefined;
+    if (existingId) {
+      await db.execute(
+        `UPDATE candidate_bgv_check
+            SET status = 'manual_review', provider_key = 'system',
+                result_summary = ?, result_json = CAST(? AS JSON), updated_at = NOW()
+          WHERE id = ?`,
+        [reason.slice(0, 240), JSON.stringify({ skipped: true, reason }), existingId],
+      );
+    } else {
+      await db.execute(
+        `INSERT INTO candidate_bgv_check
+           (id, candidate_id, check_type, provider_key, status, result_summary, result_json)
+         VALUES (?, ?, 'photo_match', 'system', 'manual_review', ?, CAST(? AS JSON))`,
+        [randomUUID(), candidateId, reason.slice(0, 240), JSON.stringify({ skipped: true, reason })],
+      );
+    }
+  } catch (error) {
     console.error("[FaceMatch] could not record a skipped comparison for", candidateId, (error as Error)?.message);
-  });
+  }
 }
 
 async function triggerFaceMatch(candidateId: string, selfiePath: string, selfieDocId: string) {
@@ -492,6 +514,23 @@ async function ensureCandidateWithinScope(candidateId: string, scopeFilter?: Onb
   }
 }
 
+// Statuses that mean the candidate is genuinely done, or never started — anything else
+// (initiated/pending/created) is a session in flight. Luckpay's own status ever reports
+// failed/expired for a session the candidate abandoned (e.g. closed the tab mid-flow),
+// so without an age check "already started" can be permanent with no way out.
+const DIGILOCKER_TERMINAL_STATUSES = new Set([
+  "completed", "documents_received", "passed", "failed", "expired", "not_started",
+]);
+const DIGILOCKER_STALE_AFTER_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+function isDigilockerStale(status: unknown, updatedAt: unknown): boolean {
+  if (DIGILOCKER_TERMINAL_STATUSES.has(String(status ?? ""))) return false;
+  if (!updatedAt) return false;
+  const ts = new Date(updatedAt as string).getTime();
+  if (Number.isNaN(ts)) return false;
+  return Date.now() - ts > DIGILOCKER_STALE_AFTER_MS;
+}
+
 async function getLatestDigilockerStatus(candidateId: string) {
   const [providerRows] = await db.execute<RowDataPacket[]>(
     `SELECT service_type, status, provider_url, client_transaction_id, updated_at
@@ -510,6 +549,7 @@ async function getLatestDigilockerStatus(candidateId: string) {
       verification_url: row.provider_url ?? null,
       client_transaction_id: row.client_transaction_id ?? null,
       updated_at: row.updated_at ?? null,
+      stale: isDigilockerStale(row.status ?? "initiated", row.updated_at),
     };
   }
 
@@ -532,16 +572,18 @@ async function getLatestDigilockerStatus(candidateId: string) {
 
   if ((sessionRows as RowDataPacket[]).length) {
     const row = (sessionRows as RowDataPacket[])[0];
+    const updatedAt = row.updated_at ?? row.created_at ?? null;
     return {
       provider: "existing",
       status: row.session_status ?? "not_started",
       verification_url: row.auth_url ?? null,
       client_transaction_id: row.state_token ?? null,
-      updated_at: row.updated_at ?? row.created_at ?? null,
+      updated_at: updatedAt,
+      stale: isDigilockerStale(row.session_status ?? "not_started", updatedAt),
     };
   }
 
-  return { provider: "luckpay", status: "not_started", verification_url: null, client_transaction_id: null, updated_at: null };
+  return { provider: "luckpay", status: "not_started", verification_url: null, client_transaction_id: null, updated_at: null, stale: false };
 }
 
 async function getLatestEsignStatus(candidateId: string) {
