@@ -15,6 +15,47 @@ const STOP_ON_FIRST_FAILURE = process.env.MIGRATION_STOP_ON_FAILURE !== "false";
 // site for why this exists. Matches the app's shared pool's own connectTimeout (db/mysql.ts).
 const VERIFY_SCHEMA_TIMEOUT_MS = 10000;
 
+/**
+ * Errors that mean "try again", not "the schema is wrong".
+ *
+ * The runner's outer catch used to record EVERY failure as `migration-runner`, and in production
+ * any recorded failure throws and refuses to start the server. That is right for a deterministic
+ * schema problem — a missing file, a checksum mismatch, bad SQL — and badly wrong for a momentary
+ * lock, which is what took production down on 2026-08-17: an ER_LOCK_WAIT_TIMEOUT on
+ * `CREATE TABLE IF NOT EXISTS salary_certificate_request`, a table that had existed since 31 July.
+ * Nothing was wrong with the schema; the boot was refused for ~40 minutes across two deploys
+ * because a lock was briefly held.
+ *
+ * `db/mysql.ts` has its own TRANSIENT_DB_ERROR_CODES, but that set is deliberately connection-level
+ * only — adding lock codes there would silently re-run statements inside other people's
+ * transactions. Lock retries are safe HERE specifically, because the runner holds an advisory lock,
+ * resets migrationHealth on every attempt, and every migration it applies is idempotent by
+ * contract. Keep the two sets separate.
+ */
+const TRANSIENT_MIGRATION_ERROR_CODES = new Set([
+  "ER_LOCK_WAIT_TIMEOUT",      // 1205 — someone held the row/metadata lock; retrying usually wins
+  "ER_LOCK_DEADLOCK",          // 1213 — InnoDB picked us as the victim
+  "ETIMEDOUT",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EPIPE",
+  "PROTOCOL_CONNECTION_LOST",
+]);
+const TRANSIENT_MIGRATION_ERRNOS = new Set([1205, 1213]);
+/** Total attempts, so a genuinely stuck lock still fails the boot rather than looping forever. */
+const MIGRATION_MAX_ATTEMPTS = 3;
+const MIGRATION_RETRY_BASE_MS = 3000;
+
+/** Exported so the retry policy can be tested against real driver error shapes, not by grepping. */
+export function isTransientMigrationError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; errno?: unknown };
+  if (typeof candidate.code === "string" && TRANSIENT_MIGRATION_ERROR_CODES.has(candidate.code)) {
+    return true;
+  }
+  return typeof candidate.errno === "number" && TRANSIENT_MIGRATION_ERRNOS.has(candidate.errno);
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function resolveSqlDir(): string {
@@ -1154,7 +1195,7 @@ export async function findMissingDeclaredSchema(
  * - Runs 043_demo_data.sql only when SEED_DEMO_DATA=true.
  * - Production startup is blocked when any migration fails.
  */
-export async function runPendingMigrations(): Promise<MigrationHealth> {
+export async function runPendingMigrations(attempt = 1): Promise<MigrationHealth> {
   if (process.env.SKIP_MIGRATIONS === 'true') {
     migrationHealth = { status: "ok", applied: [], skipped: [], failed: [], startedAt: new Date().toISOString(), completedAt: new Date().toISOString() };
     return migrationHealth;
@@ -1180,6 +1221,8 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
 
   // Connection for advisory lock (kept open throughout migration run)
   let lockConn: mysql.Connection | null = null;
+  /** Set when the outer catch sees a retryable DB error; acted on after the lock is released. */
+  let transientRetryCause: unknown = null;
 
   try {
     await ensureDatabaseExists(
@@ -1394,16 +1437,37 @@ export async function runPendingMigrations(): Promise<MigrationHealth> {
       }
     }
   } catch (error: unknown) {
-    migrationHealth.failed.push({
-      filename: "migration-runner",
-      error: error instanceof Error ? error.message : String(error),
-    });
+    // A transient DB error is not a schema verdict. Flag it and retry BELOW — deliberately not
+    // here, because the advisory lock is still held until the `finally` runs, so retrying inside
+    // this catch would block on a lock this same call owns.
+    if (isTransientMigrationError(error) && attempt < MIGRATION_MAX_ATTEMPTS) {
+      transientRetryCause = error;
+    } else {
+      migrationHealth.failed.push({
+        filename: "migration-runner",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   } finally {
     // GOVERNANCE: Always release advisory lock
     if (lockConn) {
       await releaseMigrationLock(lockConn);
       await lockConn.end();
     }
+  }
+
+  if (transientRetryCause) {
+    const delayMs = MIGRATION_RETRY_BASE_MS * attempt;
+    const reason =
+      transientRetryCause instanceof Error ? transientRetryCause.message : String(transientRetryCause);
+    console.warn(
+      `[migration] transient failure on attempt ${attempt}/${MIGRATION_MAX_ATTEMPTS} — ${reason}. `
+        + `Retrying in ${delayMs}ms; the advisory lock has been released.`
+    );
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    // migrationHealth is reset at the top of every call, so the retry starts from a clean slate
+    // and the returned health reflects only the attempt that actually finished.
+    return runPendingMigrations(attempt + 1);
   }
 
   migrationHealth.completedAt = new Date().toISOString();
