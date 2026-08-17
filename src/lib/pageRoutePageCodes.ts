@@ -158,6 +158,10 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/recruitment/job-requisition": "JOB_REQUISITION",
   "/reports": "REPORTS_CENTER",
   "/roster-master-builder": "ROSTER_MASTER",
+  // Deliberately the same code as /reports: this route renders the Reports hub's own `aon`
+  // view from the same API, so its audience must be identical rather than a second grant
+  // that can drift out of step with it.
+  "/workforce/aon-analytics": "REPORTS_CENTER",
   "/rta-board": "RTA_BOARD",
   "/salary-increment": "SALARY_INCREMENT",
   "/security-center": "SECURITY_CENTER",

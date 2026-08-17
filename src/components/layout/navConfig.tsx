@@ -1,7 +1,7 @@
 import type { FC, SVGProps } from "react";
 import {
   Activity, BarChart3, Bell, Briefcase, Building2, Calendar,
-  CalendarDays, ClipboardList, Clock, CreditCard, FileCheck,
+  CalendarClock, CalendarDays, ClipboardList, Clock, CreditCard, FileCheck,
   FileText, GitBranch, GraduationCap, Heart, Home, Landmark,
   Network, Package, Search, Server, Settings, Settings2, ShieldCheck, Sparkles,
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
@@ -232,6 +232,14 @@ export const navGroups: NavGroup[] = [
           { label: "Break Session Log",     href: "/break-session-log",         icon: ic(ClipboardList), roles: ["super_admin","admin","hr","wfm","manager","process_manager"], description: "Every break with in/out times" },
           { label: "Break Desk Devices",    href: "/break-management/devices",  icon: ic(Settings2), roles: ["super_admin","admin","wfm"], description: "Kiosk tokens & devices" },
         ],
+      },
+      // pageCode matches PAGE_CODE_BY_ROUTE["/workforce/aon-analytics"] exactly. That
+      // agreement is an invariant across all 126 nav entries carrying a pageCode — a nav
+      // entry naming a different code than the route map is how users end up seeing a link
+      // they are then denied on.
+      {
+        label: "AON & Attrition", href: "/workforce/aon-analytics", icon: ic(CalendarClock), pageCode: "REPORTS_CENTER",
+        description: "Tenure buckets, attrition & shrinkage trends",
       },
     ],
   },

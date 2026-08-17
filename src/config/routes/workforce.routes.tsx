@@ -38,6 +38,7 @@ const NativeRosterMasterBuilder    = lazy(() => import("@/pages/NativeRosterMast
 const NativeRosterCapacityConfig   = lazy(() => import("@/pages/NativeRosterCapacityConfig"));
 const NativeBiometricCommandCenter = lazy(() => import("@/pages/NativeBiometricCommandCenter"));
 const NativeCosecSyncMonitoring    = lazy(() => import("@/pages/NativeCosecSyncMonitoring"));
+const AonAnalyticsPage             = lazy(() => import("@/pages/AonAnalyticsPage"));
 const NativeWorkforcePlanning      = lazy(() => import("@/pages/NativeWorkforcePlanning"));
 const NativeRTABoard               = lazy(() => import("@/pages/NativeRTABoard"));
 const NativeBusinessCommandCenter  = lazy(() => import("@/pages/NativeBusinessCommandCenter"));
@@ -126,6 +127,18 @@ export const workforceRouteElements = (
       <Route path="/wfm/week-off-default"  element={<ProtectedRoute roles={['super_admin','admin','wfm','hr','manager']}><NativeWeekOffDefaultConfig /></ProtectedRoute>} />
       <Route path="/wfm/weekoff-fairness"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_WEEKOFF_FAIRNESS"><WeekoffFairness /></Gate></ProtectedRoute>} />
       <Route path="/workforce-planning" element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWorkforcePlanning /></Gate></ProtectedRoute>} />
+
+      {/* AON & Attrition analytics — the same view the Reports hub serves as its `aon` tab,
+          given its own address because a tab inside /reports is invisible to anyone not
+          already in the report library.
+
+          Gated by REPORTS_CENTER through PAGE_CODE_BY_ROUTE, i.e. the Reports hub's own page
+          code, so the audience is identical and no new entry is needed in rbacPageMatrix.
+          No `roles={...}` prop here on purpose: ProtectedRoute ignores the role list on any
+          route the map covers, so writing one would read like a restriction and enforce
+          nothing. The inner Gate names the same code as the map to avoid the
+          two-different-codes drift that once required users to hold both grants. */}
+      <Route path="/workforce/aon-analytics" element={<ProtectedRoute><Gate pageCode="REPORTS_CENTER"><AonAnalyticsPage /></Gate></ProtectedRoute>} />
 
       {/* Roster self-service */}
       <Route path="/my-roster"              element={<ProtectedRoute><NativeMyRoster /></ProtectedRoute>} />
