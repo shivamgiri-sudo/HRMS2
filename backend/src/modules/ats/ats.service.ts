@@ -468,14 +468,17 @@ export const atsService = {
       by_source[key] = Number(row.count);
     }
 
-    // Add open positions count (count candidates in early stages as open pipeline)
+    // Open positions from job_requisition: sum of unfilled headcount on approved, active requisitions.
+    // Previously counted DISTINCT applied_for_process from ats_candidate (pipeline proxy), which
+    // returned the number of processes that had any active candidate — not the actual open
+    // headcount demand.
     const [openPosRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(DISTINCT applied_for_process) as count
-       FROM ats_candidate
-       WHERE active_status = 1
-         AND current_stage NOT IN ('converted', 'rejected', 'Onboarded', 'Selected', 'declined')
-         AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}${scopeSql}`, scopeParams
-    );
+      `SELECT COALESCE(SUM(GREATEST(requested_headcount - fulfilled_headcount, 0)), 0) AS count
+       FROM job_requisition
+       WHERE approval_status = 'approved'
+         AND active_status = 1
+         AND closed_at IS NULL`
+    ).catch(() => [[{ count: 0 }]] as any);
     const openPositions = Number(openPosRows[0]?.count ?? 0);
 
     // Selected candidates (last 30 days)
