@@ -150,8 +150,11 @@ export function ClientQualityDrillModal({ clientId, clientName, from, to, onClos
   });
 
   const transcriptQ = useQuery({
-    queryKey: ["client-transcript", transcriptModal],
-    queryFn: () => hrmsApi.get<{ success: boolean; data: TranscriptData }>(`/api/quality-dashboard/client-drill/transcript?leadId=${transcriptModal}`).then(r => (r as any)?.data ?? r),
+    queryKey: ["client-transcript", transcriptModal, clientId],
+    // clientId is required backend-side now (Section M RBAC audit, 2026-08-17) — the endpoint
+    // used to trust leadId alone, letting any caller with router access read another client's
+    // transcript. Already in scope here since this modal is always opened for one client.
+    queryFn: () => hrmsApi.get<{ success: boolean; data: TranscriptData }>(`/api/quality-dashboard/client-drill/transcript?leadId=${transcriptModal}&clientId=${clientId}`).then(r => (r as any)?.data ?? r),
     enabled: !!transcriptModal,
   });
 
