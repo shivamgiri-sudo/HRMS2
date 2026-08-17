@@ -846,6 +846,140 @@ wfmRegularizationSecureRouter.post("/regularizations/batch", h(async (req: any, 
   });
 }));
 
+// ── Multi-employee bulk regularization submit ─────────────────────────────
+//
+// WHY THIS EXISTS
+//   /regularizations/batch covers one employee across up to 31 dates. That is the right shape
+//   for an individual who forgot to punch, and the wrong shape for a systemic failure. When a
+//   branch's biometric feed breaks, the correction is a rectangle: many employees x many dates.
+//   Measured live 2026-08-17, Delhi Office ran 612 attendance rows for August of which 100% were
+//   missing_punch across 51 employees; org-wide, 30% of August rows are missing_punch with 4,255
+//   unresolved blocker-severity reconciliation issues. Raising those one employee at a time is
+//   51 submissions for one branch for one month.
+//
+// WHAT IT DELIBERATELY DOES NOT DO
+//   It does not write attendance. Every pair goes through wfmService.submitRegularization, the
+//   same call /batch uses, so each one lands as a PENDING request carrying the existing risk
+//   scoring, duplicate detection and the manager -> WFM -> (frozen months) Payroll approval
+//   chain. This is an origination tool, not an approval bypass — a bulk correction that wrote
+//   straight to attendance_daily_record would let one person move payable days unreviewed.
+//   Approval remains a separate act, via /regularizations/bulk-review.
+//
+//   Scope is enforced per employee, not once for the request: canAccessEmployee is called for
+//   every target, so a branch-scoped WFM user cannot widen their reach by naming employees from
+//   another branch in the payload.
+wfmRegularizationSecureRouter.post("/regularizations/bulk-multi-employee", h(async (req: any, res: any) => {
+  /** Per-employee dates, so each employee can carry their own missing days. */
+  const rawTargets = Array.isArray(req.body.targets) ? req.body.targets : [];
+  if (!rawTargets.length) {
+    return res.status(400).json({ success: false, message: "targets array is required: [{ employeeId, sessionDates: [] }]" });
+  }
+
+  const targets: Array<{ employeeId: string; sessionDates: string[] }> = [];
+  for (const t of rawTargets) {
+    const employeeId = String(t?.employeeId ?? "").trim();
+    const sessionDates: string[] = Array.isArray(t?.sessionDates)
+      ? t.sessionDates.map(String).filter((d: string) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+      : [];
+    if (employeeId && sessionDates.length) targets.push({ employeeId, sessionDates });
+  }
+  if (!targets.length) {
+    return res.status(400).json({ success: false, message: "No valid targets — each needs employeeId and at least one YYYY-MM-DD sessionDate" });
+  }
+
+  // Bounded because every pair runs the full submit path (risk scoring, duplicate checks). A
+  // whole branch-month exceeds this deliberately: the caller pages rather than the server
+  // holding one very long request open and timing out mid-write with no usable result.
+  const MAX_PAIRS = 500;
+  const totalPairs = targets.reduce((n, t) => n + t.sessionDates.length, 0);
+  if (totalPairs > MAX_PAIRS) {
+    return res.status(400).json({
+      success: false,
+      message: `${totalPairs} employee-date pairs requested; the limit is ${MAX_PAIRS} per call. Split the date range or the employee list and submit again.`,
+    });
+  }
+
+  const reason = String(req.body.reason ?? "").trim();
+  if (reason.length < 10) {
+    return res.status(400).json({ success: false, message: "reason is mandatory and must be at least 10 characters — it is the audit record for a bulk correction" });
+  }
+
+  const callerEmp = await getEmployeeForUser(req.authUser.id);
+  const isPrivileged = await hasAnyRole(req.authUser.id, "admin", "hr", "wfm", "manager", "assistant_manager", "tl", "team_leader", "branch_head", "process_manager", "ceo");
+  if (!isPrivileged) {
+    return res.status(403).json({ success: false, message: "Bulk correction across employees requires a WFM, HR, branch or management role" });
+  }
+
+  const results: Array<{ employeeId: string; date: string; success: boolean; id?: string; message?: string }> = [];
+  let denied = 0;
+
+  for (const target of targets) {
+    // Per-employee scope check. Denials are reported rather than aborting the run, so one
+    // out-of-scope id in a long list does not discard the corrections that were valid.
+    if (!(await canAccessEmployee(req.authUser.id, target.employeeId, true))) {
+      denied += target.sessionDates.length;
+      for (const d of target.sessionDates) {
+        results.push({ employeeId: target.employeeId, date: d, success: false, message: "Forbidden — employee outside your scope" });
+      }
+      continue;
+    }
+
+    const requestedByType = callerEmp?.id === target.employeeId ? "employee" : "manager";
+    const commonFields = {
+      requestedStatus: req.body.requestedStatus ?? null,
+      disputeType:     req.body.disputeType ?? null,
+      reason,
+      supportingNote:  req.body.supportingNote ?? null,
+      oldPunchIn:      null,
+      oldPunchOut:     null,
+      newPunchIn:      req.body.newPunchIn ?? null,
+      newPunchOut:     req.body.newPunchOut ?? null,
+      latitude:        null,
+      longitude:       null,
+      requestedByType,
+      employeeId:      target.employeeId,
+    };
+
+    for (const sessionDate of target.sessionDates) {
+      try {
+        const data = await wfmService.submitRegularization(
+          { ...commonFields, sessionDate, reasonCode: req.body.reasonCode ?? undefined } as any,
+          req.authUser.id,
+        );
+        void logSensitiveAction({
+          actor_user_id: req.authUser.id,
+          actor_role: requestedByType,
+          action_type: "REGULARIZATION_SUBMITTED",
+          module_key: "attendance",
+          entity_type: "attendance_regularization",
+          entity_id: data.id,
+          employee_id: target.employeeId,
+          reason,
+          new_value_json: { session_date: sessionDate, bulk_multi_employee: true, ...commonFields },
+          req,
+        });
+        results.push({ employeeId: target.employeeId, date: sessionDate, success: true, id: data.id });
+      } catch (err: any) {
+        results.push({ employeeId: target.employeeId, date: sessionDate, success: false, message: err?.message ?? String(err) });
+      }
+    }
+  }
+
+  const succeeded = results.filter((r) => r.success).length;
+  const failed = results.length - succeeded;
+  return res.status(201).json({
+    success: failed === 0,
+    employees: targets.length,
+    succeeded,
+    failed,
+    denied,
+    data: results,
+    message: failed > 0
+      ? `${succeeded} raised, ${failed} skipped (${denied} out of scope) — see data for details`
+      : `${succeeded} regularization request(s) raised across ${targets.length} employee(s), pending approval`,
+  });
+}));
+
 wfmRegularizationSecureRouter.get("/regularizations/mine", h(async (req: any, res: any) => {
   const emp = await getEmployeeForUser(req.authUser.id);
   if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
