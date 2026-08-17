@@ -32,17 +32,28 @@ describe("GET /leave/requests/my", () => {
     if (firstParam > -1) expect(my).toBeLessThan(firstParam);
   });
 
+  it("has a live boundary route right after /requests/my, so the slice below cannot silently swallow the rest of the file", () => {
+    // GET /requests/legacy (the prior boundary) was removed 2026-08-17 once
+    // scripts/migrate-leave-history-full.ts finished migrating all leave history into
+    // mas_hrms — indexOf() for a removed marker returns -1, and source.slice(start, -1)
+    // does not throw, it silently returns "everything but the last character", which let
+    // the two tests below assert against the ENTIRE REST OF THE FILE (including
+    // /balance/:employeeId's real isLeavePrivileged widening) without failing loudly about
+    // why. Asserting the boundary itself exists turns that failure mode into a clear one.
+    expect(routes).toContain('leaveRouter.get("/balance/:employeeId"');
+  });
+
   it("forces employeeId to the caller, so the result cannot widen with the caller's role", () => {
     // GET /requests deliberately widens for privileged roles — an admin gets their whole
     // branch. That is not what "my recent activity" means, so this route must pin the
     // employee to the caller for everyone, not only for unprivileged users.
-    // Boundary is GET /requests/legacy, the next distinct route after /requests/my
-    // in the file — GET /requests and PATCH /requests/:id/review (which used to sit
-    // between them) were removed as dead code: leaveSecureRouter is mounted first in
-    // app.ts and always won for both paths. (2026-08-13 audit)
+    // Boundary is GET /balance/:employeeId, the next distinct route after /requests/my in
+    // the file. GET /requests and PATCH /requests/:id/review (dead code, removed
+    // 2026-08-13) and GET /requests/legacy (removed 2026-08-17, leave history fully
+    // migrated into mas_hrms) used to sit between them.
     const handler = routes.slice(
       routes.indexOf('leaveRouter.get("/requests/my"'),
-      routes.indexOf('leaveRouter.get("/requests/legacy"')
+      routes.indexOf('leaveRouter.get("/balance/:employeeId"')
     );
     expect(handler).toContain("getEmployeeForUser(req.authUser!.id)");
     expect(handler).toContain("query.employeeId = callerEmp.id");
@@ -51,13 +62,10 @@ describe("GET /leave/requests/my", () => {
   });
 
   it("answers a login with no employee record with an empty feed, not an error", () => {
-    // Boundary is GET /requests/legacy, the next distinct route after /requests/my
-    // in the file — GET /requests and PATCH /requests/:id/review (which used to sit
-    // between them) were removed as dead code: leaveSecureRouter is mounted first in
-    // app.ts and always won for both paths. (2026-08-13 audit)
+    // Boundary is GET /balance/:employeeId — see the two tests above.
     const handler = routes.slice(
       routes.indexOf('leaveRouter.get("/requests/my"'),
-      routes.indexOf('leaveRouter.get("/requests/legacy"')
+      routes.indexOf('leaveRouter.get("/balance/:employeeId"')
     );
     expect(handler).toMatch(/if \(!callerEmp\) return res\.json\(\{\s*success: true, data: \[\], total: 0/);
   });
