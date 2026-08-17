@@ -28,9 +28,9 @@ SELECT
   e.employee_code     AS EmpCode,
   e.full_name         AS EmpName,
   e.employee_code     AS BiometricCode,
-  b.name              AS Location,
-  d.name              AS Depart,
-  dsg.name            AS Desig,
+  b.branch_name       AS Location,
+  d.dept_name         AS Depart,
+  dsg.designation_name AS Desig,
   DATE_FORMAT(e.date_of_joining, '%d/%m/%Y') AS DOJ,
   CASE WHEN e.active_status = 1 THEN 'A' ELSE 'I' END AS Status
 FROM employees e

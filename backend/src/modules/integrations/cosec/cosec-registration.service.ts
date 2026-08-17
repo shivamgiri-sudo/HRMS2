@@ -111,9 +111,9 @@ export async function registerEmployeeInCosec(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        e.id, e.employee_code, e.full_name, e.date_of_joining,
-       b.name AS branch_name,
-       d.name AS department_name,
-       dsg.name AS designation_name
+       b.branch_name AS branch_name,
+       d.dept_name AS department_name,
+       dsg.designation_name AS designation_name
      FROM employees e
      LEFT JOIN branch_master b ON b.id = e.branch_id
      LEFT JOIN department_master d ON d.id = e.department_id
