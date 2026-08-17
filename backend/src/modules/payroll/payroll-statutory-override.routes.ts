@@ -7,6 +7,7 @@ import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { db } from '../../db/mysql.js';
 import { hasRole } from '../../shared/accessGuard.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
+import { notificationGateway } from '../communication/notification.gateway.js';
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -83,6 +84,16 @@ router.post('/request', requireRole('employee', 'hr', 'super_admin'), h(async (r
     entity_id: empId,
     change_summary: { override_type, employee_id: empId },
   });
+
+  // Notify Payroll HR + Head that a new opt-out request needs review.
+  notificationGateway.notify({
+    eventCode: 'statutory_opt_out_submitted',
+    dedupeKey: `employee_statutory_override:${empId}:${override_type}:submitted`,
+    context: { employeeId: empId },
+    entityType: 'employee_statutory_override',
+    entityId: empId,
+    data: { override_type },
+  }).catch(() => { /* gateway failure must not abort the request */ });
 
   return res.status(201).json({ success: true, message: 'Opt-out request submitted. Pending Payroll HO approval.' });
 }));
@@ -281,6 +292,16 @@ router.patch('/:id/approve', requireRole('payroll', 'super_admin'), h(async (req
     }
   }
 
+  // Notify the employee of the decision (approved or rejected).
+  notificationGateway.notify({
+    eventCode: 'statutory_opt_out_decided',
+    dedupeKey: `employee_statutory_override:${id}:${newStatus}`,
+    context: { employeeId: rec.employee_id },
+    entityType: 'employee_statutory_override',
+    entityId: id,
+    data: { decision: newStatus, override_type: rec.override_type, effective_from_month: effective_from_month ?? null },
+  }).catch(() => { /* gateway failure must not abort the response */ });
+
   return res.json({ success: true, message: `Override request ${newStatus}` });
 }));
 
@@ -350,6 +371,16 @@ router.patch('/:id/revoke', requireRole('payroll', 'super_admin'), h(async (req:
   } catch (histErr: any) {
     console.error('[StatutoryOverride] Salary history revert failed (revoke still stands):', histErr.message);
   }
+
+  // Notify the employee that their opt-out has been revoked and deductions will resume.
+  notificationGateway.notify({
+    eventCode: 'statutory_opt_out_revoked',
+    dedupeKey: `employee_statutory_override:${id}:revoked`,
+    context: { employeeId: rec.employee_id },
+    entityType: 'employee_statutory_override',
+    entityId: id,
+    data: { override_type: rec.override_type },
+  }).catch(() => { /* gateway failure must not abort the response */ });
 
   return res.json({ success: true, message: 'Override revoked. PF/ESI will resume from next payroll run.' });
 }));

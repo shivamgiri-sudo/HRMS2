@@ -171,6 +171,37 @@ export async function resolveStatutoryApplicabilityForPeriod(
     });
   }
 
+  // ── 3. HRMS statutory overrides — approved opt-outs win over both prior sources ────────────
+  // An approved pf_opt_out or esic_opt_out with effective_from_month <= payrollMonth means the
+  // employee is NOT_APPLICABLE for ECR filing, regardless of what db_bill recorded for the period.
+  // db_bill's row may predate the approval or reflect a run that predates the elected month.
+  const [overrideRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.employee_code, eso.override_type
+       FROM employee_statutory_override eso
+       JOIN employees e ON e.id = eso.employee_id
+      WHERE eso.status = 'approved'
+        AND (eso.effective_from_month IS NULL OR eso.effective_from_month <= ?)`,
+    [payrollMonth],
+  );
+  for (const row of overrideRows as Array<{ employee_code?: unknown; override_type?: unknown }>) {
+    const code = String(row.employee_code ?? "").trim().toUpperCase();
+    if (!code) continue;
+    const optOutReason = "HRMS statutory opt-out approved in employee_statutory_override — not applicable from the elected month";
+    const notApplicable: SchemeResult = { status: "NOT_APPLICABLE", source: "hrms_statutory_info", reason: optOutReason };
+    const existing = out.get(code);
+    if (String(row.override_type) === "pf_opt_out") {
+      out.set(code, existing
+        ? { ...existing, pf: notApplicable }
+        : { employeeCode: code, pf: notApplicable, esi: unresolved("No ESI data available; employee has a PF opt-out on file") }
+      );
+    } else if (String(row.override_type) === "esic_opt_out") {
+      out.set(code, existing
+        ? { ...existing, esi: notApplicable }
+        : { employeeCode: code, pf: unresolved("No PF data available; employee has an ESI opt-out on file"), esi: notApplicable }
+      );
+    }
+  }
+
   return out;
 }
 
