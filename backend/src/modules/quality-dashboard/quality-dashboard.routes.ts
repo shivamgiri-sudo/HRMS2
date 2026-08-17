@@ -292,8 +292,13 @@ router.get("/agents", requireRole(...ALLOWED_ROLES), h(async (req: Authenticated
           ELSE 'poor'
         END as band
       FROM db_audit.call_quality_assessment cqa
-      LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User COLLATE utf8mb4_unicode_ci
-      WHERE cqa.CallDate BETWEEN ? AND ? AND cqa.User IS NOT NULL AND cqa.User != ''${clientCond}${scopeCond}
+      LEFT JOIN mas_hrms.employees e
+        ON e.employee_code = cqa.User COLLATE utf8mb4_unicode_ci
+        AND (e.status IS NULL OR e.status IN ('active', 'probation', 'notice_period'))
+      WHERE cqa.CallDate BETWEEN ? AND ?
+        AND cqa.User IS NOT NULL AND cqa.User != ''
+        AND cqa.User NOT LIKE 'CODEX_%'
+        ${clientCond}${scopeCond}
       GROUP BY cqa.User
       HAVING COUNT(*) >= 3
       ORDER BY avg_score DESC
