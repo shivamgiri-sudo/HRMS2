@@ -236,6 +236,30 @@ export async function pfEcrFormat(
   clauses.push("spr.run_month = ?");
   params.push(runMonth);
 
+  /**
+   * On-roll only — the same rule the other four statutory registers in this file already apply.
+   *
+   * This one was the exception, and it is the worst place to be the exception: the ECR is the
+   * file uploaded directly to EPFO, so it covered a WIDER population than the pf-contribution-
+   * register that is supposed to reconcile against it, and nothing compared the two.
+   *
+   * Measured on production 2026-08-17. The population is salary_prep_line joined to employees
+   * for the run_month, and the money is pf_employee + pf_employer — both, because this file
+   * emits both epf_employee and eps_employer. Stating the basis matters: employee-only PF gives
+   * a July gap of Rs 78,671.58, which is the same defect measured differently, not a
+   * contradiction.
+   *
+   *   run_month   lines -> ONROLL   PF ee+er (all)   PF ee+er (ONROLL)   gap
+   *   2026-05     1,148 -> 952       15,44,722.00     15,44,722.00           0.00
+   *   2026-06     1,549 -> 1,152     19,07,727.88     18,58,744.65      48,983.23
+   *   2026-07     1,642 -> 1,136     17,83,112.71     16,26,116.26    1,56,996.45
+   *
+   * So the July return would have been filed for Rs 1,56,996.45 more than the register backing
+   * it. Pinned by statutory-onroll-filter-parity.contract.test.ts, which now enumerates six
+   * registers rather than five.
+   */
+  clauses.push("e.employment_type = 'ONROLL'");
+
   if (options.mode === "worker" && options.cursor != null) {
     clauses.push("spl.id > ?");
     params.push(options.cursor);
