@@ -63,6 +63,12 @@ const fakeDb = {
 
 vi.mock("../../../db/mysql.js", () => ({ db: fakeDb }));
 
+// pf-applicability.service.ts's resolver reads db_bill first — a separate host/mock from
+// mas_hrms. Defaults to "nobody found" so tests that don't care about PF applicability are
+// unaffected; the resolver's own describe block below overrides this per scenario.
+const fakeBillQuery = vi.fn(async () => []);
+vi.mock("../../../db/billDb.js", () => ({ billQuery: fakeBillQuery }));
+
 // Imported after the mock is registered.
 const {
   evaluateReadinessCategories,
@@ -131,6 +137,7 @@ beforeEach(() => {
   __resetSchemaCache();
   fakeDb.execute.mockClear();
   fakeDb.query.mockClear();
+  fakeBillQuery.mockReset().mockResolvedValue([]);
   baseline();
 });
 
@@ -593,6 +600,89 @@ describe("5. payment-file readiness", () => {
     // Either outcome is acceptable for this fixture; what must never happen is a silent green
     // when the history genuinely does not exist, which the production dry run confirmed.
     expect(["SOURCE_MISSING", "PASS"]).toContain(check.state);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION — first real caller of
+ * pf-applicability.service.ts's canonical resolver (2026-08-17, zero callers until now).
+ * Matched by the ABSENCE of "pf_employee > 0" after the JOIN, which is what distinguishes this
+ * check's raw db.execute() query from its two siblings above (STATUTORY_UAN_MISSING_FOR_PF_DEDUCTED
+ * / STATUTORY_PF_ELIGIBLE_FLAG_UNRELIABLE), both scoped to PF actually deducted via that filter
+ * and both read through the population() helper (db.query with a COUNT wrapper) rather than
+ * db.execute directly.
+ */
+const PF_RESOLVER_QUERY = /FROM employees e\s+JOIN salary_prep_line spl ON spl\.run_id = \? AND spl\.employee_id = e\.id\s+WHERE(?![\s\S]*pf_employee > 0)/;
+
+describe("statutory: canonical PF applicability resolver vs. what payroll deducted", () => {
+  it("PASSes when the resolver (db_bill) agrees with the run's PF deductions", async () => {
+    baseline({
+      match: PF_RESOLVER_QUERY,
+      rows: [{ employee_id: "e1", employee_code: "MAS0001", employee_name: "Deducted Employee", pf_deducted: 1800 }],
+    });
+    fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0001", PFELig: "YES" }]);
+
+    const { check } = await checkByCode("STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION");
+    expect(check.state).toBe("PASS");
+    expect(check.severity).toBe("P2");
+  });
+
+  it("FAILs when PF was deducted but the resolver says not applicable", async () => {
+    baseline({
+      match: PF_RESOLVER_QUERY,
+      rows: [{ employee_id: "e1", employee_code: "MAS0001", employee_name: "Deducted Employee", pf_deducted: 1800 }],
+    });
+    fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0001", PFELig: "NO" }]);
+
+    const { check } = await checkByCode("STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION");
+    expect(check.state).toBe("FAIL");
+    expect(check.affectedEmployees).toBe(1);
+    expect(check.message).toContain("disagree between what payroll deducted");
+  });
+
+  it("FAILs when nothing was deducted but the resolver says applicable", async () => {
+    baseline({
+      match: PF_RESOLVER_QUERY,
+      rows: [{ employee_id: "e1", employee_code: "MAS0001", employee_name: "Not Deducted", pf_deducted: 0 }],
+    });
+    fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0001", PFELig: "YES" }]);
+
+    const { check } = await checkByCode("STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION");
+    expect(check.state).toBe("FAIL");
+    expect(check.affectedEmployees).toBe(1);
+  });
+
+  it("does not flag PF_APPLICABILITY_UNRESOLVED as a disagreement", async () => {
+    baseline({
+      match: PF_RESOLVER_QUERY,
+      rows: [{ employee_id: "e1", employee_code: "MAS9999", employee_name: "Unresolved Employee", pf_deducted: 1800 }],
+    });
+    fakeBillQuery.mockResolvedValue([]); // MAS9999 never appears in db_bill or employee_statutory_info -> unresolved
+
+    const { check } = await checkByCode("STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION");
+    expect(check.state).toBe("PASS");
+  });
+
+  it("reports SOURCE_MISSING, not PASS, when the resolver's own source (db_bill) is unreachable", async () => {
+    baseline({ match: PF_RESOLVER_QUERY, rows: [] });
+    fakeBillQuery.mockRejectedValue(new Error("ETIMEDOUT"));
+
+    const { check } = await checkByCode("STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION");
+    expect(check.state).toBe("SOURCE_MISSING");
+    expect(check.message).toContain("could not run");
+  });
+
+  it("never blocks canPay at P2, even when it disagrees", async () => {
+    baseline({
+      match: PF_RESOLVER_QUERY,
+      rows: [{ employee_id: "e1", employee_code: "MAS0001", employee_name: "Deducted Employee", pf_deducted: 1800 }],
+    });
+    fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0001", PFELig: "NO" }]);
+
+    const result = await evaluateReadinessCategories(RUN_ID);
+    expect(result.canPayBlockedBy).not.toContain("STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION");
   });
 });
 

@@ -50,6 +50,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { resolvePfApplicabilityForPeriod, type PfApplicabilityResult } from "./pf-applicability.service.js";
 
 // ─── State + severity vocabulary ─────────────────────────────────────────────
 
@@ -1750,7 +1751,7 @@ async function paymentFileChecks(scope: RunScope): Promise<CategoryCheckResult[]
  *   comfortable one being the only number on the page.
  */
 async function statutoryChecks(scope: RunScope): Promise<CategoryCheckResult[]> {
-  const { runId, where, params } = scope;
+  const { runId, runMonth, where, params } = scope;
 
   return Promise.all([
     runCheck({ code: "STATUTORY_UAN_MISSING_FOR_PF_DEDUCTED", layer: "STATUTORY", severity: "P1" }, async () => {
@@ -1805,6 +1806,69 @@ async function statutoryChecks(scope: RunScope): Promise<CategoryCheckResult[]> 
               "Any statutory check scoped to that flag silently excludes them, so it must not be used as an eligibility source until it is reconciled against payroll.",
             undefined,
             sample,
+          );
+    }),
+
+    // First real consumer of pf-applicability.service.ts's canonical resolver (added
+    // 2026-08-17, zero callers until now). Additive only: this does not replace either
+    // check above or feed canPay at anything beyond P2 (informational, non-blocking) —
+    // it exists so the resolver's answer and what payroll actually deducted for THIS run
+    // can be compared side by side before any existing gate is repointed to it. The two
+    // checks above already do this kind of comparison against employee_statutory_info
+    // directly; this does the same against the newer, db_bill-first resolver instead.
+    runCheck({ code: "STATUTORY_PF_APPLICABILITY_RESOLVER_DISAGREES_WITH_DEDUCTION", layer: "STATUTORY", severity: "P2" }, async () => {
+      let resolved: Map<string, PfApplicabilityResult>;
+      try {
+        resolved = await resolvePfApplicabilityForPeriod(runMonth);
+      } catch (err) {
+        // db_bill unreachable — the resolver itself fails closed rather than guessing, and
+        // so does this check: no evidence to compare against is SOURCE_MISSING, not PASS.
+        return sourceMissing(
+          `The canonical PF applicability resolver could not run for ${runMonth}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT ${EMP_IDENTITY}, ROUND(spl.pf_employee, 2) AS pf_deducted
+           FROM employees e
+           JOIN salary_prep_line spl ON spl.run_id = ? AND spl.employee_id = e.id
+          WHERE ${where}`,
+        [runId, ...params],
+      );
+
+      // Flag only a clear disagreement — deducted but the resolver says not applicable, or
+      // not deducted but the resolver says applicable. PF_APPLICABILITY_UNRESOLVED is left
+      // alone here; an unresolved employee is not a disagreement, it is its own gap, and the
+      // resolver's own reporting surface (not this check) is where that belongs.
+      const mismatches: Array<Record<string, unknown>> = [];
+      for (const row of rows as Array<{ employee_id: string; employee_code: string; employee_name: string; pf_deducted: number }>) {
+        const code = String(row.employee_code ?? "").trim().toUpperCase();
+        const deducted = Number(row.pf_deducted) > 0;
+        const result = resolved.get(code);
+        const resolverSaysApplicable = result?.status === "PF_APPLICABLE";
+        const resolverSaysNotApplicable = result?.status === "PF_NOT_APPLICABLE";
+        if ((deducted && resolverSaysNotApplicable) || (!deducted && resolverSaysApplicable)) {
+          mismatches.push({
+            employee_id: row.employee_id,
+            employee_code: row.employee_code,
+            employee_name: row.employee_name,
+            pf_deducted: row.pf_deducted,
+            resolver_status: result?.status,
+            resolver_source: result?.source,
+          });
+        }
+      }
+
+      return mismatches.length === 0
+        ? pass(`The canonical PF applicability resolver (${runMonth}) agrees with what payroll actually deducted for every employee in this run.`)
+        : fail(
+            mismatches.length,
+            `${mismatches.length} employees disagree between what payroll deducted in this run and the canonical PF ` +
+              `applicability resolver (db_bill payroll for ${runMonth}, falling back to employee_statutory_info). ` +
+              "Informational only at this severity — no existing gate is repointed to this resolver yet.",
+            undefined,
+            mismatches.slice(0, 10),
           );
     }),
   ]);
