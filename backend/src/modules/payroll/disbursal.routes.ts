@@ -6,7 +6,6 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
-import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -174,191 +173,44 @@ router.post(
   })
 );
 
-// GET /api/payroll/runs/:runId/bank-export?format=generic|sbi
+// GET /api/payroll/runs/:runId/bank-export — RETIRED (section 6).
+//
+// This produced a real bank payment file while enforcing almost none of the controls the
+// canonical exporter enforces. It checked that the run existed and that the account and IFSC
+// were well-formed, and nothing else. It did NOT require:
+//
+//   - a closed run status            (canonical: isRunClosed)
+//   - validation_status = validated
+//   - FINANCE SIGN-OFF               (canonical: finance_approved_by)
+//   - payment-population reconciliation against bank readiness
+//   - a check for a pending bank-change request
+//   - org-wide scope                 (canonical denies a branch-scoped caller outright)
+//
+// and it recorded no content hash and no export-log row, so a file produced here could not
+// afterwards be shown to be the one sent to the bank.
+//
+// Two payment paths with different gates is the defect, not the formats. Retired rather than
+// re-gated because it has never produced a file: salary_run_disbursal, the table it INNER JOINs,
+// holds 0 rows across 0 runs (verified live 2026-08-17), so the route has always 404'd. Building
+// a second gated exporter to preserve an output nobody has ever generated would add a second
+// thing to keep in step with the first.
+//
+// The disbursal record and CSV upload routes above are untouched — only the payment-file
+// generation is withdrawn. If an SBI-specific layout is needed, add it as a format option to the
+// canonical exporter, where the gates already live, rather than reviving a parallel path.
 router.get(
   "/runs/:runId/bank-export",
   requireRole("payroll_head", "finance", "super_admin"),
-  async (req: AuthenticatedRequest, res: Response) => {
-    try {
-      const { runId } = req.params;
-      const format = (req.query.format as string) || "generic";
-
-      if (!["generic", "sbi"].includes(format)) {
-        return res.status(400).json({ success: false, error: "format must be generic or sbi" });
-      }
-
-      // Verify run exists and get month for narration
-      const [runRows] = await db.query<any[]>(
-        `SELECT id, run_month FROM salary_prep_run WHERE id = ?`,
-        [runId]
-      );
-      if (!runRows.length) {
-        return res.status(404).json({ success: false, error: "Run not found" });
-      }
-      const runMonth = runRows[0].run_month as string; // YYYY-MM
-      const [yr, mo] = runMonth.split("-");
-      const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-      const monthLabel = `${monthNames[parseInt(mo, 10) - 1]} ${yr}`;
-
-      // Fetch employees: must have disbursal record with NEFT/IMPS/RTGS, a salary line, and a primary bank account.
-      // account_number_status classifies the same way payrollCompliance.routes.ts already
-      // does — a garbled account number must never silently end up in a real bank file.
-      const [rows] = await db.query<any[]>(
-        `SELECT
-           e.full_name,
-           e.employee_code,
-           srd.payment_mode,
-           spl.net_salary,
-           ebd.account_number_enc, ebd.account_number AS account_number_legacy,
-           ebd.ifsc_code,
-           ebd.bank_name
-         FROM salary_run_disbursal srd
-         JOIN salary_prep_line spl
-           ON spl.run_id = srd.run_id AND spl.employee_id = srd.employee_id
-         JOIN employees e ON e.id = srd.employee_id
-         INNER JOIN employee_bank_detail ebd
-           ON ebd.employee_id = srd.employee_id
-          AND ebd.is_primary = 1
-          AND ebd.active_status = 1
-         WHERE srd.run_id = ?
-           AND UPPER(srd.payment_mode) IN ('NEFT','IMPS','RTGS')
-         ORDER BY e.employee_code`,
-        [runId]
-      );
-
-      if (!rows.length) {
-        return res.status(404).json({
-          success: false,
-          error: "No NEFT/IMPS/RTGS disbursal records found for this run",
-        });
-      }
-
-      // Resolve encrypted account numbers and classify in JS (col moved from SQL)
-      const VALID_ACCOUNT_RE_D = /^[0-9]{6,20}$/;
-      const SCIENTIFIC_RE_D = /[Ee][+-]/;
-      /**
-       * RBI IFSC: 4 letters, a literal ZERO, then 6 alphanumerics. Same expression the
-       * canonical exporter uses (payroll.routes.ts /runs/:id/neft-export) — the two must
-       * agree on who is payable or they produce different answers for the same run.
-       */
-      const IFSC_RE_D = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-      rows.forEach((r: any) => {
-        const acct = resolveAccountNumber({ account_number_enc: r.account_number_enc, account_number: r.account_number_legacy });
-        r.account_number = acct ?? "";
-        if (!acct || acct === "") r.account_number_status = "missing";
-        else if (SCIENTIFIC_RE_D.test(acct)) r.account_number_status = "corrupt_scientific_notation";
-        else if (!VALID_ACCOUNT_RE_D.test(acct)) r.account_number_status = "unrecognised_format";
-        else r.account_number_status = "ok";
-
-        // IFSC was never validated here at all — only the account number was. An employee
-        // with a good account and a missing or malformed IFSC was written straight into the
-        // bank file, where the bank rejects the row and the file's declared total stops
-        // matching what actually moved. Verified live 2026-08-14 against active primary
-        // bank rows: 188 have no IFSC and 874 fail this format, out of 12,858 — so the two
-        // exporters disagreed about ~1,062 employees.
-        //
-        // The reason is classified rather than lumped into one bucket because the classes
-        // need different remediation, and 514 of the 874 are a single recoverable typo:
-        // 'looks_like_letter_O_for_zero' is position 5 carrying the letter O where RBI
-        // mandates a zero (BARBOSFSMAN for BARB0SFSMAN — one bad import, by the shape of
-        // it). Those are almost certainly fixable in the data; 'wrong_length' ones
-        // (20437, PUNB079700) are not.
-        //
-        // Deliberately NOT auto-corrected here. Rewriting a bank routing code at export
-        // time is a money-path transformation with no audit trail, however obvious the
-        // correction looks. The exporter refuses what it cannot verify and names the
-        // reason; repairing employee_bank_detail is a separate, approved data change.
-        const ifscRaw = String(r.ifsc_code ?? "").trim().toUpperCase();
-        r.ifsc_code_normalised = ifscRaw;
-        if (!ifscRaw) r.ifsc_status = "missing";
-        else if (IFSC_RE_D.test(ifscRaw)) r.ifsc_status = "ok";
-        else if (ifscRaw.length === 11 && ifscRaw[4] === "O" && IFSC_RE_D.test(ifscRaw.slice(0, 4) + "0" + ifscRaw.slice(5))) {
-          r.ifsc_status = "looks_like_letter_O_for_zero";
-        } else if (ifscRaw.length !== 11) r.ifsc_status = "wrong_length";
-        else r.ifsc_status = "unrecognised_format";
-
-        r.payability_reason =
-          r.account_number_status !== "ok" ? `account:${r.account_number_status}`
-          : r.ifsc_status !== "ok" ? `ifsc:${r.ifsc_status}`
-          : null;
-      });
-      // Never write a corrupt/unreadable account number into a real bank file — exclude
-      // and surface it instead. The digits behind 'corrupt_scientific_notation' are
-      // genuinely gone (Excel precision loss upstream), not recoverable from this data.
-      const payableRows = rows.filter((r) => r.payability_reason === null);
-      const unpayableRows = rows.filter((r) => r.payability_reason !== null);
-
-      if (!payableRows.length) {
-        return res.status(422).json({
-          success: false,
-          error: "No employees in this run have both a payable account number and a valid IFSC.",
-          unpayableCount: unpayableRows.length,
-          unpayableEmployeeCodes: unpayableRows.map((r) => r.employee_code),
-        });
-      }
-
-      // Build CSV
-      const csvLines: string[] = [];
-
-      if (format === "sbi") {
-        csvLines.push("TransactionType,BeneficiaryName,BeneficiaryAccountNumber,IFSCCode,Amount,Narration");
-        for (const r of payableRows) {
-          const name    = String(r.full_name).toUpperCase().replace(/,/g, " ");
-          const acct    = String(r.account_number ?? "").replace(/,/g, "");
-          const ifsc    = String(r.ifsc_code_normalised ?? "").replace(/,/g, "");
-          const amount  = Number(r.net_salary).toFixed(2);
-          const narr    = `Salary ${monthLabel}`;
-          csvLines.push(`P,${name},${acct},${ifsc},${amount},${narr}`);
-        }
-      } else {
-        // Generic format
-        csvLines.push("Serial,Employee Name,Account Number,IFSC Code,Bank Name,Amount,Purpose,Narration");
-        payableRows.forEach((r, i) => {
-          const name    = `"${String(r.full_name).toUpperCase().replace(/"/g, "'")}"`;
-          const acct    = String(r.account_number ?? "").replace(/,/g, "");
-          const ifsc    = String(r.ifsc_code_normalised ?? "").replace(/,/g, "");
-          const bank    = `"${String(r.bank_name ?? "").replace(/"/g, "'")}"`;
-          const amount  = Number(r.net_salary).toFixed(2);
-          const narr    = `Salary ${monthLabel} - ${r.employee_code}`;
-          csvLines.push(`${i + 1},${name},${acct},${ifsc},${bank},${amount},Salary,${narr}`);
-        });
-      }
-
-      // Trailing comment block so Finance sees exclusions when the file is opened, since
-      // this download is a plain link today (no pre-download UI to show them first).
-      if (unpayableRows.length) {
-        csvLines.push("");
-        csvLines.push(`# ${unpayableRows.length} employee(s) EXCLUDED from this file — unusable account number or IFSC:`);
-        for (const r of unpayableRows) {
-          csvLines.push(`# ${r.employee_code},${String(r.full_name ?? "").replace(/,/g, " ")},${r.payability_reason}`);
-        }
-      }
-
-      const csvContent  = csvLines.join("\r\n");
-
-      void logSensitiveAction({
-        actor_user_id: (req as any).authUser?.id ?? (req as any).user?.id ?? "unknown",
-        action_type: "BANK_EXPORT_DOWNLOAD",
-        module_key: "payroll",
-        entity_type: "salary_prep_run",
-        entity_id: runId,
-        change_summary: {
-          format, row_count: payableRows.length, run_month: runMonth,
-          unpayable_count: unpayableRows.length,
-          unpayable_employee_codes: unpayableRows.map((r) => r.employee_code),
-        },
-      });
-
-      const formatLabel = format === "sbi" ? "SBI" : "Generic";
-      const filename    = `BankBatch_${formatLabel}_${runMonth.replace("-", "")}_${runId.substring(0, 8)}.csv`;
-
-      res.setHeader("Content-Type", "text/csv; charset=utf-8");
-      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-      // BOM for Excel UTF-8 compatibility
-      res.send("﻿" + csvContent);
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
+  async (_req: AuthenticatedRequest, res: Response) => {
+    return res.status(410).json({
+      success: false,
+      code: "BANK_EXPORT_RETIRED",
+      message:
+        "This bank export has been withdrawn because it did not enforce Finance sign-off, payment-"
+        + "population reconciliation or file-hash recording. Use GET /api/payroll/runs/:id/neft-export, "
+        + "which does.",
+      canonical: "/api/payroll/runs/:id/neft-export",
+    });
   }
 );
 

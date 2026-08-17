@@ -2340,7 +2340,8 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
   const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
   /**
    * Same two checks as the "payable bank total" in payroll-extended.routes.ts's golden-month
-   * reconciliation, and as disbursal.routes.ts's /bank-export. Not reused here only because
+   * reconciliation. (disbursal.routes.ts's /bank-export carried them too, until it was retired on
+   * 2026-08-17 for bypassing the release controls.) Not reused here only because
    * account_number arrives already resolved (encrypted-or-legacy) as a plain string, not as a
    * (enc, legacy) pair those two check separately.
    *
@@ -2402,6 +2403,25 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
     paidEmployeeIds.push(String(line.employee_id));
     srNo++;
     totalAmount += net;
+  }
+
+  // Refuse rather than hand over a payment file with no payment rows in it.
+  //
+  // Ported from the secondary disbursal exporter retired on 2026-08-17, which held this guard
+  // while the canonical one did not. Without it a run where every employee fails the account/IFSC
+  // checks still produces a well-formed CSV — header, TOTAL 0.00, and an EXCLUDED block — which
+  // reads as a completed export. Nobody gets paid, and the failure only surfaces when someone
+  // reads the excluded list. A 422 naming the count makes it a blocked export instead.
+  if (paidEmployeeIds.length === 0) {
+    return res.status(422).json({
+      success: false,
+      code: "NO_PAYABLE_EMPLOYEES",
+      message:
+        `No employee in this run can be paid: all ${unpayable.length} carry a missing or malformed `
+        + `bank account or IFSC. Resolve them in Payroll → Bank Payment Readiness and export again.`,
+      unpayableCount: unpayable.length,
+      unpayable: unpayable.map((u) => ({ code: u.code, reason: u.reason })),
+    });
   }
 
   csvRows.push(`TOTAL,,,,,,${totalAmount.toFixed(2)},`);

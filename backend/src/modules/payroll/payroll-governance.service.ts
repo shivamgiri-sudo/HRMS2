@@ -814,10 +814,10 @@ export const payrollGovernanceService = {
       )),
 
       // PAYMENT FILE — sources: employee_bank_detail (export input),
-      // profile_update_approval (bank-change approval queue). Three competing
-      // export code paths exist (payroll.routes.ts neft-export [live/reachable],
-      // payroll-extended.routes.ts neft-export [shadowed/dead by route order],
-      // disbursal.routes.ts bank-export [reachable, post-hoc record format]).
+      // profile_update_approval (bank-change approval queue). One reachable
+      // export path remains: payroll.routes.ts neft-export. The other two are
+      // payroll-extended.routes.ts neft-export [shadowed/dead by route order]
+      // and disbursal.routes.ts bank-export [RETIRED 2026-08-17, answers 410].
       //
       // UPDATED 2026-08-17. This block previously said none of them check
       // MISSING_VERIFIED_BANK or a pending bank-change request, and that the
@@ -832,9 +832,11 @@ export const payrollGovernanceService = {
       // and a pending bank-change both now refuse the file (PAYMENT_POPULATION_MISMATCH),
       // because readiness classes them MISSING and PENDING_APPROVAL rather than READY.
       //
-      // disbursal.routes.ts bank-export still checks NEITHER — verified 2026-08-17.
-      // These two checks stay because that route is reachable, and because
-      // surfacing the population before export is worth more than a refusal at it.
+      // disbursal.routes.ts bank-export checked NEITHER, which is why it was
+      // retired the same day rather than re-gated (section 6). These two checks
+      // stay regardless: surfacing the affected population before an export is
+      // attempted is worth more than a refusal at the point of export, which
+      // arrives after payroll believes it is finished.
       checkedIssue("payment_file", "PAYMENT_FILE_NEFT_EXPORT_OVERSTATEMENT_RISK", () => countIssue(
         `${eligibleSql}
           AND NOT EXISTS (
@@ -844,7 +846,7 @@ export const payrollGovernanceService = {
         params,
         "PAYMENT_FILE_NEFT_EXPORT_OVERSTATEMENT_RISK",
         "warning",
-        "Employees have no active primary bank record, so they cannot be paid by bank transfer. GET /api/payroll/runs/:id/neft-export no longer overstates the total for them — they are excluded from TOTAL and itemised in an EXCLUDED block, and the route now refuses the file outright because its payable set will not reconcile against bank payment readiness. The consequence is therefore a REFUSED export, not a wrong one: resolve MISSING_VERIFIED_BANK for these employees, or they will be left unpaid while the rest of the run waits on them. disbursal.routes.ts /bank-export performs no such check and would still emit a file without them.",
+        "Employees have no active primary bank record, so they cannot be paid by bank transfer. GET /api/payroll/runs/:id/neft-export no longer overstates the total for them — they are excluded from TOTAL and itemised in an EXCLUDED block, and the route now refuses the file outright because its payable set will not reconcile against bank payment readiness. The consequence is therefore a REFUSED export, not a wrong one: resolve MISSING_VERIFIED_BANK for these employees, or they will be left unpaid while the rest of the run waits on them. The second exporter that would have emitted a file without them was retired on 2026-08-17.",
         "payment_file",
       )),
       checkedIssue("payment_file", "PAYMENT_FILE_PENDING_BANK_CHANGE_AT_RISK", () => countIssue(
@@ -858,7 +860,7 @@ export const payrollGovernanceService = {
         params,
         "PAYMENT_FILE_PENDING_BANK_CHANGE_AT_RISK",
         "blocker",
-        "Employees have a pending, unapproved bank-change request, so the account on file may be about to be superseded. GET /api/payroll/runs/:id/neft-export now refuses the file for them — bank payment readiness classes a pending request PENDING_APPROVAL rather than READY, and the export reconciles against it — but disbursal.routes.ts /bank-export still performs no such check and would pay to the stale account while the change is in flight. Resolve via /api/payroll/bank-change-requests before export.",
+        "Employees have a pending, unapproved bank-change request, so the account on file may be about to be superseded. GET /api/payroll/runs/:id/neft-export now refuses the file for them — bank payment readiness classes a pending request PENDING_APPROVAL rather than READY, and the export reconciles against it. The second exporter that would have paid to the stale account while the change was in flight was retired on 2026-08-17. Resolve via /api/payroll/bank-change-requests before export.",
         "payment_file",
       )),
     ];
