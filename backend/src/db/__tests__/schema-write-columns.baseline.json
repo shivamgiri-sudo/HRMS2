@@ -32,6 +32,9 @@
   "modules/ats/onboarding-full.service.ts": [
     "appointment_letter_request.created_by"
   ],
+  "modules/ats/payroll-hr.service.ts": [
+    "ats_employment_offer.esic_opt_out"
+  ],
   "modules/bulk-upload/asset-master-bulk.service.ts": [
     "asset_master.asset_condition",
     "asset_master.asset_status"

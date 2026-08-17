@@ -39,6 +39,9 @@ interface ValidationFormData {
   salary_start_date: string;
   shift_id: string;
   remarks: string;
+  /** Payroll HR's decision, not the candidate's — set here at offer creation. */
+  pf_opt_out: boolean;
+  esic_opt_out: boolean;
 }
 
 interface SalaryBreakdown {
@@ -71,7 +74,7 @@ export default function NativePayrollHRValidation() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Master data
+  // Master data
   const [designations, setDesignations] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [processes, setProcesses] = useState<any[]>([]);
@@ -96,6 +99,8 @@ export default function NativePayrollHRValidation() {
     salary_start_date: '',
     shift_id: '',
     remarks: '',
+    pf_opt_out: false,
+    esic_opt_out: false,
   });
 
   const [breakdown, setBreakdown] = useState<SalaryBreakdown | null>(null);
@@ -147,7 +152,7 @@ export default function NativePayrollHRValidation() {
         hrmsApi.get('/api/employees?role=manager'),
         hrmsApi.get('/api/wfm/shifts'),
         hrmsApi.get('/api/payroll-masters/slabs'),
-      ]);
+      ]);
       setDesignations(designationsRes.data || []);
       setDepartments(departmentsRes.data || []);
       setProcesses(processesRes.data || []);
@@ -247,6 +252,8 @@ export default function NativePayrollHRValidation() {
       salary_start_date: '',
       shift_id: '',
       remarks: '',
+      pf_opt_out: false,
+      esic_opt_out: false,
     });
     setBreakdown(null);
   };
@@ -681,6 +688,36 @@ export default function NativePayrollHRValidation() {
                 days
               </div>
             )}
+          </div>
+
+          {/* PF/ESIC Opt-Out — Payroll HR's decision at offer creation, not the candidate's */}
+          <div className="bg-white border border-gray-200 rounded-lg p-6">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Statutory Opt-Out</label>
+            <p className="text-xs text-gray-500 mb-3">
+              Mark only if this employee is being opted out of PF and/or ESIC for this offer. This is
+              Payroll HR's decision, not the candidate's, and becomes an approved record the moment
+              the offer is approved — no separate Payroll HO review is needed afterward.
+            </p>
+            <div className="flex flex-wrap gap-6">
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={formData.pf_opt_out}
+                  onChange={(e) => setFormData({ ...formData, pf_opt_out: e.target.checked })}
+                  className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                />
+                Opt out of PF
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={formData.esic_opt_out}
+                  onChange={(e) => setFormData({ ...formData, esic_opt_out: e.target.checked })}
+                  className="h-4 w-4 rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                />
+                Opt out of ESIC
+              </label>
+            </div>
           </div>
 
           {/* Remarks */}

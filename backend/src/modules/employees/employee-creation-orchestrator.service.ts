@@ -1212,4 +1212,46 @@ async function createRelatedEmployeeRecords(
       [employeeId, actorUserId, actorUserId, effectiveFromMonth]
     );
   }
+
+  // PF/ESIC opt-out elected by Payroll HR at offer creation (owner ruling 2026-08-17: the
+  // candidate does not make this decision — Payroll HR does, when the offer is drafted).
+  // Mirrors the Form 11 block above but sources from ats_employment_offer.pf_opt_out /
+  // esic_opt_out rather than the candidate's own onboarding profile, and names the offer as
+  // its own approval record: the offer already went through Branch Head approval before this
+  // function runs, so a second approval through the Payroll HO queue would be redundant, not
+  // additional scrutiny — the decision was already reviewed.
+  //
+  // INSERT IGNORE: safe to retry — the unique key uq_emp_override_active on
+  // (employee_id, override_type, status) prevents a second approved row, and also means this
+  // is naturally idempotent alongside the Form 11 block above if both happened to be true for
+  // the same employee (first write for a given override_type wins; the two paths never disagree
+  // about approval, only about provenance).
+  const offerOptOuts: Array<{ flag: unknown; overrideType: 'pf_opt_out' | 'esic_opt_out'; label: string }> = [
+    { flag: offer.pf_opt_out, overrideType: 'pf_opt_out', label: 'PF' },
+    { flag: offer.esic_opt_out, overrideType: 'esic_opt_out', label: 'ESIC' },
+  ];
+  for (const { flag, overrideType, label } of offerOptOuts) {
+    if (!Boolean(Number(flag))) continue;
+    const joiningDate: Date = offer.date_of_joining instanceof Date
+      ? offer.date_of_joining
+      : new Date(String(offer.date_of_joining));
+    const effectiveFromMonth = `${joiningDate.getFullYear()}-${String(joiningDate.getMonth() + 1).padStart(2, '0')}`;
+
+    await conn.execute(
+      `INSERT IGNORE INTO employee_statutory_override
+         (id, employee_id, override_type, status,
+          requested_by, declaration_text,
+          approved_by, approved_at, effective_from_month, audit_note)
+       VALUES (UUID(), ?, ?, 'approved',
+               ?, ?,
+               ?, NOW(), ?, ?)`,
+      [
+        employeeId, overrideType,
+        actorUserId, `${label} opt-out elected by Payroll HR at offer creation`,
+        actorUserId, effectiveFromMonth,
+        `Auto-approved from offer ${offer.id ?? ''} — Branch Head already approved this offer, ` +
+          `which included the ${label} opt-out election; no separate Payroll HO review required.`,
+      ]
+    );
+  }
 }

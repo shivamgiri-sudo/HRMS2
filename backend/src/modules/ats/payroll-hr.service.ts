@@ -50,6 +50,9 @@ export interface SalaryValidationInput {
   shift_id?: string;
   remarks?: string;
   payroll_hr_id: string;
+  /** Payroll HR's decision at offer creation — not the candidate's. See payroll-hr.routes.ts. */
+  pf_opt_out?: boolean;
+  esic_opt_out?: boolean;
 }
 
 /**
@@ -366,8 +369,9 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
           salary_band, offered_ctc, basic, hra, conveyance, da, special_allowance,
           other_allowance, bonus, gross, pf_employee, pf_employer, esic_employee, esic_employer,
           professional_tax, gratuity, admin_charges, net_in_hand,
+          pf_opt_out, esic_opt_out,
           status, created_by, submitted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Analyst', ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, 0, 0, 0, ?, 'submitted', ?, NOW())
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Analyst', ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, 'submitted', ?, NOW())
        ON DUPLICATE KEY UPDATE
           emp_type = VALUES(emp_type),
           date_of_joining = VALUES(date_of_joining),
@@ -389,6 +393,8 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
           esic_employee = VALUES(esic_employee),
           esic_employer = VALUES(esic_employer),
           net_in_hand = VALUES(net_in_hand),
+          pf_opt_out = VALUES(pf_opt_out),
+          esic_opt_out = VALUES(esic_opt_out),
           status = 'submitted',
           created_by = VALUES(created_by),
           submitted_at = NOW(),
@@ -417,6 +423,8 @@ export async function validateAndAssignSalary(input: SalaryValidationInput) {
         salaryBreakdown.deductions.esic,
         salaryBreakdown.deductions.esic,
         salaryBreakdown.net,
+        input.pf_opt_out ? 1 : 0,
+        input.esic_opt_out ? 1 : 0,
         input.payroll_hr_id,
       ]
     );

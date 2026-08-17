@@ -125,6 +125,12 @@ const salaryValidationSchema = z.object({
   salary_start_date: optionalDate,
   shift_id: optionalUuid,
   remarks: z.string().optional(),
+  // Owner clarification 2026-08-17: PF/ESIC opt-out is Payroll HR's decision at offer
+  // creation, not the candidate's during onboarding. Carried onto ats_employment_offer
+  // and, once the employee is created, into an approved employee_statutory_override row —
+  // see employee-creation-orchestrator.service.ts's createRelatedEmployeeRecords.
+  pf_opt_out: z.boolean().optional(),
+  esic_opt_out: z.boolean().optional(),
 });
 
 payrollHRRouter.post('/validate', requireWriteAccess, h(async (req: AuthenticatedRequest, res: Response) => {
