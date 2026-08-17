@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ShieldCheck, PhoneCall, TrendingUp } from "lucide-react";
+import { ShieldCheck, PhoneCall, TrendingUp, CheckCircle2, XCircle, ChevronDown } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import {
   DrillDownDashboardShell,
@@ -88,11 +88,105 @@ interface AnalystCall {
   totalScore: number | null;
   maxScore: number | null;
   areasForImprovement: string | null;
+  params?: {
+    callOpen: number | null;
+    professionalism: number | null;
+    activeListening: number | null;
+    callClosure: number | null;
+    accuracy: number | null;
+  };
 }
 
 interface AnalystCallsResponse {
   employee: { id: string; fullName: string; employeeCode: string } | null;
   calls: AnalystCall[];
+}
+
+const PARAM_LABELS: [keyof NonNullable<AnalystCall["params"]>, string][] = [
+  ["callOpen",       "Call Opening"],
+  ["professionalism","Professionalism"],
+  ["activeListening","Active Listening"],
+  ["callClosure",    "Call Closure"],
+  ["accuracy",       "Accuracy"],
+];
+
+function CallAuditRow({ c }: { c: AnalystCall }) {
+  const [expanded, setExpanded] = useState(false);
+  const tone = qualityTone(c.qualityPct);
+  const scoreColor =
+    tone === "good" ? "text-emerald-600" :
+    tone === "warn" ? "text-amber-600" :
+    tone === "bad"  ? "text-rose-600" : "text-slate-500";
+
+  const hasParams = c.params && Object.values(c.params).some((v) => v !== null);
+
+  return (
+    <Card className="overflow-hidden border-border/60">
+      <button
+        onClick={() => hasParams && setExpanded((x) => !x)}
+        className={`w-full text-left ${hasParams ? "cursor-pointer hover:bg-slate-50" : "cursor-default"}`}
+      >
+        <CardContent className="flex items-center justify-between gap-3 p-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-slate-800">
+              {new Date(c.callDate).toLocaleString(undefined, {
+                day: "numeric", month: "short", year: "numeric",
+                hour: "2-digit", minute: "2-digit",
+              })}
+            </p>
+            {c.client && <p className="text-[11px] text-slate-400">{c.client}</p>}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <div className="text-right">
+              <p className={`text-base font-black tabular-nums ${scoreColor}`}>
+                {c.qualityPct !== null ? `${c.qualityPct}%` : "—"}
+              </p>
+              {c.totalScore !== null && c.maxScore !== null && (
+                <p className="text-[10px] text-slate-400">{c.totalScore}/{c.maxScore}</p>
+              )}
+            </div>
+            {hasParams && (
+              <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${expanded ? "rotate-180" : ""}`} />
+            )}
+          </div>
+        </CardContent>
+      </button>
+
+      {expanded && hasParams && (
+        <div className="border-t border-slate-100 bg-slate-50 px-4 pb-4 pt-3">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">Parameter Scores</p>
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            {PARAM_LABELS.map(([key, label]) => {
+              const val = c.params![key];
+              const passed = val === 1 || val === null ? val === 1 : Number(val) === 1;
+              return (
+                <div key={key} className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
+                  <span className="text-xs text-slate-600">{label}</span>
+                  {val === null ? (
+                    <span className="text-[10px] text-slate-400">N/A</span>
+                  ) : passed ? (
+                    <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600">
+                      <CheckCircle2 className="h-3.5 w-3.5" /> Pass
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-xs font-semibold text-red-600">
+                      <XCircle className="h-3.5 w-3.5" /> Fail
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {c.areasForImprovement && (
+            <div className="mt-3 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2">
+              <p className="mb-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-600">Areas for Improvement</p>
+              <p className="text-xs leading-relaxed text-slate-700">{c.areasForImprovement}</p>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
 }
 
 function AnalystDetailSheet({ node, open, onOpenChange }: { node: DrillNode | null; open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -107,8 +201,9 @@ function AnalystDetailSheet({ node, open, onOpenChange }: { node: DrillNode | nu
     enabled: !!node && open,
   });
 
-  const chartData = (data?.calls ?? [])
-    .filter((c) => c.qualityPct !== null)
+  const scoredCalls = (data?.calls ?? []).filter((c) => c.qualityPct !== null);
+
+  const chartData = scoredCalls
     .slice()
     .reverse()
     .map((c) => ({ date: new Date(c.callDate).toLocaleDateString(undefined, { month: "short", day: "numeric" }), quality: c.qualityPct }));
@@ -118,42 +213,38 @@ function AnalystDetailSheet({ node, open, onOpenChange }: { node: DrillNode | nu
       <SheetContent className="w-full overflow-y-auto sm:max-w-xl">
         <SheetHeader>
           <SheetTitle>{data?.employee?.fullName ?? node?.name ?? "Analyst"}</SheetTitle>
-          <SheetDescription>Individually audited calls, most recent first</SheetDescription>
+          <SheetDescription>
+            {scoredCalls.length > 0
+              ? `${scoredCalls.length} audited call${scoredCalls.length !== 1 ? "s" : ""} — click any row for parameter detail`
+              : "Individually audited calls"}
+          </SheetDescription>
         </SheetHeader>
+
         {isLoading && <p className="mt-6 text-sm text-muted-foreground">Loading…</p>}
-        {!isLoading && data && data.calls.length === 0 && (
+
+        {!isLoading && scoredCalls.length === 0 && (
           <div className="mt-6">
             <EmptyState title="No audited calls in range" description="This analyst has no scored calls in the selected window." />
           </div>
         )}
+
         {!isLoading && chartData.length > 1 && (
-          <div className="mt-6 h-52">
+          <div className="mt-6 h-44">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-                <XAxis dataKey="date" fontSize={11} />
-                <YAxis fontSize={11} domain={[0, 100]} />
-                <Tooltip />
+                <XAxis dataKey="date" fontSize={10} />
+                <YAxis fontSize={10} domain={[0, 100]} />
+                <Tooltip contentStyle={{ borderRadius: 8, fontSize: 12 }} />
                 <Line type="monotone" dataKey="quality" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
           </div>
         )}
-        <div className="mt-6 space-y-2">
-          {(data?.calls ?? []).slice(0, 50).map((c) => (
-            <Card key={c.id} className="border-border/60">
-              <CardContent className="flex items-center justify-between gap-3 p-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">{new Date(c.callDate).toLocaleString()}</p>
-                  {c.areasForImprovement && (
-                    <p className="truncate text-xs text-muted-foreground">{c.areasForImprovement}</p>
-                  )}
-                </div>
-                <Badge variant={qualityTone(c.qualityPct) === "bad" ? "destructive" : "secondary"}>
-                  {c.qualityPct !== null ? `${c.qualityPct}%` : "Unscored"}
-                </Badge>
-              </CardContent>
-            </Card>
+
+        <div className="mt-4 space-y-2">
+          {scoredCalls.slice(0, 100).map((c) => (
+            <CallAuditRow key={c.id} c={c} />
           ))}
         </div>
       </SheetContent>

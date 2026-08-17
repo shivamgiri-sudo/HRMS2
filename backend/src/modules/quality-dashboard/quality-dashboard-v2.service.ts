@@ -256,6 +256,13 @@ class QualityDashboardV2Service {
       totalScore: number | null;
       maxScore: number | null;
       areasForImprovement: string | null;
+      params: {
+        callOpen: number | null;
+        professionalism: number | null;
+        activeListening: number | null;
+        callClosure: number | null;
+        accuracy: number | null;
+      };
     }>;
   }> {
     const [empRows] = await db.execute<RowDataPacket[]>(
@@ -278,10 +285,23 @@ class QualityDashboardV2Service {
     const calls = await querySource<{
       id: number; ClientId: string | null; CallDate: string; quality_percentage: string | null;
       total_score: number | null; max_score: number | null; areas_for_improvement: string | null;
+      call_answered_within_5_seconds: number | null;
+      professionalism_maintained: number | null;
+      active_listening: number | null;
+      proper_call_closure: number | null;
+      correct_and_complete_information: number | null;
     }>(
-      `SELECT id, ClientId, CallDate, quality_percentage, total_score, max_score, areas_for_improvement
+      `SELECT id, ClientId, CallDate, quality_percentage, total_score, max_score,
+              areas_for_improvement,
+              call_answered_within_5_seconds,
+              professionalism_maintained,
+              active_listening,
+              proper_call_closure,
+              correct_and_complete_information
          FROM db_audit.call_quality_assessment
-        WHERE User = ? AND CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
+        WHERE User = ?
+          AND CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
+          AND quality_percentage IS NOT NULL
         ORDER BY CallDate DESC
         LIMIT 200`,
       [emp.employee_code, rangeDays],
@@ -300,6 +320,13 @@ class QualityDashboardV2Service {
         totalScore: c.total_score,
         maxScore: c.max_score,
         areasForImprovement: c.areas_for_improvement,
+        params: {
+          callOpen:       c.call_answered_within_5_seconds,
+          professionalism: c.professionalism_maintained,
+          activeListening: c.active_listening,
+          callClosure:    c.proper_call_closure,
+          accuracy:       c.correct_and_complete_information,
+        },
       })),
     };
   }
