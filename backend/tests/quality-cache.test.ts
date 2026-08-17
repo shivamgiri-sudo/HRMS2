@@ -387,9 +387,17 @@ describe('QualityCache', () => {
       let result = await cache.get(key);
       expect(result).toBeNull(); // Should expire immediately
 
-      // Zero TTL — expiresAt = Date.now()+0; need at least 1ms before get()
+      // Zero TTL — expiresAt = Date.now() + 0, and get() expires on `Date.now() > expiresAt`,
+      // strictly greater. A fixed `setTimeout(r, 1)` is not enough: the timer can resolve inside
+      // the same millisecond tick, leaving Date.now() equal to expiresAt rather than past it, so
+      // the entry reads as live and the assertion fails. That made this test flaky rather than
+      // wrong — it passed most runs and failed a minority, which is worse, because a red suite
+      // that clears on a re-run stops being read as a signal at all.
+      //
+      // Wait for the clock to actually advance instead of hoping a duration covers it.
+      const setAt = Date.now();
       await cache.set(key, value, 0);
-      await new Promise(r => setTimeout(r, 1));
+      while (Date.now() <= setAt) await new Promise(r => setTimeout(r, 1));
       result = await cache.get(key);
       expect(result).toBeNull(); // Should expire immediately
     });
