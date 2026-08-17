@@ -5,6 +5,8 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { payrollController as c } from "./payroll.controller.js";
+import { runRankSql } from "./run-status.js";
+import { SYNTHETIC_RUN_CREATORS } from "./payroll.service.js";
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -126,6 +128,16 @@ router.get("/records", requireRole(
     params.push(...(scoped.params || []));
   }
 
+  // Guards its sibling endpoints already apply but this one never did: listRuns excludes
+  // synthetic creators (payroll.service.ts) and /analytics excludes cancelled runs. Without
+  // them a cancelled or test-auto-gen run competes in the ROW_NUMBER ranking above and can
+  // supply the amounts a user reads as this month's payroll.
+  conds.push("LOWER(COALESCE(spr.status, '')) <> 'cancelled'");
+  conds.push(
+    `(spr.created_by IS NULL OR spr.created_by NOT IN (${SYNTHETIC_RUN_CREATORS.map(() => "?").join(",")}))`
+  );
+  params.push(...SYNTHETIC_RUN_CREATORS);
+
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
   const baseQuery = `
     FROM (
@@ -159,9 +171,14 @@ router.get("/records", requireRole(
              COALESCE(spl.eligible_holiday_days, 0) AS eligible_holiday_days,
              COALESCE(spl.final_payable_days, 0) AS final_payable_days,
              COALESCE(spl.active_calendar_days, 0) AS active_calendar_days,
+             -- Rank by how far the run progressed, not by which was created last. Ordering by
+             -- created_at alone let a stale draft created after the real run displace that
+             -- month's actual amounts for every employee it happened to contain. runRankSql
+             -- is the shared ordering /analytics and getPayrollOverview already use — keeping
+             -- a private copy of this CASE here is how those surfaces drifted apart.
              ROW_NUMBER() OVER (
                PARTITION BY spr.run_month, spl.employee_id
-               ORDER BY spr.created_at DESC, spl.id DESC
+               ORDER BY ${runRankSql("spr")}, spr.created_at DESC, spl.id DESC
              ) AS rn
         FROM salary_prep_line spl
         JOIN salary_prep_run spr ON spr.id = spl.run_id

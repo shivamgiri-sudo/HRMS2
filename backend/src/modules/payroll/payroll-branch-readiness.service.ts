@@ -250,18 +250,32 @@ export const payrollBranchReadinessService = {
     // --- attendance_frozen ---------------------------------------------------
     const attendanceFrozen = await safeQuery(
       async () => {
-        // Check salary_prep_run first
+        // The freeze signal is the run for this month, and it is two things, not one:
+        // attendance_snapshot_locked, OR a status that means the run is already settled.
+        // Status alone is what actually carries it — attendance_snapshot_locked is 0 on
+        // every row in production, while 51 of 67 runs are FINALIZED. Matching only the
+        // column therefore reported "not frozen" for months that were long closed.
+        // Same predicate as isPayrollFrozenForDate in
+        // wfm.regularization.secure.routes.ts — kept identical so the two agree.
+        //
+        // A company-wide run (branch_id and branch_filter both NULL — which is every run in
+        // production) covers every branch. The old `(branch_id = ? OR branch_filter = ?)`
+        // matched neither, so this returned 0 rows even for June and July, where runs exist.
+        //
+        // run_month is VARCHAR(7) 'YYYY-MM'; comparing it to a DATE coerces to a warning,
+        // not an error, and silently matches nothing.
         const [rows] = await db.execute<RowDataPacket[]>(
-          `SELECT attendance_snapshot_locked
+          `SELECT 1 AS frozen
              FROM salary_prep_run
             WHERE run_month = ?
-              AND (branch_id = ? OR branch_filter = ?)
+              AND (branch_id IS NULL OR branch_id = ?)
+              AND (branch_filter IS NULL OR branch_filter = ?)
+              AND (attendance_snapshot_locked = 1
+                   OR LOWER(status) IN ('finalized','finalised','locked','disbursed','approved'))
             LIMIT 1`,
           [month, branchId, branchId]
         );
-        if ((rows as any[]).length > 0) {
-          return Number((rows[0] as any).attendance_snapshot_locked ?? 0);
-        }
+        if ((rows as any[]).length > 0) return 1;
 
         // There is no payroll_attendance_snapshot table — not in this database and not in
         // any migration. This fallback therefore threw ER_NO_SUCH_TABLE on every call and
@@ -553,7 +567,11 @@ export const payrollBranchReadinessService = {
   ): Promise<"not_started" | "in_progress" | "ready" | "blocked"> {
     if (hoOverride === 1) return "ready";
     const minScore = Number(await getPolicyValue("payroll", "readiness", "min_readiness_score", "80"));
-    if (score >= minScore && frozen === 1) return "ready";
+    // Not `&& frozen === 1`. attendance_frozen is set by freezeAttendance(runId), which needs
+    // a run to already exist, so requiring it here made 'ready' unreachable for every branch
+    // in every month — 0 of 74 rows have ever held it. The freeze remains a scored input
+    // (10 points, computeScore above) and remains a hard gate at lock/finalize/disburse.
+    if (score >= minScore) return "ready";
     if (frozen === 0 && score < 50) return "blocked";
     if (score >= 50) return "in_progress";
     if (score > 0) return "in_progress";
@@ -1172,19 +1190,38 @@ export const payrollBranchReadinessService = {
     for (const branch of branches) {
       try {
         const rec = await this.getOrRefresh(month, branch.id);
+
+        // One predicate, not two. This used to compute `isReady` — which honours the HO
+        // override — and then AND it with `!isBlocked`, where `isBlocked` was true whenever
+        // `attendance_frozen === 0` on its own. An overridden branch was therefore isReady
+        // AND isBlocked, and landed in `blocked`, so the override was dead code and the
+        // error message in createRun told users to apply a control that could not work.
+        //
+        // attendance_frozen cannot be satisfied before a run exists in any case:
+        // freezeAttendance() in payroll-governance.service.ts takes a runId and sets
+        // attendance_snapshot_locked ON the run, so it is a post-creation control. Requiring
+        // it to create the run made creation impossible — verified live 2026-08-17, where
+        // 0 of 74 rows in this table have ever been frozen and August 2026 had no run at all.
+        // Freeze stays enforced where it can actually hold: lock, finalize and disburse.
         const isReady =
           rec.ho_override_ready === 1 ||
           (rec.attendance_frozen === 1 && rec.readiness_status === "ready");
-        const isBlocked =
-          rec.attendance_frozen === 0 ||
-          (rec.ho_override_ready === 0 && rec.readiness_status !== "ready");
 
-        if (isReady && !isBlocked) {
+        if (isReady) {
           ready.push(branch.branch_name);
         } else {
           blocked.push(branch.branch_name);
         }
-      } catch {
+      } catch (err: unknown) {
+        // Fail closed, but never silently. An unreadable branch is indistinguishable from an
+        // unprepared one unless the error is surfaced — and one is genuinely likely here:
+        // payroll_branch_readiness.branch_id is utf8mb4_0900_ai_ci while branch_master.id is
+        // utf8mb4_unicode_ci, so any join added without an explicit CONVERT/COLLATE raises
+        // ER_CANT_AGGREGATE_2COLLATIONS and would read as "this branch is not ready".
+        console.warn(
+          `[BranchReadiness] readiness unreadable for branch ${branch.branch_name} (${branch.id}) in ${month} — treating as blocked:`,
+          err instanceof Error ? err.message : String(err)
+        );
         blocked.push(branch.branch_name);
       }
     }

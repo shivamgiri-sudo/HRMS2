@@ -248,7 +248,16 @@ router.get("/records", requireRole("admin", "hr", "super_admin", "finance", "pay
   (req as any).scopeFilter = scoped;
   return c.listPayrollRecords(req, res);
 }));
-router.get("/overview", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.getPayrollOverview));
+// Same role list as GET /records in payroll.secure.routes.ts. Commit 18c00e4f admitted
+// finance_head/payroll_head/payroll_admin to /runs and /records but left /overview behind,
+// so those three roles loaded the payroll grid and then got a 403 on the summary cards above
+// it — which the frontend rendered as ₹0 rather than as an error. The grid and the cards it
+// sits under have to agree on who may read them.
+router.get(
+  "/overview",
+  requireRole("admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"),
+  h(c.getPayrollOverview)
+);
 
 router.get(
   "/attendance-control-tower",

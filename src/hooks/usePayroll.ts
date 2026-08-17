@@ -261,15 +261,15 @@ export function usePayrollStats() {
           isDraft: overview.isDraft ?? false,
         };
       } catch (error) {
+        // Do NOT collapse a failure into zeros. A 403 rendered as ₹0 is unreadable: the user
+        // sees a populated payroll grid under summary cards claiming the month cost nothing,
+        // with nothing anywhere saying the request was refused. Let the query go to `error`
+        // so the page can say which of "no permission" and "no payroll" it is.
         console.error("Failed to fetch payroll stats:", error);
-        return {
-          totalPayroll: 0,
-          employeeCount: 0,
-          avgSalary: 0,
-          pending: 0,
-        };
+        throw error;
       }
     },
+    retry: false,
   });
 }
 

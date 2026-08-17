@@ -4,6 +4,8 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { columnExists, ifObjectExists, tableExists } from "../../shared/schema-object-cache.js";
 import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
+import { latestPayrollMonth } from "../reporting/payroll-month.js";
+import { runRankSql } from "../payroll/run-status.js";
 import {
   EXPECTED_TO_WORK_EXCLUSIONS,
   HALF_DAY_STATUS,
@@ -1211,6 +1213,14 @@ export const managementService = {
   },
 
   async getCeoMetrics() {
+    // The payroll tiles used to pin to DATE_FORMAT(CURDATE(), '%Y-%m'). Payroll is closed
+    // monthly and in arrears, so for most of any month there is no run for "this month" yet —
+    // on 2026-08-17 there was no 2026-08 run at all and every payroll tile read ₹0 with no
+    // month label, which is indistinguishable from "payroll ran and produced nothing".
+    // Resolve to the latest month that actually has payroll instead, the same way the report
+    // library already does.
+    const payrollMonth = await latestPayrollMonth();
+
     const [
       payrollResult,
       mandateGapResult,
@@ -1220,8 +1230,8 @@ export const managementService = {
       hiringGapResult,
       ffLiabilityResult,
     ] = await Promise.all([
-      // 1. Payroll liability — current month run (matches Payroll page total)
-      // Fixed: select only the LATEST run for the current month to avoid summing across multiple runs
+      // 1. Payroll liability — latest month with payroll (matches Payroll page total).
+      // Selects a single canonical run for the month so multiple runs are never summed.
       db.execute<RowDataPacket[]>(
         `SELECT
            COALESCE(SUM(spl.gross_salary), 0)  AS total_gross,
@@ -1234,21 +1244,13 @@ export const managementService = {
          JOIN (
            SELECT id, run_month
            FROM salary_prep_run
-           WHERE run_month = DATE_FORMAT(CURDATE(), '%Y-%m')
-             AND status IN ('draft','processing','completed','locked','disbursed')
-           ORDER BY
-             CASE status
-               WHEN 'disbursed' THEN 1
-               WHEN 'locked' THEN 2
-               WHEN 'completed' THEN 3
-               WHEN 'processing' THEN 4
-               WHEN 'draft' THEN 5
-               ELSE 6
-             END,
-             created_at DESC
+           WHERE run_month = ?
+             AND LOWER(COALESCE(status,'')) NOT IN ('cancelled')
+           ORDER BY ${runRankSql()}, created_at DESC
            LIMIT 1
          ) spr ON spr.id = spl.run_id
-         GROUP BY spr.run_month`
+         GROUP BY spr.run_month`,
+        [payrollMonth]
       ),
       // 2. HC gap by process: mandated vs active
       db.execute<RowDataPacket[]>(

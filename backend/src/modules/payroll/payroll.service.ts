@@ -48,7 +48,7 @@ const LOCKED_STATUSES = new Set(["locked", "disbursed", "finalized"]);
  * MySQL UUID v1 rather than the application's v4, and leave window_close_date
  * NULL — but they render in the runs list exactly like a real run.
  */
-const SYNTHETIC_RUN_CREATORS = ["test-auto-gen"] as const;
+export const SYNTHETIC_RUN_CREATORS = ["test-auto-gen"] as const;
 
 export const payrollService = {
   // ─── Structures ────────────────────────────────────────────────────────────

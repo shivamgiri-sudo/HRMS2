@@ -203,7 +203,7 @@ const Payroll = () => {
   const historyTotalItems = historyRecordsPage?.total ?? 0;
   const historyTotalPages = Math.max(1, Math.ceil(historyTotalItems / historyPageSize));
 
-  const { data: stats } = usePayrollStats();
+  const { data: stats, error: statsError } = usePayrollStats();
 
   const generatePayroll = useGeneratePayroll();
   const updateStatus = useUpdatePayrollStatus();
@@ -238,6 +238,24 @@ const Payroll = () => {
   // Current month run — used for incentive-applied warning
   const currentMonthStr = `${currentYear}-${String(currentMonth).padStart(2, "0")}`;
   const currentMonthRun = runSummaries.find(r => r.run_month === currentMonthStr) ?? null;
+  const currentMonthLabel = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" })
+    .format(new Date(currentYear, currentMonth - 1, 1));
+
+  // Payroll is closed monthly and always in arrears, so for most of any calendar month there
+  // is no run for "this month" yet and there is not supposed to be one. Verified against the
+  // billing system, which is where the real vouchers are issued: May salary was processed
+  // 6-12 Jun, June salary 6-27 Jul, July salary 7-12 Aug. On 2026-08-17 the payroll actually
+  // being processed was July's, and August had no rows in either system.
+  //
+  // The page used to render that as an empty grid sitting under summary cards showing July's
+  // money, which reads as "August ran and paid nothing". What it should say is which month is
+  // being processed, and when the current one opens.
+  const noRunForCurrentMonth = !isLoadingHistory && monthFilter === "current" && !currentMonthRun;
+  const processingRunMonth = stats?.isFallback ? stats?.effectiveRunMonth ?? null : null;
+  const processingLabel = processingRunMonth
+    ? new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" })
+        .format(new Date(Number(processingRunMonth.split("-")[0]), Number(processingRunMonth.split("-")[1]) - 1, 1))
+    : null;
 
   const availableYears = useMemo(() => {
     const years = new Set<number>();
@@ -638,7 +656,9 @@ const Payroll = () => {
     const [yr, mo] = rm.split("-");
     const label = new Intl.DateTimeFormat("en-IN", { month: "long", year: "numeric" })
       .format(new Date(Number(yr), Number(mo) - 1, 1));
-    if (stats?.isFallback) return `Last run: ${label}`;
+    // "Last run" undersold this. Payroll is in arrears, so the most recent run is not a stale
+    // leftover — it is the payroll being worked on right now, and the cards are its real money.
+    if (stats?.isFallback) return `Processing: ${label}`;
     if (stats?.isDraft) return `${label} · Draft`;
     return label;
   })();
@@ -967,6 +987,33 @@ const Payroll = () => {
             </div>
 
             <TabsContent value="current" className="mt-0 space-y-4">
+              {statsError && (
+                <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+                  <p className="font-medium text-destructive">Payroll summary could not be loaded</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {statsError instanceof Error ? statsError.message : "An unexpected error occurred."}
+                    {" "}The totals above are unavailable — they are not zero.
+                  </p>
+                </div>
+              )}
+
+              {noRunForCurrentMonth && (
+                <div className="rounded-xl border border-sky-200 bg-sky-50 p-4">
+                  <p className="font-semibold text-sky-900">
+                    {processingLabel
+                      ? `Currently processing: ${processingLabel} salary`
+                      : `No payroll run for ${currentMonthLabel} yet`}
+                  </p>
+                  <p className="mt-1 text-sm text-sky-800">
+                    {processingLabel
+                      ? `The figures below are ${processingLabel}'s payroll, which is the run being processed now. `
+                      : ""}
+                    Payroll runs in arrears — {currentMonthLabel} opens for processing after the
+                    month closes, so there are no {currentMonthLabel} amounts yet.
+                  </p>
+                </div>
+              )}
+
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-2">
                 <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-[1fr_140px_140px]">
                   <div className="relative sm:col-span-2 xl:col-span-1">
@@ -1078,14 +1125,20 @@ const Payroll = () => {
                 </div>
               ) : currentRecords.length === 0 ? (
                 <EmptyState
-                  title="No Payroll Records"
+                  title={noRunForCurrentMonth ? `${currentMonthLabel} has not been run yet` : "No Payroll Records"}
                   description={
-                    !hasCurrentFilters
-                      ? "Generate payroll to see records here."
-                      : "No records match your current search criteria."
+                    hasCurrentFilters
+                      ? "No records match your current search criteria."
+                      : noRunForCurrentMonth
+                        // Name the month and say why it is empty. "Generate payroll to see
+                        // records here" gave no way to tell a month that is not due yet from a
+                        // month that ran and produced nothing.
+                        ? `Payroll runs in arrears, so ${currentMonthLabel} opens after the month closes.`
+                          + (processingLabel ? ` Switch to All Months to see ${processingLabel}, which is being processed now.` : "")
+                        : "Generate payroll to see records here."
                   }
                   action={
-                    !hasCurrentFilters ? (
+                    !hasCurrentFilters && !noRunForCurrentMonth ? (
                       <Button
                         className="h-10 rounded-xl bg-slate-950 px-4 text-xs font-semibold text-white hover:bg-slate-800"
                         onClick={handleGeneratePayroll}
