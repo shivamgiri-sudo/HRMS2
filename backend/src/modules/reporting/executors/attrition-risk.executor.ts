@@ -243,7 +243,9 @@ export async function leaveAttendanceReconciliation(
            COALESCE(NULLIF(TRIM(e.full_name),''),
                     TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
            COALESCE(b.branch_name, 'UNASSIGNED')       AS branch_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+           COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
            COUNT(*)                                    AS approved_requests,
            SUM(GREATEST(DATEDIFF(lr.to_date, lr.from_date) + 1, 1)) AS approved_leave_days,
            SUM(COALESCE(m.marked_leave, 0))            AS days_marked_leave_in_attendance,
@@ -256,6 +258,7 @@ export async function leaveAttendanceReconciliation(
       JOIN employees e                ON e.id  = lr.employee_id
       LEFT JOIN branch_master b       ON b.id  = e.branch_id
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+      LEFT JOIN process_master p      ON p.id  = e.process_id
       LEFT JOIN (
         SELECT adr.employee_id, adr.record_date,
                SUM(adr.attendance_status = 'leave_approved') AS marked_leave,
@@ -270,7 +273,7 @@ export async function leaveAttendanceReconciliation(
       ) m ON m.employee_id = lr.employee_id AND m.record_date = lr.from_date
      WHERE ${clauses.join(" AND ")}
      GROUP BY DATE_FORMAT(lr.from_date, '%Y-%m'), e.employee_code, employee_name,
-              b.branch_name, cc.cost_centre_name
+              b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name
      ORDER BY month DESC, days_marked_absent_in_attendance DESC`;
 
   /*
