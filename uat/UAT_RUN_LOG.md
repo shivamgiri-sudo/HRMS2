@@ -71,3 +71,34 @@ used:
   defect log, not FRONTEND_VERIFIED — a distinction preserved through to the final report so
   it doesn't get silently upgraded to a false "tested in browser" claim.
 
+
+### RBAC sweep, part 2 — full page_catalog scan (beyond the 86-page sample)
+
+Extended the RBAC gap check to all 244 active page_catalog rows, not just the 86 tied to a
+`ProtectedRoute roles={}` array. Found:
+- **0 pages with zero grants** (good — nothing is completely unreachable even by super_admin).
+- **46 more pages super_admin-only.** Cross-checked which have a live `<Gate pageCode=>`
+  reference in any current route file: only 9 do (`ATTENDANCE_BILLING_CONFIG`,
+  `CUSTOMIZATION_MANAGER`, `EXIT_COMMAND_CENTER`, `MATERNITY_LEAVE`, `MCNMEET`, `MOBILITY`,
+  `ORG_MASTERS`, `PORTAL_DATA_MANAGER`, `SUPPORT_COMMAND_CENTER`) — the other ~37 have zero
+  route references and are very likely stale/orphaned catalog rows (old pageCodes no longer
+  wired to any live route), not confirmed live bugs. **Not yet confirmed**: whether any of
+  those ~37 are still consulted via a direct `canViewPage("CODE")` call outside the route
+  files (a component-level check rather than the `<Gate>` wrapper) — this check was started
+  but not completed in this session; treat as an open follow-up, not "checked and clean."
+- Of the 9 live ones, 2 have strong evidence of being genuine bugs (fixed via migration 1231):
+  `MATERNITY_LEAVE` (route's own `roles={['super_admin','admin','hr']}`, DB had super_admin
+  only) and `ORG_MASTERS` (navConfig consistently lists `admin|hr` across 3 entries pointing
+  at it, DB had super_admin only).
+- The remaining 7 live ones (`ATTENDANCE_BILLING_CONFIG`, `CUSTOMIZATION_MANAGER`,
+  `EXIT_COMMAND_CENTER`, `MCNMEET`, `MOBILITY`, `PORTAL_DATA_MANAGER`,
+  `SUPPORT_COMMAND_CENTER`) have **no `roles=` prop on their route and no clear navConfig
+  role signal either** (empty roles column) — meaning there is no independent evidence of
+  who *should* see them beyond the current DB grant itself. NOT auto-fixed; genuinely
+  ambiguous and needs a product-owner call on intended audience, not a guess. Left as-is.
+
+**Time-boxed**: this sub-investigation was cut short at the user's direction rather than
+fully resolving the "is it referenced outside routes/" question for all 37 remaining codes.
+Follow-up if pursued: `grep -r "CODE_NAME" src/ backend/src/` per code, excluding
+`config/routes/`, watching for `canViewPage(`, `hasRoutePageAccess`, or direct pageCode
+string literals in components.
