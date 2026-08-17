@@ -223,6 +223,9 @@ describe("the gates that kept this latent stay in place", () => {
   });
 
   it("still refuses a branch-scoped caller rather than emitting a partial file", () => {
-    expect(EXPORT_HANDLER).toContain("hasOrgWideScope");
+    // Fixed 2026-08-17 (Section M RBAC audit): the raw hasOrgWideScope trusted bare `admin`
+    // membership with no scope row — see bank-export-gating.contract.test.ts. This endpoint now
+    // gates on the stricter local hasExportScope() instead.
+    expect(EXPORT_HANDLER).toContain("hasExportScope");
   });
 });

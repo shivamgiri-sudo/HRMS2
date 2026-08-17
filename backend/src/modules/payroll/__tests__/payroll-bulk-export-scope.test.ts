@@ -24,16 +24,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const RUN_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
 const AUTH_USER_ID = "33333333-3333-3333-3333-333333333333";
 
-const { execute, hasOrgWideScope, buildScopeWhereClause, hasRole, getEmployeeForUser } = vi.hoisted(() => ({
+const { execute, hasOrgWideScope, hasAnyRole, getUserAssignmentScopes, buildScopeWhereClause, hasRole, getEmployeeForUser } = vi.hoisted(() => ({
   execute: vi.fn(),
   hasOrgWideScope: vi.fn(),
+  // Fixed 2026-08-17 (Section M RBAC audit): the bank-file endpoints below no longer call
+  // hasOrgWideScope (it trusts bare `admin` membership with no scope row — see
+  // bank-export-gating.contract.test.ts) — they call a local hasExportScope() built from
+  // these two primitives instead, matching bank-payment-readiness.routes.ts's reference
+  // implementation. hasOrgWideScope is kept mocked here only because buildScopeWhereClause's
+  // sibling salary-sheet-export tests import from the same module.
+  hasAnyRole: vi.fn(),
+  getUserAssignmentScopes: vi.fn(),
   buildScopeWhereClause: vi.fn(),
   hasRole: vi.fn(),
   getEmployeeForUser: vi.fn(),
 }));
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
-vi.mock("../../../shared/scopeAccess.js", () => ({ hasOrgWideScope, buildScopeWhereClause }));
+vi.mock("../../../shared/scopeAccess.js", () => ({ hasOrgWideScope, hasAnyRole, getUserAssignmentScopes, buildScopeWhereClause }));
 vi.mock("../../../shared/accessGuard.js", () => ({ hasRole, getEmployeeForUser }));
 vi.mock("../../../config/env.js", () => ({ env: { PAYROLL_BANK_KEY: "test-bank-key" } }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
@@ -63,12 +71,26 @@ describe("bank-file exports deny a branch-scoped caller instead of emitting a pa
   beforeEach(() => {
     execute.mockReset();
     hasOrgWideScope.mockReset();
+    hasAnyRole.mockReset();
+    getUserAssignmentScopes.mockReset();
     buildScopeWhereClause.mockReset();
   });
 
+  /** hasExportScope: holds a payroll-export role but not super_admin, with only a branch-scope row. */
+  function mockBranchScopedCaller() {
+    hasAnyRole.mockImplementation(async (_userId, ...roles) => !roles.includes("super_admin"));
+    getUserAssignmentScopes.mockResolvedValue([{ scope_type: "branch" }]);
+  }
+
+  /** hasExportScope: holds a payroll-export role with an explicit scope_type='all' row. */
+  function mockOrgWideCaller() {
+    hasAnyRole.mockImplementation(async (_userId, ...roles) => !roles.includes("super_admin"));
+    getUserAssignmentScopes.mockResolvedValue([{ scope_type: "all" }]);
+  }
+
   for (const path of ["neft-summary", "neft-export"]) {
     it(`GET /runs/:id/${path} returns 403 for a branch-scoped caller and touches no bank data`, async () => {
-      hasOrgWideScope.mockResolvedValue(false);
+      mockBranchScopedCaller();
 
       const res = await request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/${path}`);
 
@@ -79,7 +101,7 @@ describe("bank-file exports deny a branch-scoped caller instead of emitting a pa
   }
 
   it("GET /runs/:id/neft-export still serves a full CSV for an org-wide caller", async () => {
-    hasOrgWideScope.mockResolvedValue(true);
+    mockOrgWideCaller();
     execute
       .mockResolvedValueOnce(RUN_ROW)
       .mockResolvedValueOnce([[
@@ -94,6 +116,19 @@ describe("bank-file exports deny a branch-scoped caller instead of emitting a pa
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("text/csv");
     expect(res.text).toContain("MAS001");
+  });
+
+  it("GET /runs/:id/neft-export denies an admin-only caller with no scope_type='all' row (the actual production gap this fixed)", async () => {
+    // The vulnerability this session found: hasOrgWideScope() trusted bare `admin` membership
+    // with zero scope rows. hasExportScope must not repeat that — holding only `admin` (never
+    // super_admin, and not one of PAYROLL_EXPORT_ROLES) must fail closed.
+    hasAnyRole.mockResolvedValue(false); // holds neither super_admin nor a PAYROLL_EXPORT_ROLES role
+    getUserAssignmentScopes.mockResolvedValue([]);
+
+    const res = await request(buildApp()).get(`/api/payroll/runs/${RUN_ID}/neft-export`);
+
+    expect(res.status).toBe(403);
+    expect(execute).not.toHaveBeenCalled();
   });
 });
 

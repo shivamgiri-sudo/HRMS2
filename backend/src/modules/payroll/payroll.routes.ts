@@ -9,7 +9,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { requireWFMAccess } from "../../middleware/requireWFMAccess.js";
 import { payrollRunLimiter } from "../../middleware/rateLimiter.js";
-import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync, hasScopedAccess, hasOrgWideScope } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync, hasScopedAccess, getUserAssignmentScopes } from "../../shared/scopeAccess.js";
 import { statutoryRegimeForFinancialYear } from "./statutory-regime.js";
 import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 import { getPartAAvailability } from "./tds-certificate-part-a.service.js";
@@ -45,6 +45,33 @@ import type { RowDataPacket } from "mysql2";
 const PAYROLL_EXPORT_ROLES = ["finance", "payroll", "finance_head", "payroll_head", "payroll_admin"];
 const ORG_WIDE_REQUIRED_MSG =
   "This export requires org-wide payroll scope. A branch-scoped export would produce a partial payment file, which is indistinguishable from a complete one once downloaded.";
+
+/**
+ * The bank/NEFT export's own org-wide test — deliberately NOT hasOrgWideScope().
+ *
+ * hasOrgWideScope() short-circuits to true for anyone holding `admin` (scopeAccess.ts:~192)
+ * before it ever looks at a scope row. Fixed 2026-08-17 (Section M RBAC audit): this file's
+ * neft-lines and neft-export endpoints were still using the raw hasOrgWideScope check, even
+ * though the identical vulnerability was already found and fixed for /payment-file in
+ * bank-payment-readiness.routes.ts (c202fe10, 2026-08-14), whose own commit message names this
+ * exact gap as an unfixed follow-up: "the admin-implies-org-wide shortcut in hasOrgWideScope()
+ * still applies to every other endpoint that uses it." Measured against production 2026-08-14:
+ * one active account holds `admin` + `branch_admin` with ZERO scope_type='all' rows. Routed
+ * through hasOrgWideScope, that branch administrator could download every employee's full
+ * decrypted bank account number for the whole organisation through THIS file's endpoints.
+ *
+ * super_admin is org-wide by definition; everyone else needs a real scope_type='all' row
+ * against a payroll export role. Holding `admin` is not, by itself, org-wide payroll scope.
+ * Same helper/logic as bank-payment-readiness.routes.ts's hasExportScope — duplicated here
+ * rather than shared, to keep this a minimal, targeted fix on the files that were still
+ * vulnerable rather than a cross-file refactor.
+ */
+async function hasExportScope(userId: string): Promise<boolean> {
+  if (await hasAnyRoleAsync(userId, "super_admin")) return true;
+  if (!(await hasAnyRoleAsync(userId, ...PAYROLL_EXPORT_ROLES))) return false;
+  const scopes = await getUserAssignmentScopes(userId, PAYROLL_EXPORT_ROLES);
+  return scopes.some((s) => s.scope_type === "all");
+}
 
 // Must match files.routes.ts UPLOADS_ROOT, which serves these back via
 // /api/files/tax-documents/*. Resolving from __dirname wrote to backend/dist/uploads/
@@ -2202,7 +2229,7 @@ router.get(
 
     // Returns decrypted full account numbers for every employee in the run — same
     // org-wide requirement as the NEFT export this feeds.
-    if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+    if (!(await hasExportScope(req.authUser!.id))) {
       return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
     }
 
@@ -2274,7 +2301,7 @@ router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance
   // hasOrgWideScope in shared/scopeAccess.ts for why a partial payment file is
   // worse than none. (This route duplicates the one in payroll-extended.routes.ts;
   // both are gated so whichever the UI reaches behaves identically.)
-  if (!(await hasOrgWideScope(req.authUser!.id, PAYROLL_EXPORT_ROLES))) {
+  if (!(await hasExportScope(req.authUser!.id))) {
     return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
   }
 
