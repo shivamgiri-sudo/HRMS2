@@ -149,10 +149,15 @@ export function ImprestAllocationPanel() {
         referenceNo: draft.referenceNo || undefined,
         transactionDate: draft.transactionDate || undefined,
         remarks: draft.remarks || undefined,
+        // Owner ruling 2026-08-17 (option A): Finance Head hands the float to the Branch Admin
+        // directly, so raising the allocation IS the authorisation — there is no second approver.
+        // Only finance_head and super_admin can reach this endpoint, and the server credits the
+        // ledger and writes the approval event in the same transaction as the insert.
+        disburseImmediately: true,
       });
     },
     onSuccess: () => {
-      toast({ title: "Allocation raised", description: "It is now awaiting review." });
+      toast({ title: "Allocation disbursed", description: "The float has been credited." });
       setDraft(EMPTY_DRAFT);
       setShowForm(false);
       refresh();
@@ -187,7 +192,7 @@ export function ImprestAllocationPanel() {
       <GrnCard>
         <GrnCardHeader
           title="Raise an allocation"
-          description="Puts money into a branch float. It is credited only once the allocation is approved."
+          description="Puts money into a branch float. Finance Head disburses directly — the float is credited immediately."
           action={
             <GrnChip active={showForm} onClick={() => setShowForm((open) => !open)}>
               <Plus className="mr-1 h-3.5 w-3.5" />
