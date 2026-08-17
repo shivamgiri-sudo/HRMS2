@@ -62,7 +62,11 @@ export async function predictAgentRisk(from: string, to: string) {
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?
         AND User IS NOT NULL AND User != ''
-        AND User NOT LIKE 'CODEX_%'
+        AND NOT EXISTS (
+          SELECT 1 FROM mas_hrms.employees ex
+          WHERE ex.employee_code = User COLLATE utf8mb4_unicode_ci
+            AND ex.status NOT IN ('active', 'probation', 'notice_period')
+        )
       GROUP BY User
       HAVING COUNT(*) >= 5
     )
@@ -95,9 +99,8 @@ export async function predictAgentRisk(from: string, to: string) {
         ELSE 'Continue monitoring'
       END as recommended_action
     FROM agent_metrics am
-    LEFT JOIN mas_hrms.employees e
-      ON e.employee_code = am.agent_code
-      AND (e.status IS NULL OR e.status IN ('active', 'probation', 'notice_period'))
+    LEFT JOIN mas_hrms.employees e ON e.employee_code = am.agent_code
+    WHERE COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), am.agent_code) NOT LIKE 'Codex E2E%'
     ORDER BY
       CASE
         WHEN week_avg < overall_avg - 10 THEN 1
