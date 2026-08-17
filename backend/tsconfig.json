@@ -13,6 +13,18 @@
     "resolveJsonModule": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "scripts/migrate-ncosec-biometric.ts", "scripts/ncosecDb.ts"],
+  "include": [
+    "src/**/*.ts",
+    "scripts/migrate-ncosec-biometric.ts",
+    "scripts/ncosecDb.ts",
+    // Scripts that write to production are typechecked; the rest of scripts/ is not, because it
+    // holds a long tail of one-off diagnostics that would fail the build for no benefit. These two
+    // recover employee data from db_bill and issue UPDATE/INSERT against mas_hrms, so a type error
+    // in one is a production data error. Added 2026-08-17 after `getBillPool()` — which is async —
+    // was used without await in the statutory loader: the script was broken on its first db_bill
+    // call while `tsc --noEmit` reported clean, because scripts/ was outside the program entirely.
+    "scripts/backfill-unbanked-from-dbbill.ts",
+    "scripts/backfill-statutory-ids-from-dbbill.ts"
+  ],
   "exclude": ["node_modules", "dist", "tests", "src/tests", "src/**/__tests__"]
 }

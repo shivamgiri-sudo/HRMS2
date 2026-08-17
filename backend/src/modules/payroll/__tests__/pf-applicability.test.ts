@@ -98,11 +98,15 @@ describe("it never guesses", () => {
   });
 
   it("contains no wage-threshold inference — that would be inventing statutory policy", async () => {
+    // Asserted against the SHARED resolver, not this file. The PF service is now a projection of
+    // statutory-applicability.service.ts and holds no rules of its own, so pointing this at
+    // pf-applicability.service.ts would pass for the trivial reason that there is nothing there —
+    // a guard that cannot fail, which is worse than no guard at all.
     const src = (await import("node:fs")).readFileSync(
-      (await import("node:path")).resolve(process.cwd(), "src/modules/payroll/pf-applicability.service.ts"),
+      (await import("node:path")).resolve(process.cwd(), "src/modules/payroll/statutory-applicability.service.ts"),
       "utf8",
     ).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-    expect(src).not.toMatch(/15000|15_000|basic\s*[<>]=?/i);
+    expect(src).not.toMatch(/15000|15_000|21000|21_000|basic\s*[<>]=?|gross\s*[<>]=?/i);
   });
 });
 

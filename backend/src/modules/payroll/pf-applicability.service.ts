@@ -1,53 +1,30 @@
 import type { RowDataPacket } from "mysql2";
-import { billQuery } from "../../db/billDb.js";
 import { db } from "../../db/mysql.js";
 import { UAN_FORMAT } from "../../shared/statutoryFormat.js";
+import {
+  resolveStatutoryApplicabilityForPeriod,
+  type Applicability,
+  type ApplicabilitySource,
+} from "./statutory-applicability.service.js";
+// billQuery is deliberately no longer imported here: the db_bill read moved to
+// statutory-applicability.service.ts so PF and ESI resolve from ONE pass over the same row.
+// The UAN filing-readiness resolver below still uses `db` for its own mas_hrms query.
 
 /**
- * The ONE answer to "is this employee PF-applicable for this payroll period?".
+ * PF applicability — a thin projection of statutory-applicability.service.ts.
  *
- * Owner ruling 2026-08-17 (option A): db_bill's monthly payroll row is authoritative, because it
- * is what actually happened to the employee's money. HRMS has not released a salary yet; db_bill
- * has, and its PFELig flag is the decision that was applied when they were paid.
+ * This file used to hold its own db_bill query. When ESI applicability turned out to be the same
+ * question against the same row — salary_data carries PFELig and ESIElig side by side for the
+ * same (employee, month) — keeping a separate PF implementation would have meant two round trips
+ * to db_bill for one readiness screen, and two places that had to agree about period parsing,
+ * employee-code normalisation, which fallback wins, and what an unreadable flag means. That is
+ * the two-rival-systems defect this audit keeps finding, so the query moved to one resolver and
+ * this became a projection of it.
  *
- * WHY THIS EXISTS
- *   Every consumer answered this differently, and the one HRMS-native source could not answer it
- *   at all. Measured live 2026-08-17 against 1,327 active employees:
- *
- *     employee_statutory_info.pf_eligible        69 rows        (5.2%)
- *     db_bill salary_data PFELig, 2026-07     1,231 rows        (93%, ZERO unresolved)
- *
- *   So the data was never missing — it was in the system that pays people. A resolver built on
- *   employee_statutory_info would have silently covered 5% of the workforce and looked complete.
- *
- * WHY NOT COPY IT INTO mas_hrms
- *   Explicit owner instruction 2026-08-17: no duplicate tables or columns. This reads through to
- *   db_bill per period, the same pattern bank-payment-readiness already uses for credited
- *   accounts. A copied table would drift from the payroll that produced it, and the drift would
- *   be invisible — which is the failure mode this whole audit keeps finding.
- *
- * GOING FORWARD (the second half of the ruling)
- *   HRMS must keep working as it takes over payroll. db_bill is therefore the FIRST source, not
- *   the only one:
- *
- *     1. db_bill salary_data for the period      — authoritative, what was actually paid
- *     2. employee_statutory_info.pf_eligible     — HRMS-native, for employees db_bill never paid
- *     3. PF_APPLICABILITY_UNRESOLVED             — neither knows; never guessed
- *
- *   An HRMS-native joiner who has never appeared in a db_bill run resolves through (2), so the
- *   resolver does not stop working the moment payroll moves across. As db_bill coverage falls
- *   and HRMS coverage rises, the same function keeps answering without a rewrite.
- *
- * NEVER GUESSES
- *   There is deliberately no wage-threshold inference here. Deriving PF applicability from salary
- *   would be inventing statutory policy, and an employee wrongly marked applicable has money
- *   deducted that should not have been.
- *
- * WHAT THIS DOES NOT ANSWER
- *   Applicability only — not identity. A PF-applicable employee still needs a valid 12-digit UAN
- *   before ECR can be filed, and that is a separate resolution with materially worse coverage
- *   (711 of 1,327 valid, measured the same day). ECR must fail closed on a missing UAN rather
- *   than quietly dropping the contributor.
+ * The PF-shaped API is preserved deliberately: callers asking only about PF should not have to
+ * know ESI exists, and PF_APPLICABILITY_UNRESOLVED reads better at a PF call site than a generic
+ * UNRESOLVED. Behaviour is unchanged — the rules, sources and precedence all live in the shared
+ * resolver, which is where they are tested.
  */
 
 export type PfApplicability =
@@ -55,7 +32,7 @@ export type PfApplicability =
   | "PF_NOT_APPLICABLE"
   | "PF_APPLICABILITY_UNRESOLVED";
 
-export type PfApplicabilitySource = "db_bill_payroll" | "hrms_statutory_info" | "none";
+export type PfApplicabilitySource = ApplicabilitySource;
 
 export interface PfApplicabilityResult {
   employeeCode: string;
@@ -65,89 +42,22 @@ export interface PfApplicabilityResult {
   reason: string;
 }
 
-const yesNo = (raw: unknown): boolean | null => {
-  const v = String(raw ?? "").trim().toUpperCase();
-  if (v === "YES" || v === "Y" || v === "1" || v === "TRUE") return true;
-  if (v === "NO" || v === "N" || v === "0" || v === "FALSE") return false;
-  // Anything else is NOT treated as "no". db_bill's eligibility columns are known to carry
-  // misaligned junk on at least one row (an IFSC code and a person's name), and reading that as
-  // "not applicable" would silently drop a contributor from a statutory filing.
-  return null;
-};
+const toPf = (status: Applicability): PfApplicability =>
+  status === "APPLICABLE" ? "PF_APPLICABLE"
+  : status === "NOT_APPLICABLE" ? "PF_NOT_APPLICABLE"
+  : "PF_APPLICABILITY_UNRESOLVED";
 
-const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
-
-/**
- * Resolve the whole period in one pass.
- *
- * Batched deliberately: db_bill is MySQL 5.5 on a separate host, and a per-employee call would
- * mean over a thousand round trips per readiness screen. Callers wanting a single employee should
- * still use this and read one key out — the query is indexed on the period, not the employee.
- */
 export async function resolvePfApplicabilityForPeriod(
   payrollMonth: string,
 ): Promise<Map<string, PfApplicabilityResult>> {
-  if (!PERIOD_RE.test(payrollMonth)) {
-    throw new Error(`Payroll month must be YYYY-MM, received "${payrollMonth}"`);
-  }
+  const all = await resolveStatutoryApplicabilityForPeriod(payrollMonth);
   const out = new Map<string, PfApplicabilityResult>();
-
-  // ── 1. db_bill payroll for the period — authoritative ─────────────────────
-  let billRows: Array<{ EmpCode?: unknown; PFELig?: unknown }> = [];
-  try {
-    billRows = (await billQuery(
-      `SELECT EmpCode, PFELig FROM salary_data
-        WHERE DATE_FORMAT(SalDate, '%Y-%m') = ?
-          AND EmpCode IS NOT NULL AND TRIM(EmpCode) <> ''`,
-      [payrollMonth],
-    )) as Array<{ EmpCode?: unknown; PFELig?: unknown }>;
-  } catch (err) {
-    // db_bill unreachable is UNRESOLVED for everyone, never "not applicable". A statutory
-    // population that silently empties when a remote host is down is the worst possible failure.
-    throw new Error(
-      `PF applicability cannot be resolved for ${payrollMonth}: the payroll source (db_bill) is `
-      + `unreachable. ${err instanceof Error ? err.message : String(err)}`,
-    );
+  for (const [code, r] of all) {
+    // An employee whose row resolved ESI but not PF is genuinely PF-unresolved, and is dropped
+    // from this map rather than reported as a resolved PF answer — the caller asked about PF.
+    if (r.pf.status === "UNRESOLVED" && r.pf.source === "hrms_statutory_info") continue;
+    out.set(code, { employeeCode: code, status: toPf(r.pf.status), source: r.pf.source, reason: r.pf.reason });
   }
-
-  for (const row of billRows) {
-    const code = String(row.EmpCode ?? "").trim().toUpperCase();
-    if (!code || out.has(code)) continue;
-    const flag = yesNo(row.PFELig);
-    out.set(code, {
-      employeeCode: code,
-      status:
-        flag === true ? "PF_APPLICABLE"
-        : flag === false ? "PF_NOT_APPLICABLE"
-        : "PF_APPLICABILITY_UNRESOLVED",
-      source: "db_bill_payroll",
-      reason:
-        flag === null
-          ? `The ${payrollMonth} payroll row carries an unreadable PF eligibility value`
-          : `Resolved from the ${payrollMonth} payroll run`,
-    });
-  }
-
-  // ── 2. HRMS-native fallback, for employees that period never paid ─────────
-  const [hrmsRows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.employee_code, s.pf_eligible
-       FROM employees e
-       JOIN employee_statutory_info s ON s.employee_id = e.id
-      WHERE e.active_status = 1 AND e.employee_code IS NOT NULL`,
-  );
-  for (const row of hrmsRows as Array<{ employee_code?: unknown; pf_eligible?: unknown }>) {
-    const code = String(row.employee_code ?? "").trim().toUpperCase();
-    if (!code || out.has(code)) continue; // db_bill wins — it is what was actually paid
-    const flag = yesNo(row.pf_eligible);
-    if (flag === null) continue; // leave genuinely unresolved rather than inventing a default
-    out.set(code, {
-      employeeCode: code,
-      status: flag ? "PF_APPLICABLE" : "PF_NOT_APPLICABLE",
-      source: "hrms_statutory_info",
-      reason: "Not in that period's payroll; resolved from the HRMS statutory record",
-    });
-  }
-
   return out;
 }
 
