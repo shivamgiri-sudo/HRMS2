@@ -1,6 +1,7 @@
-import type { RowDataPacket } from "mysql2";
-import { db } from "../../db/mysql.js";
-import { UAN_FORMAT } from "../../shared/statutoryFormat.js";
+import {
+  resolveStatutoryFilingReadinessForPeriod,
+  type FilingStatus,
+} from "./statutory-filing-readiness.service.js";
 import {
   resolveStatutoryApplicabilityForPeriod,
   type Applicability,
@@ -156,61 +157,29 @@ export interface UanFilingReadinessResult {
 export async function resolveUanFilingReadinessForPeriod(
   payrollMonth: string,
 ): Promise<Map<string, UanFilingReadinessResult>> {
-  const pf = await resolvePfApplicabilityForPeriod(payrollMonth);
+  // Projected from the shared filing-readiness resolver, which answers this question for PF and
+  // ESI in one pass. Keeping a second PF-only implementation here would have meant two passes
+  // over the same employee rows and two copies of the applicable-then-identifier precedence — the
+  // same divergence that let PF and ESI applicability drift apart. The PF-shaped result is
+  // preserved exactly, so callers and tests of this function are unaffected.
+  const all = await resolveStatutoryFilingReadinessForPeriod(payrollMonth);
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.employee_code,
-            e.uan_number AS uan_employees,
-            si.uan_number AS uan_statutory_info,
-            eu.uan AS uan_employee_uan
-       FROM employees e
-       LEFT JOIN employee_statutory_info si ON si.employee_id = e.id
-       LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
-      WHERE e.active_status = 1 AND e.employee_code IS NOT NULL`,
-  );
+  const toPfStatus = (s: FilingStatus): UanFilingStatus =>
+    s === "MISSING_ID" ? "MISSING_UAN"
+    : s === "INVALID_ID" ? "INVALID_UAN"
+    : s === "APPLICABILITY_UNRESOLVED" ? "PF_APPLICABILITY_UNRESOLVED"
+    : s;
 
   const out = new Map<string, UanFilingReadinessResult>();
-  for (const row of rows as Array<{
-    employee_code?: unknown; uan_employees?: unknown; uan_statutory_info?: unknown; uan_employee_uan?: unknown;
-  }>) {
-    const code = String(row.employee_code ?? "").trim().toUpperCase();
-    if (!code) continue;
-
-    let uan: string | null = null;
-    let uanSource: UanSource = "none";
-    const candidates: Array<[unknown, UanSource]> = [
-      [row.uan_employees, "employees"],
-      [row.uan_statutory_info, "employee_statutory_info"],
-      [row.uan_employee_uan, "employee_uan"],
-    ];
-    for (const [raw, source] of candidates) {
-      const trimmed = String(raw ?? "").trim();
-      if (trimmed) { uan = trimmed; uanSource = source; break; }
-    }
-    const uanValid = uan === null ? null : UAN_FORMAT.test(uan);
-
-    const pfResult = pf.get(code) ?? {
-      employeeCode: code,
-      status: "PF_APPLICABILITY_UNRESOLVED" as const,
-      source: "none" as const,
-      reason: `Not present in the ${payrollMonth} PF applicability resolution`,
-    };
-
-    let status: UanFilingStatus;
-    if (pfResult.status === "PF_APPLICABILITY_UNRESOLVED") status = "PF_APPLICABILITY_UNRESOLVED";
-    else if (pfResult.status === "PF_NOT_APPLICABLE") status = "NOT_APPLICABLE";
-    else if (uan === null) status = "MISSING_UAN";
-    else if (!uanValid) status = "INVALID_UAN";
-    else status = "READY";
-
+  for (const [code, r] of all) {
     out.set(code, {
       employeeCode: code,
-      pfStatus: pfResult.status,
-      pfSource: pfResult.source,
-      uan,
-      uanSource,
-      uanValid,
-      status,
+      pfStatus: toPf(r.pf.applicability),
+      pfSource: r.pf.applicabilitySource,
+      uan: r.pf.identifier,
+      uanSource: r.pf.identifierSource as UanSource,
+      uanValid: r.pf.identifierValid,
+      status: toPfStatus(r.pf.status),
     });
   }
   return out;
