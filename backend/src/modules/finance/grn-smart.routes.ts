@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync } from "fs";
 import path from "path";
-import { Router, type NextFunction, type Response } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
 import {
   requireWriteAccess,
@@ -44,19 +44,70 @@ const storage = multer.diskStorage({
     callback(null, `${randomUUID()}${path.extname(file.originalname).toLowerCase()}`);
   },
 });
+const ALLOWED_UPLOAD_EXTENSIONS = [".pdf", ".jpg", ".jpeg", ".png", ".webp"];
+const ALLOWED_UPLOAD_MIME_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const MAX_UPLOAD_FILES = 10;
+
 const upload = multer({
   storage,
-  limits: { fileSize: 20 * 1024 * 1024, files: 10 },
+  limits: { fileSize: MAX_UPLOAD_BYTES, files: MAX_UPLOAD_FILES },
   fileFilter(_req, file, callback) {
-    const extensions = [".pdf", ".jpg", ".jpeg", ".png", ".webp"];
-    const mimeTypes = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
+    const extension = path.extname(file.originalname).toLowerCase();
+    const extensionOk = ALLOWED_UPLOAD_EXTENSIONS.includes(extension);
+    const mimeTypeOk = ALLOWED_UPLOAD_MIME_TYPES.includes(file.mimetype);
+    if (extensionOk && mimeTypeOk) {
+      callback(null, true);
+      return;
+    }
+    /**
+     * Reject LOUDLY. The previous `callback(null, mimeOk && extOk)` discarded a mismatched file
+     * silently — multer dropped it, `req.files` came back empty, and the handler answered
+     * "At least one PDF or image is required" to someone who had just attached a PDF. The two
+     * facts that explain it (which file, and what type the browser claimed) were never sent.
+     *
+     * The MIME half is the one that actually bites: a browser is free to label a .pdf as
+     * application/octet-stream, and then a perfectly valid invoice vanishes with no reason given.
+     */
+    const reason = !extensionOk
+      ? `its extension ${extension || "(none)"} is not one of ${ALLOWED_UPLOAD_EXTENSIONS.join(", ")}`
+      : `the browser sent it as "${file.mimetype}", which is not a supported document type`;
     callback(
-      null,
-      extensions.includes(path.extname(file.originalname).toLowerCase())
-        && mimeTypes.includes(file.mimetype)
+      Object.assign(new Error(`"${file.originalname}" was not accepted: ${reason}.`), {
+        statusCode: 400,
+        code: "UNSUPPORTED_FILE_TYPE",
+      })
     );
   },
 });
+
+/**
+ * multer's OWN failures (file too large, too many files) surface as a MulterError carrying no
+ * `statusCode`, so errorHandler.ts classifies them as unexpected 500s and, in production, replaces
+ * the message with an anonymous "quote reference …". Someone attaching a 25 MB scan would be told
+ * the server had broken rather than that the file is too big. Translate them into readable 400s.
+ */
+function uploadGrnFiles(field: string, maxCount: number) {
+  const middleware = upload.array(field, maxCount);
+  return (req: Request, res: Response, next: NextFunction) =>
+    middleware(req, res, (error: unknown) => {
+      if (!error) {
+        next();
+        return;
+      }
+      if (error instanceof multer.MulterError) {
+        const message =
+          error.code === "LIMIT_FILE_SIZE"
+            ? `Each file must be ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))} MB or smaller.`
+            : error.code === "LIMIT_FILE_COUNT" || error.code === "LIMIT_UNEXPECTED_FILE"
+              ? `A GRN accepts at most ${maxCount} files per upload.`
+              : `Upload failed: ${error.code}.`;
+        next(Object.assign(new Error(message), { statusCode: 400, code: error.code }));
+        return;
+      }
+      next(error);
+    });
+}
 
 function actor(req: AuthenticatedRequest) {
   const id = req.authUser?.id;
@@ -248,7 +299,7 @@ smartGrnRouter.post(
   requireWriteAccess,
   requireRole(...SMART_WRITE_ROLES),
   authorizeGrn,
-  upload.array("files", 10),
+  uploadGrnFiles("files", MAX_UPLOAD_FILES),
   async (req: SmartRequest, res) => {
     try {
       const files = (req.files as Express.Multer.File[] | undefined) ?? [];
