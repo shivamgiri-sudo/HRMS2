@@ -533,7 +533,7 @@ export function Step3AddressKyc({
               {digilockerStale && (
                 <Button
                   onClick={onDigilocker}
-                  disabled={saving}
+                  disabled={saving || !consentAccepted}
                   size="sm"
                   variant="outline"
                   className="border-amber-500 text-amber-900 bg-amber-100 hover:bg-amber-200"
