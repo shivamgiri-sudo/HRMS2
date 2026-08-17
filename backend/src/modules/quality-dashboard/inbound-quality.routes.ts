@@ -7,9 +7,29 @@ const router = Router();
 const h = (fn: (req: Request, res: Response) => Promise<unknown>) =>
   (req: Request, res: Response, next: (e?: unknown) => void) => fn(req, res).catch(next);
 
+// Fixed 2026-08-18 (Section M RBAC audit, user decision): manager and process_manager were
+// removed from this list. Every endpoint below takes clientId as an OPTIONAL filter — omitted,
+// it means "all clients" — and there is no per-user client/process scoping applied anywhere in
+// this file. That is a deliberate design for genuinely org-wide roles, but process_manager and
+// manager are role-titled as scoped to one process/client, so it silently granted them the same
+// org-wide visibility (call transcripts, KPI scores, VOC quotes, fraud/scam signals) as
+// super_admin.
+//
+// The correct fix is real per-caller client scoping, matching client-drill.routes.ts's model.
+// It cannot be built right now: verified live 2026-08-18, BOTH candidate mapping sources are
+// completely unpopulated in production — user_assignment_scope.client_id (0 of all rows) and
+// process_master.client_id (0 of 131 processes) — and process<->client is not even a clean 1:1
+// once populated (one client's campaigns span many differently-named processes, per the
+// cost-centre billing-name audit). There is no reliable way to compute "this process_manager's
+// own client" from any existing data.
+//
+// So this fails closed rather than ship a fake or broken scope: these two roles lose access to
+// this dashboard entirely until real client/process-mapping master data exists to scope by.
+// Re-add them, backed by real scoping (mirroring client-drill.routes.ts / enterpriseScope.ts's
+// buildClientScopeCondition), once that data exists.
 router.use(
   requireAuth,
-  requireRole("super_admin", "admin", "ceo", "manager", "process_manager", "operations_manager", "qa", "quality_analyst")
+  requireRole("super_admin", "admin", "ceo", "operations_manager", "qa", "quality_analyst")
 );
 
 function parseFilters(q: Record<string, unknown>): svc.InboundQualityFilters {
