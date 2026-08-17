@@ -18,6 +18,7 @@ import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService, getCompanyBudgetConsolidation } from "./branch-budget.service.js";
 import { getCeoOverview, getYtdSummary, type CeoFilters } from "./ceo-overview.service.js";
 import { budgetTopupService } from "./budget-topup.service.js";
+import { budgetCostCentreUtilizationService } from "./budget-cost-centre-utilization.service.js";
 import { branchBudgetAllocationService } from "./branch-budget-allocation.service.js";
 import { meterService } from "./meter.service.js";
 import { costCentreMappingService } from "./cost-centre-mapping.service.js";
@@ -468,6 +469,27 @@ router.get(
   h(async (req, res) => {
     await assertBranchOf(req, await branchBudgetService.get(req.params.budgetId).then((b: any) => b?.branch_id));
     const data = await branchBudgetService.listTransfers(req.params.budgetId);
+    res.json({ success: true, data });
+  })
+);
+
+// Per-cost-centre budget vs actual, with the head / sub-head breakdown the tab drills into.
+// Server-side because the figures come from three tables the budget-detail payload does not carry
+// (finance_budget_line_allocation and grn_cost_allocation above all), and because row scope has to
+// be enforced here rather than by whatever the browser happens to ask for.
+router.get(
+  "/pnl/budgets/:id/cost-centre-utilization",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await budgetCostCentreUtilizationService.getBudgetBranch(req.params.id);
+    await assertFinanceRecordBranch({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      recordBranchId: branchId,
+    });
+    const data = await budgetCostCentreUtilizationService.get(req.params.id);
     res.json({ success: true, data });
   })
 );

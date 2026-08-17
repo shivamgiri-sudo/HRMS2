@@ -153,6 +153,31 @@ type BudgetCapabilities = {
   canReviewAccountsStage: boolean;
 };
 
+/** One row of GET /pnl/budgets/:id/cost-centre-utilization. Mirrors BudgetCostCentreRow in
+ *  budget-cost-centre-utilization.service.ts — budgeted unions direct and allocated lines, while
+ *  reserved/consumed are measured from grn_cost_allocation rather than pro-rated. */
+type CostCentreUtilizationHead = {
+  head: string;
+  subHead: string | null;
+  budgeted: number;
+  reserved: number;
+  consumed: number;
+  available: number;
+};
+type CostCentreUtilizationRow = {
+  costCentreId: string | null;
+  costCentreCode: string | null;
+  costCentreName: string;
+  /** GRN spend whose own cost centre was never recorded. Not a cost centre — a data-quality row. */
+  isUnattributed: boolean;
+  budgeted: number;
+  reserved: number;
+  consumed: number;
+  available: number;
+  lineCount: number;
+  heads: CostCentreUtilizationHead[];
+};
+
 /** The only statuses in which the plan builder may be edited; every later status is read-only
  *  until a reviewer sends the budget back for revision. Mirrors the backend guard in
  *  branch-budget.service.ts saveDraft() — 'submitted' is included because a branch admin
@@ -708,44 +733,53 @@ export default function BranchBudgetManagementWorkspace() {
     return [...map.values()].sort((a, b) => a.head.localeCompare(b.head) || (a.subHead ?? "").localeCompare(b.subHead ?? ""));
   }, [detailQuery.data]);
 
-  // Cost Centre Budget vs Actual: aggregate budget lines by cost centre to show per-CC spend
-  const utilizationByCostCentre = useMemo(() => {
-    const map = new Map<string, {
-      costCentreId: string | null;
-      costCentreName: string;
-      planned: number;
-      reserved: number;
-      consumed: number;
-      available: number;
-      lineCount: number;
-    }>();
-    (detailQuery.data?.lines ?? []).forEach((l) => {
-      const ccId = l.cost_centre_id ?? null;
-      const ccName = l.cost_centre_name ?? "Branch Common";
-      const key = ccId ?? "__branch__";
-      const entry = map.get(key) ?? {
-        costCentreId: ccId,
-        costCentreName: ccName,
-        planned: 0,
-        reserved: 0,
-        consumed: 0,
-        available: 0,
-        lineCount: 0,
-      };
-      entry.planned += Number(l.gross_amount ?? 0);
-      entry.reserved += Number(l.reserved_amount ?? 0);
-      entry.consumed += Number(l.consumed_amount ?? 0);
-      entry.available += Number(l.available_gross_amount ?? 0);
-      entry.lineCount += 1;
-      map.set(key, entry);
+  /**
+   * Cost Centre Budget vs Actual.
+   *
+   * This used to aggregate `detailQuery.data.lines` on `cost_centre_id` in the browser, which only
+   * ever sees lines planned DIRECTLY at a cost centre. A branch-level line carries NULL there by
+   * design and keeps its split in `finance_budget_line_allocation` — a table this payload does not
+   * carry — so every such line collapsed into one "Branch Common" row. On production that hid
+   * Rs 13.1L across 5 further cost centres on NOIDA-2's active budget alone, and showed 2 rows
+   * where 6 cost centres hold budget.
+   *
+   * The rollup now happens server-side in budget-cost-centre-utilization.service.ts, which unions
+   * both sources and reads MEASURED consumption from grn_cost_allocation. See that file for why
+   * spend is measured rather than pro-rated.
+   */
+  const costCentreUtilizationQuery = useQuery({
+    queryKey: ["budget-cost-centre-utilization", detailId],
+    queryFn: async () => {
+      if (!detailId) return [];
+      const response = await hrmsApi.get<{ success: boolean; data: CostCentreUtilizationRow[] }>(
+        `/api/finance/pnl/budgets/${detailId}/cost-centre-utilization`
+      );
+      return response.data ?? [];
+    },
+    enabled: Boolean(detailId),
+  });
+  const utilizationByCostCentre = costCentreUtilizationQuery.data ?? [];
+  const ccTotals = useMemo(() => {
+    return utilizationByCostCentre.reduce(
+      (acc, cc) => ({
+        lineCount: acc.lineCount + cc.lineCount,
+        budgeted: acc.budgeted + cc.budgeted,
+        reserved: acc.reserved + cc.reserved,
+        consumed: acc.consumed + cc.consumed,
+        available: acc.available + cc.available,
+      }),
+      { lineCount: 0, budgeted: 0, reserved: 0, consumed: 0, available: 0 }
+    );
+  }, [utilizationByCostCentre]);
+  /** Which cost centres are drilled open into their head / sub-head detail. */
+  const [expandedCostCentres, setExpandedCostCentres] = useState<Set<string>>(new Set());
+  const toggleCostCentre = (key: string) =>
+    setExpandedCostCentres((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
     });
-    return [...map.values()].sort((a, b) => {
-      // Branch Common at the end
-      if (!a.costCentreId && b.costCentreId) return 1;
-      if (a.costCentreId && !b.costCentreId) return -1;
-      return a.costCentreName.localeCompare(b.costCentreName);
-    });
-  }, [detailQuery.data]);
 
   // Tax amendment queue — pending and recent amendments for the active/selected budget.
   const taxAmendmentsQuery = useQuery({
@@ -2342,12 +2376,25 @@ export default function BranchBudgetManagementWorkspace() {
                 <CardHeader>
                   <CardTitle>Cost Centre Budget vs. Actual</CardTitle>
                   <p className="text-sm text-slate-500">
-                    Budget allocation and consumption aggregated by cost centre for {period || "selected period"}.
+                    Every cost centre this budget funds for {period || "selected period"} — lines planned
+                    directly at a cost centre plus each branch-level line's allocated share. Click a row
+                    for its head and sub-head detail. Reserved and consumed are measured from the GRNs
+                    that actually hit each cost centre, never pro-rated.
                   </p>
                 </CardHeader>
                 <CardContent>
-                  {!utilizationByCostCentre.length ? (
-                    <p className="py-8 text-center text-slate-500">Select a branch and period to view cost centre budget data.</p>
+                  {costCentreUtilizationQuery.isLoading ? (
+                    <p className="py-8 text-center text-slate-500">Loading cost centre utilization…</p>
+                  ) : costCentreUtilizationQuery.isError ? (
+                    <p className="py-8 text-center text-rose-600">
+                      {(costCentreUtilizationQuery.error as Error)?.message || "Could not load cost centre utilization."}
+                    </p>
+                  ) : !utilizationByCostCentre.length ? (
+                    <p className="py-8 text-center text-slate-500">
+                      {detailId
+                        ? "This budget has no cost centre attribution yet — no line is planned at a cost centre and none has an allocation."
+                        : "Select a branch and period to view cost centre budget data."}
+                    </p>
                   ) : (
                     <div className="overflow-x-auto rounded-xl border border-slate-200">
                       <table className="w-full min-w-[800px] text-xs">
@@ -2365,30 +2412,90 @@ export default function BranchBudgetManagementWorkspace() {
                         </thead>
                         <tbody className="divide-y">
                           {utilizationByCostCentre.map((cc) => {
-                            const utilPct = cc.planned > 0 ? Math.round((cc.consumed / cc.planned) * 100) : 0;
-                            const variance = cc.planned - cc.consumed;
+                            const rowKey = cc.costCentreId ?? "__unattributed__";
+                            const utilPct = cc.budgeted > 0 ? Math.round((cc.consumed / cc.budgeted) * 100) : 0;
+                            const variance = cc.budgeted - cc.consumed;
+                            const isOpen = expandedCostCentres.has(rowKey);
                             return (
-                              <tr key={cc.costCentreId ?? "__branch__"} className="hover:bg-slate-50/70">
-                                <td className="px-3 py-2 font-medium text-slate-800">
-                                  {cc.costCentreName}
-                                  {!cc.costCentreId && <span className="ml-2 text-xs text-slate-400">(indirect)</span>}
-                                </td>
-                                <td className="px-3 py-2 text-right tabular-nums text-slate-600">{cc.lineCount}</td>
-                                <td className="px-3 py-2 text-right tabular-nums">{money(cc.planned)}</td>
-                                <td className="px-3 py-2 text-right tabular-nums text-amber-700">{money(cc.reserved)}</td>
-                                <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{money(cc.consumed)}</td>
-                                <td className={`px-3 py-2 text-right tabular-nums ${cc.available < 0 ? "font-semibold text-rose-600" : "text-slate-700"}`}>
-                                  {money(cc.available)}
-                                </td>
-                                <td className="px-3 py-2 text-right">
-                                  <Badge variant="outline" className={utilPct >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : utilPct >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
-                                    {utilPct}%
-                                  </Badge>
-                                </td>
-                                <td className={`px-3 py-2 text-right tabular-nums font-medium ${variance < 0 ? "text-rose-600" : "text-emerald-600"}`}>
-                                  {variance > 0 ? "+" : ""}{money(variance)}
-                                </td>
-                              </tr>
+                              <Fragment key={rowKey}>
+                                <tr
+                                  className="cursor-pointer hover:bg-slate-50/70"
+                                  onClick={() => toggleCostCentre(rowKey)}
+                                  // Keyboard parity: the drill-down is the only way to read the
+                                  // head/sub-head split, so it cannot be mouse-only.
+                                  tabIndex={0}
+                                  role="button"
+                                  aria-expanded={isOpen}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      event.preventDefault();
+                                      toggleCostCentre(rowKey);
+                                    }
+                                  }}
+                                >
+                                  <td className="px-3 py-2 font-medium text-slate-800">
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <ChevronRight
+                                        className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`}
+                                      />
+                                      {cc.costCentreName}
+                                    </span>
+                                    {cc.isUnattributed && (
+                                      <span
+                                        className="ml-2 text-xs text-amber-600"
+                                        title="Spend recorded against this budget whose GRN carried no cost centre. It is shown separately rather than spread across the real cost centres."
+                                      >
+                                        (no cost centre on the GRN)
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2 text-right tabular-nums text-slate-600">{cc.lineCount}</td>
+                                  <td className="px-3 py-2 text-right tabular-nums">{money(cc.budgeted)}</td>
+                                  <td className="px-3 py-2 text-right tabular-nums text-amber-700">{money(cc.reserved)}</td>
+                                  <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{money(cc.consumed)}</td>
+                                  <td className={`px-3 py-2 text-right tabular-nums ${cc.available < 0 ? "font-semibold text-rose-600" : "text-slate-700"}`}>
+                                    {money(cc.available)}
+                                  </td>
+                                  <td className="px-3 py-2 text-right">
+                                    <Badge variant="outline" className={utilPct >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : utilPct >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
+                                      {utilPct}%
+                                    </Badge>
+                                  </td>
+                                  <td className={`px-3 py-2 text-right tabular-nums font-medium ${variance < 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                                    {variance > 0 ? "+" : ""}{money(variance)}
+                                  </td>
+                                </tr>
+                                {isOpen && cc.heads.map((h) => {
+                                  const headPct = h.budgeted > 0 ? Math.round((h.consumed / h.budgeted) * 100) : 0;
+                                  const headVariance = h.budgeted - h.consumed;
+                                  return (
+                                    <tr key={`${rowKey}:${h.head}:${h.subHead ?? ""}`} className="bg-slate-50/60">
+                                      <td className="py-1.5 pl-10 pr-3 text-slate-600">
+                                        {h.head}
+                                        {h.subHead && <span className="text-slate-400"> · {h.subHead}</span>}
+                                      </td>
+                                      <td />
+                                      <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">{money(h.budgeted)}</td>
+                                      <td className="px-3 py-1.5 text-right tabular-nums text-amber-700">{money(h.reserved)}</td>
+                                      <td className="px-3 py-1.5 text-right tabular-nums text-emerald-700">{money(h.consumed)}</td>
+                                      <td className={`px-3 py-1.5 text-right tabular-nums ${h.available < 0 ? "font-semibold text-rose-600" : "text-slate-600"}`}>
+                                        {money(h.available)}
+                                      </td>
+                                      <td className="px-3 py-1.5 text-right text-slate-500">{headPct}%</td>
+                                      <td className={`px-3 py-1.5 text-right tabular-nums ${headVariance < 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                                        {headVariance > 0 ? "+" : ""}{money(headVariance)}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                                {isOpen && !cc.heads.length && (
+                                  <tr className="bg-slate-50/60">
+                                    <td colSpan={8} className="py-2 pl-10 pr-3 text-slate-500">
+                                      No head or sub-head detail for this cost centre.
+                                    </td>
+                                  </tr>
+                                )}
+                              </Fragment>
                             );
                           })}
                         </tbody>
@@ -2396,25 +2503,15 @@ export default function BranchBudgetManagementWorkspace() {
                           <tr>
                             <td className="px-3 py-2 text-slate-800">Total</td>
                             <td className="px-3 py-2 text-right tabular-nums text-slate-600">
-                              {utilizationByCostCentre.reduce((sum, cc) => sum + cc.lineCount, 0)}
+                              {ccTotals.lineCount}
                             </td>
-                            <td className="px-3 py-2 text-right tabular-nums">
-                              {money(utilizationByCostCentre.reduce((sum, cc) => sum + cc.planned, 0))}
-                            </td>
-                            <td className="px-3 py-2 text-right tabular-nums text-amber-700">
-                              {money(utilizationByCostCentre.reduce((sum, cc) => sum + cc.reserved, 0))}
-                            </td>
-                            <td className="px-3 py-2 text-right tabular-nums text-emerald-700">
-                              {money(utilizationByCostCentre.reduce((sum, cc) => sum + cc.consumed, 0))}
-                            </td>
-                            <td className="px-3 py-2 text-right tabular-nums text-slate-700">
-                              {money(utilizationByCostCentre.reduce((sum, cc) => sum + cc.available, 0))}
-                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">{money(ccTotals.budgeted)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-amber-700">{money(ccTotals.reserved)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{money(ccTotals.consumed)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-slate-700">{money(ccTotals.available)}</td>
                             <td className="px-3 py-2 text-right">
                               {(() => {
-                                const totalPlanned = utilizationByCostCentre.reduce((sum, cc) => sum + cc.planned, 0);
-                                const totalConsumed = utilizationByCostCentre.reduce((sum, cc) => sum + cc.consumed, 0);
-                                const totalPct = totalPlanned > 0 ? Math.round((totalConsumed / totalPlanned) * 100) : 0;
+                                const totalPct = ccTotals.budgeted > 0 ? Math.round((ccTotals.consumed / ccTotals.budgeted) * 100) : 0;
                                 return (
                                   <Badge variant="outline" className={totalPct >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : totalPct >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
                                     {totalPct}%
@@ -2424,9 +2521,7 @@ export default function BranchBudgetManagementWorkspace() {
                             </td>
                             <td className="px-3 py-2 text-right tabular-nums">
                               {(() => {
-                                const totalPlanned = utilizationByCostCentre.reduce((sum, cc) => sum + cc.planned, 0);
-                                const totalConsumed = utilizationByCostCentre.reduce((sum, cc) => sum + cc.consumed, 0);
-                                const totalVariance = totalPlanned - totalConsumed;
+                                const totalVariance = ccTotals.budgeted - ccTotals.consumed;
                                 return (
                                   <span className={totalVariance < 0 ? "text-rose-600" : "text-emerald-600"}>
                                     {totalVariance > 0 ? "+" : ""}{money(totalVariance)}
