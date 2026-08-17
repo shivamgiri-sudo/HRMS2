@@ -137,72 +137,10 @@ leaveRouter.get("/requests/my", h(async (req: AuthenticatedRequest, res: Respons
 // change to app.ts's mount order), it would let any "manager"-role user approve
 // any employee's leave. Removed rather than left dormant. (2026-08-13 audit)
 //
-// GET /requests/legacy?employeeId=&year= — historical leave records from db_bill
-leaveRouter.get("/requests/legacy", h(async (req: AuthenticatedRequest, res: Response) => {
-  const privileged = await isLeavePrivileged(req.authUser!.id);
-  let employeeId = String(req.query.employeeId ?? "");
-  if (!privileged) {
-    const callerEmp = await getEmployeeForUser(req.authUser!.id);
-    if (!callerEmp) return res.status(403).json({ success: false, message: "No employee record" });
-    employeeId = callerEmp.id;
-  }
-  if (!employeeId) return res.status(400).json({ success: false, message: "employeeId required" });
-
-  // Resolve employee_code from mas_hrms
-  const [empRows] = await db.execute<RowDataPacket[]>(
-    "SELECT employee_code FROM employees WHERE id = ? LIMIT 1", [employeeId]
-  );
-  const empCode = (empRows[0] as any)?.employee_code;
-  if (!empCode) return res.json({ success: true, data: [] });
-
-  const year = req.query.year ? Number(req.query.year) : null;
-  const legacy = await getLegacyPool();
-
-  const params: any[] = [empCode];
-  let yearCond = "";
-  if (year) { yearCond = " AND YEAR(LeaveFrom) = ?"; params.push(year); }
-
-  const [rows] = await legacy.execute<RowDataPacket[]>(`
-    SELECT
-      Id                                                  AS id,
-      EmpCode                                             AS emp_code,
-      LeaveFrom                                           AS from_date,
-      LeaveTo                                             AS to_date,
-      LeaveType                                           AS leave_type_code,
-      COALESCE(CL,0)+COALESCE(EL,0)+COALESCE(ML,0)+COALESCE(PTRL,0)+COALESCE(MTRL,0)+COALESCE(LWP,0) AS total_days,
-      CASE Status
-        WHEN 'Approved'     THEN 'approved'
-        WHEN 'Not Approved' THEN 'rejected'
-        WHEN 'Pending'      THEN 'pending'
-        ELSE LOWER(Status)
-      END                                                 AS status,
-      TRIM(Purpose)                                       AS reason,
-      CreateDate                                          AS created_at
-    FROM leave_management
-    WHERE EmpCode = ?${yearCond}
-    ORDER BY LeaveFrom DESC
-    LIMIT 200
-  `, params);
-
-  // De-duplicate server-side against leave already migrated into mas_hrms.
-  //
-  // The client used to do this by building a Set of legacy_leave_id from the
-  // HRMS list — but that list is capped at 20 rows by leaveRequestFiltersSchema
-  // while this route returns up to 200, so every leave beyond the 20 most recent
-  // survived the filter and rendered a second time. Filtering here makes the
-  // result correct regardless of how the caller paginates.
-  const [migratedRows] = await db.execute<RowDataPacket[]>(
-    `SELECT legacy_leave_id FROM leave_request
-      WHERE employee_id = ? AND legacy_leave_id IS NOT NULL`,
-    [employeeId]
-  );
-  const migrated = new Set(
-    (migratedRows as any[]).map((r) => String(r.legacy_leave_id))
-  );
-  const deduped = (rows as any[]).filter((r) => !migrated.has(String(r.id)));
-
-  return res.json({ success: true, data: deduped });
-}));
+// GET /requests/legacy — REMOVED 2026-08-17.
+// Historical leave data (2018–2026) fully migrated from db_bill into mas_hrms.leave_request
+// via scripts/migrate-leave-history-full.ts (27,209 records).
+// mas_hrms is now the sole source of truth for all leave history.
 
 // Employee self-scope: employees can view only their own leave balance.
 leaveRouter.get("/balance/:employeeId", h(async (req: AuthenticatedRequest, res: Response) => {

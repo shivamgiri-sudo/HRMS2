@@ -94,9 +94,9 @@ export async function predictAgentRisk(from: string, to: string) {
         ELSE 'Continue monitoring'
       END as recommended_action
     FROM agent_metrics am
-    LEFT JOIN mas_hrms.employees e
-      ON e.employee_code = am.agent_code AND e.active_status = 1
+    LEFT JOIN mas_hrms.employees e ON e.employee_code = am.agent_code
     WHERE COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), am.agent_code) NOT LIKE 'Codex E2E%'
+      AND COALESCE(e.active_status, 1) = 1
     ORDER BY
       CASE
         WHEN week_avg < overall_avg - 10 THEN 1
