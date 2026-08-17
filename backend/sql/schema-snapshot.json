@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 948,
-  "columnCount": 13358,
+  "tableCount": 950,
+  "columnCount": 13378,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -1077,6 +1077,7 @@
       "created_at",
       "updated_at",
       "pf_opt_out",
+      "esic_opt_out",
       "pf_opt_out_consent_at",
       "approved_at"
     ],
@@ -4024,6 +4025,18 @@
       "reason",
       "created_at"
     ],
+    "cosec_user_sync_queue": [
+      "id",
+      "employee_id",
+      "employee_code",
+      "cosec_user_id",
+      "status",
+      "message",
+      "retry_count",
+      "attempted_at",
+      "completed_at",
+      "created_at"
+    ],
     "cost_centre_approval_log": [
       "id",
       "cost_centre_id",
@@ -4065,6 +4078,7 @@
       "budget_annual",
       "bill_source_id",
       "client_name",
+      "billing_client_name",
       "tally_head",
       "stream",
       "process_type",
@@ -14084,6 +14098,16 @@
       "created_by",
       "created_at",
       "updated_at"
+    ],
+    "v_cosec_employee_feed": [
+      "empcode",
+      "empname",
+      "biometriccode",
+      "location",
+      "depart",
+      "desig",
+      "doj",
+      "status"
     ],
     "v_customization_application_summary": [
       "entity_type",

@@ -114,8 +114,26 @@ describe("live call sites are wired to the exclusion helper", () => {
     const fn = source.match(/async getDashboardStats\([\s\S]*?\n {2}\},/);
     expect(fn, "getDashboardStats not found").toBeTruthy();
     const usages = (fn![0].match(/excludeEmployeeShapedCandidatesSql/g) ?? []).length;
-    // 1 in the shared `conds` array (covers 4 SELECTs) + 3 separate hardcoded queries.
-    expect(usages).toBe(4);
+    // 1 in the shared `conds` array (covers 4 SELECTs) + 2 separate hardcoded queries.
+    //
+    // Was 3 hardcoded until 1f0d801c. That commit replaced the open-positions query — a
+    // COUNT(DISTINCT applied_for_process) over ats_candidate, used as a pipeline proxy — with a
+    // SUM of unfilled headcount over job_requisition, which is the actual open demand. The
+    // exclusion left with the query it belonged to, correctly: job_requisition holds
+    // requisitions, not candidates, so there are no employee-shaped rows to exclude.
+    //
+    // Counting call sites is a proxy for "every ats_candidate read is scoped", and the proxy
+    // goes stale whenever a read is legitimately removed. The assertion below is the one that
+    // actually matters, so check it first if this number ever disagrees again: adding a
+    // redundant exclusion to make this equal 4 would satisfy the count and scope nothing.
+    expect(usages).toBe(3);
+
+    // The real invariant: no ats_candidate read inside this function is left unscoped. Every
+    // FROM ats_candidate must either sit behind the shared `where` (built from `conds`) or
+    // carry its own exclusion.
+    const candidateReads = (fn![0].match(/FROM ats_candidate/g) ?? []).length;
+    const scopedReads = (fn![0].match(/FROM ats_candidate[\s\S]{0,400}?(\$\{where\}|excludeEmployeeShapedCandidatesSql)/g) ?? []).length;
+    expect(scopedReads, "an ats_candidate read in getDashboardStats is not scoped — it would count the ~29,926 legacy employee rows").toBe(candidateReads);
   });
 
   it("recruitment.executor.ts's recruitmentPipeline excludes inside the LEFT JOIN ON clause", () => {
