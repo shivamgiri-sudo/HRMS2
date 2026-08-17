@@ -1,0 +1,88 @@
+Section,Route,Component,ComponentFile,GateType,GateValue,IsRedirect,RedirectTarget
+Public,/,,,None,,TRUE,/auth
+Public,/features,Features,@/pages/Features,None,,FALSE,
+Public,/how-it-works,HowItWorks,@/pages/HowItWorks,None,,FALSE,
+Public,/pricing,Pricing,@/pages/Pricing,None,,FALSE,
+Public,/privacy-policy,PrivacyPolicy,@/pages/PrivacyPolicy,None,,FALSE,
+Public,/terms-of-service,TermsOfService,@/pages/TermsOfService,None,,FALSE,
+Public,/security,Security,@/pages/Security,None,,FALSE,
+Public,/auth,Auth,@/pages/AuthClean,None,,FALSE,
+Public,/login,Auth,@/pages/AuthClean,None,,FALSE,
+Public,/reset-password,ResetPassword,@/pages/ResetPassword,None,,FALSE,
+Public,/change-password,ChangePassword,@/pages/ChangePassword,ProtectedRoute,,FALSE,
+Public,/two-factor,TwoFactor,@/pages/TwoFactor,ProtectedRoute,,FALSE,
+Public,/verify/emp/:employeeCode,PublicEmployeeVerify,@/pages/PublicEmployeeVerify,None,,FALSE,
+Public,/verify/payslip/:employeeCode/:monthYear,PublicPayslipVerify,@/pages/PublicEmployeeVerify,None,,FALSE,
+Public,/verify/appointment/:token,PublicAppointmentLetterVerify,@/pages/PublicAppointmentLetterVerify,None,,FALSE,
+Public,/interview-registration,NativeATSCandidateRegistration,@/pages/NativeATSCandidateRegistration,None,,FALSE,
+Public,/candidate-registration,,,None,,TRUE,/interview-registration
+Public,/walkin-registration,,,None,,TRUE,/interview-registration
+Public,/onboard,CandidateOnboardingPage,@/pages/CandidateOnboardingPage,None,,FALSE,
+Public,/onboard-full,CandidateOnboardingFullPage,@/pages/CandidateOnboardingFullPage,None,,FALSE,
+Public,/onboard-full-legacy,CandidateOnboardingV2,@/pages/CandidateOnboardingV2,None,,FALSE,
+Public,/candidate-onboarding-full,,,None,,TRUE,/onboard-full
+Public,/onboard-v1,,,None,,TRUE,/onboard-full
+Public,/candidate-portal/login,CandidatePortalLogin,@/pages/CandidatePortalLogin,None,,FALSE,
+Public,/candidate-portal/dashboard,CandidatePortalDashboard,@/pages/CandidatePortalDashboard,None,,FALSE,
+Public,/portal/login,PortalLogin,@/pages/portal/PortalLogin,None,,FALSE,
+Public,/break-desk,BreakDesk,@/pages/BreakDesk,None,,FALSE,
+Public,/display/waiting-room,WaitingRoomDisplay,@/pages/WaitingRoomDisplay,None,,FALSE,
+Public,/display/ops-board,OpsBoard,@/pages/OpsBoard,None,,FALSE,
+Public,/employee/joining-documents/esign/:token,EmployeeDocumentEsignReviewPage,@/pages/EmployeeDocumentEsignReviewPage,None,,FALSE,
+Public,/employee/joining-kit/esign/:token,EmployeeJoiningKitEsignPage,@/pages/EmployeeJoiningKitEsignPage,None,,FALSE,
+Public,/employee/epf-compliance/review/:token,EmployeeEpfComplianceReviewPage,@/pages/EmployeeEpfComplianceReviewPage,None,,FALSE,
+Public,/visitor-register,VisitorSelfRegister,@/pages/VisitorSelfRegister,None,,FALSE,
+Public,/visitor-status/:token,VisitorStatusPage,@/pages/VisitorStatusPage,None,,FALSE,
+Public,/visitor-status,VisitorStatusPage,@/pages/VisitorStatusPage,None,,FALSE,
+Public,/visitor-gate,VisitorGatePage,@/pages/VisitorGatePage,None,,FALSE,
+Dashboards,/dashboard,Index,@/pages/Index,ProtectedRoute,,FALSE,
+Dashboards,/ceo/dashboard,CeoDashboard,@/pages/dashboards/CeoDashboard,DashboardRouteGate,CEO_DASHBOARD,FALSE,
+Dashboards,/payroll-hr/dashboard,PayrollHrDashboard,@/pages/dashboards/PayrollHrDashboard,DashboardRouteGate,PAYROLL_HR_DASHBOARD,FALSE,
+Dashboards,/wfm/dashboard,WfmDashboard,@/pages/dashboards/WfmDashboard,DashboardRouteGate,WFM_DASHBOARD,FALSE,
+Dashboards,/hr/dashboard,HrDashboard,@/pages/dashboards/HrDashboard,DashboardRouteGate,HR_DASHBOARD,FALSE,
+Dashboards,/manager/dashboard,ManagerDashboard,@/pages/dashboards/ManagerDashboard,DashboardRouteGate,MANAGEMENT_DASHBOARD,FALSE,
+Dashboards,/my-dashboard,EmployeeSelfDashboard,@/pages/dashboards/EmployeeSelfDashboard,DashboardRouteGate,EMPLOYEE_SELF_DASHBOARD,FALSE,
+Dashboards,/quality-dashboard,QualityDashboard,@/pages/QualityDashboard,DashboardRouteGate,QUALITY_DASHBOARD,FALSE,
+Dashboards,/operations-dashboard,OperationsDashboard,@/pages/OperationsDashboard,DashboardRouteGate,OPERATIONS_DASHBOARD,FALSE,
+Dashboards,/recruiter-dashboard,RecruiterDashboard,@/pages/dashboards/RecruiterDashboard,DashboardRouteGate,RECRUITER_DASHBOARD,FALSE,
+Dashboards,/wfm-attendance,WfmAttendanceDashboard,@/pages/dashboards/WfmAttendanceDashboard,DashboardRouteGate,WFM_ATTENDANCE_DASHBOARD,FALSE,
+Dashboards,/it/dashboard,ItManagerDashboard,@/pages/dashboards/ItManagerDashboard,DashboardRouteGate,IT_MANAGER_DASHBOARD,FALSE,
+Finance,/finance/grn,NativeGRNManagement,@/pages/NativeGRNManagement,ProtectedRoute+Roles+Gate,FINANCE_GRN,FALSE,
+Finance,/finance/branch-budget,BranchBudgetManagementPage,@/pages/finance/BranchBudgetManagementPage,ProtectedRoute+Roles+Gate,FINANCE_BRANCH_BUDGET,FALSE,
+Finance,/finance/process-pnl,ProcessPnlPage,@/pages/finance/ProcessPnlPage,ProtectedRoute+Roles+Gate,FINANCE_PROCESS_PNL,FALSE,
+Payroll,/payroll,Payroll,@/pages/Payroll,ProtectedRoute+Gate,PAYROLL,FALSE,
+Payroll,/payroll/payslips,PayslipCenterRoute,payroll.routes.tsx (inline role-check),ProtectedRoute,,FALSE,
+Payroll,/payroll/bank-readiness,BankPaymentReadiness,@/pages/payroll/BankPaymentReadiness,ProtectedRoute+Roles+Gate,PAYROLL_BANK_READINESS,FALSE,
+Performance/Quality,/quality/executive,ExecutiveQualityDashboard,@/pages/ExecutiveQualityDashboard,ProtectedRoute+Gate,QUALITY_EXECUTIVE (2026-08-17: now a real page not a redirect),FALSE,
+
+NOTE: Full 381-row detail (all 12 route files) captured in the discovery agent transcript
+a45bb8ba8afbb77cf; this file holds the section-representative subset plus every row flagged
+as noteworthy. Key findings from full discovery, not duplicated row-by-row here:
+
+TOTAL ROUTES: 381 across 12 route files (public 36, dashboards 12, people 26, recruitment 38,
+workforce 50, payroll 43, performance 44, compliance 11, finance 25, platform 89, portal 3,
+visitor 4).
+
+FINDING 1 - Duplicate redirect declarations (dead code, platform.routes.tsx copies never win):
+  /payroll/variance and /payroll/cost-summary declared in both payroll.routes.tsx AND
+  platform.routes.tsx (payroll's registers first in index.tsx, wins).
+  /break-reports and /break-session-log declared in both workforce.routes.tsx AND
+  platform.routes.tsx (workforce's wins).
+
+FINDING 2 - Dead lazy imports in finance.routes.tsx: MyExpenses, NewExpenseClaim,
+  ExpenseApprovals, FinanceQueue, ExpenseReports imported but never rendered by any Route -
+  all /expenses/* paths redirect to /payroll/reimbursements (module retired per in-file comment).
+
+FINDING 3 - roles=[...] dead-code pattern: on any route whose pathname appears in
+  PAGE_CODE_BY_ROUTE (src/lib/pageRoutePageCodes.ts), ProtectedRoute's roles prop is NEVER
+  evaluated - access is 100% governed by the DB role_page_access grant for that pageCode.
+  See UAT_ROLE_MATRIX.csv Part 3 for the full dead-vs-live table (69 dead, 17 live combos).
+
+FINDING 4 - Four routes deliberately NOT page-gated despite sensitive admin function, because
+  gating on an absent pageCode fails closed for everyone incl. super_admin:
+  /settings/signing-certificate, /settings/provisioning-recipients, /settings/fraud-alerts,
+  /settings/branch-payroll-hr (all platform.routes.tsx). Backend enforces role separately.
+
+FINDING 5 - /quality/executive (performance.routes.tsx) changed TODAY (2026-08-17) from a
+  redirect to a real gated page (ExecutiveQualityDashboard) - flagged as newly-live
+  functionality requiring first-time UAT, not regression-only.

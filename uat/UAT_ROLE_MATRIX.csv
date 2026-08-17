@@ -1,0 +1,130 @@
+DISTINCT ROLE KEYS FOUND (57), from navConfig.tsx + useUserRole.ts + backend SQL + role catalogs:
+accounts_head, admin, agent, analyst, assistant_manager, branch_admin, branch_head,
+branch_hr, branch_it, branch_wfm, ceo, client_user, coo, employee, finance,
+finance_head, ho_hr, ho_payroll, ho_wfm, hr, hr_admin, hr_branch, hr_head,
+interviewer, it, it_admin, it_head, lms_admin, management, manager, mcp_server,
+operations, operations_head, operations_manager, payroll, payroll_admin,
+payroll_branch, payroll_head, payroll_hr, process_manager, qa, quality,
+quality_analyst, recruiter, recruitment_hr, rta, security_head, super_admin,
+team_leader, tl, tq_head, trainer, training, visitor_reception, visitor_security,
+wfm, wfm_spoc
+
+CAVEATS:
+- useUserRole.ts ROLE_ALIASES treats manager<->process_manager and tl<->team_leader as
+  interchangeable at runtime - test as one identity per pair, not four.
+- backend/src/shared/workforceRoleCatalog.ts (2026-07-30 snapshot of the LIVE
+  workforce_role_catalog table) is smaller than the nav/SQL-derived list above. Roles present
+  in nav/SQL but ABSENT from that live snapshot (likely stale/aspirational, do not assume
+  assignable): ho_hr, ho_payroll, ho_wfm, wfm_spoc, rta, hr_admin, hr_branch, hr_head,
+  branch_hr, security_head, visitor_security, visitor_reception, recruitment_hr, management,
+  agent, analyst, operations, operations_head, quality, training, lms_admin, client_user,
+  mcp_server, branch_wfm.
+- backend/src/modules/access/role.catalog.ts (ROLES const) is an older/legacy parallel
+  catalog - not treated as source of truth.
+
+===============================================================================
+PART 3 - ProtectedRoute roles={} DEAD vs LIVE (mechanism: src/components/auth/ProtectedRoute.tsx)
+===============================================================================
+Mechanism: getRoutePageCode(pathname) via PAGE_CODE_BY_ROUTE (src/lib/pageRoutePageCodes.ts).
+When the route's pathname IS in that map: roles prop is NEVER evaluated - canViewPage(pageCode)
+(DB role_page_access) is sole authority. When NOT in the map: roles is a real, additional
+AND-condition alongside the Gate's own DB check.
+Confirmed via explicit in-code comment (workforce.routes.tsx rest-policy block): "No roles={...}
+prop here on purpose: ProtectedRoute ignores the role list on any route the map covers, so
+writing one would read like a restriction and enforce nothing."
+
+--- TABLE A: roles is DEAD CODE (69 routes - DB grant for the pageCode is sole authority) ---
+RouteFile,Path,PageCode,DeadRolesListed
+compliance.routes.tsx,/provisioning/wfm-alignment,PROVISIONING_WFM_ALIGNMENT,wfm|admin|super_admin
+compliance.routes.tsx,/provisioning/it,PROVISIONING_IT,it|admin|super_admin
+compliance.routes.tsx,/provisioning/admin,PROVISIONING_ADMIN,branch_admin|hr|admin|super_admin
+finance.routes.tsx,/vendors,VENDOR_MANAGEMENT,admin|super_admin|finance|manager
+finance.routes.tsx,/finance/vendor-payment-tracking,FINANCE_VENDOR_PAYMENTS,financeRoles
+finance.routes.tsx,/finance/grn,FINANCE_GRN,grnRoles
+finance.routes.tsx,/finance/salary-voucher,FINANCE_SALARY_VOUCHER,super_admin|finance_head|payroll_hr
+finance.routes.tsx,/finance/branch-budget,FINANCE_BRANCH_BUDGET,7 roles
+finance.routes.tsx,/finance/budget-consolidation,FINANCE_BUDGET_CONSOLIDATION,budgetConsolidationRoles
+finance.routes.tsx,/finance/cost-centres,FINANCE_COST_CENTRES,costCentreRoles
+finance.routes.tsx,/finance/billability,FINANCE_BILLABILITY_SEAT_COST,billabilityRoles
+finance.routes.tsx,/finance/process-pnl,FINANCE_PROCESS_PNL,pnlRoles
+finance.routes.tsx,/finance/process-pnl/configuration,FINANCE_PNL_CONFIG,pnlRoles
+finance.routes.tsx,/finance/process-pnl/lobs,FINANCE_PNL_LOBS,pnlRoles
+finance.routes.tsx,/finance/process-pnl/period-close,FINANCE_PNL_PERIOD_CLOSE,pnlRoles
+payroll.routes.tsx,/payroll/package-admin,SALARY_PACKAGE_ADMIN,admin|super_admin|payroll
+payroll.routes.tsx,/payroll/overtime,PAYROLL_OVERTIME,admin|super_admin|wfm|payroll|payroll_head
+payroll.routes.tsx,/payroll/disbursal,PAYROLL_DISBURSAL,super_admin|payroll|payroll_head|finance
+payroll.routes.tsx,/payroll/bank-readiness,PAYROLL_BANK_READINESS,11 roles
+payroll.routes.tsx,/payroll/config-flags,PAYROLL_CONFIG_FLAGS,super_admin|admin|payroll_head|payroll_branch
+payroll.routes.tsx,/payroll/recalculation-queue,PAYROLL_RECALCULATION_QUEUE,super_admin|admin|payroll_head|payroll_branch
+payroll.routes.tsx,/payroll/attendance-control-tower,PAYROLL_ATTENDANCE_CONTROL_TOWER,8 roles
+payroll.routes.tsx,/payroll/running-breakdown,PAYROLL_RUNNING_BREAKDOWN,super_admin|admin|payroll_head|payroll_branch|wfm|employee
+payroll.routes.tsx,/payroll/holiday-master,PAYROLL_HOLIDAY_MASTER,super_admin|admin|payroll_head|payroll_branch
+payroll.routes.tsx,/payroll/validation,PAYROLL_VALIDATION,super_admin|payroll_head
+payroll.routes.tsx,/payroll/noc,PAYROLL_NOC,super_admin|payroll_head|payroll_branch|payroll|admin
+payroll.routes.tsx,/payroll/branch-readiness,PAYROLL_BRANCH_READINESS,8 roles
+payroll.routes.tsx,/payroll/process-readiness,PAYROLL_PROCESS_READINESS,10 roles
+payroll.routes.tsx,/payroll/calendar,PAYROLL_CALENDAR,super_admin|payroll_head|payroll_branch
+payroll.routes.tsx,/payroll/statutory-filing,PAYROLL_STATUTORY_FILING,super_admin|payroll_head|finance|admin
+payroll.routes.tsx,/payroll/audit-trail,PAYROLL_AUDIT_TRAIL,super_admin|payroll_head|finance|admin
+payroll.routes.tsx,/payroll/bulk-outputs,PAYROLL_BULK_OUTPUTS,super_admin|payroll_head|admin
+payroll.routes.tsx,/payroll/loans,PAYROLL_LOANS,super_admin|payroll_head|finance|admin|hr|employee
+payroll.routes.tsx,/payroll/sign-off,PAYROLL_SIGN_OFF,super_admin|payroll_head|finance|ceo|admin
+payroll.routes.tsx,/payroll/salary-certificates,SALARY_CERTIFICATE,super_admin|payroll_head|finance|admin|hr|employee
+payroll.routes.tsx,/payroll/reimbursements,PAYROLL_REIMBURSEMENTS,super_admin|payroll_head|finance|admin|hr|employee
+payroll.routes.tsx,/payroll/ho-queues,PAYROLL_HO_QUEUES,super_admin|payroll_head|payroll|finance|hr|admin
+payroll.routes.tsx,/payroll/epf-compliance,PAYROLL_EPF_COMPLIANCE,admin|super_admin|payroll_hr|payroll|hr|manager
+performance.routes.tsx,/pip-management,PIP_MANAGEMENT,admin|hr|super_admin|manager
+performance.routes.tsx,/quality/audit-forms,QA_EVALUATION,super_admin|admin|qa|tq_head
+performance.routes.tsx,/call-master,CALL_MASTER,8 roles
+performance.routes.tsx,/call-master/inbound,CALL_MASTER_INBOUND,8 roles
+performance.routes.tsx,/sales/brand-analytics,SALES_BRAND_ANALYTICS,6 roles
+performance.routes.tsx,/governance/tat-matrix,TAT_MATRIX,admin|hr|super_admin
+platform.routes.tsx,/bulk-upload,BULK_UPLOAD,admin|hr|super_admin|wfm|payroll|payroll_hr
+platform.routes.tsx,/migration-console,MIGRATION_CONSOLE,admin
+platform.routes.tsx,/audit-log,AUDIT_LOG,admin|super_admin|hr|payroll_head|wfm
+platform.routes.tsx,/admin/configuration,CONFIGURATION_CENTER,super_admin|admin
+platform.routes.tsx,/security-center,SECURITY_CENTER,admin|ceo|coo|hr
+platform.routes.tsx,/super-admin/page-access,ACCESS_CONTROL,admin
+platform.routes.tsx,/super-admin/module-access,MODULE_ACCESS,admin
+platform.routes.tsx,/control-tower,CONTROL_TOWER,admin|super_admin|hr|manager
+recruitment.routes.tsx,/ats/bulk-import,ATS_BULK_IMPORT,admin|super_admin
+recruitment.routes.tsx,/ats/joining-control-room,ATS_JOINING_CONTROL_ROOM,admin|hr|payroll_hr|super_admin
+recruitment.routes.tsx,/ats/name-consistency,NAME_CONSISTENCY_MATRIX,admin|hr|super_admin|recruiter
+people.routes.tsx,/ats/joining-documents-tracker,ATS_JOINING_DOCUMENTS_TRACKER,admin|super_admin|hr|payroll_hr|branch_head
+people.routes.tsx,/exit/resignation-command-center,RESIGNATION_COMMAND_CENTER,admin|hr|manager|finance|payroll|super_admin
+people.routes.tsx,/people-experience/command-center,PEOPLE_EXPERIENCE_COMMAND_CENTER,(roles present, no visible Gate wrapper, still dead - path is in the map)
+workforce.routes.tsx,/admin/discard-center,DISCARD_CENTER,super_admin|wfm
+workforce.routes.tsx,/attendance-rules-master,ATTENDANCE_RULES_MASTER,super_admin|admin|hr
+workforce.routes.tsx,/hr/attendance-lookup,ATTENDANCE_LOOKUP,super_admin|admin|hr|payroll_head|payroll_admin|wfm
+workforce.routes.tsx,/wfm/team-attendance,TEAM_ATTENDANCE,10 roles
+workforce.routes.tsx,/wfm/planning-rules,WFM_PLANNING_RULES,super_admin|admin|wfm
+workforce.routes.tsx,/wfm/slot-requirements,WFM_SLOT_REQUIREMENTS,super_admin|admin|wfm
+workforce.routes.tsx,/wfm/weekoff-day-rules,WFM_WEEKOFF_DAY_RULES,super_admin|admin|wfm
+workforce.routes.tsx,/wfm/branch-spoc-config,WFM_BRANCH_SPOC_CONFIG,super_admin|admin
+workforce.routes.tsx,/business-command-center,BUSINESS_COMMAND_CENTER,9 roles
+workforce.routes.tsx,/business-actions,BUSINESS_ACTION_QUEUE,11 roles
+
+--- TABLE B: roles is LIVE (17 routes - path NOT in PAGE_CODE_BY_ROUTE, both roles AND Gate DB check must pass) ---
+RouteFile,Path,PageCode,LiveRoles,WhyNotDead
+finance.routes.tsx,/finance/process-pnl/:processId,FINANCE_PROCESS_PNL,pnlRoles,dynamic param unmatched
+payroll.routes.tsx,/payroll/holiday-work,PAYROLL_HOLIDAY_WORK,super_admin|admin|wfm|payroll_head|payroll_branch,only sub-paths mapped
+payroll.routes.tsx,/payroll/salary-verification,PAYROLL_SALARY_VERIFICATION,super_admin|payroll_head|branch_head|payroll_branch|wfm|process_manager|admin,not in map
+payroll.routes.tsx,/payroll/tds-certificate-part-a,PAYROLL_TDS_PART_A,super_admin|admin|payroll_head|payroll|payroll_hr|finance,not in map
+payroll.routes.tsx,/payroll/pf-management,PAYROLL_PF_MANAGEMENT,admin|super_admin|payroll_hr|payroll,not in map
+performance.routes.tsx,/kpi/process-metrics,KPI_CONFIG,super_admin|admin|qa|tq_head|process_manager,not in map
+performance.routes.tsx,/quality/file-audit,QUALITY_DASHBOARD,super_admin|admin|qa|quality_analyst|tq_head,not in map
+performance.routes.tsx,/call-master/inbound/:projectKey,CALL_MASTER_INBOUND,8 roles,dynamic param unmatched
+platform.routes.tsx,/super-admin/policy-engine,SUPER_ADMIN_POLICY_ENGINE,super_admin,not in map
+platform.routes.tsx,/communication/templates,COMM_TEMPLATES,super_admin|admin|hr,not in map
+platform.routes.tsx,/communication/dispatch,COMM_DISPATCH,super_admin|admin|hr,not in map
+platform.routes.tsx,/communication/history,COMM_HISTORY,super_admin|admin|hr,not in map
+platform.routes.tsx,/settings/communication-config,COMM_CONFIG,super_admin|admin,not in map
+platform.routes.tsx,/settings/call-centre-config,CALL_CENTRE_CONFIG,super_admin|admin,not in map
+workforce.routes.tsx,/wfm/weekoff-fairness,WFM_WEEKOFF_FAIRNESS,super_admin|admin|wfm,not in map
+workforce.routes.tsx,/wfm/break-desk-devices,WFM_BREAK_DESK_DEVICES,super_admin|admin|wfm,not in map
+recruitment.routes.tsx,/recruitment/ijp,ijp_admin,super_admin|hr|hr_admin|recruitment_hr,not in map
+
+PRACTICAL IMPLICATION FOR UAT: for every Table A row, "does role X see this page" must be
+validated against the live role_page_access DB grant for that pageCode - the roles array in
+the route file is cosmetic and can legitimately diverge from real behavior without being a
+bug. For Table B rows, BOTH the roles array AND the DB grant must independently pass.

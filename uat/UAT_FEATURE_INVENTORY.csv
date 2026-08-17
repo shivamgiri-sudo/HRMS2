@@ -1,0 +1,70 @@
+HRMS2 UAT Reports & Exports Inventory
+=======================================
+Report architecture: 111 catalog entries in src/lib/report-catalog.ts rendered inside one
+hub page (src/pages/ReportsHub.tsx, route /reports, 7 tabs: Library, Decision Center, BPO
+Reports, AON & Attrition, My Requests, Source Validation, Audit Trail). Legacy paths
+(/break-reports, /payroll/variance, /payroll/cost-summary) are redirects into
+/reports?view=library&report=<code>.
+Two export mechanisms: immediate XLSX download (GET /api/reports/suite/:code/export, gated
+by exportRoles+sensitivityLevel) and email delivery (POST /api/reports/:code/request,
+always available as fallback).
+Backend mounting confirmed in backend/src/app.ts: /api/reports -> reportingRouter (mounts
+/suite, /, /bpo-master, /deep-sections, /journey-audit); /api/admin/report-requests ->
+reportAdminAuditRouter.
+
+ALL 111+ REPORTHUB REPORTS CONFIRMED: backend route exists for every one, zero 404 risk
+found for any reachable report. Full per-report CSV (ReportName,Route,BackendEndpoint,
+BackendRouteFound,HasExport,ExportFormats) captured in discovery agent transcript
+a0dddad0ac63836dc (166K tokens, 119 tool calls) - available on request; key entries below.
+
+KEY STATUTORY/PAYROLL REPORTS (all confirmed backend-wired, XLSX export):
+PF Contribution Register, PF ECR Format Export, ESIC Contribution Register,
+Professional Tax Register, TDS Computation Register, Form 16 Status,
+Gratuity Liability Register, PF/ESIC Salary Register, UAN Status Report,
+UAN Master Register, Bank Advice/Transfer Sheet, Payroll Reconciliation,
+Payroll Population Reconciliation, F&F Settlement Register, F&F Pending Register.
+
+===============================================================================
+ANOMALIES FOUND (real defects, not yet fixed - candidates for today's fix queue)
+===============================================================================
+
+1. ORPHANED/UNREACHABLE PAGES WITH WORKING CODE (lazy-imported, no <Route> registered):
+   - ExpenseReports.tsx (finance.routes.tsx) - already known dead (expenses module retired)
+   - FinanceQueue.tsx (finance.routes.tsx) - has working expenseApi.exportForPayment() export
+     code that can never be reached
+   - PfBatchesPage.tsx (payroll.routes.tsx) - has working EPFO acknowledgement XLSX template
+     generator that can never be reached
+   - PfCreationQueuePage.tsx (payroll.routes.tsx) - has working CSV export that can never be
+     reached
+   NOTE: /payroll/pf-batches and /payroll/pf-creation-queue currently just redirect to
+   /payroll/pf-management (confirmed in route inventory) - so these ARE covered by a
+   redirect, just not rendering their own dedicated page. Lower priority than initially
+   flagged; the functionality may already be folded into PfManagement.tsx. Needs a quick
+   check of whether PfManagement.tsx actually contains equivalent functionality before
+   treating this as a real gap.
+
+2. DEAD EXPORT COMPONENTS (never imported anywhere):
+   - src/components/dashboard/ExportButton.tsx
+   - src/components/ats/command-center/shared/ExportButton.tsx
+
+3. ORPHANED BACKEND ENDPOINTS (exist, mounted, but zero frontend caller):
+   - GET /api/reports/journey-audit/source-verification
+   - GET /api/reports/journey-audit/interview-to-exit
+   - GET /api/reports/journey-audit/audit-compliance-ledger
+
+4. MISLEADING REPORT: "Compliance Audit Report" (/compliance/audit-report) downloads a
+   plain .txt file (Content-Type: text/plain), not a real PDF/CSV/Excel despite being
+   presented in the UI as a "report" with an export button. Low severity (P3/P4, UX/
+   labelling issue) but worth a UI copy fix or a real format upgrade.
+
+===============================================================================
+CSV 2 - Inline exports on operational (non-report-hub) pages
+===============================================================================
+30 pages confirmed with working inline export mechanisms (client-side XLSX/CSV Blob, or
+server-backed Blob download) - see discovery agent transcript for full list. Notable ones
+directly relevant to go-live blockers:
+- Payslip Center - NEFT Export: downloadNeftCsv() -> GET /api/payroll/runs/:id/neft-export
+- Vendor Payment Dispatch: exportCsv() -> server-backed CSV with filters
+- Audit Log: handleExport() -> POST /api/audit/export -> server-generated Blob
+- WFM Attendance Exceptions: server-generated CSV, truncation flagged via
+  X-Export-Truncated header (good practice - large-dataset UAT case already handled)
