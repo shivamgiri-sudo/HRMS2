@@ -365,8 +365,21 @@ payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", 
       LEFT JOIN designation_master desm ON desm.id = e.designation_id
       LEFT JOIN branch_master bm ON bm.id = e.branch_id
       LEFT JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
-      LEFT JOIN employee_uan eu ON eu.employee_id = e.id
-      LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id
+      -- Both of these are one-row-per-employee joins and must say so, or the salary sheet
+      -- silently gains a duplicate row per employee -- each carrying the full gross and net,
+      -- and invisible in a thousand-row spreadsheet.
+      --
+      -- Neither duplicates today: employee_uan holds 0 rows and no employee has more than one
+      -- bank record (verified live 2026-08-17). Both are about to change. employee_uan being
+      -- empty is an open statutory blocker whose fix is to populate it, and the
+      -- bank-change-approval workflow exists specifically to create a second bank row -- so
+      -- the day either is resolved, this export starts double-counting unless scoped now.
+      -- Same predicates the NEFT paths and the sibling query below already apply.
+      LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+      LEFT JOIN employee_bank_detail ebd
+             ON ebd.employee_id = e.id
+            AND ebd.active_status = 1
+            AND ebd.is_primary = 1
       LEFT JOIN salary_prep_line_component slc_basic     ON slc_basic.line_id     = spl.id AND slc_basic.component_code     = 'BASIC'
       LEFT JOIN salary_prep_line_component slc_hra       ON slc_hra.line_id       = spl.id AND slc_hra.component_code       = 'HRA'
       LEFT JOIN salary_prep_line_component slc_bonus     ON slc_bonus.line_id     = spl.id AND slc_bonus.component_code     = 'BONUS'
