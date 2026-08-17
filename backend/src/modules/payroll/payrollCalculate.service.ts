@@ -1244,7 +1244,16 @@ export async function calculatePayrollRunScoped(
           employeeAge,
         });
         tdsMonthly = tdsResult.tds_monthly;
-      } catch {
+      } catch (err: unknown) {
+        // TAX_SLABS_AMBIGUOUS (taxEngine.service.ts's getSlabs) is a refusal, not an
+        // unavailability — payroll_tax_slab_master has more than one active row for the same
+        // band, so summing every row would silently double-tax it. Falling back to the other
+        // calculator here would defeat the entire point of that guard: the run would compute a
+        // plausible, wrong TDS instead of stopping. This must propagate, not be swallowed into
+        // the fallback below.
+        if ((err as { code?: string } | null)?.code === "TAX_SLABS_AMBIGUOUS") {
+          throw err;
+        }
         // Fallback to the synchronous engine when the taxEngine tables are
         // unavailable. It reads the same approved statutory_config, so this is a
         // different route to the same rates — not a laxer one.

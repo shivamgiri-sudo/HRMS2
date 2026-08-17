@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 /**
  * A duplicated tax band is charged twice, and the result looks entirely plausible.
@@ -72,6 +74,42 @@ describe("getSlabs refuses an ambiguous slab table", () => {
     await expect(taxEngineService.getSlabs("2026-27", "new" as never)).rejects.toThrow(
       /No approved tax slabs/
     );
+  });
+});
+
+describe("the canonical calculator propagates the refusal instead of silently falling back", () => {
+  // payrollCalculate.service.ts wrapped the call to taxEngineService.calculateMonthlyTds in a
+  // bare `catch {}` with no error inspection, framed as "fall back when the taxEngine tables are
+  // unavailable." That catch does not distinguish "tables unavailable" from "tables available but
+  // ambiguous" — it swallowed TAX_SLABS_AMBIGUOUS exactly the same as a real outage, and fell
+  // through to a DIFFERENT calculator (calculateTds, reading statutory_config instead of
+  // payroll_tax_slab_master). The duplicate-slab guard above exists specifically to stop a run
+  // rather than compute a doubled tax; a bare catch after it defeated the entire point.
+  //
+  // Source-text, not a functional import: payrollCalculate.service.ts is the full per-employee
+  // calculation pipeline (attendance, LWP, components, statutory deductions) with heavy DB
+  // dependencies well beyond this one branch — mocking it wholesale to exercise a single catch
+  // clause would risk pinning behaviour this file has no business asserting. This checks the one
+  // thing that matters: the specific error code is inspected and re-thrown before the fallback
+  // branch, not that the whole calculation runs correctly (that's payrollCalculate's own tests).
+  const SOURCE = readFileSync(
+    resolve(process.cwd(), "src/modules/payroll/payrollCalculate.service.ts"),
+    "utf8",
+  );
+
+  it("checks for TAX_SLABS_AMBIGUOUS and re-throws before reaching the fallback calculator", () => {
+    const catchAt = SOURCE.indexOf("} catch (err: unknown) {");
+    const fallbackCommentAt = SOURCE.indexOf("Fallback to the synchronous engine");
+    expect(catchAt, "the catch block was not found").toBeGreaterThan(-1);
+    expect(fallbackCommentAt, "the fallback branch was not found").toBeGreaterThan(catchAt);
+
+    const guardBlock = SOURCE.slice(catchAt, fallbackCommentAt);
+    expect(guardBlock).toMatch(/code\s*===\s*"TAX_SLABS_AMBIGUOUS"/);
+    expect(guardBlock).toMatch(/throw err;/);
+  });
+
+  it("no longer uses a bare catch that cannot distinguish the two failure modes", () => {
+    expect(SOURCE).not.toMatch(/tdsMonthly = tdsResult\.tds_monthly;\s*\n\s*\} catch \{/);
   });
 });
 
