@@ -8,6 +8,9 @@
   "modules/finance/grn.routes.ts": [
     "vendor_debit_note"
   ],
+  "modules/integrations/cosec/cosec-registration.service.ts": [
+    "mx_usermst"
+  ],
   "modules/lms/lms-provisioning.service.ts": [
     "trainee_master"
   ],

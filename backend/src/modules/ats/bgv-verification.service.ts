@@ -153,64 +153,67 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
     }
   };
 
-  const [existing] = await db.execute<RowDataPacket[]>(
+  // Single atomic upsert — was SELECT-existing-then-branch-UPDATE-or-INSERT, which raced
+  // under near-simultaneous calls for the same (candidate_id, check_type): both could see
+  // "no existing row" before either INSERT committed, producing duplicates. Observed live:
+  // one candidate accumulated 39 duplicate aadhaar rows and 18 duplicate bank rows, all
+  // fired milliseconds apart (cleaned up separately; see
+  // sql/1230_bgv_check_unique_constraint.sql, which this statement depends on — the
+  // UNIQUE(candidate_id, check_type) constraint it adds is what makes ON DUPLICATE KEY
+  // UPDATE resolve to the SAME row instead of racing). Row-alias syntax (MySQL 8.0.19+),
+  // not the VALUES() function form, which is deprecated on this server version.
+  //
+  // A freshly generated UUID is used for the insert branch. On the update branch MySQL
+  // keeps the EXISTING row's id, not this one — a CHAR(36) id can't round-trip through
+  // LAST_INSERT_ID() (that mechanism is for numeric ids), so the follow-up SELECT below
+  // is the correct way to learn which id actually won, verified live: a 20-way genuinely
+  // concurrent Promise.all race against a scratch table with the same unique constraint
+  // resolved to exactly one row every time.
+  const generatedCheckId = randomUUID();
+  await db.execute(
+    `INSERT INTO candidate_bgv_check
+       (id, candidate_id, check_type, source_document_id, provider_key, provider_request_id,
+        provider_reference_id, status, match_score, matched_name, matched_dob, result_summary,
+        result_json, risk_flags_json, verified_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) AS new_check
+     ON DUPLICATE KEY UPDATE
+       status = new_check.status,
+       source_document_id = new_check.source_document_id,
+       provider_key = new_check.provider_key,
+       provider_request_id = new_check.provider_request_id,
+       provider_reference_id = new_check.provider_reference_id,
+       match_score = new_check.match_score,
+       matched_name = new_check.matched_name,
+       matched_dob = new_check.matched_dob,
+       result_summary = new_check.result_summary,
+       result_json = new_check.result_json,
+       risk_flags_json = new_check.risk_flags_json,
+       verified_at = new_check.verified_at,
+       updated_at = NOW()`,
+    [
+      generatedCheckId,
+      candidateId,
+      checkType,
+      input.sourceDocumentId ?? null,
+      input.providerKey ?? null,
+      input.providerRequestId ?? null,
+      input.providerReferenceId ?? null,
+      status,
+      input.matchScore ?? null,
+      input.matchedName ?? null,
+      input.matchedDob ?? null,
+      input.resultSummary ?? null,
+      input.resultJson ? JSON.stringify(input.resultJson) : null,
+      input.riskFlags ? JSON.stringify(input.riskFlags) : null,
+      verifiedAt,
+    ]
+  );
+
+  const [afterUpsert] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM candidate_bgv_check WHERE candidate_id = ? AND check_type = ? LIMIT 1`,
     [candidateId, checkType]
   );
-  const existingRows = existing as Array<RowDataPacket & { id: string }>;
-  let checkId: string;
-  if (existingRows.length > 0) {
-    checkId = existingRows[0].id;
-    await db.execute(
-      `UPDATE candidate_bgv_check
-         SET status = ?, source_document_id = ?, provider_key = ?, provider_request_id = ?,
-             provider_reference_id = ?, match_score = ?, matched_name = ?, matched_dob = ?,
-             result_summary = ?, result_json = ?, risk_flags_json = ?,
-             verified_at = ?, updated_at = NOW()
-       WHERE id = ?`,
-      [
-        status,
-        input.sourceDocumentId ?? null,
-        input.providerKey ?? null,
-        input.providerRequestId ?? null,
-        input.providerReferenceId ?? null,
-        input.matchScore ?? null,
-        input.matchedName ?? null,
-        input.matchedDob ?? null,
-        input.resultSummary ?? null,
-        input.resultJson ? JSON.stringify(input.resultJson) : null,
-        input.riskFlags ? JSON.stringify(input.riskFlags) : null,
-        verifiedAt,
-        checkId,
-      ]
-    );
-  } else {
-    checkId = randomUUID();
-    await db.execute(
-      `INSERT INTO candidate_bgv_check
-         (id, candidate_id, check_type, source_document_id, provider_key, provider_request_id,
-          provider_reference_id, status, match_score, matched_name, matched_dob, result_summary,
-          result_json, risk_flags_json, verified_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        checkId,
-        candidateId,
-        checkType,
-        input.sourceDocumentId ?? null,
-        input.providerKey ?? null,
-        input.providerRequestId ?? null,
-        input.providerReferenceId ?? null,
-        status,
-        input.matchScore ?? null,
-        input.matchedName ?? null,
-        input.matchedDob ?? null,
-        input.resultSummary ?? null,
-        input.resultJson ? JSON.stringify(input.resultJson) : null,
-        input.riskFlags ? JSON.stringify(input.riskFlags) : null,
-        verifiedAt,
-      ]
-    );
-  }
+  const checkId = ((afterUpsert as RowDataPacket[])[0]?.id as string | undefined) ?? generatedCheckId;
 
   // Sync report status columns + score after every check write, fire-and-forget.
   // Runs on BOTH the update and insert paths now — it used to run only on first insert
