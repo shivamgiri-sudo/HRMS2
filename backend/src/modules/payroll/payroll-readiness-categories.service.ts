@@ -50,7 +50,7 @@
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { resolvePfApplicabilityForPeriod, type PfApplicabilityResult } from "./pf-applicability.service.js";
+import { resolvePfApplicabilityForPeriod, resolveUanFilingReadinessForPeriod, type PfApplicabilityResult, type UanFilingReadinessResult } from "./pf-applicability.service.js";
 
 // ─── State + severity vocabulary ─────────────────────────────────────────────
 
@@ -1869,6 +1869,58 @@ async function statutoryChecks(scope: RunScope): Promise<CategoryCheckResult[]> 
               "Informational only at this severity — no existing gate is repointed to this resolver yet.",
             undefined,
             mismatches.slice(0, 10),
+          );
+    }),
+
+    // UAN filing readiness (Section D of the 2026-08-17 go-live closure) — applicability plus
+    // identity. Scoped to THIS run's payable population so the count means "would block this
+    // run's ECR", not "every active employee anywhere." Still P2/informational: no ECR or filing
+    // route reads this yet, this only makes the gap visible before it does.
+    runCheck({ code: "STATUTORY_UAN_FILING_NOT_READY", layer: "STATUTORY", severity: "P2" }, async () => {
+      let uanReadiness: Map<string, UanFilingReadinessResult>;
+      try {
+        uanReadiness = await resolveUanFilingReadinessForPeriod(runMonth);
+      } catch (err) {
+        return sourceMissing(
+          `UAN filing readiness could not be resolved for ${runMonth}: ` +
+            `${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
+      const [payableRows] = await db.execute<RowDataPacket[]>(
+        `SELECT ${EMP_IDENTITY}
+           FROM employees e
+           JOIN salary_prep_line spl ON spl.run_id = ? AND spl.employee_id = e.id
+          WHERE ${where}`,
+        [runId, ...params],
+      );
+
+      const notReady: Array<Record<string, unknown>> = [];
+      for (const row of payableRows as Array<{ employee_id: string; employee_code: string; employee_name: string }>) {
+        const code = String(row.employee_code ?? "").trim().toUpperCase();
+        const result = uanReadiness.get(code);
+        if (result && (result.status === "MISSING_UAN" || result.status === "INVALID_UAN")) {
+          notReady.push({
+            employee_id: row.employee_id,
+            employee_code: row.employee_code,
+            employee_name: row.employee_name,
+            pf_status: result.pfStatus,
+            uan: result.uan,
+            uan_source: result.uanSource,
+            status: result.status,
+          });
+        }
+      }
+
+      return notReady.length === 0
+        ? pass(`Every PF-applicable employee in this run (${runMonth}) has a valid 12-digit UAN on file.`)
+        : fail(
+            notReady.length,
+            `${notReady.length} employees in this run are PF-applicable but not UAN-filing-ready ` +
+              `(missing or not-12-digit UAN). Not enforced yet — no ECR/filing route reads this ` +
+              "resolver. Surfaced here so the gap is visible before Auto-TDS/ECR is turned on.",
+            undefined,
+            notReady.slice(0, 10),
           );
     }),
   ]);

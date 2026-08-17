@@ -686,6 +686,91 @@ describe("statutory: canonical PF applicability resolver vs. what payroll deduct
   });
 });
 
+// Distinguished from PF_RESOLVER_QUERY above by the absence of ", ROUND(spl.pf_employee, 2) AS
+// pf_deducted" between "employee_name" and "FROM employees e" — this check's payable-population
+// query selects identity columns only, no deduction amount.
+const UAN_READINESS_QUERY = /AS employee_name\s*\n\s*FROM employees e\s+JOIN salary_prep_line spl ON spl\.run_id = \? AND spl\.employee_id = e\.id\s+WHERE/;
+// resolveUanFilingReadinessForPeriod's own UAN-store lookup (pf-applicability.service.ts) —
+// distinct SQL text, so it needs its own Rule alongside UAN_READINESS_QUERY's payable-population
+// rule rather than colliding with it.
+const UAN_STORE_LOOKUP_QUERY = /uan_employees,\s*si\.uan_number AS uan_statutory_info/;
+
+function uanReady(row: { employee_code: string; uan_employees?: string | null; uan_statutory_info?: string | null; uan_employee_uan?: string | null }): Rule {
+  return {
+    match: UAN_STORE_LOOKUP_QUERY,
+    rows: [{ uan_employees: null, uan_statutory_info: null, uan_employee_uan: null, ...row }],
+  };
+}
+
+describe("statutory: UAN filing readiness (applicability plus identity)", () => {
+  it("PASSes when every PF-applicable employee in the run has a valid UAN", async () => {
+    baseline(
+      { match: UAN_READINESS_QUERY, rows: [{ employee_id: "e1", employee_code: "MAS0001", employee_name: "Ready Employee" }] },
+      uanReady({ employee_code: "MAS0001", uan_employees: "123456789012" }),
+    );
+    fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0001", PFELig: "YES" }]);
+
+    const { check } = await checkByCode("STATUTORY_UAN_FILING_NOT_READY");
+    expect(check.state).toBe("PASS");
+    expect(check.severity).toBe("P2");
+  });
+
+  it("FAILs and names the employee when a PF-applicable payable employee has no UAN", async () => {
+    baseline(
+      { match: UAN_READINESS_QUERY, rows: [{ employee_id: "e1", employee_code: "MAS0002", employee_name: "Missing UAN Employee" }] },
+      uanReady({ employee_code: "MAS0002" }),
+    );
+    fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0002", PFELig: "YES" }]);
+
+    const { check } = await checkByCode("STATUTORY_UAN_FILING_NOT_READY");
+    expect(check.state).toBe("FAIL");
+    expect(check.affectedEmployees).toBe(1);
+    expect(check.sample?.[0]).toMatchObject({ employee_code: "MAS0002", status: "MISSING_UAN" });
+  });
+
+  it("FAILs on an invalid (non-12-digit) UAN, distinctly from a missing one", async () => {
+    baseline(
+      { match: UAN_READINESS_QUERY, rows: [{ employee_id: "e1", employee_code: "MAS0003", employee_name: "Bad UAN Employee" }] },
+      uanReady({ employee_code: "MAS0003", uan_employees: "12345" }),
+    );
+    fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0003", PFELig: "YES" }]);
+
+    const { check } = await checkByCode("STATUTORY_UAN_FILING_NOT_READY");
+    expect(check.state).toBe("FAIL");
+    expect(check.sample?.[0]).toMatchObject({ status: "INVALID_UAN" });
+  });
+
+  it("PASSes (does not flag) an employee the resolver says is not PF-applicable", async () => {
+    baseline(
+      { match: UAN_READINESS_QUERY, rows: [{ employee_id: "e1", employee_code: "MAS0004", employee_name: "Not Applicable Employee" }] },
+      uanReady({ employee_code: "MAS0004" }),
+    );
+    fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0004", PFELig: "NO" }]);
+
+    const { check } = await checkByCode("STATUTORY_UAN_FILING_NOT_READY");
+    expect(check.state).toBe("PASS");
+  });
+
+  it("reports SOURCE_MISSING, not PASS, when the underlying resolver's source is unreachable", async () => {
+    baseline({ match: UAN_READINESS_QUERY, rows: [] });
+    fakeBillQuery.mockRejectedValue(new Error("ETIMEDOUT"));
+
+    const { check } = await checkByCode("STATUTORY_UAN_FILING_NOT_READY");
+    expect(check.state).toBe("SOURCE_MISSING");
+  });
+
+  it("never blocks canPay at P2", async () => {
+    baseline(
+      { match: UAN_READINESS_QUERY, rows: [{ employee_id: "e1", employee_code: "MAS0005", employee_name: "Missing UAN Employee" }] },
+      uanReady({ employee_code: "MAS0005" }),
+    );
+    fakeBillQuery.mockResolvedValue([{ EmpCode: "MAS0005", PFELig: "YES" }]);
+
+    const result = await evaluateReadinessCategories(RUN_ID);
+    expect(result.canPayBlockedBy).not.toContain("STATUTORY_UAN_FILING_NOT_READY");
+  });
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe("fail-closed behaviour (the guard is disabled to prove it is load-bearing)", () => {

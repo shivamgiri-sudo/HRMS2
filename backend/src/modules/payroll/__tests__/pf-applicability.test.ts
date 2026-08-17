@@ -19,8 +19,10 @@ const { billQuery, execute } = vi.hoisted(() => ({ billQuery: vi.fn(), execute: 
 vi.mock("../../../db/billDb.js", () => ({ billQuery }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-const { resolvePfApplicabilityForPeriod, resolvePfApplicability, summarisePfApplicability } =
-  await import("../pf-applicability.service.js");
+const {
+  resolvePfApplicabilityForPeriod, resolvePfApplicability, summarisePfApplicability,
+  resolveUanFilingReadinessForPeriod, summariseUanFilingReadiness,
+} = await import("../pf-applicability.service.js");
 
 beforeEach(() => {
   billQuery.mockReset();
@@ -112,5 +114,91 @@ describe("summary keeps unresolved visible", () => {
       { employeeCode: "C", status: "PF_APPLICABILITY_UNRESOLVED", source: "none", reason: "" },
     ]);
     expect(s).toMatchObject({ applicable: 1, notApplicable: 1, unresolved: 1 });
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// UAN filing readiness — applicability plus identity
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Two db.execute calls happen per resolution: (1) resolvePfApplicabilityForPeriod's own
+ * employee_statutory_info fallback, (2) this resolver's UAN query. Order matters for the mock.
+ */
+function mockUanQuery(rows: Array<Record<string, unknown>>) {
+  execute.mockResolvedValueOnce([[], []]); // (1) HRMS-native PF fallback — empty, db_bill decides
+  execute.mockResolvedValueOnce([rows, []]); // (2) the UAN query itself
+}
+
+describe("UAN filing readiness — READY only when applicable AND a valid UAN exists", () => {
+  it("READY: PF-applicable with a valid 12-digit UAN", async () => {
+    billQuery.mockResolvedValue([{ EmpCode: "MAS001", PFELig: "YES" }]);
+    mockUanQuery([{ employee_code: "MAS001", uan_employees: "123456789012", uan_statutory_info: null, uan_employee_uan: null }]);
+
+    const all = await resolveUanFilingReadinessForPeriod("2026-07");
+    expect(all.get("MAS001")).toMatchObject({
+      status: "READY", pfStatus: "PF_APPLICABLE", uan: "123456789012", uanSource: "employees", uanValid: true,
+    });
+  });
+
+  it("NOT_APPLICABLE: PF resolver says not applicable — UAN is irrelevant, even if present", async () => {
+    billQuery.mockResolvedValue([{ EmpCode: "MAS002", PFELig: "NO" }]);
+    mockUanQuery([{ employee_code: "MAS002", uan_employees: "123456789012", uan_statutory_info: null, uan_employee_uan: null }]);
+
+    const all = await resolveUanFilingReadinessForPeriod("2026-07");
+    expect(all.get("MAS002")?.status).toBe("NOT_APPLICABLE");
+  });
+
+  it("MISSING_UAN: PF-applicable, no UAN in any of the three stores", async () => {
+    billQuery.mockResolvedValue([{ EmpCode: "MAS003", PFELig: "YES" }]);
+    mockUanQuery([{ employee_code: "MAS003", uan_employees: null, uan_statutory_info: "", uan_employee_uan: null }]);
+
+    const all = await resolveUanFilingReadinessForPeriod("2026-07");
+    expect(all.get("MAS003")).toMatchObject({ status: "MISSING_UAN", uan: null, uanSource: "none", uanValid: null });
+  });
+
+  it("INVALID_UAN: PF-applicable, a UAN exists but is not 12 digits — never silently accepted as present", async () => {
+    billQuery.mockResolvedValue([{ EmpCode: "MAS004", PFELig: "YES" }]);
+    mockUanQuery([{ employee_code: "MAS004", uan_employees: "12345", uan_statutory_info: null, uan_employee_uan: null }]);
+
+    const all = await resolveUanFilingReadinessForPeriod("2026-07");
+    expect(all.get("MAS004")).toMatchObject({ status: "INVALID_UAN", uan: "12345", uanValid: false });
+  });
+
+  it("PF_APPLICABILITY_UNRESOLVED: propagated from the underlying PF resolver, not silently dropped", async () => {
+    billQuery.mockResolvedValue([]); // MAS005 never appears in db_bill or employee_statutory_info
+    mockUanQuery([{ employee_code: "MAS005", uan_employees: "123456789012", uan_statutory_info: null, uan_employee_uan: null }]);
+
+    const all = await resolveUanFilingReadinessForPeriod("2026-07");
+    expect(all.get("MAS005")?.status).toBe("PF_APPLICABILITY_UNRESOLVED");
+  });
+
+  it("precedence: employees.uan_number wins over employee_statutory_info and employee_uan", async () => {
+    billQuery.mockResolvedValue([{ EmpCode: "MAS006", PFELig: "YES" }]);
+    mockUanQuery([{ employee_code: "MAS006", uan_employees: "111111111111", uan_statutory_info: "222222222222", uan_employee_uan: "333333333333" }]);
+
+    const all = await resolveUanFilingReadinessForPeriod("2026-07");
+    expect(all.get("MAS006")).toMatchObject({ uan: "111111111111", uanSource: "employees" });
+  });
+
+  it("falls through to employee_statutory_info, then employee_uan, when earlier sources are empty", async () => {
+    billQuery.mockResolvedValue([{ EmpCode: "MAS007", PFELig: "YES" }]);
+    mockUanQuery([{ employee_code: "MAS007", uan_employees: null, uan_statutory_info: null, uan_employee_uan: "333333333333" }]);
+
+    const all = await resolveUanFilingReadinessForPeriod("2026-07");
+    expect(all.get("MAS007")).toMatchObject({ uan: "333333333333", uanSource: "employee_uan" });
+  });
+});
+
+describe("summariseUanFilingReadiness counts every state distinctly", () => {
+  it("keeps INVALID_UAN separate from MISSING_UAN, and unresolved separate from both", () => {
+    const s = summariseUanFilingReadiness([
+      { employeeCode: "A", pfStatus: "PF_APPLICABLE", pfSource: "db_bill_payroll", uan: "123456789012", uanSource: "employees", uanValid: true, status: "READY" },
+      { employeeCode: "B", pfStatus: "PF_NOT_APPLICABLE", pfSource: "db_bill_payroll", uan: null, uanSource: "none", uanValid: null, status: "NOT_APPLICABLE" },
+      { employeeCode: "C", pfStatus: "PF_APPLICABLE", pfSource: "db_bill_payroll", uan: null, uanSource: "none", uanValid: null, status: "MISSING_UAN" },
+      { employeeCode: "D", pfStatus: "PF_APPLICABLE", pfSource: "db_bill_payroll", uan: "abc", uanSource: "employees", uanValid: false, status: "INVALID_UAN" },
+      { employeeCode: "E", pfStatus: "PF_APPLICABILITY_UNRESOLVED", pfSource: "none", uan: null, uanSource: "none", uanValid: null, status: "PF_APPLICABILITY_UNRESOLVED" },
+    ]);
+    expect(s).toEqual({ ready: 1, notApplicable: 1, missingUan: 1, invalidUan: 1, unresolved: 1 });
   });
 });
