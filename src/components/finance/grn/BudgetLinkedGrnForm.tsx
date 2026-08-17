@@ -1966,7 +1966,7 @@ export function BudgetLinkedGrnForm({
                         options={vendors.map((vendor) => ({
                           value: vendor.id,
                           label: (vendor.vendor_name ?? vendor.name ?? "").trim(),
-                          hint: vendor.vendor_code ?? undefined,
+                          hint: undefined,
                         }))}
                         value={form.vendorId}
                         onChange={(value) => {
