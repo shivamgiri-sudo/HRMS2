@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { validateEpfCompliance } from "../employees/epfComplianceValidation.service.js";
 import type { EpfProfileInput, EpfNomineeInput } from "../employees/epfComplianceValidation.service.js";
+import { resolveUanFilingReadinessForPeriod } from "./pf-applicability.service.js";
 
 interface BatchFilter {
   branchId?: string | null;
@@ -670,7 +671,12 @@ export const pfCreationService = {
       `SELECT establishment_code, establishment_name FROM pf_establishment_master WHERE id = ? AND active_status = 1`,
       [establishmentId]
     );
-    if (!estRows.length) throw Object.assign(new Error("Establishment not found"), { status: 404 });
+    // status -> statusCode: the property errorHandler.ts actually reads (verified against its
+    // other 3 callers in this same file, lines 291/300/319, which already use statusCode). This
+    // throw's message was being replaced with a generic "unexpected server error" in production —
+    // found while fixing the ECR readiness gate below; fixed here too since it sits in the same
+    // function and is the same one-property-name defect, not a separate change.
+    if (!estRows.length) throw Object.assign(new Error("Establishment not found"), { statusCode: 404 });
     const est = estRows[0];
 
     const [runRows] = await db.query<any[]>(
@@ -687,14 +693,28 @@ export const pfCreationService = {
     if (!runRows.length) {
       throw Object.assign(
         new Error(`No finalised salary run found for ${month}`),
-        { status: 404 }
+        { statusCode: 404 }
       );
     }
     const runId = runRows[0].run_id;
 
-    const [rows] = await db.query<any[]>(
+    // Population + identity fix (2026-08-17): this used to INNER JOIN
+    // employee_epf_compliance_profile for both applicability (pf_applicable = 1, a table with
+    // 6 rows total in production — effectively excludes almost everyone) AND the UAN itself
+    // (eecp.uan_masked). uan_masked is not a truncated display value, it never held the real
+    // number at all — epfKycCapture.service.ts's recordMaskedAudit() writes maskUan(uan) there
+    // by design ("Deliberately does not accept or write the raw values"). A file built from it
+    // would carry an unfileable masked UAN for every row it did include.
+    //
+    // Population is now salary_prep_line for this run — PF actually deducted (pf_employee > 0)
+    // on an ONROLL employee — the same basis the other statutory registers in this codebase use
+    // (statutory.executor.ts's pfEcrFormat, pfContributionRegister), so this generator and the
+    // register meant to reconcile against it agree on who's in scope. The real UAN comes from
+    // resolveUanFilingReadinessForPeriod() (employees.uan_number -> employee_statutory_info ->
+    // employee_uan, format-validated), never from the compliance-profile's masked copy.
+    const [contributorRows] = await db.query<any[]>(
       `SELECT
-         eecp.uan_masked              AS uan,
+         e.employee_code,
          e.full_name                  AS member_name,
          ROUND(spl.gross_salary)      AS gross_wages,
          ROUND(spl.pf_employee / 0.12) AS epf_wages,
@@ -703,20 +723,49 @@ export const pfCreationService = {
          ROUND(spl.lwp_days)          AS ncp_days
        FROM salary_prep_line spl
        JOIN employees e ON e.id = spl.employee_id
-       JOIN employee_epf_compliance_profile eecp
-         ON eecp.employee_id = spl.employee_id
-        AND eecp.pf_applicable = 1
-        AND eecp.uan_masked IS NOT NULL
-        AND eecp.uan_masked != ''
        WHERE spl.run_id = ?
+         AND spl.pf_employee > 0
+         AND e.employment_type = 'ONROLL'
        ORDER BY e.employee_code`,
       [runId]
     );
 
-    if (!rows.length) {
+    if (!contributorRows.length) {
       throw Object.assign(
-        new Error("No EPF-applicable employees with UAN found for this run"),
-        { status: 404 }
+        new Error("No employees with PF deducted were found for this run"),
+        { statusCode: 404 }
+      );
+    }
+
+    // Fail closed rather than silently drop: every PF-deducted contributor needs a valid
+    // 12-digit UAN before this file can be generated. A partially-clean file — some rows
+    // present, some quietly missing — would read as a completed export to whoever uploads it.
+    const uanReadiness = await resolveUanFilingReadinessForPeriod(month);
+    const blocked: Array<{ employee_code: string; member_name: string; reason: string }> = [];
+    const rows: any[] = [];
+    for (const r of contributorRows) {
+      const readiness = uanReadiness.get(String(r.employee_code).trim().toUpperCase());
+      const uan = readiness?.uan ?? null;
+      const uanValid = readiness?.uanValid ?? null;
+      if (!uan) {
+        blocked.push({ employee_code: r.employee_code, member_name: r.member_name, reason: "MISSING_UAN" });
+        continue;
+      }
+      if (!uanValid) {
+        blocked.push({ employee_code: r.employee_code, member_name: r.member_name, reason: "INVALID_UAN" });
+        continue;
+      }
+      rows.push({ ...r, uan });
+    }
+
+    if (blocked.length) {
+      throw Object.assign(
+        new Error(
+          `ECR_NOT_READY: ${blocked.length} employee(s) had PF deducted this run but have no valid ` +
+          `12-digit UAN, so the file cannot be generated without silently dropping a contributor. ` +
+          `Resolve via HR/Payroll UAN remediation, then regenerate.`
+        ),
+        { statusCode: 409, code: "ECR_NOT_READY", blockedEmployees: blocked }
       );
     }
 

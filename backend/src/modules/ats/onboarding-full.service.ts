@@ -1867,27 +1867,64 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
 
   const id = randomUUID();
   const fileUrl = `secure:onboarding:${file.filename}`;
-  await db.execute(
-    `INSERT INTO candidate_onboarding_document
-       (id, candidate_id, doc_type, doc_name, page_no, file_original_name, file_path, file_url, mime_type, file_size_bytes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      id,
-      candidateId,
-      input.docType ?? input.doc_type ?? "Other",
-      input.docName ?? input.doc_name ?? file.originalname,
-      (input.pageNo || input.page_no) ? Number(input.pageNo ?? input.page_no) || null : null,
-      file.originalname,
-      file.path,
-      fileUrl,
-      file.mimetype,
-      file.size,
-    ]
-  );
-  await logCandidateAction(candidateId, "UPLOAD_DOCUMENT", { documentId: id, docType: input.docType ?? input.doc_type }, meta);
+  const docTypeRaw = (input.docType ?? input.doc_type ?? "Other") as unknown as string;
+  // Hoisted from further down (was computed again, unchanged, right before the OCR
+  // trigger) so the supersede check below and the face-match routing further down
+  // share one definition of "this is an identity document" instead of two that could
+  // drift apart.
+  const docType = String(input.docType ?? input.doc_type ?? "").toLowerCase();
+  const isFaceImage = docType.includes("selfie") || docType.includes("live") || docType.includes("photo");
+  const isIdImage = docType.includes("aadhaar") || docType.includes("pan");
+
+  // Identity documents are already singular by the app's own logic: triggerFaceMatch
+  // picks "the one" Aadhaar/PAN/face image to compare against, with no concept of
+  // history. A candidate asked to re-upload a corrected copy (e.g. after the
+  // onboarding link is resent) left the old one active too — deleteOnboardingDocument
+  // is a separate, explicit action nobody was calling first. Auto-retire the previous
+  // active document of the same identity type here, in the same transaction as the
+  // new insert, so a candidate is never left with zero active documents of that type
+  // if the insert fails. Non-identity types (education certs, experience letters,
+  // etc.) are untouched — those can legitimately have more than one active document
+  // of the same doc_type, and this never runs for them.
+  const supersedesPriorDocument = isFaceImage || isIdImage;
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    if (supersedesPriorDocument) {
+      await conn.execute(
+        `UPDATE candidate_onboarding_document
+            SET document_status = 'deleted', deleted_at = NOW(), deleted_by = NULL
+          WHERE candidate_id = ? AND LOWER(doc_type) = ? AND deleted_at IS NULL`,
+        [candidateId, docType]
+      );
+    }
+    await conn.execute(
+      `INSERT INTO candidate_onboarding_document
+         (id, candidate_id, doc_type, doc_name, page_no, file_original_name, file_path, file_url, mime_type, file_size_bytes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        candidateId,
+        docTypeRaw,
+        input.docName ?? input.doc_name ?? file.originalname,
+        (input.pageNo || input.page_no) ? Number(input.pageNo ?? input.page_no) || null : null,
+        file.originalname,
+        file.path,
+        fileUrl,
+        file.mimetype,
+        file.size,
+      ]
+    );
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+  await logCandidateAction(candidateId, "UPLOAD_DOCUMENT", { documentId: id, docType: docTypeRaw }, meta);
 
   // Async OCR extraction and cross-validation (non-blocking — never delays upload response)
-  const docType = String(input.docType ?? input.doc_type ?? "").toLowerCase();
   const isIdentityDoc = docType.includes("aadhaar") || docType.includes("aadhar") || docType.includes("pan") || docType.includes("cheque") || docType.includes("passbook") || docType.includes("bank");
   if (isIdentityDoc && file.mimetype.startsWith("image/")) {
     extractFromDocument(file.path, docType)
@@ -1914,8 +1951,7 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
   // image and an ID image, and previously only ran if the ID already existed
   // when the face arrived. Which document a candidate uploads first is not
   // something they know matters.
-  const isFaceImage = docType.includes("selfie") || docType.includes("live") || docType.includes("photo");
-  const isIdImage = docType.includes("aadhaar") || docType.includes("pan");
+  // (isFaceImage / isIdImage computed earlier, above the supersede transaction.)
   if (file.mimetype.startsWith("image/")) {
     if (isFaceImage) {
       triggerFaceMatch(candidateId, file.path, id).catch(e =>
