@@ -1,7 +1,8 @@
-{
+﻿{
   "extends": "./tsconfig.json",
   "include": [
     "src/modules/reporting/executors/aon.executor.ts",
+    "src/modules/reporting/executors/attrition-risk.executor.ts",
     "src/modules/reporting/executors/index.ts",
     "src/modules/reporting/report-catalog.ts"
   ]

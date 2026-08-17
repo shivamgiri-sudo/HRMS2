@@ -3240,6 +3240,104 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     availabilityStatus: 'validated',
   },
   {
+    code: "attrition-risk-score",
+    name: "Attrition Risk Ranking",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Per-employee attrition risk ranking with the component scores that produced it",
+    rowGrain: "One row per active employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Employee Code", format: "text", width: 130 },
+      { key: "employee_name", label: "Employee", format: "text", width: 190 },
+      { key: "risk_band", label: "Risk", format: "text", width: 90 },
+      { key: "risk_score", label: "Score", format: "number", width: 90, align: "right" },
+      { key: "aon_bucket", label: "AON Bucket", format: "text", width: 110 },
+      { key: "aon_days", label: "AON Days", format: "number", width: 100, align: "right" },
+      { key: "branch_name", label: "Branch", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "attendance_days", label: "Attendance Days", format: "number", width: 130, align: "right" },
+      { key: "absence_rate_pct", label: "Absence %", format: "number", width: 110, align: "right" },
+      { key: "missing_punch_rate_pct", label: "Missing Punch %", format: "number", width: 140, align: "right" },
+      { key: "half_day_rate_pct", label: "Half Day %", format: "number", width: 115, align: "right" },
+      { key: "tenure_points", label: "Tenure Pts", format: "number", width: 110, align: "right" },
+      { key: "absence_points", label: "Absence Pts", format: "number", width: 115, align: "right" },
+      { key: "missing_punch_points", label: "Punch Pts", format: "number", width: 110, align: "right" },
+      { key: "half_day_points", label: "Half Day Pts", format: "number", width: 120, align: "right" },
+      { key: "date_of_joining", label: "Joined", format: "text", width: 110 },
+    ],
+    filters: [F_BRANCH, F_COST_CENTRE],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "attendance_daily_record", "branch_master", "cost_centre_master", "process_master"],
+    calculationNotes:
+      "A RANKING, not a prediction. Nothing here is trained, because there is nothing to " +
+      "train against: exit_request holds 2 rows against 2,632 exits in twelve months, so why " +
+      "anyone left is not recorded. What the data supports is ordering people by resemblance " +
+      "to the population that has historically left. Measured over twelve months with " +
+      "impossible-tenure rows excluded, 1,121 of 2,615 exits (43%) fell within 30 days of " +
+      "joining and 1,760 (67%) within 90, so tenure carries most of the signal and the score " +
+      "says so openly — bucket contributes the largest single term (45/30/18/6) and the " +
+      "behavioural terms modulate it (absence up to 25, missing punch up to 20, half-day up " +
+      "to 10, capped at 100). Weights are stated judgement, not learned, and every component " +
+      "is emitted as its own column so a manager can see why someone ranks where they do. " +
+      "Rates are NULL below 5 attendance days rather than allowed to swing the score on a " +
+      "handful of rows, and attendance_days is emitted so that limit is visible. Process is " +
+      "deliberately NOT part of the arithmetic: it is NULL for 341 active employees, all 183 " +
+      "of them in the 0-30 bucket, so a process baseline would be absent for exactly the " +
+      "people this report is about.",
+    branchScoped: true,
+    processScoped: false,
+    sensitivityLevel: 'confidential',
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "leave-attendance-reconciliation",
+    name: "Leave vs Attendance Reconciliation",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Approved leave that attendance does not reflect, per employee per month",
+    rowGrain: "One row per employee per month with approved leave",
+    primaryKey: ["month", "employee_code"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 100 },
+      { key: "employee_code", label: "Employee Code", format: "text", width: 130 },
+      { key: "employee_name", label: "Employee", format: "text", width: 190 },
+      { key: "branch_name", label: "Branch", format: "text", width: 150 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "approved_requests", label: "Approved Requests", format: "number", width: 150, align: "right" },
+      { key: "approved_leave_days", label: "Approved Leave Days", format: "number", width: 165, align: "right" },
+      { key: "days_marked_leave_in_attendance", label: "Marked As Leave", format: "number", width: 145, align: "right" },
+      { key: "days_marked_absent_in_attendance", label: "Marked As Absent", format: "number", width: 150, align: "right" },
+      { key: "attendance_agreement_pct", label: "Agreement %", format: "number", width: 125, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["leave_request", "attendance_daily_record", "employees", "branch_master", "cost_centre_master"],
+    calculationNotes:
+      "Approved leave does not reach attendance. Measured live 2026-08-17: 1,180 leave " +
+      "requests were approved in the last 90 days while attendance_daily_record recorded 12 " +
+      "days as leave_approved over the same period. Those employees are counted absent, " +
+      "which inflates unplanned shrinkage and understates planned absence — the split WFM " +
+      "schedules against. days_marked_absent_in_attendance is the number that matters. " +
+      "This report WRITES NOTHING: posting these days into attendance would change payable " +
+      "days, and therefore salary, for months that may already be settled, which is a " +
+      "payroll decision with a frozen-month question attached rather than a reporting one. " +
+      "Matched on the leave START date rather than expanding each request into individual " +
+      "dates, because expanding needs a calendar table this schema does not have; the " +
+      "per-request grain is enough to size the gap and name who is affected.",
+    branchScoped: true,
+    processScoped: false,
+    sensitivityLevel: 'confidential',
+    containsPII: true,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
     code: "attrition-deep-dive",
     name: "Attrition Deep Dive",
     category: "Attrition & Trends",
