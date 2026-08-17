@@ -668,6 +668,24 @@ export default function BranchBudgetManagementWorkspace() {
   });
   const transferRows = (transfersQuery.data as any)?.data ?? [];
   const detailQuery = useBranchBudgetDetail(detailId);
+
+  /**
+   * Lines of the budget whose Transfer button was actually clicked.
+   *
+   * The dialog used to read `detailQuery.data.lines` — the lines of whichever budget happened to
+   * be *selected* (`detailId`), not the row the button belongs to. The Approval & Utilization tab
+   * lists every branch budget, so each row's Transfer dialog offered the same lines and the same
+   * available amounts, which is what made it look like one allocation applied to all branches.
+   *
+   * It was not only confusing: the POST goes to /budgets/{transferTarget.budgetId}/transfer while
+   * the line ids came from a different budget, so branchBudgetService.submitTransfer rejects it
+   * with "Source line belongs to a different budget" — a refusal that (until the throws were
+   * statused) reached the user as an anonymous "quote reference …" 500.
+   *
+   * Keyed by id, so React Query caches each budget separately and switching rows refetches.
+   */
+  const transferDetailQuery = useBranchBudgetDetail(transferTarget?.budgetId ?? null);
+  const transferLines = transferDetailQuery.data?.lines ?? [];
   // Separate detail query for the review dialog — fetches only when a budget is being reviewed.
   const reviewDetailQuery = useBranchBudgetDetail(reviewingBudgetId);
   // Last month's budget, for the Prev/Var columns and Copy-forward. Matched by head+sub-head NAME
@@ -2085,9 +2103,11 @@ export default function BranchBudgetManagementWorkspace() {
                           <Button size="sm" variant="outline" onClick={() => setReviewingBudgetId(budget.id)}>
                             <Eye className="mr-1 h-3.5 w-3.5" />{canReview(budget) ? "Review" : "View"}
                           </Button>
-                          {canAmendTax && budget.status === "active" && detailQuery.data?.lines && detailQuery.data.lines.length > 1 && (
+                          {/* Gated on THIS row's own line count. It used to test
+                              detailQuery.data.lines — the selected budget's lines — so the button
+                              appeared or vanished on every row according to an unrelated budget. */}
+                          {canAmendTax && budget.status === "active" && Number(budget.line_count ?? 0) > 1 && (
                             <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => {
-                              const lines = detailQuery.data!.lines;
                               setTransferTarget({ budgetId: budget.id, fromLineId: "", toLineId: "", transferAmount: "", reason: "" });
                             }}>
                               <ArrowLeftRight className="mr-1 h-3.5 w-3.5" />Transfer
@@ -2654,24 +2674,48 @@ export default function BranchBudgetManagementWorkspace() {
       )}
 
       {/* 2-A: Budget transfer / virement dialog */}
-      {transferTarget && detailQuery.data?.lines && (
+      {transferTarget && (
         <Dialog open onOpenChange={(open) => { if (!open) setTransferTarget(null); }}>
           <DialogContent className="max-w-md">
-            <DialogHeader><DialogTitle>Submit Budget Transfer</DialogTitle></DialogHeader>
+            <DialogHeader>
+              <DialogTitle>Submit Budget Transfer</DialogTitle>
+              {/* Name the budget being moved within. With one dialog serving every row, the only
+                  thing that told you which budget you were editing was which button you pressed. */}
+              {transferDetailQuery.data && (
+                <p className="text-xs text-muted-foreground">
+                  {transferDetailQuery.data.budget_number}
+                  {transferDetailQuery.data.branch_name ? ` · ${transferDetailQuery.data.branch_name}` : ""}
+                  {transferDetailQuery.data.period_code ? ` · ${transferDetailQuery.data.period_code}` : ""}
+                </p>
+              )}
+            </DialogHeader>
             <div className="space-y-4 py-2 text-sm">
               <p className="text-muted-foreground">Move approved budget from a surplus line to a deficit line. Requires approval from a different Finance Head or Accounts Head before lines are updated.</p>
+              {transferDetailQuery.isLoading ? (
+                <p className="py-6 text-center text-muted-foreground">Loading this budget's lines…</p>
+              ) : transferDetailQuery.isError ? (
+                <p className="py-6 text-center text-rose-600">
+                  {(transferDetailQuery.error as Error)?.message || "Could not load this budget's lines."}
+                </p>
+              ) : transferLines.length < 2 ? (
+                <p className="py-6 text-center text-amber-700">
+                  This budget has {transferLines.length} line{transferLines.length === 1 ? "" : "s"}. A transfer moves
+                  money between two lines of the same budget, so it needs at least two.
+                </p>
+              ) : (
+              <>
               <div className="space-y-1">
                 <Label>From (source line) *</Label>
-                <select className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={transferTarget.fromLineId} onChange={(e) => setTransferTarget((t) => t && ({ ...t, fromLineId: e.target.value }))}>
+                <select className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={transferTarget.fromLineId} onChange={(e) => setTransferTarget((t) => t && ({ ...t, fromLineId: e.target.value, toLineId: t.toLineId === e.target.value ? "" : t.toLineId }))}>
                   <option value="">— Select source line —</option>
-                  {detailQuery.data.lines.map((l) => <option key={l.id} value={l.id}>{l.head} › {l.sub_head ?? "General"} › {l.item_name} (avail: {money(Number(l.available_gross_amount ?? 0))})</option>)}
+                  {transferLines.map((l) => <option key={l.id} value={l.id}>{l.head} › {l.sub_head ?? "General"} › {l.item_name} (avail: {money(Number(l.available_gross_amount ?? 0))})</option>)}
                 </select>
               </div>
               <div className="space-y-1">
                 <Label>To (destination line) *</Label>
                 <select className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" value={transferTarget.toLineId} onChange={(e) => setTransferTarget((t) => t && ({ ...t, toLineId: e.target.value }))}>
                   <option value="">— Select destination line —</option>
-                  {detailQuery.data.lines.filter((l) => l.id !== transferTarget.fromLineId).map((l) => <option key={l.id} value={l.id}>{l.head} › {l.sub_head ?? "General"} › {l.item_name}</option>)}
+                  {transferLines.filter((l) => l.id !== transferTarget.fromLineId).map((l) => <option key={l.id} value={l.id}>{l.head} › {l.sub_head ?? "General"} › {l.item_name}</option>)}
                 </select>
               </div>
               <div className="space-y-1">
@@ -2682,11 +2726,13 @@ export default function BranchBudgetManagementWorkspace() {
                 <Label>Reason *</Label>
                 <Textarea value={transferTarget.reason} onChange={(e) => setTransferTarget((t) => t && ({ ...t, reason: e.target.value }))} placeholder="Explain why this transfer is needed" />
               </div>
+              </>
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setTransferTarget(null)}>Cancel</Button>
               <Button
-                disabled={transferMutation.isPending || !transferTarget.fromLineId || !transferTarget.toLineId || !transferTarget.transferAmount || !transferTarget.reason.trim() || transferTarget.fromLineId === transferTarget.toLineId}
+                disabled={transferMutation.isPending || transferLines.length < 2 || !transferTarget.fromLineId || !transferTarget.toLineId || !transferTarget.transferAmount || !transferTarget.reason.trim() || transferTarget.fromLineId === transferTarget.toLineId}
                 onClick={() => void transferMutation.mutateAsync(transferTarget)}
               >
                 {transferMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}

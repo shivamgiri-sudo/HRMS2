@@ -2129,7 +2129,15 @@ export function BudgetLinkedGrnForm({
 
               {/* ── Proof section (inline within card) ── */}
               <DenseSection title="Attachments" />
-              <label className="flex cursor-pointer items-center gap-3 rounded-[8px] border border-dashed border-grn-line bg-grn-paper px-3 py-2.5 text-center transition-colors hover:border-grn-brand hover:bg-grn-card">
+              {/* `relative` is load-bearing, not decoration. Tailwind's `sr-only` makes the file
+                  input below `position: absolute`, and with no positioned ancestor its containing
+                  block was the INITIAL one -- the viewport -- not #main-content-area. So the input
+                  escaped that scroll container's clipping and stretched the DOCUMENT to reach it,
+                  giving /finance/grn a second, window-level scrollbar beside the app's own.
+                  Measured on production: documentElement.scrollHeight 1023 vs clientHeight 788, a
+                  235px phantom scroll that exactly matched this input's distance below the fold;
+                  containing it returns the document to 788 = 788, one scrollbar. */}
+              <label className="relative flex cursor-pointer items-center gap-3 rounded-[8px] border border-dashed border-grn-line bg-grn-paper px-3 py-2.5 text-center transition-colors hover:border-grn-brand hover:bg-grn-card">
                 <UploadCloud className="h-5 w-5 text-grn-ink-soft" strokeWidth={1.6} />
                 <div className="flex-1 text-left">
                   <span className="text-[12px] font-semibold text-grn-ink">
