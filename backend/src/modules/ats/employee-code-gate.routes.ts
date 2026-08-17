@@ -1,5 +1,6 @@
 import { Router, type NextFunction, type Response } from 'express';
 import { db } from '../../db/mysql.js';
+import { upsertOpenWorkItem } from '../../shared/workItem.js';
 import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { requireWriteAccess } from '../../middleware/authMiddleware.js';
@@ -134,14 +135,18 @@ router.post(
       [req.authUser!.id, candidateId, JSON.stringify({ employee_code: empCode })],
     ).catch(() => {});
 
-    // Work item for employee master creation
-    await db.execute(
-      `INSERT INTO work_item (id,item_type,title,module_code,entity_type,entity_id,assigned_to_role,priority,status,created_at)
-       VALUES (UUID(),'EMPLOYEE_MASTER_CREATION','Create employee master record','employees','candidate',?,
-               'hr','critical','pending',NOW())
-       ON DUPLICATE KEY UPDATE updated_at = NOW()`,
-      [candidateId],
-    ).catch(() => {});
+    // Work item for employee master creation.
+    // Was an INSERT ... ON DUPLICATE KEY UPDATE, which could never fire — work_item has no
+    // unique key but its primary — so every call appended another copy of the same task.
+    await upsertOpenWorkItem({
+      itemType: "EMPLOYEE_MASTER_CREATION",
+      title: "Create employee master record",
+      moduleCode: "employees",
+      entityType: "candidate",
+      entityId: candidateId,
+      assignedToRole: "hr",
+      priority: "critical",
+    }).catch(() => {});
 
     return res.json({ success: true, employeeCode: empCode, message: 'Employee code generated' });
   }),

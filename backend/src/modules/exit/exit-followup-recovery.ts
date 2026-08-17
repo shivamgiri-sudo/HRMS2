@@ -36,9 +36,8 @@
  *   into "the exit call failed", after the exit has already committed, which is strictly worse
  *   for the caller and changes nothing about the underlying step.
  */
-import type { RowDataPacket, ResultSetHeader } from "mysql2";
-import { db } from "../../db/mysql.js";
 import { logger } from "../../lib/logger.js";
+import { upsertOpenWorkItem } from "../../shared/workItem.js";
 
 /** One item_type per step, so the Work Inbox shows what actually needs doing. */
 export type ExitFollowUpStep =
@@ -90,29 +89,21 @@ export async function recordExitFollowUpFailure(
     `or retried by hand.`;
 
   try {
-    const [existing] = await db.execute<RowDataPacket[]>(
-      `SELECT id FROM work_item
-        WHERE item_type = ? AND entity_type = 'exit_request' AND entity_id = ?
-          AND status NOT IN ('completed', 'cancelled')
-        LIMIT 1`,
-      [itemType, exitRequestId],
-    );
-
-    if (existing[0]) {
-      await db.execute<ResultSetHeader>(
-        `UPDATE work_item SET description = ?, updated_at = NOW() WHERE id = ?`,
-        [description, String((existing[0] as { id: unknown }).id)],
-      );
-      return;
-    }
-
-    await db.execute<ResultSetHeader>(
-      `INSERT INTO work_item
-         (id, item_type, title, description, module_code, entity_type, entity_id,
-          assigned_to_role, priority, status, created_at)
-       VALUES (UUID(), ?, ?, ?, 'exit', 'exit_request', ?, ?, ?, 'pending', NOW())`,
-      [itemType, meta.title, description, exitRequestId, meta.role, meta.priority],
-    );
+    // Delegates to the shared recorder rather than keeping a second copy of the same
+    // open-item-or-refresh logic. That helper exists because three ATS producers wrote
+    // `ON DUPLICATE KEY UPDATE` against work_item, which has no unique key but its primary, so
+    // the clause never fired and each call appended a duplicate. Two implementations of the same
+    // idempotency rule is how they drift.
+    await upsertOpenWorkItem({
+      itemType,
+      title: meta.title,
+      description,
+      moduleCode: "exit",
+      entityType: "exit_request",
+      entityId: exitRequestId,
+      assignedToRole: meta.role,
+      priority: meta.priority,
+    });
   } catch (writeErr) {
     // Deliberately swallowed — see NON-THROWING above.
     logger.error(

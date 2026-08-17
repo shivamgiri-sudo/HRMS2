@@ -1,5 +1,6 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { db } from '../../db/mysql.js';
+import { upsertOpenWorkItem } from '../../shared/workItem.js';
 import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { requireWriteAccess } from '../../middleware/authMiddleware.js';
@@ -74,13 +75,17 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
     ]
   );
   // Create work item for BM approval
-  await db.execute(
-    `INSERT INTO work_item (id,item_type,title,module_code,entity_type,entity_id,assigned_to_role,priority,status,created_at)
-     VALUES (UUID(),'JCLR_BM_APPROVAL','JCLR pending BM approval','ats','candidate',?,
-             'branch_head','high','pending',NOW())
-     ON DUPLICATE KEY UPDATE updated_at = NOW()`,
-    [candidateId]
-  ).catch(() => {});
+  // Was an INSERT ... ON DUPLICATE KEY UPDATE, which could never fire — work_item has no unique
+  // key but its primary — so every call appended another copy of the same task.
+  await upsertOpenWorkItem({
+    itemType: 'JCLR_BM_APPROVAL',
+    title: 'JCLR pending BM approval',
+    moduleCode: 'ats',
+    entityType: 'candidate',
+    entityId: candidateId,
+    assignedToRole: 'branch_head',
+    priority: 'high',
+  }).catch(() => {});
   return res.json({ success: true, message: 'JCLR entry saved' });
 }));
 
@@ -105,13 +110,15 @@ router.post('/:candidateId/approve', requireAuth, requireWriteAccess, requireRol
     [candidateId, remarks, req.authUser!.id]
   ).catch(() => {});
   // Work item for JCLR entry
-  await db.execute(
-    `INSERT INTO work_item (id,item_type,title,module_code,entity_type,entity_id,assigned_to_role,priority,status,created_at)
-     VALUES (UUID(),'JCLR_ENTRY','JCLR entry pending after BM approval','ats','candidate',?,
-             'payroll_hr','high','pending',NOW())
-     ON DUPLICATE KEY UPDATE updated_at = NOW()`,
-    [candidateId]
-  ).catch(() => {});
+  await upsertOpenWorkItem({
+    itemType: 'JCLR_ENTRY',
+    title: 'JCLR entry pending after BM approval',
+    moduleCode: 'ats',
+    entityType: 'candidate',
+    entityId: candidateId,
+    assignedToRole: 'payroll_hr',
+    priority: 'high',
+  }).catch(() => {});
   return res.json({ success: true, message: 'JCLR approved' });
 }));
 

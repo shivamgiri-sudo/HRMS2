@@ -45,18 +45,25 @@ describe("recordExitFollowUpFailure", () => {
   });
 
   it("routes each step to the team that owns it", async () => {
-    const seen: Record<string, string> = {};
+    // Asserted by VALUE, not by column position. This originally read params[4], which broke the
+    // moment the insert moved into the shared work-item recorder with a different column order —
+    // a positional assertion pins the SQL's shape, not the claim being made.
+    const seen: Record<string, string[]> = {};
     for (const step of ["FF_DRAFT_CREATION", "DIRECT_REPORT_REPARENT", "IT_DEPROVISION_DISPATCH"] as const) {
       execute.mockReset();
       execute.mockResolvedValueOnce([[], []]).mockResolvedValueOnce([{ insertId: 1 }, []]);
       await recordExitFollowUpFailure(step, EXIT_ID, EMP_ID, new Error("x"));
       const params = execute.mock.calls.find(([s]) => /INSERT INTO work_item/i.test(String(s)))![1] as string[];
-      seen[step] = params[4]; // assigned_to_role
+      seen[step] = params.map(String);
     }
     // An unsettled F&F is payroll's, orphaned reports are HR's, access is IT's.
-    expect(seen.FF_DRAFT_CREATION).toBe("payroll");
-    expect(seen.DIRECT_REPORT_REPARENT).toBe("hr");
-    expect(seen.IT_DEPROVISION_DISPATCH).toBe("it");
+    expect(seen.FF_DRAFT_CREATION).toContain("payroll");
+    expect(seen.DIRECT_REPORT_REPARENT).toContain("hr");
+    expect(seen.IT_DEPROVISION_DISPATCH).toContain("it");
+    // And each must still carry its own step type, so the routing is not just coincidence.
+    expect(seen.FF_DRAFT_CREATION).toContain("EXIT_FOLLOWUP_FF_DRAFT_CREATION");
+    expect(seen.DIRECT_REPORT_REPARENT).toContain("EXIT_FOLLOWUP_DIRECT_REPORT_REPARENT");
+    expect(seen.IT_DEPROVISION_DISPATCH).toContain("EXIT_FOLLOWUP_IT_DEPROVISION_DISPATCH");
   });
 
   /**
