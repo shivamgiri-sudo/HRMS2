@@ -48,6 +48,9 @@ export interface CostCentreRecord {
 
   // Joined fields
   client_name?: string;
+  /** The legal entity actually invoiced, from billing_invoice_snapshot. Distinct from
+   *  client_name, which despite its name holds the PROCESS/campaign name. */
+  billing_client_name?: string;
   client_code?: string;
   lob_name?: string;
   lob_code?: string;
