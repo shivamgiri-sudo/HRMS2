@@ -112,7 +112,7 @@ function DisputeModal({
             Shift: <strong>{assignment.shift_name} ({fmtTime(assignment.start_time)} – {fmtTime(assignment.end_time)})</strong>
           </p>
         )}
-        <label className="block text-xs font-bold text-slate-700 mb-1">Reason for dispute *</label>
+        <label className="block text-xs font-bold text-slate-700 mb-1">Reason for dispute * (at least 5 characters)</label>
         <textarea
           value={reason}
           onChange={(e) => setReason(e.target.value)}
@@ -128,7 +128,7 @@ function DisputeModal({
             Cancel
           </button>
           <button
-            disabled={!reason.trim() || isPending}
+            disabled={reason.trim().length < 5 || isPending}
             onClick={() => onSubmit(assignment.id, reason.trim())}
             className="flex-1 rounded-xl bg-rose-600 py-2 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50"
           >
@@ -304,13 +304,14 @@ export default function NativeMyRoster() {
   const [notice, setNotice] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const [disputeTarget, setDisputeTarget] = useState<DailyAssignment | null>(null);
 
-  // Fetch published/active cycles for the employee's process
+  // Fetch weeks (Mon-Sun) this employee has a roster in — reads wfm_roster_assignment by
+  // date range, not cycle_id, so both the cycle-based and legacy roster engines are visible.
+  // See the endpoint's own comment in wfm.routes.ts for why: roster-gov's table
+  // (what this used to call) holds 0 rows in production.
   const cyclesQ = useQuery({
-    queryKey: ["my-roster-cycles"],
+    queryKey: ["my-roster-weeks"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ data: RosterCycle[] }>(
-        "/api/roster-gov/my-cycles?status=published,acknowledged,active",
-      );
+      const res = await hrmsApi.get<{ data: RosterCycle[] }>("/api/wfm/my-roster/weeks");
       return res.data ?? [];
     },
   });
@@ -327,13 +328,14 @@ export default function NativeMyRoster() {
     [],
   );
 
-  // Fetch roster assignments for selected cycle
+  // Fetch roster assignments for the selected week (selectedCycle.id is the week's
+  // Monday date, YYYY-MM-DD — see the /my-roster/weeks endpoint).
   const assignmentsQ = useQuery({
     queryKey: ["my-roster-assignments", selectedCycle?.id],
     enabled: !!selectedCycle?.id,
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: DailyAssignment[] }>(
-        `/api/roster-gov/my-roster/${selectedCycle!.id}`,
+        `/api/wfm/my-roster/week/${selectedCycle!.id}`,
       );
       return res.data ?? [];
     },
@@ -354,15 +356,33 @@ export default function NativeMyRoster() {
 
   const leaves: LeaveRequest[] = leavesQ.data ?? [];
 
-  // Bulk-acknowledge entire week
+  // Per-assignment acknowledge — the only ack primitive the backend has (WFM guards it on
+  // final_roster_status = 'pending_employee_ack', so it 409s harmlessly on anything already
+  // decided). "Acknowledge Week" below just calls this once per pending day in the week.
+  const perDayAckMutation = useMutation({
+    mutationFn: (assignmentId: string) =>
+      hrmsApi.post<{ success: boolean }>(`/api/wfm/my-weekoff/${assignmentId}/acknowledge`, {}),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["my-roster-assignments", selectedCycle?.id] });
+    },
+    onError: (err: Error) => {
+      setNotice({ type: "error", msg: err.message ?? "Acknowledgement failed." });
+    },
+  });
+
+  // Bulk-acknowledge entire week — no bulk endpoint exists on the WFM side, so this
+  // acknowledges every still-pending day in the currently loaded week one call at a time.
   const ackMutation = useMutation({
-    mutationFn: (cycleId: string) =>
-      hrmsApi.post<{ data: { acknowledged: number } }>(
-        `/api/roster-gov/cycles/${cycleId}/acknowledge`,
-        {},
-      ),
-    onSuccess: (res) => {
-      const count = res.data?.acknowledged ?? 0;
+    mutationFn: async (_cycleId: string) => {
+      const pendingIds = assignments
+        .filter((a) => a.acknowledgement_status === "pending")
+        .map((a) => a.id);
+      await Promise.all(
+        pendingIds.map((id) => hrmsApi.post<{ success: boolean }>(`/api/wfm/my-weekoff/${id}/acknowledge`, {})),
+      );
+      return pendingIds.length;
+    },
+    onSuccess: (count) => {
       setNotice({
         type: "success",
         msg: count > 0 ? `Roster acknowledged (${count} days confirmed).` : "Roster already acknowledged.",
@@ -374,22 +394,10 @@ export default function NativeMyRoster() {
     },
   });
 
-  // Per-assignment acknowledge
-  const perDayAckMutation = useMutation({
-    mutationFn: (assignmentId: string) =>
-      hrmsApi.post<{ success: boolean }>(`/api/roster-gov/assignments/${assignmentId}/acknowledge`, {}),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ["my-roster-assignments", selectedCycle?.id] });
-    },
-    onError: (err: Error) => {
-      setNotice({ type: "error", msg: err.message ?? "Acknowledgement failed." });
-    },
-  });
-
-  // Per-assignment dispute
+  // Per-assignment dispute — WFM's reject endpoint requires a reason of at least 5 characters.
   const disputeMutation = useMutation({
     mutationFn: ({ assignmentId, dispute_reason }: { assignmentId: string; dispute_reason: string }) =>
-      hrmsApi.post<{ success: boolean }>(`/api/roster-gov/assignments/${assignmentId}/dispute`, { dispute_reason }),
+      hrmsApi.post<{ success: boolean }>(`/api/wfm/my-weekoff/${assignmentId}/reject`, { reason: dispute_reason }),
     onSuccess: () => {
       setDisputeTarget(null);
       setNotice({ type: "success", msg: "Dispute raised. Your manager will review." });
@@ -471,7 +479,7 @@ export default function NativeMyRoster() {
               </div>
             ) : cycles.length === 0 ? (
               <div className="rounded-2xl border bg-white p-6 text-center text-sm text-slate-400">
-                No published roster cycles found.
+                No roster found for this period.
               </div>
             ) : (
               cycles.map((c) => (

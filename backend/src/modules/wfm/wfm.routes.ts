@@ -1094,6 +1094,123 @@ async function closeRosterAckInboxItem(
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// MY ROSTER (week view) — /api/wfm/my-roster/weeks, /api/wfm/my-roster/week/:weekStart
+//
+// wfm_roster_assignment is the only table holding real roster data (413,386 rows,
+// verified live 2026-08-17); roster_daily_assignment — what NativeMyRoster.tsx called
+// until now via /api/roster-gov/* — holds 0. Employees saw an empty page.
+//
+// A cycle-based repoint (the other rival table's model) would not have fixed this: of
+// those 413,386 rows, 412,032 have cycle_id = NULL — they come from the legacy plan_id
+// roster engines, never the cycle-based generator. These two endpoints read by
+// (employee_id, roster_date) instead of cycle_id, so both legacy and cycle-based rows
+// are visible. Employee acknowledgement itself still only works for rows a manager has
+// actually published into the ack chain (final_roster_status = 'pending_employee_ack',
+// via POST /roster/publish-to-employees) — for everything still sitting in 'generated'
+// (the legacy majority), this is read-only: the week is reported 'draft' rather than
+// carrying a false "acknowledge" affordance on data nobody ever asked them to confirm.
+// Bringing the legacy population into the ack workflow is a separate, larger decision
+// (whether/how to assign cycle_id retroactively) and is not made here.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ACK_TERMINAL = ["acknowledged", "approved_final", "published_to_rta", "force_approved_by_manager", "realigned_by_manager"];
+const ACK_DISPUTED = ["rejected_by_employee", "pending_manager_action", "escalated_to_hr", "manager_rejected_employee_request"];
+
+/** Map the 10-value final_roster_status enum onto the 3 states NativeMyRoster.tsx knows. */
+function mapAckStatus(finalRosterStatus: string): string {
+  if (ACK_TERMINAL.includes(finalRosterStatus)) return "acknowledged";
+  if (ACK_DISPUTED.includes(finalRosterStatus)) return "disputed";
+  if (finalRosterStatus === "pending_employee_ack") return "pending";
+  return "not_published"; // 'generated' — never entered the ack workflow
+}
+
+// GET /api/wfm/my-roster/weeks — which weeks (Mon-Sun) this employee has assignments in,
+// 8 weeks back through 4 weeks ahead, most recent first.
+wfmRouter.get("/my-roster/weeks", requireAuth, h(async (req: any, res: any) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ error: "No employee record" });
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+        DATE_SUB(roster_date, INTERVAL WEEKDAY(roster_date) DAY) AS week_start,
+        SUM(final_roster_status <> 'generated') AS non_generated_count,
+        SUM(final_roster_status IN (${ACK_TERMINAL.map(() => "?").join(",")})) AS terminal_count,
+        COUNT(*) AS total_count
+       FROM wfm_roster_assignment
+      WHERE employee_id = ?
+        AND roster_date BETWEEN DATE_SUB(CURDATE(), INTERVAL 8 WEEK) AND DATE_ADD(CURDATE(), INTERVAL 4 WEEK)
+      GROUP BY week_start
+      ORDER BY week_start DESC`,
+    [...ACK_TERMINAL, (emp as any).id]
+  );
+
+  const weeks = (rows as any[]).map((r) => {
+    const weekStart: string = r.week_start instanceof Date ? r.week_start.toISOString().slice(0, 10) : String(r.week_start);
+    const end = new Date(`${weekStart}T00:00:00`);
+    end.setDate(end.getDate() + 6);
+    const status = Number(r.non_generated_count) === 0
+      ? "draft"
+      : Number(r.terminal_count) === Number(r.total_count) ? "acknowledged" : "published";
+    return {
+      id: weekStart,
+      process_id: "",
+      week_start_date: weekStart,
+      week_end_date: end.toISOString().slice(0, 10),
+      status,
+    };
+  });
+
+  return res.json({ success: true, data: weeks });
+}));
+
+// GET /api/wfm/my-roster/week/:weekStart — the 7 days for that week, shift/weekoff/ack state.
+wfmRouter.get("/my-roster/week/:weekStart", requireAuth, h(async (req: any, res: any) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ error: "No employee record" });
+
+  const weekStart = String(req.params.weekStart);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
+    return res.status(400).json({ success: false, error: "weekStart must be YYYY-MM-DD" });
+  }
+  const weekEndDate = new Date(`${weekStart}T00:00:00`);
+  weekEndDate.setDate(weekEndDate.getDate() + 6);
+  const weekEnd = weekEndDate.toISOString().slice(0, 10);
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT wra.id, wra.cycle_id, wra.employee_id, wra.roster_date, wra.is_week_off,
+            wra.final_roster_status, wra.employee_ack_at,
+            COALESCE(wst.shift_name, wsm.shift_name) AS shift_name,
+            COALESCE(wst.start_time, wsm.start_time) AS start_time,
+            COALESCE(wst.end_time, wsm.end_time) AS end_time
+       FROM wfm_roster_assignment wra
+       LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
+       LEFT JOIN wfm_shift_master wsm ON wsm.id = wra.shift_id
+      WHERE wra.employee_id = ?
+        AND wra.roster_date BETWEEN ? AND ?
+      ORDER BY wra.roster_date`,
+    [(emp as any).id, weekStart, weekEnd]
+  );
+
+  const data = (rows as any[]).map((r) => ({
+    id: r.id,
+    cycle_id: r.cycle_id ?? weekStart,
+    employee_id: r.employee_id,
+    roster_date: r.roster_date instanceof Date ? r.roster_date.toISOString().slice(0, 10) : String(r.roster_date),
+    shift_template_id: null,
+    shift_name: r.shift_name ?? null,
+    start_time: r.start_time ?? null,
+    end_time: r.end_time ?? null,
+    is_week_off: r.is_week_off,
+    is_holiday: 0,
+    acknowledgement_status: mapAckStatus(r.final_roster_status),
+    acknowledged_at: r.employee_ack_at ?? null,
+    notes: null,
+  }));
+
+  return res.json({ success: true, data });
+}));
+
 wfmRouter.get("/my-weekoff", requireAuth, h(async (req: any, res: any) => {
   const emp = await getEmployeeForUser(req.authUser!.id);
   if (!emp) return res.status(403).json({ error: "No employee record" });
