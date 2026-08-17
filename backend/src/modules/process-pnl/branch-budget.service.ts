@@ -13,6 +13,7 @@ import {
 } from "./branch-budget-allocation.service.js";
 import { isPeriodLocked } from "./finance-period-lock.js";
 
+import { refuse } from "./finance-error.js";
 export type BudgetTaxTreatment =
   | "inclusive"
   | "exclusive"
@@ -124,7 +125,7 @@ function clamp(value: number, minimum: number, maximum: number) {
 function financialYearFromPeriod(periodCode: string) {
   const [year, month] = periodCode.split("-").map(Number);
   if (!year || !month || month < 1 || month > 12) {
-    throw new Error("Budget period must be a valid YYYY-MM month");
+    throw refuse(400, "BUDGET_PERIOD_INVALID", "Budget period must be a valid YYYY-MM month");
   }
   return month >= 4
     ? `${year}-${String(year + 1).slice(-2)}`
@@ -200,33 +201,33 @@ function canonicalizeTaxPatch(patch: {
       recoverableTaxPct: 0,
     };
   }
-  if (patch.gstRate < 0 || patch.gstRate > 100) throw new Error("Invalid GST rate");
-  if (patch.recoverableTaxPct < 0 || patch.recoverableTaxPct > 100) throw new Error("Invalid recoverable %");
+  if (patch.gstRate < 0 || patch.gstRate > 100) throw refuse(400, "GST_RATE_INVALID", "Invalid GST rate");
+  if (patch.recoverableTaxPct < 0 || patch.recoverableTaxPct > 100) throw refuse(400, "RECOVERABLE_PCT_INVALID", "Invalid recoverable %");
   return patch;
 }
 
 function validateLine(line: BudgetLineInput, index: number) {
   const label = `Budget line ${index + 1}`;
-  if (!line.head?.trim()) throw new Error(`${label}: head is required`);
+  if (!line.head?.trim()) throw refuse(400, "LINE_HEAD_REQUIRED", `${label}: head is required`);
   if (!line.itemName?.trim()) {
-    throw new Error(`${label}: item/service is required`);
+    throw refuse(400, "LINE_ITEM_REQUIRED", `${label}: item/service is required`);
   }
-  if (!line.unit?.trim()) throw new Error(`${label}: unit is required`);
+  if (!line.unit?.trim()) throw refuse(400, "LINE_UNIT_REQUIRED", `${label}: unit is required`);
   if (!line.justification?.trim()) {
-    throw new Error(`${label}: justification is required`);
+    throw refuse(400, "LINE_JUSTIFICATION_REQUIRED", `${label}: justification is required`);
   }
   if (!Number.isFinite(Number(line.quantity)) || Number(line.quantity) <= 0) {
-    throw new Error(`${label}: quantity must be greater than zero`);
+    throw refuse(400, "LINE_QUANTITY_INVALID", `${label}: quantity must be greater than zero`);
   }
   if (!Number.isFinite(Number(line.unitRate)) || Number(line.unitRate) < 0) {
-    throw new Error(`${label}: unit rate cannot be negative`);
+    throw refuse(400, "LINE_UNIT_RATE_INVALID", `${label}: unit rate cannot be negative`);
   }
   if (
     !Number.isFinite(Number(line.gstRate))
     || Number(line.gstRate) < 0
     || Number(line.gstRate) > 100
   ) {
-    throw new Error(`${label}: invalid GST rate`);
+    throw refuse(400, "GST_RATE_INVALID", `${label}: invalid GST rate`);
   }
   if (
     line.recoverableTaxPct != null
@@ -236,7 +237,7 @@ function validateLine(line: BudgetLineInput, index: number) {
       || Number(line.recoverableTaxPct) > 100
     )
   ) {
-    throw new Error(`${label}: recoverable GST must be between 0 and 100`);
+    throw refuse(400, "RECOVERABLE_PCT_INVALID", `${label}: recoverable GST must be between 0 and 100`);
   }
 }
 
@@ -256,12 +257,12 @@ async function validateAttribution(
         LIMIT 1`,
       [costCentreId]
     );
-    if (!costCentres[0]) throw new Error("Selected cost centre was not found");
+    if (!costCentres[0]) throw refuse(404, "COST_CENTRE_NOT_FOUND", "Selected cost centre was not found");
     const mappedProcessId = costCentres[0].process_id
       ? String(costCentres[0].process_id)
       : null;
     if (processId && mappedProcessId && processId !== mappedProcessId) {
-      throw new Error("Selected cost centre is mapped to a different process");
+      throw refuse(400, "COST_CENTRE_PROCESS_MISMATCH", "Selected cost centre is mapped to a different process");
     }
     processId = processId ?? mappedProcessId;
   }
@@ -275,12 +276,12 @@ async function validateAttribution(
       [processId]
     );
     const process = processes[0];
-    if (!process) throw new Error("Selected process was not found");
+    if (!process) throw refuse(404, "PROCESS_NOT_FOUND", "Selected process was not found");
     if (Number(process.active_status ?? 1) !== 1) {
-      throw new Error("Selected process is inactive");
+      throw refuse(409, "PROCESS_INACTIVE", "Selected process is inactive");
     }
     if (process.branch_id && String(process.branch_id) !== branchId) {
-      throw new Error("Selected process belongs to a different branch");
+      throw refuse(400, "PROCESS_BRANCH_MISMATCH", "Selected process belongs to a different branch");
     }
   }
 
@@ -292,9 +293,9 @@ async function validateAttribution(
         LIMIT 1`,
       [line.preferredVendorId]
     );
-    if (!vendors[0]) throw new Error("Preferred vendor was not found");
+    if (!vendors[0]) throw refuse(404, "VENDOR_NOT_FOUND", "Preferred vendor was not found");
     if (Number(vendors[0].is_active ?? 0) !== 1) {
-      throw new Error("Preferred vendor is inactive");
+      throw refuse(409, "VENDOR_INACTIVE", "Preferred vendor is inactive");
     }
   }
 
@@ -315,9 +316,9 @@ async function generateBudgetNumber(
     [branchId]
   );
   const branch = branches[0];
-  if (!branch) throw new Error("Selected branch was not found");
+  if (!branch) throw refuse(404, "BRANCH_NOT_FOUND", "Selected branch was not found");
   if (Number(branch.active_status ?? 1) !== 1) {
-    throw new Error("Selected branch is inactive");
+    throw refuse(409, "BRANCH_INACTIVE", "Selected branch is inactive");
   }
   const branchSequence = Number(branch.branch_seq ?? 0);
   return `BUD/${branchSequence}/${periodCode.replace("-", "")}/${id
@@ -922,7 +923,7 @@ export const branchBudgetService = {
         LIMIT 1`,
       [id]
     );
-    if (!headers[0]) throw new Error("Budget not found");
+    if (!headers[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
 
     const [lines] = await db.execute<RowDataPacket[]>(
       `SELECT l.*,
@@ -989,16 +990,16 @@ export const branchBudgetService = {
     actorRole = "branch_admin"
   ) {
     if (!input.branchId || !/^\d{4}-\d{2}$/.test(input.periodCode)) {
-      throw new Error("Branch and a valid budget period are required");
+      throw refuse(400, "BUDGET_BRANCH_PERIOD_REQUIRED", "Branch and a valid budget period are required");
     }
     const expectedFinancialYear = financialYearFromPeriod(input.periodCode);
     if (input.financialYear !== expectedFinancialYear) {
-      throw new Error(
+      throw refuse(400, "FINANCIAL_YEAR_MISMATCH",
         `Financial year must be ${expectedFinancialYear} for ${input.periodCode}`
       );
     }
     if (!input.lines?.length) {
-      throw new Error("At least one detailed budget line is required");
+      throw refuse(400, "BUDGET_LINES_REQUIRED", "At least one detailed budget line is required");
     }
     input.lines.forEach(validateLine);
 
@@ -1017,12 +1018,12 @@ export const branchBudgetService = {
           [budgetId]
         );
         existing = byId[0];
-        if (!existing) throw new Error("Budget draft was not found");
+        if (!existing) throw refuse(404, "BUDGET_NOT_FOUND", "Budget draft was not found");
         if (
           String(existing.branch_id) !== input.branchId
           || String(existing.period_code) !== input.periodCode
         ) {
-          throw new Error("Budget branch and period cannot be changed after creation");
+          throw refuse(409, "BUDGET_IDENTITY_IMMUTABLE", "Budget branch and period cannot be changed after creation");
         }
       } else {
         const [byPeriod] = await connection.execute<RowDataPacket[]>(
@@ -1055,7 +1056,7 @@ export const branchBudgetService = {
         existing
         && !["draft", "revision_required", "submitted"].includes(String(existing.status))
       ) {
-        throw new Error(
+        throw refuse(409, "BUDGET_ALREADY_EXISTS",
           `A ${existing.status} budget already exists for this branch and month`
         );
       }
@@ -1173,9 +1174,9 @@ export const branchBudgetService = {
           FOR UPDATE`,
         [id]
       );
-      if (!rows[0]) throw new Error("Budget not found");
+      if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       if (String(rows[0].status) !== "draft") {
-        throw new Error("Only a draft budget can be submitted");
+        throw refuse(409, "BUDGET_WRONG_STATUS", "Only a draft budget can be submitted");
       }
 
       const [result] = await connection.execute<ResultSetHeader>(
@@ -1185,7 +1186,7 @@ export const branchBudgetService = {
         [actorId, id]
       );
       if (result.affectedRows !== 1) {
-        throw new Error("Budget status changed before submission; refresh and retry");
+        throw refuse(409, "BUDGET_STATUS_CHANGED", "Budget status changed before submission; refresh and retry");
       }
       // Close any outstanding correction notes: they stay open (and visible) for the whole time the
       // branch admin is editing, and are marked resolved only once the budget goes back for review.
@@ -1235,13 +1236,13 @@ export const branchBudgetService = {
           ? "finance_head_approved"
           : null;
     if (!expectedStatus) {
-      throw new Error(`Role ${actorRole} cannot revise branch budgets`);
+      throw refuse(403, "BUDGET_NO_REVISE_ROLE", `Role ${actorRole} cannot revise branch budgets`);
     }
     if (!reason?.trim()) {
-      throw new Error("A reason is required when a reviewer edits budget lines");
+      throw refuse(400, "BUDGET_REVISION_REASON_REQUIRED", "A reason is required when a reviewer edits budget lines");
     }
     if (!lines?.length) {
-      throw new Error("At least one budget line is required");
+      throw refuse(400, "BUDGET_LINES_REQUIRED", "At least one budget line is required");
     }
 
     const connection = await db.getConnection();
@@ -1254,10 +1255,10 @@ export const branchBudgetService = {
           FOR UPDATE`,
         [id]
       );
-      if (!rows[0]) throw new Error("Budget not found");
+      if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       const currentStatus = String(rows[0].status);
       if (currentStatus !== expectedStatus) {
-        throw new Error(
+        throw refuse(403, "BUDGET_NO_REVISE_ROLE",
           `Role ${actorRole} cannot revise a budget in status ${currentStatus}`
         );
       }
@@ -1313,7 +1314,7 @@ export const branchBudgetService = {
    */
   async deleteOrSupersede(id: string, actorId: string, actorRole: string, reason: string) {
     if (!reason?.trim()) {
-      throw new Error("A reason is required to delete or supersede a budget");
+      throw refuse(400, "BUDGET_DELETE_REASON_REQUIRED", "A reason is required to delete or supersede a budget");
     }
     const connection = await db.getConnection();
     try {
@@ -1322,7 +1323,7 @@ export const branchBudgetService = {
         `SELECT id, budget_number, status, created_by FROM finance_budget_header WHERE id = ? FOR UPDATE`,
         [id]
       );
-      if (!rows[0]) throw new Error("Budget not found");
+      if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       const status = String(rows[0].status);
       const budgetNumber = String(rows[0].budget_number);
       const createdBy = rows[0].created_by == null ? null : String(rows[0].created_by);
@@ -1334,10 +1335,10 @@ export const branchBudgetService = {
       const isSuperAdminActor = actorRole.toLowerCase() === "super_admin";
       if (!isSuperAdminActor) {
         if (createdBy !== actorId) {
-          throw new Error("Only the person who raised this budget can delete it");
+          throw refuse(403, "BUDGET_DELETE_NOT_CREATOR", "Only the person who raised this budget can delete it");
         }
         if (status !== "draft") {
-          throw new Error(
+          throw refuse(409, "BUDGET_WRONG_STATUS",
             `This budget is ${status}, so it can no longer be deleted by its creator. `
             + "Ask a super admin to supersede it."
           );
@@ -1397,7 +1398,7 @@ export const branchBudgetService = {
         `DELETE FROM finance_budget_header WHERE id = ?`,
         [id]
       );
-      if (result.affectedRows !== 1) throw new Error("Budget was changed by someone else; refresh and retry");
+      if (result.affectedRows !== 1) throw refuse(409, "BUDGET_STATUS_CHANGED", "Budget was changed by someone else; refresh and retry");
       await connection.commit();
       return {
         outcome: "deleted" as const,
@@ -1432,10 +1433,10 @@ export const branchBudgetService = {
   ) {
     const role = actorRole.toLowerCase();
     if (!["finance_head", "super_admin"].includes(role)) {
-      throw new Error("Only finance_head or super_admin can amend a budget line's tax treatment");
+      throw refuse(403, "TAX_AMENDMENT_NO_ROLE", "Only finance_head or super_admin can amend a budget line's tax treatment");
     }
     if (!reason?.trim()) {
-      throw new Error("A reason is required for a tax-treatment amendment");
+      throw refuse(400, "TAX_AMENDMENT_REASON_REQUIRED", "A reason is required for a tax-treatment amendment");
     }
 
     const connection = await db.getConnection();
@@ -1446,9 +1447,9 @@ export const branchBudgetService = {
         `SELECT id, status FROM finance_budget_header WHERE id = ? FOR UPDATE`,
         [budgetId]
       ) as unknown as [RowDataPacket[], unknown];
-      if (!header) throw new Error("Budget not found");
+      if (!header) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       if (String(header.status) !== "active") {
-        throw new Error(
+        throw refuse(409, "BUDGET_WRONG_STATUS",
           `Tax-treatment amendment is only allowed on active budgets (current status: ${header.status})`
         );
       }
@@ -1460,7 +1461,7 @@ export const branchBudgetService = {
           FOR UPDATE`,
         [lineId, budgetId]
       ) as unknown as [RowDataPacket[], unknown];
-      if (!line) throw new Error("Budget line not found in this budget");
+      if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found in this budget");
 
       const oldTreatment = String(line.tax_treatment);
       const recomputed = calculateBudgetLine({
@@ -1556,7 +1557,7 @@ export const branchBudgetService = {
       `SELECT id, status, period_code FROM finance_budget_header WHERE id = ? LIMIT 1`,
       [budgetId]
     ) as unknown as [RowDataPacket[], unknown];
-    if (!header) throw new Error("Budget not found");
+    if (!header) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
 
     const [[line]] = await db.execute<RowDataPacket[]>(
       `SELECT id, item_name, tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
@@ -1565,7 +1566,7 @@ export const branchBudgetService = {
          FROM finance_budget_line WHERE id = ? AND budget_id = ? LIMIT 1`,
       [lineId, budgetId]
     ) as unknown as [RowDataPacket[], unknown];
-    if (!line) throw new Error("Budget line not found");
+    if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
 
     const periodLocked = await isPeriodLocked(header.period_code ?? null);
 
@@ -1641,7 +1642,7 @@ export const branchBudgetService = {
     actorRole: string,
     reason: string
   ): Promise<{ amendmentId: string }> {
-    if (!reason?.trim()) throw new Error("Reason is required for a tax treatment amendment");
+    if (!reason?.trim()) throw refuse(400, "TAX_AMENDMENT_REASON_REQUIRED", "Reason is required for a tax treatment amendment");
 
     const canonical = canonicalizeTaxPatch(patch);
     const amendmentId = randomUUID();
@@ -1653,12 +1654,12 @@ export const branchBudgetService = {
         `SELECT id, status, period_code FROM finance_budget_header WHERE id = ? FOR UPDATE`,
         [budgetId]
       ) as unknown as [RowDataPacket[], unknown];
-      if (!header) throw new Error("Budget not found");
+      if (!header) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       if (String(header.status) !== "active") {
-        throw new Error("Budget must be active to request a tax treatment amendment");
+        throw refuse(409, "BUDGET_WRONG_STATUS", "Budget must be active to request a tax treatment amendment");
       }
       if (await isPeriodLocked(header.period_code ?? null, connection)) {
-        throw new Error("Period is locked — tax treatment amendments are blocked until the period is reopened");
+        throw refuse(409, "FINANCE_PERIOD_LOCKED", "Period is locked — tax treatment amendments are blocked until the period is reopened");
       }
 
       const [[line]] = await connection.execute<RowDataPacket[]>(
@@ -1669,7 +1670,7 @@ export const branchBudgetService = {
            FROM finance_budget_line WHERE id = ? AND budget_id = ? FOR UPDATE`,
         [lineId, budgetId]
       ) as unknown as [RowDataPacket[], unknown];
-      if (!line) throw new Error("Budget line not found");
+      if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
 
       const inUse =
         Number(line.reserved_amount) > 0 ||
@@ -1686,7 +1687,7 @@ export const branchBudgetService = {
       ) as unknown as [RowDataPacket[], unknown];
 
       if (inUse || Number(grnRow?.cnt ?? 0) > 0) {
-        throw new Error("BUDGET_LINE_ALREADY_IN_USE");
+        throw refuse(409, "BUDGET_LINE_ALREADY_IN_USE", "BUDGET_LINE_ALREADY_IN_USE");
       }
 
       const [[pendingRow]] = await connection.execute<RowDataPacket[]>(
@@ -1695,7 +1696,7 @@ export const branchBudgetService = {
         [lineId]
       ) as unknown as [RowDataPacket[], unknown];
       if (Number(pendingRow?.cnt ?? 0) > 0) {
-        throw new Error("A pending tax amendment already exists for this line");
+        throw refuse(409, "TAX_AMENDMENT_PENDING_EXISTS", "A pending tax amendment already exists for this line");
       }
 
       const quotedAmount = Number(line.unit_rate) * (Number(line.quantity) || 1);
@@ -1777,7 +1778,7 @@ export const branchBudgetService = {
   ) {
     const role = actorRole.toLowerCase();
     if (!["finance_head", "super_admin"].includes(role)) {
-      throw new Error("Only finance_head or super_admin can review tax amendments");
+      throw refuse(403, "TAX_AMENDMENT_NO_ROLE", "Only finance_head or super_admin can review tax amendments");
     }
 
     const connection = await db.getConnection();
@@ -1788,10 +1789,10 @@ export const branchBudgetService = {
         `SELECT * FROM finance_budget_line_tax_amendment WHERE id = ? FOR UPDATE`,
         [amendmentId]
       ) as unknown as [RowDataPacket[], unknown];
-      if (!amend) throw new Error("Tax amendment not found");
-      if (String(amend.status) !== "pending") throw new Error("Amendment is no longer pending");
+      if (!amend) throw refuse(404, "TAX_AMENDMENT_NOT_FOUND", "Tax amendment not found");
+      if (String(amend.status) !== "pending") throw refuse(409, "TAX_AMENDMENT_NOT_PENDING", "Amendment is no longer pending");
       if (String(amend.requested_by) === actorId) {
-        throw new Error("The requestor cannot approve their own amendment");
+        throw refuse(409, "TAX_AMENDMENT_MAKER_CHECKER", "The requestor cannot approve their own amendment");
       }
 
       if (decision === "rejected") {
@@ -1816,10 +1817,10 @@ export const branchBudgetService = {
         [String(amend.budget_id)]
       ) as unknown as [RowDataPacket[], unknown];
       if (!header || String(header.status) !== "active") {
-        throw new Error("Budget is no longer active");
+        throw refuse(409, "BUDGET_WRONG_STATUS", "Budget is no longer active");
       }
       if (await isPeriodLocked(header.period_code ?? null, connection)) {
-        throw new Error("Period has been locked since the amendment was requested");
+        throw refuse(409, "FINANCE_PERIOD_LOCKED", "Period has been locked since the amendment was requested");
       }
 
       const [[line]] = await connection.execute<RowDataPacket[]>(
@@ -1828,7 +1829,7 @@ export const branchBudgetService = {
            FROM finance_budget_line WHERE id = ? AND budget_id = ? FOR UPDATE`,
         [String(amend.line_id), String(amend.budget_id)]
       ) as unknown as [RowDataPacket[], unknown];
-      if (!line) throw new Error("Budget line no longer exists");
+      if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line no longer exists");
 
       const inUse =
         Number(line.reserved_amount) > 0 ||
@@ -1836,7 +1837,7 @@ export const branchBudgetService = {
         Number(line.reserved_quantity) > 0 ||
         Number(line.consumed_quantity) > 0;
       if (inUse) {
-        throw new Error("BUDGET_LINE_ALREADY_IN_USE — line was used since the amendment was requested; cannot apply");
+        throw refuse(409, "BUDGET_LINE_ALREADY_IN_USE", "BUDGET_LINE_ALREADY_IN_USE — line was used since the amendment was requested; cannot apply");
       }
 
       const after = calculateBudgetLine({
@@ -1930,20 +1931,20 @@ export const branchBudgetService = {
           ? "finance_head_approved"
           : null;
     if (!expectedStatus) {
-      throw new Error(`Role ${actorRole} cannot review branch budgets`);
+      throw refuse(403, "BUDGET_NO_REVIEW_ROLE", `Role ${actorRole} cannot review branch budgets`);
     }
     if (decision !== "approve" && !remarks?.trim()) {
-      throw new Error("Remarks are required for rejection or revision");
+      throw refuse(400, "BUDGET_REVIEW_REMARKS_REQUIRED", "Remarks are required for rejection or revision");
     }
     const corrections = (lineCorrections ?? []).filter((entry) => entry.note?.trim());
     if (decision === "revision" && !corrections.length) {
-      throw new Error(
+      throw refuse(400, "BUDGET_CORRECTION_NOTES_REQUIRED",
         "At least one head/sub-head correction note is required when sending a budget back for revision"
       );
     }
     for (const entry of corrections) {
       if (!entry.head?.trim()) {
-        throw new Error("Every correction note must name the head it applies to");
+        throw refuse(400, "BUDGET_CORRECTION_NOTES_REQUIRED", "Every correction note must name the head it applies to");
       }
     }
 
@@ -1959,11 +1960,11 @@ export const branchBudgetService = {
           FOR UPDATE`,
         [id]
       );
-      if (!rows[0]) throw new Error("Budget not found");
+      if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       const currentStatus = String(rows[0].status) as BudgetStatus;
       const currentRevision = Number(rows[0].revision_no ?? 0);
       if (currentStatus !== expectedStatus) {
-        throw new Error(
+        throw refuse(403, "BUDGET_NO_REVIEW_ROLE",
           `Role ${actorRole} cannot review budget in status ${currentStatus}`
         );
       }
@@ -1976,35 +1977,35 @@ export const branchBudgetService = {
         const bhApprovedBy = rows[0].branch_head_approved_by ? String(rows[0].branch_head_approved_by) : null;
         const fhApprovedBy = rows[0].finance_head_approved_by ? String(rows[0].finance_head_approved_by) : null;
         if (role === "branch_head" && submittedBy && submittedBy === actorId) {
-          throw new Error(
+          throw refuse(409, "BUDGET_MAKER_CHECKER",
             "Maker-checker violation: the same person cannot submit and Branch Head-approve the same budget"
           );
         }
         if (role === "finance_head") {
           if (submittedBy && submittedBy === actorId) {
-            throw new Error(
+            throw refuse(409, "BUDGET_MAKER_CHECKER",
               "Maker-checker violation: Finance Head cannot be the person who submitted this budget"
             );
           }
           if (bhApprovedBy && bhApprovedBy === actorId) {
-            throw new Error(
+            throw refuse(409, "BUDGET_MAKER_CHECKER",
               "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head approval"
             );
           }
         }
         if (role === "accounts_head") {
           if (submittedBy && submittedBy === actorId) {
-            throw new Error(
+            throw refuse(409, "BUDGET_MAKER_CHECKER",
               "Maker-checker violation: Accounts Head cannot be the person who submitted this budget"
             );
           }
           if (bhApprovedBy && bhApprovedBy === actorId) {
-            throw new Error(
+            throw refuse(409, "BUDGET_MAKER_CHECKER",
               "Maker-checker violation: Accounts Head cannot be the person who performed the Branch Head approval"
             );
           }
           if (fhApprovedBy && fhApprovedBy === actorId) {
-            throw new Error(
+            throw refuse(409, "BUDGET_MAKER_CHECKER",
               "Maker-checker violation: Accounts Head cannot be the person who performed the Finance Head approval"
             );
           }
@@ -2042,7 +2043,7 @@ export const branchBudgetService = {
         ]
       );
       if (result.affectedRows !== 1) {
-        throw new Error("Budget status changed during review; refresh and retry");
+        throw refuse(409, "BUDGET_STATUS_CHANGED", "Budget status changed during review; refresh and retry");
       }
 
       for (const entry of corrections) {
@@ -2094,7 +2095,7 @@ export const branchBudgetService = {
     costCentreId?: string;
     period?: string;
   }) {
-    if (!filters.branchId) throw new Error("Branch is required");
+    if (!filters.branchId) throw refuse(400, "BRANCH_REQUIRED", "Branch is required");
     const conditions = ["h.branch_id = ?", "h.status = 'active'"];
     const params: unknown[] = [filters.branchId];
     if (filters.period) {
@@ -2156,7 +2157,7 @@ export const branchBudgetService = {
       [lineId, branchId]
     );
     if (!rows[0]) {
-      throw new Error(
+      throw refuse(409, "BUDGET_LINE_UNAVAILABLE",
         "The selected approved budget line is unavailable for this branch"
       );
     }
@@ -2177,9 +2178,9 @@ export const branchBudgetService = {
     actorRole?: string;
   }) {
     const amount = roundMoney(Number(input.transferAmount));
-    if (!Number.isFinite(amount) || amount <= 0) throw new Error("Transfer amount must be a positive number");
-    if (!input.reason?.trim()) throw new Error("Reason is required for a budget transfer");
-    if (input.fromLineId === input.toLineId) throw new Error("From and To lines must be different");
+    if (!Number.isFinite(amount) || amount <= 0) throw refuse(400, "TRANSFER_AMOUNT_INVALID", "Transfer amount must be a positive number");
+    if (!input.reason?.trim()) throw refuse(400, "TRANSFER_REASON_REQUIRED", "Reason is required for a budget transfer");
+    if (input.fromLineId === input.toLineId) throw refuse(400, "TRANSFER_SAME_LINE", "From and To lines must be different");
 
     // P1-7: Idempotency — reject a duplicate pending transfer for the same lines/amount
     // created in the last 60 seconds (double-click or network retry guard).
@@ -2192,7 +2193,7 @@ export const branchBudgetService = {
       [input.budgetId, input.fromLineId, input.toLineId, amount]
     );
     if ((dupes as RowDataPacket[]).length > 0) {
-      throw new Error(
+      throw refuse(409, "TRANSFER_DUPLICATE_PENDING",
         "A duplicate transfer request is already pending. The previous request is awaiting approval."
       );
     }
@@ -2202,13 +2203,13 @@ export const branchBudgetService = {
       [input.budgetId]
     );
     const header = (headerRows as RowDataPacket[])[0];
-    if (!header) throw new Error("Budget not found");
-    if (String(header.status) !== "active") throw new Error("Budget transfers are only allowed on active budgets");
+    if (!header) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
+    if (String(header.status) !== "active") throw refuse(409, "BUDGET_WRONG_STATUS", "Budget transfers are only allowed on active budgets");
 
     // Early period-lock check at submission time — gives an upfront error rather than
     // having the request sit pending only to fail at review.
     if (await isPeriodLocked(String(header.period_code))) {
-      throw new Error(
+      throw refuse(409, "FINANCE_PERIOD_LOCKED",
         `${header.period_code} is locked for P&L close. Budget transfers cannot be submitted for locked periods.`
       );
     }
@@ -2220,16 +2221,16 @@ export const branchBudgetService = {
     );
     const fromLine = (lineRows as RowDataPacket[]).find((r) => String(r.id) === input.fromLineId);
     const toLine   = (lineRows as RowDataPacket[]).find((r) => String(r.id) === input.toLineId);
-    if (!fromLine) throw new Error("Source budget line not found");
-    if (!toLine)   throw new Error("Target budget line not found");
-    if (String(fromLine.budget_id) !== input.budgetId) throw new Error("Source line belongs to a different budget");
-    if (String(toLine.budget_id)   !== input.budgetId) throw new Error("Target line belongs to a different budget");
+    if (!fromLine) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Source budget line not found");
+    if (!toLine)   throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Target budget line not found");
+    if (String(fromLine.budget_id) !== input.budgetId) throw refuse(400, "TRANSFER_LINE_WRONG_BUDGET", "Source line belongs to a different budget");
+    if (String(toLine.budget_id)   !== input.budgetId) throw refuse(400, "TRANSFER_LINE_WRONG_BUDGET", "Target line belongs to a different budget");
 
     const available = roundMoney(
       Number(fromLine.gross_amount) - Number(fromLine.reserved_amount) - Number(fromLine.consumed_amount)
     );
     if (amount > available + 0.01) {
-      throw new Error(
+      throw refuse(409, "TRANSFER_EXCEEDS_AVAILABLE",
         `Transfer amount ₹${amount.toLocaleString("en-IN")} exceeds available balance ₹${available.toLocaleString("en-IN")} on the source line`
       );
     }
@@ -2277,7 +2278,7 @@ export const branchBudgetService = {
         WHERE t.id = ?`,
       [id]
     );
-    if (!(rows as RowDataPacket[])[0]) throw new Error("Transfer not found");
+    if (!(rows as RowDataPacket[])[0]) throw refuse(404, "TRANSFER_NOT_FOUND", "Transfer not found");
     return (rows as RowDataPacket[])[0];
   },
 
@@ -2299,7 +2300,7 @@ export const branchBudgetService = {
     remarks?: string
   ) {
     if (decision === "reject" && !remarks?.trim()) {
-      throw new Error("A reason is required to reject a transfer request");
+      throw refuse(400, "TRANSFER_REJECT_REASON_REQUIRED", "A reason is required to reject a transfer request");
     }
 
     const connection = await db.getConnection();
@@ -2315,14 +2316,14 @@ export const branchBudgetService = {
         [id]
       );
       const transfer = (transferRows as RowDataPacket[])[0];
-      if (!transfer) throw new Error("Budget transfer not found");
+      if (!transfer) throw refuse(404, "TRANSFER_NOT_FOUND", "Budget transfer not found");
       if (String(transfer.status) !== "pending") {
-        throw new Error(`Transfer is not awaiting approval (status: ${transfer.status})`);
+        throw refuse(409, "TRANSFER_WRONG_STAGE", `Transfer is not awaiting approval (status: ${transfer.status})`);
       }
 
       // P1-7: Maker-checker — approver cannot be the person who submitted.
       if (String(transfer.created_by) === actorId) {
-        throw new Error(
+        throw refuse(409, "TRANSFER_MAKER_CHECKER",
           "Maker-checker violation: the approver cannot be the same person who submitted this transfer"
         );
       }
@@ -2347,7 +2348,7 @@ export const branchBudgetService = {
 
       // P0-3: Re-check period lock inside the transaction before mutation.
       if (await isPeriodLocked(String(transfer.period_code), connection)) {
-        throw new Error(
+        throw refuse(409, "FINANCE_PERIOD_LOCKED",
           `${transfer.period_code} is locked for P&L close. This transfer cannot be applied.`
         );
       }
@@ -2357,7 +2358,7 @@ export const branchBudgetService = {
         [String(transfer.budget_id)]
       );
       if (!headerRows[0] || String(headerRows[0].status) !== "active") {
-        throw new Error("Budget is no longer active; transfer cannot be applied");
+        throw refuse(409, "BUDGET_WRONG_STATUS", "Budget is no longer active; transfer cannot be applied");
       }
 
       const amount = Number(transfer.transfer_amount);
@@ -2371,7 +2372,7 @@ export const branchBudgetService = {
         [String(transfer.from_line_id)]
       );
       const fromLine = (fromRows as RowDataPacket[])[0];
-      if (!fromLine) throw new Error("Source budget line not found");
+      if (!fromLine) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Source budget line not found");
 
       // Derive quantity delta: grossPerUnit = calculateBudgetLine({...line, quantity:1}).grossAmount.
       // This is the exact inverse of the forward calculation so the gross change is precisely
@@ -2390,19 +2391,19 @@ export const branchBudgetService = {
         justification: "",
       }).grossAmount;
       if (!fromGrossPerUnit || fromGrossPerUnit <= 0) {
-        throw new Error("Source line has a zero unit rate; transfer amount cannot be derived");
+        throw refuse(409, "TRANSFER_ZERO_UNIT_RATE", "Source line has a zero unit rate; transfer amount cannot be derived");
       }
 
       const fromQtyDelta = roundQuantity(amount / fromGrossPerUnit);
       const newFromQty = roundQuantity(Number(fromLine.quantity) - fromQtyDelta);
       if (newFromQty < 0) {
-        throw new Error("Transfer would reduce source line quantity below zero");
+        throw refuse(409, "TRANSFER_BELOW_ZERO", "Transfer would reduce source line quantity below zero");
       }
       const available = roundMoney(
         Number(fromLine.gross_amount) - Number(fromLine.reserved_amount) - Number(fromLine.consumed_amount)
       );
       if (amount > available + 0.01) {
-        throw new Error(
+        throw refuse(409, "TRANSFER_EXCEEDS_AVAILABLE",
           `Transfer amount ₹${amount.toLocaleString("en-IN")} exceeds available balance ₹${available.toLocaleString("en-IN")} on the source line`
         );
       }
@@ -2442,7 +2443,7 @@ export const branchBudgetService = {
         [String(transfer.to_line_id)]
       );
       const toLine = (toRows as RowDataPacket[])[0];
-      if (!toLine) throw new Error("Target budget line not found");
+      if (!toLine) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Target budget line not found");
 
       const toGrossPerUnit = calculateBudgetLine({
         head: String(toLine.head),
@@ -2458,7 +2459,7 @@ export const branchBudgetService = {
         justification: "",
       }).grossAmount;
       if (!toGrossPerUnit || toGrossPerUnit <= 0) {
-        throw new Error("Target line has a zero unit rate; transfer amount cannot be derived");
+        throw refuse(409, "TRANSFER_ZERO_UNIT_RATE", "Target line has a zero unit rate; transfer amount cannot be derived");
       }
 
       const toQtyDelta = roundQuantity(amount / toGrossPerUnit);

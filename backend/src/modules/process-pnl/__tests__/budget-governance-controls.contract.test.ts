@@ -60,7 +60,12 @@ describe("Budget tax amendment (737a0a42)", () => {
   it("reviewTaxAmendment re-checks period lock inside the transaction (P0-3)", () => {
     const svc = read("src/modules/process-pnl/branch-budget.service.ts");
     const fnStart = svc.indexOf("async reviewTaxAmendment(");
-    const fn = svc.slice(fnStart, fnStart + 4000);
+    // Slice to the next top-level method rather than a fixed character budget. The old
+    // `fnStart + 4000` window silently dropped the tail of the function as soon as the body
+    // grew -- attaching a status and code to each throw was enough to push pnl_cost_amount out
+    // of range, failing the test while the behaviour it guards was untouched.
+    const offset = svc.slice(fnStart + 1).search(/\n {2}async /);
+    const fn = offset > -1 ? svc.slice(fnStart, fnStart + 1 + offset) : svc.slice(fnStart);
     expect(fn).toContain("isPeriodLocked(");
     const txIdx = fn.indexOf("beginTransaction");
     const lockIdx = fn.indexOf("isPeriodLocked(");
@@ -71,7 +76,12 @@ describe("Budget tax amendment (737a0a42)", () => {
   it("reviewTaxAmendment recalculates the line via calculateBudgetLine, not direct column patch", () => {
     const svc = read("src/modules/process-pnl/branch-budget.service.ts");
     const fnStart = svc.indexOf("async reviewTaxAmendment(");
-    const fn = svc.slice(fnStart, fnStart + 4000);
+    // Slice to the next top-level method rather than a fixed character budget. The old
+    // `fnStart + 4000` window silently dropped the tail of the function as soon as the body
+    // grew -- attaching a status and code to each throw was enough to push pnl_cost_amount out
+    // of range, failing the test while the behaviour it guards was untouched.
+    const offset = svc.slice(fnStart + 1).search(/\n {2}async /);
+    const fn = offset > -1 ? svc.slice(fnStart, fnStart + 1 + offset) : svc.slice(fnStart);
     expect(fn).toContain("calculateBudgetLine(");
     // All dependent columns must be updated
     for (const col of ["pnl_cost_amount", "cgst_amount", "recoverable_tax_amount"]) {

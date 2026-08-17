@@ -11,6 +11,7 @@ import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance
 import { resolvePendingWith } from "../finance/finance-workflow-role.js";
 import { lockActiveBudgetLine } from "./budget-consumption.service.js";
 import { isPeriodLocked } from "./finance-period-lock.js";
+import { refuse } from "./finance-error.js";
 
 export type BudgetTopupStatus =
   | "submitted"
@@ -36,10 +37,6 @@ export type BudgetTopupStatus =
  *   404 — the row does not exist
  *   409 — the row exists but its current state forbids this action (stage, status, lock, maker)
  */
-function refuse(status: number, code: string, message: string) {
-  return Object.assign(new Error(message), { statusCode: status, code });
-}
-
 function roundMoney(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }

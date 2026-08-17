@@ -53,7 +53,12 @@ describe("mandatory branch-budget Head/Sub-head coverage", () => {
     it("has no coverage completeness gate in the submit path", () => {
       // Nothing may be thrown on account of a Head/Sub-head. This is the assertion that
       // matters: it catches a re-added gate however it is worded or implemented.
-      const thrown = [...submitBody.matchAll(/throw new Error\(([\s\S]*?)\);/g)].map((m) => m[1]);
+      //
+      // Both throw forms are recognised. Matching only `throw new Error(` used to make this test
+      // pass vacuously the moment the refusals moved to `throw refuse(status, code, message)` —
+      // `thrown` came back empty, which is indistinguishable here from "no coverage gate exists".
+      // The guard below that insists on a non-empty list is what caught it.
+      const thrown = [...submitBody.matchAll(/throw (?:new Error|refuse)\(([\s\S]*?)\);/g)].map((m) => m[1]);
       expect(thrown.length, "expected submitBudget to still throw for its real guards").toBeGreaterThan(0);
       const coverageThrows = thrown.filter((message) => /sub-?head|coverage|decision/i.test(message));
       expect(

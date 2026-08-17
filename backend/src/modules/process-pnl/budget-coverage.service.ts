@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
+import { refuse } from "./finance-error.js";
 export type BudgetPlanningStatus = "planned" | "not_planned" | "not_applicable";
 
 export interface BudgetCoverageInput {
@@ -16,7 +17,7 @@ async function getBudgetOrThrow(budgetId: string) {
     "SELECT * FROM finance_budget_header WHERE id = ? LIMIT 1",
     [budgetId]
   );
-  if (!rows[0]) throw new Error("Budget not found");
+  if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
   return rows[0] as any;
 }
 
@@ -126,7 +127,7 @@ export const budgetCoverageService = {
     actorUserId: string
   ) {
     if (!Array.isArray(entries) || !entries.length) {
-      throw new Error("At least one Head/Sub-head coverage decision is required");
+      throw refuse(400, "COVERAGE_DECISIONS_REQUIRED", "At least one Head/Sub-head coverage decision is required");
     }
     const connection = await db.getConnection();
     try {
@@ -135,25 +136,25 @@ export const budgetCoverageService = {
         "SELECT status FROM finance_budget_header WHERE id = ? FOR UPDATE",
         [budgetId]
       );
-      if (!budgetRows[0]) throw new Error("Budget not found");
+      if (!budgetRows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       if (!["draft", "revision_required"].includes(String(budgetRows[0].status))) {
-        throw new Error("Head/Sub-head coverage can only be changed on an editable budget");
+        throw refuse(409, "BUDGET_NOT_EDITABLE", "Head/Sub-head coverage can only be changed on an editable budget");
       }
 
       const seen = new Set<string>();
       for (const [index, entry] of entries.entries()) {
         if (!entry.expenseHeadId || !entry.expenseSubHeadId) {
-          throw new Error(`Coverage row ${index + 1}: Head and Sub-head are required`);
+          throw refuse(400, "COVERAGE_ROW_INVALID", `Coverage row ${index + 1}: Head and Sub-head are required`);
         }
         if (!("planned,not_planned,not_applicable".split(",")).includes(entry.planningStatus)) {
-          throw new Error(`Coverage row ${index + 1}: invalid planning status`);
+          throw refuse(400, "COVERAGE_ROW_INVALID", `Coverage row ${index + 1}: invalid planning status`);
         }
         if (seen.has(entry.expenseSubHeadId)) {
-          throw new Error(`Coverage row ${index + 1}: duplicate Sub-head decision`);
+          throw refuse(400, "COVERAGE_ROW_DUPLICATE", `Coverage row ${index + 1}: duplicate Sub-head decision`);
         }
         seen.add(entry.expenseSubHeadId);
         if (entry.planningStatus !== "planned" && !entry.reason?.trim()) {
-          throw new Error(
+          throw refuse(400, "COVERAGE_REASON_REQUIRED", 
             `Coverage row ${index + 1}: reason is mandatory for ${entry.planningStatus.replace("_", " ")}`
           );
         }
@@ -166,7 +167,7 @@ export const budgetCoverageService = {
           [entry.expenseSubHeadId, entry.expenseHeadId]
         );
         if (!masterRows[0]) {
-          throw new Error(`Coverage row ${index + 1}: active Head/Sub-head mapping was not found`);
+          throw refuse(400, "COVERAGE_MAPPING_NOT_FOUND", `Coverage row ${index + 1}: active Head/Sub-head mapping was not found`);
         }
         if (entry.planningStatus !== "planned") {
           const [lineRows] = await connection.execute<RowDataPacket[]>(
@@ -179,7 +180,7 @@ export const budgetCoverageService = {
             [entry.expenseHeadId, entry.expenseSubHeadId, budgetId]
           );
           if (Number(lineRows[0]?.total ?? 0) > 0) {
-            throw new Error(
+            throw refuse(409, "COVERAGE_LINE_EXISTS", 
               `Coverage row ${index + 1}: remove the detailed budget line before marking this Sub-head ${entry.planningStatus.replace("_", " ")}`
             );
           }
@@ -260,9 +261,9 @@ export const budgetCoverageService = {
         "SELECT status FROM finance_budget_header WHERE id = ? FOR UPDATE",
         [budgetId]
       );
-      if (!budgetRows[0]) throw new Error("Budget not found");
+      if (!budgetRows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       if (String(budgetRows[0].status) !== "draft") {
-        throw new Error("Only a draft budget can be submitted");
+        throw refuse(409, "BUDGET_WRONG_STATUS", "Only a draft budget can be submitted");
       }
 
       // Head/Sub-head coverage does NOT gate submission. There is deliberately no
@@ -279,7 +280,7 @@ export const budgetCoverageService = {
         [budgetId]
       );
       if (Number(lineCountRows[0]?.total ?? 0) <= 0) {
-        throw new Error("Add at least one budget line before submitting");
+        throw refuse(409, "BUDGET_LINES_REQUIRED", "Add at least one budget line before submitting");
       }
 
       const [coverageRows] = await connection.execute<RowDataPacket[]>(
@@ -306,7 +307,7 @@ export const budgetCoverageService = {
         [actorUserId, budgetId]
       );
       if (result.affectedRows !== 1) {
-        throw new Error("Budget status changed before submission; refresh and retry");
+        throw refuse(409, "BUDGET_STATUS_CHANGED", "Budget status changed before submission; refresh and retry");
       }
       // Close any correction notes a reviewer raised against this budget's heads/sub-heads. They
       // stay open — and visible on their line — for as long as the branch admin is editing, and

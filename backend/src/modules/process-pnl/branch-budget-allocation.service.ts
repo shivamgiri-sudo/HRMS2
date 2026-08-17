@@ -6,6 +6,7 @@ import { allocatePoolAmount, type AllocationShare } from "./bpo-pnl.calculation.
 import { getBranchMeterConsumption, type MeterUtilityType } from "./meter.service.js";
 import { getCostCentreGradeWeightedCost } from "./grade-engine.service.js";
 
+import { refuse } from "./finance-error.js";
 /**
  * Branch Budget foundation (PR 2): normalized cost-centre allocation for branch-planned budget
  * lines. Reuses the shared allocatePoolAmount() primitive (bpo-pnl.calculation.ts) so branch
@@ -253,18 +254,18 @@ export async function saveMonthlyDrivers(
   actorUserId: string
 ): Promise<MonthlyDriverRecord[]> {
   if (!/^\d{4}-\d{2}$/.test(periodCode)) {
-    throw new Error("A valid budget period (YYYY-MM) is required");
+    throw refuse(400, "ALLOCATION_PERIOD_INVALID", "A valid budget period (YYYY-MM) is required");
   }
   const activeCostCentres = new Set((await listActiveCostCentres(branchId)).map((cc) => cc.id));
   for (const driver of drivers) {
     if (!activeCostCentres.has(driver.costCentreId)) {
-      throw new Error(`Cost centre ${driver.costCentreId} is not an active cost centre for this branch`);
+      throw refuse(400, "COST_CENTRE_NOT_ACTIVE", `Cost centre ${driver.costCentreId} is not an active cost centre for this branch`);
     }
     if (!Number.isFinite(driver.plannedHeadcount) || driver.plannedHeadcount < 0) {
-      throw new Error("Planned headcount cannot be negative");
+      throw refuse(400, "HEADCOUNT_NEGATIVE", "Planned headcount cannot be negative");
     }
     if (!Number.isFinite(driver.revenueRatePerHead) || driver.revenueRatePerHead < 0) {
-      throw new Error("Revenue rate per head cannot be negative");
+      throw refuse(400, "REVENUE_RATE_NEGATIVE", "Revenue rate per head cannot be negative");
     }
     for (const [label, value] of [
       ["Seat count", driver.seatCount],
@@ -273,7 +274,7 @@ export async function saveMonthlyDrivers(
       ["Hiring volume", driver.hiringVolume],
     ] as const) {
       if (value != null && (!Number.isFinite(value) || value < 0)) {
-        throw new Error(`${label} cannot be negative`);
+        throw refuse(400, "DRIVER_VALUE_NEGATIVE", `${label} cannot be negative`);
       }
     }
   }
@@ -396,7 +397,7 @@ export async function computeLineAllocations(
   const method = (SEEDED_DRIVER_ALIASES[(sharingMethod ?? "").trim()]
     ?? (sharingMethod ?? "").trim()) as SharingMethod;
   if (!SUPPORTED_SHARING_METHODS.includes(method)) {
-    throw new Error(
+    throw refuse(400, "SHARING_METHOD_UNSUPPORTED",
       `Sharing method "${sharingMethod ?? ""}" is not yet supported for branch-level splitting. ` +
       `Supported methods: ${SUPPORTED_SHARING_METHODS.join(", ")}.`
     );
@@ -406,7 +407,7 @@ export async function computeLineAllocations(
     listActiveCostCentres(branchId, executor)
   );
   if (allActive.length === 0) {
-    throw new Error("This branch has no active cost centres to allocate a branch-level line to");
+    throw refuse(409, "NO_ACTIVE_COST_CENTRES", "This branch has no active cost centres to allocate a branch-level line to");
   }
 
   // Narrow to the line's own cost-centre scope. Everything downstream — driver checks, manual
@@ -418,14 +419,14 @@ export async function computeLineAllocations(
     const activeIds = new Set(allActive.map((cc) => cc.id));
     const unknown = scopeIds.filter((id) => !activeIds.has(id));
     if (unknown.length) {
-      throw new Error(
+      throw refuse(400, "COST_CENTRE_NOT_ACTIVE",
         `Cost centre scope names ${unknown.length} cost centre(s) that are not active for this branch`
       );
     }
     const wanted = new Set(scopeIds);
     costCentres = allActive.filter((cc) => wanted.has(cc.id));
     if (costCentres.length === 0) {
-      throw new Error("Select at least one cost centre for this branch-level line");
+      throw refuse(400, "COST_CENTRE_SCOPE_REQUIRED", "Select at least one cost centre for this branch-level line");
     }
   }
 
@@ -436,19 +437,19 @@ export async function computeLineAllocations(
 
   if (method === "manual") {
     if (!manualAllocations?.length) {
-      throw new Error("Manual sharing requires a percentage for at least one cost centre");
+      throw refuse(400, "MANUAL_SPLIT_INCOMPLETE", "Manual sharing requires a percentage for at least one cost centre");
     }
     const activeIds = new Set(costCentres.map((cc) => cc.id));
     const missing = costCentres.filter((cc) => !manualAllocations.some((m) => m.costCentreId === cc.id));
     if (missing.length > 0) {
-      throw new Error(
+      throw refuse(400, "MANUAL_SPLIT_INCOMPLETE",
         `Manual sharing requires a percentage for every ${scopeIds.length ? "selected" : "active"} cost centre. Missing: ` +
         missing.map((cc) => cc.costCentreName).join(", ")
       );
     }
     const unknown = manualAllocations.filter((m) => !activeIds.has(m.costCentreId));
     if (unknown.length > 0) {
-      throw new Error("Manual sharing references a cost centre that is not active for this branch");
+      throw refuse(400, "COST_CENTRE_NOT_ACTIVE", "Manual sharing references a cost centre that is not active for this branch");
     }
     shares = manualAllocations.map((m) => ({ key: m.costCentreId, weight: m.percentage }));
     mode = "manual_percentage";
@@ -475,7 +476,7 @@ export async function computeLineAllocations(
     // exactly what meter-wise sharing exists for. Only a branch with no meter data anywhere is an
     // error, because then there is nothing to apportion by.
     if (consumptionByCostCentre.size === 0) {
-      throw new Error(
+      throw refuse(409, "METER_READING_MISSING",
         "No meter reading exists for this branch and period"
         + (utilityType ? ` for ${utilityType}` : "")
         + ". Record at least one meter reading before using meter-wise sharing."
@@ -502,7 +503,7 @@ export async function computeLineAllocations(
     }
     const missingGradeData = costCentres.filter((cc) => !costByCostCentre.has(cc.id));
     if (missingGradeData.length > 0) {
-      throw new Error(
+      throw refuse(409, "GRADE_HEADCOUNT_MISSING",
         `Grade-wise headcount data is missing for: ` +
         missingGradeData.map((cc) => cc.costCentreName).join(", ") +
         ". Set grade drivers for every active cost centre before using grade-weighted sharing."
@@ -545,7 +546,7 @@ export async function computeLineAllocations(
       return !driver || driverWeight(method, driver) <= 0;
     });
     if (missingDrivers.length > 0) {
-      throw new Error(
+      throw refuse(409, "MONTHLY_DRIVER_MISSING",
         `Monthly ${DRIVER_LABELS[method] ?? "driver data"} is missing for: ` +
         missingDrivers.map((cc) => cc.costCentreName).join(", ") +
         ". Set monthly drivers for every active cost centre before using this sharing method."
@@ -589,7 +590,7 @@ export async function computeLineAllocations(
   // caller). balanced/percentTotal are identical across all four calls above since they share
   // the same `shares` — checking one is sufficient.
   if (mode === "manual_percentage" && !gross.balanced) {
-    throw new Error(
+    throw refuse(400, "MANUAL_SPLIT_NOT_100", 
       `Manual cost-centre split must total 100% (currently ${(gross.percentTotal ?? 0).toFixed(2)}%)`
     );
   }

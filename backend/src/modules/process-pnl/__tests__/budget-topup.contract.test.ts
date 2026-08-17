@@ -110,9 +110,13 @@ describe("budget top-up request workflow", () => {
     // A single bare throw here is a message the reviewer will never see.
     expect(code, "a bare `throw new Error()` is masked by errorHandler.ts in production")
       .not.toMatch(/throw new Error\(/);
-    // The helper must set both halves errorHandler.ts reads.
-    expect(service).toContain("statusCode: status");
-    expect(service).toContain("code");
+    // The refusals go through the shared helper, which is where the two fields errorHandler.ts
+    // reads are now set — this service held a local copy until the same fix was swept across the
+    // sibling budget services and the one definition moved to finance-error.ts.
+    expect(service).toContain('from "./finance-error.js"');
+    const helper = read("src/modules/process-pnl/finance-error.ts");
+    expect(helper).toContain("statusCode: status");
+    expect(helper).toContain("code");
   });
 
   it("maker-checker refusal is a 409 the reviewer can read, not an anonymous 500", () => {
