@@ -289,7 +289,9 @@ export async function createEmployeeFromCandidate(
          COALESCE(p.permanent_address, c.permanent_address) AS permanent_address,
          -- The statutory forms need these; they were collected and then dropped.
          COALESCE(p.father_name, p.father_husband_name, c.father_name) AS father_name,
-         p.marital_status
+         p.marital_status,
+         -- Form 11 PF opt-out election captured during onboarding
+         COALESCE(p.pf_opt_out_elected, 0) AS pf_opt_out_elected
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
        WHERE c.id = ? LIMIT 1`,
@@ -390,8 +392,8 @@ export async function createEmployeeFromCandidate(
       ]
     );
 
-    // Create related records (statutory, salary, nominee, leave)
-    await createRelatedEmployeeRecords(conn, employeeId, candidateId, offer, candRow);
+    // Create related records (statutory, salary, nominee, leave, pf-opt-out)
+    await createRelatedEmployeeRecords(conn, employeeId, candidateId, offer, candRow, approverId);
 
     // Link the bridge. The idempotency guard above reads this row, so if the
     // update matches nothing the guard is silently defeated and a second
@@ -1084,7 +1086,8 @@ async function createRelatedEmployeeRecords(
   employeeId: string,
   candidateId: string,
   offer: any,
-  candRow: any
+  candRow: any,
+  actorUserId: string
 ): Promise<void> {
   const panNumber = String(candRow?.pan_number ?? '').trim() || null;
   const aadhaarNumber = String(candRow?.aadhar_number ?? '').trim() || null;
@@ -1181,4 +1184,32 @@ async function createRelatedEmployeeRecords(
      ON DUPLICATE KEY UPDATE employee_id = leave_balance_ledger.employee_id`,
     [randomUUID(), employeeId, offer.date_of_joining]
   );
+
+  // Form 11 PF opt-out: if the candidate elected PF opt-out during onboarding
+  // (Form 11 — only valid for first employment / never-a-PF-member declarations),
+  // create a pre-approved employee_statutory_override so payroll does not deduct
+  // PF from the very first run. Without this, the onboarding election is silently
+  // dropped and PF is deducted until a separate manual request is raised and
+  // approved through the Payroll HO queue.
+  //
+  // INSERT IGNORE: safe to retry — the unique key uq_emp_override_active on
+  // (employee_id, override_type, status) prevents a second approved row.
+  if (Boolean(candRow?.pf_opt_out_elected)) {
+    const joiningDate: Date = offer.date_of_joining instanceof Date
+      ? offer.date_of_joining
+      : new Date(String(offer.date_of_joining));
+    const effectiveFromMonth = `${joiningDate.getFullYear()}-${String(joiningDate.getMonth() + 1).padStart(2, '0')}`;
+
+    await conn.execute(
+      `INSERT IGNORE INTO employee_statutory_override
+         (id, employee_id, override_type, status,
+          requested_by, declaration_text,
+          approved_by, approved_at, effective_from_month, audit_note)
+       VALUES (UUID(), ?, 'pf_opt_out', 'approved',
+               ?, 'PF opt-out elected by employee on Form 11 during onboarding',
+               ?, NOW(), ?,
+               'Auto-approved from Form 11 election — no Payroll HO review required for first-employment declarations')`,
+      [employeeId, actorUserId, actorUserId, effectiveFromMonth]
+    );
+  }
 }
