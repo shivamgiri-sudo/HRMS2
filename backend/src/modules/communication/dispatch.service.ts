@@ -491,7 +491,17 @@ class DispatchService {
   async getStats(): Promise<DispatchStats> {
     const [todayRows]  = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE()");
     const [delivRows]  = await db.execute<DeliveryWindowRow[]>("SELECT COUNT(*) t, SUM(status = 'sent') d FROM dispatch_log WHERE sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
-    const [failedRows] = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE status = 'failed' AND retry_count < 3");
+    // `AND retry_count < 3` removed 2026-08-17. It asserted a three-attempt cap that NOTHING
+    // implements: retry() increments retry_count with no ceiling, no backoff and no cooldown, and
+    // there is no drainer or worker on this table at all. retry_count is 0 on all 2,770 rows, so
+    // the clause matched every failed row anyway — inert, and wrong about the system.
+    //
+    // It is removed rather than made real because the ceiling is an owner decision, not a
+    // constant to guess. Left in place it is worse than useless: it is exactly the predicate
+    // someone writing the first drainer would copy as "the existing rule", and doing so would
+    // sweep up all 1,854 historic failures on the first tick — 919 SMS and 904 WhatsApp across
+    // 7 contacts each. Any real cap belongs next to a cutover floor, not inferred from a stat.
+    const [failedRows] = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE status = 'failed'");
     const [retryRows]  = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE retry_count > 0 AND sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
     const [bounceRows] = await db.execute<DispatchCountRow[]>("SELECT COUNT(*) c FROM dispatch_log WHERE status = 'bounced' AND sent_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
     const [chRows]     = await db.execute<ChannelCountRow[]>("SELECT channel, COUNT(*) c FROM dispatch_log WHERE DATE(sent_at) = CURDATE() GROUP BY channel");
