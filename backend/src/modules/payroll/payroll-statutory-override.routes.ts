@@ -195,6 +195,92 @@ router.patch('/:id/approve', requireRole('payroll', 'super_admin'), h(async (req
     change_summary: { decision, override_type: rec.override_type, employee_id: rec.employee_id, effective_from_month },
   });
 
+  // Salary history revision: when approved, write a new employee_salary_history row
+  // reflecting the zeroed deduction so payslips and salary reports show the correct
+  // post-opt-out structure. Uses increment_request_id = override row id so revoke can
+  // find and close this row exactly. Non-critical — failure here does not undo the approval.
+  if (decision === 'approved') {
+    try {
+      const effDate = effective_from_month
+        ? `${effective_from_month}-01`
+        : new Date().toISOString().substring(0, 10);
+
+      const [histRows] = await db.execute<RowDataPacket[]>(
+        `SELECT * FROM employee_salary_history
+         WHERE employee_id = ? AND is_current = 1
+         ORDER BY effective_from DESC LIMIT 1`,
+        [rec.employee_id]
+      );
+      const cur = histRows[0] as any;
+
+      if (cur) {
+        const isPf   = rec.override_type === 'pf_opt_out';
+        const isEsic = rec.override_type === 'esic_opt_out';
+        const newEpfEmp  = isPf   ? 0 : +(cur.epf_employee  ?? 0);
+        const newEsicEmp = isEsic ? 0 : +(cur.esic_employee ?? 0);
+        const newEpfEmr  = isPf   ? 0 : +(cur.epf_employer  ?? 0);
+        const newEsicEmr = isEsic ? 0 : +(cur.esic_employer ?? 0);
+        const gross = +(cur.gross ?? 0);
+        const pt    = +(cur.professional_tax ?? 0);
+        const adm   = +(cur.admin_charges ?? 0);
+        const grat  = +(cur.gratuity_monthly ?? 0);
+        // Net in-hand = gross minus employee-side deductions
+        const newNet = Math.round((gross - newEpfEmp - newEsicEmp - pt) * 100) / 100;
+        // CTC = gross + employer-side costs
+        const newCtc = Math.round((gross + newEpfEmr + newEsicEmr + adm + grat) * 100) / 100;
+        const prevDed = isPf ? +(cur.epf_employee ?? 0) : +(cur.esic_employee ?? 0);
+        const label   = isPf ? 'PF' : 'ESIC';
+
+        // Close the current salary history row
+        await db.execute(
+          `UPDATE employee_salary_history
+             SET is_current = 0, effective_to = DATE_SUB(?, INTERVAL 1 DAY)
+           WHERE employee_id = ? AND is_current = 1`,
+          [effDate, rec.employee_id]
+        );
+
+        // Insert revised row; increment_request_id stores the override id for revoke lookup
+        await db.execute(
+          `INSERT INTO employee_salary_history
+             (id, employee_id, effective_from, source, increment_request_id,
+              basic, hra, conveyance, portfolio_allowance, medical_allowance,
+              special_allowance, other_allowance, bonus, pli, lta,
+              gross, net_in_hand, ctc,
+              epf_employee, esic_employee, professional_tax,
+              epf_employer, esic_employer, admin_charges, gratuity_monthly,
+              branch_name, department_name, designation_name, cost_centre_name,
+              is_current, notes, created_by)
+           VALUES (UUID(), ?, ?, 'hrms_manual', ?,
+                   ?, ?, ?, ?, ?,
+                   ?, ?, ?, ?, ?,
+                   ?, ?, ?,
+                   ?, ?, ?,
+                   ?, ?, ?, ?,
+                   ?, ?, ?, ?,
+                   1, ?, ?)`,
+          [
+            rec.employee_id, effDate, id,
+            cur.basic ?? 0, cur.hra ?? 0, cur.conveyance ?? 0,
+            cur.portfolio_allowance ?? 0, cur.medical_allowance ?? 0,
+            cur.special_allowance ?? 0, cur.other_allowance ?? 0,
+            cur.bonus ?? 0, cur.pli ?? 0, cur.lta ?? 0,
+            gross, newNet, newCtc,
+            newEpfEmp, newEsicEmp, pt,
+            newEpfEmr, newEsicEmr, adm, grat,
+            cur.branch_name ?? null, cur.department_name ?? null,
+            cur.designation_name ?? null, cur.cost_centre_name ?? null,
+            `${label} opt-out approved — ₹${prevDed}/month ${label} deduction zeroed from ` +
+            `${effective_from_month ?? effDate.substring(0, 7)}. ` +
+            `Net take-home increased by ₹${prevDed}/month.`,
+            actorUserId,
+          ]
+        );
+      }
+    } catch (histErr: any) {
+      console.error('[StatutoryOverride] Salary history update failed (approval still stands):', histErr.message);
+    }
+  }
+
   return res.json({ success: true, message: `Override request ${newStatus}` });
 }));
 
@@ -230,6 +316,40 @@ router.patch('/:id/revoke', requireRole('payroll', 'super_admin'), h(async (req:
     entity_id: id,
     change_summary: { override_type: rec.override_type, employee_id: rec.employee_id },
   });
+
+  // Salary history revert: close the opt-out history row and re-open the row that
+  // preceded it so salary history stays consistent with the resumed deduction.
+  try {
+    const [optOutRows] = await db.execute<RowDataPacket[]>(
+      `SELECT effective_from FROM employee_salary_history
+       WHERE employee_id = ? AND increment_request_id = ? LIMIT 1`,
+      [rec.employee_id, id]
+    );
+    const optOutHist = optOutRows[0] as any;
+    if (optOutHist) {
+      // Close the opt-out history row (effective up to yesterday)
+      await db.execute(
+        `UPDATE employee_salary_history
+           SET is_current = 0, effective_to = CURDATE()
+         WHERE employee_id = ? AND increment_request_id = ?`,
+        [rec.employee_id, id]
+      );
+      // Re-open the row that was closed when opt-out was applied: its effective_to
+      // was set to one day before the opt-out effective_from at approval time
+      await db.execute(
+        `UPDATE employee_salary_history
+           SET is_current = 1, effective_to = NULL
+         WHERE employee_id = ?
+           AND effective_to = DATE_SUB(?, INTERVAL 1 DAY)
+           AND (increment_request_id IS NULL OR increment_request_id != ?)
+         ORDER BY effective_from DESC
+         LIMIT 1`,
+        [rec.employee_id, optOutHist.effective_from, id]
+      );
+    }
+  } catch (histErr: any) {
+    console.error('[StatutoryOverride] Salary history revert failed (revoke still stands):', histErr.message);
+  }
 
   return res.json({ success: true, message: 'Override revoked. PF/ESI will resume from next payroll run.' });
 }));
