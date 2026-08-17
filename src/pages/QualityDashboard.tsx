@@ -16,7 +16,6 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useUserRole, useWorkforceAccess } from "@/hooks/useUserRole";
-import { DashboardLevelSummary, type HeroTile } from "@/components/dashboards/DashboardLevelSummary";
 import { DashboardInsights, computeQualityInsights } from "@/components/dashboards/DashboardInsights";
 import { QualityTargetGapCard } from "@/components/quality/QualityTargetGapCard";
 import {
@@ -27,7 +26,6 @@ import {
   today, firstOfMonth,
   type QDSummary, type TrendPoint, type AgentRow, type FraudSignals, type ClientRow,
 } from "@/components/quality-dashboard/v2";
-import { Users2, Headphones, Gauge, Layers } from "lucide-react";
 
 // ─── Types (drill-down shell) ─────────────────────────────────────────────────
 
@@ -219,24 +217,6 @@ function SelfQualityScorecard({ employeeId }: { employeeId: string }) {
 
 const SELF_ONLY_ROLES = new Set(["employee", "agent", "trainee"]);
 
-function qualityHeroTiles(nodes: QualityApiNode[]): HeroTile[] {
-  const agentCount = nodes.reduce((s, n) => s + n.agentCount, 0);
-  const callsAudited = nodes.reduce((s, n) => s + n.callsAudited, 0);
-  const scored = nodes.filter((n) => n.avgQualityPct !== null);
-  const avg = scored.length
-    ? Math.round(
-        (scored.reduce((s, n) => s + (n.avgQualityPct ?? 0) * n.callsAudited, 0) /
-          scored.reduce((s, n) => s + n.callsAudited, 0)) *
-          10,
-      ) / 10
-    : null;
-  return [
-    { label: nodes.length === 1 ? "Agents" : "Agents (combined)", value: agentCount.toLocaleString(), icon: <Users2 className="h-4 w-4" /> },
-    { label: "Calls audited", value: callsAudited.toLocaleString(), icon: <Headphones className="h-4 w-4" /> },
-    { label: "Avg quality", value: avg !== null ? `${avg}%` : "—", tone: qualityTone(avg), icon: <Gauge className="h-4 w-4" /> },
-    { label: nodes.length === 1 ? "In view" : "Shown here", value: String(nodes.length), icon: <Layers className="h-4 w-4" /> },
-  ];
-}
 
 // ─── Main page ─────────────────────────────────────────────────────────────────
 
@@ -414,23 +394,9 @@ export default function QualityDashboard() {
                 ))}
               </TabsList>
 
-              {/* Drill-down tab — existing logic, unchanged */}
+              {/* Drill-down tab */}
               <TabsContent value="drilldown">
                 <div className="space-y-4">
-                  <DashboardLevelSummary
-                    title="Quality"
-                    subtitle={
-                      <>
-                        Call quality scored from{" "}
-                        <span className="font-medium">db_audit.call_quality_assessment</span>{" "}
-                        — last {levelData?.rangeDays ?? 30} days
-                      </>
-                    }
-                    heroTiles={rawNodes.length > 0 ? qualityHeroTiles(rawNodes) : []}
-                    chartData={rawNodes.map((n) => ({ name: n.name, value: n.avgQualityPct }))}
-                    chartTitle={`Avg quality by ${levelNoun}`}
-                    chartValueSuffix="%"
-                  />
                   {rawNodes.length > 0 && (
                     <DashboardInsights data={computeQualityInsights(rawNodes, levelNoun)} />
                   )}
