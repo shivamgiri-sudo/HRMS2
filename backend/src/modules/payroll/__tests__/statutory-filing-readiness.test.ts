@@ -27,13 +27,25 @@ beforeEach(() => {
 });
 
 /**
- * Two db.execute calls happen per resolution, in order:
- *   (1) the shared applicability resolver's employee_statutory_info fallback
- *   (2) this resolver's identifier query
+ * Route each mas_hrms query to its answer by what it selects, not by call order.
+ *
+ * This used to queue two mockResolvedValueOnce in sequence: the applicability resolver's
+ * employee_statutory_info fallback, then this resolver's identifier query. Adding the approved
+ * opt-out override lookup upstream inserted a third query between them, so every queued answer
+ * shifted by one and the identifier query received `[]` — surfacing as "(intermediate value) is
+ * not iterable" in the resolver rather than anything resembling the real cause.
+ *
+ * Positional mocks encode the number of queries a dependency happens to make today, which is not
+ * part of its contract. Dispatching on the SQL keeps these tests about behaviour: a query added
+ * upstream tomorrow falls through to the empty default instead of corrupting an unrelated
+ * assertion.
  */
 const mockIdentifiers = (rows: Array<Record<string, unknown>>) => {
-  execute.mockResolvedValueOnce([[], []]);
-  execute.mockResolvedValueOnce([rows, []]);
+  execute.mockImplementation(async (sql: unknown) => {
+    const text = String(sql);
+    if (text.includes("uan_employees")) return [rows, []]; // this resolver's identifier query
+    return [[], []];                                       // statutory fallback, opt-out overrides
+  });
 };
 
 describe("READY requires BOTH applicability and a well-formed identifier", () => {
@@ -99,6 +111,38 @@ describe("READY requires BOTH applicability and a well-formed identifier", () =>
   });
 });
 
+describe("an approved statutory opt-out reaches readiness", () => {
+  it("makes an otherwise-READY employee NOT_APPLICABLE, identifier notwithstanding", async () => {
+    // The seam between two changes: the shared applicability resolver gained an approved-opt-out
+    // tier that outranks db_bill, and readiness is built on top of it. Nothing tested that the
+    // override survives the journey. It has to: an employee who opted out and still holds a valid
+    // UAN would otherwise be filed for a contribution they elected not to make, and their
+    // identifier being perfectly well-formed is exactly what makes that failure invisible.
+    billQuery.mockResolvedValue([{ EmpCode: "MAS010", PFELig: "YES", ESIElig: "YES" }]);
+    execute.mockImplementation(async (sql: unknown) => {
+      const text = String(sql);
+      if (text.includes("employee_statutory_override")) {
+        return [[{ employee_code: "MAS010", override_type: "pf_opt_out" }], []];
+      }
+      if (text.includes("uan_employees")) {
+        return [[{
+          employee_code: "MAS010",
+          uan_employees: "123456789012", uan_statutory_info: null, uan_employee_uan: null,
+          esi_employees: "1234567890", esi_statutory_info: null,
+        }], []];
+      }
+      return [[], []];
+    });
+
+    const all = await resolveStatutoryFilingReadinessForPeriod("2026-07");
+    // PF opted out — not filable, despite a valid UAN on file.
+    expect(all.get("MAS010")?.pf.status).toBe("NOT_APPLICABLE");
+    expect(all.get("MAS010")?.pf.identifier).toBe("123456789012");
+    // ESI untouched by a PF opt-out.
+    expect(all.get("MAS010")?.esi.status).toBe("READY");
+  });
+});
+
 describe("identifiers are read from every store, in precedence order", () => {
   it("falls through to employee_statutory_info when the employees column is empty", async () => {
     // Not cosmetic: employee_statutory_info.esi_number holds 39 active employees that
@@ -139,7 +183,7 @@ describe("identifiers are read from every store, in precedence order", () => {
 });
 
 describe("it costs two queries, not two per employee", () => {
-  it("hits db_bill once and mas_hrms twice regardless of headcount", async () => {
+  it("hits db_bill once regardless of headcount", async () => {
     // db_bill is MySQL 5.5 across the WAN. A per-employee round trip would make a readiness
     // screen over a thousand of them.
     billQuery.mockResolvedValue([
@@ -155,7 +199,10 @@ describe("it costs two queries, not two per employee", () => {
     const all = await resolveStatutoryFilingReadinessForPeriod("2026-07");
     expect(all.size).toBe(3);
     expect(billQuery).toHaveBeenCalledTimes(1);
-    expect(execute).toHaveBeenCalledTimes(2);
+    // The mas_hrms side is asserted as "one identifier query", not as a total call count — the
+    // shared applicability resolver is free to add lookups without that being this test's business.
+    const identifierQueries = execute.mock.calls.filter((c) => String(c[0]).includes("uan_employees"));
+    expect(identifierQueries).toHaveLength(1);
   });
 });
 

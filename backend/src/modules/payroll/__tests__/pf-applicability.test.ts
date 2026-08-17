@@ -126,20 +126,24 @@ describe("summary keeps unresolved visible", () => {
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Three db.execute calls happen per resolution, in order:
- *   (1) resolveStatutoryApplicabilityForPeriod's HRMS-native pf/esi fallback
- *   (2) resolveStatutoryApplicabilityForPeriod's approved-statutory-override check (added
- *       when PF/ESIC opt-out overrides were wired in as a third applicability source —
- *       see statutory-applicability.service.ts step 3)
- *   (3) this resolver's own UAN store query
- * Order matters for the mock; missing one shifts every later mockResolvedValueOnce down by
- * one slot, so the real UAN query silently gets the beforeEach default ([[], []]) instead of
- * `rows` — which reads as "UAN never found" rather than a wiring mistake in the test.
+ * Route each mas_hrms query to its answer by what it selects, not by call order.
+ *
+ * This queued two mockResolvedValueOnce in sequence — the PF resolver's employee_statutory_info
+ * fallback, then the UAN query. Adding the approved opt-out override lookup to the shared
+ * applicability resolver inserted a third query between them, so every queued answer shifted by
+ * one and the UAN query received `[]`. Seven tests here failed on main with "(intermediate value)
+ * is not iterable", which points at the resolver rather than at the mock that actually caused it.
+ *
+ * The number of queries a dependency makes is not part of its contract. Dispatching on the SQL
+ * means a query added upstream falls through to the empty default instead of corrupting an
+ * unrelated assertion.
  */
 function mockUanQuery(rows: Array<Record<string, unknown>>) {
-  execute.mockResolvedValueOnce([[], []]); // (1) HRMS-native PF/ESI fallback — empty, db_bill decides
-  execute.mockResolvedValueOnce([[], []]); // (2) approved statutory-override check — none for this test
-  execute.mockResolvedValueOnce([rows, []]); // (3) the UAN query itself
+  execute.mockImplementation(async (sql: unknown) => {
+    const text = String(sql);
+    if (text.includes("uan_employees")) return [rows, []]; // the UAN readiness query
+    return [[], []];                                       // statutory fallback, opt-out overrides
+  });
 }
 
 describe("UAN filing readiness — READY only when applicable AND a valid UAN exists", () => {
