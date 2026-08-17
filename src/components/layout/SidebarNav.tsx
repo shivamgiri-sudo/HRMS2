@@ -100,7 +100,7 @@ function MasterNavItem({
                 : pathname === child.href || pathname.startsWith(`${child.href}/`);
             return (
               <Link
-                key={child.href}
+                key={`${child.href}-${child.label}`}
                 to={child.href}
                 onClick={onNavigate}
                 className={cn("nav-item group text-[12.5px]", active && "active")}
@@ -182,7 +182,7 @@ export function SidebarNav({ groups, onNavigate }: SidebarNavProps) {
                 const active = isActive(item.href);
                 return (
                   <Link
-                    key={`${group.title}-${item.href}`}
+                    key={`${group.title}-${item.href}-${item.label}`}
                     to={item.href}
                     onClick={onNavigate}
                     className={cn("nav-item group", active && "active")}
