@@ -35,7 +35,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../src/db/mysql.js";
 import { getBillPool, closeBillPool } from "../src/db/billDb.js";
 import { encryptAccountForSync } from "../src/shared/syncPiiEncryption.js";
-import { blindIndex, isUsingDevEncryptionKey } from "../src/shared/fieldEncryption.js";
+import { blindIndex, isUsingDevBlindIndexKey, isUsingDevEncryptionKey } from "../src/shared/fieldEncryption.js";
 
 const APPLY = process.argv.includes("--apply");
 const ALLOW_CORRECTIONS = process.argv.includes("--allow-corrections");
@@ -78,6 +78,20 @@ async function main() {
     console.error(
       "REFUSING to --apply: FIELD_ENCRYPTION_KEY is the all-zeros dev key.\n" +
       "Ciphertext written now could never be decrypted in production. Run this on the server."
+    );
+    process.exitCode = 1;
+    return;
+  }
+  // This script writes account_number_blind_index directly (below), but only checked the
+  // encryption key, not this one. bank-account-blind-index-backfill.ts guards on both — an
+  // encryption key set correctly with the blind-index key still on its dev fallback would
+  // silently write dev-key indexes for real rows with no error, exactly the failure mode that
+  // guard exists to prevent (a lookup built with the wrong key returns nothing, so the
+  // duplicate check it feeds would pass everything and never actually detect a collision).
+  if (APPLY && isUsingDevBlindIndexKey()) {
+    console.error(
+      "REFUSING to --apply: FIELD_BLIND_INDEX_KEY is the all-zeros dev key.\n" +
+      "A blind index written now would never match a real lookup in production. Run this on the server."
     );
     process.exitCode = 1;
     return;

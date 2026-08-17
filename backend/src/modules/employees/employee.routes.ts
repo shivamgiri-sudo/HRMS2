@@ -20,6 +20,7 @@ import { encryptField, decryptField } from "../../shared/fieldEncryption.js";
 import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
 import { validateBankFields, validateStatutoryFields } from "../../shared/statutoryFormat.js";
 import { SELF_EDITABLE_PERSONAL_COLUMNS, dbColumnFor } from "./fieldOwnership.js";
+import { computeAccountBlindIndex, findDuplicateAccountOwner } from "../../shared/bankAccountDuplicate.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -718,11 +719,23 @@ router.put("/:employeeId/bank-details", ...hrProfileGate, h(async (req: any, res
     return res.status(400).json({ success: false, error: "Invalid format", details: formatErrors });
   }
 
-  // TODO(cross-employee duplicate check): shared/bankAccountDuplicate.ts has
-  // findDuplicateAccountOwner(), written and unit tested, but not called here yet — it
-  // depends on migration 1136 + its backfill having run and been verified on this
-  // database first. See the header comment in that file and in
-  // 1136_employee_bank_detail_account_blind_index.sql before wiring it in.
+  // Cross-employee duplicate check, via the blind index added in migration 1136.
+  // Migration applied to production (dc1c5e88, 2026-08-16); the one-time backfill of
+  // existing rows has not run yet, so this only catches a duplicate against another
+  // account written (or re-saved) after that migration, not yet against every
+  // historical row — narrower than "no duplicate accounts exist" but strictly better
+  // than the no-check status quo it replaces. Every row this route writes computes
+  // and stores its index below, which is exactly what shrinks the backfill's
+  // remaining scope. See bankAccountDuplicate.ts's header for the full lifecycle.
+  if (account_number) {
+    const dup = await findDuplicateAccountOwner(String(account_number), empId);
+    if (dup) {
+      return res.status(409).json({
+        success: false,
+        error: `This account number is already on file for another employee (${dup.employeeCode}). Verify the account number before saving.`,
+      });
+    }
+  }
 
   // verification_status and masked_account_number are not real columns on
   // employee_bank_detail (this INSERT 500'd on every call — confirmed live). See the
@@ -736,6 +749,10 @@ router.put("/:employeeId/bank-details", ...hrProfileGate, h(async (req: any, res
     fields.push("account_number_enc");
     vals.push(enc);
     onDup.push("account_number_enc = VALUES(account_number_enc)");
+
+    fields.push("account_number_blind_index");
+    vals.push(computeAccountBlindIndex(String(account_number)));
+    onDup.push("account_number_blind_index = VALUES(account_number_blind_index)");
   }
 
   const placeholders = fields.map(() => "?").join(", ");

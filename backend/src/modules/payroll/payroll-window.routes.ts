@@ -9,6 +9,7 @@ import { isRunClosed } from './run-status.js';
 import { encryptField } from '../../shared/fieldEncryption.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { validateBankFields } from '../../shared/statutoryFormat.js';
+import { computeAccountBlindIndex, findDuplicateAccountOwner } from '../../shared/bankAccountDuplicate.js';
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -215,10 +216,25 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
       return res.status(400).json({ success: false, message: 'Invalid format in submitted values', details: formatErrors });
     }
 
-    // TODO(cross-employee duplicate check): shared/bankAccountDuplicate.ts has
-    // findDuplicateAccountOwner(), written and unit tested, but not called here yet — see
-    // its header comment and 1136_employee_bank_detail_account_blind_index.sql for the
-    // migration + backfill sequence that must complete on this database first.
+    // Cross-employee duplicate check, via the blind index added in migration 1136.
+    // Migration applied to production (dc1c5e88, 2026-08-16); the one-time backfill of
+    // existing rows has not run yet, so this only catches a duplicate against another
+    // account written (or re-saved) AFTER that migration, not yet against every
+    // historical row. That is a real, narrower guarantee than "no duplicate accounts
+    // exist" — but it is strictly better than the no-check status quo it replaces, and
+    // every row this route itself writes computes and stores its index below, which is
+    // exactly what shrinks the backfill's remaining scope. See bankAccountDuplicate.ts's
+    // header for the full lifecycle.
+    if (newValues.account_number) {
+      const dup = await findDuplicateAccountOwner(String(newValues.account_number), rec.employee_id);
+      if (dup) {
+        return res.status(409).json({
+          success: false,
+          message: `This account number is already on file for another employee (${dup.employeeCode}). `
+            + `Verify the account number before approving.`,
+        });
+      }
+    }
 
     // Archive the existing primary account (kept for history, not deleted) —
     // matches profile-approval.service.ts's approveBankDetailsUpdate archival shape.
@@ -239,15 +255,19 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
     const encAccountNumber = newValues.account_number
       ? encryptField(String(newValues.account_number))
       : null;
+    const accountBlindIndex = newValues.account_number
+      ? computeAccountBlindIndex(String(newValues.account_number))
+      : null;
 
     // Insert new primary bank record — account_number_enc was previously never
     // written here, so an approved bank change silently discarded the account
-    // number the employee submitted.
+    // number the employee submitted. account_number_blind_index is written on every
+    // row from here on so the backfill's remaining scope only shrinks.
     await db.execute(
       `INSERT INTO employee_bank_detail
          (id, employee_id, is_primary, account_seq, bank_name, account_holder_name,
-          bank_branch, account_number_enc, ifsc_code, account_type, verified, active_status)
-       VALUES (UUID(), ?, 1, ?, ?, ?, ?, ?, ?, ?, 1, 1)`,
+          bank_branch, account_number_enc, account_number_blind_index, ifsc_code, account_type, verified, active_status)
+       VALUES (UUID(), ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)`,
       [
         rec.employee_id,
         nextSeq,
@@ -255,6 +275,7 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
         newValues.account_holder_name ?? null,
         newValues.bank_branch ?? null,
         encAccountNumber,
+        accountBlindIndex,
         newValues.ifsc_code ?? null,
         newValues.account_type ?? 'savings',
       ]
