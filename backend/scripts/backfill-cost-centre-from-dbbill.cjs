@@ -116,7 +116,7 @@ const BILL_SOURCES = [
        LEFT JOIN branch_master b ON b.id = e.branch_id
       WHERE e.active_status = 1
         AND e.cost_centre_id IS NULL
-        AND e.date_of_joining >= '2026-07-20'`);
+        ${process.env.BACKFILL_ALL === '1' ? '' : "AND e.date_of_joining >= '2026-07-20'"}`);
   console.log(`\nEmployees missing a cost centre: ${targets.length}`);
   if (targets.length === 0) { await hrms.end(); await bill.end(); return; }
 
@@ -230,8 +230,11 @@ const BILL_SOURCES = [
   }
   console.log(`\n  rows updated: ${updated} of ${plan.length} planned`);
   const [after] = await hrms.query(
+    // Must use the SAME population as the run, or the closing number reports on a
+    // different set than was just written and reads as success while work remains.
     `SELECT COUNT(*) still_null FROM employees
-      WHERE active_status = 1 AND cost_centre_id IS NULL AND date_of_joining >= '2026-07-20'`);
+      WHERE active_status = 1 AND cost_centre_id IS NULL
+        ${process.env.BACKFILL_ALL === '1' ? '' : "AND date_of_joining >= '2026-07-20'"}`);
   console.log(`  still missing a cost centre: ${after[0].still_null}`);
   await hrms.end(); await bill.end();
 })().catch(e => { console.error('FAILED: ' + e.message); process.exit(1); });

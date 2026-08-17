@@ -1,20 +1,26 @@
 /**
- * Export the employees still missing a cost centre, as a CSV for HR/Ops to complete.
+ * Export the active employees missing a cost centre and/or a process, as a CSV for
+ * HR/Ops to complete.
  *
- * These are the rows the backfill deliberately would not guess: no cost centre in the
- * onboarding offer and none in db_bill, or two sources that disagree. Each row carries the
- * valid options for that employee's branch, so the sheet can be filled without looking
- * anything up — and so it is obvious that branch does NOT determine cost centre (NOIDA
- * alone offers dozens of choices).
+ * Both columns are here because both are unrecoverable and both block the same analysis.
+ *
+ *   cost centre  55 active employees. The rest were recovered from db_bill; these are the
+ *                residue where no source holds a value, or two sources disagree and the
+ *                choice is a business decision.
+ *   process      341 active employees, including ALL 183 in the 0-30 day bucket. This one
+ *                cannot be backfilled at all: attendance_daily_record yields 0 (it copies
+ *                the employee's process at write time, so it is empty exactly when the
+ *                employee is), break_daily_summary 0, db_bill.masjclrentry 0,
+ *                db_bill.employee_master 1, ATS 1, roster 1. The value exists in nobody's
+ *                system and has to be entered.
+ *
+ * Each row carries the valid options for that employee's branch so the sheet can be filled
+ * without lookups, and so it is obvious that branch does NOT determine either field.
  */
 const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
 
-/**
- * Credentials come from backend/.env, never from this file. Values there are wrapped in
- * double quotes and must be stripped, or they travel as part of the password.
- */
 function envFile() {
   const p = path.resolve(__dirname, '..', '.env');
   const out = {};
@@ -32,13 +38,16 @@ if (!pick('DB_USER') || !pick('DB_PASSWORD')) {
   process.exit(1);
 }
 
-const CFG = { user: pick('DB_USER'), password: pick('DB_PASSWORD'), database: pick('DB_NAME', 'mas_hrms'), connectTimeout: 20000 };
-const HOSTS = [pick('DB_HOST', '192.168.10.6'), '122.184.128.90'];
-
 async function connectAny() {
-  for (const host of HOSTS) {
-    try { const c = await mysql.createConnection({ ...CFG, host }); console.log(`connected via ${host}`); return c; }
-    catch (e) { console.log(`${host} -> ${e.code}`); }
+  for (const host of [pick('DB_HOST', '192.168.10.6'), '122.184.128.90']) {
+    try {
+      const c = await mysql.createConnection({
+        host, user: pick('DB_USER'), password: pick('DB_PASSWORD'),
+        database: pick('DB_NAME', 'mas_hrms'), connectTimeout: 20000,
+      });
+      console.log(`connected via ${host}`);
+      return c;
+    } catch (e) { console.log(`${host} -> ${e.code}`); }
   }
   throw new Error('mas_hrms unreachable');
 }
@@ -49,21 +58,31 @@ async function connectAny() {
     SELECT e.employee_code,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
            COALESCE(b.branch_name,'UNASSIGNED') AS branch,
-           COALESCE(d.dept_name,'')            AS department,
-           COALESCE(des.designation_name,'')   AS designation,
+           COALESCE(d.dept_name,'')             AS department,
+           COALESCE(des.designation_name,'')    AS designation,
            DATE_FORMAT(e.date_of_joining,'%Y-%m-%d') AS date_of_joining,
-           ''                                  AS cost_centre_to_assign,
+           DATEDIFF(CURDATE(), e.date_of_joining)    AS aon_days,
+           CASE WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 30 THEN '0-30'
+                WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 60 THEN '31-60'
+                WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 90 THEN '61-90'
+                ELSE '90+' END                        AS aon_bucket,
+           CASE WHEN e.cost_centre_id IS NULL THEN 'MISSING' ELSE 'ok' END AS cost_centre_status,
+           CASE WHEN e.process_id     IS NULL THEN 'MISSING' ELSE 'ok' END AS process_status,
+           ''  AS cost_centre_to_assign,
+           ''  AS process_to_assign,
            (SELECT GROUP_CONCAT(cm.cost_centre_name ORDER BY cm.cost_centre_name SEPARATOR ' | ')
-              FROM cost_centre_master cm
-             WHERE cm.branch_id = e.branch_id AND cm.active_status = 1) AS valid_options_for_branch
+              FROM cost_centre_master cm WHERE cm.branch_id = e.branch_id AND cm.active_status = 1)
+             AS valid_cost_centres_for_branch,
+           (SELECT GROUP_CONCAT(pm.process_name ORDER BY pm.process_name SEPARATOR ' | ')
+              FROM process_master pm WHERE pm.active_status = 1)
+             AS valid_processes
       FROM employees e
       LEFT JOIN branch_master b        ON b.id   = e.branch_id
       LEFT JOIN department_master d    ON d.id   = e.department_id
       LEFT JOIN designation_master des ON des.id = e.designation_id
      WHERE e.active_status = 1
-       AND e.cost_centre_id IS NULL
-       AND e.date_of_joining >= '2026-07-20'
-     ORDER BY branch, e.employee_code`);
+       AND (e.cost_centre_id IS NULL OR e.process_id IS NULL)
+     ORDER BY aon_days ASC, branch, e.employee_code`);
 
   if (rows.length === 0) { console.log('nothing outstanding'); await c.end(); return; }
 
@@ -76,17 +95,17 @@ async function connectAny() {
 
   const outDir = path.resolve(__dirname, '..', 'backups');
   fs.mkdirSync(outDir, { recursive: true });
-  const out = path.join(outDir, 'cost-centre-worklist-for-hr.csv');
+  const out = path.join(outDir, 'org-assignment-worklist-for-hr.csv');
   fs.writeFileSync(out, csv, 'utf8');
 
   console.log(`wrote ${out}`);
   console.log(`rows: ${rows.length}`);
-  const byBranch = {};
-  for (const r of rows) byBranch[r.branch] = (byBranch[r.branch] || 0) + 1;
-  console.log('by branch: ' + JSON.stringify(byBranch));
-  console.log('choices available per branch: ' +
-    JSON.stringify(rows.reduce((a, r) => {
-      a[r.branch] = (r.valid_options_for_branch || '').split(' | ').filter(Boolean).length; return a;
-    }, {})));
+  const cc = rows.filter(r => r.cost_centre_status === 'MISSING').length;
+  const pr = rows.filter(r => r.process_status === 'MISSING').length;
+  console.log(`  missing cost centre: ${cc}`);
+  console.log(`  missing process    : ${pr}`);
+  const byBucket = {};
+  for (const r of rows) byBucket[r.aon_bucket] = (byBucket[r.aon_bucket] || 0) + 1;
+  console.log(`  by AON bucket: ${JSON.stringify(byBucket)}`);
   await c.end();
 })().catch(e => { console.error('FAILED: ' + e.message); process.exit(1); });

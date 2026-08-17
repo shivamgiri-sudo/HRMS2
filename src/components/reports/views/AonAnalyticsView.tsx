@@ -194,7 +194,21 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId: 
   const base = branchId ? { branchId } : {};
   const hc = useReport("aon-bucket-headcount", base);
   const at = useReport("aon-bucket-attrition", { ...base, from, to });
-  const sh = useReport("aon-bucket-shrinkage", { ...base, from, to });
+  /*
+   * Shrinkage is fetched ONLY when its metric is selected.
+   *
+   * It scans attendance_daily_record, and although that table is small (131,906 rows in
+   * total, of which twelve months is essentially all of it) the aggregate takes 65s for a
+   * three-month window on this database and exceeds the 120s gateway limit over twelve.
+   * The cost is contention, not volume — Threads_running was 27 while measuring — so
+   * narrowing the window does not rescue it.
+   *
+   * Every page load previously paid that cost whether or not anyone looked at shrinkage,
+   * which is what made the default Overview feel broken. Now Headcount and Attrition load
+   * in seconds and the expensive query runs only on an explicit request, where a wait is
+   * at least attributable to something the user just asked for.
+   */
+  const sh = useReport("aon-bucket-shrinkage", { ...base, from, to }, metric === "shrinkage");
 
   /*
    * Gate on the query the SELECTED metric needs, never on all three.
