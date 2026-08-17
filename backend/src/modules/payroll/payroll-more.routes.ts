@@ -9,6 +9,7 @@ import type { RowDataPacket } from "mysql2";
 import multer from "multer";
 import { randomUUID } from "crypto";
 import { recalculateOpenPayrollForEmployee } from "./payroll-targeted-recalculation.service.js";
+import { payslipService } from "./payslip.service.js";
 
 export const payrollMoreRouter = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -1056,7 +1057,21 @@ payrollMoreRouter.post("/runs/:id/bulk-generate-payslips",
     const job = createBulkJob(runId, total);
     bulkJobs.set(runId, job);
 
-    // Fire-and-forget — mark each line as payslip_generated
+    const actorUserId = req.authUser!.id;
+
+    // Fire-and-forget — generate a payslip per line, then mark the line.
+    //
+    // This used to ONLY run the UPDATE below. It never called the generator and never wrote
+    // salary_payslip, so the job reported success, flipped payslip_generated on every line,
+    // and produced no payslip whatsoever. Verified live 2026-08-17: salary_payslip holds 2,855
+    // rows, all from a single backfill on 2026-06-11 (identical generated_at) and none for any
+    // month after 2026-03 — while bulk-payslip-summary, which reads the flag, would happily
+    // report 100% generated. That is the exact shape of failure this codebase keeps producing:
+    // a success path that asserts work it did not do.
+    //
+    // payslipService.generatePayslip is the same function the single-employee route already
+    // uses. Calling it rather than re-implementing the INSERT keeps one writer for
+    // salary_payslip, and it upserts on run+employee so re-running the job is safe.
     setImmediate(async () => {
       try {
         const [lines] = await db.execute<RowDataPacket[]>(
@@ -1064,16 +1079,22 @@ payrollMoreRouter.post("/runs/:id/bulk-generate-payslips",
         );
         for (const line of lines as any[]) {
           try {
+            await payslipService.generatePayslip(runId, String(line.employee_id), actorUserId);
             await db.execute(
               "UPDATE salary_prep_line SET payslip_generated = 1, payslip_generated_at = NOW() WHERE id = ?",
               [line.id]
             );
             job.done++;
-          } catch {
+          } catch (err: unknown) {
             job.failed++;
+            // Keep the first failure. A bare counter told an operator "40 failed" and nothing
+            // about why, on a job whose whole output is invisible until someone opens a payslip.
+            if (!job.error) {
+              job.error = `employee ${line.employee_id}: ${err instanceof Error ? err.message : String(err)}`;
+            }
           }
         }
-        job.status = "done";
+        job.status = job.failed > 0 && job.done === 0 ? "error" : "done";
         job.finishedAt = new Date().toISOString();
       } catch (e: any) {
         job.status = "error";
