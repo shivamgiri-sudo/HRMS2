@@ -18,6 +18,28 @@ const ROOT = resolve(__dirname, "../../../..");
 const routes = readFileSync(join(ROOT, "src/modules/leave/leave.routes.ts"), "utf8");
 const service = readFileSync(join(ROOT, "src/modules/leave/leave.service.ts"), "utf8");
 
+/**
+ * Isolate one route's handler.
+ *
+ * These assertions used to slice from /requests/my to a hard-coded `leaveRouter.get(
+ * "/requests/legacy"` boundary. That route was deleted on 2026-08-17 when leave history moved
+ * into mas_hrms, so indexOf returned -1 and slice(start, -1) ran to nearly the end of the file —
+ * swallowing GET /balance/:employeeId, which legitimately calls isLeavePrivileged. The
+ * not.toContain("isLeavePrivileged") assertion then failed against a handler 20 lines away, and
+ * read as a privilege-widening regression on "my leave requests" when none existed.
+ *
+ * The boundary is now the next route registration, whatever it happens to be, so no future
+ * deletion can move it. A missing route under test throws by name instead of silently
+ * mis-slicing, because a contract test that asserts against the wrong text is worse than one
+ * that fails.
+ */
+function handlerFor(path: string): string {
+  const start = routes.indexOf(`leaveRouter.get("${path}"`);
+  if (start === -1) throw new Error(`GET ${path} is not registered on leaveRouter`);
+  const next = routes.indexOf("\nleaveRouter.", start + 1);
+  return routes.slice(start, next === -1 ? undefined : next);
+}
+
 describe("GET /leave/requests/my", () => {
   it("is registered", () => {
     expect(routes).toContain('leaveRouter.get("/requests/my"');
@@ -32,29 +54,27 @@ describe("GET /leave/requests/my", () => {
     if (firstParam > -1) expect(my).toBeLessThan(firstParam);
   });
 
-  it("has a live boundary route right after /requests/my, so the slice below cannot silently swallow the rest of the file", () => {
-    // GET /requests/legacy (the prior boundary) was removed 2026-08-17 once
-    // scripts/migrate-leave-history-full.ts finished migrating all leave history into
-    // mas_hrms — indexOf() for a removed marker returns -1, and source.slice(start, -1)
-    // does not throw, it silently returns "everything but the last character", which let
-    // the two tests below assert against the ENTIRE REST OF THE FILE (including
-    // /balance/:employeeId's real isLeavePrivileged widening) without failing loudly about
-    // why. Asserting the boundary itself exists turns that failure mode into a clear one.
-    expect(routes).toContain('leaveRouter.get("/balance/:employeeId"');
+  it("isolates the handler by its own extent, not by a named neighbour that can be deleted", () => {
+    // Two sessions fixed the same incident on 2026-08-17 and this reconciles them. The other
+    // fix re-pointed the slice at GET /balance/:employeeId and asserted that route exists, so a
+    // future deletion would fail loudly instead of silently. That works, but it keeps a
+    // hard-coded neighbour — the thing that broke — and couples this file to a route it has no
+    // business knowing about. handlerFor() ends at the next route registration, whatever that
+    // is, so there is no named boundary left to delete and no separate assertion to maintain.
+    //
+    // What is worth keeping from that fix is the reason it existed: indexOf() returns -1 for a
+    // missing marker and slice(start, -1) does not throw — it quietly returns everything but the
+    // last character. That is why the failure pointed at a handler 20 lines away.
+    expect(handlerFor("/requests/my")).toContain('leaveRouter.get("/requests/my"');
+    expect(handlerFor("/requests/my")).not.toContain('leaveRouter.get("/balance/:employeeId"');
+    expect(() => handlerFor("/requests/does-not-exist")).toThrow(/is not registered/);
   });
 
   it("forces employeeId to the caller, so the result cannot widen with the caller's role", () => {
     // GET /requests deliberately widens for privileged roles — an admin gets their whole
     // branch. That is not what "my recent activity" means, so this route must pin the
     // employee to the caller for everyone, not only for unprivileged users.
-    // Boundary is GET /balance/:employeeId, the next distinct route after /requests/my in
-    // the file. GET /requests and PATCH /requests/:id/review (dead code, removed
-    // 2026-08-13) and GET /requests/legacy (removed 2026-08-17, leave history fully
-    // migrated into mas_hrms) used to sit between them.
-    const handler = routes.slice(
-      routes.indexOf('leaveRouter.get("/requests/my"'),
-      routes.indexOf('leaveRouter.get("/balance/:employeeId"')
-    );
+    const handler = handlerFor("/requests/my");
     expect(handler).toContain("getEmployeeForUser(req.authUser!.id)");
     expect(handler).toContain("query.employeeId = callerEmp.id");
     // No privilege branch here — that is what would let the scope widen.
@@ -62,11 +82,7 @@ describe("GET /leave/requests/my", () => {
   });
 
   it("answers a login with no employee record with an empty feed, not an error", () => {
-    // Boundary is GET /balance/:employeeId — see the two tests above.
-    const handler = routes.slice(
-      routes.indexOf('leaveRouter.get("/requests/my"'),
-      routes.indexOf('leaveRouter.get("/balance/:employeeId"')
-    );
+    const handler = handlerFor("/requests/my");
     expect(handler).toMatch(/if \(!callerEmp\) return res\.json\(\{\s*success: true, data: \[\], total: 0/);
   });
 
