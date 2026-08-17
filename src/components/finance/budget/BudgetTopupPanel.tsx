@@ -193,6 +193,16 @@ export function BudgetTopupPanel({
     (request.status === "submitted" && canReviewBranchStage) ||
     (request.status === "branch_head_approved" && canReviewFinanceStage);
 
+  /** Maker-checker: budget-topup.service.ts review() refuses BOTH decisions when the actor is the
+   *  submitter, and it does so before the decision is even inspected. Only Approve was disabled
+   *  here, so Reject stayed live on a request it could never act on — and because that refusal
+   *  used to throw without a statusCode, pressing it returned an anonymous "quote reference …"
+   *  500 instead of the reason. Both buttons now reflect the one rule the backend enforces. */
+  const isOwnRequest = (request: BudgetTopupRequest) =>
+    Boolean(currentUserId && request.requested_by && currentUserId === request.requested_by);
+
+  const MAKER_CHECKER_HINT = "You submitted this request — a different reviewer must approve or reject it";
+
   return (
     <Card className="rounded-3xl border-slate-200 shadow-sm">
       <CardHeader className="flex flex-row items-center justify-between">
@@ -230,22 +240,16 @@ export function BudgetTopupPanel({
                   <Input
                     placeholder="Remarks (required to reject)"
                     className="h-8 w-56 text-xs"
+                    disabled={isOwnRequest(request)}
                     value={reviewNotes[request.id] ?? ""}
                     onChange={(event) => setReviewNotes((prev) => ({ ...prev, [request.id]: event.target.value }))}
                   />
                   <div className="flex gap-2">
                     <Button
                       size="sm"
-                      disabled={
-                        reviewMutation.isPending ||
-                        // P0P1-4: prevent self-approval — mirror backend maker-checker.
-                        Boolean(currentUserId && request.requested_by && currentUserId === request.requested_by)
-                      }
-                      title={
-                        currentUserId && request.requested_by && currentUserId === request.requested_by
-                          ? "You submitted this request — a different reviewer must approve it"
-                          : undefined
-                      }
+                      // P0P1-4: prevent self-approval — mirror backend maker-checker.
+                      disabled={reviewMutation.isPending || isOwnRequest(request)}
+                      title={isOwnRequest(request) ? MAKER_CHECKER_HINT : undefined}
                       onClick={() => reviewMutation.mutate({ id: request.id, decision: "approve" })}
                     >
                       <CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve
@@ -253,12 +257,22 @@ export function BudgetTopupPanel({
                     <Button
                       size="sm"
                       variant="destructive"
-                      disabled={reviewMutation.isPending}
+                      disabled={reviewMutation.isPending || isOwnRequest(request)}
+                      title={isOwnRequest(request) ? MAKER_CHECKER_HINT : undefined}
                       onClick={() => reviewMutation.mutate({ id: request.id, decision: "reject" })}
                     >
                       <XCircle className="mr-1 h-3.5 w-3.5" />Reject
                     </Button>
                   </div>
+                  {/* A disabled button explains itself only on hover, and not at all on touch.
+                      Say who the request is actually waiting for, so the raiser chases the right
+                      person instead of assuming the screen is broken. */}
+                  {isOwnRequest(request) && (
+                    <p className="max-w-[15rem] text-right text-xs text-amber-700">
+                      You raised this request, so you cannot review it. It is waiting for{" "}
+                      {request.status === "submitted" ? "another Branch Head" : "the Finance Head"}.
+                    </p>
+                  )}
                 </div>
               )}
             </div>

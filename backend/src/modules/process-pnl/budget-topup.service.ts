@@ -19,6 +19,27 @@ export type BudgetTopupStatus =
   | "rejected"
   | "applied";
 
+/**
+ * Every refusal in this file is a decision the reviewer needs to read, not an internal fault.
+ *
+ * errorHandler.ts only forwards `error.message` when the error carries a `statusCode`. A bare
+ * `throw new Error(...)` is treated as an unexpected 500 and, in production, has its message
+ * REPLACED with "An unexpected server error occurred. Please quote reference <hex> if you contact
+ * HR." So the maker-checker refusal, the wrong-stage refusal and "a reason is required to reject"
+ * all reached the reviewer as the same anonymous reference id — a self-inflicted dead end that
+ * needed a server log to decode. Observed in production 2026-08-17 (reference 538f315d) when the
+ * raiser of a NOIDA-2 top-up pressed Reject on their own request.
+ *
+ * Every throw below therefore carries a status and a stable code:
+ *   400 — the caller sent something invalid and can correct it
+ *   403 — the caller holds no role valid for this stage
+ *   404 — the row does not exist
+ *   409 — the row exists but its current state forbids this action (stage, status, lock, maker)
+ */
+function refuse(status: number, code: string, message: string) {
+  return Object.assign(new Error(message), { statusCode: status, code });
+}
+
 function roundMoney(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
@@ -61,7 +82,7 @@ async function applyTopupToLine(
     [budgetLineId]
   );
   const line = rows[0];
-  if (!line) throw new Error("Budget line not found");
+  if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
 
   const recomputed = calculateBudgetLine({
     head: String(line.head),
@@ -127,7 +148,7 @@ export const budgetTopupService = {
         WHERE l.id = ?`,
       [budgetLineId]
     );
-    if (!rows[0]) throw new Error("Budget line not found");
+    if (!rows[0]) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
     return String(rows[0].branch_id);
   },
 
@@ -141,13 +162,13 @@ export const budgetTopupService = {
     const requestedAmount = roundMoney(input.requestedAmount);
     const requestedQuantity = roundQuantity(input.requestedQuantity);
     if (!Number.isFinite(requestedAmount) || requestedAmount <= 0) {
-      throw new Error("Requested amount must be greater than zero");
+      throw refuse(400, "TOPUP_AMOUNT_INVALID", "Requested amount must be greater than zero");
     }
     if (!Number.isFinite(requestedQuantity) || requestedQuantity < 0) {
-      throw new Error("Requested quantity cannot be negative");
+      throw refuse(400, "TOPUP_QUANTITY_INVALID", "Requested quantity cannot be negative");
     }
     if (!input.reason?.trim()) {
-      throw new Error("A reason is required to request a budget increase");
+      throw refuse(400, "TOPUP_REASON_REQUIRED", "A reason is required to request a budget increase");
     }
 
     const [lineRows] = await db.execute<RowDataPacket[]>(
@@ -158,9 +179,13 @@ export const budgetTopupService = {
       [input.budgetLineId]
     );
     const line = lineRows[0];
-    if (!line) throw new Error("Budget line not found");
+    if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
     if (String(line.budget_status) !== "active") {
-      throw new Error("A top-up can only be requested against an active budget line");
+      throw refuse(
+        409,
+        "BUDGET_NOT_ACTIVE",
+        `A top-up can only be requested against an active budget line (this budget is '${line.budget_status}')`
+      );
     }
 
     const id = randomUUID();
@@ -186,7 +211,7 @@ export const budgetTopupService = {
         WHERE t.id = ?`,
       [id]
     );
-    if (!rows[0]) throw new Error("Top-up request not found");
+    if (!rows[0]) throw refuse(404, "TOPUP_NOT_FOUND", "Top-up request not found");
     return rows[0];
   },
 
@@ -296,23 +321,27 @@ export const budgetTopupService = {
         [id]
       );
       const request = rows[0];
-      if (!request) throw new Error("Top-up request not found");
+      if (!request) throw refuse(404, "TOPUP_NOT_FOUND", "Top-up request not found");
       const status = String(request.status);
 
       // P0P1-4: Maker-checker — the approver cannot be the person who raised the request,
       // regardless of role.  Applies to both approve and reject so a requester cannot
       // "reject" their own request to unblock a later re-submission either.
       if (String(request.requested_by) === actorId) {
-        throw new Error(
-          "Maker-checker violation: the approver cannot be the same person who submitted this top-up request"
+        throw refuse(
+          409,
+          "TOPUP_MAKER_CHECKER",
+          "You submitted this top-up request, so you cannot review it. A different reviewer must approve or reject it."
         );
       }
 
       if (decision === "reject") {
         if (!["submitted", "branch_head_approved"].includes(status)) {
-          throw new Error(`Cannot reject a top-up request in status ${status}`);
+          throw refuse(409, "TOPUP_WRONG_STAGE", `Cannot reject a top-up request in status ${status}`);
         }
-        if (!remarks?.trim()) throw new Error("A reason is required to reject a top-up request");
+        if (!remarks?.trim()) {
+          throw refuse(400, "TOPUP_REJECT_REASON_REQUIRED", "A reason is required to reject a top-up request");
+        }
         const reviewedColumn = effectiveRole === "branch_head" ? "branch_head" : "finance_head";
         await connection.execute(
           `UPDATE finance_budget_topup_request
@@ -328,7 +357,11 @@ export const budgetTopupService = {
 
       if (effectiveRole === "branch_head") {
         if (status !== "submitted") {
-          throw new Error(`Top-up request is not awaiting branch_head review (status: ${status})`);
+          throw refuse(
+            409,
+            "TOPUP_WRONG_STAGE",
+            `Top-up request is not awaiting branch_head review (status: ${status})`
+          );
         }
         await connection.execute(
           `UPDATE finance_budget_topup_request
@@ -343,11 +376,17 @@ export const budgetTopupService = {
 
       if (effectiveRole === "finance_head") {
         if (status !== "branch_head_approved") {
-          throw new Error(`Top-up request is not awaiting finance_head review (status: ${status})`);
+          throw refuse(
+            409,
+            "TOPUP_WRONG_STAGE",
+            `Top-up request is not awaiting finance_head review (status: ${status})`
+          );
         }
         // P0-3: Re-check period lock inside the transaction before mutating the budget line.
         if (await isPeriodLocked(String(request.period_code), connection)) {
-          throw new Error(
+          throw refuse(
+            409,
+            "FINANCE_PERIOD_LOCKED",
             `${request.period_code} is locked for P&L close. This top-up cannot be applied.`
           );
         }
@@ -366,7 +405,13 @@ export const budgetTopupService = {
         return this.get(id);
       }
 
-      throw new Error(`No approval role is valid for top-up status ${status}`);
+      // Reached when resolveFinanceStageRole returned a role that owns no stage of this
+      // workflow — an authorisation outcome, so 403 rather than a 409 state conflict.
+      throw refuse(
+        403,
+        "TOPUP_NO_REVIEW_ROLE",
+        `Your role (${effectiveRole || "none"}) cannot review a top-up request in status ${status}`
+      );
     } catch (error) {
       await connection.rollback();
       throw error;

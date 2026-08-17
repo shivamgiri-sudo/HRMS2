@@ -82,8 +82,10 @@ describe("budget top-up request workflow", () => {
 
   it("review() enforces maker-checker — approver cannot be the request submitter (P0P1-4)", () => {
     const service = read("src/modules/process-pnl/budget-topup.service.ts");
-    // The guard must appear before the status dispatch (before 'if (decision === "reject")')
-    const makerCheckerIdx = service.indexOf("Maker-checker violation");
+    // Anchored on the stable error CODE, not the user-facing prose. The message used to open
+    // "Maker-checker violation:" — internal jargon aimed at no one, and now rewritten to tell the
+    // reviewer what to do. Pinning a contract test to wording blocks exactly that kind of fix.
+    const makerCheckerIdx = service.indexOf("TOPUP_MAKER_CHECKER");
     const rejectDispatchIdx = service.indexOf('if (decision === "reject")');
     expect(makerCheckerIdx).toBeGreaterThan(-1);
     expect(rejectDispatchIdx).toBeGreaterThan(-1);
@@ -92,6 +94,82 @@ describe("budget top-up request workflow", () => {
     // Checks actor vs request submitter, not role names
     expect(service).toContain("request.requested_by");
     expect(service.slice(makerCheckerIdx - 100, makerCheckerIdx + 200)).toContain("actorId");
+  });
+
+  /**
+   * Production 2026-08-17, reference 538f315d: the raiser of a NOIDA-2 top-up pressed Reject on
+   * their own request and got "An unexpected server error occurred. Please quote reference
+   * 538f315d if you contact HR." errorHandler.ts forwards `error.message` only when the error
+   * carries a `statusCode`; a bare `throw new Error(...)` is classified as an unexpected 500 and
+   * masked in production. Every refusal in this service is a reviewer-facing decision, so every
+   * one of them must carry a status.
+   */
+  it("every refusal carries a statusCode, so production does not mask it as a reference id", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    const code = service.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    // A single bare throw here is a message the reviewer will never see.
+    expect(code, "a bare `throw new Error()` is masked by errorHandler.ts in production")
+      .not.toMatch(/throw new Error\(/);
+    // The helper must set both halves errorHandler.ts reads.
+    expect(service).toContain("statusCode: status");
+    expect(service).toContain("code");
+  });
+
+  it("maker-checker refusal is a 409 the reviewer can read, not an anonymous 500", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    const idx = service.indexOf("TOPUP_MAKER_CHECKER");
+    expect(idx).toBeGreaterThan(-1);
+    const block = service.slice(idx - 200, idx + 300);
+    expect(block).toContain("409");
+    // The message must name the actual constraint rather than internal jargon.
+    expect(block).toMatch(/cannot review it/i);
+  });
+
+  it("wrong-stage, locked-period and missing-reason refusals are all statused", () => {
+    const service = read("src/modules/process-pnl/budget-topup.service.ts");
+    for (const [codeName, status] of [
+      ["TOPUP_WRONG_STAGE", "409"],
+      ["FINANCE_PERIOD_LOCKED", "409"],
+      ["TOPUP_REJECT_REASON_REQUIRED", "400"],
+      ["TOPUP_NO_REVIEW_ROLE", "403"],
+      ["TOPUP_NOT_FOUND", "404"],
+    ] as const) {
+      const idx = service.indexOf(codeName);
+      expect(idx, `${codeName} must exist`).toBeGreaterThan(-1);
+      expect(
+        service.slice(idx - 120, idx + 40),
+        `${codeName} must be thrown with HTTP ${status}`
+      ).toContain(status);
+    }
+  });
+
+  /**
+   * The backend maker-checker guard runs BEFORE the decision is inspected, so it refuses reject
+   * exactly as it refuses approve. The panel disabled only Approve, leaving a live Reject button
+   * on a request it could never act on — which is how the masked 500 above was triggered at all.
+   */
+  it("the panel disables BOTH review buttons for the request's own submitter", () => {
+    const panel = fs.readFileSync(
+      path.resolve(backendRoot, "../src/components/finance/budget/BudgetTopupPanel.tsx"),
+      "utf8"
+    );
+    expect(panel).toContain("const isOwnRequest =");
+    // Anchor on the mutate() call sites, not the mutationFn's `decision: "approve" | "reject"`
+    // type annotation, which otherwise matches first and points at the wrong block entirely.
+    const approveIdx = panel.indexOf('decision: "approve" })');
+    const rejectIdx = panel.indexOf('decision: "reject" })');
+    expect(approveIdx).toBeGreaterThan(-1);
+    expect(rejectIdx).toBeGreaterThan(-1);
+    expect(
+      panel.slice(approveIdx - 500, approveIdx),
+      "Approve must be disabled for the submitter"
+    ).toContain("isOwnRequest(request)");
+    expect(
+      panel.slice(rejectIdx - 500, rejectIdx),
+      "Reject must be disabled for the submitter — the backend refuses it identically"
+    ).toContain("isOwnRequest(request)");
+    // A disabled button is silent on touch devices, so the reason must also be on screen.
+    expect(panel).toContain("You raised this request, so you cannot review it");
   });
 
   it("period lock is re-checked inside the finance_head transaction (P0-3)", () => {
