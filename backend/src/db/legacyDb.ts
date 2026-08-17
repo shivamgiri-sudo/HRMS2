@@ -35,11 +35,21 @@ export async function getLegacyPool(): Promise<mysql.Pool> {
     // defense-in-depth, not a fix for a demonstrated violation.
     try {
       const conn = await pool.getConnection();
-      await conn.query('SET SESSION TRANSACTION READ ONLY');
+      // MySQL 5.5 doesn't support SET SESSION TRANSACTION READ ONLY (added in 5.6.5).
+      // Try the modern syntax; fall back silently — no code writes through this pool.
+      try {
+        await conn.query('SET SESSION TRANSACTION READ ONLY');
+      } catch {
+        try {
+          await conn.query('SET SESSION tx_read_only = 1');
+        } catch {
+          console.warn('[LEGACY/BILL] READ ONLY session not enforced (old MySQL version) — no writes expected');
+        }
+      }
       conn.release();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error('[LEGACY/BILL] Failed to set READ ONLY session:', message);
+      console.error('[LEGACY/BILL] Failed to acquire connection:', message);
       throw error;
     }
     console.log(`[LEGACY/BILL] Connected to ${host}:${port}/${database} (READ-ONLY)`);

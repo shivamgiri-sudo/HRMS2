@@ -139,24 +139,103 @@ export async function creditMonthlyLeaves(
   console.log(`[LeaveMonthlyWorker] Done — credited: ${credited}, skipped: ${skipped}`);
 }
 
+// ── Catch-up Logic ───────────────────────────────────────────────────────────
+
+/**
+ * Back-fills leave credits for employees who missed a prior month's run.
+ *
+ * A month qualifies for catch-up only when:
+ *   (a) the worker already ran it for SOME employees (evidence in leave_el_credit_log), AND
+ *   (b) at least one currently-active employee who joined BEFORE that month
+ *       has no credit log entry for any leave type scheduled for that month.
+ *
+ * Condition (a) prevents double-crediting months that were seeded manually
+ * (e.g. EL Jan–Jun 2026 were seeded via migration, not worker-run).
+ * Condition (b) uses strict "joined before month-start" so proration = 1.0 is
+ * guaranteed — employees who joined mid-month and got 0 days by proration are
+ * not incorrectly flagged as missed.
+ */
+async function runCatchUp(year: number, upToMonth: number): Promise<void> {
+  const [scheduleRows]: any = await db.execute(
+    `SELECT DISTINCT month FROM leave_credit_schedule WHERE month <= ? ORDER BY month`,
+    [upToMonth]
+  );
+
+  for (const { month } of scheduleRows) {
+    // (a) Worker must have already run for at least one employee this month
+    const [ran]: any = await db.execute(
+      `SELECT COUNT(*) AS cnt
+       FROM leave_el_credit_log l
+       JOIN leave_type_master lt ON lt.id = l.leave_type_id
+       JOIN leave_credit_schedule lcs ON lcs.leave_code = lt.leave_code AND lcs.month = ?
+       WHERE l.credit_year = ? AND l.credit_month = ? AND l.credit_type = 'monthly'`,
+      [month, year, month]
+    );
+    if (Number(ran[0]?.cnt ?? 0) === 0) continue;
+
+    // (b) Any active employee who joined strictly before this month and has no entry?
+    const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+    const [result]: any = await db.execute(
+      `SELECT COUNT(*) AS gap
+       FROM employees e
+       WHERE e.active_status = 1
+         AND e.employment_status = 'active'
+         AND e.date_of_joining IS NOT NULL
+         AND e.date_of_joining < ?
+         AND NOT EXISTS (
+           SELECT 1
+           FROM leave_el_credit_log l2
+           JOIN leave_type_master lt2 ON lt2.id = l2.leave_type_id
+           WHERE l2.employee_id = e.id
+             AND l2.credit_year  = ?
+             AND l2.credit_month = ?
+             AND l2.credit_type  = 'monthly'
+             AND lt2.leave_code IN (
+               SELECT leave_code FROM leave_credit_schedule WHERE month = ?
+             )
+         )`,
+      [monthStart, year, month, month]
+    );
+
+    const gap = Number(result[0]?.gap ?? 0);
+    if (gap > 0) {
+      console.log(`[LeaveMonthlyWorker] Catch-up: ${gap} employees missed ${year}-${String(month).padStart(2, '0')} — back-filling`);
+      await creditMonthlyLeaves(year, month);
+    }
+  }
+}
+
 // ── Worker Loop ──────────────────────────────────────────────────────────────
 
 /**
- * On each 6-hour tick, check whether today is the 1st of the month.
- * If so, run the monthly leave credit job.
+ * On each 6-hour tick:
+ *  1. Back-fill any employee who missed a prior month's credit (catch-up).
+ *  2. If today is the 1st, run the new month's credit.
  */
 async function checkAndRun(): Promise<void> {
   const now = new Date();
-  if (now.getDate() !== 1) {
-    console.log(`[LeaveMonthlyWorker] Day ${now.getDate()} — not 1st, skipping`);
-    return;
-  }
-  const creditYear = now.getFullYear();
+  const creditYear  = now.getFullYear();
   const creditMonth = now.getMonth() + 1;
-  try {
-    await creditMonthlyLeaves(creditYear, creditMonth);
-  } catch (err: any) {
-    console.error('[LeaveMonthlyWorker] Error:', err.message);
+
+  // Back-fill past months that have gaps (safe: idempotent, skips already-credited)
+  const catchUpUpto = now.getDate() === 1 ? creditMonth - 1 : creditMonth - 1;
+  if (catchUpUpto >= 1) {
+    try {
+      await runCatchUp(creditYear, catchUpUpto);
+    } catch (err: any) {
+      console.error('[LeaveMonthlyWorker] Catch-up error:', err.message);
+    }
+  }
+
+  // New month credit on the 1st
+  if (now.getDate() === 1) {
+    try {
+      await creditMonthlyLeaves(creditYear, creditMonth);
+    } catch (err: any) {
+      console.error('[LeaveMonthlyWorker] Monthly credit error:', err.message);
+    }
+  } else {
+    console.log(`[LeaveMonthlyWorker] Day ${now.getDate()} — not 1st, skipping new credit`);
   }
 }
 
