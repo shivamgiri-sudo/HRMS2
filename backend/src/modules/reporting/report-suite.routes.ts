@@ -171,7 +171,35 @@ function fallbackReport(code: string) {
   };
 }
 
-reportSuiteRouter.get("/catalog", h(async (_req, res) => res.json({ success: true, data: CATALOG })));
+/**
+ * The curated list, minus anything that would 404 when clicked.
+ *
+ * CATALOG above is a hand-picked "featured reports" list; REPORT_CATALOG is what
+ * reportCatalogAccessMiddleware actually admits. Nothing kept the two in step, so three codes
+ * were advertised here that have no REPORT_CATALOG entry — `statutory-missing`,
+ * `cosec-unmapped` and `identity-mapping-exceptions`. All three returned 404 the moment a user
+ * clicked them, because the access middleware rejects an unknown code before the handler runs.
+ * The report list was lying to the user.
+ *
+ * Filtered rather than "fixed" by adding the three to REPORT_CATALOG on purpose. Those blocks
+ * apply no row scope, so admitting them would ship an org-wide data leak in the same commit
+ * that made them reachable. Making them work is a separate piece of work with its own scoping;
+ * until then, not offering them is the honest state.
+ *
+ * Computed once at module load — the inputs are both static.
+ */
+const SERVED_CATALOG = CATALOG.filter((entry) => REPORT_CATALOG.some((r) => r.code === entry.code));
+
+const UNSERVABLE = CATALOG.filter((entry) => !SERVED_CATALOG.includes(entry));
+if (UNSERVABLE.length > 0) {
+  // Say it out loud at boot. A silently shorter list is how the drift went unnoticed.
+  console.warn(
+    `[report-suite] ${UNSERVABLE.length} curated report(s) omitted from /catalog — no REPORT_CATALOG entry, so they would 404: ` +
+    UNSERVABLE.map((e) => e.code).join(", "),
+  );
+}
+
+reportSuiteRouter.get("/catalog", h(async (_req, res) => res.json({ success: true, data: SERVED_CATALOG })));
 
 // ── GET /api/reports/suite/:code/export ──────────────────────────────────────
 // Immediate XLSX download.
