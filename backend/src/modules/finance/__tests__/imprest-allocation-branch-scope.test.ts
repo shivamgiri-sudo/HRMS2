@@ -91,13 +91,17 @@ describe("POST /allocations/:id/review", () => {
     expect(reviewAllocation, "the service must not be reached at all").not.toHaveBeenCalled();
   });
 
-  it("allows a Branch Head reviewing their own branch's allocation", async () => {
+  it("REFUSES a Branch Head reviewing an allocation, even for their own branch", async () => {
+    // Owner ruling 2026-08-17: branch_head has no part in imprest. The float is handed by Finance
+    // Head directly to the Branch Admin who spends it, so the branch does not approve its own
+    // funding. This previously expected 200 for a branch head on their own branch.
     allocationBranch = OWN;
     const res = await request(appFor("branch_head"))
       .post("/api/finance/imprest/allocations/a1/review")
       .send({ decision: "approve" });
-    expect(res.status).toBe(200);
-    expect(reviewAllocation).toHaveBeenCalledOnce();
+    expect(res.status).toBe(403);
+    // Refused at the role gate — the review must not run at all.
+    expect(reviewAllocation).not.toHaveBeenCalled();
   });
 
   it("leaves a global finance role unrestricted", async () => {
@@ -112,7 +116,9 @@ describe("POST /allocations/:id/review", () => {
       if (/FROM imprest_allocation/i.test(String(sql))) return [[], []];
       return [[{ branch_id: OWN, id: OWN }], []];
     });
-    const res = await request(appFor("branch_head"))
+    // Driven by finance_head now: branch_head is refused at the role gate before the lookup, so
+    // it can no longer exercise the not-found path this test exists to pin.
+    const res = await request(appFor("finance_head"))
       .post("/api/finance/imprest/allocations/nope/review")
       .send({ decision: "approve" });
     expect(res.status).toBe(404);

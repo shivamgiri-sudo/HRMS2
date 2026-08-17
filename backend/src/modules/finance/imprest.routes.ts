@@ -27,7 +27,14 @@ import { listFinanceApprovalEvents } from "../../shared/financeApprovalEvent.js"
  * its list would not.
  */
 
-const IMPREST_WRITE_ROLES = ["finance_head", "accounts_head", "super_admin"] as const;
+/**
+ * Owner ruling 2026-08-17: raising an imprest allocation is Finance Head and Super Admin ONLY.
+ *
+ * accounts_head was removed — an allocation is the act of releasing company money into a branch
+ * float, and the owner placed that decision with Finance Head. Branch Head has no part in imprest
+ * at all: the float is handed by Finance Head directly to the Branch Admin who will spend it.
+ */
+const IMPREST_WRITE_ROLES = ["finance_head", "super_admin"] as const;
 const IMPREST_MASTER_ROLES = ["finance_head", "super_admin"] as const;
 const IMPREST_READ_ROLES = [
   ...IMPREST_WRITE_ROLES,
@@ -243,7 +250,8 @@ imprestRouter.post(
 imprestRouter.post(
   "/allocations/:id/review",
   requireWriteAccess,
-  requireRole("branch_head", "finance_head", "super_admin"),
+  // branch_head removed per the same ruling — the branch does not approve its own float.
+  requireRole("finance_head", "super_admin"),
   h(async (req, res) => {
     try {
       const access = await assertAllocationBranch(req, req.params.id);

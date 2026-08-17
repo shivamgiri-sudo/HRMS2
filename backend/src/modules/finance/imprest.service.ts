@@ -60,6 +60,15 @@ export async function allocateImprestNumber(
   return `IMP/${mm}/${yyyy.slice(2, 4)}/${String(sequence).padStart(4, "0")}`;
 }
 
+/**
+ * The exact members of imprest_allocation.payment_mode's ENUM, verified against the live column.
+ * Kept as a named constant so the validation below and the UI's picker have one source to agree
+ * with; a value outside this set is rejected with a readable message instead of reaching MySQL.
+ */
+const ALLOCATION_PAYMENT_MODES = [
+  "Cheque", "NEFT", "RTGS", "IMPS", "UPI", "Cash", "Bank Transfer", "Adjustment", "Other",
+];
+
 export const imprestService = {
   // ── Manager master ────────────────────────────────────────────────────────
 
@@ -286,6 +295,22 @@ export const imprestService = {
     }
     if (!input.allocationDate) throw new Error("Allocation date is required");
     const mode = input.paymentMode ?? "Bank Transfer";
+    // Validated here rather than left to the column.
+    //
+    // payment_mode is an ENUM and this value was passed straight through, so an unrecognised mode
+    // reached MySQL and came back as "Data truncated for column 'payment_mode' at row 1" — which
+    // names no field the user chose, suggests the value was too long rather than not a member, and
+    // under STRICT_TRANS_TABLES fails the whole allocation. The UI was sending bank_transfer /
+    // neft / cheque against an ENUM of 'Bank Transfer' / 'NEFT' / 'Cheque', so EVERY allocation
+    // failed and no imprest float could ever be funded.
+    //
+    // The list is the ENUM's exact members. If a mode is added to the column, add it here too —
+    // the two are meant to be read side by side.
+    if (!ALLOCATION_PAYMENT_MODES.includes(mode)) {
+      throw new Error(
+        `'${mode}' is not a valid payment mode. Use one of: ${ALLOCATION_PAYMENT_MODES.join(", ")}`,
+      );
+    }
     // Same rule vendor payments enforce: anything that is not cash leaves a trace, and the
     // trace is the only way a double payment is ever caught.
     if (mode !== "Cash" && !input.referenceNo) {

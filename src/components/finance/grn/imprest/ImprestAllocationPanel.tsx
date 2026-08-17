@@ -51,15 +51,26 @@ type Allocation = {
   remarks?: string | null;
 };
 
+/**
+ * These are the EXACT members of imprest_allocation.payment_mode's ENUM, and they must stay that
+ * way. The list previously read bank_transfer / neft / cheque / demand_draft — lower case, with
+ * underscores — and MySQL accepts none of them, so every allocation failed with
+ * "Data truncated for column 'payment_mode' at row 1" no matter which option was chosen. Not just
+ * the default: all nine values were invalid, so raising an imprest allocation was impossible.
+ *
+ * "demand_draft" is deliberately absent rather than renamed: the column has no Demand Draft
+ * member, and inventing one here would only move the same truncation error somewhere else.
+ * Use "Other" until a migration adds it.
+ */
 const PAYMENT_MODES = [
-  "bank_transfer", "neft", "rtgs", "imps", "upi", "cheque", "cash", "demand_draft", "adjustment",
+  "Bank Transfer", "NEFT", "RTGS", "IMPS", "UPI", "Cheque", "Cash", "Adjustment", "Other",
 ];
 
 const EMPTY_DRAFT = {
   imprestManagerId: "",
   allocationDate: new Date().toISOString().slice(0, 10),
   amount: "",
-  paymentMode: "bank_transfer",
+  paymentMode: "Bank Transfer",
   bankName: "",
   referenceNo: "",
   transactionDate: "",
@@ -253,7 +264,7 @@ export function ImprestAllocationPanel() {
               >
                 {PAYMENT_MODES.map((mode) => (
                   <option key={mode} value={mode}>
-                    {mode.replace(/_/g, " ")}
+                    {mode}
                   </option>
                 ))}
               </GrnSelect>

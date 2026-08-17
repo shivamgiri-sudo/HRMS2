@@ -114,11 +114,26 @@ describe("scope is resolved server-side, never trusted from the query", () => {
     expect(createBlock).toContain("403");
   });
 
-  it("keeps master maintenance narrower than allocation entry", () => {
-    // Appointing who holds a branch float is a finance-controller act; raising an allocation
-    // against an existing appointment is an operational one.
+  it("restricts allocation entry to Finance Head and Super Admin", () => {
+    // Owner ruling 2026-08-17. accounts_head previously shared allocation entry, on the reading
+    // that raising against an existing appointment is operational. The owner placed the decision
+    // with Finance Head instead: an allocation releases company money into a branch float, so the
+    // two role sets are now deliberately identical rather than master-narrower-than-entry.
     expect(SRC).toContain('const IMPREST_MASTER_ROLES = ["finance_head", "super_admin"] as const;');
-    expect(SRC).toContain('const IMPREST_WRITE_ROLES = ["finance_head", "accounts_head", "super_admin"] as const;');
+    expect(SRC).toContain('const IMPREST_WRITE_ROLES = ["finance_head", "super_admin"] as const;');
+    // accounts_head must not creep back into either.
+    expect(SRC).not.toMatch(/IMPREST_(MASTER|WRITE)_ROLES = \[[^\]]*accounts_head/);
+  });
+
+  it("gives branch_head no part in raising or approving an allocation", () => {
+    // The float is handed by Finance Head directly to the Branch Admin who spends it; the branch
+    // does not approve its own funding. branch_head keeps READ access only.
+    const at = SRC.indexOf('"/allocations/:id/review"');
+    // Comments stripped: the block carries a note explaining WHY branch_head was removed, and a
+    // bare not.toContain would match that prose rather than a live requireRole argument.
+    const reviewBlock = SRC.slice(at, at + 400).replace(/\/\/.*$/gm, "");
+    expect(reviewBlock).not.toContain("branch_head");
+    expect(reviewBlock).toContain('requireRole("finance_head", "super_admin")');
   });
 
   it("guards every write with requireWriteAccess as well as a role", () => {
