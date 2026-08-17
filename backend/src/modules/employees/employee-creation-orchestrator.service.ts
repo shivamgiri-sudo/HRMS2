@@ -47,6 +47,7 @@ import { issueCandidatePortalAccess } from '../ats/interview.service.js';
 import { env } from '../../config/env.js';
 import { resolveVerifiedDob } from "../ats/ageVerification.service.js";
 import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
+import { registerEmployeeInCosec } from "../integrations/cosec/cosec-registration.service.js";
 
 export interface EmployeeCreationInput {
   candidateId: string;
@@ -500,6 +501,11 @@ export async function createEmployeeFromCandidate(
       createdBy: approverId ?? "system",
     }).catch((err) => {
       console.error('[EmployeeOrchestrator] LMS auto-provisioning failed:', err);
+    });
+
+    // Non-blocking COSEC biometric registration — errors do not block employee creation
+    registerEmployeeInCosec(employeeId, employeeCode).catch((err) => {
+      console.error('[EmployeeOrchestrator] COSEC registration failed:', err);
     });
 
     // ── Post-code steps ────────────────────────────────────────────────────
