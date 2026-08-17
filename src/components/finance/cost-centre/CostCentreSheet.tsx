@@ -104,6 +104,7 @@ export function CostCentreSheet({ open, onOpenChange, mode, costCentre, onSaved 
           payment_mode: costCentre.payment_mode,
           payment_terms: costCentre.payment_terms,
           hsn_code: costCentre.hsn_code,
+          sac_code: costCentre.sac_code,
           service_tax_no: costCentre.service_tax_no,
           vendor_state_code: costCentre.vendor_state_code,
           bill_to_address1: costCentre.bill_to_address1,

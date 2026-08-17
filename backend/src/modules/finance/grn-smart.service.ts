@@ -516,25 +516,26 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
     });
   }
 
-  // HSN/SAC: warn if any invoice component is missing its statutory commodity code.
-  // Non-blocking — the approved business rule on mandatory vs optional is not yet codified
-  // in this system; adding the check here makes it visible in the validation panel so Finance
-  // can act on it without the field being silently ignored.
-  if (invoiceComponents.length) {
-    const missingHsn = (invoiceComponents as any[]).filter(
-      (c) => !String(c.hsn_sac_code ?? "").trim()
-    );
-    results.push({
-      code: "HSN_SAC_REQUIRED",
-      status: missingHsn.length ? "warning" : "passed",
-      severity: missingHsn.length ? "warning" : "info",
-      blocking: false,
-      message: missingHsn.length
-        ? `${missingHsn.length} invoice component(s) are missing a HSN/SAC code — required for statutory compliance`
-        : "HSN/SAC codes captured on all invoice components",
-      details: { missingCount: missingHsn.length },
-    });
-  }
+  // HSN_SAC_REQUIRED was removed here deliberately on 2026-08-17. Do NOT re-add it without
+  // reading this first — it was a warning nobody could ever clear.
+  //
+  //  - There was no field to satisfy it. 0f1e599d had already removed the HSN/SAC column from
+  //    InvoiceComponentsEditor (mobile and desktop), so the code could not be entered at all,
+  //    while this check went on reporting it missing on every GRN.
+  //  - It claimed a compliance duty that is not the buyer's. On a PURCHASE, HSN/SAC reporting
+  //    sits with the supplier, in their GSTR-1. Input tax credit reconciles against GSTR-2B on
+  //    GSTIN + invoice number + date + taxable value + tax — every one of which this GRN already
+  //    captures. Nothing downstream consumed hsn_sac_code.
+  //  - There is no precedent for capturing it. db_bill ran client billing across 11,020 invoices
+  //    and never recorded a supplier's HSN/SAC; neither vendor master there even has the column.
+  //    Its HSN/SAC columns are all OUTWARD — MAS's own supply codes, held per cost centre.
+  //
+  // The obligation that IS ours is the outward one: cost_centre_master.sac_code, which feeds our
+  // own GSTR-1 HSN summary. That is where the real gap was — 54 of 437 active cost centres —
+  // and it is being addressed there rather than by nagging about inbound invoices.
+  //
+  // The hsn_sac_code column and its payload plumbing are left intact, so re-introducing capture
+  // later needs a UI field and a reason, not a schema change.
 
   // IRN: if an e-invoice reference number is present, the acknowledgement number must be too.
   if (grn.grn_type === "vendor" && String(grn.irn ?? "").trim()) {

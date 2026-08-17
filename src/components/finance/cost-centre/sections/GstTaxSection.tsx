@@ -52,17 +52,40 @@ export function GstTaxSection({ data, onChange, disabled }: GstTaxSectionProps) 
   return (
     <div className="grid gap-4 p-4">
       <div className="grid grid-cols-2 gap-4">
+        {/* Two columns exist in cost_centre_master — hsn_code and sac_code — but this section
+            offered a single box labelled "HSN / SAC Code" wired to hsn_code alone. So every SAC
+            anyone typed went into the HSN column, and the 364 real SAC values carried over from
+            db_bill were invisible here and could not be edited. Measured 2026-08-17: sac_code
+            populated on 364 of 927 rows, hsn_code on 0 of 927.
+
+            SAC leads because this is a services business: its outward supply is 998593
+            (call-centre services, on 343 rows), and this is the value that feeds our own GSTR-1
+            HSN/SAC summary. */}
         <div className="space-y-2">
-          <Label htmlFor="hsn_code">HSN / SAC Code</Label>
+          <Label htmlFor="sac_code">SAC Code (services)</Label>
+          <Input
+            id="sac_code"
+            value={data.sac_code ?? ""}
+            onChange={(e) => onChange({ sac_code: e.target.value })}
+            placeholder="998593"
+            disabled={disabled}
+          />
+          <p className="text-xs text-muted-foreground">
+            For services supplied from this cost centre. All SAC codes begin 99 — call-centre
+            services are 998593.
+          </p>
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="hsn_code">HSN Code (goods)</Label>
           <Input
             id="hsn_code"
             value={data.hsn_code ?? ""}
             onChange={(e) => onChange({ hsn_code: e.target.value })}
-            placeholder="998311"
+            placeholder="4802"
             disabled={disabled}
           />
           <p className="text-xs text-muted-foreground">
-            HSN code for goods or SAC code for services
+            Only if goods are supplied. Leave blank for a services-only cost centre.
           </p>
         </div>
         <div className="space-y-2">

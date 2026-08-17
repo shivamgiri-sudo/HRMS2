@@ -77,6 +77,9 @@ export interface CostCentreRecord {
 
   // GST/Tax
   hsn_code?: string;
+  /** Separate column from hsn_code. Holds the services code (99xxxx) and is the one actually
+   *  populated on live rows — the form used to write both into hsn_code. */
+  sac_code?: string;
   service_tax_no?: string;
   vendor_state_code?: string;
 
@@ -160,6 +163,9 @@ export interface CostCentreInput {
 
   // GST/Tax
   hsn_code?: string;
+  /** Separate column from hsn_code. Holds the services code (99xxxx) and is the one actually
+   *  populated on live rows — the form used to write both into hsn_code. */
+  sac_code?: string;
   service_tax_no?: string;
   vendor_state_code?: string;
 

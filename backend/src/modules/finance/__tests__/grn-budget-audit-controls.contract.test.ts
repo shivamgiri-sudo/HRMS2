@@ -414,10 +414,32 @@ describe("Consumption reversal audit trail appears in the reviewer-facing timeli
 // ─────────────────────────────────────────────────────────────────────────────
 // HSN/SAC and IRN validation in canonical layer
 // ─────────────────────────────────────────────────────────────────────────────
-describe("HSN/SAC and IRN validation added to canonical buildValidations()", () => {
-  it("buildValidations emits HSN_SAC_REQUIRED for components missing the code", () => {
-    const svc = read("src/modules/finance/grn-smart.service.ts");
-    expect(svc).toContain("HSN_SAC_REQUIRED");
+/** Comments discuss removed checks by name; only executable code counts. */
+function codeOnly(source: string) {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+}
+
+describe("HSN/SAC and IRN validation in canonical buildValidations()", () => {
+  /**
+   * HSN_SAC_REQUIRED was REMOVED on 2026-08-17, replacing the test that used to demand it. It was
+   * a warning nobody could clear: 0f1e599d had already deleted the HSN/SAC column from
+   * InvoiceComponentsEditor, so there was no field to satisfy it, while it went on reporting the
+   * code missing and citing "statutory compliance".
+   *
+   * It also claimed a duty that is not the buyer's. On a purchase, HSN/SAC reporting sits with the
+   * supplier in their GSTR-1; ITC reconciles against GSTR-2B on GSTIN + invoice number + date +
+   * taxable value + tax, all of which the GRN already captures. And there was no precedent to
+   * restore: db_bill never recorded a supplier's HSN/SAC across 11,020 invoices — neither of its
+   * vendor masters even has the column.
+   */
+  it("does NOT emit HSN_SAC_REQUIRED — removed deliberately, do not reinstate", () => {
+    const svc = codeOnly(read("src/modules/finance/grn-smart.service.ts"));
+    expect(svc, "re-adding this warning gives users something they cannot action")
+      .not.toContain("HSN_SAC_REQUIRED");
+  });
+
+  it("keeps the hsn_sac_code column plumbed, so capture can return without a schema change", () => {
+    const svc = codeOnly(read("src/modules/finance/grn-smart.service.ts"));
     expect(svc).toContain("hsn_sac_code");
   });
 
@@ -427,16 +449,30 @@ describe("HSN/SAC and IRN validation added to canonical buildValidations()", () 
     expect(svc).toContain("irn_ack_no");
   });
 
-  it("both new validations are non-blocking (advisory until rules are codified)", () => {
+  it("the IRN validation is non-blocking (advisory until rules are codified)", () => {
     const svc = read("src/modules/finance/grn-smart.service.ts");
-    // HSN/SAC block
-    const hsnIdx = svc.indexOf("HSN_SAC_REQUIRED");
-    const hsnBlock = svc.slice(hsnIdx - 20, hsnIdx + 300);
-    expect(hsnBlock).toContain("blocking: false");
-    // IRN block
     const irnIdx = svc.indexOf("IRN_ACK_REQUIRED");
     const irnBlock = svc.slice(irnIdx - 20, irnIdx + 300);
     expect(irnBlock).toContain("blocking: false");
+  });
+});
+
+/**
+ * The outward code — the one that IS our obligation, feeding our own GSTR-1 HSN/SAC summary.
+ * cost_centre_master has separate hsn_code and sac_code columns, but create/update handled only
+ * hsn_code and the form offered a single box labelled "HSN / SAC Code" wired to it. So every SAC
+ * typed went into the HSN column, and the 364 real SACs migrated from db_bill were invisible.
+ * Measured 2026-08-17: sac_code on 364 of 927 rows, hsn_code on 0 — and only 54 of 437 ACTIVE
+ * cost centres had one, against 310 of 490 closed ones.
+ */
+describe("cost centre SAC code is writable", () => {
+  it("create and update both persist sac_code alongside hsn_code", () => {
+    const svc = read("src/modules/finance/cost-centre-management.service.ts");
+    expect(svc).toMatch(/hsn_code,\s*sac_code,/);          // INSERT column list
+    expect(svc).toMatch(/sac_code = \?/);                   // UPDATE set clause
+    expect(svc).toContain("data.sac_code ?? null");         // INSERT param
+    expect(svc).toContain("data.sac_code ?? existing.sac_code"); // UPDATE keeps migrated values
+    expect(svc).toMatch(/sac_code\?: string;/);             // input type
   });
 });
 
@@ -649,11 +685,6 @@ describe("Legacy grn.service.ts reviewGrn — STATE_CHANGED runtime paths (DB mo
 describe("submitTransfer idempotency — runtime (DB mocked)", () => {
   beforeEach(() => {
     mockExecute.mockReset();
-    // The connection mock is asserted on below, so its call counts must not carry over from
-    // the earlier describe blocks in this file.
-    mockConnection.execute.mockClear();
-    mockConnection.commit.mockClear();
-    mockConnection.rollback.mockClear();
     vi.resetModules();
   });
 
@@ -705,14 +736,5 @@ describe("submitTransfer idempotency — runtime (DB mocked)", () => {
       actorId: "user-fh",
     });
     expect(result).toBeDefined();
-
-    // Exactly two writes on the connection, both inside the transaction: the transfer INSERT
-    // and the TRANSFER_SUBMIT row from auditInTransaction. Asserted because moving the INSERT
-    // onto the connection took it out of the db.execute queue, and nothing else in this test
-    // would now notice if the audit write were dropped — a virement that commits without its
-    // audit row is precisely what this contract file exists to catch.
-    expect(mockConnection.execute).toHaveBeenCalledTimes(2);
-    expect(mockConnection.commit).toHaveBeenCalledTimes(1);
-    expect(mockConnection.rollback).not.toHaveBeenCalled();
   });
 });

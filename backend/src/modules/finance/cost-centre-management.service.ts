@@ -57,6 +57,9 @@ export interface CostCentreInput {
 
   // GST/Tax
   hsn_code?: string;
+  /** SAC is the one that matters here, and it was missing from create/update entirely.
+   *  See the note on the INSERT below for what that cost. */
+  sac_code?: string;
   service_tax_no?: string;
   vendor_state_code?: string;
 
@@ -292,7 +295,15 @@ export const costCentreManagementService = {
         mandated_seats_value, shrinkage_percentage, attrition_percentage, shift_hours,
         working_days_per_week, training_days, incentive_allowed, deduction_allowed,
         revenue_flag, billing_flag, revenue_type, fixed_amount, variable_base, payment_mode, payment_terms,
-        hsn_code, service_tax_no, vendor_state_code,
+        -- sac_code was absent from this INSERT (and from the UPDATE below) while hsn_code was
+        -- present, so no cost centre created in HRMS2 could ever carry a SAC. That is why the
+        -- split measured on 2026-08-17 looked backwards: 310 of 490 CLOSED cost centres have a
+        -- SAC, carried over from db_bill, against 54 of 437 ACTIVE ones. The live rows are the
+        -- newer ones, and the field simply could not be filled.
+        -- It matters more than hsn_code here: this is a services business, so its outward supply
+        -- is SAC (998593, call-centre services, on 343 rows), and this column feeds our own
+        -- GSTR-1 HSN/SAC summary. hsn_code is empty on all 927 rows.
+        hsn_code, sac_code, service_tax_no, vendor_state_code,
         bill_to_address1, bill_to_address2, bill_to_address3, bill_to_city, bill_to_pincode,
         ship_to_address1, ship_to_address2, ship_to_address3, ship_to_city, ship_to_pincode,
         association_date, status, created_by, active_status
@@ -301,7 +312,7 @@ export const costCentreManagementService = {
         ?, ?, ?, ?,
         ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?,
+        ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
         ?, 'draft', ?, 1
@@ -331,6 +342,7 @@ export const costCentreManagementService = {
         data.payment_mode ?? null,
         data.payment_terms ?? null,
         data.hsn_code ?? null,
+        data.sac_code ?? null,
         data.service_tax_no ?? null,
         data.vendor_state_code ?? null,
         data.bill_to_address1 ?? null,
@@ -396,6 +408,7 @@ export const costCentreManagementService = {
         payment_mode = ?,
         payment_terms = ?,
         hsn_code = ?,
+        sac_code = ?,
         service_tax_no = ?,
         vendor_state_code = ?,
         bill_to_address1 = ?,
@@ -434,6 +447,9 @@ export const costCentreManagementService = {
         data.payment_mode ?? existing.payment_mode,
         data.payment_terms ?? existing.payment_terms,
         data.hsn_code ?? existing.hsn_code,
+        // Falls back to the existing value, so the 364 codes that DID come across from db_bill
+        // survive an edit by anyone whose form does not send the field.
+        data.sac_code ?? existing.sac_code,
         data.service_tax_no ?? existing.service_tax_no,
         data.vendor_state_code ?? existing.vendor_state_code,
         data.bill_to_address1 ?? existing.bill_to_address1,
