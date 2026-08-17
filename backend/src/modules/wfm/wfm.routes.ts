@@ -1344,6 +1344,31 @@ wfmRouter.post(
         throw err;
       }
 
+      // Fixed 2026-08-17 (Section E audit): this write went straight to
+      // status='published' with no check of the cycle's CURRENT status, unlike every
+      // transition in roster.governance.service.ts's advanceCycleStatus/VALID_TRANSITIONS,
+      // which this route bypasses entirely. A repeat or mistaken call against a cycle that has
+      // already advanced past publish — acknowledged, active, locked for attendance, or already
+      // handed to payroll — would silently force its status field back to 'published', even
+      // though the per-assignment `WHERE final_roster_status = 'generated'` guard below already
+      // protects the assignment rows themselves from being re-dragged. Other code
+      // (rta-sync.service.ts, dashboards) reads this status field to decide sync/display
+      // eligibility, so regressing it is a real, visible break, not a cosmetic one.
+      // Re-publishing from draft/submitted/reviewed/published itself stays allowed exactly as
+      // designed — the comment above already documents that as safe and idempotent.
+      const POST_PUBLISH_STATUSES = new Set([
+        "acknowledged", "active", "variance_review", "attendance_locked", "payroll_input_ready", "closed",
+      ]);
+      if (POST_PUBLISH_STATUSES.has(String(cycleRows[0].status))) {
+        const err: any = new Error(
+          `Cannot publish: cycle is already at status '${cycleRows[0].status}', past the publish step. ` +
+          `Publishing again would regress it and desynchronize downstream sync/dashboard reads.`
+        );
+        err.statusCode = 409;
+        err.code = "CYCLE_ALREADY_ADVANCED";
+        throw err;
+      }
+
       const [moved] = await conn.execute<ResultSetHeader>(
         `UPDATE wfm_roster_assignment
             SET final_roster_status = 'pending_employee_ack',

@@ -67,6 +67,20 @@ describe("the producer for pending_employee_ack exists", () => {
     // employees carry a dangling one. A work item addressed to a ghost id is invisible.
     expect(SRC).toMatch(/JOIN auth_user au ON au\.id = e\.user_id/);
   });
+
+  it("refuses to re-publish over a cycle that has already advanced past publish (Section E audit fix, 2026-08-17)", () => {
+    // Previously this route wrote status='published' unconditionally with no check of the
+    // cycle's CURRENT status, unlike every transition in roster.governance.service.ts's
+    // advanceCycleStatus/VALID_TRANSITIONS, which this route bypasses entirely. A repeat or
+    // mistaken call against an already-acknowledged/locked/closed cycle would silently force
+    // its status field back to 'published', even though the per-assignment
+    // final_roster_status='generated' guard above already protects the assignment rows.
+    const publishBlock = SRC.slice(SRC.indexOf('"/roster/publish-to-employees"'), SRC.indexOf("FINAL ROSTER PUBLISH"));
+    expect(publishBlock).toMatch(/POST_PUBLISH_STATUSES = new Set\(/);
+    expect(publishBlock).toMatch(/"acknowledged", "active", "variance_review", "attendance_locked", "payroll_input_ready", "closed"/);
+    expect(publishBlock).toMatch(/CYCLE_ALREADY_ADVANCED/);
+    expect(publishBlock).toMatch(/statusCode = 409/);
+  });
 });
 
 describe("the employee's answer cannot overwrite a decision already taken", () => {

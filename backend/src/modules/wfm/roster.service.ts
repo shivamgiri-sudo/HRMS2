@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import type { WfmRosterPlan, WfmRosterAssignment } from "./wfm.types.js";
 import { computeScheduledMinutes, rosterAssignmentColumns } from "./shift-scheduling.util.js";
-import { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock } from "./rest-policy.service.js";
+import { applyRestDecision, isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock } from "./rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 
@@ -202,36 +202,51 @@ export const rosterService = {
           if (restCheck.reason === "REST_POLICY_MISSING") {
             throw new RestPolicyMissingError();
           }
-          // INSUFFICIENT_REST: only proceeds if the resolved policy explicitly
-          // allows an emergency override AND the caller supplied both a reason
-          // and an approver — matching "override requires reason, approver,
-          // timestamp and audit entry" exactly. Anything less than that is a
-          // block, not a silent pass.
-          const canUseOverride = restCheck.canOverride && input.restOverrideReason && input.restOverrideApprovedBy;
-          if (!canUseOverride) {
-            throw new InsufficientRestError({
-              actualRestMinutes: restCheck.actualRestMinutes, requiredRestMinutes: restCheck.requiredRestMinutes,
-              against: restCheck.against, canOverride: restCheck.canOverride,
-            });
-          }
 
-          const neighbor = restCheck.neighborShift!;
-          const candidateStartAt = `${input.rosterDate} ${input.shiftStartTime.slice(0, 5)}:00`;
-          const candidateEndAt = `${input.rosterDate} ${input.shiftEndTime.slice(0, 5)}:00`;
-          const neighborAt = `${neighbor.date} ${neighbor.time}:00`;
-          await logRestOverride({
-            employeeId: input.employeeId,
-            rosterDate: input.rosterDate,
-            previousShiftEndAt: restCheck.against === "previous" ? neighborAt : candidateEndAt,
-            nextShiftStartAt: restCheck.against === "next" ? neighborAt : candidateStartAt,
-            actualRestMinutes: restCheck.actualRestMinutes!,
-            requiredRestMinutes: restCheck.requiredRestMinutes!,
-            policyId: restCheck.policy?.id ?? null,
-            source: "manual_assignment",
-            reason: input.restOverrideReason!,
-            requestedBy: userId,
-            approvedBy: input.restOverrideApprovedBy!,
-          }, conn);
+          // Fixed 2026-08-17 (Section E audit): this path previously always blocked on
+          // INSUFFICIENT_REST regardless of the policy's enforcementMode, ignoring WARN mode
+          // entirely — the one write path out of five that never called applyRestDecision.
+          // Same shared decision as generation/bulk upload/swap now: in WARN the assignment
+          // proceeds and a REST_GAP_WARNING is recorded; only BLOCK reaches the existing
+          // emergency-override logic below, unchanged from before this fix.
+          const restDecision = await applyRestDecision(
+            restCheck,
+            { employeeId: input.employeeId, rosterDate: input.rosterDate },
+            conn,
+          );
+
+          if (!restDecision.allowed) {
+            // INSUFFICIENT_REST under BLOCK: only proceeds if the resolved policy explicitly
+            // allows an emergency override AND the caller supplied both a reason
+            // and an approver — matching "override requires reason, approver,
+            // timestamp and audit entry" exactly. Anything less than that is a
+            // block, not a silent pass.
+            const canUseOverride = restCheck.canOverride && input.restOverrideReason && input.restOverrideApprovedBy;
+            if (!canUseOverride) {
+              throw new InsufficientRestError({
+                actualRestMinutes: restCheck.actualRestMinutes, requiredRestMinutes: restCheck.requiredRestMinutes,
+                against: restCheck.against, canOverride: restCheck.canOverride,
+              });
+            }
+
+            const neighbor = restCheck.neighborShift!;
+            const candidateStartAt = `${input.rosterDate} ${input.shiftStartTime.slice(0, 5)}:00`;
+            const candidateEndAt = `${input.rosterDate} ${input.shiftEndTime.slice(0, 5)}:00`;
+            const neighborAt = `${neighbor.date} ${neighbor.time}:00`;
+            await logRestOverride({
+              employeeId: input.employeeId,
+              rosterDate: input.rosterDate,
+              previousShiftEndAt: restCheck.against === "previous" ? neighborAt : candidateEndAt,
+              nextShiftStartAt: restCheck.against === "next" ? neighborAt : candidateStartAt,
+              actualRestMinutes: restCheck.actualRestMinutes!,
+              requiredRestMinutes: restCheck.requiredRestMinutes!,
+              policyId: restCheck.policy?.id ?? null,
+              source: "manual_assignment",
+              reason: input.restOverrideReason!,
+              requestedBy: userId,
+              approvedBy: input.restOverrideApprovedBy!,
+            }, conn);
+          }
         }
       }
 

@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-const { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock } = vi.hoisted(() => ({
+const { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock, applyRestDecision } = vi.hoisted(() => ({
   isRestPolicyFeatureActive: vi.fn(),
   validateMinimumRest: vi.fn(),
   logRestOverride: vi.fn().mockResolvedValue(undefined),
@@ -23,8 +23,18 @@ const { isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmp
   // existing assertion against `execute.mock.calls` still sees the calls
   // assignEmployee makes "through the lock connection".
   withEmployeeRosterLock: vi.fn((_employeeId: string, fn: (conn: { execute: typeof execute }) => unknown) => fn({ execute })),
+  // Mirrors applyRestDecision's real allow/warn logic (rest-policy-warn-mode.test.ts covers
+  // that function's own internals — recording the warning, blocking REST_POLICY_MISSING
+  // unconditionally, etc.). This file is scoped to assignEmployee's orchestration: does it
+  // call the shared decision point at all, and does it respect what comes back.
+  applyRestDecision: vi.fn(async (result: { ok: boolean; reason?: string; policy?: { enforcementMode?: string } }) => {
+    if (result.ok) return { allowed: true, warned: false };
+    if (result.reason !== "INSUFFICIENT_REST") return { allowed: false, warned: false };
+    if (result.policy?.enforcementMode !== "warn") return { allowed: false, warned: false };
+    return { allowed: true, warned: true };
+  }),
 }));
-vi.mock("../rest-policy.service.js", () => ({ isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock }));
+vi.mock("../rest-policy.service.js", () => ({ isRestPolicyFeatureActive, validateMinimumRest, logRestOverride, withEmployeeRosterLock, applyRestDecision }));
 
 vi.mock("../shift-scheduling.util.js", () => ({
   computeScheduledMinutes: vi.fn().mockReturnValue(480),
@@ -43,6 +53,7 @@ beforeEach(() => {
   isRestPolicyFeatureActive.mockReset();
   validateMinimumRest.mockReset();
   logRestOverride.mockClear();
+  applyRestDecision.mockClear();
   // Default: employee lookup returns a process/branch, then the final
   // SELECT * FROM wfm_roster_assignment (post-insert re-fetch) returns a row.
   execute.mockImplementation(async (sql: string) => {
@@ -142,5 +153,54 @@ describe("assignEmployee - Area 2 minimum rest", () => {
       { ...BASE_INPUT, restOverrideReason: "Urgent coverage gap" /* no approver */ }, "user-1"
     )).rejects.toThrow(InsufficientRestError);
     expect(logRestOverride).not.toHaveBeenCalled();
+  });
+});
+
+describe("assignEmployee - WARN mode (Section E audit fix, 2026-08-17)", () => {
+  // Previously this was the only one of five roster write paths that never consulted
+  // applyRestDecision — it always threw InsufficientRestError on a shortfall regardless of
+  // enforcementMode, ignoring WARN entirely. Fixed to call the same shared decision point
+  // generation/bulk-upload/swap already use.
+  const warnShortfall = {
+    ok: false as const, reason: "INSUFFICIENT_REST" as const, against: "previous" as const,
+    actualRestMinutes: 300, requiredRestMinutes: 600, canOverride: false,
+    neighborShift: { date: "2026-08-16", time: "18:00" },
+    policy: { id: "policy-1", scopeType: "organization" as const, scopeId: null, minimumRestMinutes: 600, allowsEmergencyOverride: false, enforcementMode: "warn" as const },
+  };
+
+  it("consults the shared decision point on every INSUFFICIENT_REST, not just an internal check", async () => {
+    isRestPolicyFeatureActive.mockResolvedValue(true);
+    validateMinimumRest.mockResolvedValue(warnShortfall);
+    await rosterService.assignEmployee(BASE_INPUT, "user-1");
+    expect(applyRestDecision).toHaveBeenCalledTimes(1);
+    expect(applyRestDecision.mock.calls[0][0]).toBe(warnShortfall);
+  });
+
+  it("proceeds with the insert in WARN mode even with no override reason/approver supplied", async () => {
+    isRestPolicyFeatureActive.mockResolvedValue(true);
+    validateMinimumRest.mockResolvedValue(warnShortfall);
+    const result = await rosterService.assignEmployee(BASE_INPUT, "user-1");
+    expect(result).toBeDefined();
+    const insertCall = execute.mock.calls.find(([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"));
+    expect(insertCall, "WARN mode must not block the write").toBeDefined();
+  });
+
+  it("does not fall through to the emergency-override path in WARN mode -- no audit-override row is logged", async () => {
+    isRestPolicyFeatureActive.mockResolvedValue(true);
+    validateMinimumRest.mockResolvedValue(warnShortfall);
+    await rosterService.assignEmployee(BASE_INPUT, "user-1");
+    // WARN is a policy state, not a per-assignment override -- applyRestDecision's own
+    // recordRestGapWarning (covered in rest-policy-warn-mode.test.ts) is what persists the
+    // shortfall, not this file's logRestOverride audit trail.
+    expect(logRestOverride).not.toHaveBeenCalled();
+  });
+
+  it("still blocks in BLOCK mode with no override supplied, unchanged from before this fix", async () => {
+    isRestPolicyFeatureActive.mockResolvedValue(true);
+    validateMinimumRest.mockResolvedValue({
+      ...warnShortfall,
+      policy: { ...warnShortfall.policy, enforcementMode: "block" as const },
+    });
+    await expect(rosterService.assignEmployee(BASE_INPUT, "user-1")).rejects.toThrow(InsufficientRestError);
   });
 });
