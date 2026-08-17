@@ -467,6 +467,34 @@ export function BudgetLinkedGrnForm({
       ),
   });
 
+  // Requirement 2's server-side authority for "which heads may this vendor be booked against":
+  // {mapped to this vendor} ∩ {approved budget with headroom for this branch+period}. Built and
+  // live for months (vendor-expense-mapping.service.ts, the Vendor Master mapping tab) but never
+  // called from this form — vendorHeadOptions below picked from the full master regardless of
+  // which vendor was selected. Only fetched once branch/period/vendor are all known, same
+  // preconditions the endpoint itself requires.
+  const { data: expenseSelectableResponse } = useQuery({
+    queryKey: ["expense-selectable", form.vendorId, form.branchId, effectivePeriod],
+    enabled: Boolean(isVendor && form.vendorId && form.branchId && effectivePeriod),
+    queryFn: () =>
+      hrmsApi.get<any>(
+        `/api/finance/expense-selectable?vendorId=${encodeURIComponent(form.vendorId)}`
+          + `&branchId=${encodeURIComponent(form.branchId)}`
+          + `&periodCode=${encodeURIComponent(effectivePeriod)}`
+      ),
+    staleTime: 60 * 1000,
+  });
+  // { enforced, vendorHasMappings, selectable: [{head_name, sub_head_name, available_amount}],
+  //   reason, mappedButUnbudgeted: [{head_name, sub_head_name}] } — see
+  // vendor-expense-mapping.service.ts's SelectableResult for the authoritative shape.
+  const expenseSelectable = expenseSelectableResponse?.data as {
+    enforced: boolean;
+    vendorHasMappings: boolean;
+    selectable: Array<{ head_name: string; sub_head_name: string; available_amount: number }>;
+    reason?: string;
+    mappedButUnbudgeted: Array<{ head_name: string; sub_head_name: string }>;
+  } | undefined;
+
   const branches = unwrapList(branchResponse).filter(
     (branch) => Number(branch.active_status ?? 1) === 1
   );
@@ -496,6 +524,16 @@ export function BudgetLinkedGrnForm({
     const list = unwrapList(expenseMasterResponse) as Array<{ headName?: string }>;
     return list.map((h) => String(h.headName ?? "")).filter(Boolean);
   }, [expenseMasterResponse]);
+
+  // Sub-heads from expense master for the selected head (for unbudgeted heads). Moved up from
+  // beside the vendor cascade so both the vendor and imprest Head/Sub-head options (below) can
+  // read it — declaration order matters here since both are useMemo factories evaluated during
+  // render, not hoisted function declarations.
+  const allExpenseMasterSubHeads: string[] = useMemo(() => {
+    const list = unwrapList(expenseMasterResponse) as Array<{ headName?: string; subHeads?: Array<{ subHeadName?: string }> }>;
+    const headEntry = list.find((h) => h.headName === form.head);
+    return (headEntry?.subHeads ?? []).map((sh) => String(sh.subHeadName ?? "")).filter(Boolean);
+  }, [expenseMasterResponse, form.head]);
 
   // Same monthly-driver data Branch Budget planning already fetches for this branch+period —
   // reused here so a split GRN's auto-split weighs cost centres the same way a budget line would.
@@ -626,8 +664,17 @@ export function BudgetLinkedGrnForm({
         seen.set(key, line.cost_centre_name ?? "Branch (no cost centre)");
       }
     });
+    // Merge in every active cost centre for the branch, not only ones that already have a
+    // budget line — mirrors vendorCostCentreGroups' use of the same activeCostCentres list.
+    // Without this, a cost centre with no budget line raised yet couldn't be selected at all,
+    // which cascaded into Head/Sub-head being unreachable for it too.
+    activeCostCentres.forEach((cc) => {
+      if (!seen.has(cc.id)) {
+        seen.set(cc.id, cc.costCentreName || cc.costCentreCode || "Cost centre");
+      }
+    });
     return [...seen].map(([value, label]) => ({ value, label }));
-  }, [budgetLines]);
+  }, [budgetLines, activeCostCentres]);
 
   const linesInCostCentre = useMemo(
     () =>
@@ -639,26 +686,44 @@ export function BudgetLinkedGrnForm({
     [budgetLines, form.costCentreKey]
   );
 
-  const headOptions = useMemo(
-    () => [...new Set(linesInCostCentre.map((line) => line.head))].map((head) => ({
+  // Mirrors vendorHeadOptions/vendorSubHeadOptions below: merge budgeted heads with the full
+  // finance_expense_head_master list instead of showing only heads that already have an
+  // active, unconsumed budget line for this cost centre + period. Without the merge, any head
+  // with no budget line yet, one still pending approval, or one fully consumed silently
+  // disappeared from this dropdown with no fallback — "all heads and subheads are not
+  // reflecting". Unbudgeted heads are flagged (hasBudget: false) rather than hidden, same as
+  // the vendor cascade already does.
+  const headOptions = useMemo(() => {
+    const budgetedHeads = new Set(linesInCostCentre.map((line) => line.head));
+    const allHeads = [
+      ...budgetedHeads,
+      ...allExpenseMasterHeads.filter((h) => !budgetedHeads.has(h)),
+    ];
+    return allHeads.map((head) => ({
       value: head,
       label: head,
-    })),
-    [linesInCostCentre]
-  );
+      hasBudget: budgetedHeads.has(head),
+    }));
+  }, [linesInCostCentre, allExpenseMasterHeads]);
 
   const linesInHead = useMemo(
     () => linesInCostCentre.filter((line) => line.head === form.head),
     [linesInCostCentre, form.head]
   );
 
-  const subHeadOptions = useMemo(
-    () =>
-      [...new Set(linesInHead.map((line) => line.sub_head || GENERAL_SUB_HEAD))].map(
-        (subHead) => ({ value: subHead, label: subHead })
-      ),
-    [linesInHead]
-  );
+  // Same merge as headOptions, using allExpenseMasterSubHeads (declared above, shared with the
+  // vendor cascade further down — grnType-agnostic, just keyed off form.head).
+  const subHeadOptions = useMemo(() => {
+    const budgetSubHeads = [...new Set(linesInHead.map((line) => line.sub_head || GENERAL_SUB_HEAD))];
+    const budgetSubHeadSet = new Set(budgetSubHeads);
+    const allSubHeads = [
+      ...budgetSubHeads,
+      ...allExpenseMasterSubHeads.filter((sh) => !budgetSubHeadSet.has(sh)),
+    ];
+    return allSubHeads.length
+      ? allSubHeads.map((subHead) => ({ value: subHead, label: subHead, hasBudget: budgetSubHeadSet.has(subHead) }))
+      : allExpenseMasterSubHeads.map((sh) => ({ value: sh, label: sh, hasBudget: false }));
+  }, [linesInHead, allExpenseMasterSubHeads]);
 
   const matchingLines = useMemo(
     () =>
@@ -724,24 +789,39 @@ export function BudgetLinkedGrnForm({
       ...budgetedHeads,
       ...allExpenseMasterHeads.filter((h) => !budgetedHeads.has(h)),
     ];
-    return allHeads.map((head) => ({
+    const fullList = allHeads.map((head) => ({
       value: head,
       label: head,
       hasBudget: budgetedHeads.has(head),
     }));
-  }, [budgetLines, allExpenseMasterHeads]);
+
+    // Requirement 2: once a vendor with active expense mappings is selected, narrow this list
+    // to what that vendor is actually mapped to (server-side, already intersected with approved
+    // budget by /api/finance/expense-selectable) instead of the full master. A vendor with no
+    // mappings configured yet stays unrestricted — see selectableClassifications()'s own
+    // "UNRESTRICTED, not nothing selectable" comment; narrowing that case would block every GRN
+    // for the ~875 vendors Finance hasn't mapped yet.
+    if (expenseSelectable?.vendorHasMappings) {
+      if (expenseSelectable.selectable.length > 0) {
+        const mappedHeads = new Set(expenseSelectable.selectable.map((row) => row.head_name));
+        const filtered = fullList.filter((option) => mappedHeads.has(option.value));
+        if (filtered.length) return filtered;
+      }
+      // Mapped, but none of the mapped heads currently have approved budget headroom for this
+      // branch/period — fall back to the mapping itself (flagged unbudgeted) instead of an
+      // empty dropdown; expense-selectable only returns this list when selectable is empty.
+      if (expenseSelectable.mappedButUnbudgeted.length > 0) {
+        const unbudgetedHeads = [...new Set(expenseSelectable.mappedButUnbudgeted.map((row) => row.head_name))];
+        return unbudgetedHeads.map((head) => ({ value: head, label: head, hasBudget: false }));
+      }
+    }
+    return fullList;
+  }, [budgetLines, allExpenseMasterHeads, expenseSelectable]);
 
   const vendorLinesInHead = useMemo(
     () => budgetLines.filter((line) => line.head === form.head),
     [budgetLines, form.head]
   );
-
-  // Sub-heads from expense master for the selected head (for unbudgeted heads)
-  const allExpenseMasterSubHeads: string[] = useMemo(() => {
-    const list = unwrapList(expenseMasterResponse) as Array<{ headName?: string; subHeads?: Array<{ subHeadName?: string }> }>;
-    const headEntry = list.find((h) => h.headName === form.head);
-    return (headEntry?.subHeads ?? []).map((sh) => String(sh.subHeadName ?? "")).filter(Boolean);
-  }, [expenseMasterResponse, form.head]);
 
   const vendorSubHeadOptions = useMemo(() => {
     const budgetSubHeads = [...new Set(vendorLinesInHead.map((line) => line.sub_head || GENERAL_SUB_HEAD))];
@@ -751,10 +831,25 @@ export function BudgetLinkedGrnForm({
       ...budgetSubHeads,
       ...allExpenseMasterSubHeads.filter((sh) => !budgetSubHeadSet.has(sh)),
     ];
-    return allSubHeads.length
+    const fullList = allSubHeads.length
       ? allSubHeads.map((subHead) => ({ value: subHead, label: subHead }))
       : allExpenseMasterSubHeads.map((sh) => ({ value: sh, label: sh }));
-  }, [vendorLinesInHead, allExpenseMasterSubHeads]);
+
+    // Same vendor-mapping narrowing as vendorHeadOptions, scoped to the currently selected head.
+    if (expenseSelectable?.vendorHasMappings && form.head) {
+      const mappedForHead = expenseSelectable.selectable.filter((row) => row.head_name === form.head);
+      if (mappedForHead.length > 0) {
+        const mappedSubHeads = new Set(mappedForHead.map((row) => row.sub_head_name));
+        const filtered = fullList.filter((option) => mappedSubHeads.has(option.value));
+        if (filtered.length) return filtered;
+      }
+      const unbudgetedForHead = expenseSelectable.mappedButUnbudgeted.filter((row) => row.head_name === form.head);
+      if (unbudgetedForHead.length > 0) {
+        return unbudgetedForHead.map((row) => ({ value: row.sub_head_name, label: row.sub_head_name }));
+      }
+    }
+    return fullList;
+  }, [vendorLinesInHead, allExpenseMasterSubHeads, expenseSelectable, form.head]);
 
   const vendorMatchingLines = useMemo(
     () =>
@@ -1118,6 +1213,18 @@ export function BudgetLinkedGrnForm({
         if (!form.subHead) next.subHead = "Select a sub-head.";
         if (needsItemChoice && !form.budgetLineId) {
           next.budgetLineId = "More than one budget line matches — pick the item.";
+        }
+        // headOptions/subHeadOptions now include every expense master head/sub-head, not just
+        // ones with an existing budget line (see headOptions above), so a raiser can select a
+        // combination with no matching BudgetLine at all. Unlike the vendor cascade — which has
+        // a genuinely separate "unbudgeted" submission path that sends the cost-centre id
+        // directly and lets Finance Head link a budget line during approval — Imprest's create
+        // payload hard-requires resolvedLine.id (see the submit handler below). Without this
+        // guard that resolves to null and throws on save instead of failing with a message.
+        if (form.head && form.subHead && !needsItemChoice && !resolvedLine) {
+          next.budgetLineId =
+            "No approved budget line for this Head/Sub-head in this cost centre and period. "
+            + "Ask Branch/Finance Head to add one, or pick a different combination.";
         }
       }
 
@@ -1749,7 +1856,14 @@ export function BudgetLinkedGrnForm({
                       }
                     />
                   ) : (
-                    <div className="h-8 flex items-center text-[12px] text-grn-ink-soft">See Amount section below</div>
+                    // Imprest's actual editable amount input lives in the Amount card further
+                    // down this form (shares id="grn-amount" there). This used to be a static,
+                    // unbound "See Amount section below" string — always blank-looking regardless
+                    // of what the raiser had entered. Mirror it as a live read-only total instead,
+                    // same value/format the sticky footer total strip already shows.
+                    <div className="h-8 flex items-center text-[12px] font-semibold tabular-nums text-grn-ink">
+                      {form.amount ? money(totals.gross) : <span className="font-normal text-grn-ink-soft">See Amount section below</span>}
+                    </div>
                   )}
                 </DenseField>
                 <DenseField label="Branch" required error={err("branchId")}>
@@ -1897,8 +2011,13 @@ export function BudgetLinkedGrnForm({
                 );
               })()}
 
-              {/* Accounting period override (Finance Head / Accounts Head only) */}
-              {isVendor && canOverridePeriod && period && (
+              {/* Accounting period override (Finance Head / Accounts Head only).
+                  Was isVendor-only — Imprest raisers/approvers got no period visibility or
+                  override at all, so the backend silently derived the period from billDate
+                  with nothing shown. period/effectivePeriod/canOverridePeriod are already
+                  grnType-agnostic (derived from form.billDate/form.accountingPeriod), so this
+                  is a pure gating fix, not new logic. */}
+              {canOverridePeriod && period && (
                 <DenseFieldGroup cols={2}>
                   <DenseField
                     label="Accounting period"
@@ -1924,7 +2043,7 @@ export function BudgetLinkedGrnForm({
               )}
 
               {/* Period-end cut-off warning */}
-              {isVendor && canOverridePeriod && form.accountingPeriod && form.accountingPeriod !== period && (
+              {canOverridePeriod && form.accountingPeriod && form.accountingPeriod !== period && (
                 <div className="flex items-start gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
                   <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
                   <span>Period-end cut-off: booking into <strong>{form.accountingPeriod}</strong> instead of {period}.</span>
@@ -1932,7 +2051,7 @@ export function BudgetLinkedGrnForm({
               )}
 
               {/* Accounting period read-only for non-elevated roles */}
-              {isVendor && !canOverridePeriod && effectivePeriod && (
+              {!canOverridePeriod && effectivePeriod && (
                 <div className="flex items-center gap-2 text-[12px] text-grn-ink">
                   <span className="text-grn-ink-soft">Period:</span>
                   <span className="font-bold">{effectivePeriod}</span>
@@ -2294,10 +2413,6 @@ export function BudgetLinkedGrnForm({
                     </p>
                   )}
                 </>
-              ) : !budgetLines.length ? (
-                <div className="py-2 text-[11px] text-grn-warn">
-                  No approved budget for {effectivePeriod}. Branch/Finance/Accounts Head approval required.
-                </div>
               ) : splitMode ? (
                 <div className="py-2 text-[11px] text-grn-ink-soft">
                   Budget lines are chosen per row in the split editor below.
@@ -2392,6 +2507,19 @@ export function BudgetLinkedGrnForm({
                       <span>·</span>
                       <span>{decimal(Number(resolvedLine.available_quantity))} {resolvedLine.unit} left</span>
                     </div>
+                  )}
+
+                  {/* Selected head/sub-head has no matching budget line for this cost centre +
+                      period — headOptions/subHeadOptions now include the full expense master, so
+                      this combination was selectable but, unlike the vendor cascade, Imprest has
+                      no "unbudgeted, link during approval" submission path yet. Surfaced here
+                      (same spot as the resolved-line summary above) rather than only in the
+                      top error banner, and blocks submit via the matching errors.budgetLineId. */}
+                  {form.head && form.subHead && !needsItemChoice && !resolvedLine && (
+                    <p className="text-[10px] text-amber-600">
+                      No approved budget line for this Head/Sub-head in this cost centre and period —
+                      ask Branch/Finance Head to add one, or pick a different combination.
+                    </p>
                   )}
                 </>
               )}

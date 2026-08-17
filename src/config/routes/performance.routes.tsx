@@ -31,6 +31,7 @@ const NativePerformanceFeedbackAssignments     = lazy(() => import("@/pages/Nati
 const NativePerformanceFeedbackForm            = lazy(() => import("@/pages/NativePerformanceFeedbackForm"));
 const NativePerformanceFeedbackTeamReports     = lazy(() => import("@/pages/NativePerformanceFeedbackTeamReports"));
 const PerformanceHub                 = lazy(() => import("@/pages/PerformanceHub"));
+const ExecutiveQualityDashboard = lazy(() => import("@/pages/ExecutiveQualityDashboard"));
 const NativeLMSMyLearning   = lazy(() => import("@/pages/NativeLMSMyLearning"));
 const NativeLMSCoordinator  = lazy(() => import("@/pages/NativeLMSCoordinator"));
 const LMSIntegrationAdmin   = lazy(() => import("@/pages/LMSIntegrationAdmin"));
@@ -82,10 +83,18 @@ export const performanceRouteElements = (
           Old role-specific routes below now redirect there instead of rendering their own
           page; the underlying page components are left on disk per CLAUDE.md (never delete
           existing routes/pages solely to simplify) but are no longer reachable by route.
-          See docs/superpowers/specs/2026-08-04-unified-quality-operations-dashboards-design.md */}
+          See docs/superpowers/specs/2026-08-04-unified-quality-operations-dashboards-design.md
+
+          EXCEPTION — /quality/executive, 2026-08-17: QualityDashboard.tsx's Drill-Down/
+          Heatmap/Agent Risk/Inbound/CLAP VOC/Sales & Funnel/AI & ROI tabs moved to
+          ExecutiveQualityDashboard.tsx (user's explicit choice, made after being told this
+          route had been redirected here since the consolidation above). This one route now
+          renders that page instead of redirecting; QUALITY_EXECUTIVE's role_page_access was
+          widened by migration 1143_quality_executive_page_access.sql to match everyone who
+          can already reach /quality-dashboard, so this is additive, not a narrowing. */}
       <Route path="/quality/dashboard"    element={<Navigate to="/quality-dashboard" replace />} />
       <Route path="/quality/audit"        element={<Navigate to="/quality-dashboard" replace />} />
-      <Route path="/quality/executive"    element={<Navigate to="/quality-dashboard" replace />} />
+      <Route path="/quality/executive"    element={<ProtectedRoute><Gate pageCode="QUALITY_EXECUTIVE"><ExecutiveQualityDashboard /></Gate></ProtectedRoute>} />
       <Route path="/quality/team"         element={<Navigate to="/quality-dashboard" replace />} />
       <Route path="/quality/my-dashboard" element={<Navigate to="/quality-dashboard" replace />} />
       <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager']}><Gate pageCode="KPI_CONFIG"><NativeProcessMetricConfig /></Gate></ProtectedRoute>} />

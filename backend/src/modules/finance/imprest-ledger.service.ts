@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
+import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 
 /**
@@ -88,6 +89,20 @@ export const imprestLedgerService = {
     const amount = Number(entry.amount);
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new Error("An imprest ledger amount must be a positive number");
+    }
+
+    // Every imprest movement — allocation credit, voucher spend, return, adjustment, closure —
+    // funnels through this one method, so this is the single chokepoint to stop any of them
+    // posting into a month P&L has already locked for close. GRN's own createDraft()/approval
+    // path already re-checks isPeriodLocked before a voucher reaches here (grn.service.ts), but
+    // imprest.service.ts's allocation create/approve paths had no equivalent check anywhere —
+    // checked here, immediately before the mutation and inside the caller's transaction, so a
+    // concurrent lock cannot slip through, same as grn.service.ts's own P0-3 re-check.
+    const periodCode = entry.transactionDate.slice(0, 7);
+    if (await isPeriodLocked(periodCode, connection)) {
+      throw new Error(
+        `${periodCode} is locked for P&L close. This imprest entry cannot be posted against it.`
+      );
     }
 
     // Locks the manager row, which serialises every posting against that float.
