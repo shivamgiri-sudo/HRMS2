@@ -102,11 +102,13 @@ router.get(
   "/",
   requireRole(...CC_READ_ROLES),
   h(async (req, res) => {
-    const { q, status, client_id, branch_id, page, limit } = req.query;
+    const { q, status, client_id, client_name, branch_id, page, limit } = req.query;
     const result = await costCentreManagementService.list({
       q: q as string,
       status: status as any,
       client_id: client_id as string,
+      // The filter that actually matches anything — client_id is NULL on every row.
+      client_name: client_name as string,
       branch_id: await scopedBranchId(req, branch_id),
       page: page ? parseInt(page as string, 10) : 1,
       limit: limit ? parseInt(limit as string, 10) : 50,

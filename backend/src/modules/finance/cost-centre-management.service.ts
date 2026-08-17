@@ -85,7 +85,15 @@ export interface CostCentreInput {
 export interface ListFilters {
   q?: string;
   status?: CostCentreStatus | "all";
+  /**
+   * FK filter against client_master. Semantically correct but matches NOTHING today:
+   * cost_centre_master.client_id is NULL on all 927 rows, so any caller using this gets an empty
+   * list rather than an error. Kept because it is the right filter if the FK is ever populated —
+   * see the note in list() for why it is not, and use client_name instead.
+   */
   client_id?: string;
+  /** The filter that actually works — matches the billing client text (785 rows, 683 distinct). */
+  client_name?: string;
   branch_id?: string;
   page?: number;
   limit?: number;
@@ -129,7 +137,7 @@ export const costCentreManagementService = {
    * List cost centres with filters
    */
   async list(filters: ListFilters = {}) {
-    const { q, status, client_id, branch_id, page = 1, limit = 50 } = filters;
+    const { q, status, client_id, client_name, branch_id, page = 1, limit = 50 } = filters;
     const where: string[] = [];
     const params: (string | number)[] = [];
 
@@ -153,9 +161,28 @@ export const costCentreManagementService = {
       params.push(status);
     }
 
+    /**
+     * Filtering a cost centre list by client has to go through client_name, not client_id.
+     *
+     * client_id is NULL on all 927 rows and there is no safe way to fill it: its FK points at
+     * client_master, which is a Client PORTAL TENANT registry (api_key, webhook_url,
+     * subscription_status, billing_cycle) holding 12 mostly-dead rows — '2', 'UnAllocated',
+     * 'CS/IB/AHM/003' (a cost centre code), plus defunct telecoms. Only 3 of those 12 appear in
+     * billing data at all. Populating it from the 717 billing counterparties in
+     * bill_client_snapshot would turn every company MAS invoices into a portal tenant defaulting
+     * to subscription_status = 'ACTIVE'. A billing counterparty is not a portal tenant.
+     *
+     * The billing client is already on the row as text: client_name, 785 populated, 683 distinct.
+     * So client_id stays as the (currently empty) FK filter and client_name is the one that works.
+     */
     if (client_id) {
       where.push("cc.client_id = ?");
       params.push(client_id);
+    }
+
+    if (client_name) {
+      where.push("cc.client_name LIKE ?");
+      params.push(`%${client_name}%`);
     }
 
     if (branch_id) {

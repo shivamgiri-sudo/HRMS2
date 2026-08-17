@@ -191,7 +191,11 @@ export interface CostCentreInput {
 export interface ListFilters {
   q?: string;
   status?: CostCentreStatus | "all";
+  /** FK filter — matches nothing today, cost_centre_master.client_id is NULL on all 927 rows.
+   *  Use client_name to filter by client; see the note in cost-centre-management.service.ts. */
   client_id?: string;
+  /** Billing client text — 785 populated, 683 distinct. This is the filter that works. */
+  client_name?: string;
   branch_id?: string;
   page?: number;
   limit?: number;
@@ -232,6 +236,7 @@ export function useCostCentreList(filters: ListFilters = {}) {
       if (filters.q) params.set("q", filters.q);
       if (filters.status) params.set("status", filters.status);
       if (filters.client_id) params.set("client_id", filters.client_id);
+      if (filters.client_name) params.set("client_name", filters.client_name);
       if (filters.branch_id) params.set("branch_id", filters.branch_id);
       if (filters.page) params.set("page", String(filters.page));
       if (filters.limit) params.set("limit", String(filters.limit));
