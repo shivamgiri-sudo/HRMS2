@@ -106,6 +106,20 @@ function useReport(code: string, params: Record<string, string>, enabled = true)
   return useQuery({
     queryKey: [code, qs.toString()],
     enabled,
+    /*
+     * One attempt, not four.
+     *
+     * These are heavy aggregates: measured live, headcount returns in ~2s and attrition in
+     * 8-18s, but aon-bucket-shrinkage scans twelve months of attendance and reliably
+     * exceeds the gateway's 120s limit, coming back 504 with an HTML error body. With
+     * react-query's default retry of 3, that one dead query became four consecutive
+     * two-minute requests — eight minutes of load on a database this codebase already
+     * knows to be contended, with the view stuck loading the whole time. A query that
+     * times out at the gateway will time out again; retrying it only hurts.
+     */
+    retry: false,
+    /* Re-running a 2-minute aggregate on every remount is not worth the freshness. */
+    staleTime: 5 * 60_000,
     queryFn: async () => {
       const res = await hrmsApi.get<ApiResponse>(`/api/reports/suite/${code}?${qs.toString()}`, 120_000);
       return res.data ?? [];
@@ -182,8 +196,27 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId: 
   const at = useReport("aon-bucket-attrition", { ...base, from, to });
   const sh = useReport("aon-bucket-shrinkage", { ...base, from, to });
 
-  const loading = hc.isLoading || at.isLoading || sh.isLoading;
-  const error = hc.error || at.error || sh.error;
+  /*
+   * Gate on the query the SELECTED metric needs, never on all three.
+   *
+   * This was `hc.isLoading || at.isLoading || sh.isLoading`, so the slowest query decided
+   * whether anything at all appeared. aon-bucket-shrinkage times out at the gateway after
+   * ~120s, which meant Headcount — back in under two seconds with 121 rows — sat behind
+   * grey skeletons for two minutes and then rendered only because the failure finally
+   * resolved the flag. On screen that is indistinguishable from a broken page, and it is
+   * exactly what it was reported as.
+   *
+   * A metric nobody is looking at must never blank the one they are.
+   */
+  const metricQuery = metric === "shrinkage" ? sh : metric === "exits" ? at : hc;
+  const loading = metricQuery.isLoading;
+  const error = metricQuery.error;
+
+  /* Supporting figures come from the other two queries, which may still be in flight or
+     may have failed. Their absence must read as "not available", never as a confident 0 —
+     "0 exits in range" is a claim, and an unloaded query has not earned it. */
+  const exitsReady = !at.isLoading && !at.error;
+  const headReady = !hc.isLoading && !hc.error;
 
   /* Headline per bucket. Shrinkage is weighted by employee-days, never a mean of
      percentages — averaging percentages across groups of wildly different size is the
@@ -288,13 +321,28 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId: 
     [hc.data],
   );
 
-  if (error) {
-    return (
-      <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
-        {(error as Error).message || "Failed to load AON analytics."}
-      </div>
-    );
-  }
+  /*
+   * The failure is shown INSIDE the view, not instead of it.
+   *
+   * This used to `return` a red box in place of everything, which took the metric selector,
+   * the group-by, the date range and the tabs down with it. Since the one query that fails
+   * in practice is Shrinkage, selecting it stranded the user on an error screen with no
+   * control left to switch back to Headcount — the failure removed the means of escaping
+   * itself. Keeping the chrome mounted means a slow or dead metric costs you that metric
+   * and nothing else.
+   */
+  const failure = error
+    ? (error as Error).message?.toLowerCase().includes("timeout") ||
+      (error as Error).message?.includes("504")
+      ? "This metric is taking longer than the 120-second limit and was stopped. Narrow the date range, or pick a single branch, and try again."
+      : (error as Error).message || "Failed to load this metric."
+    : null;
+
+  const MetricFailure = () => (
+    <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+      {failure}
+    </div>
+  );
 
   return (
     <div className="space-y-4">
@@ -319,9 +367,13 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId: 
         ]}
       />
 
+      {failure && <MetricFailure />}
+
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {loading
           ? BUCKETS.map(b => <ChartSkeleton key={b} height={104} />)
+          : failure
+          ? null
           : tiles.map(t => (
               <StatTile
                 key={t.bucket}
@@ -329,10 +381,10 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId: 
                 value={metric === "exits" ? num(t.exits) : metric === "shrinkage" ? pct(t.shrinkage ?? NaN) : num(t.headcount)}
                 denominator={
                   metric === "exits"
-                    ? `${pct(t.exitShare ?? NaN)} of exits in range · avg over ${num(t.headcount)} active now`
+                    ? `${pct(t.exitShare ?? NaN)} of exits in range · ${headReady ? `avg over ${num(t.headcount)} active now` : "headcount unavailable"}`
                     : metric === "shrinkage"
                       ? `over ${num(t.empDays)} employee-days`
-                      : `${pct(t.headShare ?? NaN)} of active headcount · ${num(t.exits)} exits in range`
+                      : `${pct(t.headShare ?? NaN)} of active headcount · ${exitsReady ? `${num(t.exits)} exits in range` : "exits unavailable"}`
                 }
                 intent={t.bucket === "0-30" ? "critical" : t.bucket === "31-60" ? "warning" : "neutral"}
                 icon={metric === "exits" ? <LogOut className="h-4 w-4" /> : metric === "shrinkage" ? <Activity className="h-4 w-4" /> : <Users className="h-4 w-4" />}
@@ -361,6 +413,8 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId: 
       >
         {loading ? (
           <ChartSkeleton height={320} />
+        ) : failure ? (
+          <MetricFailure />
         ) : grid.length === 0 ? (
           <EmptyState label="No rows for this filter" hint="Widen the date range or clear the branch filter." />
         ) : (
