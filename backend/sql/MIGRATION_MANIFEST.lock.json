@@ -545,7 +545,8 @@
     "1237_legacy_document_verified_backfill.sql",
     "1238_dispatch_log_skipped_status.sql",
     "1240_emergency_contact_onboarding_backfill.sql",
-    "migrations/1300_client_billing_foundation.sql"
+    "migrations/1300_client_billing_foundation.sql",
+    "migrations/1301_client_billing_approval_workflow.sql"
   ],
   "approvedDeletions": [
     {
@@ -561,7 +562,8 @@
   ],
   "knownDangling": [
     "migrations/426_employee_geofence_alerts.sql",
-    "migrations/1300_client_billing_foundation.sql"
+    "migrations/1300_client_billing_foundation.sql",
+    "migrations/1301_client_billing_approval_workflow.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
