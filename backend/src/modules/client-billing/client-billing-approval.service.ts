@@ -30,7 +30,7 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
 
     const [invoiceRows] = await conn.execute<RowDataPacket[]>(
       `SELECT id, invoice_status, cost_centre_id, finance_year, grand_total
-       FROM client_invoice WHERE id = ? LIMIT 1`,
+       FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
       [input.invoiceId]
     );
     const invoice = invoiceRows[0] as
@@ -135,7 +135,7 @@ async function rejectInvoice(input: RejectInvoiceInput): Promise<RejectInvoiceRe
     await conn.beginTransaction();
 
     const [invoiceRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT id, invoice_status FROM client_invoice WHERE id = ? LIMIT 1`,
+      `SELECT id, invoice_status FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
       [input.invoiceId]
     );
     const invoice = invoiceRows[0] as { id: string; invoice_status: string } | undefined;
