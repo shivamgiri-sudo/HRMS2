@@ -3397,15 +3397,43 @@ export const REPORT_CATALOG: ReportMeta[] = [
   // directly from backend/src/modules/reporting/report-catalog.ts's ReportDefinition —
   // same ColumnFormat/ColumnDef shape on both sides (catalog-frontend-parity.contract.test.ts).
   //
-  // NOT added here, deliberately: asset-inventory-report and offer-to-joining-tracker. Both
-  // are reachable by direct URL already and BOTH read employee data with no branch-scope
-  // predicate — report-row-scope.contract.test.ts's UNSCOPED_BACKLOG records why each cannot
-  // be scoped (offer-to-joining-tracker's grain has no branch column and is candidate-, not
-  // employee-, grain; asset-inventory-report declares no branchScoped promise at all) and
-  // explicitly asserts zero tolerance for any UNSCOPED_BACKLOG code appearing in THIS file —
-  // that is what turns direct-URL-reachable into a clickable tile every branch user can open.
-  // Adding them here would flip that test red for the correct reason. Leave them backend-only.
+  // NOT added here, deliberately: offer-to-joining-tracker. Reachable by direct URL already,
+  // reads employee data with no branch-scope predicate, and report-row-scope.contract.test.ts's
+  // UNSCOPED_BACKLOG records why it cannot be scoped at all — its grain has no branch column
+  // and is candidate-, not employee-, grain. That test explicitly asserts zero tolerance for
+  // any UNSCOPED_BACKLOG code appearing in THIS file — that is what turns direct-URL-reachable
+  // into a clickable tile every branch user can open. Adding it here would flip that test red
+  // for the correct reason. Leave it backend-only.
+  //
+  // asset-inventory-report WAS in that same NOT-added set, added here 2026-08-18: asset_master
+  // has its own branch_id, and report-suite.routes.ts's block now calls
+  // addScopedBranchOnlyFilters (a branch-only sibling of addScopedEmployeeFilters — asset_master
+  // isn't employee-shaped, so the department/process/cost-centre clauses don't apply). The
+  // table holds 0 rows in production today, so this has no live effect yet.
   // ═══════════════════════════════════════════════════════════════════════════════
+
+  {
+    code: "asset-inventory-report",
+    name: "Asset Inventory Report",
+    category: "Assets",
+    subcategory: "Inventory",
+    description: "Full asset register with current assignment status",
+    rowGrain: "One row per asset",
+    primaryKey: ["asset_code"],
+    columns: [
+      { key: "asset_code", label: "Asset Code", format: "text", width: 110 },
+      { key: "asset_name", label: "Asset Name", format: "text", width: 160 },
+      { key: "asset_category", label: "Category", format: "text", width: 120 },
+      { key: "asset_status", label: "Status", format: "status", width: 100 },
+      { key: "purchase_cost", label: "Purchase Cost", format: "currency", align: "right", width: 120, sensitive: true },
+      { key: "purchase_date", label: "Purchase Date", format: "date", width: 110 },
+      { key: "assigned_to", label: "Assigned To", format: "text", width: 160 },
+      { key: "assigned_employee_code", label: "Assigned Emp Code", format: "text", width: 130 },
+      { key: "assigned_date", label: "Assigned Date", format: "date", width: 110 },
+    ],
+    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"],
+    exportRoles: ["super_admin", "admin", "hr", "hr_head"],
+  },
 
   {
     code: "ats-pipeline-summary",

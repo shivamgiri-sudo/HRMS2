@@ -9,6 +9,7 @@ import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 import { buildIdentitySourceSnapshotReportSql, runIdentitySourceSnapshotSync } from "./identity-source-snapshot.js";
 import {
   addScopedEmployeeFilters,
+  addScopedBranchOnlyFilters,
   reportCatalogAccessMiddleware,
   reportScopeMiddleware,
 } from "./reporting-access.js";
@@ -1732,6 +1733,15 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       // verified live; the real status column is just "status", and there is
       // no condition column at all. Never caught because this report was
       // unreachable (missing from REPORT_CATALOG) until now.
+      //
+      // Row scope, added 2026-08-18: asset_master has its own branch_id (assets are tracked
+      // at a branch independent of who they're assigned to), but is not employee-shaped — no
+      // department_id/process_id/cost_centre_id/manager columns — so addScopedEmployeeFilters
+      // would 500 the moment a caller passed ?departmentId=/?processId=/?costCentreId=.
+      // addScopedBranchOnlyFilters applies just the branch predicate this table actually has.
+      // asset_master holds 0 rows in production today (verified), so this has no live effect
+      // yet — it's here so the report is safe the moment assets are entered.
+      addScopedBranchOnlyFilters(req, clauses, params, "am");
       sql = `SELECT am.asset_code, am.asset_name, am.asset_category, am.status AS asset_status,
                     am.purchase_cost, am.purchase_date,
                     COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS assigned_to,
@@ -1740,6 +1750,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
                FROM asset_master am
                LEFT JOIN asset_assignment aa ON aa.asset_id = am.id AND aa.returned_date IS NULL
                LEFT JOIN employees e ON e.id = aa.employee_id
+              WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
               ORDER BY am.asset_category, am.asset_name`;
       break;
 
