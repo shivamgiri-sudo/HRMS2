@@ -6,6 +6,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { clientBillingService } from "./client-billing.service.js";
+import { clientBillingApprovalService } from "./client-billing-approval.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,6 +71,49 @@ router.get(
       [req.params.id]
     );
     res.json({ success: true, data: { ...invoice, lines: lineRows } });
+  })
+);
+
+router.post(
+  "/invoices/:id/approve",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const body = req.body as { poNumbers?: string[] };
+    const data = await clientBillingApprovalService.approveInvoice({
+      invoiceId: req.params.id,
+      poNumbers: body.poNumbers,
+      userId: req.authUser!.id,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/invoices/:id/reject",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const body = req.body as { reason?: string };
+    if (!body.reason || body.reason.trim().length === 0) {
+      return res.status(400).json({ error: "reason is required" });
+    }
+    const data = await clientBillingApprovalService.rejectInvoice({
+      invoiceId: req.params.id,
+      reason: body.reason,
+      userId: req.authUser!.id,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/invoices/:id/audit-log",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM client_invoice_audit_log WHERE invoice_id = ? ORDER BY created_at ASC`,
+      [req.params.id]
+    );
+    res.json({ success: true, data: rows });
   })
 );
 
