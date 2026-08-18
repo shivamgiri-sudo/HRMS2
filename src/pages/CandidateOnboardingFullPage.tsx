@@ -214,6 +214,7 @@ export default function CandidateOnboardingFullPage() {
           onLookupIfsc={onb.lookupIfsc}
           token={token}
           consentAccepted={onb.consentAccepted}
+          onSkip={onb.advanceStep}
         />
       )}
 

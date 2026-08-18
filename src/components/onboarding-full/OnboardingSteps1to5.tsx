@@ -1292,7 +1292,7 @@ export function Step5Bgv({
 // ── Step 6: Bank Details ───────────────────────────────────────────────────────
 
 export function Step6Bank({
-  bank, setBank, saving, onSave, onLookupIfsc, token, consentAccepted = false,
+  bank, setBank, saving, onSave, onLookupIfsc, token, consentAccepted = false, onSkip,
 }: {
   bank: BankForm;
   setBank: React.Dispatch<React.SetStateAction<BankForm>>;
@@ -1302,6 +1302,9 @@ export function Step6Bank({
   token?: string;
   /** Penny drop calls verifyBankForCandidate, which enforces consent server-side. */
   consentAccepted?: boolean;
+  /** Bank account is optional — advances past this step without requiring any
+   *  field to be filled. Many new joiners don't have an account yet. */
+  onSkip?: () => void;
 }) {
   const upd = (k: keyof BankForm, v: string) => setBank((p) => ({ ...p, [k]: v }));
   const mismatch = Boolean(bank.accountNo && bank.confirmAccountNo && bank.accountNo !== bank.confirmAccountNo);
@@ -1489,7 +1492,17 @@ export function Step6Bank({
           </div>
         )}
 
-        <div className="mt-6 flex justify-end">
+        <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+          {!bank.accountNo && onSkip && (
+            <button
+              type="button"
+              onClick={onSkip}
+              disabled={saving}
+              className="text-sm font-semibold text-slate-500 underline underline-offset-2 hover:text-slate-700"
+            >
+              Skip for now — I don't have my bank details yet
+            </button>
+          )}
           <Button
             onClick={onSave}
             disabled={saving || mismatch || !ifscOk}
@@ -1500,6 +1513,11 @@ export function Step6Bank({
             Save Bank Details
           </Button>
         </div>
+        {!bank.accountNo && (
+          <p className="mt-2 text-xs text-slate-500 text-right">
+            You can add your bank account details anytime after joining, from your HR Profile page — Payroll will follow up before your first salary cycle.
+          </p>
+        )}
       </CardContent>
     </Card>
   );
