@@ -212,7 +212,9 @@ assessmentPublicRouter.put("/assessment/session/:token/responses/:questionId", h
     const token = tokenSchema.parse(req.params.token);
     const questionId = z.string().trim().min(1).max(120).parse(req.params.questionId);
     const input = responseSchema.parse(req.body);
-    const data = await assessmentService.saveResponse(token, questionId, input.answer, input.timeTakenSeconds);
+    const data = await assessmentService.saveResponse(
+      token, questionId, input.answer, input.timeTakenSeconds, requestMeta(req, "candidate"),
+    );
     return res.json({ success: true, data });
   } catch (error) {
     return sendError(res, error);

@@ -1,3 +1,5 @@
+import { CLIENT_DEVICE_GUARD_SNIPPET } from "./device-guard.js";
+
 export function candidateAssessmentPage(): string {
   return String.raw`<!doctype html>
 <html lang="en">
@@ -12,6 +14,12 @@ export function candidateAssessmentPage(): string {
 <body>
 <header class="top"><div class="top-row"><div><h1>MAS Callnet Candidate Assessment</h1><p>Complete the assessment while waiting for your HR interview</p></div><div id="headerTimer" class="top-timer hidden"><b id="timeRemaining">--:--</b><span>Time remaining</span></div></div></header>
 <main class="wrap">
+  <section id="deviceBlock" class="card hidden">
+    <h2>Please switch to a desktop or laptop</h2>
+    <div class="notice error">This assessment must be completed on a desktop or laptop computer, not a phone or tablet.</div>
+    <p id="deviceBlockContact" class="muted">Contact the recruiter who registered you for help.</p>
+  </section>
+
   <section id="lookup" class="card">
     <h2>Open your assessment</h2>
     <p class="muted">Enter the queue token received after candidate registration and the same mobile number used in registration.</p>
@@ -49,6 +57,9 @@ export function candidateAssessmentPage(): string {
 (()=>{"use strict";
 const API="/api/ats-ext";const $=id=>document.getElementById(id);let token="";let session=null;let answers=new Map();let countdownTimer=null;let typingTimer=null;let typingState=null;let finalSubmitting=false;let visibilityEvents=0;let typingRenderTime=0;
 const esc=value=>String(value??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+${CLIENT_DEVICE_GUARD_SNIPPET}
+function showDeviceBlock(contact){if(contact)document.getElementById("deviceBlockContact").textContent=contact;["lookup","intro","assessment","result"].forEach(id=>{const el=document.getElementById(id);if(el)el.classList.add("hidden")});document.getElementById("deviceBlock").classList.remove("hidden")}
+if(isBlockedDevice()){showDeviceBlock();return}
 async function api(path,options={}){const response=await fetch(API+path,{...options,headers:{"Content-Type":"application/json",...(options.headers||{})}});const payload=await response.json().catch(()=>({}));if(!response.ok){const error=new Error(payload.message||"Request failed");error.code=payload.code;throw error}return payload.data}
 function show(id){$(id).classList.remove("hidden")}function hide(id){$(id).classList.add("hidden")}
 function message(id,text,type="notice"){const el=$(id);if(el)el.innerHTML=text?'<div class="'+type+'">'+esc(text)+"</div>":""}
@@ -59,13 +70,13 @@ function currentTemplate(){return session?.assessment?.template||session?.templa
 function completedStatus(status){return status==="completed"||status==="manual_review"}
 function terminalStatus(status){return completedStatus(status)||["expired","cancelled","technical_error","skipped"].includes(status)}
 
-async function openAssessment(){try{$("openBtn").disabled=true;$("openBtn").innerHTML='<span class="spinner"></span> Checking';message("lookupMsg","Checking candidate registration...");const input={queueToken:$("queueToken").value.trim(),mobile:$("mobile").value.replace(/\D/g,"")};const assigned=await api("/assessment/lookup",{method:"POST",body:JSON.stringify(input)});storeToken(assigned.token);session=await api("/assessment/session/"+encodeURIComponent(token));renderEntry()}catch(error){message("lookupMsg",error.message,"notice error")}finally{$("openBtn").disabled=false;$("openBtn").textContent="Open Assessment"}}
+async function openAssessment(){try{$("openBtn").disabled=true;$("openBtn").innerHTML='<span class="spinner"></span> Checking';message("lookupMsg","Checking candidate registration...");const input={queueToken:$("queueToken").value.trim(),mobile:$("mobile").value.replace(/\D/g,"")};const assigned=await api("/assessment/lookup",{method:"POST",body:JSON.stringify(input)});storeToken(assigned.token);session=await api("/assessment/session/"+encodeURIComponent(token));renderEntry()}catch(error){if(error.code==="DEVICE_NOT_ALLOWED"){showDeviceBlock(error.message)}else{message("lookupMsg",error.message,"notice error")}}finally{$("openBtn").disabled=false;$("openBtn").textContent="Open Assessment"}}
 
 function renderEntry(){if(!session)return;hide("lookup");hide("intro");hide("assessment");hide("result");const status=session.assessment.status;if(completedStatus(status)){renderResult();return}if(terminalStatus(status)){show("result");$("result").innerHTML='<h2>Assessment unavailable</h2><div class="notice error">This assessment is '+esc(status.replaceAll("_"," "))+'. Please speak with the recruiter.</div>';clearCountdown();return}if(status==="assigned"){renderIntro();return}show("assessment");renderAssessment()}
 
 function renderIntro(){show("intro");const template=currentTemplate();$("templateBadge").textContent=template.process.replaceAll("_"," ")+" / "+template.role.replaceAll("_"," ");$("templateName").textContent=template.name;$("candidateSummary").textContent=(session.candidate?.name||"Candidate")+(session.candidate?.code?" · "+session.candidate.code:"")+(session.candidate?.queueToken?" · Token "+session.candidate.queueToken:"");$("introMeta").textContent=template.durationMinutes+" minutes · "+template.questionCount+" questions · Passing benchmark "+template.passingPercentage+"%";$("instructions").innerHTML=(template.instructions||[]).map(item=>"<li>"+esc(item)+"</li>").join("")}
 
-async function startAssessment(){try{$("startBtn").disabled=true;$("startBtn").innerHTML='<span class="spinner"></span> Starting';session=await api("/assessment/session/"+encodeURIComponent(token)+"/start",{method:"POST",body:"{}"});renderEntry()}catch(error){alert(error.message)}finally{$("startBtn").disabled=false;$("startBtn").textContent="Start Assessment"}}
+async function startAssessment(){try{$("startBtn").disabled=true;$("startBtn").innerHTML='<span class="spinner"></span> Starting';session=await api("/assessment/session/"+encodeURIComponent(token)+"/start",{method:"POST",body:"{}"});renderEntry()}catch(error){if(error.code==="DEVICE_NOT_ALLOWED"){showDeviceBlock(error.message)}else{alert(error.message)}}finally{$("startBtn").disabled=false;$("startBtn").textContent="Start Assessment"}}
 
 function renderAssessment(){const template=currentTemplate();$("activeName").textContent=template.name;$("statusBadge").textContent=session.assessment.status.replaceAll("_"," ");answers=new Map((session.responses||[]).map(response=>[response.questionId,response.answer]));$("questions").innerHTML="<h2>Assessment Questions</h2>"+template.questions.map((question,index)=>renderQuestion(question,index+1)).join("");wireQuestionEvents();renderTyping();updateProgress();startCountdown()}
 

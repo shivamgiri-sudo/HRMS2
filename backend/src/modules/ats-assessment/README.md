@@ -23,6 +23,34 @@ ATS_ASSESSMENT_TOKEN_SECRET=<long-random-secret>
 
 `ATS_ASSESSMENT_TOKEN_SECRET` is mandatory when the feature is enabled in production.
 
+## Device gate (phone/tablet block)
+
+Candidates started taking this assessment on their own phones instead of a supervised desktop, with no way to
+detect or stop it. `device-guard.ts` blocks the realistic case — a phone/tablet browser — at two points:
+`POST /assessment/lookup` (before any attempt is created or reused, so a blocked device never consumes the one
+allowed attempt) and `POST /assessment/session/:token/start` (catches a bookmarked/shared token opened directly).
+The candidate-facing page also checks on load for instant feedback, using the exact same pattern the server checks
+(`CLIENT_DEVICE_GUARD_SNIPPET`, built from the same source as the server's regex, so the two can never disagree).
+
+```env
+# Defaults to true — this is the fix being shipped, not an opt-in. Set to
+# "false" and restart to instantly restore unrestricted access if it ever
+# misfires against a real candidate.
+ATS_ASSESSMENT_DEVICE_GATE_ENABLED=true
+```
+
+**This is user-agent string matching, not a hard security boundary.** It stops a candidate using their phone as-is;
+it does not stop a technically determined candidate spoofing their UA (DevTools device emulation, a UA-switcher
+extension). iPadOS Safari's default "Request Desktop" UA is indistinguishable from macOS Safari by UA string alone,
+so an iPad in that default mode is **not** blocked — an accepted, documented gap, not a bug. An iPad in classic
+mobile-Safari UA mode (which self-identifies) is blocked.
+
+A complementary, non-blocking check also runs mid-session: if an attempt started on a desktop later sees a
+request that looks like a phone (handed off, shared, or switched devices), it's flagged via the same
+integrity-event mechanism used for tab-hidden/window-blur (visible in the staff dashboard under each attempt's
+integrity events) — never a hard block, since a false positive there would strand a candidate's near-complete
+answers.
+
 ## Portal URLs
 
 Candidate assessment kiosk:

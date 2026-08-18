@@ -138,3 +138,93 @@ integrationDescribe("ATS assessment MySQL lifecycle", () => {
     expect(candidateRows[0]).toMatchObject({ status: "Waiting", current_stage: "Arrived" });
   });
 });
+
+// Separate candidate/queue token so this suite never touches the one attempt
+// the lifecycle test above depends on completing end-to-end.
+integrationDescribe("ATS assessment device gate", () => {
+  const candidateId = randomUUID();
+  const queueTokenId = randomUUID();
+  const queueToken = `DEVICE-TEST-${Date.now()}`;
+  const mobile = "9876500001";
+  const MOBILE_UA =
+    "Mozilla/5.0 (Linux; Android 13; SM-A536E) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36";
+
+  beforeAll(async () => {
+    await db.execute(
+      `INSERT INTO ats_candidate (
+        id, candidate_code, full_name, mobile, branch_display_name,
+        applied_for_branch, applied_for_process, role_applied, experience,
+        q_token, status, current_stage, created_at, updated_at
+      ) VALUES (?, 'CAND-TEST-DEVICE', 'Device Gate Test Candidate', ?, 'Noida',
+                'Noida', 'Back Office Data Entry', 'Back Office', 'Fresher',
+                ?, 'Waiting', 'Arrived', NOW(), NOW())`,
+      [candidateId, mobile, queueToken],
+    );
+    await db.execute(
+      `INSERT INTO ats_queue_token (
+        id, candidate_id, token, token_number, status, queue_status, created_at, updated_at
+      ) VALUES (?, ?, UUID(), ?, 'active', 'waiting', NOW(), NOW())`,
+      [queueTokenId, candidateId, queueToken],
+    );
+  });
+
+  afterAll(async () => {
+    await db.execute("DELETE FROM ats_assessment_audit_log WHERE assessment_id IN (SELECT id FROM ats_candidate_assessment WHERE candidate_id = ?)", [candidateId]);
+    await db.execute("DELETE FROM ats_candidate_assessment WHERE candidate_id = ?", [candidateId]);
+    await db.execute("DELETE FROM ats_queue_token WHERE candidate_id = ?", [candidateId]);
+    await db.execute("DELETE FROM ats_candidate WHERE id = ?", [candidateId]);
+  });
+
+  it("rejects a mobile-UA lookup and never consumes the candidate's one attempt", async () => {
+    await expect(
+      assessmentService.lookupOrAssignAssessment({
+        queueToken,
+        mobile,
+        meta: { actorType: "candidate", ip: "127.0.0.1", userAgent: MOBILE_UA },
+      }),
+    ).rejects.toMatchObject({ code: "DEVICE_NOT_ALLOWED" });
+
+    const [attemptRows] = await db.execute<any[]>(
+      "SELECT COUNT(*) AS total FROM ats_candidate_assessment WHERE candidate_id = ?",
+      [candidateId],
+    );
+    expect(Number(attemptRows[0]?.total)).toBe(0);
+  });
+
+  it("allows a desktop-UA lookup through, then rejects a mobile-UA start attempt", async () => {
+    const assignment = await assessmentService.lookupOrAssignAssessment({
+      queueToken,
+      mobile,
+      meta: { actorType: "candidate", ip: "127.0.0.1", userAgent: "vitest-desktop" },
+    });
+    expect(assignment.assessment.status).toBe("assigned");
+
+    await expect(
+      assessmentService.startAssessment(assignment.token, { userAgent: MOBILE_UA }),
+    ).rejects.toMatchObject({ code: "DEVICE_NOT_ALLOWED" });
+
+    // Still assigned, not started — the rejected attempt made no progress.
+    const [statusRows] = await db.execute<any[]>(
+      "SELECT status FROM ats_candidate_assessment WHERE id = ?",
+      [assignment.assessment.id],
+    );
+    expect(statusRows[0]?.status).toBe("assigned");
+  });
+
+  it("kill switch: with the gate disabled, a mobile UA is let through", async () => {
+    const original = process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED;
+    process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED = "false";
+    try {
+      const assignment = await assessmentService.lookupOrAssignAssessment({
+        queueToken,
+        mobile,
+        meta: { actorType: "candidate", ip: "127.0.0.1", userAgent: MOBILE_UA },
+      });
+      const started = await assessmentService.startAssessment(assignment.token, { userAgent: MOBILE_UA });
+      expect(started.assessment.status).toBe("in_progress");
+    } finally {
+      if (original === undefined) delete process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED;
+      else process.env.ATS_ASSESSMENT_DEVICE_GATE_ENABLED = original;
+    }
+  });
+});

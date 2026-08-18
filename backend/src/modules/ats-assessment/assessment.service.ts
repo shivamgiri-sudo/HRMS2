@@ -20,6 +20,7 @@ import {
 import { questionBankService } from "./question-bank.service.js";
 import { emailService } from "../communication/email.service.js";
 import { assessmentInvitationEmail } from "../ats/email.templates.js";
+import { deviceBlockMessage, isBlockedDeviceUserAgent, isDeviceGateEnabled } from "./device-guard.js";
 
 type ActorType = "candidate" | "system" | "recruiter" | "hr" | "admin";
 type Meta = {
@@ -42,6 +43,8 @@ type CandidateRow = RowDataPacket & {
   experience: string | null;
   queue_token_id: string | null;
   token_number: string | null;
+  recruiter_id: string | null;
+  recruiter_name: string | null;
 };
 
 type TemplateRow = RowDataPacket & {
@@ -534,7 +537,9 @@ async function findCandidateByPublicCredentials(queueToken: string, mobile: stri
        COALESCE(NULLIF(c.role_applied, ''), NULLIF(c.applied_for_process, '')) AS role_name,
        c.experience,
        qt.id AS queue_token_id,
-       COALESCE(NULLIF(qt.token_number, ''), NULLIF(c.q_token, ''), qt.token) AS token_number
+       COALESCE(NULLIF(qt.token_number, ''), NULLIF(c.q_token, ''), qt.token) AS token_number,
+       c.recruiter_id,
+       c.recruiter_name
      FROM ats_candidate c
      LEFT JOIN ats_queue_token qt
        ON qt.candidate_id = c.id
@@ -576,7 +581,9 @@ async function findCandidateById(candidateId: string) {
        COALESCE(NULLIF(c.role_applied, ''), NULLIF(c.applied_for_process, '')) AS role_name,
        c.experience,
        qt.id AS queue_token_id,
-       COALESCE(NULLIF(qt.token_number, ''), NULLIF(c.q_token, ''), qt.token) AS token_number
+       COALESCE(NULLIF(qt.token_number, ''), NULLIF(c.q_token, ''), qt.token) AS token_number,
+       c.recruiter_id,
+       c.recruiter_name
      FROM ats_candidate c
      LEFT JOIN ats_queue_token qt
        ON qt.candidate_id = c.id
@@ -591,6 +598,33 @@ async function findCandidateById(candidateId: string) {
     throw appError("Candidate does not have an active queue token", 409, "QUEUE_TOKEN_REQUIRED");
   }
   return candidates[0];
+}
+
+/**
+ * Best-effort recruiter contact for a device-block message. `recruiter_id` FKs
+ * into ats_recruiter_roster (not employees), which already carries name/mobile
+ * denormalized — see backend/sql/129_ats_recruiter_roster.sql. Falls back to
+ * the candidate row's own denormalized recruiter_name, then to nothing at all
+ * (deviceBlockMessage renders a generic instruction when both are null) —
+ * never fabricates a contact.
+ */
+async function resolveRecruiterContact(
+  candidate: Pick<CandidateRow, "recruiter_id" | "recruiter_name">,
+): Promise<{ name: string | null; mobile: string | null }> {
+  if (candidate.recruiter_id) {
+    const roster = await rows<RowDataPacket>(
+      db,
+      `SELECT name, mobile FROM ats_recruiter_roster WHERE id = ? AND active_status = 1 LIMIT 1`,
+      [candidate.recruiter_id],
+    );
+    if (roster[0]) {
+      return {
+        name: (roster[0].name as string | null) ?? candidate.recruiter_name ?? null,
+        mobile: (roster[0].mobile as string | null) ?? null,
+      };
+    }
+  }
+  return { name: candidate.recruiter_name ?? null, mobile: null };
 }
 
 function cycleKey(candidate: CandidateRow) {
@@ -830,6 +864,17 @@ export async function lookupOrAssignAssessment(input: {
 }) {
   await ensureReady();
   const candidate = await findCandidateByPublicCredentials(input.queueToken, input.mobile);
+
+  // Device gate — checked here, after the candidate is identified (so the
+  // rejection message can name their recruiter) but BEFORE any attempt is
+  // created or reused below, so a blocked device never consumes the
+  // candidate's one allowed attempt. See device-guard.ts for what this does
+  // and does not catch.
+  if (isDeviceGateEnabled() && isBlockedDeviceUserAgent(input.meta?.userAgent)) {
+    const recruiter = await resolveRecruiterContact(candidate);
+    throw appError(deviceBlockMessage(recruiter.name, recruiter.mobile), 403, "DEVICE_NOT_ALLOWED");
+  }
+
   const currentCycle = cycleKey(candidate);
   const existing = await rows<AttemptRow>(
     db,
@@ -1111,6 +1156,14 @@ export async function startAssessment(token: string, meta: Meta = {}) {
     const template = await loadTemplate(attempt.template_id, executor);
 
     if (attempt.status === "assigned") {
+      // Device gate, mirrored from lookupOrAssignAssessment — catches a token
+      // (bookmarked, shared, or resumed from localStorage/URL hash) opened
+      // directly on a phone, bypassing /lookup entirely. No cheap recruiter
+      // lookup here without an extra query inside this transaction, so the
+      // message is generic; the personalized version is what /lookup shows.
+      if (isDeviceGateEnabled() && isBlockedDeviceUserAgent(meta.userAgent)) {
+        throw appError(deviceBlockMessage(), 403, "DEVICE_NOT_ALLOWED");
+      }
       const identityCheckEnabled = String(process.env.ATS_IDENTITY_CHECK_ENABLED ?? "false").toLowerCase() === "true";
       if (identityCheckEnabled && !(attempt as unknown as { identity_verified: number }).identity_verified) {
         throw appError(
@@ -1138,12 +1191,24 @@ export async function startAssessment(token: string, meta: Meta = {}) {
         return loadSessionData(await attemptByToken(token));
       }
       const durationSeconds = Number(template.duration_minutes) * 60 + ASSESSMENT_GRACE_SECONDS;
+      // Binds this attempt to the device class that actually started it, so
+      // saveResponse can later notice (and flag, not block) a switch from
+      // desktop to mobile mid-session — e.g. handed off to someone else.
+      // Merged into the existing client_meta JSON rather than a new column.
+      const boundClientMeta = {
+        ...parseJson<Record<string, unknown>>(attempt.client_meta, {}),
+        deviceBinding: {
+          boundAt: nowIso(),
+          uaClass: isBlockedDeviceUserAgent(meta.userAgent) ? "mobile" : "desktop",
+          uaSnippet: meta.userAgent ? meta.userAgent.slice(0, 180) : null,
+        },
+      };
       await connection.execute(
         `UPDATE ats_candidate_assessment
          SET status = 'in_progress', started_at = COALESCE(started_at, NOW()),
-             expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND)
+             expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND), client_meta = CAST(? AS JSON)
          WHERE id = ? AND status = 'assigned'`,
-        [durationSeconds, attempt.id],
+        [durationSeconds, JSON.stringify(boundClientMeta), attempt.id],
       );
       await safeAudit(attempt.id, "ASSESSMENT_STARTED", { durationSeconds }, { ...meta, actorType: "candidate" }, executor);
     } else if (attempt.status !== "in_progress") {
@@ -1199,6 +1264,7 @@ export async function saveResponse(
   questionId: string,
   answer: unknown,
   timeTakenSeconds?: number,
+  meta: Meta = {},
 ) {
   await ensureReady();
   const attempt = await attemptByToken(token);
@@ -1206,6 +1272,33 @@ export async function saveResponse(
   if (getRemainingSeconds(attempt) === 0) {
     await submitAssessment(token, { autoSubmit: true, reason: "assessment_timer_expired" });
     throw appError("Assessment time has ended and the attempt was submitted", 409, "ASSESSMENT_TIME_ENDED");
+  }
+
+  // Mid-session device-mismatch flag — soft, never blocks saving the answer.
+  // If this attempt was started on a desktop but a later request looks like
+  // it's coming from a phone (handed off, shared, or switched devices), flag
+  // it once for recruiter review via the same integrity-event mechanism
+  // already used for tab-hidden/window-blur, rather than hard-blocking on
+  // what could just be a Wi-Fi hop or browser update.
+  if (isDeviceGateEnabled()) {
+    const clientMeta = parseJson<Record<string, any>>(attempt.client_meta, {});
+    const binding = clientMeta.deviceBinding as { uaClass?: string; mismatchFlagged?: boolean } | undefined;
+    if (binding?.uaClass === "desktop" && !binding.mismatchFlagged && isBlockedDeviceUserAgent(meta.userAgent)) {
+      await recordIntegrityEvent(
+        token,
+        "device_class_mismatch",
+        {
+          boundClass: "desktop",
+          currentClass: "mobile",
+          currentUaSnippet: meta.userAgent ? meta.userAgent.slice(0, 180) : null,
+        },
+        meta,
+      ).catch(() => { /* flagging must never block saving the actual answer */ });
+      await db.execute(
+        `UPDATE ats_candidate_assessment SET client_meta = CAST(? AS JSON) WHERE id = ?`,
+        [JSON.stringify({ ...clientMeta, deviceBinding: { ...binding, mismatchFlagged: true } }), attempt.id],
+      ).catch(() => { /* best-effort guard against repeat flags; not fatal if it misses once */ });
+    }
   }
 
   const template = await loadTemplate(attempt.template_id);
