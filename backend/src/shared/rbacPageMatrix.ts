@@ -222,6 +222,10 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "SALARY_PREP",
     "SALARY_INCREMENT",
     "REPORTS_CENTER",
+    // Resend-onboarding-link access (backend requireRole already grants payroll_head the
+    // POST /send-token/:candidateId and GET /requests routes) needs this page grant too, or
+    // WorkforcePageGate blocks the Onboarding Requests page before the backend fix matters.
+    "ATS_ONBOARDING_REQUESTS",
   ],
   payroll_hr: [
     "PAYROLL_HR_DASHBOARD",

@@ -44,7 +44,11 @@ router.post('/submit-profile', h(async (req, res) => {
 router.post(
   '/send-token/:candidateId',
   requireAuth,
-  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
+  // branch_hr and payroll_head added so branch payroll HR can resend an onboarding link for
+  // their own branch's candidates, and payroll_head org-wide — previously neither role was
+  // listed here even though branch_hr already held the ATS_ONBOARDING_REQUESTS page grant, so
+  // the page loaded but every resend attempt 403'd.
+  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr', 'branch_hr', 'payroll_head'),
   h(async (req: AuthenticatedRequest, res) => {
     const candidateId = req.params!.candidateId;
     const userId = req.authUser!.id;
@@ -55,9 +59,14 @@ router.post(
       res.status(404).json({ ok: false, error: 'Candidate not found' });
       return;
     }
+    // hasScopedAccess does a raw role_key match (no legacy-alias normalization, unlike
+    // requireRole above) — 'branch_hr' must be the literal string here, not 'hr_admin', or a
+    // branch_hr user would pass requireRole and then be silently scope-denied anyway. Same gap
+    // this fix already found affecting payroll_hr, which requireRole allows above but this array
+    // doesn't cover — left as-is, not in scope for this change.
     const allowed = await hasScopedAccess(
       userId,
-      ['hr', 'recruiter'],
+      ['hr', 'recruiter', 'branch_hr', 'payroll_head'],
       { branchId: cand.applied_for_branch, processId: cand.applied_for_process },
       { allowAdminBypass: true },
     );
@@ -85,11 +94,14 @@ router.post(
 router.get(
   '/requests',
   requireAuth,
-  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
+  // Same branch_hr/payroll_head addition as POST /send-token above — this is the listing
+  // endpoint the Onboarding Requests page calls, so without it here too the page would load
+  // (branch_hr already has the page grant) but show an empty/403 list.
+  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr', 'branch_hr', 'payroll_head'),
   h(async (req: AuthenticatedRequest, res) => {
     const scopeFilter = await buildScopeWhereClause(
       req.authUser!.id,
-      ['hr', 'recruiter'],
+      ['hr', 'recruiter', 'branch_hr', 'payroll_head'],
       { branchId: 'r.branch_id' },
       { allowAdminBypass: true },
     );
