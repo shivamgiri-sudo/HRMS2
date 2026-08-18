@@ -125,3 +125,73 @@ describe("approveInvoice", () => {
     expect(String(poParticularCall[0])).toMatch(/INSERT INTO client_po_particular/);
   });
 });
+
+describe("rejectInvoice", () => {
+  it("requires a non-empty reason", async () => {
+    const conn = mockConnection();
+
+    await expect(
+      clientBillingApprovalService.rejectInvoice({ invoiceId: "inv-1", reason: "", userId: "u-1" })
+    ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/reason is required/) });
+
+    expect(conn.beginTransaction).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the invoice is already rejected", async () => {
+    const conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "rejected" }], []]);
+
+    await expect(
+      clientBillingApprovalService.rejectInvoice({ invoiceId: "inv-1", reason: "duplicate entry", userId: "u-1" })
+    ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/already rejected/) });
+  });
+
+  it("refunds every linked provision deduction, marks the invoice rejected, and writes one audit row", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "approved" }], []]) // invoice lookup
+      .mockResolvedValueOnce([[ // deductions for this invoice
+        { id: "ded-1", provision_id: "prov-1", amount_used: 5000 },
+        { id: "ded-2", provision_id: "prov-2", amount_used: 3000 },
+      ], []])
+      .mockResolvedValueOnce([{}, []]) // refund provision 1
+      .mockResolvedValueOnce([{}, []]) // delete deduction 1
+      .mockResolvedValueOnce([{}, []]) // refund provision 2
+      .mockResolvedValueOnce([{}, []]) // delete deduction 2
+      .mockResolvedValueOnce([{}, []]) // UPDATE client_invoice
+      .mockResolvedValueOnce([{}, []]); // INSERT audit log
+
+    const result = await clientBillingApprovalService.rejectInvoice({
+      invoiceId: "inv-1", reason: "client disputed the charge", userId: "u-1",
+    });
+
+    expect(result).toEqual({ id: "inv-1", invoiceStatus: "rejected" });
+
+    const refund1 = conn.execute.mock.calls[2];
+    expect(String(refund1[0])).toMatch(/UPDATE client_provision SET provision_balance = provision_balance \+ \?/);
+    expect(refund1[1]).toEqual([5000, "prov-1"]);
+
+    const refund2 = conn.execute.mock.calls[4];
+    expect(refund2[1]).toEqual([3000, "prov-2"]);
+
+    const auditCall = conn.execute.mock.calls[7];
+    expect(String(auditCall[0])).toMatch(/INSERT INTO client_invoice_audit_log/);
+    expect(auditCall[1]).toEqual(expect.arrayContaining(["inv-1", "rejected", "u-1", "client disputed the charge"]));
+
+    expect(conn.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it("works with zero linked deductions (a proforma never drew any provision)", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "proforma" }], []])
+      .mockResolvedValueOnce([[], []]) // no deductions
+      .mockResolvedValueOnce([{}, []]) // UPDATE client_invoice
+      .mockResolvedValueOnce([{}, []]); // INSERT audit log
+
+    const result = await clientBillingApprovalService.rejectInvoice({
+      invoiceId: "inv-1", reason: "no longer needed", userId: "u-1",
+    });
+    expect(result).toEqual({ id: "inv-1", invoiceStatus: "rejected" });
+  });
+});
