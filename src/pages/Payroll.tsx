@@ -27,6 +27,7 @@ import {
   KpiCardGrid,
 } from "@/components/enterprise";
 import { PayrollTable } from "@/components/payroll/PayrollTable";
+import { LiveSalaryPanel } from "@/components/payroll/LiveSalaryPanel";
 import { PayslipViewDialog } from "@/components/payroll/PayslipViewDialog";
 import { SalaryStructureManager } from "@/components/payroll/SalaryStructureManager";
 import { PayrollAnalytics } from "@/components/payroll/PayrollAnalytics";
@@ -143,6 +144,11 @@ const Payroll = () => {
   const [currentPageSize, setCurrentPageSize] = useState(10);
   const [historyPageSize, setHistoryPageSize] = useState(10);
 
+  // Drives lazy-loading of the History tab's query (see historyFilters usage below) — the
+  // History tab defaults to "All Months", an unindexed full scan that used to fire on every
+  // page load regardless of which tab was visible.
+  const [activeTab, setActiveTab] = useState("current");
+
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<PayrollRecord | null>(
     null
@@ -198,7 +204,10 @@ const Payroll = () => {
       limit: historyPageSize,
     };
   }, [historyMonth, historyYear, historyStatus, debouncedHistorySearchQuery, historyBranchId, historyDeptId, historyProcessId, historyPage, historyPageSize]);
-  const { data: historyRecordsPage, isLoading: isLoadingHistoryRecords } = usePayrollRecords(historyFilters);
+  const { data: historyRecordsPage, isLoading: isLoadingHistoryRecords } = usePayrollRecords(
+    historyFilters,
+    { enabled: activeTab === "history" }
+  );
   const historyRecords = historyRecordsPage?.records ?? [];
   const historyTotalItems = historyRecordsPage?.total ?? 0;
   const historyTotalPages = Math.max(1, Math.ceil(historyTotalItems / historyPageSize));
@@ -963,7 +972,7 @@ const Payroll = () => {
 
         {/* Tabs */}
         <section className="rounded-2xl border border-slate-200 bg-white/80 backdrop-blur-sm p-4 shadow-sm">
-          <Tabs defaultValue="current" className="w-full">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-sm font-semibold tracking-tight text-slate-950">
@@ -1012,6 +1021,14 @@ const Payroll = () => {
                     month closes, so there are no {currentMonthLabel} amounts yet.
                   </p>
                 </div>
+              )}
+
+              {noRunForCurrentMonth && (
+                <LiveSalaryPanel
+                  month={currentMonthStr}
+                  branchId={currentBranchId !== "all" ? currentBranchId : undefined}
+                  processId={currentProcessId !== "all" ? currentProcessId : undefined}
+                />
               )}
 
               <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 space-y-2">

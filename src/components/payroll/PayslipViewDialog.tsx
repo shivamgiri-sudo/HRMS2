@@ -308,11 +308,18 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                   </div>
                 </div>
 
-                {/* LWP warning */}
+                {/* LWP warning — worded to point at Earnings, not Deductions. LWP days are
+                    excluded from finalPayableDays, which prorates every earning component
+                    (including Basic) down — there is no separate "LWP deduction" line item,
+                    by design (see payrollCalculate.service.ts, lwpDeduction is always 0). The
+                    old wording ("deducted from this month's salary") sat right above the
+                    Deductions column and implied a line item that does not exist there. */}
                 {attLwp > 0 && (
                   <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
                     <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                    {attLwp} day{attLwp !== 1 ? "s" : ""} of Leave Without Pay deducted from this month's salary.
+                    {attLwp} day{attLwp !== 1 ? "s" : ""} of Leave Without Pay {attLwp !== 1 ? "reduce" : "reduces"} your payable
+                    days this month, which lowers Basic and other earnings below — it is not a
+                    separate deduction.
                   </div>
                 )}
               </>
@@ -341,7 +348,14 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
                     </colgroup>
                     <tbody>
                       <tr className="border-b">
-                        <td className="py-1.5 text-muted-foreground">Basic Salary</td>
+                        <td className="py-1.5 text-muted-foreground">
+                          Basic Salary
+                          {attLwp > 0 && (
+                            <div className="text-xs text-amber-600 italic mt-0.5">
+                              ↳ already reduced for {attLwp} LWP day{attLwp !== 1 ? "s" : ""}
+                            </div>
+                          )}
+                        </td>
                         <td className="py-1.5 text-right font-mono font-semibold">
                           {fmt(getEarning('BASIC') || record.basic)}
                         </td>

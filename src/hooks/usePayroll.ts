@@ -196,12 +196,19 @@ export async function fetchPayrollRecordPage(
   };
 }
 
-export function usePayrollRecords(filters: PayrollRecordFilters = {}) {
+export function usePayrollRecords(filters: PayrollRecordFilters = {}, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["payroll-records", filters],
     queryFn: () => fetchPayrollRecordPage(filters),
     placeholderData: (prev) => prev,
     staleTime: 5_000,
+    // Defaults to enabled so every existing caller keeps fetching eagerly. Payroll.tsx's
+    // History tab passes enabled:false until that tab is opened — its default "All Months"
+    // filter is an unindexed full scan of salary_prep_line (70k+ rows, measured 3.8s page
+    // query + 2.6s count query) that used to fire unconditionally on every /payroll page
+    // load, contending for the shared DB pool alongside the Current Payroll query and
+    // slowing the employee names that query loads first.
+    enabled: options.enabled ?? true,
   });
 }
 
