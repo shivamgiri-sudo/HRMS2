@@ -907,12 +907,13 @@ router.post('/redispatch/:employeeId', requireRole('hr', 'super_admin', 'admin')
   const { employeeId } = req.params;
 
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.id, e.employee_code, e.full_name, e.branch_id, e.date_of_joining
+    `SELECT e.id, e.employee_code, e.full_name, e.branch_id, e.date_of_joining, e.legacy_emp_id
        FROM employees e WHERE e.id = ? LIMIT 1`,
     [employeeId],
   );
   const emp = (empRows as RowDataPacket[])[0];
   if (!emp) return res.status(404).json({ success: false, message: 'Employee not found' });
+  if (emp.legacy_emp_id) return res.status(400).json({ success: false, message: 'Cannot dispatch IT provisioning for a legacy (pre-HRMS) employee' });
   if (!emp.employee_code) return res.status(400).json({ success: false, message: 'Employee has no employee_code — cannot dispatch provisioning' });
 
   // Find which task codes already exist so we skip them

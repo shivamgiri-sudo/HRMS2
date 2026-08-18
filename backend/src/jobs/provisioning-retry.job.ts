@@ -10,6 +10,7 @@
 import { RowDataPacket } from 'mysql2';
 import { db } from '../db/mysql.js';
 import { dispatchJoinProvisioningTasks } from '../modules/it-provisioning/it-provisioning.service.js';
+import { nonReactivatableSqlList } from '../modules/exit/exitEmploymentStatus.js';
 
 export interface RetryReport {
   attempted: number;
@@ -32,6 +33,17 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
   //   would permanently skip any employee created during it.
   // - Checks IT_EMAIL_DOMAIN_ASSET task_code existence as the provisioning
   //   sentinel (the first task dispatched by dispatchJoinProvisioningTasks).
+  // - active_status = 0 is overloaded: it means both "not-yet-active new
+  //   joiner" (what this job is for) AND "legacy db_bill-migrated employee
+  //   who has left" (migrate-legacy.employees.ts writes active_status = 0 for
+  //   every departed legacy row). Removing the bridge JOIN above widened the
+  //   match to include the second group too, and legacy-sync jobs re-touch
+  //   employees.created_at on re-run, so long-exited legacy staff kept
+  //   landing inside the 30-day window and getting fresh IT provisioning
+  //   tasks auto-created for them. legacy_emp_id IS NULL plus the shared
+  //   non-reactivatable employment_status guard (also used by the nightly
+  //   activation job for the identical "don't act on someone who left"
+  //   problem) excludes them without reverting the join/window fixes above.
   const [employees] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT
        e.id,
@@ -43,6 +55,8 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
      FROM employees e
      LEFT JOIN ats_onboarding_bridge ob ON ob.employee_id = e.id
      WHERE e.active_status = 0
+       AND e.legacy_emp_id IS NULL
+       AND LOWER(COALESCE(e.employment_status, '')) NOT IN (${nonReactivatableSqlList()})
        AND e.employee_code IS NOT NULL
        AND e.created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
        AND NOT EXISTS (

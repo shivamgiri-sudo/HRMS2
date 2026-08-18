@@ -793,7 +793,10 @@ export async function listProvisioningRequests(filters: {
   const limit = Math.min(200, filters.limit ?? 50);
   const offset = (page - 1) * limit;
 
-  const conds: string[] = ['1=1'];
+  // Defense-in-depth alongside the provisioning-retry job's own exclusion
+  // (jobs/provisioning-retry.job.ts): stops showing already-created bogus
+  // rows for legacy (db_bill-migrated) employees even without a data cleanup.
+  const conds: string[] = ['1=1', 'e.legacy_emp_id IS NULL'];
   const params: unknown[] = [];
 
   if (filters.assignedRole) {
@@ -854,7 +857,9 @@ export async function getProvisioningStats(filters: {
   branchIds?: string[];
   processIds?: string[];
 }): Promise<Record<string, unknown>> {
-  const conds = ["1=1"];
+  // Same legacy exclusion as listProvisioningRequests above, so stat cards
+  // agree with the list they summarize.
+  const conds = ["1=1", "e.legacy_emp_id IS NULL"];
   const params: unknown[] = [];
   if (filters.assignedRole === "it") {
     conds.push("ipr.assigned_role IN ('it', 'branch_it')");
