@@ -234,6 +234,10 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "PAYROLL_PF_CREATION_QUEUE",
     "PAYROLL_PF_BATCHES",
     "EMPLOYEE_EPF_COMPLIANCE",
+    // Already backend-allowed on POST /send-token/:candidateId and GET /requests (requireRole
+    // included payroll_hr from the start), but this page grant was found inactive in
+    // role_page_access — reactivated in migration 1236, listed here so the applier keeps it.
+    "ATS_ONBOARDING_REQUESTS",
   ],
   finance: [
     "PAYROLL_HR_DASHBOARD",

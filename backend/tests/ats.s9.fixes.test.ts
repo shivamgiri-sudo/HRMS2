@@ -277,9 +277,9 @@ describe("POST /api/ats/onboarding/send-token/:id — row-scope via hasScopedAcc
     await request(app).post("/api/ats/onboarding/send-token/cand-1").send({});
     expect(mockHasScopedAccess).toHaveBeenCalledWith(
       "user-hr-1",
-      // branch_hr/payroll_head added so branch payroll HR and payroll_head don't pass
-      // requireRole only to be silently scope-denied here (see ats.onboarding.routes.ts).
-      ["hr", "recruiter", "branch_hr", "payroll_head"],
+      // branch_hr/payroll_head/payroll_hr added so these roles don't pass requireRole only
+      // to be silently scope-denied here (see ats.onboarding.routes.ts).
+      ["hr", "recruiter", "branch_hr", "payroll_head", "payroll_hr"],
       { branchId: "b99", processId: "p77" },
       { allowAdminBypass: true },
     );

@@ -61,12 +61,14 @@ router.post(
     }
     // hasScopedAccess does a raw role_key match (no legacy-alias normalization, unlike
     // requireRole above) — 'branch_hr' must be the literal string here, not 'hr_admin', or a
-    // branch_hr user would pass requireRole and then be silently scope-denied anyway. Same gap
-    // this fix already found affecting payroll_hr, which requireRole allows above but this array
-    // doesn't cover — left as-is, not in scope for this change.
+    // branch_hr user would pass requireRole and then be silently scope-denied anyway.
+    // payroll_hr added here too: it already passed requireRole above but was missing from
+    // this array, so it was silently 403'd on every resend despite the route accepting the
+    // role — its ATS_ONBOARDING_REQUESTS page grant was also found inactive in role_page_access,
+    // reactivated in migration 1236.
     const allowed = await hasScopedAccess(
       userId,
-      ['hr', 'recruiter', 'branch_hr', 'payroll_head'],
+      ['hr', 'recruiter', 'branch_hr', 'payroll_head', 'payroll_hr'],
       { branchId: cand.applied_for_branch, processId: cand.applied_for_process },
       { allowAdminBypass: true },
     );
@@ -101,7 +103,7 @@ router.get(
   h(async (req: AuthenticatedRequest, res) => {
     const scopeFilter = await buildScopeWhereClause(
       req.authUser!.id,
-      ['hr', 'recruiter', 'branch_hr', 'payroll_head'],
+      ['hr', 'recruiter', 'branch_hr', 'payroll_head', 'payroll_hr'],
       { branchId: 'r.branch_id' },
       { allowAdminBypass: true },
     );
