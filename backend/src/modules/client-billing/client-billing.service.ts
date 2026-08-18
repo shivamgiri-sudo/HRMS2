@@ -51,7 +51,7 @@ function computeGst(baseAmount: number, gstType: string, applyGst: boolean) {
 
 async function createProforma(input: CreateProformaInput): Promise<ProformaResult> {
   if (input.lines.length === 0) {
-    throw new Error("At least one line item is required");
+    throw Object.assign(new Error("At least one line item is required"), { statusCode: 400 });
   }
 
   const conn = await db.getConnection();
@@ -69,10 +69,10 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
     );
     const costCentre = costCentreRows[0] as { gstType: string; stateCode: string | null } | undefined;
     if (!costCentre) {
-      throw new Error(`cost_centre_master ${input.costCentreId} not found`);
+      throw Object.assign(new Error(`cost_centre_master ${input.costCentreId} not found`), { statusCode: 400 });
     }
     if (!costCentre.stateCode) {
-      throw new Error(`cost centre ${input.costCentreId} has no branch GST state code — cannot mint a proforma number`);
+      throw Object.assign(new Error(`cost centre ${input.costCentreId} has no branch GST state code — cannot mint a proforma number`), { statusCode: 400 });
     }
 
     const applyGst = input.applyGst ?? true;

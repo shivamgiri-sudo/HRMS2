@@ -1,6 +1,7 @@
 import express from "express";
 import request from "supertest";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { errorHandler } from "../../../middleware/errorHandler.js";
 
 const { createProforma } = vi.hoisted(() => ({ createProforma: vi.fn() }));
 vi.mock("../client-billing.service.js", () => ({
@@ -28,6 +29,7 @@ beforeAll(async () => {
   app = express();
   app.use(express.json());
   app.use("/api/client-billing", clientBillingRouter);
+  app.use(errorHandler);
 });
 
 beforeEach(() => {
@@ -65,14 +67,26 @@ describe("POST /api/client-billing/proformas", () => {
   });
 
   it("returns 400 when the service rejects an empty line list", async () => {
-    createProforma.mockRejectedValueOnce(new Error("At least one line item is required"));
+    createProforma.mockRejectedValueOnce(
+      Object.assign(new Error("At least one line item is required"), { statusCode: 400 })
+    );
 
     const res = await request(app)
       .post("/api/client-billing/proformas")
       .send({ costCentreId: "cc-1", category: "Non Subscription", financeYear: "2026-27", monthLabel: "Aug-26", invoiceDate: "2026-08-18", lines: [] });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/At least one line item is required/);
+    expect(res.body.message).toMatch(/At least one line item is required/);
+  });
+
+  it("does not mask an unexpected non-operational failure as a 400", async () => {
+    createProforma.mockRejectedValueOnce(new Error("ECONNRESET: connection lost"));
+
+    const res = await request(app)
+      .post("/api/client-billing/proformas")
+      .send({ costCentreId: "cc-1", category: "Non Subscription", financeYear: "2026-27", monthLabel: "Aug-26", invoiceDate: "2026-08-18", lines: [{ particulars: "x", qty: 1, rate: 1 }] });
+
+    expect(res.status).toBe(500);
   });
 });
 

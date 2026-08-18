@@ -28,22 +28,18 @@ router.post(
     if (!body.costCentreId || !body.category || !body.financeYear || !body.monthLabel || !body.invoiceDate) {
       return res.status(400).json({ error: "costCentreId, category, financeYear, monthLabel, and invoiceDate are required" });
     }
-    try {
-      const data = await clientBillingService.createProforma({
-        costCentreId: body.costCentreId,
-        category: body.category,
-        financeYear: body.financeYear,
-        monthLabel: body.monthLabel,
-        invoiceDate: body.invoiceDate,
-        description: body.description,
-        applyGst: body.applyGst,
-        lines: body.lines ?? [],
-        createdBy: req.authUser!.id,
-      });
-      res.status(201).json({ success: true, data });
-    } catch (err) {
-      res.status(400).json({ error: err instanceof Error ? err.message : "Failed to create proforma" });
-    }
+    const data = await clientBillingService.createProforma({
+      costCentreId: body.costCentreId,
+      category: body.category,
+      financeYear: body.financeYear,
+      monthLabel: body.monthLabel,
+      invoiceDate: body.invoiceDate,
+      description: body.description,
+      applyGst: body.applyGst,
+      lines: body.lines ?? [],
+      createdBy: req.authUser!.id,
+    });
+    res.status(201).json({ success: true, data });
   })
 );
 
