@@ -26,6 +26,13 @@ describe("mintProformaNumber", () => {
     expect(String(sql)).toMatch(/INSERT INTO client_invoice_number_sequence/);
     expect(params).toEqual(["proforma", "GLOBAL"]);
   });
+
+  it("wraps the initial value in LAST_INSERT_ID so a first-ever mint for a scope returns 1, not the row's arbitrary auto-increment id", async () => {
+    execute.mockResolvedValueOnce([{ insertId: 1 }, []]);
+    await clientBillingNumberingService.mintProformaNumber("09");
+    const [sql] = execute.mock.calls[0];
+    expect(String(sql)).toMatch(/VALUES \(\?, \?, LAST_INSERT_ID\(1\), NOW\(\)\)/);
+  });
 });
 
 describe("mintBillNumber", () => {
@@ -39,6 +46,12 @@ describe("mintBillNumber", () => {
     execute.mockResolvedValueOnce([{ insertId: 274 }, []]);
     const result = await clientBillingNumberingService.mintBillNumber("09", "Mas Callnet India Pvt Ltd", "2026-27");
     expect(result).toBe("09-274/26-27");
+  });
+
+  it("does not zero-pad at the boundary n=10", async () => {
+    execute.mockResolvedValueOnce([{ insertId: 10 }, []]);
+    const result = await clientBillingNumberingService.mintBillNumber("09", "Mas Callnet India Pvt Ltd", "2026-27");
+    expect(result).toBe("09-10/26-27");
   });
 
   it("scopes the counter row to kind='bill', scope_key='<stateCode>|<companyName>|<financeYear>'", async () => {

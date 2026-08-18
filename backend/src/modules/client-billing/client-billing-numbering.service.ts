@@ -13,7 +13,7 @@ import { db } from "../../db/mysql.js";
 async function nextSequenceValue(kind: "proforma" | "bill", scopeKey: string): Promise<number> {
   const [result] = await db.execute<ResultSetHeader>(
     `INSERT INTO client_invoice_number_sequence (kind, scope_key, last_value, updated_at)
-     VALUES (?, ?, 1, NOW())
+     VALUES (?, ?, LAST_INSERT_ID(1), NOW())
      ON DUPLICATE KEY UPDATE last_value = LAST_INSERT_ID(last_value + 1), updated_at = NOW()`,
     [kind, scopeKey]
   );
