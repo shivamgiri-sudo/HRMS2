@@ -114,4 +114,68 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
   }
 }
 
-export const clientBillingApprovalService = { approveInvoice };
+export interface RejectInvoiceInput {
+  invoiceId: string;
+  reason: string;
+  userId: string;
+}
+
+export interface RejectInvoiceResult {
+  id: string;
+  invoiceStatus: "rejected";
+}
+
+async function rejectInvoice(input: RejectInvoiceInput): Promise<RejectInvoiceResult> {
+  if (!input.reason || input.reason.trim().length === 0) {
+    throw clientError("A reason is required to reject an invoice");
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [invoiceRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT id, invoice_status FROM client_invoice WHERE id = ? LIMIT 1`,
+      [input.invoiceId]
+    );
+    const invoice = invoiceRows[0] as { id: string; invoice_status: string } | undefined;
+    if (!invoice) {
+      throw clientError(`Invoice ${input.invoiceId} not found`);
+    }
+    if (invoice.invoice_status === "rejected") {
+      throw clientError(`Invoice ${input.invoiceId} is already rejected`);
+    }
+
+    const [deductionRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT id, provision_id, amount_used FROM client_provision_deduction WHERE invoice_id = ?`,
+      [input.invoiceId]
+    );
+    for (const deduction of deductionRows as Array<{ id: string; provision_id: string; amount_used: number }>) {
+      await conn.execute(
+        `UPDATE client_provision SET provision_balance = provision_balance + ? WHERE id = ?`,
+        [deduction.amount_used, deduction.provision_id]
+      );
+      await conn.execute(`DELETE FROM client_provision_deduction WHERE id = ?`, [deduction.id]);
+    }
+
+    await conn.execute(
+      `UPDATE client_invoice SET invoice_status = 'rejected', rejected_reason = ?, rejected_by = ?, rejected_at = NOW() WHERE id = ?`,
+      [input.reason, input.userId, input.invoiceId]
+    );
+
+    await conn.execute(
+      `INSERT INTO client_invoice_audit_log (id, invoice_id, action, actor_id, reason) VALUES (?, ?, ?, ?, ?)`,
+      [randomUUID(), input.invoiceId, 'rejected', input.userId, input.reason]
+    );
+
+    await conn.commit();
+    return { id: input.invoiceId, invoiceStatus: "rejected" };
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
+}
+
+export const clientBillingApprovalService = { approveInvoice, rejectInvoice };
