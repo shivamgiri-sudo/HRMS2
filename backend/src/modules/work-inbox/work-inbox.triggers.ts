@@ -142,6 +142,25 @@ export async function triggerOfferApprovalPending(
   });
 }
 
+export async function triggerAwolSuspected(
+  employeeId: string,
+  employeeName: string,
+  branchId?: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "AWOL_SUSPECTED",
+    title: `Possible AWOL: ${employeeName}`,
+    description: "Marked absent for 3+ of their last 5 recorded attendance days, most recent record (within 3 days) is absent, no leave request covers the last 10 days, and no exit request is on file.",
+    moduleCode: "attendance",
+    entityType: "employee",
+    entityId: employeeId,
+    assignedToRole: "hr",
+    branchId,
+    priority: "high",
+    dueAt: dueAt("AWOL_SUSPECTED"),
+  });
+}
+
 export async function triggerJoiningDocsIncomplete(
   employeeId: string,
   employeeName: string,
