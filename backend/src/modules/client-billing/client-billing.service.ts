@@ -74,6 +74,9 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
     if (!costCentre.stateCode) {
       throw Object.assign(new Error(`cost centre ${input.costCentreId} has no branch GST state code — cannot mint a proforma number`), { statusCode: 400 });
     }
+    if (costCentre.gstType !== "Integrated" && costCentre.gstType !== "Intrastate") {
+      throw Object.assign(new Error(`cost centre ${input.costCentreId} has an unrecognized GST type '${costCentre.gstType}' — expected 'Integrated' or 'Intrastate'`), { statusCode: 400 });
+    }
 
     const applyGst = input.applyGst ?? true;
     const totalAmount = round2(

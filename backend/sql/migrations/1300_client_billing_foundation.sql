@@ -31,18 +31,18 @@
 -- file in sql/MIGRATION_MANIFEST.lock.json applies it at the next pm2 restart — do that only
 -- with explicit user sign-off, per CLAUDE.md's migration-approval rule.
 
-CREATE TABLE client_invoice_number_sequence (
+CREATE TABLE IF NOT EXISTS client_invoice_number_sequence (
   id           BIGINT AUTO_INCREMENT PRIMARY KEY,
   kind         VARCHAR(20)  NOT NULL,           -- 'proforma' | 'bill'
   scope_key    VARCHAR(191) NOT NULL,            -- 'GLOBAL' for proforma; '<stateCode>|<companyName>|<financeYear>' for bill
   last_value   INT          NOT NULL DEFAULT 0,
   updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uq_kind_scope (kind, scope_key)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE client_invoice (
+CREATE TABLE IF NOT EXISTS client_invoice (
   id               CHAR(36)     NOT NULL PRIMARY KEY,
-  cost_centre_id   CHAR(36)     NOT NULL COLLATE utf8mb4_unicode_ci,
+  cost_centre_id   CHAR(36)     NOT NULL,
   invoice_status   ENUM('proforma','approved','rejected') NOT NULL DEFAULT 'proforma',
   category         VARCHAR(50)  NOT NULL,
   finance_year     VARCHAR(10)  NOT NULL,
@@ -69,9 +69,9 @@ CREATE TABLE client_invoice (
   KEY idx_ci_bill_no (bill_no),
   CONSTRAINT fk_ci_cost_centre FOREIGN KEY (cost_centre_id)
     REFERENCES cost_centre_master(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE client_invoice_line (
+CREATE TABLE IF NOT EXISTS client_invoice_line (
   id           CHAR(36)      NOT NULL PRIMARY KEY,
   invoice_id   CHAR(36)      NOT NULL,
   line_type    ENUM('charge','deduction') NOT NULL DEFAULT 'charge',
@@ -83,4 +83,4 @@ CREATE TABLE client_invoice_line (
   KEY idx_cil_invoice (invoice_id),
   CONSTRAINT fk_cil_invoice FOREIGN KEY (invoice_id)
     REFERENCES client_invoice(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
