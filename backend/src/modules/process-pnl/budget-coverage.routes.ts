@@ -58,11 +58,20 @@ budgetCoverageRouter.get(
     try {
       const user = actor(req);
       const roles = normalizedRoles(req);
-      const scopedBranchId = await resolveFinanceBranchScope({
-        userId: user.id,
-        primaryRole: user.role,
-        userRoles: user.roles,
-      });
+      // branch_head / branch_admin users who are not linked to an active employee record
+      // fail here with "not mapped to an active employee branch". Their review capabilities
+      // (canReviewBranchStage) are still valid — the branch filter just cannot be derived.
+      // Catch and default to undefined so the response succeeds and buttons appear.
+      let scopedBranchId: string | undefined = undefined;
+      try {
+        scopedBranchId = await resolveFinanceBranchScope({
+          userId: user.id,
+          primaryRole: user.role,
+          userRoles: user.roles,
+        });
+      } catch {
+        // Not all reviewer accounts have a mapped employee row — capabilities still apply.
+      }
       const isSuperAdmin = roles.includes("super_admin");
       res.json({
         success: true,

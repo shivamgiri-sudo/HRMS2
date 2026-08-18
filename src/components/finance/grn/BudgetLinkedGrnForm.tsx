@@ -525,6 +525,19 @@ export function BudgetLinkedGrnForm({
     return list.map((h) => String(h.headName ?? "")).filter(Boolean);
   }, [expenseMasterResponse]);
 
+  // Maps head_code (lowercase) → head_name so budget lines stored with head_code can be
+  // matched against form.head which always holds the head_name from the dropdown.
+  const headCodeToName = useMemo(() => {
+    const list = unwrapList(expenseMasterResponse) as Array<{ headCode?: string; headName?: string }>;
+    const map = new Map<string, string>();
+    for (const h of list) {
+      const code = String(h.headCode ?? "").trim().toLowerCase();
+      const name = String(h.headName ?? "").trim();
+      if (code && name) map.set(code, name);
+    }
+    return map;
+  }, [expenseMasterResponse]);
+
   // Sub-heads from expense master for the selected head (for unbudgeted heads). Moved up from
   // beside the vendor cascade so both the vendor and imprest Head/Sub-head options (below) can
   // read it — declaration order matters here since both are useMemo factories evaluated during
@@ -783,7 +796,13 @@ export function BudgetLinkedGrnForm({
   // spend belongs to which cost centre, not a separate classification per cost centre.
 
   const vendorHeadOptions = useMemo(() => {
-    const budgetedHeads = new Set(budgetLines.map((line) => line.head));
+    // Normalize each budget line's head to its canonical head_name. Finance may store head_code
+    // (e.g. "ADM001") or head_name (e.g. "Administration Expenses") depending on when the budget
+    // was created. The dropdown and form.head always use head_names, so a raw head_code match
+    // would make the wrong head appear unbudgeted and lose the cost-centre allocation cascade.
+    const budgetedHeads = new Set(
+      budgetLines.map((line) => headCodeToName.get(String(line.head ?? "").toLowerCase()) ?? line.head)
+    );
     // Merge: budgeted heads first (they already have lines), then unbudgeted master heads
     const allHeads = [
       ...budgetedHeads,
@@ -816,11 +835,13 @@ export function BudgetLinkedGrnForm({
       }
     }
     return fullList;
-  }, [budgetLines, allExpenseMasterHeads, expenseSelectable]);
+  }, [budgetLines, allExpenseMasterHeads, expenseSelectable, headCodeToName]);
 
   const vendorLinesInHead = useMemo(
-    () => budgetLines.filter((line) => line.head === form.head),
-    [budgetLines, form.head]
+    () => budgetLines.filter(
+      (line) => (headCodeToName.get(String(line.head ?? "").toLowerCase()) ?? line.head) === form.head
+    ),
+    [budgetLines, form.head, headCodeToName]
   );
 
   const vendorSubHeadOptions = useMemo(() => {
@@ -904,9 +925,11 @@ export function BudgetLinkedGrnForm({
   }, [isVendor, form.head, form.subHead, vendorCostCentreGroups]);
 
   // Clear a stale vendor Head/Sub-head the same way the single-line cascade already does above.
+  // Guard: skip when options are empty — budget lines and expense master are still loading and
+  // running the clear now would wipe a prefilled edit value before data arrives.
   useEffect(() => {
     setForm((current) => {
-      if (!isVendor || !current.head) return current;
+      if (!isVendor || !current.head || !vendorHeadOptions.length) return current;
       const validHead = vendorHeadOptions.some((option) => option.value === current.head);
       return validHead ? current : { ...current, head: "", subHead: "" };
     });
@@ -914,7 +937,7 @@ export function BudgetLinkedGrnForm({
 
   useEffect(() => {
     setForm((current) => {
-      if (!isVendor || !current.subHead) return current;
+      if (!isVendor || !current.subHead || !vendorSubHeadOptions.length) return current;
       const validSubHead = vendorSubHeadOptions.some((option) => option.value === current.subHead);
       return validSubHead ? current : { ...current, subHead: "" };
     });

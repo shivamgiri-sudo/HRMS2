@@ -284,6 +284,9 @@ export const imprestService = {
       referenceNo?: string | null;
       transactionDate?: string | null;
       remarks?: string | null;
+      /** Finance Head override: book this allocation to a different P&L period when allocationDate
+       *  falls in a locked month. YYYY-MM format. Also used as the IMP number month. */
+      accountingPeriod?: string | null;
       /** Skips the approval chain for a directly-disbursed allocation, as legacy behaved. */
       disburseImmediately?: boolean;
     },
@@ -330,7 +333,9 @@ export const imprestService = {
         throw new Error("This imprest manager does not hold a float for that branch");
       }
 
-      const periodCode = input.allocationDate.slice(0, 7);
+      // accountingPeriod overrides the IMP number month and the P&L period lock check.
+      // Falls back to allocationDate's month when not provided.
+      const periodCode = (input.accountingPeriod?.trim() || input.allocationDate.slice(0, 7));
       const allocationNo = await allocateImprestNumber(periodCode, connection);
       const id = randomUUID();
       const status: ImprestAllocationStatus = input.disburseImmediately ? "disbursed" : "submitted";
@@ -339,12 +344,14 @@ export const imprestService = {
         `INSERT INTO imprest_allocation
            (id, allocation_no, imprest_manager_id, branch_id, allocation_date, amount,
             payment_mode, bank_id, bank_name, reference_no, transaction_date, remarks,
+            accounting_period,
             status, submitted_by, submitted_at, disbursed_at, created_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NOW())`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NOW())`,
         [
           id, allocationNo, input.imprestManagerId, input.branchId, input.allocationDate, amount,
           mode, input.bankId ?? null, input.bankName ?? null, input.referenceNo ?? null,
           input.transactionDate ?? null, input.remarks ?? null,
+          input.accountingPeriod?.trim() || null,
           status, actorUserId, input.disburseImmediately ? new Date() : null, actorUserId,
         ],
       );
@@ -360,6 +367,7 @@ export const imprestService = {
             direction: "credit",
             amount,
             transactionDate: input.allocationDate,
+            overridePeriodCode: input.accountingPeriod?.trim() || null,
             referenceType: "imprest_allocation",
             referenceId: id,
             narration: `Allocation ${allocationNo}`,

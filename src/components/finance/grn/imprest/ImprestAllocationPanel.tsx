@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Plus, RefreshCw, X } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
+import { useHasRole } from "@/hooks/useUserRole";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import { dateLabel, money } from "@/components/finance/grn/grn-format";
 import {
@@ -69,6 +70,7 @@ const PAYMENT_MODES = [
 const EMPTY_DRAFT = {
   imprestManagerId: "",
   allocationDate: new Date().toISOString().slice(0, 10),
+  accountingPeriod: "",
   amount: "",
   paymentMode: "Bank Transfer",
   bankName: "",
@@ -95,6 +97,7 @@ export function ImprestAllocationPanel() {
   const [draft, setDraft] = useState(EMPTY_DRAFT);
   const [showForm, setShowForm] = useState(false);
   const [rejecting, setRejecting] = useState<{ id: string; reason: string } | null>(null);
+  const canOverridePeriod = useHasRole("finance_head", "super_admin");
 
   const managersQuery = useQuery({
     queryKey: ["imprest-managers"],
@@ -143,6 +146,7 @@ export function ImprestAllocationPanel() {
         // branch the manager actually holds.
         branchId: selectedManager.branch_id,
         allocationDate: draft.allocationDate,
+        accountingPeriod: draft.accountingPeriod || undefined,
         amount: Number(draft.amount),
         paymentMode: draft.paymentMode,
         bankName: draft.bankName || undefined,
@@ -246,6 +250,20 @@ export function ImprestAllocationPanel() {
                 onChange={(e) => setDraft((d) => ({ ...d, allocationDate: e.target.value }))}
               />
             </GrnFieldRow>
+
+            {canOverridePeriod && (
+              <GrnFieldRow
+                label="Accounting period"
+                hint="Override the P&L period (YYYY-MM) when the allocation date falls in a locked month. Leave blank to use the allocation date's month."
+              >
+                <GrnInput
+                  type="month"
+                  className="w-[160px]"
+                  value={draft.accountingPeriod}
+                  onChange={(e) => setDraft((d) => ({ ...d, accountingPeriod: e.target.value }))}
+                />
+              </GrnFieldRow>
+            )}
 
             <GrnFieldRow
               label="Amount"

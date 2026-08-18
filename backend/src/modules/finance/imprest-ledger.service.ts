@@ -37,6 +37,10 @@ export type ImprestPosting = {
   /** Always positive. Direction carries the sign. */
   amount: number;
   transactionDate: string;
+  /** When set, use this YYYY-MM for the period-lock check instead of transactionDate.
+   *  Allows finance_head to book an allocation to an open period when the payment date
+   *  falls in a locked one, mirroring grn_request.accounting_period. */
+  overridePeriodCode?: string | null;
   referenceType?: "imprest_allocation" | "grn_request" | "manual" | null;
   referenceId?: string | null;
   narration?: string | null;
@@ -98,7 +102,7 @@ export const imprestLedgerService = {
     // imprest.service.ts's allocation create/approve paths had no equivalent check anywhere —
     // checked here, immediately before the mutation and inside the caller's transaction, so a
     // concurrent lock cannot slip through, same as grn.service.ts's own P0-3 re-check.
-    const periodCode = entry.transactionDate.slice(0, 7);
+    const periodCode = (entry.overridePeriodCode?.trim() || entry.transactionDate.slice(0, 7));
     if (await isPeriodLocked(periodCode, connection)) {
       throw new Error(
         `${periodCode} is locked for P&L close. This imprest entry cannot be posted against it.`
