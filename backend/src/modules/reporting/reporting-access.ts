@@ -95,11 +95,11 @@ export function reportCatalogAccessMiddleware(
   return next();
 }
 
-export function addScopedEmployeeFilters(
+function addScopedBranchClause(
   req: ScopedReportRequest,
   clauses: string[],
   params: unknown[],
-  alias = "e"
+  alias: string
 ) {
   const query = req.query;
   const requestedBranchId = query.branchId ? String(query.branchId) : undefined;
@@ -116,6 +116,16 @@ export function addScopedEmployeeFilters(
       params.push(...scope.branchIds);
     }
   }
+}
+
+export function addScopedEmployeeFilters(
+  req: ScopedReportRequest,
+  clauses: string[],
+  params: unknown[],
+  alias = "e"
+) {
+  const query = req.query;
+  addScopedBranchClause(req, clauses, params, alias);
 
   if (query.departmentId) {
     clauses.push(`${alias}.department_id = ?`);
@@ -133,4 +143,20 @@ export function addScopedEmployeeFilters(
     clauses.push(`(${alias}.reporting_manager_id = ? OR ${alias}.manager_id = ?)`);
     params.push(String(query.managerId), String(query.managerId));
   }
+}
+
+/**
+ * Branch scoping only, for reports built on a table that has its own `branch_id` but is not
+ * employee-shaped — no department_id/process_id/cost_centre_id/manager columns to filter on.
+ * asset_master is the first case (asset-inventory-report, 2026-08-18): calling
+ * addScopedEmployeeFilters here would 500 the query the moment a caller passed
+ * ?departmentId=/?processId=/?costCentreId=, since those columns don't exist on that table.
+ */
+export function addScopedBranchOnlyFilters(
+  req: ScopedReportRequest,
+  clauses: string[],
+  params: unknown[],
+  alias: string
+) {
+  addScopedBranchClause(req, clauses, params, alias);
 }

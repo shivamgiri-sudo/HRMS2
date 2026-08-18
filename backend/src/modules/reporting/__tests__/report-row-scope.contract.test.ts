@@ -12,8 +12,10 @@ const frontendCatalog = read("../src/lib/report-catalog.ts");
  * Row scope is enforced in the query and nowhere else.
  *
  * reportScopeMiddleware resolves which branches the caller may see and hangs it off the
- * request; it does not filter anything. A block that never calls addScopedEmployeeFilters
- * returns every branch's rows to whoever can reach the report.
+ * request; it does not filter anything. A block that never calls addScopedEmployeeFilters (or,
+ * for a table that has branch_id but is not employee-shaped, addScopedBranchOnlyFilters —
+ * added 2026-08-18 for asset_master) returns every branch's rows to whoever can reach the
+ * report.
  *
  * This is invisible in review and in testing, because for an all-scope user the helper adds
  * no predicate at all — a scoped and an unscoped block produce byte-identical output for
@@ -30,20 +32,24 @@ const UNSCOPED_BACKLOG = new Set<string>([
   // REPORT_CATALOG and answers 404 REPORT_NOT_FOUND when it is absent. Fourteen of the entries
   // below are absent from it, so they are genuinely unreachable dead code — not merely unlisted.
   //
-  // Two are present in the backend catalogue and therefore ARE reachable by URL, and each has a
-  // reason recorded at its catalogue entry rather than here:
+  // One is present in the backend catalogue and therefore IS reachable by URL, with a reason
+  // recorded at its catalogue entry rather than here:
   //   - offer-to-joining-tracker declares branchScoped: false and cannot be scoped at all; its
   //     grain is a pre-joining candidate, ats_onboarding_bridge has no branch column, and only
   //     2 of 351 rows link to an employee. The employees LEFT JOIN that trips this scan supplies
   //     nothing but the actual date of joining.
-  //   - asset-inventory-report declares no branchScoped flag, so it promises nothing.
   //
   // payroll-readiness-status was removed from this list on 2026-08-10: it declared
   // branchScoped: true while applying no predicate, which is the one shape that is genuinely a
   // broken promise, and it now scopes through its lines' employees.
+  //
+  // asset-inventory-report was removed 2026-08-18: asset_master has its own branch_id (the scan
+  // flags this block only because of its LEFT JOIN employees for assignment lookup), and now
+  // calls addScopedBranchOnlyFilters. See reporting-access.ts for why that's a distinct helper
+  // from addScopedEmployeeFilters rather than reusing it.
   "cosec-unmapped", "payroll-audit-trail", "offer-to-joining-tracker",
   "onboarding-doc-checklist", "notice-period-adherence", "exit-interview-summary",
-  "roster-change-audit", "asset-inventory-report", "asset-assignment-register",
+  "roster-change-audit", "asset-assignment-register",
   "esic-challan-data", "cheque-name-mismatch-report",
   "rehire-eligibility-register", "feedback-360-summary", "goal-completion-summary",
   "training-needs-summary", "it-ad-account-audit",
@@ -60,7 +66,7 @@ const unscoped = (() => {
     const body = part.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
     if (!/sql\s*=\s*`/.test(body)) continue;
     if (!/\bemployees\s+e\b|\bFROM employees\b|JOIN employees\b/i.test(body)) continue;
-    if (/addScopedEmployeeFilters\s*\(/.test(body)) continue;
+    if (/addScopedEmployeeFilters\s*\(|addScopedBranchOnlyFilters\s*\(/.test(body)) continue;
     found.add(m[1]);
   }
   return found;
