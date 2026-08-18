@@ -38,6 +38,23 @@ async function getRunForMonth(month: string): Promise<{ id: string; status: stri
 }
 
 // ---------------------------------------------------------------------------
+// Helper: resolve a non-org-wide caller's own branch/process from their
+// employee record. Mirrors the isAdmin split GET /processes above already
+// uses to decide "org-wide vs scoped to my own record".
+// ---------------------------------------------------------------------------
+async function resolveActorOwnScope(
+  userId: string
+): Promise<{ branchId: string | null; processId: string | null } | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_id, process_id FROM employees WHERE user_id = ? LIMIT 1`,
+    [userId]
+  );
+  const row = (rows as any[])[0];
+  if (!row) return null;
+  return { branchId: row.branch_id ?? null, processId: row.process_id ?? null };
+}
+
+// ---------------------------------------------------------------------------
 // GET /processes — list processes the caller has salary-verification access to
 // ---------------------------------------------------------------------------
 salaryVerificationRouter.get(
@@ -865,9 +882,35 @@ salaryVerificationRouter.get(
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
-      const processId = req.query.processId as string | undefined;
-      const branchId = req.query.branchId as string | undefined;
+      let processId = req.query.processId as string | undefined;
+      let branchId = req.query.branchId as string | undefined;
       const format = (req.query.format as string) === "csv" ? "csv" : "xlsx";
+
+      // Org-wide roles (same split as GET /processes' isAdmin above) may request an
+      // unfiltered, org-wide export. Everyone else — wfm, process_manager, branch_head —
+      // is a branch/process-scoped role, so their own branchId/processId is enforced
+      // here regardless of what the client sent. Previously these params were only
+      // ever applied when present, so omitting both returned up to 10,000 employees'
+      // salary register org-wide to any caller holding one of these roles.
+      const roleKeys: string[] = (req.authUser as any)?.roleKeys ?? [];
+      const isOrgWide = roleKeys.some((r) => ["super_admin", "payroll_head", "payroll"].includes(r));
+
+      if (!isOrgWide) {
+        const ownScope = await resolveActorOwnScope(req.authUser!.id);
+        const isBranchHead = roleKeys.includes("branch_head");
+        const scopedValue = isBranchHead ? ownScope?.branchId : ownScope?.processId;
+        if (!scopedValue) {
+          return res.status(403).json({
+            success: false,
+            message: "No branch or process is assigned to your account, so there is nothing you are authorised to export.",
+          });
+        }
+        if (isBranchHead) {
+          branchId = scopedValue;
+        } else {
+          processId = scopedValue;
+        }
+      }
 
       const run = await getRunForMonth(month);
 
@@ -967,14 +1010,19 @@ salaryVerificationRouter.get(
       ];
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryData), "Summary");
 
+      const flagWhere = ["svf.run_month = ?"];
+      const flagParams: unknown[] = [month];
+      if (processId) { flagWhere.push("svf.process_id = ?"); flagParams.push(processId); }
+      if (branchId)  { flagWhere.push("svf.branch_id = ?");  flagParams.push(branchId); }
+
       const [allFlagRows] = await db.execute<RowDataPacket[]>(
         `SELECT svf.employee_code, e.full_name, svf.category, svf.description,
                 svf.expected_value, svf.status, svf.raised_at, svf.resolution_note
            FROM salary_verification_flag svf
            LEFT JOIN employees e ON e.id = svf.employee_id
-          WHERE svf.run_month = ? ${processId ? "AND svf.process_id = ?" : ""}
+          WHERE ${flagWhere.join(" AND ")}
           ORDER BY svf.raised_at DESC`,
-        processId ? [month, processId] : [month]
+        flagParams
       );
       const flagHeaders = ["Code", "Name", "Category", "Description", "Expected Value", "Status", "Raised At", "Resolution"];
       const flagData = (allFlagRows as any[]).map((f) => [

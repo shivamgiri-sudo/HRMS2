@@ -615,7 +615,8 @@ export async function bulkVerifyDocuments(
 export async function streamBulkDocumentsZip(
   employeeIds: string[],
   documentCodes: string[] | null,
-  res: Response
+  res: Response,
+  actorUserId?: string
 ): Promise<void> {
   const archive = archiverLib('zip', { zlib: { level: 9 } });
 
@@ -624,6 +625,41 @@ export async function streamBulkDocumentsZip(
   archive.on('error', (err: Error) => {
     console.error('[tracker] Archive error during ZIP creation:', err.message);
   });
+
+  // Branch Head scoping — mirrors getJoiningDocumentsTracker's isBranchHead check above.
+  // Without this, a branch_head could reach every other employee's verified documents
+  // by supplying arbitrary employee_ids to this bulk-download endpoint, even though the
+  // regular list-and-select flow already restricts them to their own branch.
+  let scopedEmployeeIds = employeeIds;
+  if (actorUserId && employeeIds.length > 0) {
+    const roleKeys = await getUserRoleKeys(actorUserId);
+    if (roleKeys.includes('branch_head')) {
+      const actorEmployee = await getEmployeeForUser(actorUserId);
+      let actorBranchId: string | undefined;
+      if (actorEmployee?.id) {
+        const [branchRows] = await db.execute<RowDataPacket[]>(
+          'SELECT branch_id FROM employees WHERE id = ? LIMIT 1',
+          [actorEmployee.id]
+        );
+        actorBranchId = (branchRows[0] as { branch_id: string } | undefined)?.branch_id;
+      }
+      if (!actorBranchId) {
+        // Cannot resolve a branch for this branch_head — finalize an empty archive
+        // rather than falling through to an unrestricted query.
+        await archive.finalize();
+        return;
+      }
+      const [allowedRows] = await db.execute<RowDataPacket[]>(
+        'SELECT id FROM employees WHERE id IN (?) AND branch_id = ?',
+        [employeeIds, actorBranchId]
+      );
+      scopedEmployeeIds = (allowedRows as Array<{ id: string }>).map((r) => r.id);
+      if (scopedEmployeeIds.length === 0) {
+        await archive.finalize();
+        return;
+      }
+    }
+  }
 
   let sql = `
     SELECT
@@ -640,7 +676,7 @@ export async function streamBulkDocumentsZip(
       AND c.verification_status = 'verified'
   `;
 
-  const params: (string[] | string)[] = [employeeIds];
+  const params: (string[] | string)[] = [scopedEmployeeIds];
 
   if (documentCodes && documentCodes.length > 0) {
     sql += ` AND c.document_code IN (?)`;

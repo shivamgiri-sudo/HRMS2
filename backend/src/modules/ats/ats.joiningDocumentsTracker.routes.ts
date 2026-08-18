@@ -237,7 +237,7 @@ joiningDocumentsTrackerRouter.post('/bulk-download', requireWriteAccess, h(async
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="joining-documents-${timestamp}.zip"`);
 
-    await streamBulkDocumentsZip(employee_ids as string[], document_codes ?? null, res);
+    await streamBulkDocumentsZip(employee_ids as string[], document_codes ?? null, res, req.authUser!.id);
 
     return res;
   } catch (error: unknown) {
