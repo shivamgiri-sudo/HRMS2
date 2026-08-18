@@ -478,8 +478,8 @@ export async function sendOnboardingOtp(params: {
   candidateName: string;
   email?: string | null;
 }): Promise<SendResult | null> {
-  // Primary: SMS via email-to-SMS gateway or configured SMS provider
-  // Fallback: send OTP to candidate's personal email
+  // Called by ats.otp.service.ts's sendOnboardingOtp() alongside the SMS
+  // send, always — not a fallback. Both channels get the same code.
   const subject = `Your OTP for MAS Callnet Onboarding: ${params.otp}`;
   const html = `
     <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px">

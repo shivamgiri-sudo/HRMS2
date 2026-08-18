@@ -1,7 +1,7 @@
 import { providerFactory } from '../communication/providers/provider.factory.js';
 import { providerConfigService } from '../communication/provider-config.service.js';
 import { buildSMS } from '../communication/smartping-dlt-registry.js';
-import { sendOnboardingOtp } from './ats.email.service.js';
+import { sendOnboardingOtp as sendOnboardingOtpEmail } from './ats.email.service.js';
 
 /**
  * Must match the caller's expiry. onboarding-full.routes.ts inserts the OTP with
@@ -11,9 +11,12 @@ import { sendOnboardingOtp } from './ats.email.service.js';
 const OTP_VALIDITY_MINUTES = 10;
 
 interface SendOtpResult {
+  smsSuccess: boolean;
+  smsError?: string;
+  emailSuccess: boolean;
+  emailError?: string;
+  /** True if at least one channel succeeded. */
   success: boolean;
-  channel: 'sms' | 'email';
-  error?: string;
 }
 
 interface SendOtpParams {
@@ -23,95 +26,87 @@ interface SendOtpParams {
   email?: string | null;
 }
 
-export async function sendOnboardingOtpViaSms(params: SendOtpParams): Promise<SendOtpResult> {
+/**
+ * Sends the same OTP over BOTH SMS and email on every request — not a
+ * fallback chain. Used to try SMS once and only email if SMS failed, which
+ * is why candidates only ever saw the code arrive by email: as long as SMS
+ * failed for ANY reason (a transient provider error, a format quirk), email
+ * silently took over and nobody's phone got anything. Both channels are now
+ * always attempted, independently, so a candidate who has a working phone
+ * always gets it there too, regardless of what happens to the other channel.
+ */
+export async function sendOnboardingOtp(params: SendOtpParams): Promise<SendOtpResult> {
   const { mobile, otp, candidateName, email } = params;
 
-  // Validate mobile number format
+  let smsSuccess = false;
+  let smsError: string | undefined;
+
   const cleanMobile = mobile.replace(/\D/g, '');
   if (!cleanMobile || cleanMobile.length < 10) {
-    return { success: false, channel: 'sms', error: 'Invalid mobile number format' };
-  }
+    smsError = 'Invalid mobile number format';
+  } else {
+    const formattedMobile = cleanMobile.startsWith('91') ? `+${cleanMobile}` : `+91${cleanMobile}`;
+    try {
+      const dbConfig = await providerConfigService.loadActiveConfig('sms');
+      const smsProvider = await providerFactory.getProviderAsync('sms', dbConfig);
 
-  // Format mobile for SMS (add country code if not present)
-  const formattedMobile = cleanMobile.startsWith('91') ? `+${cleanMobile}` : `+91${cleanMobile}`;
-
-  // Try SMS first
-  try {
-    const dbConfig = await providerConfigService.loadActiveConfig('sms');
-    const smsProvider = await providerFactory.getProviderAsync('sms', dbConfig);
-
-    // Validate recipient format
-    if (!smsProvider.validateRecipient(formattedMobile)) {
-      console.warn(`[OTP] Invalid mobile format for SMS provider: ${formattedMobile}`);
-      // Fall through to email fallback
-    } else {
-      // Built from the registered DLT template, never hand-written.
-      //
-      // This call used to pass the literal string 'OTP Verification' in the dltContentId slot
-      // along with a bespoke message. SmartPing requires a numeric DLT id there, so the
-      // provider rejected every send — observed live in production:
-      //   [OTP] SMS send failed: No registered DLT template for this message ...
-      //   received "OTP Verification". Not sent.
-      // Candidates therefore never got an onboarding OTP by SMS; every request silently fell
-      // through to the email branch below.
-      //
-      // The bespoke wording was the second half of the bug. Under India's TRAI DLT rules the
-      // delivered text must MATCH the registered template, so even had the id been right, a
-      // hand-written sentence would have been a compliance failure rather than a delivery one.
-      // buildSMS interpolates the registered text and returns its id, which is the only way to
-      // keep both correct together.
-      const { body, dltContentId } = buildSMS('candidate_mobile_otp', {
-        otp,
-        validity_minutes: OTP_VALIDITY_MINUTES,
-      });
-
-      const result = await smsProvider.send(formattedMobile, dltContentId, body);
-
-      if (result.success) {
-        console.info(`[OTP] SMS sent successfully to ${mobile.slice(-4).padStart(mobile.length, '*')}`);
-        return { success: true, channel: 'sms' };
+      if (!smsProvider.validateRecipient(formattedMobile)) {
+        smsError = `Invalid mobile format for SMS provider: ${formattedMobile}`;
       } else {
-        console.warn(`[OTP] SMS send failed: ${result.error}`);
-        // Fall through to email fallback
+        // Built from the registered DLT template, never hand-written.
+        //
+        // This call used to pass the literal string 'OTP Verification' in the dltContentId slot
+        // along with a bespoke message. SmartPing requires a numeric DLT id there, so the
+        // provider rejected every send — observed live in production:
+        //   [OTP] SMS send failed: No registered DLT template for this message ...
+        //   received "OTP Verification". Not sent.
+        // Fixed 2026-08-10 (see otp-sms-dlt.contract.test.ts, which locks this in). Under
+        // India's TRAI DLT rules the delivered text must MATCH the registered template, so
+        // buildSMS interpolates the registered text and returns its id — the only way to keep
+        // both correct together.
+        const { body, dltContentId } = buildSMS('candidate_mobile_otp', {
+          otp,
+          validity_minutes: OTP_VALIDITY_MINUTES,
+        });
+
+        const result = await smsProvider.send(formattedMobile, dltContentId, body);
+        if (result.success) {
+          smsSuccess = true;
+          console.info(`[OTP] SMS sent successfully to ${mobile.slice(-4).padStart(mobile.length, '*')}`);
+        } else {
+          smsError = result.error;
+          console.warn(`[OTP] SMS send failed: ${result.error}`);
+        }
       }
+    } catch (err) {
+      smsError = err instanceof Error ? err.message : String(err);
+      console.warn(`[OTP] SMS provider error: ${smsError}`);
     }
-  } catch (smsError) {
-    const errorMsg = smsError instanceof Error ? smsError.message : String(smsError);
-    console.warn(`[OTP] SMS provider error: ${errorMsg}`);
-    // Fall through to email fallback
   }
 
-  // Fallback to email if SMS failed or no SMS provider configured
+  // Always attempted, regardless of the SMS outcome above — this is the fix.
+  let emailSuccess = false;
+  let emailError: string | undefined;
   if (!email) {
-    return {
-      success: false,
-      channel: 'email',
-      error: 'SMS delivery failed and no email address available for fallback'
-    };
-  }
-
-  try {
-    const emailResult = await sendOnboardingOtp({ mobile, otp, candidateName, email });
-
-    if (emailResult && emailResult.ok) {
-      console.info(`[OTP] Email fallback sent successfully to ${email}`);
-      return { success: true, channel: 'email' };
-    } else {
-      const emailError = emailResult?.error ?? 'Email send returned no result';
-      console.error(`[OTP] Email fallback failed: ${emailError}`);
-      return {
-        success: false,
-        channel: 'email',
-        error: `Both SMS and email delivery failed: ${emailError}`
-      };
+    emailError = 'No email address on file';
+  } else {
+    try {
+      const emailResult = await sendOnboardingOtpEmail({ mobile, otp, candidateName, email });
+      if (emailResult && emailResult.ok) {
+        emailSuccess = true;
+        console.info(`[OTP] Email sent successfully to ${email}`);
+      } else {
+        emailError = emailResult?.error ?? 'Email send returned no result';
+        console.error(`[OTP] Email send failed: ${emailError}`);
+      }
+    } catch (err) {
+      emailError = err instanceof Error ? err.message : String(err);
+      console.error(`[OTP] Email send exception: ${emailError}`);
     }
-  } catch (emailError) {
-    const errorMsg = emailError instanceof Error ? emailError.message : String(emailError);
-    console.error(`[OTP] Email fallback exception: ${errorMsg}`);
-    return {
-      success: false,
-      channel: 'email',
-      error: `Both SMS and email delivery failed: ${errorMsg}`
-    };
   }
+
+  return {
+    smsSuccess, smsError, emailSuccess, emailError,
+    success: smsSuccess || emailSuccess,
+  };
 }

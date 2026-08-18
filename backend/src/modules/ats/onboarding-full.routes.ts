@@ -372,36 +372,46 @@ router.post("/otp/send", h(async (req, res) => {
     [otpId, tokenData.candidate_id, mobile, otpHash]
   );
 
-  // Send via SMS (primary) or email (fallback)
-  const { sendOnboardingOtpViaSms } = await import("./ats.otp.service.js");
-  const deliveryResult = await sendOnboardingOtpViaSms({
+  // Send via BOTH SMS and email, always — not a fallback chain. Previously
+  // tried SMS once and only sent email if SMS failed, so as long as SMS
+  // failed for any reason (a transient provider error, a format quirk),
+  // email silently took over and the candidate's phone got nothing.
+  const { sendOnboardingOtp } = await import("./ats.otp.service.js");
+  const deliveryResult = await sendOnboardingOtp({
     mobile,
     otp,
     candidateName: tokenData.full_name,
     email: tokenData.email
   });
 
+  // The OTP itself is deliberately not logged. It was, in plaintext alongside
+  // the mobile number, which put a working second factor into any log file,
+  // log shipper or support screen-share for its full 10-minute life. Each
+  // channel's outcome and error is what a failed delivery actually needs
+  // diagnosing.
+  console.info(
+    `[OTP] Delivery for candidate ${tokenData.candidate_id}: ` +
+    `SMS=${deliveryResult.smsSuccess ? 'sent' : `failed (${deliveryResult.smsError})`}, ` +
+    `Email=${deliveryResult.emailSuccess ? 'sent' : `failed (${deliveryResult.emailError})`}`
+  );
+
   if (!deliveryResult.success) {
-    // The OTP itself is deliberately not logged. It was, in plaintext alongside
-    // the mobile number, which put a working second factor into any log file,
-    // log shipper or support screen-share for its full 10-minute life. The
-    // channel and the provider's error are what a failed delivery actually
-    // needs diagnosing.
-    console.error(
-      `[OTP] Delivery failed via ${deliveryResult.channel} for candidate ${tokenData.candidate_id}: ${deliveryResult.error}`,
-    );
     return res.status(500).json({
       success: false,
-      message: "Failed to send OTP. Please try again or contact support."
+      message: "Failed to send OTP via SMS or email. Please try again or contact support."
     });
   }
 
-  // Log successful delivery channel
-  console.info(`[OTP] Delivered via ${deliveryResult.channel} to candidate ${tokenData.candidate_id}`);
+  const channels = [
+    deliveryResult.smsSuccess ? 'SMS' : null,
+    deliveryResult.emailSuccess ? 'email' : null,
+  ].filter(Boolean);
 
   return res.json({
     success: true,
-    message: `OTP sent via ${deliveryResult.channel === 'sms' ? 'SMS' : 'email'}`,
+    message: `OTP sent via ${channels.join(' and ')}`,
+    smsDelivered: deliveryResult.smsSuccess,
+    emailDelivered: deliveryResult.emailSuccess,
     maskedMobile: mobile.slice(-4).padStart(mobile.length, "*")
   });
 }));
