@@ -235,10 +235,12 @@ function isWalkedIn(row: HiringActivityRow) {
 function isSelected(row: HiringActivityRow) {
   const linked = String(row.linked_final_decision ?? "").toLowerCase();
   const status = String(row.current_status ?? "").toLowerCase();
+  const remarks = String(row.recruiter_remarks ?? "").toLowerCase();
   return Boolean(
     row.final_selection_flag === 1 || row.final_selection_flag === "1" ||
     status.includes("selected") ||
-    linked === "selected"
+    linked === "selected" ||
+    remarks === "selected"
   );
 }
 
