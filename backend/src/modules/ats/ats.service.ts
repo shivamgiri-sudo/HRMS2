@@ -8,6 +8,8 @@ import { transitionCandidateState } from "./ats.status-machine.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { excludeEmployeeShapedCandidatesSql } from "./ats-reporting-scope.js";
 import { toStoredNameRequired } from "../../shared/nameFormat.js";
+import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
+import { maskPii } from "../../shared/piiMask.js";
 import type {
   AtsCandidate,
   AtsCandidateStageLog,
@@ -21,6 +23,47 @@ import type {
 
 function candidateCode(): string {
   return `CND-${Date.now().toString(36).toUpperCase()}`;
+}
+
+/**
+ * ats_candidate raw statutory/bank identifier columns, with the mask shape each needs.
+ *
+ * Same denylist this codebase already applies to the `employees` table (see
+ * shared/employeeIdentifierRedaction.ts's IDENTIFIER_FIELDS) — bank_ifsc and uan_number are
+ * included alongside aadhaar/PAN/bank account for the same reason that module gives: an
+ * account number is far less useful to an attacker without the IFSC that names its bank, and
+ * a UAN is a standing statutory identifier, not a per-session token.
+ *
+ * listCandidates (GET /api/ats/candidates, up to 500 rows/page, open to admin/hr/recruiter/
+ * manager/super_admin) used to return these in the clear via `SELECT c.*` — no consumer reads
+ * the raw value: NativeATSCandidateMaster.tsx renders from this same response without ever
+ * referencing aadhar_number/pan_number/bank_account_no, and getCandidate (the single-record
+ * view) never selected these columns to begin with. Masking here brings the list in line with
+ * the detail view instead of being the one place raw values still leak.
+ */
+const CANDIDATE_RAW_IDENTIFIER_FIELDS: Record<string, Parameters<typeof maskPii>[1]> = {
+  aadhar_number: "aadhaar",
+  pan_number: "pan",
+  uan_number: "bank_account",
+  bank_account_no: "bank_account",
+  bank_ifsc: "bank_account",
+};
+
+/**
+ * Strip at-rest crypto plumbing (aadhar_number_hash, pan_number_hash, bank_account_no_hash,
+ * *_encrypted — never safe in any API response, see cryptoColumnHygiene.ts) and mask the raw
+ * identifier columns above. The pre-computed *_masked columns already on ats_candidate pass
+ * through untouched — they are the safe rendering these list rows should have carried all along.
+ */
+function sanitizeCandidateListRow<T extends Record<string, unknown>>(row: T): Record<string, unknown> {
+  const stripped = stripCryptoPlumbing(row);
+  for (const [key, maskType] of Object.entries(CANDIDATE_RAW_IDENTIFIER_FIELDS)) {
+    const value = stripped[key];
+    if (value != null && String(value).trim() !== "") {
+      stripped[key] = maskPii(String(value), maskType);
+    }
+  }
+  return stripped;
 }
 
 /** Normalize sourcing channel to canonical values */
@@ -112,7 +155,8 @@ export const atsService = {
       `SELECT COUNT(*) AS total FROM ats_candidate c ${where}`,
       params
     );
-    return { data: rows as AtsCandidate[], total: Number(countRows[0]?.total ?? 0), page: filters.page, limit: filters.limit };
+    const sanitizedRows = (rows as RowDataPacket[]).map((row) => sanitizeCandidateListRow(row));
+    return { data: sanitizedRows as unknown as AtsCandidate[], total: Number(countRows[0]?.total ?? 0), page: filters.page, limit: filters.limit };
   },
 
   async getCandidate(id: string): Promise<AtsCandidate> {
