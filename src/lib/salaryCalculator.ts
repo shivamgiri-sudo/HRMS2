@@ -36,7 +36,7 @@ const ESIC_EMP_RATE = 0.0075;
 const ESIC_EMPLR_RATE = 0.0325;
 const ESIC_LIMIT = 21000;
 const GRATUITY_RATE = 15 / 26 / 12;
-const ADMIN_RATE = 0.0136;
+const ADMIN_RATE = 0.0101; // EPFO current: 0.50% admin + 0.50% EDLI + 0.01% EDLI admin (June 2018 onward)
 const BONUS_RATE = 0.0833;
 
 function deriveComponents(gross: number, opts: PkgCalcOptions): PkgComponents {
@@ -45,16 +45,16 @@ function deriveComponents(gross: number, opts: PkgCalcOptions): PkgComponents {
   const basic = r2(gross * (basicPct / 100));
   const hra = r2(basic * (hraPct / 100));
   const special_allowance = Math.max(0, r2(gross - basic - hra - CONV));
+  const bonus = r2(basic * BONUS_RATE);
 
   const epf_employee = includePf ? r2(Math.min(basic * PF_EMP_RATE, PF_EMP_CAP)) : 0;
   const esic_employee = includeEsic && gross <= ESIC_LIMIT ? r2(gross * ESIC_EMP_RATE) : 0;
   const net_in_hand = r2(gross - epf_employee - esic_employee - PT);
 
-  const epf_employer = includePf ? r2(basic * PF_EMPLR_RATE) : 0;
+  const epf_employer = includePf ? r2(Math.min(basic * PF_EMPLR_RATE, PF_EMP_CAP)) : 0;
   const esic_employer = includeEsic && gross <= ESIC_LIMIT ? r2(gross * ESIC_EMPLR_RATE) : 0;
   const gratuity = r2(basic * GRATUITY_RATE);
-  const admin_charges = r2(basic * ADMIN_RATE);
-  const bonus = r2(basic * BONUS_RATE);
+  const admin_charges = includePf ? r2(basic * ADMIN_RATE) : 0;
   const ctc = r2(gross + epf_employer + esic_employer + gratuity + admin_charges);
 
   return {
@@ -70,10 +70,10 @@ export function calcFromCtc(monthlyCtc: number, opts: PkgCalcOptions): PkgCompon
   const { includePf, includeEsic, basicPct } = opts;
   const estGross = monthlyCtc * 0.88;
   const estBasic = estGross * (basicPct / 100);
-  const pf_e = includePf ? estBasic * PF_EMPLR_RATE : 0;
+  const pf_e = includePf ? Math.min(estBasic * PF_EMPLR_RATE, PF_EMP_CAP) : 0;
   const esic_e = includeEsic && estGross <= ESIC_LIMIT ? estGross * ESIC_EMPLR_RATE : 0;
   const grat = estBasic * GRATUITY_RATE;
-  const adm = estBasic * ADMIN_RATE;
+  const adm = includePf ? estBasic * ADMIN_RATE : 0;
   const gross = r2(Math.max(0, monthlyCtc - pf_e - esic_e - grat - adm));
   return deriveComponents(gross, opts);
 }
@@ -86,7 +86,9 @@ export function calcFromInHand(monthlyInHand: number, opts: PkgCalcOptions): Pkg
     gross = monthlyInHand + PT;
   } else if (!includePf) {
     const g0 = monthlyInHand + PT;
-    gross = g0 > ESIC_LIMIT ? g0 : r2((monthlyInHand + PT) / (1 - ESIC_EMP_RATE));
+    const gEsic = r2(g0 / (1 - ESIC_EMP_RATE));
+    // if algebraic solve pushes gross above ESIC limit, ESIC wouldn't apply → fallback to no-ESIC
+    gross = gEsic > ESIC_LIMIT ? g0 : gEsic;
   } else {
     gross = monthlyInHand + PT + PF_EMP_CAP;
     for (let i = 0; i < 5; i++) {
