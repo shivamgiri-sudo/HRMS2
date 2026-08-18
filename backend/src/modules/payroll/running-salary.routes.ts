@@ -383,10 +383,18 @@ runningSalaryRouter.get(
 );
 
 /**
- * GET /api/payroll/running-summary/batch?month=YYYY-MM&branch_id=...&process_id=...&limit=50
- * Batch running summary for a branch or process (management dashboard).
- * Returns an array of {employee_id, employee_code, name, ...summary} for up to 100 employees.
- * Each employee uses finalized line if available, otherwise live estimate.
+ * GET /api/payroll/running-summary/batch?month=YYYY-MM&branch_id=...&process_id=...&search=...&page=1&limit=50
+ * Batch running summary for a branch or process — backs the Current Payroll page's live
+ * salary lookup (LiveSalaryPanel/LiveSalaryTable), not just a management dashboard anymore.
+ * Returns {employee_id, employee_code, name, branch_name, process_name, designation_name,
+ * ...summary} plus `total` for pagination. Each employee uses finalized line if available,
+ * otherwise live estimate.
+ *
+ * search/page were added alongside the Current Payroll UI rework — without them the caller
+ * could only ever see the first 100 employees in scope with no way to find anyone by name,
+ * which is exactly the gap the attendance lookup page (GET /api/employees/hr-hub) already
+ * solved for attendance. Same LIKE-based approach here since this employee set (active +
+ * salary-assigned) is small (~1-2k), not the 70k+ row tables the payroll records fix dealt with.
  */
 runningSalaryRouter.get(
   "/running-summary-batch",
@@ -423,9 +431,12 @@ runningSalaryRouter.get(
       runMonth = `${runMonthYYYYMM}-01`;
     }
 
-    const { branch_id, process_id } = req.query as Record<string, string>;
+    const { branch_id, process_id, search } = req.query as Record<string, string>;
     const limitRaw = parseInt((req.query.limit as string) || "50", 10);
     const limit = Math.min(Math.max(1, limitRaw), 100);
+    const pageRaw = parseInt((req.query.page as string) || "1", 10);
+    const page = Math.max(1, Number.isFinite(pageRaw) ? pageRaw : 1);
+    const offset = (page - 1) * limit;
 
     const conds: string[] = [
       "e.employment_status = 'active'",
@@ -434,6 +445,16 @@ runningSalaryRouter.get(
     const params: unknown[] = [];
     if (branch_id) { conds.push("e.branch_id = ?"); params.push(branch_id); }
     if (process_id) { conds.push("e.process_id = ?"); params.push(process_id); }
+    if (search && search.trim()) {
+      // Escape SQL LIKE wildcards, same guard payroll.service.ts's listPayrollRecords uses.
+      const escaped = search.trim().replace(/[%_\\]/g, ch => "\\" + ch);
+      const s = `%${escaped}%`;
+      conds.push(
+        "(e.employee_code LIKE ? ESCAPE '\\\\' OR e.full_name LIKE ? ESCAPE '\\\\'" +
+        " OR CONCAT(COALESCE(e.first_name,''),' ',COALESCE(e.last_name,'')) LIKE ? ESCAPE '\\\\')"
+      );
+      params.push(s, s, s);
+    }
 
     // branch_id / process_id above are caller-supplied filters, not permissions —
     // on their own they let a branch_head pass any branch and pull 100 employees'
@@ -448,24 +469,55 @@ runningSalaryRouter.get(
     conds.push(`(${scoped.sql})`);
     params.push(...scoped.params);
 
+    const whereSql = conds.join(" AND ");
+    const fromSql = `
+       FROM employees e
+       JOIN employee_salary_assignment esa ON esa.employee_id = e.id
+       LEFT JOIN branch_master bm      ON bm.id = e.branch_id
+       LEFT JOIN process_master pm     ON pm.id = e.process_id
+       LEFT JOIN designation_master dsg ON dsg.id = e.designation_id
+      WHERE ${whereSql}`;
+
     const [empRows] = await (db as any).execute(
-      `SELECT e.id, e.employee_code, CONCAT(e.first_name, ' ', e.last_name) AS name
-         FROM employees e
-         JOIN employee_salary_assignment esa ON esa.employee_id = e.id
-        WHERE ${conds.join(" AND ")}
-        LIMIT ${limit}`,
+      // Plain CONCAT(first_name, last_name) returns NULL the moment either half is NULL
+      // (126 of 1329 in-scope employees) — with ORDER BY name ASC that pushed every
+      // blank-named row to page 1, since MySQL sorts NULL first. Same COALESCE/TRIM
+      // fallback chain payroll.service.ts's listPayrollRecords already uses.
+      `SELECT e.id, e.employee_code,
+              COALESCE(NULLIF(TRIM(e.full_name),''),
+                       TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,''))),
+                       e.employee_code) AS name,
+              bm.branch_name, pm.process_name, dsg.designation_name
+       ${fromSql}
+       ORDER BY name ASC
+       LIMIT ${limit} OFFSET ${offset}`,
       params
     );
+    const [countRows] = await (db as any).execute(
+      `SELECT COUNT(*) AS total FROM employees e
+       JOIN employee_salary_assignment esa ON esa.employee_id = e.id
+      WHERE ${whereSql}`,
+      params
+    );
+    const total = Number((countRows as any[])[0]?.total ?? 0);
 
     const results = await Promise.allSettled(
       (empRows as any[]).map(async (emp: any) => {
         try {
           const finalized = await getFinalizedLineForMonth(emp.id, runMonthYYYYMM);
           if (finalized) {
-            return { employee_id: emp.id, employee_code: emp.employee_code, name: emp.name, ...finalized };
+            return {
+              employee_id: emp.id, employee_code: emp.employee_code, name: emp.name,
+              branch_name: emp.branch_name, process_name: emp.process_name, designation_name: emp.designation_name,
+              ...finalized,
+            };
           }
           const summary = await computeRunningSalary(emp.id, runMonth);
-          return { employee_id: emp.id, employee_code: emp.employee_code, name: emp.name, ...summary };
+          return {
+            employee_id: emp.id, employee_code: emp.employee_code, name: emp.name,
+            branch_name: emp.branch_name, process_name: emp.process_name, designation_name: emp.designation_name,
+            ...summary,
+          };
         } catch {
           return { employee_id: emp.id, employee_code: emp.employee_code, name: emp.name, error: true };
         }
@@ -476,6 +528,6 @@ runningSalaryRouter.get(
       .filter((r) => r.status === "fulfilled")
       .map((r) => (r as PromiseFulfilledResult<any>).value);
 
-    return res.json({ success: true, data, run_month: runMonth, count: data.length });
+    return res.json({ success: true, data, run_month: runMonth, count: data.length, total, page, limit });
   }
 );

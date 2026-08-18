@@ -1028,6 +1028,7 @@ const Payroll = () => {
                   month={currentMonthStr}
                   branchId={currentBranchId !== "all" ? currentBranchId : undefined}
                   processId={currentProcessId !== "all" ? currentProcessId : undefined}
+                  search={debouncedSearchQuery}
                 />
               )}
 

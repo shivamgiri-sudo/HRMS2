@@ -1,63 +1,64 @@
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { TrendingUp, Loader2 } from "lucide-react";
+import { TrendingUp } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { LiveSalaryTable, type LiveSalaryRow } from "./LiveSalaryTable";
+import { LiveSalaryDrawer } from "./LiveSalaryDrawer";
 
 /**
  * Per-employee "live" salary estimate for the currently-running month — the month payroll
  * has not closed yet, so /api/payroll/records legitimately has no rows for it (payroll runs
  * in arrears). This panel fills that gap using the same computeRunningSalary source that
  * already backs the Attendance Hub Salary tab, the employee Payslip viewer and the standalone
- * /payroll/running-breakdown page — it was simply never surfaced on the main /payroll grid.
+ * /payroll/running-breakdown page.
  *
- * GET /api/payroll/running-summary-batch caps at 100 employees per call and has no offset
- * param, so a large org only gets a first slice — shown with an explicit "showing first N"
- * note rather than silently truncating, matching the precedent in useTeamAttendanceMonth.ts.
+ * Rebuilt to match the Attendance lookup page's pattern (AttendanceHubTable +
+ * AttendanceHubDrawer) after the first version shipped with no working search and no
+ * click-through detail: it now takes the Current Payroll tab's own search/branch/process
+ * filters as props instead of ignoring them, is paginated server-side, and clicking a row
+ * opens a drawer that reuses SalaryTab (the same RunningMonthCard + payslip history the
+ * Attendance Hub already shows) rather than a bespoke detail view.
  */
-
-interface LiveSalaryRow {
-  employee_id: string;
-  employee_code: string;
-  name: string;
-  // computeRunningSalary shape
-  earned_payable_days?: number;
-  projected_payable_days?: number;
-  earned_net_till_date?: number;
-  projected_net?: number;
-  // finalized-line fallback shape (rare for a running month, but the endpoint can return it)
-  final_payable_days?: number;
-  net_salary?: number;
-  error?: boolean;
-}
 
 interface Props {
   month: string; // YYYY-MM
   branchId?: string;
   processId?: string;
+  search?: string;
 }
 
-const fmt = (n: number | undefined | null) =>
-  n === undefined || n === null
-    ? "—"
-    : new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
+const LIMIT = 20;
 
-export function LiveSalaryPanel({ month, branchId, processId }: Props) {
+export function LiveSalaryPanel({ month, branchId, processId, search }: Props) {
+  const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<LiveSalaryRow | null>(null);
+
+  // Same as the Current Payroll tab's own search/filter effect: a changed filter means the
+  // old page number no longer means anything, so land back on page 1 rather than showing an
+  // empty "page 3 of 1" result.
+  useEffect(() => {
+    setPage(1);
+  }, [branchId, processId, search]);
+
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["payroll-running-summary-batch", month, branchId ?? "", processId ?? ""],
+    queryKey: ["payroll-running-summary-batch", month, branchId ?? "", processId ?? "", search ?? "", page],
     queryFn: async () => {
-      const qs = new URLSearchParams({ month, limit: "100" });
+      const qs = new URLSearchParams({ month, limit: String(LIMIT), page: String(page) });
       if (branchId) qs.set("branch_id", branchId);
       if (processId) qs.set("process_id", processId);
-      const res = await hrmsApi.get<{ success: boolean; data: LiveSalaryRow[]; count: number }>(
+      if (search?.trim()) qs.set("search", search.trim());
+      const res = await hrmsApi.get<{ success: boolean; data: LiveSalaryRow[]; total: number; page: number; limit: number }>(
         `/api/payroll/running-summary-batch?${qs.toString()}`
       );
-      return res.data ?? [];
+      return res;
     },
-    staleTime: 60_000,
+    placeholderData: (prev) => prev,
+    staleTime: 30_000,
   });
 
-  const rows = data ?? [];
-  const truncated = rows.length === 100;
+  const rows = data?.data ?? [];
+  const total = data?.total ?? 0;
 
   return (
     <Card className="border-emerald-200 bg-emerald-50/40">
@@ -70,59 +71,28 @@ export function LiveSalaryPanel({ month, branchId, processId }: Props) {
       <CardContent className="pt-0">
         <p className="mb-3 text-xs text-emerald-800">
           Payroll for this month has not closed yet, so there is no final run to show. These
-          figures are a live estimate from confirmed attendance to date — they will move as the
-          month progresses and are not the final payable amount.
+          figures are a live estimate from confirmed attendance to date — they move as the
+          month progresses and are not the final payable amount. Use the search and filters
+          above to find an employee, and click a row for their full breakdown.
         </p>
 
-        {isLoading ? (
-          <div className="flex items-center gap-2 py-6 text-sm text-slate-500">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading live estimates…
-          </div>
-        ) : isError ? (
+        {isError ? (
           <p className="py-4 text-sm text-slate-500">Live estimates are unavailable right now.</p>
-        ) : rows.length === 0 ? (
-          <p className="py-4 text-sm text-slate-500">No live estimates available for this scope yet.</p>
         ) : (
-          <div className="overflow-x-auto rounded-lg border border-emerald-100 bg-white">
-            <table className="w-full text-sm">
-              <thead className="bg-emerald-50/60 text-xs uppercase tracking-wide text-emerald-700">
-                <tr>
-                  <th className="px-3 py-2 text-left">Employee</th>
-                  <th className="px-3 py-2 text-right">Days so far</th>
-                  <th className="px-3 py-2 text-right">Earned so far</th>
-                  <th className="px-3 py-2 text-right">Projected (month-end)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.employee_id} className="border-t border-slate-100">
-                    <td className="px-3 py-2">
-                      <div className="font-medium text-slate-800">{r.name || r.employee_code}</div>
-                      <div className="text-xs text-slate-400">{r.employee_code}</div>
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-600">
-                      {r.earned_payable_days ?? r.final_payable_days ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums font-semibold text-slate-800">
-                      {fmt(r.earned_net_till_date ?? r.net_salary)}
-                    </td>
-                    <td className="px-3 py-2 text-right tabular-nums text-slate-600">
-                      {r.projected_net !== undefined ? fmt(r.projected_net) : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {truncated && (
-          <p className="mt-2 text-xs text-slate-400">
-            Showing the first 100 employees in scope. Open an individual employee's Payslip or
-            Attendance Hub for their live figure if they aren't listed here.
-          </p>
+          <LiveSalaryTable
+            employees={rows}
+            total={total}
+            page={page}
+            limit={LIMIT}
+            isLoading={isLoading}
+            onPageChange={setPage}
+            onSelect={setSelected}
+            selectedId={selected?.employee_id ?? null}
+          />
         )}
       </CardContent>
+
+      <LiveSalaryDrawer employee={selected} onClose={() => setSelected(null)} />
     </Card>
   );
 }
