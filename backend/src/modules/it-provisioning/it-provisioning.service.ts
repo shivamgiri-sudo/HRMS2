@@ -544,19 +544,26 @@ export async function dispatchJoinProvisioningTasks(params: {
         // In-app notification cannot be delivered until user_id is assigned.
         console.warn(`[dispatchJoinProvisioningTasks] employee ${employeeId} has no user_id — profile photo inbox notification deferred until account is activated`);
       }
-      // Email notification
-      const toEmail = emp.personal_email || emp.official_email || emp.email;
-      if (toEmail) {
-        const photoUploadUrl = frontendUrl('/profile');
-        await emailService.send({
-          to: toEmail,
-          subject: 'Action Required: Upload your profile photo — ID card pending',
-          html: provisioningEmailHtml(
-            'Upload Your Profile Photo',
-            `Dear ${employeeName},<br><br>Welcome to MAS Callnet! Your ID card is being prepared, but it cannot be printed until you upload a professional profile photo.<br><br>Please log in to HRMS and upload your photo from your Profile page at your earliest convenience.`,
-            photoUploadUrl,
-          ),
-        });
+      // Email notification — only send once the account is active (user_id assigned).
+      // Sending before activation means the employee can't log in to act on it.
+      // handleITCompletion() in task-completion-handlers sends this email at the
+      // moment the auth_user account is created, so no email is lost.
+      if (emp.user_id) {
+        const toEmail = emp.personal_email || emp.official_email || emp.email;
+        if (toEmail) {
+          const photoUploadUrl = frontendUrl('/profile');
+          await emailService.send({
+            to: toEmail,
+            subject: 'Action Required: Upload your profile photo — ID card pending',
+            html: provisioningEmailHtml(
+              'Upload Your Profile Photo',
+              `Dear ${employeeName},<br><br>Welcome to MAS Callnet! Your ID card is being prepared, but it cannot be printed until you upload a professional profile photo.<br><br>Please log in to HRMS and upload your photo from your Profile page at your earliest convenience.`,
+              photoUploadUrl,
+            ),
+          });
+        }
+      } else {
+        console.warn(`[dispatchJoinProvisioningTasks] employee ${employeeId} has no user_id — profile photo email deferred until account is activated via IT provisioning`);
       }
     }
   } catch (err) {

@@ -4,9 +4,10 @@ This module adds a pre-employment assessment layer between candidate registratio
 
 ## Safety defaults
 
-- Development branch: `feat/ats-candidate-assessment-engine`
-- Draft PR only; no change has been merged into `main`.
-- `ATS_ASSESSMENT_ENABLED` defaults to `false`.
+- Merged and live on `main` (this line was stale until 2026-08-18 — it originally said "draft PR only, nothing
+  merged," which stopped being true a while ago; the `feat/ats-candidate-assessment-engine` branch it referred to
+  is abandoned, all work now lands directly on `main`).
+- `ATS_ASSESSMENT_ENABLED` defaults to `false` — enable per-environment, not implied by being on `main`.
 - No existing queue, candidate, interview, offer, or onboarding status is introduced or changed.
 - Assessment status is stored only in assessment-owned tables.
 - Existing registration, queue, interview, selection, and onboarding routes remain unchanged.

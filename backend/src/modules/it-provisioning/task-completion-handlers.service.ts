@@ -16,6 +16,13 @@ import { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { activateIfJoiningDateReached } from '../employees/employee-activation.service.js';
+import { emailService } from '../communication/email.service.js';
+import { inboxService } from '../inbox/inbox.service.js';
+
+function _frontendUrl(path: string) {
+  const base = String(process.env.FRONTEND_URL || process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '');
+  return `${base}${path.startsWith('/') ? path : `/${path}`}`;
+}
 
 export const OFFICIAL_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/;
 
@@ -222,6 +229,52 @@ export async function completeItProvisioningTask(
     });
 
     await triggerActivationCheck(task.employee_id, actorUserId);
+
+    // When a new auth_user account was just created, send the profile photo
+    // upload email now — the employee can finally log in and act on it.
+    // dispatchJoinProvisioningTasks defers this email when user_id is null.
+    if (!existingUserId) {
+      try {
+        const [photoCheckRows] = await db.execute<RowDataPacket[]>(
+          `SELECT user_id, photo_url, personal_email, official_email, email, first_name FROM employees WHERE id = ? LIMIT 1`,
+          [task.employee_id]
+        );
+        const empData = (photoCheckRows as any[])[0];
+        if (empData && !empData.photo_url) {
+          const toEmail = empData.personal_email || empData.official_email || empData.email;
+          const empName: string = empData.first_name || 'Employee';
+          const photoUrl = _frontendUrl('/profile');
+          if (toEmail) {
+            await emailService.send({
+              to: toEmail,
+              subject: 'Action Required: Upload your profile photo — ID card pending',
+              html: `<div style="font-family:Arial,sans-serif;padding:24px;max-width:600px">
+                <h2 style="color:#0f766e">Upload Your Profile Photo</h2>
+                <p>Dear ${empName},</p>
+                <p>Welcome to MAS Callnet! Your HRMS account is now active. Your ID card is being prepared, but it cannot be printed until you upload a professional profile photo.</p>
+                <p>Please log in to HRMS and upload your photo from your Profile page.</p>
+                <p><a href="${photoUrl}" style="background:#0f172a;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold">Upload Profile Photo</a></p>
+                <p style="color:#64748b;font-size:12px;margin-top:16px">If the button does not work: ${photoUrl}</p>
+              </div>`,
+            });
+          }
+          if (empData.user_id) {
+            await inboxService.createItem({
+              user_id: empData.user_id,
+              type: 'profile_photo_required',
+              title: 'Upload your profile photo',
+              description: 'Your ID card cannot be printed until you upload a professional profile photo. Please visit your Profile page.',
+              entity_type: 'employee',
+              entity_id: task.employee_id,
+              action_url: '/profile',
+              priority: 'high',
+            });
+          }
+        }
+      } catch (photoErr) {
+        console.warn('[handleITCompletion] Non-fatal: failed to send profile photo notification after account creation:', photoErr);
+      }
+    }
 
   } catch (err) {
     await conn.rollback();
