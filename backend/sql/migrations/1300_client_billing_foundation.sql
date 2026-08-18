@@ -18,6 +18,38 @@
 -- services only ever write proforma_no — adding them in a later migration would mean a second
 -- ALTER TABLE on a table that may already have production rows by then.
 --
+-- ── PRODUCTION INCIDENT, fixed in this version ─────────────────────────────────────────────
+-- Two real bugs shipped in the version of this migration first registered on 2026-08-18 and
+-- attempted (and failed) twice against production before either was caught:
+--
+-- 1. `last_value` is a MySQL 8.0 RESERVED WORD (added for window functions, alongside RANK,
+--    LEAD, LAG, GROUPS). The unquoted column name was a hard syntax error —
+--    schema_migrations recorded `success=0` both times, "Production startup blocked because
+--    migrations failed" fired on every boot attempt, and the table was never created. Fixed
+--    by backticking the identifier everywhere it's referenced (this file and
+--    client-billing-numbering.service.ts).
+--
+-- 2. client_invoice_number_sequence originally had its own `id BIGINT AUTO_INCREMENT PRIMARY
+--    KEY` surrogate, with (kind, scope_key) as a separate UNIQUE KEY. That breaks the atomic-
+--    counter idiom's first-mint case: `INSERT ... VALUES (?, ?, LAST_INSERT_ID(1), ...)` is
+--    supposed to make `result.insertId` return 1 on a fresh row, but when the table ALSO has
+--    its own genuine AUTO_INCREMENT column, MySQL returns that column's real generated id
+--    (2, 3, 47, whatever the table's current auto-increment counter is) instead of the
+--    LAST_INSERT_ID(expr) value — even though the wrapped value (1) IS correctly stored in
+--    last_value itself. Proved live: a throwaway table with a surrogate id returned the row's
+--    real id on first insert; the identical statement against a table with NO surrogate id
+--    (composite PRIMARY KEY only) returned the wrapped value correctly, matching this
+--    migration's own precedent (ai_rate_limit_bucket, PRIMARY KEY (user_id, window_start),
+--    no surrogate id column at all). Fixed by dropping the surrogate id and making
+--    (kind, scope_key) the table's actual PRIMARY KEY — do not reintroduce a separate
+--    AUTO_INCREMENT id column here; nothing needs it, and its presence is exactly what breaks
+--    the counter.
+--
+-- Neither bug was caught by two rounds of code review because review — like the module's own
+-- test suite — checked the SQL's text and mocked db.execute's return value, never executed
+-- the statement against a real MySQL server. Caught only when this migration's fix was
+-- independently verified against a live database before being reported as fixed.
+--
 -- ── Safety ──────────────────────────────────────────────────────────────────────────────
 -- Pure CREATE TABLE — no ALTER of any existing table, no data migration. Server is MySQL 8,
 -- so this is safe to run at any time; there is nothing to lock because the tables do not exist
@@ -32,12 +64,11 @@
 -- with explicit user sign-off, per CLAUDE.md's migration-approval rule.
 
 CREATE TABLE IF NOT EXISTS client_invoice_number_sequence (
-  id           BIGINT AUTO_INCREMENT PRIMARY KEY,
   kind         VARCHAR(20)  NOT NULL,           -- 'proforma' | 'bill'
   scope_key    VARCHAR(191) NOT NULL,            -- 'GLOBAL' for proforma; '<stateCode>|<companyName>|<financeYear>' for bill
-  last_value   INT          NOT NULL DEFAULT 0,
+  `last_value` INT          NOT NULL DEFAULT 0,
   updated_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY uq_kind_scope (kind, scope_key)
+  PRIMARY KEY (kind, scope_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS client_invoice (

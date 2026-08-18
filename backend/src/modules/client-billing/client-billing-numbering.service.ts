@@ -5,16 +5,27 @@ import { db } from "../../db/mysql.js";
  * Atomic counter mint, replacing legacy's `LOCK TABLES tbl_invoice READ` (wrong table, wrong
  * mode, no real serialization — confirmed race condition in the source audit). This uses
  * MySQL's well-known `INSERT ... ON DUPLICATE KEY UPDATE col = LAST_INSERT_ID(col + expr)`
- * idiom: the UNIQUE KEY on (kind, scope_key) makes the whole statement a single atomic
- * read-modify-write at the storage-engine level, and LAST_INSERT_ID(expr) makes the new value
- * retrievable from the statement's own result (`insertId`) with no follow-up SELECT and no
- * explicit transaction/locking required.
+ * idiom: (kind, scope_key) is the table's actual PRIMARY KEY (not a separate UNIQUE KEY beside
+ * a surrogate id — see the migration's own comment for why that combination is broken), so the
+ * whole statement is a single atomic read-modify-write at the storage-engine level, and
+ * LAST_INSERT_ID(expr) makes the new value retrievable from the statement's own result
+ * (`insertId`) with no follow-up SELECT and no explicit transaction/locking required.
+ *
+ * Do not add a surrogate AUTO_INCREMENT id to client_invoice_number_sequence. Proved live: when
+ * the table has its own genuine AUTO_INCREMENT column, MySQL returns THAT column's real
+ * generated value as `insertId` on a fresh INSERT, not the LAST_INSERT_ID(expr) value — even
+ * though the wrapped value is correctly stored in last_value itself. The fresh-mint case
+ * (every first invoice for a new state/company/finance-year) would silently return an
+ * arbitrary large number instead of 1. This only works because (kind, scope_key) is the
+ * primary key with nothing else competing for LAST_INSERT_ID(), matching
+ * ai_rate_limit_bucket's PRIMARY KEY (user_id, window_start) — the working precedent this was
+ * modeled on, which also has no surrogate id.
  */
 async function nextSequenceValue(kind: "proforma" | "bill", scopeKey: string): Promise<number> {
   const [result] = await db.execute<ResultSetHeader>(
-    `INSERT INTO client_invoice_number_sequence (kind, scope_key, last_value, updated_at)
+    `INSERT INTO client_invoice_number_sequence (kind, scope_key, \`last_value\`, updated_at)
      VALUES (?, ?, LAST_INSERT_ID(1), NOW())
-     ON DUPLICATE KEY UPDATE last_value = LAST_INSERT_ID(last_value + 1), updated_at = NOW()`,
+     ON DUPLICATE KEY UPDATE \`last_value\` = LAST_INSERT_ID(\`last_value\` + 1), updated_at = NOW()`,
     [kind, scopeKey]
   );
   return result.insertId;
