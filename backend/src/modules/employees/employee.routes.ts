@@ -1313,7 +1313,14 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
                 END) AS lwp_days,
                 COALESCE(SUM(late_mark), 0) AS late_marks,
                 COUNT(CASE WHEN attendance_status = 'missing_punch' THEN 1 END) AS missing_punch_count
-           FROM attendance_daily_record
+           -- PERF (2026-08-18): attendance_daily_record has accumulated 7 overlapping
+           -- employee_id/record_date indexes across separate fix attempts (550/1011
+           -- migrations). The optimizer picks uq_emp_date (full index scan, ~120K rows)
+           -- over the purpose-built range index below on this table's current size/stats
+           -- (measured live: 8.5-9.8s query -> 2.6-2.9s with the hint). ANALYZE TABLE does
+           -- not change the choice, so the hint is pinned explicitly rather than left to
+           -- the planner. Verified this is still the index that exists in production.
+           FROM attendance_daily_record FORCE INDEX (idx_adr_date_employee)
           WHERE record_date >= ? AND record_date <= ?
           GROUP BY employee_id
        ) att ON att.employee_id = e.id
@@ -1342,7 +1349,7 @@ router.get("/hr-hub", requireRole("super_admin", "admin", "hr", "payroll_head", 
                     END
                   ), 0) AS lwp_days,
                   SUM(attendance_status = 'missing_punch') AS missing_punch_count
-             FROM attendance_daily_record
+             FROM attendance_daily_record FORCE INDEX (idx_adr_date_employee)
             WHERE record_date BETWEEN ? AND ?
             GROUP BY employee_id
          ) att ON att.employee_id = e.id
