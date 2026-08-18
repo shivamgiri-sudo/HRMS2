@@ -14,6 +14,7 @@ import {
 } from "./OnboardingFormPrimitives";
 import type { EmployeeForm, BankForm, StatusData, BgvStatus } from "./useOnboardingFull";
 import { PennyDropButton } from "./PennyDropButton";
+import { INDIA_STATES, citiesForState, OTHER_CITY } from "@/data/indiaStatesCities";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -27,15 +28,6 @@ const NOM_RELS = ["Father", "Mother", "Spouse", "Son", "Daughter", "Brother", "S
 // RELIGIONS removed per user request
 const ADDR_PROOFS = ["Aadhaar Card", "Driving License", "Voter ID", "Passport", "Rent Agreement", "Utility Bill", "Bank Passbook"];
 const ACCOUNTS = ["Savings", "Current", "Salary"];
-const INDIA_STATES = [
-  "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh", "Goa", "Gujarat",
-  "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala", "Madhya Pradesh",
-  "Maharashtra", "Manipur", "Meghalaya", "Mizoram", "Nagaland", "Odisha", "Punjab",
-  "Rajasthan", "Sikkim", "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh",
-  "Uttarakhand", "West Bengal", "Delhi", "Jammu & Kashmir", "Ladakh",
-  "Andaman & Nicobar Islands", "Chandigarh", "Dadra & Nagar Haveli", "Daman & Diu",
-  "Lakshadweep", "Puducherry",
-];
 
 // Required documents list — used to track what's been uploaded
 const REQUIRED_DOCS = [
@@ -62,6 +54,46 @@ const DOC_TYPES = [
   "Experience Letter", "Offer Letter", "Appointment Letter", "Salary Slip",
   "Relieving Letter", "NOC Letter", "Form 16", "Address Proof", "Other",
 ];
+
+/**
+ * City dropdown filtered by the selected State, with a free-text fallback.
+ * Render with `key={state}` from the caller so switching State remounts this
+ * (resetting its local "Other" mode) instead of leaving a stale text input
+ * open for a city that belonged to the previous state.
+ */
+function CityField({ state, city, onChange, required = true }: {
+  state: string; city: string; onChange: (v: string) => void; required?: boolean;
+}) {
+  const options = citiesForState(state);
+  const knownCities = options.slice(0, -1); // drop the trailing "Other (type manually)" sentinel
+  // Also covers a legacy free-text value saved before this change existed —
+  // if it's not in the curated list, treat it the same as "chose Other".
+  const [forceOther, setForceOther] = useState(() => Boolean(city) && !knownCities.includes(city));
+
+  if (forceOther) {
+    return (
+      <div className="space-y-1">
+        <F label="City / District (type manually)" value={city} onChange={onChange}
+          required={required} placeholder="Enter city" />
+        <button
+          type="button"
+          className="text-xs text-blue-600 underline underline-offset-2"
+          onClick={() => { setForceOther(false); onChange(""); }}
+        >
+          ← Choose from list instead
+        </button>
+      </div>
+    );
+  }
+  return (
+    <F label="City / District" value={city}
+      onChange={(v) => {
+        if (v === OTHER_CITY) { setForceOther(true); onChange(""); }
+        else onChange(v);
+      }}
+      opts={options} required={required} />
+  );
+}
 
 // ── Step 1: Welcome ────────────────────────────────────────────────────────────
 
@@ -625,10 +657,11 @@ export function Step3AddressKyc({
             onChange={(v) => syncPermanent("permanentAddress", v)} required
             placeholder="House/Flat No., Street, Area, Landmark" />
           <div className="grid gap-3 grid-cols-2 sm:grid-cols-3">
-            <F label="State" value={employee.permanentState} onChange={(v) => syncPermanent("permanentState", v)}
+            <F label="State" value={employee.permanentState}
+              onChange={(v) => { syncPermanent("permanentState", v); syncPermanent("permanentCity", ""); }}
               opts={INDIA_STATES} required />
-            <F label="City / District" value={employee.permanentCity}
-              onChange={(v) => syncPermanent("permanentCity", v)} required placeholder="City" />
+            <CityField key={employee.permanentState} state={employee.permanentState} city={employee.permanentCity}
+              onChange={(v) => syncPermanent("permanentCity", v)} />
             <F label="PIN Code" value={employee.permanentPincode}
               onChange={(v) => syncPermanent("permanentPincode", v)} mode="numeric" required placeholder="6 digits"
               error={employee.permanentPincode && !pinOk(employee.permanentPincode) ? "Must be 6 digits" : ""} />
@@ -655,9 +688,10 @@ export function Step3AddressKyc({
               placeholder="House/Flat No., Street, Area, Landmark" />
             <div className="grid gap-3 grid-cols-2 sm:grid-cols-3">
               <F label="State" value={employee.presentState}
-                onChange={(v) => { setSameAddr(false); upd("presentState", v); }} opts={INDIA_STATES} required />
-              <F label="City / District" value={employee.presentCity}
-                onChange={(v) => { setSameAddr(false); upd("presentCity", v); }} required placeholder="City" />
+                onChange={(v) => { setSameAddr(false); upd("presentState", v); upd("presentCity", ""); }}
+                opts={INDIA_STATES} required />
+              <CityField key={employee.presentState} state={employee.presentState} city={employee.presentCity}
+                onChange={(v) => { setSameAddr(false); upd("presentCity", v); }} />
               <F label="PIN Code" value={employee.presentPincode}
                 onChange={(v) => { setSameAddr(false); upd("presentPincode", v); }} mode="numeric" required placeholder="6 digits"
                 error={employee.presentPincode && !pinOk(employee.presentPincode) ? "Must be 6 digits" : ""} />
