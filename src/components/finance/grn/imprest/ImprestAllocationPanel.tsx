@@ -5,6 +5,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
 import { useHasRole } from "@/hooks/useUserRole";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { dateLabel, money } from "@/components/finance/grn/grn-format";
 import {
   GRN_TR, GrnAlert, GrnButton, GrnCard, GrnCardHeader, GrnCellSub, GrnChip, GrnEmptyState,
@@ -256,11 +257,12 @@ export function ImprestAllocationPanel() {
                 label="Accounting period"
                 hint="Override the P&L period (YYYY-MM) when the allocation date falls in a locked month. Leave blank to use the allocation date's month."
               >
-                <GrnInput
-                  type="month"
+                <MonthYearPicker
                   className="w-[160px]"
                   value={draft.accountingPeriod}
-                  onChange={(e) => setDraft((d) => ({ ...d, accountingPeriod: e.target.value }))}
+                  onChange={(value) => setDraft((d) => ({ ...d, accountingPeriod: value }))}
+                  emptyLabel="Use allocation date"
+                  selectClassName="h-8 rounded-[8px] border border-grn-line bg-white px-2 text-[12px] text-grn-ink focus:outline-none focus:ring-2 focus:ring-grn-brand/15"
                 />
               </GrnFieldRow>
             )}
