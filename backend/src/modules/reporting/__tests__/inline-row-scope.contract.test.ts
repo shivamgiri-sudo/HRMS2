@@ -28,15 +28,6 @@ const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
  */
 const UNSCOPED_REACHABLE = new Map<string, string>([
   [
-    "asset-inventory-report",
-    // Driven by asset_master with employees LEFT JOINed, because an asset can sit
-    // unassigned. Forcing e.branch_id would hide exactly those rows — the correctness
-    // regression the executor guard already exempts assetMovementLog for. asset_master also
-    // holds 0 rows in production (verified 2026-08-11), so there is no live exposure; the
-    // correct fix when it is populated is to scope on am.branch_id, which the table has.
-    "asset-grain; asset_master.branch_id is the right key and the table is currently empty",
-  ],
-  [
     "offer-to-joining-tracker",
     // Driven by ats_onboarding_bridge -> ats_candidate with employees LEFT JOINed, because a
     // candidate is not yet an employee. Only 2 of its 361 rows have an employee at all, so
