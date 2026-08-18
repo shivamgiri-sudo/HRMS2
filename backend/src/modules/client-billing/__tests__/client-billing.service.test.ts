@@ -73,6 +73,19 @@ describe("createProforma", () => {
     expect(conn.release).toHaveBeenCalledTimes(1);
   });
 
+  it("throws when the cost centre has an unrecognized/NULL GST type", async () => {
+    mockCostCentreLookup({ gstType: null as unknown as string, stateCode: "09" });
+    await expect(
+      clientBillingService.createProforma({
+        costCentreId: "cc-1", category: "Subscription", financeYear: "2026-27",
+        monthLabel: "Aug-26", invoiceDate: "2026-08-18",
+        lines: [{ particulars: "Seat charge", qty: 1, rate: 30000 }], createdBy: "u-1",
+      })
+    ).rejects.toMatchObject({ message: expect.stringMatching(/unrecognized GST type/), statusCode: 400 });
+    expect(conn.execute).toHaveBeenCalledTimes(1);
+    expect(conn.release).toHaveBeenCalledTimes(1);
+  });
+
   it("computes 18% IGST for an Integrated cost centre and mints/saves the proforma", async () => {
     mockCostCentreLookup({ gstType: "Integrated", stateCode: "09" });
     mintProformaNumber.mockResolvedValueOnce("PI/09/7971");
