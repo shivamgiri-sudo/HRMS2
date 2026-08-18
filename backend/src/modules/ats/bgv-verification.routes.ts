@@ -700,12 +700,38 @@ router.get("/provider-status", requireAuth, requireRole("admin", "hr"), h(async 
 
 router.get("/api-logs", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const limit = Math.min(Number(req.query.limit) || 100, 500);
+
+  // Optional filters against candidate_bgv_api_request_log's already-indexed
+  // columns (backend/sql/320_bgv_missing_tables.sql, 1017_bgv_api_log_failure_reasons.sql):
+  // created_at (idx_bgv_log_created), provider_key+endpoint_key (idx_bgv_log_provider),
+  // endpoint_key+created_at (idx_bgv_log_endpoint), outcome+created_at (idx_bgv_log_outcome),
+  // candidate_id (idx_bgv_log_candidate). `q` is a server-side LIKE, folded in here
+  // rather than left purely client-side, because the previous client-only text
+  // search only searched within the already-truncated `limit`-row fetch — a match
+  // outside the top `limit` rows was invisible to search.
+  const conds: string[] = ["1=1"];
+  const params: unknown[] = [];
+  if (req.query.from) { conds.push("l.created_at >= ?"); params.push(req.query.from); }
+  if (req.query.to) { conds.push("l.created_at <= ?"); params.push(req.query.to); }
+  if (req.query.provider_key) { conds.push("l.provider_key = ?"); params.push(req.query.provider_key); }
+  if (req.query.endpoint_key) { conds.push("l.endpoint_key = ?"); params.push(req.query.endpoint_key); }
+  if (req.query.outcome) { conds.push("l.outcome = ?"); params.push(req.query.outcome); }
+  if (req.query.success_flag !== undefined) { conds.push("l.success_flag = ?"); params.push(Number(req.query.success_flag)); }
+  if (req.query.candidate_id) { conds.push("l.candidate_id = ?"); params.push(req.query.candidate_id); }
+  if (req.query.q) {
+    conds.push("(c.full_name LIKE ? OR c.candidate_code LIKE ? OR l.endpoint_key LIKE ?)");
+    const like = `%${req.query.q}%`;
+    params.push(like, like, like);
+  }
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT l.*, c.full_name AS candidate_name, c.candidate_code
        FROM candidate_bgv_api_request_log l
        LEFT JOIN ats_candidate c ON c.id = l.candidate_id
+      WHERE ${conds.join(" AND ")}
       ORDER BY l.created_at DESC
       LIMIT ${limit}`,
+    params,
   );
   return res.json({ success: true, data: rows });
 }));

@@ -93,6 +93,15 @@ interface Stats {
   callsByEndpoint: Record<string, number>;
 }
 
+// Matches provider_key/endpoint_key values actually present in
+// candidate_bgv_api_request_log — verified against live data rather than
+// guessed from provider config naming.
+const PROVIDER_OPTIONS = ['luckpay', 'befisc_luckpay', 'mock_bgv'];
+const ENDPOINT_OPTIONS = [
+  'DIGILOCKER_STATUS', 'DIGILOCKER_INITIATE', 'BANK_VERIFY', 'PAN_VERIFY',
+  'UAN_VERIFY', 'EDUCATION_VERIFY', 'COURT_VERIFY',
+];
+
 export default function NativeBGVAPIMonitor() {
   const [providerStatus, setProviderStatus] = useState<ProviderStatus | null>(null);
   const [logs, setLogs] = useState<APILog[]>([]);
@@ -105,16 +114,34 @@ export default function NativeBGVAPIMonitor() {
   const [search, setSearch] = useState('');
   const [selectedLog, setSelectedLog] = useState<APILog | null>(null);
   const [showResponseModal, setShowResponseModal] = useState(false);
+  const [reportDays, setReportDays] = useState(30);
 
-  const loadData = async () => {
+  // Log-table filters — from/to/provider/endpoint/status are applied server-side
+  // against candidate_bgv_api_request_log's indexed columns; `search` above stays
+  // a client-side refinement on top of whatever the server returned.
+  const [filterFrom, setFilterFrom] = useState('');
+  const [filterTo, setFilterTo] = useState('');
+  const [filterProvider, setFilterProvider] = useState('');
+  const [filterEndpoint, setFilterEndpoint] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'' | 'success' | 'failed'>('');
+
+  const loadData = async (days = reportDays) => {
     setLoading(true);
     try {
+      const logParams = new URLSearchParams();
+      if (filterFrom) logParams.set('from', filterFrom);
+      if (filterTo) logParams.set('to', filterTo);
+      if (filterProvider) logParams.set('provider_key', filterProvider);
+      if (filterEndpoint) logParams.set('endpoint_key', filterEndpoint);
+      if (filterStatus) logParams.set('success_flag', filterStatus === 'success' ? '1' : '0');
+      const logsQuery = logParams.toString();
+
       const [statusRes, logsRes, statsRes, costRes, failRes] = await Promise.all([
         hrmsApi.get<any>('/api/ats/bgv/provider-status').catch(() => ({ data: null })),
-        hrmsApi.get<any>('/api/ats/bgv/api-logs').catch(() => ({ data: [] })),
+        hrmsApi.get<any>(`/api/ats/bgv/api-logs${logsQuery ? `?${logsQuery}` : ''}`).catch(() => ({ data: [] })),
         hrmsApi.get<any>('/api/ats/bgv/api-stats').catch(() => ({ data: null })),
-        hrmsApi.get<any>('/api/ats/bgv/api-cost-report?days=30').catch(() => ({ data: null })),
-        hrmsApi.get<any>('/api/ats/bgv/api-failures?days=30').catch(() => ({ data: null })),
+        hrmsApi.get<any>(`/api/ats/bgv/api-cost-report?days=${days}`).catch(() => ({ data: null })),
+        hrmsApi.get<any>(`/api/ats/bgv/api-failures?days=${days}`).catch(() => ({ data: null })),
       ]);
       setProviderStatus(statusRes.data || null);
       setLogs(logsRes.data || []);
@@ -128,6 +155,13 @@ export default function NativeBGVAPIMonitor() {
       setLoading(false);
     }
   };
+
+  const applyFilters = () => void loadData(reportDays);
+  const clearFilters = () => {
+    setFilterFrom(''); setFilterTo(''); setFilterProvider(''); setFilterEndpoint(''); setFilterStatus('');
+    void loadData(reportDays);
+  };
+  const hasActiveFilters = Boolean(filterFrom || filterTo || filterProvider || filterEndpoint || filterStatus);
 
   const calculateTotalCost = (): number => costReport?.totalCost ?? 0;
 
@@ -188,10 +222,23 @@ export default function NativeBGVAPIMonitor() {
           <h1 className="text-2xl font-black text-slate-900">BGV API Monitor</h1>
           <p className="text-sm text-slate-500 mt-1">Track background verification API calls and provider status</p>
         </div>
-        <Button onClick={() => void loadData()} variant="outline">
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-medium text-slate-500" htmlFor="bgv-report-days">Period:</label>
+          <select
+            id="bgv-report-days"
+            value={reportDays}
+            onChange={(e) => { const d = Number(e.target.value); setReportDays(d); void loadData(d); }}
+            className="h-9 rounded-md border border-slate-200 bg-white px-2 text-sm"
+          >
+            <option value={7}>Last 7 days</option>
+            <option value={30}>Last 30 days</option>
+            <option value={90}>Last 90 days</option>
+          </select>
+          <Button onClick={() => void loadData(reportDays)} variant="outline">
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Mock Warning Banner */}
@@ -451,7 +498,7 @@ export default function NativeBGVAPIMonitor() {
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center gap-2">
               <AlertTriangle className="w-5 h-5 text-red-500" />
-              Failed API Calls (last 30 days)
+              Failed API Calls (last {reportDays} days)
             </CardTitle>
             {failures.length > 0 && (
               <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
@@ -478,7 +525,7 @@ export default function NativeBGVAPIMonitor() {
           {failures.length === 0 ? (
             <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md p-3">
               <CheckCircle2 className="w-4 h-4" />
-              No provider call failures recorded in the last 30 days.
+              No provider call failures recorded in the last {reportDays} days.
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -533,20 +580,83 @@ export default function NativeBGVAPIMonitor() {
 
       {/* API Logs Table */}
       <Card>
-        <CardHeader>
+        <CardHeader className="space-y-3">
           <div className="flex items-center justify-between">
             <CardTitle>API Call Logs</CardTitle>
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <Input
-                  placeholder="Search candidate, provider, endpoint..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-9 w-64"
-                />
-              </div>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Input
+                placeholder="Search candidate, provider, endpoint..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="pl-9 w-64"
+              />
             </div>
+          </div>
+          <div className="flex flex-wrap items-end gap-2 pt-1 border-t border-slate-100">
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-medium text-slate-500" htmlFor="bgv-log-from">From</label>
+              <input
+                id="bgv-log-from"
+                type="date"
+                value={filterFrom}
+                onChange={(e) => setFilterFrom(e.target.value)}
+                className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-medium text-slate-500" htmlFor="bgv-log-to">To</label>
+              <input
+                id="bgv-log-to"
+                type="date"
+                value={filterTo}
+                onChange={(e) => setFilterTo(e.target.value)}
+                className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-medium text-slate-500" htmlFor="bgv-log-provider">Provider</label>
+              <select
+                id="bgv-log-provider"
+                value={filterProvider}
+                onChange={(e) => setFilterProvider(e.target.value)}
+                className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs"
+              >
+                <option value="">All providers</option>
+                {PROVIDER_OPTIONS.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-medium text-slate-500" htmlFor="bgv-log-endpoint">Check type</label>
+              <select
+                id="bgv-log-endpoint"
+                value={filterEndpoint}
+                onChange={(e) => setFilterEndpoint(e.target.value)}
+                className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs"
+              >
+                <option value="">All check types</option>
+                {ENDPOINT_OPTIONS.map((ep) => <option key={ep} value={ep}>{ep}</option>)}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-[11px] font-medium text-slate-500" htmlFor="bgv-log-status">Status</label>
+              <select
+                id="bgv-log-status"
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value as '' | 'success' | 'failed')}
+                className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs"
+              >
+                <option value="">All statuses</option>
+                <option value="success">Success</option>
+                <option value="failed">Failed</option>
+              </select>
+            </div>
+            <Button onClick={applyFilters} size="sm" className="h-8">Apply</Button>
+            {hasActiveFilters && (
+              <Button onClick={clearFilters} variant="ghost" size="sm" className="h-8 text-slate-500">
+                Clear filters
+              </Button>
+            )}
           </div>
         </CardHeader>
         <CardContent>
