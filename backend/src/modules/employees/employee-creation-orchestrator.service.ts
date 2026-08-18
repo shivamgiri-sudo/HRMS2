@@ -293,7 +293,15 @@ export async function createEmployeeFromCandidate(
          COALESCE(p.father_name, p.father_husband_name, c.father_name) AS father_name,
          p.marital_status,
          -- Form 11 PF opt-out election captured during onboarding
-         COALESCE(p.pf_opt_out_elected, 0) AS pf_opt_out_elected
+         COALESCE(p.pf_opt_out_elected, 0) AS pf_opt_out_elected,
+         -- Emergency contact captured on the Onboarding form (OnboardingSteps1to5.tsx).
+         -- Never carried over before: employee_emergency_contact (what the ID card, the
+         -- HR emergency-contact editor and the employee self-service editor all read) got
+         -- no row from conversion, so every new employee's card showed the "Contact HR"
+         -- fallback until someone manually re-typed what the candidate already gave.
+         p.emergency_contact_name,
+         p.emergency_contact_relation,
+         p.emergency_contact_mobile
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
        WHERE c.id = ? LIMIT 1`,
@@ -1255,6 +1263,32 @@ async function createRelatedEmployeeRecords(
         actorUserId, effectiveFromMonth,
         `Auto-approved from offer ${offer.id ?? ''} — Branch Head already approved this offer, ` +
           `which included the ${label} opt-out election; no separate Payroll HO review required.`,
+      ]
+    );
+  }
+
+  // Emergency contact carried over from Onboarding (candidate_onboarding_profile), so the ID
+  // card and every other reader of employee_emergency_contact show what the candidate actually
+  // gave instead of "Contact HR" until someone re-enters it post-hire. `name` and `mobile` are
+  // NOT NULL on this table, so only write when onboarding actually captured both; a mobile with
+  // no name (or neither) is left for the existing HR/self-service emergency-contact editors,
+  // same as before this change. ON DUPLICATE KEY UPDATE on (employee_id, contact_seq) mirrors
+  // the self-service upsert at employee.routes.ts's PUT /me/emergency-contact, so a retried
+  // conversion never raises ER_DUP_ENTRY and never overwrites a value someone already entered.
+  const onboardingEmergencyName = String(candRow?.emergency_contact_name ?? '').trim();
+  const onboardingEmergencyMobile = String(candRow?.emergency_contact_mobile ?? '').trim();
+  if (onboardingEmergencyName && onboardingEmergencyMobile) {
+    await conn.execute(
+      `INSERT INTO employee_emergency_contact (id, employee_id, contact_seq, is_primary, name, relationship, mobile)
+       VALUES (?, ?, 1, 1, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         name = IF(employee_emergency_contact.name = '', VALUES(name), employee_emergency_contact.name),
+         mobile = IF(employee_emergency_contact.mobile = '', VALUES(mobile), employee_emergency_contact.mobile)`,
+      [
+        randomUUID(), employeeId,
+        toStoredNameRequired(onboardingEmergencyName),
+        String(candRow?.emergency_contact_relation ?? '').trim() || null,
+        onboardingEmergencyMobile,
       ]
     );
   }
