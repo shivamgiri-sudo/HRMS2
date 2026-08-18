@@ -656,6 +656,186 @@ export const pfCreationService = {
     return rows;
   },
 
+  // Admin CRUD for pf_establishment_master. This table ships empty by design
+  // (see backend/sql/370_pf_creation_automation.sql) — a real EPFO establishment
+  // code has to come from Finance, so these functions only let an authorised
+  // user record/edit/deactivate rows a human enters; nothing here invents data.
+
+  async getAllEstablishments() {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT em.*, b.branch_name
+         FROM pf_establishment_master em
+         LEFT JOIN branch_master b ON b.id = em.branch_id
+        ORDER BY em.active_status DESC, em.establishment_name`,
+    );
+    return rows;
+  },
+
+  async getEstablishmentById(id: string) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT em.*, b.branch_name
+         FROM pf_establishment_master em
+         LEFT JOIN branch_master b ON b.id = em.branch_id
+        WHERE em.id = ? LIMIT 1`,
+      [id],
+    );
+    return rows[0] ?? null;
+  },
+
+  async createEstablishment(
+    data: {
+      establishment_code: string;
+      establishment_name: string;
+      branch_id?: string | null;
+      legal_entity?: string | null;
+      address?: string | null;
+      region_office?: string | null;
+    },
+    actorUserId: string,
+  ) {
+    const code = String(data.establishment_code ?? "").trim();
+    const name = String(data.establishment_name ?? "").trim();
+    if (!code || !name) {
+      throw Object.assign(
+        new Error("establishment_code and establishment_name are required"),
+        { statusCode: 400 },
+      );
+    }
+
+    const [dupe] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM pf_establishment_master WHERE establishment_code = ? LIMIT 1",
+      [code],
+    );
+    if (dupe.length > 0) {
+      throw Object.assign(
+        new Error(`An establishment with code "${code}" already exists`),
+        { statusCode: 409 },
+      );
+    }
+
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO pf_establishment_master
+         (id, establishment_code, establishment_name, branch_id, legal_entity, address, region_office, active_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+      [
+        id,
+        code,
+        name,
+        data.branch_id ?? null,
+        data.legal_entity ?? null,
+        data.address ?? null,
+        data.region_office ?? null,
+      ],
+    );
+
+    await logPfAudit({
+      employeeId: null,
+      actionType: "ESTABLISHMENT_CREATED",
+      actorUserId,
+      actorType: "admin",
+      newValue: { id, establishment_code: code, establishment_name: name },
+    });
+
+    return this.getEstablishmentById(id);
+  },
+
+  async updateEstablishment(
+    id: string,
+    data: Partial<{
+      establishment_code: string;
+      establishment_name: string;
+      branch_id: string | null;
+      legal_entity: string | null;
+      address: string | null;
+      region_office: string | null;
+      active_status: number;
+    }>,
+    actorUserId: string,
+  ) {
+    const existing = await this.getEstablishmentById(id);
+    if (!existing) {
+      throw Object.assign(new Error("Establishment not found"), { statusCode: 404 });
+    }
+
+    if (data.establishment_code !== undefined) {
+      const code = String(data.establishment_code).trim();
+      if (!code) {
+        throw Object.assign(new Error("establishment_code cannot be blank"), { statusCode: 400 });
+      }
+      const [dupe] = await db.execute<RowDataPacket[]>(
+        "SELECT id FROM pf_establishment_master WHERE establishment_code = ? AND id <> ? LIMIT 1",
+        [code, id],
+      );
+      if (dupe.length > 0) {
+        throw Object.assign(
+          new Error(`An establishment with code "${code}" already exists`),
+          { statusCode: 409 },
+        );
+      }
+    }
+    if (data.establishment_name !== undefined && !String(data.establishment_name).trim()) {
+      throw Object.assign(new Error("establishment_name cannot be blank"), { statusCode: 400 });
+    }
+
+    const columns = [
+      "establishment_code",
+      "establishment_name",
+      "branch_id",
+      "legal_entity",
+      "address",
+      "region_office",
+      "active_status",
+    ] as const;
+    const updates: string[] = [];
+    const params: unknown[] = [];
+    for (const col of columns) {
+      if (data[col] !== undefined) {
+        updates.push(`${col} = ?`);
+        params.push(data[col]);
+      }
+    }
+    if (updates.length === 0) return existing;
+
+    updates.push("updated_at = NOW()");
+    params.push(id);
+    await db.execute(
+      `UPDATE pf_establishment_master SET ${updates.join(", ")} WHERE id = ?`,
+      params,
+    );
+
+    await logPfAudit({
+      employeeId: null,
+      actionType: "ESTABLISHMENT_UPDATED",
+      actorUserId,
+      actorType: "admin",
+      oldValue: existing,
+      newValue: data,
+    });
+
+    return this.getEstablishmentById(id);
+  },
+
+  async setEstablishmentActiveStatus(id: string, activeStatus: 0 | 1, actorUserId: string) {
+    const existing = await this.getEstablishmentById(id);
+    if (!existing) {
+      throw Object.assign(new Error("Establishment not found"), { statusCode: 404 });
+    }
+    await db.execute(
+      "UPDATE pf_establishment_master SET active_status = ?, updated_at = NOW() WHERE id = ?",
+      [activeStatus, id],
+    );
+    await logPfAudit({
+      employeeId: null,
+      actionType: activeStatus === 1 ? "ESTABLISHMENT_ACTIVATED" : "ESTABLISHMENT_DEACTIVATED",
+      actorUserId,
+      actorType: "admin",
+      oldValue: { active_status: existing.active_status },
+      newValue: { active_status: activeStatus },
+    });
+    return this.getEstablishmentById(id);
+  },
+
   async getExportTemplates() {
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT id, template_name, template_code, version, file_format FROM pf_export_template WHERE active_status = 1 ORDER BY template_name",

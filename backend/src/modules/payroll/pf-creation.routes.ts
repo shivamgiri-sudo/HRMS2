@@ -159,6 +159,67 @@ router.get("/establishments", requireRole("admin", "super_admin", "payroll_hr", 
   return res.json({ success: true, data });
 }));
 
+/**
+ * Admin CRUD for pf_establishment_master.
+ *
+ * The table ships with zero rows (backend/sql/370_pf_creation_automation.sql
+ * is DDL only) — there is no CRUD here to seed a placeholder establishment.
+ * A real EPFO establishment code has to come from Finance; these routes only
+ * let an authorised user record/edit/deactivate rows that a human enters.
+ *
+ * GET /establishments/all lists every row (active and inactive) for the admin
+ * table; GET /establishments (above) stays filtered to active_status = 1 —
+ * that is the read path EcrDownloadTab's establishment picker already calls,
+ * unchanged by this addition.
+ */
+router.get("/establishments/all", requireRole("admin", "super_admin", "payroll_hr", "payroll", "hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
+  const data = await pfCreationService.getAllEstablishments();
+  return res.json({ success: true, data });
+}));
+
+router.post("/establishments", requireRole("admin", "super_admin", "payroll_hr", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { establishment_code, establishment_name, branch_id, legal_entity, address, region_office } = req.body ?? {};
+  const data = await pfCreationService.createEstablishment(
+    {
+      establishment_code,
+      establishment_name,
+      branch_id: branch_id ?? null,
+      legal_entity: legal_entity ?? null,
+      address: address ?? null,
+      region_office: region_office ?? null,
+    },
+    req.authUser!.id,
+  );
+  return res.status(201).json({ success: true, data, message: "PF establishment created." });
+}));
+
+router.put("/establishments/:id", requireRole("admin", "super_admin", "payroll_hr", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { establishment_code, establishment_name, branch_id, legal_entity, address, region_office } = req.body ?? {};
+  const updates: Record<string, unknown> = {};
+  if (establishment_code !== undefined) updates.establishment_code = establishment_code;
+  if (establishment_name !== undefined) updates.establishment_name = establishment_name;
+  if (branch_id !== undefined) updates.branch_id = branch_id;
+  if (legal_entity !== undefined) updates.legal_entity = legal_entity;
+  if (address !== undefined) updates.address = address;
+  if (region_office !== undefined) updates.region_office = region_office;
+
+  const data = await pfCreationService.updateEstablishment(req.params.id, updates, req.authUser!.id);
+  return res.json({ success: true, data, message: "PF establishment updated." });
+}));
+
+// Soft activate/deactivate only — no hard DELETE, so a batch or ECR file that
+// already references this establishment_id never loses its foreign key.
+// Restricted to admin/super_admin: deactivating a live establishment removes
+// it from the ECR picker and can block a Payroll user mid-filing.
+router.patch("/establishments/:id/status", requireRole("admin", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { active_status } = req.body ?? {};
+  if (active_status !== 0 && active_status !== 1) {
+    return res.status(400).json({ success: false, message: "active_status must be 0 or 1" });
+  }
+  const data = await pfCreationService.setEstablishmentActiveStatus(req.params.id, active_status, req.authUser!.id);
+  return res.json({ success: true, data, message: active_status === 1 ? "Establishment activated." : "Establishment deactivated." });
+}));
+
 router.get("/export-templates", requireRole("admin", "super_admin", "payroll_hr", "payroll"), h(async (_req: AuthenticatedRequest, res: Response) => {
   const data = await pfCreationService.getExportTemplates();
   return res.json({ success: true, data });

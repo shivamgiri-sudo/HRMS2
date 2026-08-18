@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/payroll/pf-creation.service.ts",
+    "src/modules/payroll/pf-creation.routes.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

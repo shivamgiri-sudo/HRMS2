@@ -9,6 +9,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import PfCreationQueuePage from "./PfCreationQueuePage";
 import PfBatchesPage from "./PfBatchesPage";
 import EcrDownloadTab from "./EcrDownloadTab";
+import PfEstablishmentsTab from "./PfEstablishmentsTab";
 
 export default function PfManagement() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -26,6 +27,7 @@ export default function PfManagement() {
             <TabsTrigger value="queue">Creation Queue</TabsTrigger>
             <TabsTrigger value="batches">Batches</TabsTrigger>
             <TabsTrigger value="ecr">ECR Download</TabsTrigger>
+            <TabsTrigger value="establishments">Establishments</TabsTrigger>
           </TabsList>
           {/* Render children without their own DashboardLayout wrapping */}
           <TabsContent value="queue" className="mt-0">
@@ -37,6 +39,11 @@ export default function PfManagement() {
           <TabsContent value="ecr" className="mt-0">
             <div className="py-4">
               <EcrDownloadTab />
+            </div>
+          </TabsContent>
+          <TabsContent value="establishments" className="mt-0">
+            <div className="py-4">
+              <PfEstablishmentsTab />
             </div>
           </TabsContent>
         </Tabs>
