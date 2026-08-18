@@ -7,6 +7,7 @@ import {
   listOnboardingRequests, saveOffer,
   listPendingApprovals, approveOffer, rejectOffer,
   sendOnboardingProgressReminder,
+  markCandidateNotJoining, clearCandidateNotJoining,
 } from './ats.onboarding.service.js';
 import { calculateSalary } from './salary.calculator.js';
 import { buildScopeWhereClause, hasScopedAccess } from '../../shared/scopeAccess.js';
@@ -194,6 +195,33 @@ router.post(
   requireRole('recruiter', 'hr', 'admin', 'super_admin'),
   h(async (req: AuthenticatedRequest, res) => {
     const result = await sendOnboardingProgressReminder(req.params!.id, req.authUser!.id);
+    res.json({ ok: true, ...result });
+  }),
+);
+
+// ── Mark / clear "candidate dropped out, not joining" ────────────────────────
+//
+// Narrower role gate than resend/reminder (admin, super_admin, hr only) —
+// mirrors the closest precedent, the onboarding-full review endpoint's
+// approve/reject/hr_review decision, since this is the same kind of
+// decisive, terminal state-change.
+router.patch(
+  '/candidates/:id/not-joining',
+  requireAuth,
+  requireRole('admin', 'super_admin', 'hr'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const reason = String(req.body?.reason ?? '');
+    const result = await markCandidateNotJoining(req.params!.id, req.authUser!.id, reason);
+    res.json({ ok: true, ...result });
+  }),
+);
+
+router.patch(
+  '/candidates/:id/not-joining/clear',
+  requireAuth,
+  requireRole('admin', 'super_admin', 'hr'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const result = await clearCandidateNotJoining(req.params!.id, req.authUser!.id);
     res.json({ ok: true, ...result });
   }),
 );

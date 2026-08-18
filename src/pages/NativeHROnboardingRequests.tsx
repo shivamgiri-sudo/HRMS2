@@ -51,6 +51,9 @@ interface OnboardingRequest {
   form_step?: string;
   current_step_idx?: number;
   form_last_activity?: string;
+  candidate_status?: string | null;
+  joining_document_status?: string | null;
+  joining_document_completion_pct?: number | null;
 }
 
 interface BgvCheckItem {
@@ -169,6 +172,8 @@ function fmt(v?: number | string | null): string {
 }
 function statusLabel(v?: string): string {
   if (v === 'initiated') return 'Initiated';
+  if (v === 'not_joining') return 'Not Joining';
+  if (v === 'joining_document_pending') return 'Joining Docs Pending';
   return String(v || 'pending').replace(/_/g, ' ');
 }
 
@@ -178,7 +183,19 @@ const FORM_IN_PROGRESS_STEPS = new Set([
   'nominee_saved','language_saved','final_saved',
 ]);
 
-function resolveDisplayStatus(r: { profile_status: string; form_step?: string }): string {
+function resolveDisplayStatus(r: {
+  profile_status: string;
+  form_step?: string;
+  candidate_status?: string | null;
+  employee_id?: string;
+  joining_document_status?: string | null;
+}): string {
+  // Highest priority — once set, nothing else about the candidate's progress
+  // matters for what HR needs to see at a glance.
+  if (r.candidate_status === 'not_joining') return 'not_joining';
+  if (r.employee_id && r.joining_document_status && r.joining_document_status !== 'completed') {
+    return 'joining_document_pending';
+  }
   if (r.profile_status === 'onboarding_sent' && r.form_step && FORM_IN_PROGRESS_STEPS.has(r.form_step)) {
     return 'initiated';
   }
@@ -198,6 +215,8 @@ function StatusBadge({ status }: { status?: string }) {
     onboarded:          'bg-emerald-50 text-emerald-700',
     rejected:           'bg-red-50 text-red-700',
     initiated:          'bg-orange-50 text-orange-700',
+    not_joining:        'bg-slate-200 text-slate-600',
+    joining_document_pending: 'bg-purple-50 text-purple-700',
   };
   return (
     <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${map[s] || 'bg-slate-50 text-slate-500'}`}>
@@ -304,6 +323,10 @@ export default function NativeHROnboardingRequests() {
   const role = String((user as any)?.role ?? '').toLowerCase();
   const allowed = roleKeys.some(k => ['admin', 'super_admin', 'hr', 'manager', 'payroll_hr', 'payroll'].includes(k));
   const canChangePfEsi = roleKeys.some(k => ['payroll_hr', 'admin', 'super_admin', 'hr'].includes(k));
+  // Narrower than the general page grant, matching the backend route gate on
+  // PATCH .../not-joining — this is a decisive, terminal state change, not
+  // an ordinary edit.
+  const canMarkNotJoining = roleKeys.some(k => ['admin', 'super_admin', 'hr'].includes(k));
 
   // ── Main view tab
   const [mainTab, setMainTab] = useState<'onboarding' | 'bgv_review'>('onboarding');
@@ -335,6 +358,8 @@ export default function NativeHROnboardingRequests() {
   // ── Send progress reminder state
   const [reminderSendingId, setReminderSendingId] = useState<string | null>(null);
   const [reminderResult, setReminderResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
+  const [notJoiningId, setNotJoiningId] = useState<string | null>(null);
+  const [notJoiningResult, setNotJoiningResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
 
   // ── Detail / selected state
   const [selected, setSelected] = useState<OnboardingRequest | null>(null);
@@ -533,6 +558,49 @@ export default function NativeHROnboardingRequests() {
     }
   }, []);
 
+  // ── Mark candidate as dropped out / not joining — stops every automated
+  // (nightly cron) and manual (Resend Link / Send Reminder) follow-up.
+  const markNotJoining = useCallback(async (row: OnboardingRequest, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const reason = window.prompt(
+      `Mark ${row.full_name} as dropped out / not joining?\n\nThis stops every further email, SMS and manual follow-up for this candidate. State the reason:`,
+    );
+    if (reason === null) return; // cancelled
+    if (!reason.trim()) { window.alert('A reason is required.'); return; }
+    setNotJoiningId(row.candidate_id);
+    setNotJoiningResult(null);
+    try {
+      await hrmsApi.patch(`/api/ats/onboarding/candidates/${row.candidate_id}/not-joining`, { reason: reason.trim() });
+      setRows((prev) => prev.map((x) => x.candidate_id === row.candidate_id ? { ...x, candidate_status: 'not_joining' } : x));
+      setSelected((prev) => prev && prev.candidate_id === row.candidate_id ? { ...prev, candidate_status: 'not_joining' } : prev);
+      setNotJoiningResult({ id: row.candidate_id, ok: true, msg: `${row.full_name} marked as not joining — follow-ups stopped.` });
+      setTimeout(() => setNotJoiningResult(null), 6000);
+    } catch (err: any) {
+      setNotJoiningResult({ id: row.candidate_id, ok: false, msg: err?.message || 'Failed to update status.' });
+      setTimeout(() => setNotJoiningResult(null), 6000);
+    } finally {
+      setNotJoiningId(null);
+    }
+  }, []);
+
+  const clearNotJoining = useCallback(async (row: OnboardingRequest, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(`Reactivate follow-ups for ${row.full_name}?`)) return;
+    setNotJoiningId(row.candidate_id);
+    try {
+      await hrmsApi.patch(`/api/ats/onboarding/candidates/${row.candidate_id}/not-joining/clear`, {});
+      setRows((prev) => prev.map((x) => x.candidate_id === row.candidate_id ? { ...x, candidate_status: 'selected' } : x));
+      setSelected((prev) => prev && prev.candidate_id === row.candidate_id ? { ...prev, candidate_status: 'selected' } : prev);
+      setNotJoiningResult({ id: row.candidate_id, ok: true, msg: `${row.full_name} re-activated.` });
+      setTimeout(() => setNotJoiningResult(null), 6000);
+    } catch (err: any) {
+      setNotJoiningResult({ id: row.candidate_id, ok: false, msg: err?.message || 'Failed to update status.' });
+      setTimeout(() => setNotJoiningResult(null), 6000);
+    } finally {
+      setNotJoiningId(null);
+    }
+  }, []);
+
   // ── Load master dropdowns once
   useEffect(() => {
     hrmsApi.get<unknown>('/api/org/departments?active=1').then((r) => setDepartments(masterFrom(r, 'department_name'))).catch(() => setDepartments([]));
@@ -581,7 +649,16 @@ export default function NativeHROnboardingRequests() {
     }
     if (filterStatus === 'pending_offer') list = list.filter((r) => r.profile_status === 'profile_submitted' && !r.offer_status);
     if (filterStatus === 'offered') list = list.filter((r) => !!r.offer_status);
-    if (filterStatus === 'onboarded') list = list.filter((r) => r.status === 'onboarded');
+    // 'onboarded' used to check r.status === 'onboarded' — ats_onboarding_request.status
+    // never actually holds that value in production (checked live: pending/
+    // profile_submitted/rejected/approved/hr_approved/offer_submitted/hr_pushback are the
+    // only values in use), so this filter silently always returned zero rows. "Onboarded"
+    // actually lives on the candidate/employee side.
+    if (filterStatus === 'onboarded') list = list.filter((r) => r.profile_status === 'onboarded' || !!r.employee_id);
+    if (filterStatus === 'initiated') list = list.filter((r) => resolveDisplayStatus(r) === 'initiated');
+    if (filterStatus === 'profile_submitted') list = list.filter((r) => r.profile_status === 'profile_submitted');
+    if (filterStatus === 'joining_document_pending') list = list.filter((r) => resolveDisplayStatus(r) === 'joining_document_pending');
+    if (filterStatus === 'not_joining') list = list.filter((r) => r.candidate_status === 'not_joining');
     if (filterBranch) list = list.filter((r) => r.branch_name === filterBranch);
     if (filterDateFrom) list = list.filter((r) => r.created_at && r.created_at >= filterDateFrom);
     if (filterDateTo) list = list.filter((r) => r.created_at && r.created_at <= filterDateTo + 'T23:59:59');
@@ -906,9 +983,13 @@ export default function NativeHROnboardingRequests() {
             <div className="flex flex-wrap gap-2 items-center">
               <select className={`${SEL} w-auto min-w-[160px]`} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
                 <option value="">All Statuses</option>
+                <option value="initiated">Initiated</option>
+                <option value="profile_submitted">Submitted Profile</option>
                 <option value="pending_offer">Pending Offer</option>
                 <option value="offered">Offered</option>
                 <option value="onboarded">Onboarded</option>
+                <option value="joining_document_pending">Joining Documents Pending</option>
+                <option value="not_joining">Not Joining (Dropped Out)</option>
               </select>
               <select className={`${SEL} w-auto min-w-[160px]`} value={filterBranch} onChange={(e) => setFilterBranch(e.target.value)}>
                 <option value="">All Branches</option>
@@ -1290,6 +1371,16 @@ export default function NativeHROnboardingRequests() {
               </div>
             )}
 
+            {/* Not Joining / Reactivate result toast */}
+            {notJoiningResult && (
+              <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm font-medium ${notJoiningResult.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                {notJoiningResult.ok
+                  ? <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" />
+                  : <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-red-500" />}
+                {notJoiningResult.msg}
+              </div>
+            )}
+
             {loading ? (
               <div className="flex h-64 items-center justify-center rounded-xl border bg-white">
                 <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
@@ -1337,35 +1428,68 @@ export default function NativeHROnboardingRequests() {
                         <td className="px-4 py-3 text-slate-600 capitalize">{statusLabel(r.bank_verification_status)}</td>
                         <td className="px-4 py-3">
                           <div className="flex flex-col gap-1">
-                            {['onboarding_sent', 'profile_in_progress', 'profile_submitted'].includes(r.profile_status) ? (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={resendingId === r.candidate_id}
-                                onClick={(e) => void resendLink(r, e)}
-                                className="min-h-[32px] gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
-                              >
-                                {resendingId === r.candidate_id
-                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  : <Send className="h-3.5 w-3.5" />}
-                                Resend
-                              </Button>
+                            {r.candidate_status === 'not_joining' ? (
+                              canMarkNotJoining && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={notJoiningId === r.candidate_id}
+                                  onClick={(e) => void clearNotJoining(r, e)}
+                                  className="min-h-[32px] gap-1 text-slate-600 border-slate-200 hover:bg-slate-50"
+                                >
+                                  {notJoiningId === r.candidate_id
+                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    : null}
+                                  Reactivate
+                                </Button>
+                              )
                             ) : (
-                              <span className="text-xs text-slate-300">—</span>
-                            )}
-                            {r.form_step && FORM_IN_PROGRESS_STEPS.has(r.form_step) && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={reminderSendingId === r.candidate_id}
-                                onClick={(e) => void sendReminder(r, e)}
-                                className="min-h-[32px] gap-1 text-orange-700 border-orange-200 hover:bg-orange-50"
-                              >
-                                {reminderSendingId === r.candidate_id
-                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  : <Send className="h-3.5 w-3.5" />}
-                                Remind
-                              </Button>
+                              <>
+                                {['onboarding_sent', 'profile_in_progress', 'profile_submitted'].includes(r.profile_status) ? (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={resendingId === r.candidate_id}
+                                    onClick={(e) => void resendLink(r, e)}
+                                    className="min-h-[32px] gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
+                                  >
+                                    {resendingId === r.candidate_id
+                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      : <Send className="h-3.5 w-3.5" />}
+                                    Resend
+                                  </Button>
+                                ) : (
+                                  <span className="text-xs text-slate-300">—</span>
+                                )}
+                                {r.form_step && FORM_IN_PROGRESS_STEPS.has(r.form_step) && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={reminderSendingId === r.candidate_id}
+                                    onClick={(e) => void sendReminder(r, e)}
+                                    className="min-h-[32px] gap-1 text-orange-700 border-orange-200 hover:bg-orange-50"
+                                  >
+                                    {reminderSendingId === r.candidate_id
+                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      : <Send className="h-3.5 w-3.5" />}
+                                    Remind
+                                  </Button>
+                                )}
+                                {canMarkNotJoining && !r.employee_id && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={notJoiningId === r.candidate_id}
+                                    onClick={(e) => void markNotJoining(r, e)}
+                                    className="min-h-[32px] gap-1 text-slate-500 border-slate-200 hover:bg-slate-50"
+                                  >
+                                    {notJoiningId === r.candidate_id
+                                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      : <X className="h-3.5 w-3.5" />}
+                                    Not Joining
+                                  </Button>
+                                )}
+                              </>
                             )}
                           </div>
                         </td>
@@ -1424,7 +1548,7 @@ export default function NativeHROnboardingRequests() {
                     Post-Onboarding Documents ({selected.employee_code})
                   </Link>
                 )}
-                {['onboarding_sent', 'profile_in_progress', 'profile_submitted'].includes(selected.profile_status) && (
+                {selected.candidate_status !== 'not_joining' && ['onboarding_sent', 'profile_in_progress', 'profile_submitted'].includes(selected.profile_status) && (
                   <Button
                     type="button"
                     size="sm"
@@ -1439,7 +1563,7 @@ export default function NativeHROnboardingRequests() {
                     Resend Onboarding Link
                   </Button>
                 )}
-                {selected.form_step && FORM_IN_PROGRESS_STEPS.has(selected.form_step) && (
+                {selected.candidate_status !== 'not_joining' && selected.form_step && FORM_IN_PROGRESS_STEPS.has(selected.form_step) && (
                   <Button
                     type="button"
                     size="sm"
@@ -1454,10 +1578,54 @@ export default function NativeHROnboardingRequests() {
                     Send Reminder
                   </Button>
                 )}
+                {canMarkNotJoining && !selected.employee_id && (
+                  selected.candidate_status === 'not_joining' ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={notJoiningId === selected.candidate_id}
+                      onClick={(e) => void clearNotJoining(selected, e)}
+                      className="gap-1 min-h-[36px] text-slate-600 border-slate-200 hover:bg-slate-50"
+                    >
+                      {notJoiningId === selected.candidate_id && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                      Reactivate Candidate
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={notJoiningId === selected.candidate_id}
+                      onClick={(e) => void markNotJoining(selected, e)}
+                      className="gap-1 min-h-[36px] text-slate-500 border-slate-200 hover:bg-slate-50"
+                    >
+                      {notJoiningId === selected.candidate_id
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <X className="h-3.5 w-3.5" />}
+                      Mark as Not Joining
+                    </Button>
+                  )
+                )}
               </div>
             </div>
 
+            {selected.candidate_status === 'not_joining' && (
+              <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-600">
+                <X className="h-4 w-4 shrink-0" />
+                This candidate is marked as not joining — all automated and manual follow-ups are stopped.
+              </div>
+            )}
+
             {/* Action result toasts (detail view) */}
+            {notJoiningResult && notJoiningResult.id === selected.candidate_id && (
+              <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium ${notJoiningResult.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                {notJoiningResult.ok
+                  ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                  : <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />}
+                {notJoiningResult.msg}
+              </div>
+            )}
             {resendResult && resendResult.id === selected.candidate_id && (
               <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium ${resendResult.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
                 {resendResult.ok

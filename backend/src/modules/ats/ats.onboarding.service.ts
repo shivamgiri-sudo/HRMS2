@@ -77,7 +77,7 @@ export async function sendOnboardingToken(
   requestedBy: string,
 ): Promise<{ token: string; expiresAt: Date }> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT c.id, c.full_name, c.email, c.mobile, c.applied_for_branch,
+    `SELECT c.id, c.full_name, c.email, c.mobile, c.applied_for_branch, c.candidate_status,
             b.id AS resolved_branch_id, b.branch_name
      FROM ats_candidate c
      LEFT JOIN branch_master b
@@ -89,6 +89,15 @@ export async function sendOnboardingToken(
   );
   if (!rows.length) throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
   const cand = rows[0];
+  // Same guard as sendOnboardingProgressReminder — a candidate marked not
+  // joining must not get a (re)sent link either, whether this is the first
+  // send or the "Resend Onboarding Link" HR action.
+  if (cand.candidate_status === 'not_joining') {
+    throw Object.assign(
+      new Error('This candidate is marked as not joining — no further onboarding links are sent'),
+      { statusCode: 409 },
+    );
+  }
 
   const rawToken = randomUUID() + '-' + randomUUID();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
@@ -290,10 +299,12 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
     `SELECT r.id, r.status, r.created_at,
             c.id AS candidate_id, c.candidate_code, c.full_name, c.mobile,
             c.email, c.profile_status, c.applied_for_process,
+            c.candidate_status,
             r.branch_id,
             COALESCE(b.branch_name, c.branch_display_name, c.branch_text, c.applied_for_branch) AS branch_name,
             o.id AS offer_id, o.status AS offer_status, o.offered_ctc,
             ob.employee_id, e.employee_code,
+            e.joining_document_status, e.joining_document_completion_pct,
             p.profile_status AS form_step,
             p.current_step_idx,
             p.updated_at AS form_last_activity,
@@ -313,6 +324,72 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
     scopeFilter.params,
   );
   return rows;
+}
+
+// ── HR: Mark candidate as dropped out / not joining ──────────────────────────
+//
+// Once set, every automated and manual follow-up path (the nightly
+// ats-reminders cron, the manual "Send Reminder" button, and "Resend
+// Onboarding Link") checks candidate_status and stops contacting this
+// candidate. Deliberately written to ats_candidate.candidate_status — a
+// free-text VARCHAR(50) column, unlike ats_onboarding_request.status and
+// ats_candidate.profile_status, which are both strict ENUMs with no
+// "not joining" value today and would need a schema migration to add one.
+// The reason/who/when goes to sensitive_action_log (existing audit table,
+// already has reason/old_value_json/new_value_json columns) rather than new
+// dedicated columns on ats_candidate, for the same no-migration reason.
+export async function markCandidateNotJoining(
+  candidateId: string,
+  actorUserId: string,
+  reason: string,
+): Promise<{ candidateId: string; candidateStatus: string }> {
+  const trimmedReason = String(reason ?? '').trim();
+  if (!trimmedReason) {
+    throw Object.assign(new Error('A reason is required to mark a candidate as not joining'), { statusCode: 400 });
+  }
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT id, candidate_status FROM ats_candidate WHERE id = ? AND active_status = 1 LIMIT 1`,
+    [candidateId],
+  );
+  if (!existing[0]) {
+    throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
+  }
+  const previousStatus = (existing[0] as RowDataPacket & { candidate_status?: string | null }).candidate_status;
+  await db.execute(
+    `UPDATE ats_candidate SET candidate_status = 'not_joining' WHERE id = ?`,
+    [candidateId],
+  );
+  const { logSensitiveAction } = await import('../../shared/auditLog.js');
+  await logSensitiveAction({
+    actor_user_id: actorUserId,
+    action_type: 'CANDIDATE_MARKED_NOT_JOINING',
+    module_key: 'ats_onboarding',
+    entity_type: 'ats_candidate',
+    entity_id: candidateId,
+    reason: trimmedReason,
+    old_value_json: { candidate_status: previousStatus ?? null },
+    new_value_json: { candidate_status: 'not_joining' },
+  });
+  return { candidateId, candidateStatus: 'not_joining' };
+}
+
+// ── HR: Reverse a "not joining" mark (candidate changed their mind) ─────────
+export async function clearCandidateNotJoining(candidateId: string, actorUserId: string): Promise<{ candidateId: string }> {
+  await db.execute(
+    `UPDATE ats_candidate
+        SET candidate_status = IF(candidate_status = 'not_joining', 'selected', candidate_status)
+      WHERE id = ?`,
+    [candidateId],
+  );
+  const { logSensitiveAction } = await import('../../shared/auditLog.js');
+  await logSensitiveAction({
+    actor_user_id: actorUserId,
+    action_type: 'CANDIDATE_NOT_JOINING_CLEARED',
+    module_key: 'ats_onboarding',
+    entity_type: 'ats_candidate',
+    entity_id: candidateId,
+  });
+  return { candidateId };
 }
 
 // ── HR: Send Progress Reminder to Candidate ──────────────────────────────────
@@ -341,7 +418,7 @@ export async function sendOnboardingProgressReminder(
   _requestedBy: string,
 ): Promise<{ sent: boolean; channel: string[] }> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT c.full_name, c.mobile, c.email,
+    `SELECT c.full_name, c.mobile, c.email, c.candidate_status,
             b.onboarding_token, b.onboarding_token_expires_at,
             p.profile_status AS form_step, p.current_step_idx,
             p.bgv_consent, p.dpdp_consent
@@ -354,6 +431,15 @@ export async function sendOnboardingProgressReminder(
   );
   if (!rows.length) throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
   const row = rows[0];
+  // Candidate said they're not joining — every follow-up path respects this
+  // (see markCandidateNotJoining), so a reminder must not be sent even if
+  // someone clicks the button before the UI catches up.
+  if (row.candidate_status === 'not_joining') {
+    throw Object.assign(
+      new Error('This candidate is marked as not joining — no further reminders are sent'),
+      { statusCode: 409 },
+    );
+  }
   if (!row.onboarding_token) throw Object.assign(new Error('No onboarding token found — please resend the link first'), { statusCode: 400 });
 
   const stepIdx: number = row.current_step_idx ?? 0;

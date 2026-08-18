@@ -46,6 +46,9 @@ export async function runOnboardingIncompleteReminders(): Promise<void> {
      WHERE c.current_stage IN ('Selected','Offered')
        -- The column is status, not joining_status.
        AND ob.status NOT IN ('joined','documents_complete','employee_created')
+       -- HR marked this candidate as not joining (markCandidateNotJoining) —
+       -- no further automated email/WhatsApp/inbox-nag once that's set.
+       AND COALESCE(c.candidate_status, '') <> 'not_joining'
        AND ob.onboarding_token IS NOT NULL
        -- Do not chase a link that has already expired — the candidate cannot use it.
        AND (ob.onboarding_token_expires_at IS NULL OR ob.onboarding_token_expires_at > NOW())
