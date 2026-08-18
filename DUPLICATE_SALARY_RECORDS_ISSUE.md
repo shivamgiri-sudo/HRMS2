@@ -1,7 +1,17 @@
 # Duplicate Salary Records Issue
 
 **Date**: 2026-06-12  
-**Status**: ⚠️ **IDENTIFIED - Cleanup Pending**
+**Status**: ✅ **RESOLVED — verified live 2026-08-18**
+
+> **Update 2026-08-18**: Re-checked live against `mas_hrms`. Zero duplicate
+> `(employee_id, run_month)` pairs for March 2026 or any other month —
+> the query in the Verification section below now returns 0 rows. Spot-checked
+> the doc's own headline example, MAS00175/March 2026: exactly one record
+> remains, gross ₹80,096 / net ₹75,932 — the "Entry 2 (correct, db_bill sync)"
+> value this doc describes keeping. The cleanup described below was carried
+> out at some point after this doc was written; it was just never marked done.
+> Left the rest of this file as-is as the historical record of the incident and
+> its planned fix — do not re-run the cleanup script, there is nothing left to clean.
 
 ---
 
@@ -280,11 +290,11 @@ DELETE FROM salary_prep_line WHERE id = @old_id;
 
 ---
 
-**Status**: ⚠️ **Cleanup Pending** (waiting for sync to complete)
+**Status**: ✅ **Resolved** — verified 0 duplicates live on 2026-08-18 (see update note at top)
 
-**Next Step**: Run cleanup script after full sync completes
+**Next Step**: None — cleanup already happened; nothing further to run
 
-**Expected Result**: 14 old records deleted, 14 correct records remain, 0 duplicates
+**Result**: 0 duplicates confirmed live for March 2026 and every other month
 
 ---
 
