@@ -142,6 +142,25 @@ export async function triggerOfferApprovalPending(
   });
 }
 
+export async function triggerJoiningDocsIncomplete(
+  employeeId: string,
+  employeeName: string,
+  branchId?: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "JOINING_DOCS_INCOMPLETE",
+    title: `Joining documents incomplete: ${employeeName}`,
+    description: "One or more mandatory joining documents are still pending upload, e-sign, or verification.",
+    moduleCode: "employees",
+    entityType: "employee",
+    entityId: employeeId,
+    assignedToRole: "hr",
+    branchId,
+    priority: "medium",
+    dueAt: dueAt("JOINING_DOCS_INCOMPLETE"),
+  });
+}
+
 export async function triggerPayrollBranchSignOff(
   branchId: string,
   branchName: string,

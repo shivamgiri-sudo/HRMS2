@@ -1,9 +1,11 @@
 /**
  * ATS Reminders Scheduler
  *
- * Three nightly/morning jobs:
+ * Four nightly/morning jobs:
  *  1. Onboarding incomplete reminder  — 9 PM daily
  *     Candidates selected 3+ days ago whose onboarding portal is not submitted
+ *  1b. Joining docs incomplete reminder — 9 PM daily
+ *     Employees joined in the last 90 days with an incomplete mandatory document
  *  2. Joining date reminder for HR    — 8 AM daily
  *     Requisitions / candidates whose target joining date is in 2 days
  *  3. Requisition approval nudge      — 8 AM daily
@@ -15,7 +17,7 @@ import { db } from "../../db/mysql.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { sendOnboardingTokenEmail } from "./ats.email.service.js";
 import { env } from "../../config/env.js";
-import { triggerOnboardingStuck } from "../work-inbox/work-inbox.triggers.js";
+import { triggerOnboardingStuck, triggerJoiningDocsIncomplete } from "../work-inbox/work-inbox.triggers.js";
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -127,6 +129,45 @@ export async function runOnboardingIncompleteReminders(): Promise<void> {
 
   if (rows.length > 0) {
     console.log(`[ats-reminders] onboarding incomplete: notified ${rows.length} candidate(s)`);
+  }
+}
+
+// ── 1b. Joining documents incomplete reminder ────────────────────────────────
+
+// JOINING_DOCS_INCOMPLETE was a registered Work Inbox item_type with zero producers
+// anywhere in the app. "Complete" is defined exactly the way
+// employeeJoiningDocuments.service.ts already defines it for its own progress
+// calculation (mandatory_completed / completed_count) — reusing that set rather than
+// inventing a second, possibly-diverging definition of done.
+export async function runJoiningDocsIncompleteReminders(): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id AS employee_id,
+            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS full_name,
+            e.branch_id
+       FROM employees e
+       JOIN employee_joining_document_checklist c ON c.employee_id = e.id
+      WHERE e.active_status = 1
+        AND e.date_of_joining >= DATE_SUB(NOW(), INTERVAL 90 DAY)
+        AND c.mandatory = 1
+        AND c.status NOT IN ('verified','signed_verified','completed','esign_completed','wet_signed_uploaded')
+      GROUP BY e.id, full_name, e.branch_id
+      LIMIT 200`
+  );
+
+  for (const row of rows) {
+    try {
+      await triggerJoiningDocsIncomplete(
+        row.employee_id as string,
+        (row.full_name ?? "Employee") as string,
+        (row.branch_id as string | null) ?? undefined
+      );
+    } catch (err) {
+      console.warn(`[joining-docs-reminder] failed for employee ${row.employee_id as string}:`, err);
+    }
+  }
+
+  if (rows.length > 0) {
+    console.log(`[ats-reminders] joining docs incomplete: notified ${rows.length} employee(s)`);
   }
 }
 
@@ -243,10 +284,13 @@ function getNextRunDelay(targetHour: number): number {
 export function startAtsRemindersScheduler(): void {
   if (_timer) return;
 
-  // Run onboarding reminder at 9 PM IST daily
+  // Run onboarding + joining-docs reminders at 9 PM IST daily
   const runEvening = () => {
     runOnboardingIncompleteReminders().catch((e: unknown) =>
       console.error('[ats-reminders] onboarding job error:', e)
+    );
+    runJoiningDocsIncompleteReminders().catch((e: unknown) =>
+      console.error('[ats-reminders] joining-docs job error:', e)
     );
     setTimeout(runEvening, 24 * HOUR_MS);
   };
