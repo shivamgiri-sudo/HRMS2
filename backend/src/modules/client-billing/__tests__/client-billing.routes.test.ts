@@ -8,6 +8,11 @@ vi.mock("../client-billing.service.js", () => ({
   clientBillingService: { createProforma },
 }));
 
+const { approveInvoice, rejectInvoice } = vi.hoisted(() => ({ approveInvoice: vi.fn(), rejectInvoice: vi.fn() }));
+vi.mock("../client-billing-approval.service.js", () => ({
+  clientBillingApprovalService: { approveInvoice, rejectInvoice },
+}));
+
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
@@ -115,5 +120,76 @@ describe("GET /api/client-billing/proformas/:id", () => {
       id: "inv-1", proforma_no: "PI/09/7971",
       lines: [{ id: "line-1", particulars: "OB Dedicated Seat 1" }],
     });
+  });
+});
+
+describe("POST /api/client-billing/invoices/:id/approve", () => {
+  beforeEach(() => {
+    approveInvoice.mockReset();
+  });
+
+  it("approves and returns the bill number", async () => {
+    approveInvoice.mockResolvedValueOnce({ id: "inv-1", billNo: "09-01/26-27", invoiceStatus: "approved" });
+
+    const res = await request(app).post("/api/client-billing/invoices/inv-1/approve").send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, data: { id: "inv-1", billNo: "09-01/26-27", invoiceStatus: "approved" } });
+    expect(approveInvoice).toHaveBeenCalledWith({ invoiceId: "inv-1", poNumbers: undefined, userId: "u-1" });
+  });
+
+  it("passes poNumbers through when supplied", async () => {
+    approveInvoice.mockResolvedValueOnce({ id: "inv-1", billNo: "09-01/26-27", invoiceStatus: "approved" });
+
+    await request(app).post("/api/client-billing/invoices/inv-1/approve").send({ poNumbers: ["PO1", "PO2"] });
+
+    expect(approveInvoice).toHaveBeenCalledWith({ invoiceId: "inv-1", poNumbers: ["PO1", "PO2"], userId: "u-1" });
+  });
+
+  it("surfaces a service statusCode error via the shared error handler", async () => {
+    approveInvoice.mockRejectedValueOnce(Object.assign(new Error("Invoice inv-1 is not in proforma status"), { statusCode: 400 }));
+
+    const res = await request(app).post("/api/client-billing/invoices/inv-1/approve").send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/not in proforma status/);
+  });
+});
+
+describe("POST /api/client-billing/invoices/:id/reject", () => {
+  beforeEach(() => {
+    rejectInvoice.mockReset();
+  });
+
+  it("returns 400 when reason is missing from the request body", async () => {
+    const res = await request(app).post("/api/client-billing/invoices/inv-1/reject").send({});
+    expect(res.status).toBe(400);
+    expect(rejectInvoice).not.toHaveBeenCalled();
+  });
+
+  it("rejects and returns the updated status", async () => {
+    rejectInvoice.mockResolvedValueOnce({ id: "inv-1", invoiceStatus: "rejected" });
+
+    const res = await request(app)
+      .post("/api/client-billing/invoices/inv-1/reject")
+      .send({ reason: "client disputed the charge" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, data: { id: "inv-1", invoiceStatus: "rejected" } });
+    expect(rejectInvoice).toHaveBeenCalledWith({ invoiceId: "inv-1", reason: "client disputed the charge", userId: "u-1" });
+  });
+});
+
+describe("GET /api/client-billing/invoices/:id/audit-log", () => {
+  it("lists audit rows for one invoice", async () => {
+    execute.mockResolvedValueOnce([[
+      { id: "log-1", invoice_id: "inv-1", action: "created", actor_id: "u-1" },
+      { id: "log-2", invoice_id: "inv-1", action: "approved", actor_id: "u-2" },
+    ], []]);
+
+    const res = await request(app).get("/api/client-billing/invoices/inv-1/audit-log");
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(2);
   });
 });
