@@ -915,7 +915,6 @@ export function Step4Documents({
                 key={fileKey}
                 type="file"
                 accept="image/*,.pdf"
-                capture="environment"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 className="hidden"
               />
