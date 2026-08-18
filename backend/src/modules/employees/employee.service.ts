@@ -287,19 +287,46 @@ export const employeeService = {
     if (departmentId) { filterConds.push("e.department_id = ?");     filterParams.push(departmentId); }
     if (designationId){ filterConds.push("e.designation_id = ?");    filterParams.push(designationId); }
     if (search) {
-      // full_name alone missed employees whose full_name is empty — fall back to
-      // first/last name (and the concatenation, so "First Last" still matches).
-      filterConds.push(`(
-        e.full_name LIKE ?
-        OR e.first_name LIKE ?
-        OR e.last_name LIKE ?
-        OR CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) LIKE ?
-        OR e.employee_code LIKE ?
-        OR e.email LIKE ?
-        OR e.official_email LIKE ?
-      )`);
-      const token = `%${search}%`;
-      filterParams.push(token, token, token, token, token, token, token);
+      // PERF (2026-08-18): this used to be a 7-column leading-wildcard LIKE OR-chain —
+      // unindexable by any B-tree index, confirmed live against production at 12-22
+      // SECONDS per query (57,517-row inactive population), on an endpoint shared by
+      // 18+ pages (Exit Management, Loan Management, NOC, Offer Letter Generation,
+      // Reactivation, ...).
+      //
+      // The obvious port of /hr-hub's search (FULLTEXT MATCH OR'd with a LIKE
+      // fallback for terms >= 3 chars) turned out NOT to fix this: measured live,
+      // MySQL will not index-merge a FULLTEXT match with a B-tree-indexable OR
+      // condition — EXPLAIN kept showing a full `employee_code` index scan
+      // (`type: index`) filtering every row in WHERE, same cost class as the
+      // original bug, still 8-23s under load. MATCH() run ALONE (no OR) reliably
+      // gets `type: fulltext` and 16-216ms. So the two paths are kept fully
+      // separate rather than OR'd together:
+      //   - term.length < 3 (below innodb_ft_min_token_size, MATCH can't help):
+      //     prefix-only LIKE ('term%', not '%term%') on first_name/last_name/
+      //     employee_code — these have their own real B-tree indexes, so a
+      //     prefix match can range-scan instead of full-scanning.
+      //   - term.length >= 3: MATCH() alone against ft_emp_search
+      //     (full_name, employee_code, official_email). No derived-name LIKE
+      //     fallback: employees.full_name is a GENERATED COLUMN, CONCAT of
+      //     first_name (NOT NULL) + last_name, so it can never be blank the way
+      //     the /hr-hub comment this was ported from was written to guard
+      //     against (verified live: 0 employees have a blank full_name) — the
+      //     fallback that comment justified doesn't apply to this table.
+      // Personal `email` substring search is dropped: it was part of the same
+      // unindexable OR-chain and no consuming page's UI advertises searching by
+      // personal email (every one is labelled "search by name or employee code").
+      const term = search.trim();
+      const isCodeSearch = /^MAS/i.test(term);
+      if (isCodeSearch) {
+        filterConds.push("e.employee_code LIKE ?");
+        filterParams.push(`${term.toUpperCase()}%`);
+      } else if (term.length < 3) {
+        filterConds.push("(e.first_name LIKE ? OR e.last_name LIKE ? OR e.employee_code LIKE ?)");
+        filterParams.push(`${term}%`, `${term}%`, `${term}%`);
+      } else {
+        filterConds.push("MATCH(e.full_name, e.employee_code, e.official_email) AGAINST (? IN BOOLEAN MODE)");
+        filterParams.push(`${term}*`);
+      }
     }
 
     // Apply scope filter from middleware

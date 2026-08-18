@@ -111,7 +111,10 @@ describe("PUT /api/employees/me/emergency-contact", () => {
     expect(inserts).toHaveLength(1);
     const paramsStr = JSON.stringify(inserts[0][1]);
     expect(paramsStr).toContain("EMPLOYEE_SELF_EMERGENCY_CONTACT_UPDATED");
-    expect(paramsStr).toContain("New Name");
+    // Names are stored uppercase (2026-08-18 policy) — the route uppercases the
+    // new value before writing it; "Old Name" is the mocked prior DB value,
+    // stored as-is by this fixture, not re-normalized on read.
+    expect(paramsStr).toContain("NEW NAME");
     expect(paramsStr).toContain("Old Name");
   });
 });
@@ -136,7 +139,8 @@ describe("PUT /api/employees/me/nominee", () => {
     expect(inserts).toHaveLength(1);
     const paramsStr = JSON.stringify(inserts[0][1]);
     expect(paramsStr).toContain("EMPLOYEE_SELF_NOMINEE_UPDATED");
-    expect(paramsStr).toContain("New Nominee");
+    // Names are stored uppercase (2026-08-18 policy) — see the equivalent note above.
+    expect(paramsStr).toContain("NEW NOMINEE");
     expect(paramsStr).toContain("Old Nominee");
   });
 });
@@ -183,6 +187,7 @@ describe("PUT /api/employees/:employeeId/nominee — HR entry", () => {
     expect(inserts).toHaveLength(1);
     const paramsStr = JSON.stringify(inserts[0][1]);
     expect(paramsStr).toContain("NOMINEE_HR_ENTRY");
-    expect(paramsStr).toContain("HR Entered Nominee");
+    // Names are stored uppercase (2026-08-18 policy) — see the equivalent note above.
+    expect(paramsStr).toContain("HR ENTERED NOMINEE");
   });
 });
