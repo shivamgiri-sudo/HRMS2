@@ -45,7 +45,7 @@ export function calculateSalary(
   const pfEmployerAnnual = estimatedBasic * 0.12;
   const esicEmployerAnnual = esicApplies ? estimatedGross * (esicEmployerPct / 100) : 0;
   const gratuityAnnual = (estimatedBasic / 26 / 12) * 15;
-  const adminChargesAnnual = estimatedBasic * 0.005;
+  const adminChargesAnnual = estimatedBasic * 0.0136;
 
   const gross = annualCtc - pfEmployerAnnual - esicEmployerAnnual - gratuityAnnual - adminChargesAnnual;
   const monthlyGross = gross / 12;
@@ -66,7 +66,7 @@ export function calculateSalary(
   const pfEmployer = estimatedBasic * 0.12; // consistent with gross derivation
   const esicEmployer = esicApplies ? gross * (esicEmployerPct / 100) : 0;
   const gratuity = (basic / 26 / 12) * 15;
-  const adminCharges = basic * 0.005;
+  const adminCharges = basic * 0.0136;
   const bonus = basic * 0.0833;
 
   const netInHand = gross - pfEmployee - esicEmployee - professionalTax;
