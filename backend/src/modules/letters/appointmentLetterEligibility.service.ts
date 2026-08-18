@@ -222,16 +222,25 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
 
 /**
  * Everyone Payroll HR could issue to, with the reasons they cannot.
- * Restricted to employees whose joining documents are already complete, so the
- * queue is the actual work list rather than the whole company.
+ *
+ * Used to require a mandatory=1 checklist row just to appear in this query at
+ * all, so an employee with zero mandatory checklist rows was invisible here —
+ * not "blocked", simply never returned — even though evaluateAppointmentLetterEligibility()
+ * above correctly reports a no_joining_documents blocker for that exact case.
+ * That let the list and single-employee endpoints disagree. Every id below still
+ * goes through the same per-employee eligibility evaluation, so removing the
+ * pre-filter makes them agree by construction instead of duplicating the logic.
+ *
+ * Legacy (db_bill-migrated) employees are excluded outright — same rationale as
+ * the joining-documents tracker and IT provisioning queue: they were never real
+ * onboarding work items.
  */
 export async function listAppointmentLetterQueue(limit = 200): Promise<EligibilityResult[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id
        FROM employees e
       WHERE e.active_status = 1
-        AND EXISTS (SELECT 1 FROM employee_joining_document_checklist c
-                     WHERE c.employee_id = e.id AND c.mandatory = 1)
+        AND e.legacy_emp_id IS NULL
         AND NOT EXISTS (SELECT 1 FROM appointment_letter_issue i
                          WHERE i.employee_id = e.id AND i.status <> 'revoked')
       ORDER BY e.date_of_joining DESC
