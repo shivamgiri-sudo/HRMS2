@@ -475,25 +475,22 @@ export async function createEmployeeFromCandidate(
       console.warn('[EmployeeOrchestrator] Selfie promotion failed (non-blocking):', selfieErr);
     }
 
-    // RULE 9: Provisioning failure doesn't block creation
-    try {
-      await dispatchJoinProvisioningTasks({
-        employeeId,
-        employeeCode,
-        // Name and branch live on the candidate; the offer has neither column.
-        employeeName: candRow?.full_name ?? null,
-        branchId: candRow?.branch_id ?? null,
-        actorUserId: approverId,
-        triggerEventId: offerId,
-        joiningDate: offer.date_of_joining,
-      });
-      result.provisioningStatus.dispatched = true;
-    } catch (provErr) {
-      console.error('[EmployeeOrchestrator] Provisioning dispatch failed:', provErr);
-      result.warnings.push('Provisioning tasks failed to dispatch - will retry automatically');
-      result.provisioningStatus.dispatched = false;
-      // Employee creation still successful
-    }
+    // RULE 9: Provisioning failure doesn't block creation — fire-and-forget so
+    // sequential SMTP sends inside dispatchJoinProvisioningTasks do not hold
+    // the HTTP response open (was causing 30+ second timeouts for Branch Head).
+    dispatchJoinProvisioningTasks({
+      employeeId,
+      employeeCode,
+      // Name and branch live on the candidate; the offer has neither column.
+      employeeName: candRow?.full_name ?? null,
+      branchId: candRow?.branch_id ?? null,
+      actorUserId: approverId,
+      triggerEventId: offerId,
+      joiningDate: offer.date_of_joining,
+    }).catch((provErr: unknown) => {
+      console.error('[EmployeeOrchestrator] Provisioning dispatch failed:', provErr instanceof Error ? provErr.message : provErr);
+    });
+    result.provisioningStatus.dispatched = true;
 
     // Non-blocking LMS provisioning — errors do not block employee creation
     provisionLmsIdentityForEmployee({

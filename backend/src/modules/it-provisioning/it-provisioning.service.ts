@@ -259,54 +259,63 @@ async function dispatchNotifications(
     actionUrl,
   });
 
-  for (const user of users) {
-    // A shared mailbox configured as a recipient has no login, so there is no
-    // inbox to write to — it gets the email only.
-    if (user.userId) try {
-      await inboxService.createItem({
-        user_id: user.userId,
-        type,
-        title,
-        description,
-        entity_type: 'it_provisioning_request',
-        entity_id: entityId,
-        action_url: actionUrl,
-        priority: 'high',
-      });
-      console.log('[dispatchNotifications] Inbox item created:', {
-        userId: user.userId,
-        entityId,
-      });
-    } catch (err: unknown) {
-      console.error('[dispatchNotifications] inbox create failed:', {
-        userId: user.userId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+  // Collect emails up-front for dedup (can't use the set inside parallel map)
+  const seenEmails = new Set<string>();
+  const userTasks = users.map((user) => {
+    const sendEmail = user.email && !seenEmails.has(user.email);
+    if (sendEmail) seenEmails.add(user.email!);
+    return { user, sendEmail };
+  });
 
-    if (user.email && !emailsSent.has(user.email)) {
-      emailsSent.add(user.email);
-      const fullActionUrl = frontendUrl(actionUrl);
-      try {
-        await emailService.send({
-          to: user.email,
-          ...(ccList.length ? { cc: ccList.join(', ') } : {}),
-          subject: title,
-          html: provisioningEmailHtml(title, description, fullActionUrl),
-          text: `${title}\n\n${description}\n\nOpen task in HRMS: ${fullActionUrl}`,
-        });
-        console.log('[dispatchNotifications] Email sent:', {
-          to: user.email,
-          subject: title,
-        });
-      } catch (err: unknown) {
-        console.error('[dispatchNotifications] email send failed:', {
-          to: user.email,
-          error: err instanceof Error ? err.message : String(err),
-        });
+  await Promise.all(
+    userTasks.map(async ({ user, sendEmail }) => {
+      // A shared mailbox configured as a recipient has no login, so there is no
+      // inbox to write to — it gets the email only.
+      if (user.userId) {
+        try {
+          await inboxService.createItem({
+            user_id: user.userId,
+            type,
+            title,
+            description,
+            entity_type: 'it_provisioning_request',
+            entity_id: entityId,
+            action_url: actionUrl,
+            priority: 'high',
+          });
+          console.log('[dispatchNotifications] Inbox item created:', { userId: user.userId, entityId });
+        } catch (err: unknown) {
+          console.error('[dispatchNotifications] inbox create failed:', {
+            userId: user.userId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
-    }
-  }
+
+      if (sendEmail) {
+        const fullActionUrl = frontendUrl(actionUrl);
+        try {
+          await emailService.send({
+            to: user.email!,
+            ...(ccList.length ? { cc: ccList.join(', ') } : {}),
+            subject: title,
+            html: provisioningEmailHtml(title, description, fullActionUrl),
+            text: `${title}\n\n${description}\n\nOpen task in HRMS: ${fullActionUrl}`,
+          });
+          console.log('[dispatchNotifications] Email sent:', { to: user.email, subject: title });
+        } catch (err: unknown) {
+          console.error('[dispatchNotifications] email send failed:', {
+            to: user.email,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    })
+  );
+
+  // Keep the set in sync for the summary log below
+  emailsSent.clear();
+  seenEmails.forEach((e) => emailsSent.add(e));
 
   console.log('[dispatchNotifications] Notifications dispatched:', {
     inboxItems: users.length,

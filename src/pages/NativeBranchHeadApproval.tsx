@@ -318,12 +318,12 @@ export default function NativeBranchHeadApproval() {
         delete updated[offerId];
         return updated;
       });
-      await load();
     } catch (e: any) {
       setActionError(e?.message ?? `Failed to ${action} the offer.`);
     } finally {
-      setActing(null);
+      setActing(null);  // unfreeze button as soon as POST resolves
     }
+    void load();  // refresh list in background — does not block the button
   };
 
   if (user && !roleKeys.some(k => ALLOWED.includes(k))) {
