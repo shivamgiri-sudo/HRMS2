@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket, ResultSetHeader } from "mysql2";
+import { syncCostCentreRelatedTables } from "../../shared/cost-centre-sync.js";
 
 // ============================================================================
 // Types
@@ -393,6 +394,14 @@ export const costCentreManagementService = {
     }
 
     await logApprovalAction(id, "created", null, "draft", actor);
+
+    await syncCostCentreRelatedTables({
+      cost_centre_code: data.cost_centre_code,
+      cost_centre_name: data.cost_centre_name,
+      branch_id: data.branch_id ?? null,
+      client_id: data.client_id ?? null,
+      process_id: data.process_id ?? null,
+    });
 
     return this.getById(id);
   },

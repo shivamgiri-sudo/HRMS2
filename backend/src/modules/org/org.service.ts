@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 
 import { blankToNull } from "../../shared/sql-values.js";
+import { syncCostCentreRelatedTables } from "../../shared/cost-centre-sync.js";
 // ── Whitelisted master tables to prevent SQL injection ────────────────────────
 const MASTER_TABLE_WHITELIST = new Set([
   "branch_master",
@@ -566,6 +567,13 @@ export const costCentreService = {
         data.department_id?.trim() || null,
       ]
     );
+    await syncCostCentreRelatedTables({
+      cost_centre_code: data.cost_centre_code,
+      cost_centre_name: data.cost_centre_name,
+      branch_id: data.branch_id.trim(),
+      client_id: data.client_id.trim(),
+      process_id: data.process_id.trim(),
+    });
     return getById("cost_centre_master", id);
   },
 
