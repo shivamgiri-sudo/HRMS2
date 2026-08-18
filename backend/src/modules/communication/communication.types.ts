@@ -3,7 +3,7 @@ export type TemplateCategory = 'onboarding' | 'payroll' | 'attendance' | 'leave'
 export type NotificationCategory = Exclude<TemplateCategory, 'custom'>;
 export type Channel = 'email' | 'sms' | 'whatsapp';
 export type MultiChannel = Channel | 'multi';
-export type DispatchStatus = 'queued' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed';
+export type DispatchStatus = 'queued' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'failed' | 'skipped';
 export type RetentionCategory = 'critical' | 'standard' | 'routine';
 
 // ========== DB row interfaces ==========
@@ -21,7 +21,7 @@ export interface NotificationPreferences {
 }
 
 export interface DispatchLog {
-  id: string; template_id: string | null; template_name: string;
+  id: string; template_id: string | null; template_name: string; event_code: string | null;
   recipient_employee_id: string | null; recipient_contact: string;
   channel: Channel; status: DispatchStatus; subject: string | null;
   body_preview: string | null; sent_at: string | null; delivered_at: string | null;

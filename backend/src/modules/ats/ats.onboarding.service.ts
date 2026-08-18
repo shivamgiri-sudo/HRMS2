@@ -15,6 +15,7 @@ import {
 import { createTemporaryPasswordCredential } from '../auth/tempPassword.service.js';
 import { getIstDateString } from '../../utils/dateUtils.js';
 import { providerFactory } from '../communication/providers/provider.factory.js';
+import { buildSMS } from '../communication/smartping-dlt-registry.js';
 
 // ── PII Helpers ───────────────────────────────────────────────────────────────
 
@@ -141,23 +142,39 @@ export async function sendOnboardingToken(
 
   // SMS/WhatsApp fallback for candidates without email (walk-ins)
   if (cand.mobile) {
-    const smsBody =
-      `Hi ${cand.full_name}, you have been selected! Complete your onboarding at: ${onboardingLink} (valid 7 days)`;
+    // SmartPing (the live SMS provider) requires a numeric TRAI DLT template id where this
+    // used to pass the literal string 'Onboarding Link' — rejected on every send, same class
+    // of bug as dispatch.service.ts's (see event-sms-template-map.ts). Fixed by using the
+    // already-registered 'onboarding_link' DLT template instead of free text.
+    //
+    // Known content gap, not fixable in code: that registered template's approved text is
+    // "Dear {#var#}, your onboarding process has been initiated. Please complete your details
+    // using the HRMS onboarding link sent to you. - Ispark" — one variable slot (name), no URL
+    // slot. DLT templates can't include arbitrary free text, so this SMS cannot actually carry
+    // the clickable onboardingLink for a candidate with no email — it can only notify them a
+    // link exists. Getting the real link to a mobile-only walk-in candidate needs either a new
+    // DLT template registered with a URL variable, or a different delivery mechanism; that's a
+    // product/compliance decision outside what this fix can resolve.
     try {
       const smsProvider = providerFactory.getProvider('sms');
+      const { dltContentId, body: smsBody } = buildSMS('onboarding_link', { name: cand.full_name });
       await withDeliveryTimeout(
-        smsProvider.send(cand.mobile, 'Onboarding Link', smsBody),
+        smsProvider.send(cand.mobile, dltContentId, smsBody),
         `SMS delivery for ${candidateId}`,
       );
     } catch (smsErr) {
       // SMS failure must not block token generation — log and continue
       console.error('[onboarding] SMS delivery failed for', candidateId, smsErr instanceof Error ? smsErr.message : String(smsErr));
     }
-    // WhatsApp delivery attempt (best-effort)
+    // WhatsApp delivery attempt (best-effort) — left as free text deliberately: WhatsApp isn't
+    // DLT-regulated the way SMS is, and fixing its own separate reliability issues is out of
+    // scope for this SMS-specific change.
+    const waBody =
+      `Hi ${cand.full_name}, you have been selected! Complete your onboarding at: ${onboardingLink} (valid 7 days)`;
     try {
       const waProvider = providerFactory.getProvider('whatsapp');
       await withDeliveryTimeout(
-        waProvider.send(cand.mobile, 'Onboarding Link', smsBody),
+        waProvider.send(cand.mobile, 'Onboarding Link', waBody),
         `WhatsApp delivery for ${candidateId}`,
       );
     } catch (waErr) {
@@ -245,8 +262,21 @@ export async function submitProfile(token: string, profile: Record<string, unkno
   );
 
   await db.execute(
-    `UPDATE ats_onboarding_request SET status = 'in_progress', updated_at = NOW()
+    `UPDATE ats_onboarding_request SET status = 'profile_submitted', updated_at = NOW()
      WHERE candidate_id = ?`,
+    [candidateId],
+  );
+  // Ensure a candidate_onboarding_profile row exists so the joining control room
+  // profile_status gate is not permanently blocked for candidates who used the
+  // legacy short form instead of the canonical full form.
+  await db.execute(
+    `INSERT INTO candidate_onboarding_profile
+       (id, candidate_id, profile_status, submitted_at, created_at, updated_at)
+     VALUES (UUID(), ?, 'submitted', NOW(), NOW(), NOW())
+     ON DUPLICATE KEY UPDATE
+       profile_status = IF(profile_status IN ('pending','draft',''), 'submitted', profile_status),
+       submitted_at   = COALESCE(submitted_at, NOW()),
+       updated_at     = NOW()`,
     [candidateId],
   );
 
@@ -263,18 +293,122 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
             r.branch_id,
             COALESCE(b.branch_name, c.branch_display_name, c.branch_text, c.applied_for_branch) AS branch_name,
             o.id AS offer_id, o.status AS offer_status, o.offered_ctc,
-            ob.employee_id, e.employee_code
+            ob.employee_id, e.employee_code,
+            p.profile_status AS form_step,
+            p.current_step_idx,
+            p.updated_at AS form_last_activity
      FROM ats_onboarding_request r
      JOIN ats_candidate c ON c.id = r.candidate_id
      LEFT JOIN branch_master b ON b.id = r.branch_id
      LEFT JOIN ats_employment_offer o ON o.onboarding_request_id = r.id
      LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
      LEFT JOIN employees e ON e.id = ob.employee_id
+     LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
      WHERE (${scopeFilter.sql})
      ORDER BY r.created_at DESC`,
     scopeFilter.params,
   );
   return rows;
+}
+
+// ── HR: Send Progress Reminder to Candidate ──────────────────────────────────
+
+const STEP_REMINDER_MESSAGES: Record<number, string> = {
+  0: 'Please start by completing the Welcome & Consent step — accept the privacy policy and verify your mobile OTP to begin.',
+  1: 'You left off at the Personal Details step. Please complete your basic personal information to continue.',
+  2: 'You stopped at the Address & KYC step. Please fill in your address and upload your Aadhaar/PAN details.',
+  3: 'Please upload your required documents (Aadhaar card, PAN card, etc.) on the Documents step to continue.',
+  4: 'You need to complete the BGV & Verification step. Please grant consent for background verification to proceed.',
+  5: 'Please complete your Bank Details on the onboarding form to continue.',
+  6: 'Please fill in your Education details to continue.',
+  7: 'Please provide your Work Experience details to continue.',
+  8: 'Please complete your Family & Language details to continue.',
+  9: "You're almost done! Please open your onboarding form, accept the Statutory Declaration, and click the Submit button to finish.",
+};
+
+const STEP_LABELS_SHORT = [
+  'Welcome & Consent', 'Personal Details', 'Address & KYC', 'Documents',
+  'BGV & Verification', 'Bank Details', 'Education', 'Experience',
+  'Family & Language', 'Statutory Declaration',
+];
+
+export async function sendOnboardingProgressReminder(
+  candidateId: string,
+  _requestedBy: string,
+): Promise<{ sent: boolean; channel: string[] }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT c.full_name, c.mobile, c.email,
+            b.onboarding_token, b.onboarding_token_expires_at,
+            p.profile_status AS form_step, p.current_step_idx,
+            p.bgv_consent, p.dpdp_consent
+     FROM ats_candidate c
+     JOIN ats_onboarding_bridge b ON b.candidate_id = c.id
+     LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+     WHERE c.id = ? AND c.active_status = 1
+     LIMIT 1`,
+    [candidateId],
+  );
+  if (!rows.length) throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
+  const row = rows[0];
+  if (!row.onboarding_token) throw Object.assign(new Error('No onboarding token found — please resend the link first'), { statusCode: 400 });
+
+  const stepIdx: number = row.current_step_idx ?? 0;
+  const stepName = STEP_LABELS_SHORT[stepIdx] ?? `Step ${stepIdx + 1}`;
+  const stepMsg = STEP_REMINDER_MESSAGES[stepIdx] ?? STEP_REMINDER_MESSAGES[0];
+
+  // Add consent-specific nudge if blocked
+  const consentNote = !row.dpdp_consent
+    ? '\n\nImportant: Your Privacy (DPDP) consent has not been recorded. Please complete the Welcome step first.'
+    : !row.bgv_consent
+    ? '\n\nImportant: Your BGV consent is pending. Please complete the BGV & Verification step.'
+    : '';
+
+  const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
+  const onboardingLink = `${baseUrl}/onboard-full?token=${row.onboarding_token}`;
+  const whatsappBody = `Hi ${row.full_name},\n\nYour onboarding form is incomplete. You last reached: ${stepName} (step ${stepIdx + 1} of 10).\n\n${stepMsg}${consentNote}\n\nContinue here: ${onboardingLink}\n\n— MAS Callnet HR`;
+
+  const sent: string[] = [];
+
+  if (row.email) {
+    try {
+      await withDeliveryTimeout(
+        sendOnboardingTokenEmail({ candidateId, to: row.email, candidateName: row.full_name, onboardingLink }),
+        `reminder email for ${candidateId}`,
+      );
+      sent.push('email');
+    } catch (e) {
+      console.error('[reminder] email failed for', candidateId, e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  if (row.mobile) {
+    try {
+      const waProvider = providerFactory.getProvider('whatsapp');
+      await withDeliveryTimeout(
+        waProvider.send(row.mobile, 'Onboarding Reminder', whatsappBody),
+        `reminder WhatsApp for ${candidateId}`,
+      );
+      sent.push('whatsapp');
+    } catch (e) {
+      console.error('[reminder] WhatsApp failed for', candidateId, e instanceof Error ? e.message : String(e));
+    }
+    // Not attempted over SMS, deliberately — same 'Onboarding Reminder' human-label-in-DLT-id-slot
+    // bug as the two fixed above, but unlike onboarding_link there is no registered DLT template
+    // for this content at all: the message is per-step dynamic (stepName/stepMsg/consentNote vary
+    // by where the candidate is stuck), and none of the 63 registered SmartPing templates match a
+    // "resume your onboarding form" reminder. Calling smsProvider.send with SOME id here would
+    // either be rejected (a template that doesn't match the vars) or, worse, a DLT compliance
+    // violation if it somehow got accepted with different content than what's registered — so
+    // this stays WhatsApp/email only until a matching template is registered upstream.
+    console.warn(`[reminder] SMS not attempted for ${candidateId} — no registered DLT template for onboarding reminders`);
+  }
+
+  await db.execute(
+    `UPDATE ats_onboarding_bridge SET reminder_sent_at = NOW() WHERE candidate_id = ?`,
+    [candidateId],
+  );
+
+  return { sent: sent.length > 0, channel: sent };
 }
 
 // ── HR: Save / Submit Employment Offer ───────────────────────────────────────

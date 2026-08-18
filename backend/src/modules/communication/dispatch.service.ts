@@ -6,6 +6,7 @@ import type { RowDataPacket } from 'mysql2';
 import { providerFactory } from './providers/provider.factory.js';
 import { providerConfigService } from './provider-config.service.js';
 import { templateService } from './template.service.js';
+import { resolveSmsForEvent } from './event-sms-template-map.js';
 import { notificationPreferencesService } from './notification-preferences.service.js';
 import { inboxService } from '../inbox/inbox.service.js';
 import type {
@@ -89,6 +90,7 @@ interface RetryLogRow extends RowDataPacket {
   channel: Channel;
   recipient_contact: string;
   body_preview: string | null;
+  event_code: string | null;
 }
 
 /**
@@ -329,13 +331,14 @@ class DispatchService {
           const dispatchId = randomUUID();
           await db.execute(
             `INSERT INTO dispatch_log
-             (id, template_id, template_name, recipient_employee_id, recipient_contact,
+             (id, template_id, template_name, event_code, recipient_employee_id, recipient_contact,
               channel, status, subject, body_preview, is_critical, retention_category)
-             VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
             [
               dispatchId,
               dto.template_id ?? null,
               resolvedTemplateName,
+              dto.event_code ?? null,
               emp.id,
               contact,
               channel,
@@ -346,7 +349,10 @@ class DispatchService {
             ]
           );
 
-          this._deliver(dispatchId, channel, contact, rendered).catch(err =>
+          // context carries the same data _deliver needs to resolve an SMS DLT template for
+          // this event (see resolveSmsForEvent) — event_code alone isn't enough, the template's
+          // variables (from_date, course_name, etc.) live in here.
+          this._deliver(dispatchId, channel, contact, rendered, dto.event_code, context).catch(err =>
             console.error(`[dispatch] delivery failed for ${dispatchId}:`, err)
           );
           queued.push(dispatchId);
@@ -364,7 +370,9 @@ class DispatchService {
     dispatchId: string,
     channel: Channel,
     contact: string,
-    rendered: { html: string; text?: string; subject?: string }
+    rendered: { html: string; text?: string; subject?: string },
+    eventCode?: string,
+    data?: Record<string, unknown>,
   ): Promise<void> {
     // Load DB config so admin panel changes take effect immediately
     const dbConfig = await providerConfigService.loadActiveConfig(channel);
@@ -374,6 +382,34 @@ class DispatchService {
       await db.execute(
         "UPDATE dispatch_log SET status = 'failed', error_message = 'Invalid recipient format' WHERE id = ?",
         [dispatchId]
+      );
+      return;
+    }
+
+    // SmartPing (the live SMS provider) requires a numeric TRAI DLT template id in the
+    // "subject" slot, not a human-readable subject line — sending the rendered subject there
+    // (what every channel did before this fix) is what made every SMS through this pipeline
+    // fail. Of the ~46 notification-catalogue events, only a handful have a registered DLT
+    // template mapped (event-sms-template-map.ts); everything else is deliberately not
+    // attempted rather than sent doomed and logged as an indistinguishable "failed".
+    if (channel === 'sms') {
+      const resolved = resolveSmsForEvent(eventCode, data);
+      if (!resolved) {
+        await db.execute(
+          `UPDATE dispatch_log SET status = 'skipped', error_message = ? WHERE id = ?`,
+          [
+            eventCode
+              ? `No registered DLT template mapped for event '${eventCode}' — SMS not attempted.`
+              : 'No event_code on this dispatch, so no DLT template could be resolved — SMS not attempted.',
+            dispatchId,
+          ]
+        );
+        return;
+      }
+      const result = await provider.send(contact, resolved.dltContentId, resolved.body);
+      await db.execute(
+        `UPDATE dispatch_log SET status = ?, error_message = ?, sent_at = IF(? = 'sent', NOW(), sent_at) WHERE id = ?`,
+        [result.success ? 'sent' : 'failed', result.error ?? null, result.success ? 'sent' : '', dispatchId]
       );
       return;
     }
@@ -413,7 +449,7 @@ class DispatchService {
 
   async retry(dispatchId: string): Promise<void> {
     const [rows] = await db.execute<RetryLogRow[]>(
-      'SELECT channel, recipient_contact, body_preview FROM dispatch_log WHERE id = ?',
+      'SELECT channel, recipient_contact, body_preview, event_code FROM dispatch_log WHERE id = ?',
       [dispatchId]
     );
     if (!rows[0]) {
@@ -457,7 +493,15 @@ class DispatchService {
     );
     // text as well as html: _deliver picks `text ?? html` for sms/whatsapp, and the stored preview
     // for those channels is already the text rendering, not markup.
-    this._deliver(dispatchId, log.channel, log.recipient_contact, { html: body, text: body }).catch(err =>
+    //
+    // event_code is threaded through for SMS so _deliver can still identify which event this
+    // was, but the original data object (from_date, course_name, etc.) was never persisted —
+    // only template_id/template_name/recipient were, same limitation the truncation guard above
+    // already documents for body. So an SMS retry for a DLT-mapped event still resolves to
+    // "skipped, no data to build the template variables from" rather than a real resend; that is
+    // correct, not a regression — retrying it today (pre-fix) sent the same doomed non-DLT
+    // subject as the original attempt and was rejected identically.
+    this._deliver(dispatchId, log.channel, log.recipient_contact, { html: body, text: body }, log.event_code ?? undefined).catch(err =>
       console.error(`[dispatch] retry delivery failed for ${dispatchId}:`, err)
     );
   }
