@@ -3455,7 +3455,12 @@ export const REPORT_CATALOG: ReportMeta[] = [
 
   {
     code: "bank-advice",
-    name: "Bank Advice / Transfer Sheet",
+    // Was "Bank Advice / Transfer Sheet" — identical to neft-transfer-file's name below, added
+    // yesterday by a bulk reachability fix that didn't check for the collision. neft-transfer-
+    // file is what payroll actually generates (see its own executor comment); this one reads
+    // the older employees.bank_account_number column instead of employee_bank_detail. Renamed
+    // so the two tiles are distinguishable in the Report Library, not hidden or removed.
+    name: "Bank Advice / Transfer Sheet (Legacy Account Source)",
     category: "Payroll",
     subcategory: "Monthly Processing",
     description: "Bank transfer file for salary disbursement",

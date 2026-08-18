@@ -931,6 +931,16 @@ export async function neftTransferFile(
     (ebd.account_number IS NOT NULL AND TRIM(ebd.account_number) <> '')
     OR (ebd.account_number_enc IS NOT NULL AND TRIM(ebd.account_number_enc) <> '')
   )`);
+  // Same disagreement guard bank-advice already carries (see its comment above) — until now
+  // this report had none. db_bill's own confirmed-credit history has since shown the legacy
+  // column is not safely ignorable for the disagreeing population (see the corrected note in
+  // bank-payment-readiness.service.ts), so a mismatch here must exclude the row, not just be
+  // logged, the same as bank-advice does.
+  clauses.push(`NOT (
+    e.bank_account_number IS NOT NULL AND TRIM(e.bank_account_number) <> ''
+    AND ebd.account_number IS NOT NULL AND TRIM(CONVERT(ebd.account_number USING utf8mb4)) <> ''
+    AND TRIM(e.bank_account_number) <> TRIM(CONVERT(ebd.account_number USING utf8mb4))
+  )`);
   // employee_bank_detail.account_number is varbinary(500), not text — REGEXP against it
   // directly throws ER_CHARACTER_SET_MISMATCH ("Character set 'binary' cannot be used in
   // conjunction with 'utf8mb4_unicode_ci'"), caught live before this shipped. CONVERT(...USING

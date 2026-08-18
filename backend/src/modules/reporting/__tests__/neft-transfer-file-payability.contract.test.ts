@@ -52,16 +52,22 @@ describe("neftTransferFile requires a usable, real-looking account and a routabl
     );
   });
 
-  it("does not touch the separately-flagged dual-account-source disagreement", () => {
-    // That decision belongs to whoever reconciles employees.bank_account_number vs
-    // employee_bank_detail (see ACCOUNT_SOURCE_JOIN's own comment) — this fix must not silently
-    // fold that unresolved question into a payability guard scoped to ebd alone.
+  it("excludes a row where employees.bank_account_number disagrees with employee_bank_detail (2026-08-18)", () => {
+    // Was: "does not touch the separately-flagged dual-account-source disagreement" — that gap is
+    // exactly what let a CONFLICT employee's real, unmasked account leave the app with only a
+    // text label as the warning. bankAdvice() already excluded this; neftTransferFile() — the
+    // sibling this file's own doc-comment calls "what payroll actually generates" — did not, and
+    // was the higher-consequence gap of the two. Mirrors bankAdvice()'s own guard shape.
     const guardBlock = NEFT_TRANSFER_FILE.slice(
       NEFT_TRANSFER_FILE.indexOf("clauses.push(`(\n    (ebd.account_number"),
       NEFT_TRANSFER_FILE.indexOf("const base = `"),
     );
-    expect(guardBlock).not.toContain("acct_chk");
-    expect(guardBlock).not.toContain("e.bank_account_number");
+    expect(guardBlock).toMatch(
+      /NOT \(\s*e\.bank_account_number IS NOT NULL AND TRIM\(e\.bank_account_number\) <> ''/,
+    );
+    expect(guardBlock).toMatch(
+      /TRIM\(e\.bank_account_number\) <> TRIM\(CONVERT\(ebd\.account_number USING utf8mb4\)\)/,
+    );
   });
 
   it("still excludes draft/cancelled runs and non-positive net salary (pre-existing gates kept)", () => {

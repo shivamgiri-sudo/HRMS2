@@ -20,6 +20,14 @@
  *   never as a payment source. It deliberately does NOT change what any existing payment path
  *   reads — that divergence is reported by getPaymentSourceDivergence() and left for a decision.
  *
+ *   CORRECTION, 2026-08-18: "the only defensible payment source" is the right call for what to
+ *   trust BY DEFAULT (it's the only actively-maintained table), but it is not evidence the value
+ *   is correct. Checked against db_bill's own confirmed-credit history for all 7 employees
+ *   conflicting on the 2026-07 run: the frozen legacy column was the one actually paid, correctly,
+ *   every time — including through real account changes employee_bank_detail missed. A future
+ *   fix must not resolve a CONFLICT by defaulting to employee_bank_detail; verify per-employee
+ *   against db_bill (or a human) the same way this module already does for READY.
+ *
  * VERIFICATION COMES FROM db_bill, NOT FROM employee_bank_detail.verified
  *   `verified` is not a bank-confirmation flag. Only PATCH /bank-change-requests/:id ever writes
  *   it (payroll-window.routes.ts), so it means "arrived via the approval workflow" and is set on
