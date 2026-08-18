@@ -181,28 +181,52 @@ export const INBOX_RESOLUTION_RULES: readonly ResolutionRule[] = [
       )`,
   },
   {
+    // Originally closed only on a regularization row. On production 5,051 of
+    // these (2026-08-18) had already gone through bulk attendance correction,
+    // a direct edit, or a re-sync — none of which write a regularization row —
+    // so the alert kept nagging for the full 30 days about a day that was
+    // fixed weeks earlier. attendance_daily_record.attendance_status moving
+    // off 'missing_punch' is just as much affirmative evidence the day is no
+    // longer missing a punch, however it got fixed.
     key: "attendance_missing_punch",
-    resolvedWhen: "a regularization has been raised for that employee and date",
+    resolvedWhen: "a regularization has been raised for that employee and date, or the day's attendance record no longer shows missing_punch",
     where: `
       w.type = 'attendance_missing_punch' AND w.is_actioned = 0
       AND w.action_url LIKE '%date=%'
-      AND EXISTS (
-        SELECT 1 FROM attendance_regularization ar
-         WHERE ar.employee_id = w.entity_id
-           AND ar.session_date = ${ALERT_DATE}
-      )`,
+      AND ( EXISTS (
+              SELECT 1 FROM attendance_regularization ar
+               WHERE ar.employee_id = w.entity_id
+                 AND ar.session_date = ${ALERT_DATE}
+            )
+         OR EXISTS (
+              SELECT 1 FROM attendance_daily_record adr
+               WHERE adr.employee_id = w.entity_id
+                 AND adr.record_date = ${ALERT_DATE}
+                 AND adr.attendance_status <> 'missing_punch'
+            ) )`,
   },
   {
+    // Same fix as attendance_missing_punch above, for the same reason —
+    // 5,207 open on production 2026-08-18. This one asks for review of a
+    // COSEC-vs-dialler mismatch, so "resolved" means the day now carries a
+    // settled, non-ambiguous status rather than still sitting on whatever
+    // provisional/anomalous status raised the alert in the first place.
     key: "attendance_validation",
-    resolvedWhen: "a regularization has been raised for that employee and date",
+    resolvedWhen: "a regularization has been raised for that employee and date, or the day's attendance record now shows a settled status",
     where: `
       w.type = 'attendance_validation' AND w.is_actioned = 0
       AND w.action_url LIKE '%date=%'
-      AND EXISTS (
-        SELECT 1 FROM attendance_regularization ar
-         WHERE ar.employee_id = w.entity_id
-           AND ar.session_date = ${ALERT_DATE}
-      )`,
+      AND ( EXISTS (
+              SELECT 1 FROM attendance_regularization ar
+               WHERE ar.employee_id = w.entity_id
+                 AND ar.session_date = ${ALERT_DATE}
+            )
+         OR EXISTS (
+              SELECT 1 FROM attendance_daily_record adr
+               WHERE adr.employee_id = w.entity_id
+                 AND adr.record_date = ${ALERT_DATE}
+                 AND adr.attendance_status IN ('present','half_day','week_off','holiday','leave_approved')
+            ) )`,
   },
   {
     key: "it_provisioning",
