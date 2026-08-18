@@ -193,6 +193,13 @@ export async function getJoiningDocumentsTracker(
     )`,
     `LOWER(COALESCE(e.employment_status, '')) NOT IN ('resigned', 'terminated')`,
     'e.employee_code IS NOT NULL',
+    // Legacy (db_bill-migrated) employees get a placeholder checklist row from
+    // createLegacyJoiningChecklists.ts (mandatory=0, status='verified' — their
+    // documents were verified offline pre-HRMS), which satisfies the checklist
+    // EXISTS clause above and makes them pass through into this tracker showing
+    // "pending" — they were never real joining-document work items. Exclude them
+    // outright rather than trying to display a synthetic "verified" status.
+    'e.legacy_emp_id IS NULL',
   ];
   const params: (string | number)[] = [];
 

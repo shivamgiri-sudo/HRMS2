@@ -1,6 +1,7 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket, ResultSetHeader } from 'mysql2';
 import { randomUUID } from 'crypto';
+import { recalculateDocumentProgress } from '../employees/employeeJoiningDocuments.service.js';
 
 interface CreateChecklistsResult {
   created: number;
@@ -115,6 +116,14 @@ export async function createLegacyJoiningChecklists(): Promise<CreateChecklistsR
         ]
       );
       result.created++;
+      // The insert above never updated employees.joining_document_status /
+      // joining_document_completion_pct, so it stayed NULL for every legacy
+      // employee forever — recalculateDocumentProgress is the established
+      // single writer for those columns (employeeJoiningDocuments.service.ts).
+      // Keeps the underlying data internally consistent even though the
+      // joining-documents tracker now excludes legacy_emp_id IS NOT NULL rows
+      // outright rather than trying to display this as a status.
+      await recalculateDocumentProgress(employee.id);
     } catch (err: any) {
       console.error(`[createLegacyJoiningChecklists] Failed for ${employee.employee_code}:`, err.message);
       result.skipped++;
