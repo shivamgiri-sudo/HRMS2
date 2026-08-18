@@ -1685,6 +1685,14 @@ function SignoffTab() {
       toast({ title: "Revoke failed", description: e?.message, variant: "destructive" }),
   });
 
+  const lockRunMut = useMutation({
+    mutationFn: () =>
+      hrmsApi.patch(`/api/payroll/runs/${selectedRunId}/status`, { status: "locked" }),
+    onSuccess: () => { toast({ title: "Run locked" }); invalidate(); },
+    onError: (e: any) =>
+      toast({ title: "Lock failed", description: e?.response?.data?.message ?? e?.message, variant: "destructive" }),
+  });
+
   const markDisbursedMut = useMutation({
     mutationFn: () =>
       hrmsApi.patch(`/api/payroll/runs/${selectedRunId}/status`, { status: "disbursed" }),
@@ -1868,6 +1876,23 @@ function SignoffTab() {
                     {revokeMut.isPending ? "Revoking…" : "Revoke Finance Approval"}
                   </Button>
                 )}
+                {status.status === "approved" &&
+                  !!status.finance_approved_at &&
+                  (!status.ceo_required || !!status.ceo_acknowledged_at) &&
+                  // Matches the backend's own head-level gate for locking a run
+                  // (payroll.service.ts::updateRunStatus) — deliberately narrower
+                  // than the broader route-level role list, so this button never
+                  // appears for someone the backend would reject anyway.
+                  roleKeys.some((r) => ["finance_head", "payroll_head", "admin", "super_admin"].includes(r)) && (
+                    <Button
+                      size="sm"
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                      onClick={() => lockRunMut.mutate()}
+                      disabled={lockRunMut.isPending}
+                    >
+                      {lockRunMut.isPending ? "Locking…" : "Lock Run"}
+                    </Button>
+                  )}
                 {status.status === "locked" &&
                   !!status.finance_approved_at &&
                   (!status.ceo_required || !!status.ceo_acknowledged_at) &&

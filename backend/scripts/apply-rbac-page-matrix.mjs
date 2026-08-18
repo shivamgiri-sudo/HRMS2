@@ -57,6 +57,30 @@ try {
     grants.get(row.role_key).add(row.page_code);
   }
 
+  // Grants this tool has itself applied before. A grant is only a revocation
+  // candidate if it is in here AND missing from today's matrix — i.e. the
+  // matrix used to want it and no longer does. A grant that is active in
+  // role_page_access but was never recorded here was granted some other way
+  // (an admin UI action, a migration, a manual SQL fix) and this tool has no
+  // basis to claim it as wrong; it is left alone unconditionally. Table starts
+  // empty, so on first run nothing existing is a candidate — this can only
+  // ever be as safe or safer than before, never more destructive.
+  await conn.execute(
+    `CREATE TABLE IF NOT EXISTS rbac_matrix_applied_grants (
+       role_key VARCHAR(64) NOT NULL,
+       page_code VARCHAR(128) NOT NULL,
+       first_applied_at DATETIME NOT NULL,
+       last_applied_at DATETIME NOT NULL,
+       PRIMARY KEY (role_key, page_code)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  );
+  const [appliedRows] = await conn.query("SELECT role_key, page_code FROM rbac_matrix_applied_grants");
+  const previouslyApplied = new Map();
+  for (const row of appliedRows) {
+    if (!previouslyApplied.has(row.role_key)) previouslyApplied.set(row.role_key, new Set());
+    previouslyApplied.get(row.role_key).add(row.page_code);
+  }
+
   const summary = [];
   let inserted = 0;
   let enabled = 0;
@@ -95,6 +119,11 @@ try {
       );
       for (const pageCode of grants.get(role) ?? new Set()) {
         if (desiredSet.has(pageCode)) continue;
+        // Never a revocation candidate unless this tool granted it before — see
+        // rbac_matrix_applied_grants above. A grant absent from the matrix but
+        // also absent from that table was granted some other way and is not
+        // this tool's to flag, let alone revoke.
+        if (!(previouslyApplied.get(role)?.has(pageCode))) continue;
         // A grant on a page_catalog row with active_status = 0 reaches nothing: getAccessMe
         // returns those codes as disabledPageCodes and ProtectedRoute denies them regardless
         // of the grant. Revoking one removes no access a user could actually use, so it must
@@ -174,11 +203,19 @@ try {
     if (!apply) continue;
 
     if (desired.length > 0) {
-      const [disableResult] = await conn.execute(
-        `UPDATE role_page_access SET active_status = 0 WHERE role_key = ? AND active_status = 1 AND page_code NOT IN (${desired.map(() => "?").join(",")})`,
-        [role, ...desired],
+      // Only ever deactivates a grant this tool previously wrote AND no longer
+      // wants. Anything active that this tool never recorded applying is left
+      // untouched, no matter what today's matrix says — see previouslyApplied.
+      const ownedExtras = [...actualSet].filter(
+        (pageCode) => !desiredSet.has(pageCode) && previouslyApplied.get(role)?.has(pageCode),
       );
-      disabled += Number(disableResult.affectedRows || 0);
+      if (ownedExtras.length > 0) {
+        const [disableResult] = await conn.execute(
+          `UPDATE role_page_access SET active_status = 0 WHERE role_key = ? AND active_status = 1 AND page_code IN (${ownedExtras.map(() => "?").join(",")})`,
+          [role, ...ownedExtras],
+        );
+        disabled += Number(disableResult.affectedRows || 0);
+      }
     }
 
     for (const pageCode of desired) {
@@ -191,6 +228,15 @@ try {
       );
       if (result.affectedRows === 1) inserted += 1;
       if (result.affectedRows === 2) enabled += 1;
+
+      // Record that this tool is now the one asserting this grant, so a future
+      // run may revoke it if the matrix later drops it — never before then.
+      await conn.execute(
+        `INSERT INTO rbac_matrix_applied_grants (role_key, page_code, first_applied_at, last_applied_at)
+         VALUES (?, ?, NOW(), NOW())
+         ON DUPLICATE KEY UPDATE last_applied_at = NOW()`,
+        [role, pageCode],
+      );
     }
   }
 
