@@ -42,8 +42,15 @@ router.post("/employees/:id/lifecycle", requireRole("admin", "hr"), h(async (req
 
 // Admin/HR see any employee's documents; employee sees own
 router.get("/employees/:id/documents", selfOrAdminHr("id"), h(async (req: AuthenticatedRequest, res: Response) => {
-  await lifecycleService.logDocumentAccess(`list:${req.params.id}`, req.authUser!.id, "view", req.ip);
-  res.json({ data: await lifecycleService.listDocuments(req.params.id) });
+  const docs = await lifecycleService.listDocuments(req.params.id);
+  // Previously logged one synthetic "list:<employeeId>" row per view — a value
+  // /documents/:id/access-log (below) could never look up, since it queries by
+  // a real document id, so the Access Log tab always returned zero rows. Log
+  // one real row per document actually returned instead, so ids can match.
+  await Promise.all(
+    docs.map((d) => lifecycleService.logDocumentAccess(String(d.id), req.authUser!.id, "view", req.ip))
+  );
+  res.json({ data: docs });
 }));
 
 router.post("/documents/:id/verify", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -51,12 +58,20 @@ router.post("/documents/:id/verify", requireRole("admin", "hr"), h(async (req: A
   res.json({ ok: true });
 }));
 
-router.get("/documents/expiring", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+// Read routes below are widened to match the live role_page_access grants for
+// EMPLOYEE_MANAGEMENT (can_view=1: hr, branch_hr, it_head, branch_head,
+// super_admin — the last already bypasses requireRole unconditionally), the
+// page-code Gate this data actually sits behind — not just admin/hr. The
+// write action (/documents/:id/verify above) stays admin,hr-only; this only
+// widens who can VIEW.
+const DOC_VERIFICATION_READ_ROLES = ["admin", "hr", "branch_hr", "it_head", "branch_head"] as const;
+
+router.get("/documents/expiring", requireRole(...DOC_VERIFICATION_READ_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const days = req.query.days ? parseInt(req.query.days as string, 10) : 30;
   res.json({ data: await lifecycleService.getExpiredOrExpiringDocuments(days) });
 }));
 
-router.get("/documents/unverified", requireRole("admin", "hr"), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get("/documents/unverified", requireRole(...DOC_VERIFICATION_READ_ROLES), h(async (_req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ed.id,
             ed.employee_id,
@@ -78,7 +93,7 @@ router.get("/documents/unverified", requireRole("admin", "hr"), h(async (_req: A
   res.json({ data: rows });
 }));
 
-router.get("/documents/:id/access-log", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/documents/:id/access-log", requireRole(...DOC_VERIFICATION_READ_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT dal.*,
             dal.access_type AS action_type,
