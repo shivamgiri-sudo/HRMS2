@@ -43,6 +43,24 @@ remains — it does not round up.
 6. **Produced, not resolved** (per the brief's own explicit instruction not to guess): the
    Process (341 employees) and Cost Centre (55 employees) worklists, exact match to the
    brief's cited figures, confirming currency.
+7. **Applied**: `ORG_MASTERS`/`hr` write-permission gap (item 4 above) closed via a reviewed,
+   manifest-registered migration (`1233_org_masters_hr_write_permission.sql`), per R016's
+   explicit instruction to use a migration rather than an ad-hoc write. Committed and pushed;
+   will auto-apply on the next backend restart per this repo's boot-time migration runner.
+8. **R017 complete**: all 55 super_admin-only page codes in the live catalog re-queried and
+   classified (up from 46 in a prior session — the catalog has grown since). 11 are genuinely
+   live pages incorrectly restricted to super_admin (a real, actionable finding awaiting
+   product-owner role targeting); 5 are correctly super_admin-only; 15 are already tracked by
+   the codebase's own `page-catalog-route-drift.contract.test.ts` ratchet as a deliberately
+   deferred follow-up (not new work); 2 are ambiguous pending a live UI check; 22 are confirmed
+   true orphans (zero code reference anywhere, no functional impact). Full detail: defect
+   register D011.
+9. **R009 scan script built**: `backend/scripts/leave-attendance-reconciliation-scan.ts`,
+   read-only, classifies unreconciled approved-leave-days the same way D004 did (legacy-migrated
+   vs. live-code) so the finding can be re-run and diffed rather than re-derived by hand. No
+   cleanup script built — per D004/P005, bulk-overwriting migrated leave history is explicitly
+   forbidden, so this is very likely scan-only feeding an HR/Payroll worklist, not an
+   automated fix.
 
 ## Full backend test suite: 8581 passed, 0 failed
 

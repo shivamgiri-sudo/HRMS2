@@ -51,7 +51,35 @@ alongside `UAT_FINAL_REPORT.md` and `UAT_EXECUTIVE_SUMMARY.md`.
   project memory** (prior deep audits in earlier sessions), explicitly labeled
   `verified_this_session: NO` — a live re-check was attempted for bank/IFSC and was blocked by
   a genuine DB connection-establishment degradation observed live during this session (see
-  `UAT_PERFORMANCE_REPORT.md`). Do not treat these as freshly confirmed.
+  `UAT_PERFORMANCE_REPORT.md`). Do not treat these as freshly confirmed. One re-check attempt
+  this continuation pass (unbanked-employee count) produced an inconclusive result — the query
+  used didn't actually test the same condition a prior memory item tracked (has-account-but-
+  missing-IFSC vs. no-account-at-all) — and was correctly discarded rather than reported as a
+  finding. No memory file was changed on that basis.
+- RBAC page-code catalog (all 55 super_admin-only codes) **directly re-queried and classified
+  live** this continuation pass — see D011 in the defect register. DB connectivity recovered
+  partway through this pass (255ms response after the earlier degradation eased).
+
+## RBAC — R017 orphan/super_admin page-code sweep
+
+All 55 super_admin-only `page_catalog` codes (live count, up from 46 in a prior session)
+classified via live DB query + combined fixed-string grep across `src/` and `backend/src/`,
+cross-referenced against the codebase's own `page-catalog-route-drift.contract.test.ts` ratchet:
+11 genuinely-live-but-restricted (new, actionable finding), 5 correctly restricted, 15 already
+tracked by the existing contract test as a deliberately deferred follow-up, 2 ambiguous, 22
+confirmed true orphans with zero code reference and no functional impact. `ORG_MASTERS`/`hr`'s
+write-permission gap closed via migration `1233_org_masters_hr_write_permission.sql` (committed,
+pushed, will auto-apply on next backend restart — automated `migration-manifest-guard.test.ts`
+verification was attempted but the process itself hung under the same resource contention
+described above; not yet confirmed passing).
+
+## R009 — leave-attendance reconciliation scan script
+
+`backend/scripts/leave-attendance-reconciliation-scan.ts` built (read-only, no writes) to
+reproduce D004's classification on demand instead of by hand. Live-tested against the current
+schema (columns verified via `information_schema` first, after an initial draft guessed at a
+nonexistent `leave_request_day` table and was caught and corrected before running). No cleanup
+script built — per D004/P005, bulk-overwriting migrated leave history is explicitly forbidden.
 
 ## Sections of the brief NOT reached this session
 
