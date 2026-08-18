@@ -258,10 +258,10 @@ const DEFAULT_FIELDS_BY_DOCUMENT: Record<string, string[]> = {
     "zero_tolerance_employee_name",
     "zero_tolerance_signature_date",
   ],
-  IT_COMPLIANCE: ["employee_name", "employee_code", "date_of_joining", "branch", "current_date"],
+  IT_COMPLIANCE: ["employee_name", "employee_code", "date_of_joining", "branch", "process", "current_date"],
   BAMS_DECLARATION: ["employee_name", "employee_code", "date_of_joining", "branch", "process", "designation", "department", "current_date", "attendance_system_name", "attendance_criterion", "attendance_login_hours"],
-  PI_PROCESSING_CONSENT: ["employee_name", "employee_code", "mobile", "email", "current_date"],
-  ZERO_TOLERANCE_ACK: ["employee_name", "employee_code", "date_of_joining", "branch", "current_date"],
+  PI_PROCESSING_CONSENT: ["employee_name", "employee_code", "process", "mobile", "email", "current_date"],
+  ZERO_TOLERANCE_ACK: ["employee_name", "employee_code", "date_of_joining", "branch", "process", "current_date"],
   EPF_DECLARATION: ["employee_name", "father_name", "date_of_birth", "date_of_joining", "mobile", "email", "pan_masked", "aadhaar_masked", "uan", "current_date"],
   EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date", "father_name", "relation_prefix", "employee_address", "monthly_remuneration", "monthly_remuneration_words", "payroll_hr_name", "payroll_hr_designation"],
 };

@@ -159,7 +159,8 @@ const IT: Block[] = [
   li("3. If I am found responsible for any such offence listed above, the code of conduct may be invoked for termination of my services or regulatory action."),
   sp(),
   p("Name: {{it_employee_name}}          Employee Code: {{employee_code}}"),
-  p("Branch: {{branch}}          Date of Joining: {{date_of_joining}}"),
+  p("Branch: {{branch}}          Process: {{process}}"),
+  p("Date of Joining: {{date_of_joining}}"),
   p("Signature: ______________________          Date: {{it_signature_date}}"),
 ];
 
@@ -202,6 +203,7 @@ const PI: Block[] = [
   p("Note: Please ensure that you have reviewed and understood the contents of this consent form before signing it. If you have any questions or concerns, please contact the Company's Human Resources department for clarification before providing your consent."),
   sp(),
   p("Employee Name: {{pi_employee_name}}          Employee Code: {{employee_code}}"),
+  p("Process: {{process}}"),
   p("Mobile: {{mobile}}          Email: {{email}}"),
   p("Employee Signature: ______________________          Date: {{pi_signature_date}}"),
 ];
@@ -249,7 +251,8 @@ const ZERO: Block[] = [
   sp(),
   h("Acknowledgment"),
   p("I, {{zero_tolerance_employee_name}}, have read and understood the Mas Callnet India Pvt. Ltd. Zero Tolerance Policy and agree to comply with its terms and conditions."),
-  p("Employee Code: {{employee_code}}          Branch: {{branch}}          Date of Joining: {{date_of_joining}}"),
+  p("Employee Code: {{employee_code}}          Branch: {{branch}}          Process: {{process}}"),
+  p("Date of Joining: {{date_of_joining}}"),
   p("Signature: ______________________          Date: {{zero_tolerance_signature_date}}"),
 ];
 
