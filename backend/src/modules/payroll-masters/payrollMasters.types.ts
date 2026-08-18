@@ -10,36 +10,44 @@ export interface SalarySlab {
   updated_at: string;
 }
 
+/** Live schema as of migration 326. Replaces the old grade_id/slab_id Schema A. */
 export interface SalaryPackage {
   id: string;
-  grade_id: string;
-  slab_id: string;
-  location_id: string | null;
-  cost_centre_id: string | null;
-  basic_amt: number;
-  conveyance_amt: number;
-  conveyance_type: 'fixed' | 'pct';
-  medical_amt: number;
-  medical_type: 'fixed' | 'pct';
-  other_allowance_amt: number;
-  other_allowance_type: 'fixed' | 'pct';
-  bonus_amt: number;
-  bonus_type: 'fixed' | 'pct';
-  portfolio_amt: number;
-  special_allowance_amt: number;
-  pli_amt: number;
-  gross_monthly: number;
-  ctc_monthly: number;
-  effective_from: string;
+  branch_name: string;
+  cost_centre_code: string | null;
+  band_code: string;
+  package_amount: number;
+  // Earnings
+  basic: number;
+  hra: number;
+  lta: number;
+  conveyance: number;
+  portfolio: number;
+  medical: number;
+  special_allowance: number;
+  other_allowance: number;
+  bonus: number;
+  pli: number;
+  gross: number;
+  // Statutory deductions (employee)
+  epf_employee: number;
+  esic_employee: number;
+  professional_tax: number;
+  net_in_hand: number;
+  // Employer contributions
+  epf_employer: number;
+  esic_employer: number;
+  admin_charges: number;
+  ctc: number;
   active_status: number;
+  source_db: string;
+  source_id: number | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
-  // joins
+  // optional join columns
   grade_name?: string;
-  slab_label?: string;
-  location_name?: string;
-  cost_centre_name?: string;
+  band?: string;
 }
 
 export interface DesignationBandEntry {

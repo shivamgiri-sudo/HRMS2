@@ -34,6 +34,7 @@ import { db } from "../../db/mysql.js";
 export type AppointmentLetterSalary = {
   basic: number;
   hra: number;
+  lta: number;
   conveyance: number;
   otherAllowance: number;
   specialAllowance: number;
@@ -76,7 +77,7 @@ const num = (v: unknown): number => {
 
 /** Columns salary_component_assignments simply does not have. */
 const ASSIGNMENT_MISSING = [
-  "Other Allowance", "Bonus", "Medical Allowance", "Portfolio", "PLI", "Admin Charges",
+  "LTA", "Other Allowance", "Bonus", "Medical Allowance", "Portfolio", "PLI", "Admin Charges",
 ];
 
 async function fromPackage(employeeId: string): Promise<AppointmentLetterSalary | null> {
@@ -95,6 +96,7 @@ async function fromPackage(employeeId: string): Promise<AppointmentLetterSalary 
   return {
     basic: num(p.basic),
     hra: num(p.hra),
+    lta: num(p.lta),
     conveyance: num(p.conveyance),
     otherAllowance: num(p.other_allowance),
     specialAllowance: num(p.special_allowance),
@@ -135,6 +137,7 @@ async function fromAssignment(employeeId: string): Promise<AppointmentLetterSala
   return {
     basic: num(a.basic),
     hra: num(a.hra),
+    lta: 0,
     conveyance: num(a.conveyance),
     otherAllowance: 0,
     specialAllowance: num(a.special_allowance),
@@ -193,6 +196,7 @@ async function fromLegacy(employeeId: string): Promise<AppointmentLetterSalary |
   return {
     basic: num(l.basic),
     hra: num(l.hra),
+    lta: num(l.lta),
     conveyance: num(l.conveyance),
     otherAllowance: num(l.other_allowance),
     specialAllowance: num(l.special_allowance),
@@ -247,6 +251,7 @@ export function toLetterRows(s: AppointmentLetterSalary): Record<string, string>
   return {
     basic: f(s.basic),
     hra: f(s.hra),
+    lta: f(s.lta),
     conveyance: f(s.conveyance),
     other_allowance: f(s.otherAllowance),
     special_allowance: f(s.specialAllowance),

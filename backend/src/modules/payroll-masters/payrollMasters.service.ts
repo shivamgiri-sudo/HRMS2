@@ -178,7 +178,7 @@ function amt(v: unknown): number {
  * no default, so they are required; every other money column defaults to 0.00.
  */
 const PACKAGE_MONEY_COLUMNS = [
-  "basic", "hra", "conveyance", "portfolio", "medical", "special_allowance",
+  "basic", "hra", "lta", "conveyance", "portfolio", "medical", "special_allowance",
   "other_allowance", "bonus", "pli", "gross", "epf_employee", "esic_employee",
   "professional_tax", "net_in_hand", "epf_employer", "esic_employer",
   "admin_charges", "ctc",
@@ -375,10 +375,12 @@ export async function lookupBandForDesignation(departmentId: string, designation
   if (!rows.length) return null;
   const entry = rows[0] as any;
   let suggestedPackage: RowDataPacket | null = null;
-  if (entry.min_slab_id) {
+  if (entry.band) {
+    // Look up by band_code (strip the 'Band ' prefix grade_band_master stores).
+    const bandCode = String(entry.band).replace(/^Band\s+/i, '').trim();
     const [pkgs] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM salary_package_master WHERE grade_id=? AND slab_id=? AND active_status=1 ORDER BY effective_from DESC LIMIT 1`,
-      [entry.grade_id, entry.min_slab_id]
+      `SELECT * FROM salary_package_master WHERE band_code=? AND active_status=1 ORDER BY package_amount ASC LIMIT 1`,
+      [bandCode]
     );
     suggestedPackage = (pkgs as RowDataPacket[])[0] ?? null;
   }

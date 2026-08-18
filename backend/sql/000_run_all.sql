@@ -372,5 +372,14 @@ SOURCE sql/1016_bgv_report_digilocker_esign.sql;
 SOURCE sql/1017_bgv_api_log_failure_reasons.sql;
 SOURCE sql/1018_attendance_lookup_indexes.sql;
 
+-- ── Salary package data integrity (1047–1049) ─────────────────────────────────
+-- 1047: Backfill source_id + insert 2 missing rows from db_bill (requires db_bill visible).
+--       Skip gracefully if cross-DB access is unavailable.
+SOURCE sql/1047_salary_package_source_id_backfill.sql;
+-- 1048: ADD lta (Leave Travel Allowance) column to salary_package_master.
+SOURCE sql/1048_salary_package_add_lta.sql;
+-- 1049: Rename salary_component_master code 'TA' → 'CONV' to match payroll engine.
+SOURCE sql/1049_salary_component_conveyance_rename.sql;
+
 SELECT CONCAT('mas_hrms schema bootstrap complete — ', NOW()) AS status;
 SHOW TABLES;

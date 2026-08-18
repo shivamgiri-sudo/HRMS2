@@ -42,7 +42,7 @@ const PHANTOM = [
 
 const VALID = {
   branch_name: "Noida", cost_centre_code: "CC-OPS-01", band_code: "C",
-  package_amount: 25000, basic: 10000, hra: 4000, gross: 21050, ctc: 23609,
+  package_amount: 25000, basic: 10000, hra: 4000, lta: 0, gross: 21050, ctc: 23609,
 };
 
 describe("salary package writes use the real schema", () => {
@@ -63,7 +63,7 @@ describe("salary package writes use the real schema", () => {
     const calls = capture();
     await createPackage({ ...VALID }, "user-1");
     const insert = calls.find((c) => /INSERT INTO salary_package_master/i.test(c.sql))!;
-    for (const col of ["branch_name", "band_code", "package_amount", "basic", "hra", "gross", "ctc", "net_in_hand"]) {
+    for (const col of ["branch_name", "band_code", "package_amount", "basic", "hra", "lta", "gross", "ctc", "net_in_hand"]) {
       expect(insert.sql).toContain(col);
     }
   });
