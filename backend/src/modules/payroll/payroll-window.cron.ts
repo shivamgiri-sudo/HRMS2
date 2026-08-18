@@ -5,6 +5,7 @@ import { getIstDateString } from '../../utils/dateUtils.js';
 import { leaveService } from '../leave/leave.service.js';
 import { CLOSED_RUN_STATUSES_SQL } from './run-status.js';
 import { notifyPayrollWindowClosing } from './payroll.notifications.js';
+import { triggerPayrollBranchReadinessIncomplete } from '../work-inbox/work-inbox.triggers.js';
 
 let _timer: ReturnType<typeof setInterval> | null = null;
 
@@ -118,12 +119,46 @@ export async function runPayrollWindowClosingWarning(): Promise<void> {
   }
 }
 
+/**
+ * Daily cron: nudge a branch whose payroll_branch_readiness row is still
+ * not_started/in_progress/blocked for the current month. PAYROLL_BRANCH_READINESS was a
+ * registered Work Inbox item_type with zero producers anywhere in the app — the two
+ * existing triggers in payroll-branch-readiness.service.ts both fire on a sign-off EVENT
+ * (notifying payroll_head after a branch confirms readiness); nothing scans for a branch
+ * that has NOT yet gotten there. 3-day grace on created_at, same threshold
+ * ats-reminders.cron.ts's onboarding-incomplete job already uses, so a branch isn't
+ * nagged on day one of a new payroll month.
+ */
+export async function runPayrollBranchReadinessReminders(): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT r.branch_id, COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name, r.process_month
+       FROM payroll_branch_readiness r
+       LEFT JOIN branch_master b ON b.id = r.branch_id
+      WHERE r.process_month = DATE_FORMAT(NOW(), '%Y-%m')
+        AND r.readiness_status IN ('not_started','in_progress','blocked')
+        AND DATEDIFF(NOW(), r.created_at) >= 3`
+  );
+
+  for (const row of rows as Array<{ branch_id: string; branch_name: string; process_month: string }>) {
+    try {
+      await triggerPayrollBranchReadinessIncomplete(row.branch_id, row.branch_name, row.process_month);
+    } catch (err) {
+      console.warn(`[payroll-window-cron] readiness reminder failed for branch ${row.branch_id}:`, err);
+    }
+  }
+
+  if (rows.length > 0) {
+    console.log(`[payroll-window-cron] branch readiness incomplete: notified ${rows.length} branch(es)`);
+  }
+}
+
 export function startPayrollWindowClosureScheduler(): void {
   if (_timer) return;
 
   // Run once at startup, then every 24 hours
   runPayrollWindowClosure()
     .then(() => runPayrollWindowClosingWarning())
+    .then(() => runPayrollBranchReadinessReminders())
     .catch((e: unknown) =>
       console.error('[payroll-window-cron] startup run failed:', e)
     );
@@ -131,6 +166,7 @@ export function startPayrollWindowClosureScheduler(): void {
   _timer = setInterval(
     () => runPayrollWindowClosure()
       .then(() => runPayrollWindowClosingWarning())
+      .then(() => runPayrollBranchReadinessReminders())
       .catch((e: unknown) =>
         console.error('[payroll-window-cron] scheduled run failed:', e)
       ),

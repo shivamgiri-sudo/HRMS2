@@ -180,6 +180,25 @@ export async function triggerPayrollBranchSignOff(
   });
 }
 
+export async function triggerPayrollBranchReadinessIncomplete(
+  branchId: string,
+  branchName: string,
+  month: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "PAYROLL_BRANCH_READINESS",
+    title: `${branchName} payroll inputs incomplete for ${month}`,
+    description: `Payroll readiness for ${branchName} (${month}) is not yet complete. Review attendance, incentives, deductions, and sign off once ready.`,
+    moduleCode: "payroll",
+    entityType: "branch_readiness",
+    entityId: branchId,
+    assignedToRole: "branch_head",
+    branchId,
+    priority: "high",
+    dueAt: dueAt("PAYROLL_BRANCH_READINESS"),
+  });
+}
+
 export async function triggerPayrollAttendanceFreezeRequest(
   branchId: string,
   branchName: string,
