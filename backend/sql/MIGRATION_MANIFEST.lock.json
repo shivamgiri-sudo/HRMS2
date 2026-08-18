@@ -519,7 +519,7 @@
     "460_budget_line_tax_amendment.sql",
     "440_finance_phase1.sql",
     "441_finance_phases_2_3_4.sql",
-    "1216_client_billing_foundation.sql"
+    "migrations/1300_client_billing_foundation.sql"
   ],
   "approvedDeletions": [
     {

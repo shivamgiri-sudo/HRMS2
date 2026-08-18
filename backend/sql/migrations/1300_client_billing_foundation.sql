@@ -1,4 +1,4 @@
--- 1216_client_billing_foundation.sql
+-- 1300_client_billing_foundation.sql
 --
 -- Foundation schema for the client-billing replica (docs/superpowers/specs/2026-08-18-client-billing-replica-design.md).
 -- Creates three new tables only. Does not touch cost_centre_master, branch_master, billing_invoice,
@@ -42,7 +42,7 @@ CREATE TABLE client_invoice_number_sequence (
 
 CREATE TABLE client_invoice (
   id               CHAR(36)     NOT NULL PRIMARY KEY,
-  cost_centre_id   CHAR(36)     NOT NULL,
+  cost_centre_id   CHAR(36)     NOT NULL COLLATE utf8mb4_unicode_ci,
   invoice_status   ENUM('proforma','approved','rejected') NOT NULL DEFAULT 'proforma',
   category         VARCHAR(50)  NOT NULL,
   finance_year     VARCHAR(10)  NOT NULL,
