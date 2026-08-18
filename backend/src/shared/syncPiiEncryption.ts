@@ -119,6 +119,59 @@ export function blindIndexPan(value: string | null | undefined, context = "sync"
   return blindIndex(plain);
 }
 
+/**
+ * Ciphertext for an Aadhaar number, or null when there is nothing to encrypt.
+ *
+ * Sibling of encryptPanForSync — same dev-key refusal, same reasoning. First
+ * writer of employees.aadhaar_number_encrypted: that column and
+ * aadhaar_blind_index exist (backend/sql/515_employee_pii_encryption_columns.sql,
+ * 1122_employees_aadhaar_blind_index.sql) but had zero writers before the
+ * statutory-approval sync started using this, so there is no prior plaintext
+ * coverage to preserve — this is additive, not a rewrite of an existing path.
+ */
+export function encryptAadhaarForSync(value: string | null | undefined, context = "sync"): string | null {
+  const plain = value ? String(value).trim() : "";
+  if (!plain) return null;
+
+  if (isUsingDevEncryptionKey()) {
+    if (!devKeyWarned) {
+      devKeyWarned = true;
+      console.warn(
+        `[${context}] FIELD_ENCRYPTION_KEY is the all-zeros dev key — writing plaintext Aadhaar only, no ciphertext. ` +
+        `Ciphertext written under this key would be undecryptable in production.`
+      );
+    }
+    return null;
+  }
+
+  return encryptField(plain, 1);
+}
+
+/**
+ * Blind index for an Aadhaar number, or null when there is nothing to index.
+ *
+ * Sibling of blindIndexPan — same normalisation (String(value).trim(), no
+ * upper-casing — Aadhaar is numeric so case does not apply, but kept
+ * identical to the PAN helper for consistency) and same dev-key refusal.
+ */
+export function blindIndexAadhaar(value: string | null | undefined, context = "sync"): string | null {
+  const plain = value ? String(value).trim() : "";
+  if (!plain) return null;
+
+  if (isUsingDevBlindIndexKey()) {
+    if (!devBlindKeyWarned) {
+      devBlindKeyWarned = true;
+      console.warn(
+        `[${context}] FIELD_BLIND_INDEX_KEY is the dev key — writing no blind index. ` +
+        `An index written under this key matches nothing at lookup time and reports no error.`
+      );
+    }
+    return null;
+  }
+
+  return blindIndex(plain);
+}
+
 /** Test seam: the warn-once latch is module state, which would leak between test cases. */
 export function __resetDevKeyWarningForTests(): void {
   devKeyWarned = false;

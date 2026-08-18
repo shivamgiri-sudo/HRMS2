@@ -71,6 +71,47 @@ describe("encryptPanForSync", () => {
   });
 });
 
+describe("encryptAadhaarForSync", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("produces ciphertext that decrypts back to the original Aadhaar", async () => {
+    const { mod, fe } = await loadWith(REAL_KEY);
+    const ct = mod.encryptAadhaarForSync("999988887777");
+    expect(ct).toBeTypeOf("string");
+    expect(ct).not.toContain("999988887777");
+    expect(fe.decryptField(ct as string)).toBe("999988887777");
+  });
+
+  it("trims before encrypting", async () => {
+    const { mod, fe } = await loadWith(REAL_KEY);
+    expect(fe.decryptField(mod.encryptAadhaarForSync("  999988887777  ") as string)).toBe("999988887777");
+  });
+
+  it("returns null when there is nothing to encrypt", async () => {
+    const { mod } = await loadWith(REAL_KEY);
+    expect(mod.encryptAadhaarForSync(null)).toBeNull();
+    expect(mod.encryptAadhaarForSync(undefined)).toBeNull();
+    expect(mod.encryptAadhaarForSync("")).toBeNull();
+    expect(mod.encryptAadhaarForSync("   ")).toBeNull();
+  });
+
+  it("REFUSES to encrypt under the all-zeros dev key, and warns once", async () => {
+    const { mod } = await loadWith(DEV_KEY);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(mod.encryptAadhaarForSync("999988887777")).toBeNull();
+    expect(mod.encryptAadhaarForSync("111122223333")).toBeNull();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("dev key");
+  });
+
+  it("randomises the IV, so the same Aadhaar does not produce a repeatable ciphertext", async () => {
+    const { mod } = await loadWith(REAL_KEY);
+    expect(mod.encryptAadhaarForSync("999988887777")).not.toBe(mod.encryptAadhaarForSync("999988887777"));
+  });
+});
+
 describe("encryptAccountForSync", () => {
   beforeEach(() => { vi.restoreAllMocks(); });
 
@@ -202,6 +243,44 @@ describe("blindIndexPan", () => {
   });
 });
 
+describe("blindIndexAadhaar", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("matches fieldEncryption.blindIndex for the same value", async () => {
+    const { mod, fe } = await loadWithBlindKey(REAL_BLIND_KEY);
+    expect(mod.blindIndexAadhaar("999988887777")).toBe(fe.blindIndex("999988887777"));
+  });
+
+  it("normalises with trim only", async () => {
+    const { mod, fe } = await loadWithBlindKey(REAL_BLIND_KEY);
+    expect(mod.blindIndexAadhaar("  999988887777  ")).toBe(fe.blindIndex("999988887777"));
+  });
+
+  it("is deterministic, unlike the ciphertext", async () => {
+    const { mod } = await loadWithBlindKey(REAL_BLIND_KEY);
+    expect(mod.blindIndexAadhaar("999988887777")).toBe(mod.blindIndexAadhaar("999988887777"));
+  });
+
+  it("returns null when there is nothing to index", async () => {
+    const { mod } = await loadWithBlindKey(REAL_BLIND_KEY);
+    expect(mod.blindIndexAadhaar(null)).toBeNull();
+    expect(mod.blindIndexAadhaar(undefined)).toBeNull();
+    expect(mod.blindIndexAadhaar("")).toBeNull();
+    expect(mod.blindIndexAadhaar("   ")).toBeNull();
+  });
+
+  it("REFUSES to index under the dev blind-index key, and warns once", async () => {
+    const { mod } = await loadWithBlindKey(undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(mod.blindIndexAadhaar("999988887777")).toBeNull();
+    expect(mod.blindIndexAadhaar("111122223333")).toBeNull();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("dev key");
+  });
+});
+
 /**
  * Structural guard for the OTHER table. employee_statutory_info.pan_number holds 3,341
  * plaintext PANs against 0 ciphertext (measured live 2026-08-11) — migration 1123 added
@@ -264,6 +343,31 @@ describe("employee_statutory_info writers keep the PAN dual-write", () => {
     expect(src).toContain("encryptPanForSync");
     expect(src).toContain("blindIndexPan");
     expect(src).not.toMatch(/\bencryptField\s*\(/);
+  });
+});
+
+/**
+ * Structural guard for the write that makes an approved statutory-details change actually
+ * visible. employee.routes.ts's profile GET reads employees.pan_number_encrypted/aadhaar_number_encrypted
+ * as the PRIMARY source (employee_statutory_info is only a fallback when that's empty), so
+ * without this the approval only ever reaches employee_statutory_info and silently never
+ * shows up anywhere for anyone who already had a PAN/Aadhaar on file.
+ */
+describe("statutory-approval route syncs approved PAN/Aadhaar to employees, not just employee_statutory_info", () => {
+  const EMPLOYEES = path.join(here, "..", "..", "modules", "employees");
+
+  it("writes employees.pan_number with ciphertext and blind index", () => {
+    const src = fs.readFileSync(path.join(EMPLOYEES, "statutory-approval.routes.ts"), "utf8");
+    expect(src).toContain("UPDATE employees SET pan_number = ?, pan_number_encrypted = ?, pan_blind_index = ?");
+    expect(src).toContain("encryptPanForSync(pan_number");
+    expect(src).toContain("blindIndexPan(pan_number");
+  });
+
+  it("writes employees.aadhaar_number with ciphertext and blind index", () => {
+    const src = fs.readFileSync(path.join(EMPLOYEES, "statutory-approval.routes.ts"), "utf8");
+    expect(src).toContain("UPDATE employees SET aadhaar_number = ?, aadhaar_number_encrypted = ?, aadhaar_blind_index = ?");
+    expect(src).toContain("encryptAadhaarForSync(aadhaar_id");
+    expect(src).toContain("blindIndexAadhaar(aadhaar_id");
   });
 });
 

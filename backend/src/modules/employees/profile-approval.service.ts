@@ -112,16 +112,35 @@ export async function submitStatutoryDetailsForApproval(
   // stacking a fresh conflicting request every time this is called.
   const existingPendingId = await findPendingApprovalId(employeeId, 'statutory_details');
   const id = existingPendingId ?? randomUUID();
+
+  // Read current values before insert, same read-before-write pattern as
+  // PUT /me/emergency-contact (employee.routes.ts) — old_values was previously
+  // hardcoded to the literal string '{}', so the review UI's before/after
+  // comparison never had anything to show. Only plaintext PAN/Aadhaar are
+  // captured here, never ciphertext — useless in a JSON diff anyway.
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT pan_number, uan_number, epf_number, esic_number, aadhaar_number, aadhaar_last4
+       FROM employees WHERE id = ? LIMIT 1`,
+    [employeeId]
+  );
+  const [statRows] = await db.execute<RowDataPacket[]>(
+    `SELECT epf_number, esi_number, uan_number, pan_number, aadhaar_id, pf_eligible, esi_eligible, epf_date
+       FROM employee_statutory_info WHERE employee_id = ? LIMIT 1`,
+    [employeeId]
+  );
+  const oldValues = { employees: empRows[0] ?? null, employee_statutory_info: statRows[0] ?? null };
+
   await db.execute(
     `INSERT INTO profile_update_approval
        (id, employee_id, request_type, old_values, new_values, status,
         requested_by_role, routed_to_role, reviewed_by)
-     VALUES (?, ?, 'statutory_details', '{}', ?, 'pending', 'employee', 'hr', NULL)
+     VALUES (?, ?, 'statutory_details', ?, ?, 'pending', 'employee', 'hr', NULL)
      ON DUPLICATE KEY UPDATE
        new_values = VALUES(new_values),
+       old_values = VALUES(old_values),
        routed_to_role = 'hr',
        requested_at = NOW()`,
-    [id, employeeId, JSON.stringify(newValues)]
+    [id, employeeId, JSON.stringify(oldValues), JSON.stringify(newValues)]
   );
 
   await logSensitiveAction({

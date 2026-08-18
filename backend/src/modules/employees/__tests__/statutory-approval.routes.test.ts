@@ -14,16 +14,18 @@ const ACTOR_ID = "11111111-1111-1111-1111-111111111111";
 const EMPLOYEE_ID = "22222222-2222-2222-2222-222222222222";
 const APPROVAL_ID = "33333333-3333-3333-3333-333333333333";
 
-const { getConnection, dbExecute, encryptPanForSync, blindIndexPan, logSensitiveAction } = vi.hoisted(() => ({
+const { getConnection, dbExecute, encryptPanForSync, blindIndexPan, encryptAadhaarForSync, blindIndexAadhaar, logSensitiveAction } = vi.hoisted(() => ({
   getConnection: vi.fn(),
   dbExecute: vi.fn(),
   encryptPanForSync: vi.fn((v: string) => `enc(${v})`),
   blindIndexPan: vi.fn((v: string) => `idx(${v})`),
+  encryptAadhaarForSync: vi.fn((v: string) => `aenc(${v})`),
+  blindIndexAadhaar: vi.fn((v: string) => `aidx(${v})`),
   logSensitiveAction: vi.fn(),
 }));
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute, getConnection } }));
-vi.mock("../../../shared/syncPiiEncryption.js", () => ({ encryptPanForSync, blindIndexPan }));
+vi.mock("../../../shared/syncPiiEncryption.js", () => ({ encryptPanForSync, blindIndexPan, encryptAadhaarForSync, blindIndexAadhaar }));
 vi.mock("../../../shared/auditLog.js", () => ({ logSensitiveAction }));
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (req: express.Request, _res: express.Response, next: express.NextFunction) => {
@@ -101,6 +103,8 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
     getConnection.mockReset();
     encryptPanForSync.mockClear();
     blindIndexPan.mockClear();
+    encryptAadhaarForSync.mockClear();
+    blindIndexAadhaar.mockClear();
     logSensitiveAction.mockReset().mockResolvedValue(undefined);
   });
 
@@ -131,6 +135,36 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
     expect(conn.rollback).not.toHaveBeenCalled();
   });
 
+  it("propagates an approved PAN/Aadhaar change to the employees table, not just employee_statutory_info", async () => {
+    // Regression coverage: employee.routes.ts's profile GET resolves PAN/Aadhaar
+    // with `employees` as the PRIMARY source and employee_statutory_info only as
+    // a fallback when that primary is empty — so without this write, an approved
+    // change to someone who already has a PAN on file never becomes visible
+    // anywhere.
+    const conn = makeConnection(PENDING_REQUEST);
+    getConnection.mockResolvedValue(conn);
+
+    const res = await request(app())
+      .patch(`/api/statutory-change-requests/${APPROVAL_ID}`)
+      .send({ decision: "approved" });
+
+    expect(res.status).toBe(200);
+    expect(encryptAadhaarForSync).toHaveBeenCalledWith("999988887777", expect.any(String));
+    expect(blindIndexAadhaar).toHaveBeenCalledWith("999988887777", expect.any(String));
+
+    const panSync = conn.statements.findIndex((s) => s.includes("UPDATE employees SET pan_number"));
+    expect(panSync).toBeGreaterThan(-1);
+    expect(conn.params[panSync]).toContain("NEWPP5678B");
+    expect(conn.params[panSync]).toContain("enc(NEWPP5678B)");
+    expect(conn.params[panSync]).toContain("idx(NEWPP5678B)");
+
+    const aadhaarSync = conn.statements.findIndex((s) => s.includes("UPDATE employees SET aadhaar_number"));
+    expect(aadhaarSync).toBeGreaterThan(-1);
+    expect(conn.params[aadhaarSync]).toContain("999988887777");
+    expect(conn.params[aadhaarSync]).toContain("aenc(999988887777)");
+    expect(conn.params[aadhaarSync]).toContain("aidx(999988887777)");
+  });
+
   it("commits before writing the audit log, and masks PAN/Aadhaar/UAN in it", async () => {
     const conn = makeConnection(PENDING_REQUEST);
     getConnection.mockResolvedValue(conn);
@@ -146,6 +180,32 @@ describe("PATCH /api/statutory-change-requests/:id — approve", () => {
     expect(JSON.stringify(entry.new_value_json)).not.toContain("NEWPP5678B");
     expect(JSON.stringify(entry.new_value_json)).not.toContain("999988887777");
     expect(entry.new_value_json.pan_number).toBe("******678B"); // "NEWPP5678B" masked to last 4
+  });
+
+  it("masks a nested old_values shape ({ employees: {...}, employee_statutory_info: {...} })", async () => {
+    // submitStatutoryDetailsForApproval (profile-approval.service.ts) now stores
+    // old_values nested like this instead of the flat shape / literal '{}' it
+    // used to write. maskStatutoryValues must recurse into it, or PAN/Aadhaar
+    // would be written unmasked into the audit log for the first time.
+    const conn = makeConnection({
+      ...PENDING_REQUEST,
+      old_values: JSON.stringify({
+        employees: { pan_number: "OLDPP1234A", aadhaar_number: "111122223333" },
+        employee_statutory_info: { pan_number: "OLDPP1234A", aadhaar_id: "111122223333" },
+      }),
+    });
+    getConnection.mockResolvedValue(conn);
+
+    await request(app())
+      .patch(`/api/statutory-change-requests/${APPROVAL_ID}`)
+      .send({ decision: "approved" });
+
+    const entry = logSensitiveAction.mock.calls[0][0];
+    const serialized = JSON.stringify(entry.old_value_json);
+    expect(serialized).not.toContain("OLDPP1234A");
+    expect(serialized).not.toContain("111122223333");
+    expect(entry.old_value_json.employees.pan_number).toBe("******234A");
+    expect(entry.old_value_json.employee_statutory_info.aadhaar_id).toBe("********3333");
   });
 
   it("rejects with a reason, does not touch employee_statutory_info", async () => {

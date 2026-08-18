@@ -19,7 +19,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
-import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
+import { encryptPanForSync, blindIndexPan, encryptAadhaarForSync, blindIndexAadhaar } from "../../shared/syncPiiEncryption.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { validateStatutoryFields } from "../../shared/statutoryFormat.js";
 
@@ -46,14 +46,31 @@ router.get("/pending", requireRole(...REVIEWER_ROLES), h(async (_req: Authentica
 }));
 
 // Never surface a raw PAN/Aadhaar/UAN/ESI number in an audit-log entry.
+// old_values is now nested ({ employees: {...}, employee_statutory_info: {...} }
+// — see submitStatutoryDetailsForApproval in profile-approval.service.ts, which
+// used to write old_values as the literal string '{}') while new_values stays
+// a flat object of submitted fields. Mask recurses one level into any plain
+// nested object so both shapes get the same sensitive-key masking, instead of
+// only matching flat top-level keys and silently passing PAN/Aadhaar through
+// unmasked for the nested case.
+const STATUTORY_SENSITIVE_KEYS = ["pan_number", "aadhaar_id", "aadhaar_number", "uan_number", "esi_number", "esic_number", "epf_number"];
 function maskStatutoryValues(values: Record<string, any> | undefined | null): Record<string, unknown> {
   if (!values) return {};
   const mask = (v: unknown) => (v == null || v === "" ? null : `${"*".repeat(Math.max(0, String(v).length - 4))}${String(v).slice(-4)}`);
-  const out: Record<string, unknown> = { ...values };
-  for (const key of ["pan_number", "aadhaar_id", "uan_number", "esi_number", "epf_number"]) {
-    if (key in out) out[key] = mask(out[key]);
-  }
-  return out;
+  const maskLevel = (obj: Record<string, any>): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(obj)) {
+      if (STATUTORY_SENSITIVE_KEYS.includes(key)) {
+        out[key] = mask(val);
+      } else if (val && typeof val === "object" && !Array.isArray(val)) {
+        out[key] = maskLevel(val);
+      } else {
+        out[key] = val;
+      }
+    }
+    return out;
+  };
+  return maskLevel(values);
 }
 
 // PATCH /api/statutory-change-requests/:id
@@ -142,6 +159,39 @@ router.patch("/:id", requireRole(...REVIEWER_ROLES), h(async (req: Authenticated
       }
       if (uan_number !== undefined) {
         await connection.execute("UPDATE employees SET uan_number = ? WHERE id = ?", [uan_number, rec.employee_id]);
+      }
+
+      // employee.routes.ts's own profile GET resolves PAN/Aadhaar with the
+      // `employees` table as PRIMARY source and employee_statutory_info only
+      // as a fallback when that primary is empty (resolvePii(emp.pan_number_encrypted,
+      // emp.pan_number) etc.) — confirmed by direct read of that route. Without
+      // this, an approved PAN/Aadhaar change only ever landed in
+      // employee_statutory_info above, so for anyone who already had a PAN on
+      // file the approval was invisible everywhere: the employee's own
+      // profile kept showing the old value indefinitely, silently. No read-path
+      // change needed — resolvePii already checks employees first, so this
+      // write alone makes the existing GET route pick it up.
+      if (pan_number !== undefined) {
+        await connection.execute(
+          "UPDATE employees SET pan_number = ?, pan_number_encrypted = ?, pan_blind_index = ? WHERE id = ?",
+          [
+            pan_number,
+            encryptPanForSync(pan_number, "statutory-approval-employees-sync"),
+            blindIndexPan(pan_number, "statutory-approval-employees-sync"),
+            rec.employee_id,
+          ]
+        );
+      }
+      if (aadhaar_id !== undefined) {
+        await connection.execute(
+          "UPDATE employees SET aadhaar_number = ?, aadhaar_number_encrypted = ?, aadhaar_blind_index = ? WHERE id = ?",
+          [
+            aadhaar_id,
+            encryptAadhaarForSync(aadhaar_id, "statutory-approval-employees-sync"),
+            blindIndexAadhaar(aadhaar_id, "statutory-approval-employees-sync"),
+            rec.employee_id,
+          ]
+        );
       }
     }
 
