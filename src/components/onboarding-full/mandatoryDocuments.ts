@@ -15,11 +15,13 @@ import type { DocRecord } from "./useOnboardingFull";
 
 export type MandatoryDocRule = { label: string; matches: string[] };
 
+// Bank Passbook / Cancelled Cheque deliberately removed — bank account is no
+// longer mandatory at onboarding. Keep this list identical to the backend's
+// MANDATORY_DOCUMENTS in onboarding-full.service.ts.
 export const MANDATORY_DOCUMENT_RULES: MandatoryDocRule[] = [
   { label: "Aadhaar Card", matches: ["aadhaar", "aadhar"] },
   { label: "PAN Card", matches: ["pan"] },
   { label: "Address Proof", matches: ["address proof"] },
-  { label: "Cancelled Cheque / Bank Passbook", matches: ["cancelled cheque", "cheque", "passbook"] },
   { label: "Passport Size Photo", matches: ["passport photo", "passport size", "photo"] },
   { label: "10th Marksheet", matches: ["10th"] },
   { label: "12th Marksheet / Diploma", matches: ["12th", "diploma"] },

@@ -50,4 +50,22 @@ describe("Onboarding — frontend/backend mandatory-document parity", () => {
     const query = fn.slice(0, queryEnd);
     expect(query).toContain("deleted_at IS NULL");
   });
+
+  it("neither list requires a bank/cheque document — bank is optional at onboarding", () => {
+    const backendRules = extractRules(backendService, "const MANDATORY_DOCUMENTS");
+    const frontendRules = extractRules(frontendModule, "export const MANDATORY_DOCUMENT_RULES");
+    expect(backendRules.some((r) => r.label.toLowerCase().includes("cheque"))).toBe(false);
+    expect(frontendRules.some((r) => r.label.toLowerCase().includes("cheque"))).toBe(false);
+  });
+});
+
+describe("Onboarding — bank account is not mandatory to submit", () => {
+  it("submitFullOnboarding no longer hard-requires a candidate_onboarding_bank_detail row", () => {
+    const fn = backendService.slice(
+      backendService.indexOf("export async function submitFullOnboarding"),
+      backendService.indexOf("const missingDocuments = await findMissingMandatoryDocuments")
+    );
+    expect(fn).not.toContain("candidate_onboarding_bank_detail");
+    expect(fn).not.toContain("Bank details are required before submit");
+  });
 });

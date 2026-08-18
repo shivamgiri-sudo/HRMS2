@@ -35,7 +35,10 @@ const REQUIRED_DOCS = [
   { type: "Aadhaar", label: "Aadhaar Card", required: true },
   { type: "PAN Card", label: "PAN Card", required: true },
   { type: "Address Proof", label: "Address Proof", required: true },
-  { type: "Cancelled Cheque", label: "Cancelled Cheque / Bank Passbook", required: true },
+  // Bank account is optional at onboarding (many new joiners don't have one
+  // yet) — no longer a mandatory upload, but still offered as an optional
+  // doc type for candidates who do have one.
+  { type: "Cancelled Cheque", label: "Cancelled Cheque / Bank Passbook (if you have an account)", required: false },
   { type: "Passport Photo", label: "Passport Size Photo", required: true },
   { type: "10th Marksheet", label: "10th Marksheet / Certificate", required: true },
   { type: "12th Marksheet", label: "12th Marksheet / Diploma Certificate", required: true },

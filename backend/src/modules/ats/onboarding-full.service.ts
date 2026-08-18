@@ -1715,11 +1715,17 @@ export async function savePfOptOutConsent(token: string, input: Record<string, u
  * how 15 of 38 submitted candidates ended up with no identity documents at all,
  * two of them already approved.
  */
+// Bank Passbook / Cancelled Cheque deliberately removed (was here) — bank
+// account is no longer mandatory at onboarding, see submitFullOnboarding's
+// comment. Not made conditional on "bank details were provided" either: the
+// Bank step's Save button already unconditionally upserts a row even when
+// entirely blank, so "a bank row exists" was never a reliable signal for
+// "the candidate actually has an account" without more scope than this
+// fix warrants.
 const MANDATORY_DOCUMENTS: Array<{ label: string; matches: string[] }> = [
   { label: "Aadhaar Card", matches: ["aadhaar", "aadhar"] },
   { label: "PAN Card", matches: ["pan"] },
   { label: "Address Proof", matches: ["address proof"] },
-  { label: "Cancelled Cheque / Bank Passbook", matches: ["cancelled cheque", "cheque", "passbook"] },
   { label: "Passport Size Photo", matches: ["passport photo", "passport size", "photo"] },
   { label: "10th Marksheet", matches: ["10th"] },
   { label: "12th Marksheet / Diploma", matches: ["12th", "diploma"] },
@@ -1778,11 +1784,14 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
     );
   }
 
-  const [bankRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
-    [candidateId]
-  );
-  if (!bankRows.length) throw Object.assign(new Error("Bank details are required before submit"), { statusCode: 400 });
+  // Bank account is deliberately NOT required to submit — many new joiners
+  // don't have one yet at onboarding time. They add it post-joining via the
+  // existing employee self-service flow (POST /me/bank-change-request,
+  // Profile.tsx's Bank Account section), which already routes through
+  // Payroll HO approval. Confirmed zero downstream dependency: neither
+  // employee-creation-orchestrator.service.ts's createEmployeeFromCandidate
+  // nor joining-control-room.service.ts's readinessBlockers() reference bank
+  // data at all.
 
   const missingDocuments = await findMissingMandatoryDocuments(candidateId);
   if (missingDocuments.length) {
