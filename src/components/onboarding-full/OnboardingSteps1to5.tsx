@@ -275,6 +275,16 @@ export function Step2Personal({
     : null;
   const dobError = age !== null && (age < 16 || age > 60) ? `Age must be between 16–60 (currently ${age})` : "";
 
+  // Emergency contact must be reachable independently of the candidate's own
+  // phone — a shared number defeats the point of an emergency contact.
+  // Hard-block (like the Bank step's account-number mismatch), not a soft
+  // warning (like the Bank step's name-mismatch) — this must never be allowed.
+  const normPhone = (v: string) => (v || "").replace(/\D/g, "").slice(-10);
+  const mobileEqualsEmergency = Boolean(
+    employee.mobileNumber && employee.emergencyContactMobile &&
+    normPhone(employee.mobileNumber) === normPhone(employee.emergencyContactMobile)
+  );
+
   return (
     <Card className="border-t-4 border-t-slate-500 shadow-sm border border-slate-200 rounded-xl overflow-hidden">
       <div className="px-5 pt-4 pb-3 border-b border-slate-100">
@@ -338,7 +348,8 @@ export function Step2Personal({
           <F label="Relation" value={employee.emergencyContactRelation} onChange={(v) => upd("emergencyContactRelation", v)}
             opts={RELATIONS} />
           <F label="Mobile Number" value={employee.emergencyContactMobile} onChange={(v) => upd("emergencyContactMobile", v)}
-            type="tel" mode="tel" required placeholder="Active number" />
+            type="tel" mode="tel" required placeholder="Active number"
+            error={mobileEqualsEmergency ? "Must be different from your own Mobile Number above" : ""} />
         </div>
 
         <SectionHead sub="For PF/ESI nomination purposes">Nominee 1 (Primary)</SectionHead>
@@ -366,7 +377,7 @@ export function Step2Personal({
         <div className="mt-6 flex gap-3 justify-end">
           <Button
             onClick={onSave}
-            disabled={saving || Boolean(dobError)}
+            disabled={saving || Boolean(dobError) || mobileEqualsEmergency}
             size="lg"
             className="min-h-[52px] px-8 text-base font-bold bg-blue-600 hover:bg-blue-700 rounded-xl shadow-lg"
           >

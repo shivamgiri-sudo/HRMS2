@@ -1269,6 +1269,20 @@ export async function getFullOnboardingStatus(token: string) {
 export async function saveEmployeeDetails(token: string, input: Record<string, unknown>, meta?: { ip?: string; userAgent?: string }) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;
+
+  // Mobile and Emergency Contact numbers must differ — the frontend already
+  // blocks this, but that check is bypassable (dev tools, a direct API call),
+  // so it must also be enforced here before any write.
+  const normPhone = (v: unknown) => String(v ?? "").replace(/\D/g, "").slice(-10);
+  const mobileNorm = normPhone(input.mobileNumber ?? tokenData.mobile);
+  const emergencyNorm = normPhone(input.emergencyContactMobile);
+  if (mobileNorm && emergencyNorm && mobileNorm === emergencyNorm) {
+    throw Object.assign(
+      new Error("Emergency contact number must be different from your own mobile number."),
+      { statusCode: 400, code: "MOBILE_EQUALS_EMERGENCY_CONTACT" },
+    );
+  }
+
   const id = randomUUID();
   const panMasked = maskPan(input.panNumber ?? input.pan_number ?? input.pan_number_masked);
   const panHash = hashValue(input.panNumber ?? input.pan_number);
