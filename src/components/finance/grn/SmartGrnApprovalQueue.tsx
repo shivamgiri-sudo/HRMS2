@@ -1068,10 +1068,10 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
             )}
           </Tabs>
 
-          <SheetFooter className="gap-2 border-t border-grn-line-soft px-[16px] py-[12px] sm:justify-end">
+          <SheetFooter className="flex-wrap gap-2 border-t border-grn-line-soft px-[16px] py-[12px] sm:flex-nowrap sm:justify-end">
             <GrnButton onClick={() => setTarget(null)}>Close</GrnButton>
             {canReview && (
-              <>
+              <div className="flex shrink-0 gap-2">
                 <GrnButton
                   variant="destructive"
                   disabled={reviewMutation.isPending || workspaceQuery.isLoading}
@@ -1090,7 +1090,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     : <CheckCircle2 className="h-3.5 w-3.5" />}
                   Approve
                 </GrnButton>
-              </>
+              </div>
             )}
           </SheetFooter>
         </SheetContent>
