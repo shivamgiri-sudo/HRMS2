@@ -302,6 +302,12 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
       if (searchQuery.trim()) params.set("q", searchQuery.trim());
       params.set("active_status", statusFilter);
       if (hasBranchFilter && branchFilter) params.set("branch_id", branchFilter);
+      // branch_master holds live rows that share the same name but are NOT duplicates —
+      // distinct locations, some with real employees linked, some blank twins. The default
+      // list dedups by name and hides the rest, so editing "the branch" here could silently
+      // update a row no employee is actually linked to. Ask for every row (+ employee counts)
+      // so duplicate names can be told apart below.
+      if (isBranchTab) params.set("include_duplicates", "1");
       const url = `${tab.apiPath}${params.toString() ? `?${params.toString()}` : ""}`;
       const res = await hrmsApi.get<{ data: OrgRecord[] } | OrgRecord[]>(url);
       const data = Array.isArray(res) ? res : (res as { data: OrgRecord[] }).data ?? [];
@@ -312,7 +318,7 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [tab.apiPath, searchQuery, statusFilter, hasBranchFilter, branchFilter]);
+  }, [tab.apiPath, searchQuery, statusFilter, hasBranchFilter, branchFilter, isBranchTab]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -392,6 +398,24 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
       setMessage(msg);
     }
   };
+
+  // branch_master can hold multiple rows sharing the same name that are NOT duplicates —
+  // distinct physical locations (see the include_duplicates note in load() above). Flag
+  // them here so HR can tell which row to edit by Code / linked-employee count instead of
+  // always landing on whichever one the old deduped list used to show.
+  const duplicateNames = isBranchTab
+    ? new Set(
+        Object.entries(
+          records.reduce<Record<string, number>>((acc, r) => {
+            const name = getRecordName(r, tab).trim().toLowerCase();
+            if (name) acc[name] = (acc[name] ?? 0) + 1;
+            return acc;
+          }, {})
+        )
+          .filter(([, count]) => count > 1)
+          .map(([name]) => name)
+      )
+    : new Set<string>();
 
   return (
     <div className="space-y-4">
@@ -505,6 +529,19 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
                       )}
                       {rec.band && (
                         <div className="text-xs text-slate-400 mt-0.5">Band: {String(rec.band)}</div>
+                      )}
+                      {isBranchTab && typeof rec.employee_count === "number" && (
+                        <div className="text-xs text-slate-400 mt-0.5">
+                          {rec.employee_count} employee{rec.employee_count === 1 ? "" : "s"} linked
+                        </div>
+                      )}
+                      {isBranchTab && duplicateNames.has(getRecordName(rec, tab).trim().toLowerCase()) && (
+                        <div
+                          className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700"
+                          title="Another branch row shares this name. Check Code and employees-linked before editing — they are separate physical locations, not one record."
+                        >
+                          <AlertTriangle className="h-3 w-3" /> Duplicate name — verify code
+                        </div>
                       )}
                     </td>
                     <td className="p-4 font-mono text-xs text-slate-500">{getRecordCode(rec, tab)}</td>

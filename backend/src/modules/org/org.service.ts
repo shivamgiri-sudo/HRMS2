@@ -5,6 +5,7 @@ import { getEffectiveConfig } from "../customization/customization-engine.js";
 
 import { blankToNull } from "../../shared/sql-values.js";
 import { syncCostCentreRelatedTables } from "../../shared/cost-centre-sync.js";
+import { clearBranchLetterheadCache } from "./branchAddress.service.js";
 // ── Whitelisted master tables to prevent SQL injection ────────────────────────
 const MASTER_TABLE_WHITELIST = new Set([
   "branch_master",
@@ -38,6 +39,18 @@ interface ListOptions {
   client_id?: string;
   lob_id?: string;
   process_id?: string;
+  /**
+   * Several master tables (branch_master above all — see 1115_reactivate_operational_branches.sql
+   * and the job-requisition/statutory-executor/ceo-overview findings) hold live rows that share
+   * the same name but are NOT duplicates: distinct physical locations, some with real employees
+   * linked, some blank. The default name-based dedup below picks one survivor per name and hides
+   * the rest, so an admin editing "the branch" from the deduped list can silently update a row no
+   * employee is actually linked to, while the employee's real row never changes. Passing this flag
+   * returns every row untouched so an admin UI can show and edit them individually. Nothing sends
+   * this flag today except the Org Masters Branches tab — every other consumer (dropdowns,
+   * filter-options, exports) is unaffected and keeps seeing the deduped list.
+   */
+  includeDuplicates?: boolean;
 }
 
 // Tables that actually carry a branch_id column — listActive() is generic across every
@@ -137,14 +150,19 @@ async function listActive(table: string, orderCol = "created_at", options: ListO
     params
   );
 
-  const seen = new Set<string>();
-  let items = (rows as RowDataPacket[]).filter((item) => {
-    if (!nameCol) return true;
-    const normalized = String(item[nameCol] ?? "").trim().toLocaleLowerCase();
-    if (!normalized || seen.has(normalized)) return false;
-    seen.add(normalized);
-    return true;
-  });
+  let items: RowDataPacket[];
+  if (options.includeDuplicates) {
+    items = rows as RowDataPacket[];
+  } else {
+    const seen = new Set<string>();
+    items = (rows as RowDataPacket[]).filter((item) => {
+      if (!nameCol) return true;
+      const normalized = String(item[nameCol] ?? "").trim().toLocaleLowerCase();
+      if (!normalized || seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
+  }
 
   // Apply customization if entityType + employeeId provided
   if (options.entityType && options.employeeId) {
@@ -185,7 +203,24 @@ async function setStatus(table: string, id: string, status: number): Promise<voi
 // ── Branch ────────────────────────────────────────────────────────────────────
 
 export const branchService = {
-  list: (options?: ListOptions) => listActive("branch_master", "branch_name", { entityType: "branch", ...options }),
+  async list(options?: ListOptions) {
+    const items = await listActive("branch_master", "branch_name", { entityType: "branch", ...options });
+    // Only when the caller explicitly asked to see duplicate-named rows (see includeDuplicates
+    // doc on ListOptions): attach how many employees are actually linked to each row, so an
+    // admin picking among same-named branches can tell which one is the real, in-use row rather
+    // than an empty twin. Skipped for the default dropdown/list path — cheap there, but no
+    // consumer needs it and it shouldn't change the shape of the common case.
+    if (options?.includeDuplicates && items.length > 0) {
+      const [counts] = await db.execute<RowDataPacket[]>(
+        `SELECT branch_id, COUNT(*) AS employee_count FROM employees WHERE branch_id IS NOT NULL GROUP BY branch_id`
+      );
+      const countMap = new Map<string, number>((counts as RowDataPacket[]).map((r) => [String(r.branch_id), Number(r.employee_count)]));
+      for (const item of items) {
+        (item as RowDataPacket).employee_count = countMap.get(String(item.id)) ?? 0;
+      }
+    }
+    return items;
+  },
   getById: (id: string) => getById("branch_master", id),
   setStatus: (id: string, status: number) => setStatus("branch_master", id, status),
   async create(data: { branch_code: string; branch_name: string; city?: string; state?: string; address?: string; hr_contact?: string; latitude?: number | string; longitude?: number | string }) {
@@ -201,6 +236,10 @@ export const branchService = {
       "UPDATE branch_master SET branch_name = COALESCE(?, branch_name), city = COALESCE(?, city), state = COALESCE(?, state), address = COALESCE(?, address), hr_contact = COALESCE(?, hr_contact), latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude), updated_at = NOW() WHERE id = ?",
       [data.branch_name ?? null, data.city ?? null, data.state ?? null, data.address ?? null, data.hr_contact ?? null, data.latitude ? Number(data.latitude) : null, data.longitude ? Number(data.longitude) : null, id]
     );
+    // branchAddress.service.ts caches resolved letterhead (incl. hr_contact) per branch id for
+    // the life of the process and is never otherwise invalidated — without this, offer/appointment
+    // letters and digital form-fill keep printing the pre-edit HR contact/address until a restart.
+    clearBranchLetterheadCache();
     return getById("branch_master", id);
   },
   delete: (id: string) => softDelete("branch_master", id),

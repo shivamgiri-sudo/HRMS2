@@ -31,7 +31,7 @@ function buildCrud(
   }
 ) {
   router.get(path, h(async (req: Request, res: Response) => {
-    const { q, active_status, page, limit, branch_id } = req.query;
+    const { q, active_status, page, limit, branch_id, include_duplicates } = req.query;
     const options = {
       q: q as string | undefined,
       active_status: active_status as string | undefined,
@@ -40,6 +40,10 @@ function buildCrud(
       // Ignored by list() for tables with no branch_id column (see TABLES_WITH_BRANCH_ID
       // in org.service.ts) — safe to always pass through.
       branch_id: branch_id as string | undefined,
+      // Opt-in only — see includeDuplicates doc on ListOptions in org.service.ts. Nothing
+      // sends this today except the Org Masters Branches tab; every other caller of every
+      // other tab is unaffected.
+      includeDuplicates: include_duplicates === "1" || include_duplicates === "true",
     };
     res.json({ data: await svc.list(options) });
   }));
