@@ -296,7 +296,10 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
             ob.employee_id, e.employee_code,
             p.profile_status AS form_step,
             p.current_step_idx,
-            p.updated_at AS form_last_activity
+            p.updated_at AS form_last_activity,
+            (SELECT COUNT(*) FROM candidate_onboarding_document d
+               WHERE d.candidate_id = c.id AND d.deleted_at IS NULL) AS documents_uploaded,
+            bank.verification_status AS bank_verification_status
      FROM ats_onboarding_request r
      JOIN ats_candidate c ON c.id = r.candidate_id
      LEFT JOIN branch_master b ON b.id = r.branch_id
@@ -304,6 +307,7 @@ export async function listOnboardingRequests(scopeFilter: { sql: string; params:
      LEFT JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
      LEFT JOIN employees e ON e.id = ob.employee_id
      LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
+     LEFT JOIN candidate_onboarding_bank_detail bank ON bank.candidate_id = c.id
      WHERE (${scopeFilter.sql})
      ORDER BY r.created_at DESC`,
     scopeFilter.params,

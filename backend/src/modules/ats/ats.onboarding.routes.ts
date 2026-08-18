@@ -6,6 +6,7 @@ import {
   sendOnboardingToken, validateToken, submitProfile,
   listOnboardingRequests, saveOffer,
   listPendingApprovals, approveOffer, rejectOffer,
+  sendOnboardingProgressReminder,
 } from './ats.onboarding.service.js';
 import { calculateSalary } from './salary.calculator.js';
 import { buildScopeWhereClause, hasScopedAccess } from '../../shared/scopeAccess.js';
@@ -175,24 +176,25 @@ router.post(
       });
       return;
     }
-    const { randomUUID } = await import('crypto');
-    const token = randomUUID();
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 19)
-      .replace('T', ' ');
-    await database.execute(
-      `UPDATE ats_candidate
-          SET onboarding_token = ?,
-              onboarding_token_expires = ?,
-              status = 'onboarding_link_sent',
-              updated_at = NOW()
-        WHERE id = ?`,
-      [token, expiresAt, id],
-    );
+    // Delegate to the canonical sendOnboardingToken so ats_onboarding_request,
+    // ats_onboarding_bridge, and ats_candidate.profile_status are all written correctly.
+    const { sendOnboardingToken } = await import('./ats.onboarding.service.js');
+    const result = await sendOnboardingToken(id, req.authUser!.id);
     const baseUrl = process.env.FRONTEND_URL ?? 'http://localhost:8085';
-    const link = `${baseUrl}/onboard-full?token=${token}`;
-    res.json({ success: true, link, token, expires_at: expiresAt });
+    const link = `${baseUrl}/onboard-full?token=${result.token}`;
+    res.json({ success: true, link, token: result.token, expires_at: result.expiresAt });
+  }),
+);
+
+// ── Send Progress Reminder to Candidate ──────────────────────────────────────
+
+router.post(
+  '/candidates/:id/send-reminder',
+  requireAuth,
+  requireRole('recruiter', 'hr', 'admin', 'super_admin'),
+  h(async (req: AuthenticatedRequest, res) => {
+    const result = await sendOnboardingProgressReminder(req.params!.id, req.authUser!.id);
+    res.json({ ok: true, ...result });
   }),
 );
 

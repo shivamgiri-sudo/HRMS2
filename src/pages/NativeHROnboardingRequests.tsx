@@ -48,6 +48,9 @@ interface OnboardingRequest {
   bank_verification_status?: string;
   employee_id?: string;
   employee_code?: string;
+  form_step?: string;
+  current_step_idx?: number;
+  form_last_activity?: string;
 }
 
 interface BgvCheckItem {
@@ -165,7 +168,21 @@ function fmt(v?: number | string | null): string {
   return `₹${Math.round(n).toLocaleString('en-IN')}`;
 }
 function statusLabel(v?: string): string {
+  if (v === 'initiated') return 'Initiated';
   return String(v || 'pending').replace(/_/g, ' ');
+}
+
+const FORM_IN_PROGRESS_STEPS = new Set([
+  'draft','employee_details_saved','bank_saved','statutory_saved',
+  'qualifications_saved','experience_saved','family_saved',
+  'nominee_saved','language_saved','final_saved',
+]);
+
+function resolveDisplayStatus(r: { profile_status: string; form_step?: string }): string {
+  if (r.profile_status === 'onboarding_sent' && r.form_step && FORM_IN_PROGRESS_STEPS.has(r.form_step)) {
+    return 'initiated';
+  }
+  return r.profile_status;
 }
 function canDownloadDocs(role: string): boolean {
   return ['admin', 'super_admin', 'hr', 'payroll_hr', 'payroll'].includes(role);
@@ -180,6 +197,7 @@ function StatusBadge({ status }: { status?: string }) {
     hr_approved:        'bg-blue-50 text-blue-700',
     onboarded:          'bg-emerald-50 text-emerald-700',
     rejected:           'bg-red-50 text-red-700',
+    initiated:          'bg-orange-50 text-orange-700',
   };
   return (
     <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${map[s] || 'bg-slate-50 text-slate-500'}`}>
@@ -313,6 +331,10 @@ export default function NativeHROnboardingRequests() {
   // ── Resend link state
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [resendResult, setResendResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
+
+  // ── Send progress reminder state
+  const [reminderSendingId, setReminderSendingId] = useState<string | null>(null);
+  const [reminderResult, setReminderResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
 
   // ── Detail / selected state
   const [selected, setSelected] = useState<OnboardingRequest | null>(null);
@@ -476,6 +498,23 @@ export default function NativeHROnboardingRequests() {
       setBgvReviewSaving(false);
     }
   }, [loadBgvQueue, bgvDetailCandidate, loadBgvDetail]);
+
+  // ── Send progress reminder to initiated candidate
+  const sendReminder = useCallback(async (row: OnboardingRequest, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setReminderSendingId(row.candidate_id);
+    setReminderResult(null);
+    try {
+      await hrmsApi.post(`/api/ats/onboarding/candidates/${row.candidate_id}/send-reminder`, {});
+      setReminderResult({ id: row.candidate_id, ok: true, msg: `Reminder sent to ${maskEmail(row.email)} / ${maskMobile(row.mobile)}` });
+      setTimeout(() => setReminderResult(null), 6000);
+    } catch (err: any) {
+      setReminderResult({ id: row.candidate_id, ok: false, msg: err?.message || 'Failed to send reminder.' });
+      setTimeout(() => setReminderResult(null), 6000);
+    } finally {
+      setReminderSendingId(null);
+    }
+  }, []);
 
   // ── Resend onboarding link
   const resendLink = useCallback(async (row: OnboardingRequest, e: React.MouseEvent) => {
@@ -1292,27 +1331,43 @@ export default function NativeHROnboardingRequests() {
                         </td>
                         <td className="px-4 py-3 text-slate-600">{r.branch_name || '—'}</td>
                         <td className="px-4 py-3 text-slate-600">{r.process_name || r.applied_for_process || '—'}</td>
-                        <td className="px-4 py-3"><StatusBadge status={r.profile_status} /></td>
+                        <td className="px-4 py-3"><StatusBadge status={resolveDisplayStatus(r)} /></td>
                         <td className="px-4 py-3"><OfferBadge status={r.offer_status} /></td>
                         <td className="px-4 py-3 text-slate-600">{r.documents_uploaded ?? 0}</td>
                         <td className="px-4 py-3 text-slate-600 capitalize">{statusLabel(r.bank_verification_status)}</td>
                         <td className="px-4 py-3">
-                          {['onboarding_sent', 'profile_in_progress', 'profile_submitted'].includes(r.profile_status) ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={resendingId === r.candidate_id}
-                              onClick={(e) => void resendLink(r, e)}
-                              className="min-h-[36px] gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
-                            >
-                              {resendingId === r.candidate_id
-                                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                : <Send className="h-3.5 w-3.5" />}
-                              Resend
-                            </Button>
-                          ) : (
-                            <span className="text-xs text-slate-300">—</span>
-                          )}
+                          <div className="flex flex-col gap-1">
+                            {['onboarding_sent', 'profile_in_progress', 'profile_submitted'].includes(r.profile_status) ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={resendingId === r.candidate_id}
+                                onClick={(e) => void resendLink(r, e)}
+                                className="min-h-[32px] gap-1 text-blue-700 border-blue-200 hover:bg-blue-50"
+                              >
+                                {resendingId === r.candidate_id
+                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  : <Send className="h-3.5 w-3.5" />}
+                                Resend
+                              </Button>
+                            ) : (
+                              <span className="text-xs text-slate-300">—</span>
+                            )}
+                            {r.form_step && FORM_IN_PROGRESS_STEPS.has(r.form_step) && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={reminderSendingId === r.candidate_id}
+                                onClick={(e) => void sendReminder(r, e)}
+                                className="min-h-[32px] gap-1 text-orange-700 border-orange-200 hover:bg-orange-50"
+                              >
+                                {reminderSendingId === r.candidate_id
+                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  : <Send className="h-3.5 w-3.5" />}
+                                Remind
+                              </Button>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <Button
@@ -1359,7 +1414,7 @@ export default function NativeHROnboardingRequests() {
                 <span><span className="text-slate-400">Email: </span>{maskEmail(selected.email)}</span>
               </div>
               <div className="flex items-center gap-3 flex-wrap">
-                <StatusBadge status={selected.profile_status} />
+                <StatusBadge status={resolveDisplayStatus(selected)} />
                 {selected.employee_id && selected.employee_code && (
                   <Link
                     to={`/employees/${selected.employee_id}/joining-documents`}
@@ -1384,16 +1439,39 @@ export default function NativeHROnboardingRequests() {
                     Resend Onboarding Link
                   </Button>
                 )}
+                {selected.form_step && FORM_IN_PROGRESS_STEPS.has(selected.form_step) && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={reminderSendingId === selected.candidate_id}
+                    onClick={(e) => void sendReminder(selected, e)}
+                    className="gap-1 min-h-[36px] text-orange-700 border-orange-200 hover:bg-orange-50"
+                  >
+                    {reminderSendingId === selected.candidate_id
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <Send className="h-3.5 w-3.5" />}
+                    Send Reminder
+                  </Button>
+                )}
               </div>
             </div>
 
-            {/* Resend result toast (detail view) */}
+            {/* Action result toasts (detail view) */}
             {resendResult && resendResult.id === selected.candidate_id && (
               <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium ${resendResult.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
                 {resendResult.ok
                   ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
                   : <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />}
                 {resendResult.msg}
+              </div>
+            )}
+            {reminderResult && reminderResult.id === selected.candidate_id && (
+              <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 text-sm font-medium ${reminderResult.ok ? 'border-orange-200 bg-orange-50 text-orange-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                {reminderResult.ok
+                  ? <CheckCircle2 className="h-4 w-4 shrink-0 text-orange-500" />
+                  : <AlertTriangle className="h-4 w-4 shrink-0 text-red-500" />}
+                {reminderResult.msg}
               </div>
             )}
 
@@ -1410,6 +1488,27 @@ export default function NativeHROnboardingRequests() {
                     {stepComplete.filter(Boolean).length}/{stepComplete.length} sections complete
                   </span>
                 </div>
+
+                {/* In-progress banner — shown when candidate started the form but hasn't submitted */}
+                {selected.form_step && FORM_IN_PROGRESS_STEPS.has(selected.form_step) && (
+                  <div className="mb-3 rounded-lg bg-orange-50 border border-orange-200 px-3 py-2 flex flex-wrap items-center gap-3">
+                    <AlertTriangle className="h-4 w-4 text-orange-500 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <span className="text-xs font-bold text-orange-700">Form in progress — not yet submitted</span>
+                      <span className="mx-2 text-orange-300">·</span>
+                      <span className="text-xs text-orange-600">
+                        Last active step: <strong>{STEP_LABELS[selected.current_step_idx ?? 0] ?? `Step ${(selected.current_step_idx ?? 0) + 1}`}</strong>
+                        {' '}(step {(selected.current_step_idx ?? 0) + 1} of {STEP_LABELS.length})
+                      </span>
+                    </div>
+                    {selected.form_last_activity && (
+                      <span className="text-[11px] text-orange-500 whitespace-nowrap">
+                        Last saved: {new Date(selected.form_last_activity).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 <div className="flex flex-wrap gap-2">
                   {STEP_LABELS.map((label, i) => (
                     <span

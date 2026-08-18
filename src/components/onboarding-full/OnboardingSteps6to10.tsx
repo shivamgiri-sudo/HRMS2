@@ -550,6 +550,7 @@ export function Step10Statutory({
   pfOptOutElected, pfOptOutSaving, pfOptOutConsented, pfOptOutConsentedAt,
   onPfOptOutConsent,
   onSendOtp, onVerifyOtp, onSave, onSubmit,
+  consentAccepted, privacyConsentAccepted,
 }: {
   statutory: StatutoryForm;
   setStatutory: React.Dispatch<React.SetStateAction<StatutoryForm>>;
@@ -572,6 +573,8 @@ export function Step10Statutory({
   onVerifyOtp: () => void;
   onSave: () => void;
   onSubmit: () => void;
+  consentAccepted: boolean;
+  privacyConsentAccepted: boolean;
 }) {
   const updS = (k: keyof StatutoryForm, v: any) => setStatutory((p) => ({ ...p, [k]: v }));
   const [pfForm11Check1, setPfForm11Check1] = useState(false);
@@ -585,7 +588,8 @@ export function Step10Statutory({
     statutory.internationalWorker === false;
   const form11ConsentReady = pfForm11Check1 && pfForm11Check2 && pfForm11Check3;
 
-  const canSubmit = statutory.declarationAccepted && otpVerified;
+  const documentsOk = (status?.documents.length ?? 0) >= 1;
+  const canSubmit = statutory.declarationAccepted && otpVerified && privacyConsentAccepted && consentAccepted && documentsOk;
 
   return (
     <Card className="border-t-4 border-t-emerald-500 shadow-sm border border-slate-200 rounded-xl overflow-hidden">
@@ -842,15 +846,31 @@ export function Step10Statutory({
           </p>
 
           {!canSubmit && (
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 rounded-lg bg-red-50 border border-red-200 px-3 py-2.5">
+              <p className="text-xs font-black text-red-700 uppercase tracking-wide mb-1">Please complete these required steps before submitting:</p>
+              {!privacyConsentAccepted && (
+                <p className="text-xs text-red-700 font-semibold flex items-center gap-1.5">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" /> Privacy (DPDP) consent is required — go to Welcome & Consent (Step 1) and accept the privacy policy
+                </p>
+              )}
+              {!consentAccepted && (
+                <p className="text-xs text-red-700 font-semibold flex items-center gap-1.5">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" /> BGV consent is required — go to BGV & Verification (Step 5) and grant consent for background verification
+                </p>
+              )}
+              {!documentsOk && (
+                <p className="text-xs text-red-700 font-semibold flex items-center gap-1.5">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" /> At least 1 document must be uploaded — go to Documents (Step 4) and upload your passport-size photo and required documents
+                </p>
+              )}
               {!otpVerified && (
-                <p className="text-xs text-red-700 font-bold flex items-center gap-1.5">
-                  <AlertCircle className="h-3.5 w-3.5" /> Mobile OTP must be verified before submission
+                <p className="text-xs text-red-700 font-semibold flex items-center gap-1.5">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" /> Mobile OTP must be verified before submission
                 </p>
               )}
               {!statutory.declarationAccepted && (
-                <p className="text-xs text-red-700 font-bold flex items-center gap-1.5">
-                  <AlertCircle className="h-3.5 w-3.5" /> Declaration must be accepted before submission
+                <p className="text-xs text-red-700 font-semibold flex items-center gap-1.5">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" /> Statutory declaration must be accepted before submission
                 </p>
               )}
             </div>

@@ -1741,11 +1741,27 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
   const candidateId = tokenData.candidate_id as string;
 
   const [profileRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_name, mobile_number, personal_email_id, pan_number_hash, aadhaar_number_hash
+    `SELECT id, employee_name, mobile_number, personal_email_id, pan_number_hash, aadhaar_number_hash,
+            bgv_consent, dpdp_consent
        FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
     [candidateId]
   );
   if (!profileRows.length) throw Object.assign(new Error("Employee details are required before submit"), { statusCode: 400 });
+
+  const profile = profileRows[0];
+
+  if (!profile.dpdp_consent) {
+    throw Object.assign(
+      new Error("Privacy (DPDP) consent is required before submission. Please go to the Welcome & Consent step and accept the privacy policy."),
+      { statusCode: 400, code: "DPDP_CONSENT_REQUIRED" }
+    );
+  }
+  if (!profile.bgv_consent) {
+    throw Object.assign(
+      new Error("BGV consent is required before submission. Please go to the BGV & Verification step and grant consent for background verification."),
+      { statusCode: 400, code: "BGV_CONSENT_REQUIRED" }
+    );
+  }
 
   const [bankRows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM candidate_onboarding_bank_detail WHERE candidate_id = ? LIMIT 1`,
@@ -2276,13 +2292,23 @@ export async function syncOnboardingStatus(
   const safeCandidateStatus = candidateAllowed.has(mappedCandidateStatus) ? mappedCandidateStatus : "profile_submitted";
 
   await db.execute(
-    `UPDATE ats_candidate SET profile_status = ?, updated_at = NOW() WHERE id = ?`,
-    [safeCandidateStatus, candidateId]
+    `UPDATE ats_candidate SET profile_status = ?, status = ?, updated_at = NOW() WHERE id = ?`,
+    [safeCandidateStatus, safeRequestStatus, candidateId]
   );
-  await db.execute(
+  const [reqResult] = await db.execute<ResultSetHeader>(
     `UPDATE ats_onboarding_request SET status = ?, updated_at = NOW() WHERE candidate_id = ?`,
     [safeRequestStatus, candidateId]
   );
+  if (reqResult.affectedRows === 0) {
+    // No ats_onboarding_request row exists (candidate's link was sent via a legacy path that skipped row creation).
+    // Create it now so all downstream HR views can track this candidate correctly.
+    await db.execute(
+      `INSERT INTO ats_onboarding_request (id, candidate_id, status, created_at, updated_at)
+       VALUES (UUID(), ?, ?, NOW(), NOW())
+       ON DUPLICATE KEY UPDATE status = VALUES(status), updated_at = NOW()`,
+      [candidateId, safeRequestStatus]
+    );
+  }
   await db.execute(
     `UPDATE candidate_onboarding_profile SET profile_status = ?, updated_at = NOW() WHERE candidate_id = ?`,
     [safeProfileStatus, candidateId]

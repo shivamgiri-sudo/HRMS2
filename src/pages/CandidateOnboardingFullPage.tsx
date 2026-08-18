@@ -276,6 +276,8 @@ export default function CandidateOnboardingFullPage() {
           onVerifyOtp={onb.verifyOtp}
           onSave={onb.saveStatutory}
           onSubmit={onb.submit}
+          consentAccepted={onb.consentAccepted}
+          privacyConsentAccepted={onb.privacyConsentAccepted}
         />
       )}
     </OnboardingMobileShell>
