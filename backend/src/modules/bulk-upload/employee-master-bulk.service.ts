@@ -1,6 +1,7 @@
 import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
+import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
 
 interface BatchRow extends RowDataPacket {
   id: string;
@@ -149,7 +150,7 @@ export async function importEmployeeMasterBatch(
            lob_id = COALESCE(VALUES(lob_id), lob_id),
            employment_type = VALUES(employment_type)`,
         [
-          employeeCode, firstName, lastName, mobile, email,
+          employeeCode, toStoredNameRequired(firstName), toStoredName(lastName), mobile, email,
           gender, doj, branchId, departmentId, designationId,
           costCentreId, processId, lobId, employmentType, importedByUserId,
         ]

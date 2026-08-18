@@ -21,6 +21,7 @@ import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption
 import { validateBankFields, validateStatutoryFields } from "../../shared/statutoryFormat.js";
 import { SELF_EDITABLE_PERSONAL_COLUMNS, dbColumnFor } from "./fieldOwnership.js";
 import { computeAccountBlindIndex, findDuplicateAccountOwner } from "../../shared/bankAccountDuplicate.js";
+import { toStoredNameRequired } from "../../shared/nameFormat.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -591,10 +592,11 @@ router.put("/me/emergency-contact", h(async (req: any, res: any) => {
   if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
   const empId = rows[0].id;
 
-  const { name, relationship, mobile, address } = req.body;
-  if (!name || !relationship || !mobile) {
+  const { name: rawName, relationship, mobile, address } = req.body;
+  if (!rawName || !relationship || !mobile) {
     return res.status(400).json({ success: false, error: "name, relationship, and mobile are required" });
   }
+  const name = toStoredNameRequired(rawName);
 
   const [beforeRows] = await db.execute(
     "SELECT name, relationship, mobile, address FROM employee_emergency_contact WHERE employee_id = ? AND contact_seq = 1 LIMIT 1",
@@ -636,10 +638,11 @@ router.put("/me/nominee", h(async (req: any, res: any) => {
   if (!rows.length) return res.status(404).json({ success: false, error: "No employee record for this user" });
   const empId = rows[0].id;
 
-  const { nominee_name, relationship, date_of_birth, mobile, address } = req.body;
-  if (!nominee_name || !relationship) {
+  const { nominee_name: rawNomineeName, relationship, date_of_birth, mobile, address } = req.body;
+  if (!rawNomineeName || !relationship) {
     return res.status(400).json({ success: false, error: "nominee_name and relationship are required" });
   }
+  const nominee_name = toStoredNameRequired(rawNomineeName);
 
   let oldValues: Record<string, unknown> | null = null;
   try {
@@ -868,10 +871,11 @@ router.put("/:employeeId/statutory-details", ...hrProfileGate, h(async (req: any
 // PUT /api/employees/:employeeId/emergency-contact — HR entry, mirrors PUT /me/emergency-contact
 router.put("/:employeeId/emergency-contact", ...hrProfileGate, h(async (req: any, res: any) => {
   const empId = req.params.employeeId;
-  const { name, relationship, mobile, address } = req.body;
-  if (!name || !relationship || !mobile) {
+  const { name: rawName, relationship, mobile, address } = req.body;
+  if (!rawName || !relationship || !mobile) {
     return res.status(400).json({ success: false, error: "name, relationship, and mobile are required" });
   }
+  const name = toStoredNameRequired(rawName);
 
   const [beforeRows] = await db.execute(
     "SELECT name, relationship, mobile, address FROM employee_emergency_contact WHERE employee_id = ? AND contact_seq = 1 LIMIT 1",
@@ -904,10 +908,11 @@ router.put("/:employeeId/emergency-contact", ...hrProfileGate, h(async (req: any
 // PUT /api/employees/:employeeId/nominee — HR entry, mirrors PUT /me/nominee
 router.put("/:employeeId/nominee", ...hrProfileGate, h(async (req: any, res: any) => {
   const empId = req.params.employeeId;
-  const { nominee_name, relationship, date_of_birth, mobile, address } = req.body;
-  if (!nominee_name || !relationship) {
+  const { nominee_name: rawNomineeName, relationship, date_of_birth, mobile, address } = req.body;
+  if (!rawNomineeName || !relationship) {
     return res.status(400).json({ success: false, error: "nominee_name and relationship are required" });
   }
+  const nominee_name = toStoredNameRequired(rawNomineeName);
 
   let oldValues: Record<string, unknown> | null = null;
   try {

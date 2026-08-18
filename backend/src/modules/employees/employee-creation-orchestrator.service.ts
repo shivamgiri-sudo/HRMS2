@@ -48,6 +48,7 @@ import { env } from '../../config/env.js';
 import { resolveVerifiedDob } from "../ats/ageVerification.service.js";
 import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
 import { registerEmployeeInCosec } from "../integrations/cosec/cosec-registration.service.js";
+import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
 
 export interface EmployeeCreationInput {
   candidateId: string;
@@ -369,7 +370,7 @@ export async function createEmployeeFromCandidate(
           user_id, active_status, employment_status)
        VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
       [
-        employeeId, employeeCode, firstName, lastName,
+        employeeId, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
         candRow?.personal_email ?? null,
         candRow?.mobile ?? null,
         candRow?.personal_email ?? null,
@@ -377,7 +378,7 @@ export async function createEmployeeFromCandidate(
         candRow?.alternate_mobile ?? null,
         candRow?.gender ?? null,
         candRow?.date_of_birth ?? null,
-        candRow?.father_name ?? null,
+        toStoredName(candRow?.father_name),
         candRow?.marital_status ?? null,
         candRow?.current_address ?? null,
         candRow?.permanent_address ?? null,

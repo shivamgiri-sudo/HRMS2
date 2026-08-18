@@ -9,6 +9,7 @@ import type { Employee, PaginatedResult } from "./employee.types.js";
 import type { CreateEmployeeInput, EmployeeFilters, UpdateEmployeeInput } from "./employee.validation.js";
 import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
 import { dispatchJoinProvisioningTasks } from "../it-provisioning/it-provisioning.service.js";
+import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
 
 // Directory list sort — SortableTableHead on the frontend already exposes these 8 columns,
 // but the query ignored sortBy entirely and always returned employee_code ASC, so "sort by
@@ -188,8 +189,8 @@ export const employeeService = {
       [
         id,
         input.employeeCode,
-        input.firstName,
-        input.lastName ?? null,
+        toStoredNameRequired(input.firstName),
+        toStoredName(input.lastName),
         input.email ?? null,
         input.mobile ?? null,
         input.gender ?? null,
@@ -479,8 +480,8 @@ export const employeeService = {
     const sets: string[] = [];
     const params: unknown[] = [];
 
-    if (input.firstName         !== undefined) { sets.push("first_name = ?");           params.push(input.firstName); }
-    if (input.lastName          !== undefined) { sets.push("last_name = ?");            params.push(input.lastName ?? null); }
+    if (input.firstName         !== undefined) { sets.push("first_name = ?");           params.push(toStoredNameRequired(input.firstName)); }
+    if (input.lastName          !== undefined) { sets.push("last_name = ?");            params.push(toStoredName(input.lastName)); }
     if (input.email             !== undefined) { sets.push("email = ?");                params.push(input.email ?? null); }
     if (input.officialEmail     !== undefined) { sets.push("official_email = ?");       params.push(input.officialEmail ?? null); }
     if (input.mobile            !== undefined) { sets.push("mobile = ?");               params.push(input.mobile ?? null); }

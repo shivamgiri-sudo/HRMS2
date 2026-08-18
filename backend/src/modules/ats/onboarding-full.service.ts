@@ -20,6 +20,7 @@ import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
 import { assertEmployableAge, persistMinorFlag, resolveVerifiedDob } from "./ageVerification.service.js";
+import { toStoredName } from "../../shared/nameFormat.js";
 // face-match loaded lazily so onboarding only loads it when needed
 let _faceMatchModule: typeof import("./face-match.service.js") | null = null;
 async function getFaceMatch() {
@@ -1345,18 +1346,18 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       candidateId,
       hashValue(token),
       input.title ?? null,
-      input.employeeName ?? tokenData.full_name ?? null,
+      toStoredName(input.employeeName ?? tokenData.full_name),
       input.relation ?? null,
-      input.fatherHusbandName ?? input.father_name ?? null,
+      toStoredName(input.fatherHusbandName ?? input.father_name),
       input.gender ?? tokenData.gender ?? null,
       input.maritalStatus ?? null,
       normalizedDob,
       input.bloodGroup ?? null,
-      input.nominee ?? input.nomineeName ?? null,
+      toStoredName(input.nominee ?? input.nomineeName),
       input.nomineeRelation ?? null,
       normDate(input.nomineeDateOfBirth),
       input.nominee1SharePct || null,
-      input.nominee2Name || null,
+      toStoredName(input.nominee2Name),
       input.nominee2Relation || null,
       normDate(input.nominee2Dob),
       input.nominee2SharePct || null,
@@ -1384,8 +1385,8 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
       input.esicNumber ?? null,
       input.sourceType ?? tokenData.source_type ?? null,
       input.source ?? tokenData.source ?? null,
-      input.motherName ?? null,
-      input.emergencyContactName ?? null,
+      toStoredName(input.motherName),
+      toStoredName(input.emergencyContactName),
       input.emergencyContactRelation ?? null,
       input.emergencyContactMobile ?? null,
       input.nationality ?? 'Indian',
@@ -1439,7 +1440,7 @@ export async function saveEmployeeDetails(token: string, input: Record<string, u
     // normalizedDob is computed ~100 lines above for exactly this reason and was
     // simply not reused here. nonEmptyString is this file's existing idiom.
     [
-      nonEmptyString(input.fatherHusbandName ?? input.father_name),
+      toStoredName(input.fatherHusbandName ?? input.father_name),
       nonEmptyString(input.gender ?? tokenData.gender),
       normalizedDob,
       nonEmptyString(input.permanentAddress),

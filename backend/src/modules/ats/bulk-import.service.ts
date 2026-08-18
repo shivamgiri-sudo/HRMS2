@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { getIstDateString } from '../../utils/dateUtils.js';
+import { toStoredName } from "../../shared/nameFormat.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -428,7 +429,7 @@ async function importOneCandidate(
         updated_at = NOW()
       WHERE id = ?`,
       [
-        row.FullName?.trim() ?? "",
+        toStoredName(row.FullName) ?? "",
         email ?? "",
         normalizeGender(row.Gender) ?? "",
         row.RoleApplied?.trim() ?? "",
@@ -470,7 +471,7 @@ async function importOneCandidate(
     [
       candidateDbId,
       row.CandidateID?.trim() ?? `IMP-${randomUUID().slice(0, 8).toUpperCase()}`,
-      row.FullName?.trim(),
+      toStoredName(row.FullName),
       mobile,
       email ?? null,
       normalizeGender(row.Gender) ?? null,

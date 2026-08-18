@@ -7,6 +7,7 @@ import { sendOnboardingToken } from "./ats.onboarding.service.js";
 import { transitionCandidateState } from "./ats.status-machine.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { excludeEmployeeShapedCandidatesSql } from "./ats-reporting-scope.js";
+import { toStoredNameRequired } from "../../shared/nameFormat.js";
 import type {
   AtsCandidate,
   AtsCandidateStageLog,
@@ -217,7 +218,7 @@ export const atsService = {
           leaves_in_3months, owns_two_wheeler, id_proof_available, education_proof_available,
           recruiter_name, profile_status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, candidateCode(), input.fullName, input.mobile, input.email ?? null, input.gender ?? null,
+      [id, candidateCode(), toStoredNameRequired(input.fullName), input.mobile, input.email ?? null, input.gender ?? null,
        input.dateOfBirth ?? null, input.appliedForProcess ?? null, input.appliedForBranch ?? null,
        normalizedChannel, input.referredBy ?? null, input.walkInDate ?? null, input.remarks ?? null, userId,
        input.address ?? null, input.education ?? null, input.experience ?? null,
@@ -238,8 +239,12 @@ export const atsService = {
     ];
     fields.forEach(([key, column]) => {
       if (input[key] !== undefined) {
-        // Normalize sourcing channel if being updated
-        const value = key === "sourcingChannel" ? normalizeSourceChannel(input[key] as string) : (input[key] ?? null);
+        // Normalize sourcing channel if being updated; names are always stored uppercase.
+        const value = key === "sourcingChannel"
+          ? normalizeSourceChannel(input[key] as string)
+          : key === "fullName"
+          ? toStoredNameRequired(input[key] as string)
+          : (input[key] ?? null);
         sets.push(`${column} = ?`);
         params.push(value);
       }

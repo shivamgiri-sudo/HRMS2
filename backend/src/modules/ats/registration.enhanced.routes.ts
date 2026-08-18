@@ -20,6 +20,7 @@ import {
 } from "./ats.email.service.js";
 import { jobRequisitionService } from "../job-requisition/job-requisition.service.js";
 import { privacyService } from "../privacy/privacy.service.js";
+import { toStoredNameRequired } from "../../shared/nameFormat.js";
 
 export const registrationEnhancedRouter = Router();
 
@@ -251,7 +252,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
              updated_at = NOW()
          WHERE id = ?`,
         [
-          input.name,
+          toStoredNameRequired(input.name),
           input.email ?? null,
           input.gender ?? null,
           input.dateOfBirth ?? null,

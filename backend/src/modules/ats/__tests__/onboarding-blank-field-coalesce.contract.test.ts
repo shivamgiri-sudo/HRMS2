@@ -82,18 +82,22 @@ describe("saveOnboardingProfile bindings", () => {
     expect(mirror).not.toMatch(/input\.dateOfBirth \?\? tokenData\.date_of_birth \?\? null/);
   });
 
-  it("wraps every user-supplied string binding in nonEmptyString", () => {
-    for (const field of [
-      "input.fatherHusbandName",
-      "input.gender",
-      "input.permanentAddress",
-      "input.mobileNumber",
-      "input.personalEmailId",
-    ]) {
+  it("wraps every user-supplied string binding in a null-safe helper", () => {
+    // input.fatherHusbandName moved to toStoredName (2026-08-18, "names stored
+    // uppercase" policy): it has the exact same blank-to-NULL safety property
+    // this test guards, plus the new uppercase requirement, so it's an equally
+    // valid wrapper here — not a regression of the fix this file documents.
+    for (const [field, wrapper] of [
+      ["input.fatherHusbandName", "toStoredName("],
+      ["input.gender", "nonEmptyString("],
+      ["input.permanentAddress", "nonEmptyString("],
+      ["input.mobileNumber", "nonEmptyString("],
+      ["input.personalEmailId", "nonEmptyString("],
+    ] as const) {
       const at = mirror.indexOf(field);
       expect(at, `${field} not bound in the mirror`).toBeGreaterThan(-1);
       const line = mirror.slice(mirror.lastIndexOf("\n", at), mirror.indexOf("\n", at));
-      expect(line, `${field} still binds a raw value`).toContain("nonEmptyString(");
+      expect(line, `${field} still binds a raw value`).toContain(wrapper);
     }
   });
 
