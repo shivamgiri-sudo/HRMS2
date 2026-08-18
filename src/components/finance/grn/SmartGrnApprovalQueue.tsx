@@ -549,6 +549,28 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                       >
                         Review
                       </GrnButton>
+                      {/* Inline quick-approve / quick-reject — mirrors the imprest queue pattern */}
+                      {((row.status === "submitted" && capabilities?.canReviewBranchStage) ||
+                        (row.status === "branch_head_approved" && capabilities?.canReviewFinanceStage)) && (
+                        <>
+                          <GrnIconButton
+                            title="Approve"
+                            aria-label={`Approve ${row.grn_number}`}
+                            disabled={reviewMutation.isPending}
+                            onClick={(e) => { e.stopPropagation(); reviewMutation.mutate({ id: row.id, decision: "approved", note: "" }); }}
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                          </GrnIconButton>
+                          <GrnIconButton
+                            title="Reject (opens review)"
+                            aria-label={`Reject ${row.grn_number}`}
+                            className="hover:border-grn-crit hover:text-grn-crit"
+                            onClick={(e) => { e.stopPropagation(); setTarget(row); setDecision("rejected"); setReviewNote(""); setOverrideCode(null); setOverrideReason(""); }}
+                          >
+                            <XCircle className="h-3.5 w-3.5" />
+                          </GrnIconButton>
+                        </>
+                      )}
                       {/* Not in the redesign mock, but a real capability: a draft only leaves the
                           branch when someone submits it. */}
                       {row.status === "draft" && capabilities?.canCreate && (
@@ -601,7 +623,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       {/* Tabbed Sheet — replaces the 1180px Dialog */}
       <Sheet open={Boolean(target)} onOpenChange={(open) => !open && setTarget(null)}>
         {/* Full width below 560px — a fixed 560 overflowed the viewport on a phone. */}
-        <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:w-[560px] sm:max-w-[560px]">
+        <SheetContent side="right" className="grn-scope flex w-full flex-col gap-0 p-0 sm:w-[560px] sm:max-w-[560px]">
           <SheetHeader className="border-b border-grn-line bg-grn-line-soft px-[16px] py-[12px]">
             <SheetTitle className="font-grn-mono text-[13px] font-bold text-grn-brand">
               {target?.grn_number} — Review
