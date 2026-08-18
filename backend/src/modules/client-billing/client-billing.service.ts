@@ -54,7 +54,7 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
     throw new Error("At least one line item is required");
   }
 
-  const conn = await (db as any).getConnection();
+  const conn = await db.getConnection();
   const invoiceId = randomUUID();
 
   try {
