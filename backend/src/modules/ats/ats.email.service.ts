@@ -184,7 +184,7 @@ export async function sendOnboardingTokenEmail(params: {
       body: `<p>Dear <strong>${escapeHtml(params.candidateName)}</strong>,</p>
         <p>Your profile has been selected. Please complete your secure 10-step onboarding form using the button below.</p>
         <div style="margin:18px 0;border:1px solid #dbeafe;background:#eff6ff;border-radius:16px;padding:16px;color:#1e3a8a">
-          <strong>Before you start:</strong> Keep Aadhaar, PAN, bank details, education proof, and experience documents ready.
+          <strong>Before you start:</strong> Keep Aadhaar, PAN, Bank Passbook or Cancelled Cheque (if you have an account), education proof, and experience documents ready.
         </div>
         <p style="margin-top:18px;color:#64748b;font-size:13px;line-height:1.6">If the button does not open, copy this link into your browser:<br><span style="word-break:break-all">${escapeHtml(params.onboardingLink)}</span></p>`,
       actionLabel: "Open Onboarding Form",
