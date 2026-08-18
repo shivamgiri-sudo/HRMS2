@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import {
   autoMapHeaders,
   normalizeMobile,
+  isRejectionOutcome,
   CALLING_TARGET_FIELDS,
   CALLING_FIELD_LABELS,
   REQUIRED_CALLING_FIELDS,
@@ -25,6 +26,7 @@ interface BulkCallingUploadProps {
     options: {
       callingOutcomeOptions: string[];
       wpGroupOptions: string[];
+      rejectionReasonOptions: string[];
     };
   };
   sessionLocked: boolean;
@@ -47,6 +49,7 @@ interface MappedRow {
   candidate_location: string;
   wp_group: string;
   recruiter_remarks: string;
+  recruiter_rejection_reason: string;
   _valid: boolean;
   _errors: string[];
 }
@@ -131,6 +134,7 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
         candidate_location: "",
         wp_group: "",
         recruiter_remarks: "",
+        recruiter_rejection_reason: "",
         _valid: true,
         _errors: [],
       };
@@ -173,6 +177,14 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
     });
   }, []);
 
+  const updateRowRejectionReason = useCallback((index: number, value: string) => {
+    setMappedRows((prev) => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], recruiter_rejection_reason: value };
+      return copy;
+    });
+  }, []);
+
   const applyBatchFeedback = useCallback((value: string) => {
     setBatchFeedback(value);
     if (!value) return;
@@ -189,6 +201,13 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
       toast.error(`${missingFeedback.length} row(s) still need a Calling Feedback outcome`);
       return;
     }
+    const missingRejectionReason = validRows.filter(
+      (r) => isRejectionOutcome(r.recruiter_remarks) && !r.recruiter_rejection_reason
+    );
+    if (missingRejectionReason.length) {
+      toast.error(`${missingRejectionReason.length} row(s) marked Rejected/Not Interested still need a Rejection Reason`);
+      return;
+    }
 
     setStep("submitting");
     try {
@@ -202,6 +221,7 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
         candidate_location: r.candidate_location || undefined,
         wp_group: r.wp_group || undefined,
         recruiter_remarks: r.recruiter_remarks || undefined,
+        recruiter_rejection_reason: r.recruiter_rejection_reason || undefined,
         activity_date: bootstrap.actor.activityDate,
         recruiter_name_snapshot: bootstrap.actor.recruiterName,
         hiring_source: sessionContext.hiring_source,
@@ -229,7 +249,7 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
   // ── Template Download ───────────────────────────────────────────────────────
 
   const downloadTemplate = useCallback(() => {
-    const headers = ["Candidate Name", "Mobile No.", "Gender", "Email", "Education", "Experience", "Location", "WP Group", "Calling Feedback"];
+    const headers = ["Candidate Name", "Mobile No.", "Gender", "Email", "Education", "Experience", "Location", "WP Group", "Calling Feedback", "Rejection Reason"];
     const csvContent = headers.join(",") + "\n" + headers.map(() => "").join(",") + "\n";
     const blob = new Blob([csvContent], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -398,6 +418,9 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
     const validCount = mappedRows.filter((r) => r._valid).length;
     const invalidCount = mappedRows.length - validCount;
     const noFeedbackCount = mappedRows.filter((r) => r._valid && !r.recruiter_remarks).length;
+    const noReasonCount = mappedRows.filter(
+      (r) => r._valid && isRejectionOutcome(r.recruiter_remarks) && !r.recruiter_rejection_reason
+    ).length;
 
     return (
       <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-4">
@@ -419,6 +442,7 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
           <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">{validCount} valid</Badge>
           {invalidCount > 0 && <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200">{invalidCount} errors</Badge>}
           {noFeedbackCount > 0 && <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">{noFeedbackCount} no feedback</Badge>}
+          {noReasonCount > 0 && <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">{noReasonCount} no rejection reason</Badge>}
 
           <div className="ml-auto flex items-center gap-2">
             <span className="text-[10px] font-bold uppercase text-slate-500">Apply to all:</span>
@@ -448,11 +472,14 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
                 <th className="px-2 py-2 text-left font-bold text-slate-600">Education</th>
                 <th className="px-2 py-2 text-left font-bold text-slate-600">Location</th>
                 <th className="px-2 py-2 text-left font-bold text-slate-600 w-44">Calling Feedback</th>
+                <th className="px-2 py-2 text-left font-bold text-slate-600 w-40">Rejection Reason</th>
                 <th className="px-2 py-2 text-left font-bold text-slate-600 w-16">Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {mappedRows.map((row, idx) => (
+              {mappedRows.map((row, idx) => {
+                const rowNeedsReason = isRejectionOutcome(row.recruiter_remarks);
+                return (
                 <tr key={idx} className={`transition-colors ${!row._valid ? "bg-rose-50/50" : row.recruiter_remarks ? "hover:bg-slate-50" : "bg-amber-50/30 hover:bg-amber-50/50"}`}>
                   <td className="px-2 py-1.5 text-slate-400 font-mono">{idx + 1}</td>
                   <td className="px-2 py-1.5 font-medium text-slate-900 max-w-[140px] truncate">{row.candidate_name || <span className="text-rose-400 italic">missing</span>}</td>
@@ -477,6 +504,25 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
                     </select>
                   </td>
                   <td className="px-2 py-1.5">
+                    {rowNeedsReason ? (
+                      <select
+                        value={row.recruiter_rejection_reason}
+                        onChange={(e) => updateRowRejectionReason(idx, e.target.value)}
+                        disabled={!row._valid}
+                        className={`h-6 w-full rounded border px-1.5 text-xs font-medium text-slate-700 disabled:opacity-40 ${
+                          row._valid && !row.recruiter_rejection_reason ? "border-rose-400 bg-rose-50" : "border-slate-200 bg-white"
+                        }`}
+                      >
+                        <option value="">— Select —</option>
+                        {bootstrap.options.rejectionReasonOptions.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-slate-300">—</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5">
                     {row._valid ? (
                       <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
                     ) : (
@@ -484,7 +530,8 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -501,9 +548,15 @@ export function BulkCallingUpload({ bootstrap, sessionLocked, sessionContext }: 
                 {noFeedbackCount} row(s) need Calling Feedback before import
               </p>
             )}
+            {noReasonCount > 0 && (
+              <p className="text-xs font-bold text-rose-600">
+                <AlertTriangle className="inline h-3 w-3 mr-1" />
+                {noReasonCount} row(s) need a Rejection Reason before import
+              </p>
+            )}
             <Button
               onClick={() => void handleSubmit()}
-              disabled={step === "submitting" || validCount === 0 || noFeedbackCount > 0}
+              disabled={step === "submitting" || validCount === 0 || noFeedbackCount > 0 || noReasonCount > 0}
               className="gap-1.5"
             >
               {step === "submitting" ? (

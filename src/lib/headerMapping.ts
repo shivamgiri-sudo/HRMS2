@@ -13,6 +13,7 @@ export const CALLING_TARGET_FIELDS = [
   "candidate_location",
   "wp_group",
   "recruiter_remarks",
+  "recruiter_rejection_reason",
 ] as const;
 
 export type CallingTargetField = (typeof CALLING_TARGET_FIELDS)[number];
@@ -27,6 +28,7 @@ export const CALLING_HEADER_ALIASES: Record<CallingTargetField, string[]> = {
   candidate_location: ["Candidate Location", "Location", "City", "Area", "Address", "Place"],
   wp_group: ["WP Groups", "WP Group", "WhatsApp Group", "WP", "Group"],
   recruiter_remarks: ["HR Recruiter Remarks", "Remarks", "Outcome", "Calling Outcome", "Feedback", "Call Status", "Status", "Call Outcome", "Result"],
+  recruiter_rejection_reason: ["HR Recruiter_Rejection Reasons", "HR Recruiter Rejection Reasons", "Rejection Reason", "Rejection Reasons"],
 };
 
 export const CALLING_FIELD_LABELS: Record<CallingTargetField, string> = {
@@ -39,9 +41,17 @@ export const CALLING_FIELD_LABELS: Record<CallingTargetField, string> = {
   candidate_location: "Location",
   wp_group: "WP Group",
   recruiter_remarks: "Calling Feedback",
+  recruiter_rejection_reason: "Rejection Reason",
 };
 
 export const REQUIRED_CALLING_FIELDS: CallingTargetField[] = ["candidate_name", "mobile"];
+
+/** Outcomes that mandate a rejection reason — mirrors isRejectedOutcome() in
+ *  backend/src/modules/ats/recruiter-hiring.service.ts. Keep in sync. */
+export function isRejectionOutcome(remarks: string): boolean {
+  const r = remarks.toLowerCase();
+  return ["rejected", "rejected (recruiter decision)", "not interested", "not interested (candidate declined)"].includes(r);
+}
 
 function canonical(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
