@@ -106,6 +106,7 @@ import { benefitsRouter } from "./modules/benefits/benefits.routes.js";
 import { careerRouter } from "./modules/career/career.routes.js";
 import ijpRouter from "./modules/ijp/ijp.routes.js";
 import { erpRouter } from "./modules/erp/erp.routes.js";
+import { clientBillingRouter } from "./modules/client-billing/client-billing.routes.js";
 import { inboxRouter } from "./modules/inbox/inbox.routes.js";
 import { itProvisioningRouter } from "./modules/it-provisioning/it-provisioning.routes.js";
 import { mobilityRouter } from "./modules/mobility/mobility.routes.js";
@@ -497,6 +498,7 @@ app.use("/api/benefits", benefitsRouter);
 app.use("/api/career", careerRouter);
 app.use("/api/ijp", ijpRouter);
 app.use("/api/erp", erpRouter);
+app.use("/api/client-billing", clientBillingRouter);
 app.use("/api/finance", vendorPaymentRouter);
 app.use("/api/finance", grnRouter);
 // Mounted at its own /imprest prefix rather than bare /api/finance, so no imprest path can
