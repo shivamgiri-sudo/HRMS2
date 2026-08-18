@@ -1728,7 +1728,7 @@ const MANDATORY_DOCUMENTS: Array<{ label: string; matches: string[] }> = [
 /** Returns the labels of mandatory documents this candidate has not provided. */
 async function findMissingMandatoryDocuments(candidateId: string): Promise<string[]> {
   const [docRows] = await db.execute<RowDataPacket[]>(
-    `SELECT doc_type, doc_name FROM candidate_onboarding_document WHERE candidate_id = ?`,
+    `SELECT doc_type, doc_name FROM candidate_onboarding_document WHERE candidate_id = ? AND deleted_at IS NULL`,
     [candidateId],
   );
   const held = docRows

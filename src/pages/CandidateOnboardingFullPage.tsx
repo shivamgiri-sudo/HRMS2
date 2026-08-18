@@ -278,6 +278,7 @@ export default function CandidateOnboardingFullPage() {
           onSubmit={onb.submit}
           consentAccepted={onb.consentAccepted}
           privacyConsentAccepted={onb.privacyConsentAccepted}
+          onGoToDocuments={() => onb.setStep(4)}
         />
       )}
     </OnboardingMobileShell>

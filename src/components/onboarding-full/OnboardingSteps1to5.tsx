@@ -15,6 +15,7 @@ import {
 import type { EmployeeForm, BankForm, StatusData, BgvStatus } from "./useOnboardingFull";
 import { PennyDropButton } from "./PennyDropButton";
 import { INDIA_STATES, citiesForState, OTHER_CITY } from "@/data/indiaStatesCities";
+import { findMissingMandatoryDocs, MANDATORY_DOCUMENT_RULES } from "./mandatoryDocuments";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -820,7 +821,14 @@ export function Step4Documents({
     } finally { setUploading(false); }
   };
 
-  const requiredMissing = REQUIRED_DOCS.filter((d) => d.required && !uploadedTypes.has(d.type));
+  // Substring-matches against doc_type/doc_name the same way the backend's
+  // findMissingMandatoryDocuments does — the old exact-match against
+  // REQUIRED_DOCS's `type` strings could disagree with the backend (e.g. a
+  // "Diploma Certificate" upload satisfies the backend's 12th/diploma rule
+  // but would still show as missing under an exact match).
+  const digilockerDone = status?.digilocker?.status === "documents_received";
+  const requiredMissing = findMissingMandatoryDocs(status?.documents, digilockerDone);
+  const optionalDocs = REQUIRED_DOCS.filter((d) => !d.required);
 
   return (
     <Card className="border-t-4 border-t-amber-500 shadow-sm border border-slate-200 rounded-xl overflow-hidden">
@@ -877,18 +885,28 @@ export function Step4Documents({
           </button>
           {showChecklist && (
             <div className="p-4 grid gap-2 sm:grid-cols-2">
-              {REQUIRED_DOCS.map((d) => {
-                const done = uploadedTypes.has(d.type);
+              {MANDATORY_DOCUMENT_RULES.map((rule) => {
+                const done = !requiredMissing.some((m) => m.label === rule.label);
                 return (
-                  <div key={d.type} className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 ${done ? "bg-emerald-50 text-emerald-700" : d.required ? "bg-red-50 text-red-700" : "bg-slate-50 text-slate-600"}`}>
+                  <div key={rule.label} className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 ${done ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700"}`}>
                     {done
                       ? <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
-                      : d.required
-                        ? <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
-                        : <span className="w-3.5 h-3.5 flex-shrink-0 rounded-full border-2 border-slate-300" />
+                      : <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />
+                    }
+                    <span className="font-semibold">{rule.label}</span>
+                    {!done && <span className="ml-auto text-[10px] font-black uppercase">Required</span>}
+                  </div>
+                );
+              })}
+              {optionalDocs.map((d) => {
+                const done = uploadedTypes.has(d.type);
+                return (
+                  <div key={d.type} className={`flex items-center gap-2 text-xs rounded-lg px-3 py-2 ${done ? "bg-emerald-50 text-emerald-700" : "bg-slate-50 text-slate-600"}`}>
+                    {done
+                      ? <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
+                      : <span className="w-3.5 h-3.5 flex-shrink-0 rounded-full border-2 border-slate-300" />
                     }
                     <span className="font-semibold">{d.label}</span>
-                    {d.required && !done && <span className="ml-auto text-[10px] font-black uppercase">Required</span>}
                   </div>
                 );
               })}

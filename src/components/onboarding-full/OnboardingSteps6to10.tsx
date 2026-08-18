@@ -14,6 +14,7 @@ import type {
   StatutoryForm, StatusData, BgvStatus, BankForm,
 } from "./useOnboardingFull";
 import { EMPTY_QUAL, FAMILY_MEMBER_LIMIT, hasSavedMaskedValue } from "./useOnboardingFull";
+import { findMissingMandatoryDocs } from "./mandatoryDocuments";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -550,7 +551,7 @@ export function Step10Statutory({
   pfOptOutElected, pfOptOutSaving, pfOptOutConsented, pfOptOutConsentedAt,
   onPfOptOutConsent,
   onSendOtp, onVerifyOtp, onSave, onSubmit,
-  consentAccepted, privacyConsentAccepted,
+  consentAccepted, privacyConsentAccepted, onGoToDocuments,
 }: {
   statutory: StatutoryForm;
   setStatutory: React.Dispatch<React.SetStateAction<StatutoryForm>>;
@@ -575,6 +576,7 @@ export function Step10Statutory({
   onSubmit: () => void;
   consentAccepted: boolean;
   privacyConsentAccepted: boolean;
+  onGoToDocuments?: () => void;
 }) {
   const updS = (k: keyof StatutoryForm, v: any) => setStatutory((p) => ({ ...p, [k]: v }));
   const [pfForm11Check1, setPfForm11Check1] = useState(false);
@@ -588,7 +590,14 @@ export function Step10Statutory({
     statutory.internationalWorker === false;
   const form11ConsentReady = pfForm11Check1 && pfForm11Check2 && pfForm11Check3;
 
-  const documentsOk = (status?.documents.length ?? 0) >= 1;
+  // Previously just "at least 1 document uploaded" — which even a Live Selfie
+  // capture satisfied — while the backend actually hard-requires 7 specific
+  // categories at submit time. A candidate could sail past this button fully
+  // enabled and only then get a backend rejection listing 6 things nobody
+  // told them were still missing. Now checks the same rules the backend does.
+  const digilockerDone = status?.digilocker?.status === "documents_received";
+  const missingMandatoryDocs = findMissingMandatoryDocs(status?.documents, digilockerDone);
+  const documentsOk = missingMandatoryDocs.length === 0;
   const canSubmit = statutory.declarationAccepted && otpVerified && privacyConsentAccepted && consentAccepted && documentsOk;
 
   return (
@@ -859,9 +868,25 @@ export function Step10Statutory({
                 </p>
               )}
               {!documentsOk && (
-                <p className="text-xs text-red-700 font-semibold flex items-center gap-1.5">
-                  <AlertCircle className="h-3.5 w-3.5 shrink-0" /> At least 1 document must be uploaded — go to Documents (Step 4) and upload your passport-size photo and required documents
-                </p>
+                <div className="text-xs text-red-700 font-semibold">
+                  <p className="flex items-start gap-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      Still missing: {missingMandatoryDocs.map((d) => d.label).join(", ")}.{" "}
+                      {onGoToDocuments ? (
+                        <button
+                          type="button"
+                          onClick={onGoToDocuments}
+                          className="underline underline-offset-2 font-black"
+                        >
+                          Go to Documents (Step 4)
+                        </button>
+                      ) : (
+                        "Go to Documents (Step 4) to upload them."
+                      )}
+                    </span>
+                  </p>
+                </div>
               )}
               {!otpVerified && (
                 <p className="text-xs text-red-700 font-semibold flex items-center gap-1.5">
