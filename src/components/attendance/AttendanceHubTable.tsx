@@ -32,6 +32,12 @@ interface Props {
   page: number;
   limit: number;
   isLoading: boolean;
+  // True while a query is in flight but placeholderData is still showing the
+  // previous result set (react-query's isFetching, not isPending). Without
+  // this, picking a filter swaps the old rows for new ones with zero visual
+  // feedback for as long as the request takes — looked exactly like the
+  // filter "wasn't working" (2026-08-18 attendance-lookup slowness report).
+  isRefetching?: boolean;
   month: string;
   onPageChange: (p: number) => void;
   onSelect: (emp: HubEmployee) => void;
@@ -39,7 +45,7 @@ interface Props {
 }
 
 export function AttendanceHubTable({
-  employees, total, page, limit, isLoading, month,
+  employees, total, page, limit, isLoading, isRefetching = false, month,
   onPageChange, onSelect, selectedId,
 }: Props) {
   const totalPages = Math.max(1, Math.ceil(total / limit));
@@ -68,6 +74,14 @@ export function AttendanceHubTable({
   return (
     <div className="space-y-2">
       {/* Table header */}
+      <div className="flex items-center gap-2 px-4 text-[10px] font-semibold uppercase tracking-[0.08em] text-indigo-500">
+        {isRefetching && (
+          <>
+            <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 animate-pulse" />
+            <span>Updating…</span>
+          </>
+        )}
+      </div>
       <div className="grid grid-cols-[2fr_1fr_1fr_repeat(3,_0.8fr)_1fr_0.6fr] gap-3 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">
         <span>Employee</span>
         <span>Branch / Process</span>
@@ -79,7 +93,9 @@ export function AttendanceHubTable({
         <span></span>
       </div>
 
-      {/* Rows */}
+      {/* Rows — dimmed while a filter/page change is refetching, so the swap
+          from old to new data doesn't look like nothing happened */}
+      <div className={`space-y-2 transition-opacity duration-150 ${isRefetching ? "opacity-50" : "opacity-100"}`}>
       {employees.map(emp => {
         const statusKey = (emp.employment_status ?? "").toLowerCase();
         const statusCls = STATUS_COLORS[statusKey] ?? STATUS_COLORS.inactive;
@@ -147,6 +163,7 @@ export function AttendanceHubTable({
           </button>
         );
       })}
+      </div>
 
       {/* Pagination */}
       {totalPages > 1 && (

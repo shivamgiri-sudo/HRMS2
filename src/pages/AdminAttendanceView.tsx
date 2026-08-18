@@ -47,7 +47,7 @@ export default function AdminAttendanceView() {
     [filters, debouncedSearch]
   );
 
-  const { data: result, isLoading, dataUpdatedAt } = useHubEmployees(debouncedFilters, month);
+  const { data: result, isLoading, isFetching, dataUpdatedAt } = useHubEmployees(debouncedFilters, month);
   const { data: todaySummary } = useTodaySummary();
   const employees = result?.data ?? [];
   const total = result?.total ?? 0;
@@ -137,6 +137,7 @@ export default function AdminAttendanceView() {
           page={filters.page}
           limit={filters.limit}
           isLoading={isLoading}
+          isRefetching={isFetching && !isLoading}
           month={month}
           onPageChange={handlePageChange}
           onSelect={setSelectedEmployee}
