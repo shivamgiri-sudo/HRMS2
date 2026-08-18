@@ -127,7 +127,11 @@ export async function sendCandidateOnboardingOtp(token: string, input: { mobile?
 
   const code = otpCode();
   const hash = await bcrypt.hash(code, 10);
-  const deliverySent = await sendOtpSms(mobile, code);
+  // candidate_mobile_otp, not the default hrms_login_otp — a candidate isn't logging into
+  // HRMS, they're verifying their mobile for onboarding, and the registry has a dedicated
+  // template that says so; OTP_TTL_MINUTES so the SMS text can't drift from the row's real
+  // expiry (DATE_ADD(NOW(), INTERVAL OTP_TTL_MINUTES MINUTE) below).
+  const deliverySent = await sendOtpSms(mobile, code, 'candidate_mobile_otp', OTP_TTL_MINUTES);
   await db.execute(
     `INSERT INTO candidate_otp_logs
        (id, candidate_id, onboarding_id, mobile_hash, mobile_last4, otp_hash, purpose,

@@ -910,12 +910,24 @@ export const leaveService = {
       const emp = (empRow[0] as any);
       const phone = emp?.mobile ?? emp?.personal_phone ?? null;
       const isApproved = input.status === 'approved' || input.status === 'branch_head_approved';
-      if (phone && (isApproved || input.status === 'rejected')) {
-        const key = isApproved ? 'leave_approved' : 'request_rejected' as const;
-        const vars = input.status === 'approved'
-          ? { name: emp.name, from_date: updated.from_date, to_date: updated.to_date }
-          : { name: emp.name, request_type: 'Leave', approver_name: 'Manager' };
-        sendSMS(phone, key, vars as any).catch(() => {});
+      if (phone && isApproved) {
+        sendSMS(phone, 'leave_approved', { name: emp.name, from_date: updated.from_date, to_date: updated.to_date }).catch(() => {});
+      } else if (phone && input.status === 'rejected') {
+        // Not sent, deliberately: this used to call sendSMS(phone, 'request_rejected', ...), but
+        // 'request_rejected' is not a registered SmartPing DLT template key — buildSMS() threw
+        // "Unknown SmartPing DLT template key" on every call, caught silently, so every leave
+        // rejection SMS has failed since this was written while approvals worked fine. The
+        // registry's only approval/rejection-shaped template is request_approved, whose approved
+        // text is hardcoded ("your {request_type} request has been approved by {approver_name}")
+        // — reusing it here would tell the employee their leave was approved when it was
+        // rejected, which is worse than sending nothing. No registered template exists for a
+        // rejection, so this is skipped rather than guessed. NOTE: notifyLeaveDecision above
+        // does NOT cover this gap either — it goes through notificationGateway.notify(), which
+        // is fully dormant today (every event row in notification_event_config is seeded
+        // enabled=0/dispatch_mode='shadow', confirmed 2026-08-18) — so a rejected employee
+        // currently gets no automated notification via any channel, only what's visible in the
+        // HRMS UI itself.
+        console.warn(`[leave] rejection SMS not attempted for request ${id} — no registered DLT template for a rejection`);
       }
     } catch { /* non-fatal */ }
 
