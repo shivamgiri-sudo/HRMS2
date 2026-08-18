@@ -95,11 +95,17 @@ async function insertBatch(docs: DocRow[]): Promise<{ inserted: number; skipped:
   let skipped = 0;
   for (const doc of docs) {
     try {
+      // verified = 1: these are historical documents from before this system
+      // existed, not new submissions awaiting HR review — they were verified
+      // offline as part of the original db_bill process, the same reasoning
+      // already applied to the legacy joining-document checklist placeholder
+      // (createLegacyJoiningChecklists.ts marks it status='verified'). Treating
+      // them as unverified created the false-pending queue this fix resolves.
       const [result] = await db.execute<ResultSetHeader>(
         `INSERT IGNORE INTO employee_documents
            (id, employee_id, doc_type, doc_name, file_url, verified, uploaded_by,
             created_at, doc_category, legacy_source, legacy_ref_id)
-         VALUES (?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 1, NULL, ?, ?, ?, ?)`,
         [
           doc.id,
           doc.employee_id,
