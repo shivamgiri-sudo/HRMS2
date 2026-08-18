@@ -186,8 +186,21 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
   },
   // ── Previously server.ts-only (see the import block above) ──
   {
+    // server.ts gates this behind ATS_REMINDERS_ENABLED — "stays off because enabling it
+    // is an outward-facing action... Owner's call, made explicitly rather than as a side
+    // effect." But ecosystem.config.cjs sets WORKERS_PROCESS=external on hrms-api (so its
+    // own gated call never even runs there) and hrms-workers is the process that actually
+    // executes this list, unconditionally, with no gate of its own. Found 2026-08-19: since
+    // this entry was added (2026-08-02) and the cron itself was fixed to actually work
+    // (2026-08-04), the candidate-facing onboarding-reminder email has likely been sending
+    // in production the whole time, bypassing the explicit-enable decision entirely. Same
+    // gate, applied where the scheduler is actually started, so the deliberate "off" takes
+    // effect rather than being silently bypassed.
     name: "ats-reminders",
-    start: () => { startAtsRemindersScheduler(); return Promise.resolve(); },
+    start: () => {
+      if (process.env.ATS_REMINDERS_ENABLED === "true") startAtsRemindersScheduler();
+      return Promise.resolve();
+    },
   },
   {
     name: "attendance-reconciliation",
