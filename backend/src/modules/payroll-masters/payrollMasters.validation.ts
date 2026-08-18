@@ -21,26 +21,32 @@ export const CreateBandSchema = z.object({
 
 export const UpdateBandSchema = CreateBandSchema.partial();
 
-const amtType = z.enum(['fixed', 'pct']).default('fixed');
+const moneyField = z.coerce.number().min(0).default(0);
 
 export const CreatePackageSchema = z.object({
-  grade_id: z.string().uuid(),
-  slab_id: z.string().uuid(),
-  location_id: z.string().uuid().nullable().optional(),
-  cost_centre_id: z.string().uuid().nullable().optional(),
-  basic_amt: z.coerce.number().min(0).default(0),
-  conveyance_amt: z.coerce.number().min(0).default(0),
-  conveyance_type: amtType,
-  medical_amt: z.coerce.number().min(0).default(0),
-  medical_type: amtType,
-  other_allowance_amt: z.coerce.number().min(0).default(0),
-  other_allowance_type: amtType,
-  bonus_amt: z.coerce.number().min(0).default(0),
-  bonus_type: amtType,
-  portfolio_amt: z.coerce.number().min(0).default(0),
-  special_allowance_amt: z.coerce.number().min(0).default(0),
-  pli_amt: z.coerce.number().min(0).default(0),
-  effective_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  branch_name:       z.string().min(1),
+  band_code:         z.string().min(1),
+  cost_centre_code:  z.string().optional().nullable(),
+  package_amount:    z.coerce.number().min(0),
+  basic:             moneyField,
+  hra:               moneyField,
+  conveyance:        moneyField,
+  portfolio:         moneyField,
+  medical:           moneyField,
+  special_allowance: moneyField,
+  other_allowance:   moneyField,
+  bonus:             moneyField,
+  pli:               moneyField,
+  gross:             moneyField,
+  epf_employee:      moneyField,
+  esic_employee:     moneyField,
+  professional_tax:  moneyField,
+  net_in_hand:       moneyField,
+  epf_employer:      moneyField,
+  esic_employer:     moneyField,
+  admin_charges:     moneyField,
+  ctc:               moneyField,
+  active_status:     z.coerce.number().int().min(0).max(1).optional().default(1),
 });
 
 export const UpdatePackageSchema = CreatePackageSchema.partial();

@@ -9,14 +9,16 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Loader2, Plus, Pencil, Trash2, IndianRupee, Building2, Layers, Save, X, CheckCircle2,
+  Calculator,
 } from 'lucide-react';
+import { calcFromCtc, calcFromInHand, type PkgCalcOptions } from '@/lib/salaryCalculator';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface Band { id: string; band_code: string; band_name: string; slab_from: number; slab_to: number; active_status: number; }
 interface CostCentre { id: string; cost_centre_code: string; display_name: string; branch_name: string; category: string; client_name: string; process_name: string; active_status: number; }
 interface Package {
   id: string; branch_name: string; cost_centre_code: string; band_code: string;
-  package_amount: number; basic: number; hra: number; conveyance: number; gross: number;
+  package_amount: number; basic: number; hra: number; lta: number; conveyance: number; gross: number;
   epf_employee: number; esic_employee: number; net_in_hand: number; epf_employer: number;
   esic_employer: number; admin_charges: number; ctc: number; bonus: number; pli: number;
   professional_tax: number; special_allowance: number; other_allowance: number;
@@ -49,6 +51,15 @@ export default function NativeSalaryPackageAdmin() {
   const [pkgCC, setPkgCC] = useState('');
   const [editPkg, setEditPkg] = useState<Partial<Package> | null>(null);
 
+  // Calculator state
+  const [calcMode, setCalcMode] = useState<'ctc' | 'inhand'>('ctc');
+  const [ctcInput, setCtcInput] = useState('');
+  const [inHandInput, setInHandInput] = useState('');
+  const [includePf, setIncludePf] = useState(true);
+  const [includeEsic, setIncludeEsic] = useState(true);
+  const [basicPct, setBasicPct] = useState(40);
+  const [hraPct, setHraPct] = useState(40);
+
   // Distinct branches from cost centres
   const branches = [...new Set(costCentres.map(c => c.branch_name))].sort();
 
@@ -76,6 +87,24 @@ export default function NativeSalaryPackageAdmin() {
 
   useEffect(() => { void loadBands(); void loadCostCentres(); }, [loadBands, loadCostCentres]);
   useEffect(() => { void loadPackages(); }, [loadPackages]);
+
+  // Auto-calculate whenever driver input or toggles change (only when dialog is open)
+  useEffect(() => {
+    if (!editPkg) return;
+    const opts: PkgCalcOptions = { includePf, includeEsic, basicPct, hraPct };
+    if (calcMode === 'ctc') {
+      const v = parseFloat(ctcInput);
+      if (!v || v <= 0) return;
+      const c = calcFromCtc(v, opts);
+      setEditPkg(p => ({ ...p!, ...c, package_amount: c.ctc }));
+    } else {
+      const v = parseFloat(inHandInput);
+      if (!v || v <= 0) return;
+      const c = calcFromInHand(v, opts);
+      setEditPkg(p => ({ ...p!, ...c, package_amount: c.ctc }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctcInput, inHandInput, includePf, includeEsic, basicPct, hraPct, calcMode]);
 
   // ── Save Band ──────────────────────────────────────────────────────────────
   const saveBand = async () => {
@@ -289,40 +318,191 @@ export default function NativeSalaryPackageAdmin() {
                     </select>
                   </div>
                   <div className="flex items-end">
-                    <Button size="sm" onClick={() => setEditPkg({ branch_name: pkgBranch || '', band_code: pkgBand || '', cost_centre_code: pkgCC || '', package_amount: 0, basic: 0, hra: 0, conveyance: 0, gross: 0, epf_employee: 0, esic_employee: 0, net_in_hand: 0, epf_employer: 0, esic_employer: 0, admin_charges: 0, ctc: 0, bonus: 0, pli: 0, professional_tax: 0, special_allowance: 0, other_allowance: 0, portfolio: 0, medical: 0 })} className="gap-1.5 w-full">
+                    <Button size="sm" onClick={() => { setCtcInput(''); setInHandInput(''); setCalcMode('ctc'); setEditPkg({ branch_name: pkgBranch || '', band_code: pkgBand || '', cost_centre_code: pkgCC || '', package_amount: 0, basic: 0, hra: 0, lta: 0, conveyance: 0, gross: 0, epf_employee: 0, esic_employee: 0, net_in_hand: 0, epf_employer: 0, esic_employer: 0, admin_charges: 0, ctc: 0, bonus: 0, pli: 0, professional_tax: 0, special_allowance: 0, other_allowance: 0, portfolio: 0, medical: 0 }); }} className="gap-1.5 w-full">
                       <Plus className="h-3.5 w-3.5" /> New Package
                     </Button>
                   </div>
                 </div>
 
-                {/* Add/Edit package form */}
+                {/* Add/Edit package form — auto-calculator */}
                 {editPkg && (
                   <div className="rounded-xl border-2 border-blue-200 bg-blue-50/30 p-5 mb-4 space-y-4">
-                    <p className="text-sm font-bold text-blue-700">
-                      {editPkg.id ? 'Edit' : 'New'} Package — {editPkg.branch_name || 'Select branch'} / Band {editPkg.band_code || '?'}
-                    </p>
+                    {/* Title */}
+                    <div className="flex items-center gap-2">
+                      <Calculator className="h-4 w-4 text-blue-600" />
+                      <p className="text-sm font-bold text-blue-700">
+                        {editPkg.id ? 'Edit' : 'New'} Package — {editPkg.branch_name || 'Select branch'} / Band {editPkg.band_code || '?'}
+                      </p>
+                    </div>
+
+                    {/* Row 0: Header fields */}
                     <div className="grid gap-3 sm:grid-cols-4">
-                      <div><Label className="text-xs">Branch *</Label><Input className="h-9" value={editPkg.branch_name ?? ''} onChange={e => setEditPkg(p => ({ ...p!, branch_name: e.target.value }))} /></div>
-                      <div><Label className="text-xs">Cost Centre</Label><Input className="h-9" value={editPkg.cost_centre_code ?? ''} onChange={e => setEditPkg(p => ({ ...p!, cost_centre_code: e.target.value }))} /></div>
-                      <div><Label className="text-xs">Band *</Label>
-                        <select className={`mt-1 ${SEL} h-9`} value={editPkg.band_code ?? ''} onChange={e => setEditPkg(p => ({ ...p!, band_code: e.target.value }))}>
-                          <option value="">Select</option>
-                          {bands.map(b => <option key={b.band_code} value={b.band_code}>{b.band_code}</option>)}
+                      <div>
+                        <Label className="text-xs">Branch *</Label>
+                        <select className={`mt-1 ${SEL} h-9`} value={editPkg.branch_name ?? ''} onChange={e => setEditPkg(p => ({ ...p!, branch_name: e.target.value }))}>
+                          <option value="">Select Branch</option>
+                          {branches.map(b => <option key={b} value={b}>{b}</option>)}
                         </select>
                       </div>
-                      <div><Label className="text-xs">Package Amount *</Label><Input className="h-9" type="number" value={editPkg.package_amount ?? ''} onChange={e => setEditPkg(p => ({ ...p!, package_amount: Number(e.target.value) }))} /></div>
+                      <div>
+                        <Label className="text-xs">Cost Centre</Label>
+                        <select className={`mt-1 ${SEL} h-9`} value={editPkg.cost_centre_code ?? ''} onChange={e => setEditPkg(p => ({ ...p!, cost_centre_code: e.target.value }))}>
+                          <option value="">All / None</option>
+                          {costCentres.filter(c => !editPkg.branch_name || c.branch_name === editPkg.branch_name).map(c => (
+                            <option key={c.cost_centre_code} value={c.cost_centre_code}>{c.cost_centre_code}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <Label className="text-xs">Band *</Label>
+                        <select className={`mt-1 ${SEL} h-9`} value={editPkg.band_code ?? ''} onChange={e => setEditPkg(p => ({ ...p!, band_code: e.target.value }))}>
+                          <option value="">Select Band</option>
+                          {bands.map(b => <option key={b.band_code} value={b.band_code}>Band {b.band_code} ({fmt(b.slab_from)}–{fmt(b.slab_to)})</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <Label className="text-xs">Package Amount (CTC/mo)</Label>
+                        <Input className="h-9 bg-slate-100 font-semibold text-blue-700" readOnly value={editPkg.ctc ? fmt(editPkg.ctc) : ''} placeholder="Auto-calculated" />
+                      </div>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-6">
-                      {(['basic', 'hra', 'conveyance', 'bonus', 'special_allowance', 'other_allowance', 'gross', 'epf_employee', 'esic_employee', 'professional_tax', 'net_in_hand', 'epf_employer', 'esic_employer', 'admin_charges', 'ctc', 'pli'] as const).map(f => (
-                        <div key={f}>
-                          <Label className="text-[10px] capitalize">{f.replace(/_/g, ' ')}</Label>
-                          <Input className="h-8 text-xs" type="number" value={(editPkg as any)[f] ?? 0} onChange={e => setEditPkg(p => ({ ...p!, [f]: Number(e.target.value) }))} />
+
+                    {/* Row 1: Calc mode + toggles */}
+                    <div className="flex flex-wrap items-center gap-4 rounded-lg bg-white border border-blue-100 px-4 py-3">
+                      {/* Mode toggle */}
+                      <div className="flex items-center gap-1 rounded-lg border border-slate-200 p-0.5">
+                        <button
+                          className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${calcMode === 'ctc' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                          onClick={() => setCalcMode('ctc')}
+                        >From CTC</button>
+                        <button
+                          className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors ${calcMode === 'inhand' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                          onClick={() => setCalcMode('inhand')}
+                        >From In-Hand</button>
+                      </div>
+
+                      {/* Driver input */}
+                      <div className="flex items-center gap-2">
+                        <Label className="text-xs whitespace-nowrap">{calcMode === 'ctc' ? 'Monthly CTC (₹)' : 'Net In Hand (₹)'}</Label>
+                        <Input
+                          className="h-8 w-32 text-sm font-semibold"
+                          type="number"
+                          placeholder="e.g. 25000"
+                          value={calcMode === 'ctc' ? ctcInput : inHandInput}
+                          onChange={e => calcMode === 'ctc' ? setCtcInput(e.target.value) : setInHandInput(e.target.value)}
+                        />
+                      </div>
+
+                      {/* PF toggle */}
+                      <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                        <input type="checkbox" className="h-4 w-4 accent-blue-600" checked={includePf} onChange={e => setIncludePf(e.target.checked)} />
+                        <span className="text-xs font-medium">Include PF</span>
+                      </label>
+
+                      {/* ESIC toggle */}
+                      <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                        <input type="checkbox" className="h-4 w-4 accent-blue-600" checked={includeEsic} onChange={e => setIncludeEsic(e.target.checked)} />
+                        <span className="text-xs font-medium">Include ESIC</span>
+                      </label>
+
+                      {/* Basic% */}
+                      <div className="flex items-center gap-1.5">
+                        <Label className="text-xs whitespace-nowrap">Basic %</Label>
+                        <Input className="h-8 w-16 text-xs" type="number" min={10} max={80} value={basicPct} onChange={e => setBasicPct(Number(e.target.value))} />
+                      </div>
+
+                      {/* HRA% */}
+                      <div className="flex items-center gap-1.5">
+                        <Label className="text-xs whitespace-nowrap">HRA %</Label>
+                        <Input className="h-8 w-16 text-xs" type="number" min={0} max={100} value={hraPct} onChange={e => setHraPct(Number(e.target.value))} />
+                      </div>
+                    </div>
+
+                    {/* Row 2: Component grid */}
+                    <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+                      {/* Left column: earnings */}
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b pb-1">Earnings (Monthly)</p>
+                        {([
+                          ['basic', 'Basic'],
+                          ['hra', 'HRA'],
+                          ['lta', 'LTA'],
+                          ['conveyance', 'Conveyance'],
+                          ['special_allowance', 'Special Allowance'],
+                          ['bonus', 'Bonus'],
+                          ['portfolio', 'Portfolio'],
+                          ['medical', 'Medical Allowance'],
+                          ['other_allowance', 'Other Allowance'],
+                          ['pli', 'PLI'],
+                        ] as const).map(([field, label]) => {
+                          const isComputed = ['basic', 'hra', 'conveyance', 'special_allowance', 'bonus'].includes(field);
+                          return (
+                            <div key={field} className="flex items-center gap-2">
+                              <Label className="text-xs w-36 shrink-0">{label}</Label>
+                              <Input
+                                className={`h-8 text-xs flex-1 ${isComputed ? 'bg-slate-50 text-slate-700' : 'bg-white'}`}
+                                type="number"
+                                value={(editPkg as any)[field] ?? 0}
+                                onChange={e => setEditPkg(p => ({ ...p!, [field]: Number(e.target.value) }))}
+                              />
+                            </div>
+                          );
+                        })}
+                        <div className="flex items-center gap-2 pt-1 border-t mt-1">
+                          <Label className="text-xs w-36 font-bold">Gross</Label>
+                          <Input className="h-8 text-xs flex-1 bg-slate-100 font-semibold text-blue-700" readOnly value={editPkg.gross ? fmt(editPkg.gross) : ''} />
                         </div>
-                      ))}
+                      </div>
+
+                      {/* Right column: deductions + employer */}
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b pb-1">Deductions &amp; Employer Costs</p>
+                        {([
+                          ['epf_employee', 'PF (Employee)', true],
+                          ['esic_employee', 'ESIC (Employee)', true],
+                          ['professional_tax', 'Professional Tax', true],
+                        ] as [string, string, boolean][]).map(([field, label, computed]) => (
+                          <div key={field} className="flex items-center gap-2">
+                            <Label className="text-xs w-36 shrink-0">{label}</Label>
+                            <Input
+                              className={`h-8 text-xs flex-1 ${computed ? 'bg-slate-50 text-red-600' : 'bg-white'}`}
+                              type="number"
+                              value={(editPkg as any)[field] ?? 0}
+                              onChange={e => setEditPkg(p => ({ ...p!, [field]: Number(e.target.value) }))}
+                            />
+                          </div>
+                        ))}
+                        <div className="flex items-center gap-2 pt-1 border-t mt-1">
+                          <Label className="text-xs w-36 font-bold text-emerald-700">Net In Hand</Label>
+                          <Input className="h-8 text-xs flex-1 bg-emerald-50 font-bold text-emerald-700" readOnly value={editPkg.net_in_hand ? fmt(editPkg.net_in_hand) : ''} />
+                        </div>
+                        <div className="pt-2 mt-2">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-2">Employer Contributions</p>
+                          {([
+                            ['epf_employer', 'EPF CO (Employer)', true],
+                            ['esic_employer', 'ESIC CO (Employer)', true],
+                            ['admin_charges', 'Admin Charges', true],
+                          ] as [string, string, boolean][]).map(([field, label, computed]) => (
+                            <div key={field} className="flex items-center gap-2 mb-2">
+                              <Label className="text-xs w-36 shrink-0">{label}</Label>
+                              <Input
+                                className={`h-8 text-xs flex-1 ${computed ? 'bg-slate-50 text-orange-700' : 'bg-white'}`}
+                                type="number"
+                                value={(editPkg as any)[field] ?? 0}
+                                onChange={e => setEditPkg(p => ({ ...p!, [field]: Number(e.target.value) }))}
+                              />
+                            </div>
+                          ))}
+                          <div className="flex items-center gap-2 pt-1 border-t mt-1">
+                            <Label className="text-xs w-36 font-bold">CTC (Monthly)</Label>
+                            <Input className="h-8 text-xs flex-1 bg-blue-50 font-bold text-blue-700" readOnly value={editPkg.ctc ? fmt(editPkg.ctc) : ''} />
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                    <div className="flex gap-2">
+
+                    <div className="flex gap-2 pt-2 border-t">
                       <Button size="sm" onClick={savePkg} disabled={saving} className="gap-1"><Save className="h-3.5 w-3.5" />{saving ? 'Saving...' : 'Save Package'}</Button>
-                      <Button size="sm" variant="ghost" onClick={() => setEditPkg(null)}>Cancel</Button>
+                      <Button size="sm" variant="ghost" onClick={() => { setEditPkg(null); setCtcInput(''); setInHandInput(''); }}>Cancel</Button>
                     </div>
                   </div>
                 )}
@@ -335,7 +515,7 @@ export default function NativeSalaryPackageAdmin() {
                   <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
                     <table className="w-full text-xs">
                       <thead className="sticky top-0 bg-white z-10"><tr className="bg-slate-50 border-b">
-                        {['Band', 'CC', 'Pkg Amt', 'Basic', 'HRA', 'Conv', 'Bonus', 'Gross', 'PF', 'ESI', 'Net', 'CTC', ''].map(h => (
+                        {['Band', 'CC', 'Pkg Amt', 'Basic', 'HRA', 'LTA', 'Conv', 'Bonus', 'Gross', 'PF', 'ESI', 'Net', 'CTC', ''].map(h => (
                           <th key={h} className="px-2 py-2 text-left font-semibold text-slate-600 whitespace-nowrap">{h}</th>
                         ))}
                       </tr></thead>
@@ -347,6 +527,7 @@ export default function NativeSalaryPackageAdmin() {
                             <td className="px-2 py-1.5 font-bold text-blue-700">{fmt(p.package_amount)}</td>
                             <td className="px-2 py-1.5">{fmt(p.basic)}</td>
                             <td className="px-2 py-1.5">{fmt(p.hra)}</td>
+                            <td className="px-2 py-1.5">{fmt(p.lta)}</td>
                             <td className="px-2 py-1.5">{fmt(p.conveyance)}</td>
                             <td className="px-2 py-1.5">{fmt(p.bonus)}</td>
                             <td className="px-2 py-1.5 font-semibold">{fmt(p.gross)}</td>
@@ -356,7 +537,7 @@ export default function NativeSalaryPackageAdmin() {
                             <td className="px-2 py-1.5">{fmt(p.ctc)}</td>
                             <td className="px-2 py-1.5">
                               <div className="flex gap-1">
-                                <button onClick={() => setEditPkg(p)} className="p-1 hover:bg-slate-200 rounded"><Pencil className="h-3 w-3 text-slate-500" /></button>
+                                <button onClick={() => { setCalcMode('ctc'); setCtcInput(String(p.ctc || '')); setInHandInput(''); setEditPkg(p); }} className="p-1 hover:bg-slate-200 rounded"><Pencil className="h-3 w-3 text-slate-500" /></button>
                                 <button onClick={() => deletePkg(p.id)} className="p-1 hover:bg-red-100 rounded"><Trash2 className="h-3 w-3 text-red-400" /></button>
                               </div>
                             </td>
