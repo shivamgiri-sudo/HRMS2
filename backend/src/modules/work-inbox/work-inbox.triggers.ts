@@ -120,6 +120,28 @@ export async function triggerResignationDiscussion(
   });
 }
 
+export async function triggerOfferApprovalPending(
+  candidateId: string,
+  candidateName: string
+): Promise<void> {
+  // branch_head_id on ats_branch_head_approval is an employees.id, not an auth_user id
+  // (payroll-hr.service.ts:481 joins it straight to `employees e`), so it cannot be passed
+  // as assignedToUserId — work_item.assigned_to_user_id is compared against the caller's
+  // auth user id everywhere else in this module (see assertWorkItemAccess). Role-only
+  // targeting, same as every other trigger in this file.
+  await createWorkItemIfNotExists({
+    itemType: "OFFER_APPROVAL_PENDING",
+    title: `Offer awaiting branch-head approval: ${candidateName}`,
+    description: "A candidate's offer is pending branch-head approval before onboarding can proceed.",
+    moduleCode: "ats",
+    entityType: "candidate",
+    entityId: candidateId,
+    assignedToRole: "branch_head",
+    priority: "high",
+    dueAt: dueAt("OFFER_APPROVAL_PENDING"),
+  });
+}
+
 export async function triggerPayrollBranchSignOff(
   branchId: string,
   branchName: string,
