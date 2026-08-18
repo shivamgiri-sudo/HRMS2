@@ -20,13 +20,27 @@ export async function migrateEmployees(
   srcTable: string,
   masters: MasterMaps,
 ): Promise<EmployeeMigrationResult> {
-  console.log('  [Phase 2] Migrating employeesâ€¦');
+  console.log('  [Phase 2] Migrating employees (missing only)…');
+
+  // Build set of codes already in mas_hrms so we only insert genuinely new rows
+  const [existingRows] = await dst.execute<RowDataPacket[]>(
+    `SELECT employee_code FROM employees`,
+  );
+  const existing = new Set<string>(
+    (existingRows as any[]).map((r) => String(r.employee_code).trim().toUpperCase()),
+  );
+  console.log(`  [Phase 2] ${existing.size} employees already in mas_hrms — will skip these`);
 
   const [rows] = await src.execute<RowDataPacket[]>(`SELECT * FROM ${srcTable}`);
   const result: EmployeeMigrationResult = { inserted: 0, skipped: 0, errors: [] };
 
   for (const raw of rows) {
     const row = raw as LegacyEmployeeRow;
+    // Skip if already present
+    if (row.EmpCode && existing.has(row.EmpCode.trim().toUpperCase())) {
+      result.skipped++;
+      continue;
+    }
     try {
       await migrateOneEmployee(dst, row, masters, result);
     } catch (err) {
@@ -45,6 +59,11 @@ async function migrateOneEmployee(
   result: EmployeeMigrationResult,
 ): Promise<void> {
   if (!row.EmpCode || !row.EmpCode.trim()) {
+    result.skipped++;
+    return;
+  }
+  // Skip iSpark / Data Connect employees — identified by IDC prefix
+  if (/^IDC/i.test(row.EmpCode.trim())) {
     result.skipped++;
     return;
   }
