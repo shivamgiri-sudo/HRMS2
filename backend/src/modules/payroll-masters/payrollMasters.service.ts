@@ -1,6 +1,7 @@
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
+import { evaluateMinimumWageForBranchName } from './minimum-wage-gate.service.js';
 
 // ── SLABS ─────────────────────────────────────────────────────────────────────
 
@@ -218,22 +219,41 @@ function requirePackageKeys(data: Record<string, unknown>): void {
  * sends and no column holds - so it yields NaN and is left unused rather than
  * applied to real salary data.
  */
+/**
+ * Minimum-wage floor check for a package amount. Never throws and never blocks the
+ * write — see minimum-wage-gate.service.ts for the full rationale. Resolved by
+ * branch_name because that is the only location signal salary_package_master carries;
+ * an unresolved/ambiguous branch name or a state with no configured floor both come back
+ * provisional (status !== 'ok'), same as a genuine below-floor amount — none of the
+ * three is "silently allowed".
+ */
+async function checkPackageMinimumWage(branchName: unknown, packageAmount: number) {
+  const result = await evaluateMinimumWageForBranchName(
+    typeof branchName === 'string' ? branchName : null,
+    packageAmount,
+  );
+  return { min_wage_provisional: result.provisional ? 1 : 0, min_wage_check_note: result.note };
+}
+
 export async function createPackage(data: any, createdBy: string) {
   requirePackageKeys(data);
   const id = randomUUID();
   const money = PACKAGE_MONEY_COLUMNS.map((c) => amt(data[c]));
+  const packageAmount = amt(data.package_amount);
+  const minWage = await checkPackageMinimumWage(data.branch_name, packageAmount);
 
   await db.execute(
     `INSERT INTO salary_package_master
        (id, branch_name, cost_centre_code, band_code, package_amount,
-        ${PACKAGE_MONEY_COLUMNS.join(", ")}, active_status, source_db, created_by)
-     VALUES (?, ?, ?, ?, ?, ${PACKAGE_MONEY_COLUMNS.map(() => "?").join(", ")}, ?, ?, ?)`,
+        ${PACKAGE_MONEY_COLUMNS.join(", ")}, active_status, source_db, created_by,
+        min_wage_provisional, min_wage_check_note)
+     VALUES (?, ?, ?, ?, ?, ${PACKAGE_MONEY_COLUMNS.map(() => "?").join(", ")}, ?, ?, ?, ?, ?)`,
     [
       id,
       data.branch_name,
       data.cost_centre_code ?? null,
       data.band_code,
-      amt(data.package_amount),
+      packageAmount,
       ...money,
       data.active_status ?? 1,
       // source_db defaults to 'db_bill'. Every one of the 295 existing rows came
@@ -241,6 +261,8 @@ export async function createPackage(data: any, createdBy: string) {
       // claim the same provenance - the column exists to tell them apart.
       'hrms',
       createdBy || null,
+      minWage.min_wage_provisional,
+      minWage.min_wage_check_note,
     ]
   );
   return getPackageById(id);
@@ -257,20 +279,27 @@ export async function updatePackage(id: string, data: any) {
   if (!existing) return null;
   const merged = { ...existing, ...data };
   requirePackageKeys(merged);
+  const packageAmount = amt(merged.package_amount);
+  // Re-checked on every edit, not just create: a branch_name or package_amount change
+  // is exactly the case this gate exists for, and the previous check's provisional
+  // flag must not survive a change to either input it was computed from.
+  const minWage = await checkPackageMinimumWage(merged.branch_name, packageAmount);
 
   await db.execute(
     `UPDATE salary_package_master SET
        branch_name = ?, cost_centre_code = ?, band_code = ?, package_amount = ?,
        ${PACKAGE_MONEY_COLUMNS.map((c) => `${c} = ?`).join(", ")},
-       active_status = ?, updated_at = NOW()
+       active_status = ?, min_wage_provisional = ?, min_wage_check_note = ?, updated_at = NOW()
      WHERE id = ?`,
     [
       merged.branch_name,
       merged.cost_centre_code ?? null,
       merged.band_code,
-      amt(merged.package_amount),
+      packageAmount,
       ...PACKAGE_MONEY_COLUMNS.map((c) => amt(merged[c])),
       merged.active_status ?? 1,
+      minWage.min_wage_provisional,
+      minWage.min_wage_check_note,
       id,
     ]
   );
