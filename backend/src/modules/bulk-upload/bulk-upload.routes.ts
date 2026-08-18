@@ -4,7 +4,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -91,30 +91,97 @@ router.post("/batches/:id/rows", requireRole("admin", "hr", "super_admin", "wfm"
   if (!Array.isArray(rows) || rows.length === 0) {
     return res.status(400).json({ error: "rows array required" });
   }
+  // A single multi-row INSERT instead of one round trip per row — with a few
+  // hundred rows the old per-row loop alone could take longer than the
+  // frontend's 30s request timeout, which is what produced the "batch didn't
+  // upload" report even though staging had actually succeeded.
+  const values: unknown[] = [];
+  const placeholders: string[] = [];
   for (const row of rows) {
-    await db.execute(
-      `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status, error_messages)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [randomUUID(), req.params.id, row.row_no,
-       row.raw_data ? JSON.stringify(row.raw_data) : null,
-       row.normalized_data ? JSON.stringify(row.normalized_data) : null,
-       row.row_status ?? "pending",
-       row.error_messages ? JSON.stringify(row.error_messages) : null]
+    placeholders.push("(?, ?, ?, ?, ?, ?, ?)");
+    values.push(
+      randomUUID(), req.params.id, row.row_no,
+      row.raw_data ? JSON.stringify(row.raw_data) : null,
+      row.normalized_data ? JSON.stringify(row.normalized_data) : null,
+      row.row_status ?? "pending",
+      row.error_messages ? JSON.stringify(row.error_messages) : null
     );
   }
+  await db.execute(
+    `INSERT INTO upload_batch_row (id, upload_batch_id, row_no, raw_data, normalized_data, row_status, error_messages)
+     VALUES ${placeholders.join(", ")}`,
+    values
+  );
   res.status(201).json({ success: true, count: rows.length });
 }));
+
+const KNOWN_IMPORT_RPCS = new Set([
+  "import_official_email_update_batch",
+  "import_pf_uan_batch",
+  "import_reporting_manager_update_batch",
+  "import_roster_assignment_batch",
+  "import_weekoff_preference_batch",
+  "import_shift_rotation_type_batch",
+  "import_shift_roster_batch",
+  "import_upload_batch",
+  "import_process_upload_batch",
+  "import_department_upload_batch",
+  "import_asset_upload_batch",
+  "import_branch_upload_batch",
+  "import_lob_upload_batch",
+  "import_designation_upload_batch",
+]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
 router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wfm", "wfm_analyst", "payroll", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { rpc_name } = req.body as { rpc_name?: string };
 
+  if (!rpc_name || !KNOWN_IMPORT_RPCS.has(rpc_name)) {
+    return res.status(501).json({
+      success: false,
+      error: `Import function '${rpc_name || "unknown"}' for batch ${id} is not yet implemented in the MySQL backend.`,
+    });
+  }
+
+  // Atomically claim the batch before running the (possibly long-running) import.
+  // Without this, a client retry after a false request-timeout — the import
+  // itself keeps running server-side even after the client gives up — can fire
+  // a second concurrent import of the same batch. The second call finds no
+  // 'valid'/'pending' rows left (the first call already flipped them), computes
+  // 0 imported / 0 errors, and overwrites the first call's correct summary with
+  // a misleading "imported, 0 rows" — which is exactly what happened to
+  // BATCH-1787062644877. Rejecting the concurrent call instead keeps the
+  // summary that the completed import actually wrote.
+  const [claim] = await db.execute<ResultSetHeader>(
+    `UPDATE upload_batch SET batch_status = 'importing', updated_at = NOW()
+     WHERE id = ? AND batch_status NOT IN ('importing')`,
+    [id]
+  );
+  if (claim.affectedRows === 0) {
+    return res.status(409).json({
+      success: false,
+      error: "This batch is already being imported. Wait for it to finish, then refresh the page — do not resubmit.",
+    });
+  }
+
+  try {
+    return await dispatchImport(rpc_name, id, req.authUser!.id, res);
+  } catch (err) {
+    await db.execute(
+      `UPDATE upload_batch SET batch_status = 'failed', error_summary = ?, updated_at = NOW() WHERE id = ?`,
+      [String((err as Error)?.message ?? "Import failed").slice(0, 1000), id]
+    );
+    throw err;
+  }
+}));
+
+async function dispatchImport(rpc_name: string, id: string, userId: string, res: Response) {
   if (rpc_name === "import_official_email_update_batch") {
     const { importOfficialEmailBatch } = await import(
       "../it-provisioning/it-provisioning.bulk.service.js"
     );
-    const data = await importOfficialEmailBatch(id, req.authUser!.id);
+    const data = await importOfficialEmailBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -122,7 +189,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importPfUanBatch } = await import(
       "../bulk-upload/pf-uan-bulk.service.js"
     );
-    const data = await importPfUanBatch(id, req.authUser!.id);
+    const data = await importPfUanBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -130,7 +197,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importReportingManagerBatch } = await import(
       "../bulk-upload/reporting-manager-bulk.service.js"
     );
-    const data = await importReportingManagerBatch(id, req.authUser!.id);
+    const data = await importReportingManagerBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -138,7 +205,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importRosterAssignmentBatch } = await import(
       "../bulk-upload/roster-assignment-bulk.service.js"
     );
-    const data = await importRosterAssignmentBatch(id, req.authUser!.id);
+    const data = await importRosterAssignmentBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -146,7 +213,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importWeekOffPreferenceBatch } = await import(
       "../bulk-upload/weekoff-preference-bulk.service.js"
     );
-    const data = await importWeekOffPreferenceBatch(id, req.authUser!.id);
+    const data = await importWeekOffPreferenceBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -154,7 +221,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importShiftRotationTypeBatch } = await import(
       "../bulk-upload/shift-rotation-type-bulk.service.js"
     );
-    const data = await importShiftRotationTypeBatch(id, req.authUser!.id);
+    const data = await importShiftRotationTypeBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -162,7 +229,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importShiftRosterBatch } = await import(
       "../bulk-upload/shift-roster-bulk.service.js"
     );
-    const data = await importShiftRosterBatch(id, req.authUser!.id);
+    const data = await importShiftRosterBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -170,7 +237,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importEmployeeMasterBatch } = await import(
       "../bulk-upload/employee-master-bulk.service.js"
     );
-    const data = await importEmployeeMasterBatch(id, req.authUser!.id);
+    const data = await importEmployeeMasterBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -178,7 +245,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importProcessMasterBatch } = await import(
       "../bulk-upload/process-master-bulk.service.js"
     );
-    const data = await importProcessMasterBatch(id, req.authUser!.id);
+    const data = await importProcessMasterBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -186,7 +253,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importDepartmentMasterBatch } = await import(
       "../bulk-upload/department-master-bulk.service.js"
     );
-    const data = await importDepartmentMasterBatch(id, req.authUser!.id);
+    const data = await importDepartmentMasterBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -194,7 +261,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importAssetMasterBatch } = await import(
       "../bulk-upload/asset-master-bulk.service.js"
     );
-    const data = await importAssetMasterBatch(id, req.authUser!.id);
+    const data = await importAssetMasterBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -202,7 +269,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importBranchMasterBatch } = await import(
       "../bulk-upload/branch-master-bulk.service.js"
     );
-    const data = await importBranchMasterBatch(id, req.authUser!.id);
+    const data = await importBranchMasterBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -210,7 +277,7 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importLobMasterBatch } = await import(
       "../bulk-upload/lob-master-bulk.service.js"
     );
-    const data = await importLobMasterBatch(id, req.authUser!.id);
+    const data = await importLobMasterBatch(id, userId);
     return res.json({ success: true, data });
   }
 
@@ -218,14 +285,14 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
     const { importDesignationMasterBatch } = await import(
       "../bulk-upload/designation-master-bulk.service.js"
     );
-    const data = await importDesignationMasterBatch(id, req.authUser!.id);
+    const data = await importDesignationMasterBatch(id, userId);
     return res.json({ success: true, data });
   }
 
-  return res.status(501).json({
-    success: false,
-    error: `Import function '${rpc_name || "unknown"}' for batch ${id} is not yet implemented in the MySQL backend.`,
-  });
-}));
+  // Unreachable in practice — rpc_name is checked against KNOWN_IMPORT_RPCS
+  // before this function is ever called — kept as a safety net so the caller's
+  // try/catch still resets batch_status off 'importing' if it is ever hit.
+  throw new Error(`Import function '${rpc_name}' for batch ${id} is not yet implemented in the MySQL backend.`);
+}
 
 export { router as bulkUploadRouter };

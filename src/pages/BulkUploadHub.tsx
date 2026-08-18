@@ -825,6 +825,10 @@ export default function BulkUploadHub() {
       const batch = batchRes.data;
 
       if (stagedRows.length > 0) {
+        // Staging is now a single bulk INSERT server-side, but large files still
+        // deserve more room than the 30s default — that default is what produced
+        // "batch didn't upload" reports for files the server actually finished
+        // staging successfully a little after the client gave up.
         await hrmsApi.post(`/api/bulk-upload/batches/${batch.id}/rows`,
           stagedRows.map((row) => ({
             row_no: row.rowNo,
@@ -832,7 +836,8 @@ export default function BulkUploadHub() {
             normalized_data: row.normalizedData,
             row_status: row.status,
             error_messages: row.errors,
-          }))
+          })),
+          180000
         );
       }
 
@@ -877,9 +882,12 @@ export default function BulkUploadHub() {
     setMessage(`Import started for ${batch.upload_batch_no}. Please wait...`);
 
     try {
+      // Import can process hundreds of rows server-side; the 30s default abort
+      // timeout used to fire well before the server finished, so the UI showed
+      // a false failure even on batches that went on to import successfully.
       const res = await hrmsApi.post<{ success: boolean; data?: any; error?: string }>(`/api/bulk-upload/batches/${batch.id}/import`, {
         rpc_name: rpcName,
-      });
+      }, 300000);
 
       if (!res.success) {
         throw new Error(res.error || "Import action failed.");

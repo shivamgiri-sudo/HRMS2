@@ -9,6 +9,51 @@ interface BatchRow extends RowDataPacket {
   normalized_data: string | Record<string, unknown>;
 }
 
+interface CodeRow extends RowDataPacket {
+  id: string;
+  code: string;
+}
+
+interface ParsedRow {
+  rowId: string;
+  rowNo: number;
+  employeeCode: string;
+  firstName: string;
+  lastName: string | null;
+  mobile: string | null;
+  email: string | null;
+  gender: string | null;
+  doj: string | null;
+  employmentType: string;
+  branchCode: string | null;
+  departmentCode: string | null;
+  designationCode: string | null;
+  costCentreCode: string | null;
+  processCode: string | null;
+  lobCode: string | null;
+}
+
+const CHUNK_SIZE = 200;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/** Bulk-fetch a lookup table's id for every distinct code referenced in the batch. */
+async function bulkLookup(sql: string, codes: Set<string>): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (codes.size === 0) return map;
+  const codeList = Array.from(codes);
+  const [rows] = await db.execute<CodeRow[]>(
+    `${sql} IN (${codeList.map(() => "?").join(",")})`,
+    codeList
+  );
+  for (const r of rows) map.set(r.code, r.id);
+  return map;
+}
+
 export async function importEmployeeMasterBatch(
   batchId: string,
   importedByUserId: string
@@ -20,170 +65,182 @@ export async function importEmployeeMasterBatch(
     [batchId]
   );
 
-  let importedRows = 0;
-  let errorRows = 0;
+  if (batchRows.length === 0) {
+    return { importedRows: 0, errorRows: 0, errors: [] };
+  }
+
+  const parsed: ParsedRow[] = [];
   const errors: string[] = [];
+  let errorRows = 0;
+  const errorUpdates: Array<{ rowId: string; message: string }> = [];
+  const branchCodes = new Set<string>();
+  const departmentCodes = new Set<string>();
+  const designationCodes = new Set<string>();
+  const costCentreCodes = new Set<string>();
+  const processCodes = new Set<string>();
+  const lobCodes = new Set<string>();
 
   for (const row of batchRows) {
-    try {
-      const data =
-        typeof row.normalized_data === "string"
-          ? JSON.parse(row.normalized_data)
-          : (row.normalized_data ?? {});
+    const data =
+      typeof row.normalized_data === "string"
+        ? JSON.parse(row.normalized_data)
+        : (row.normalized_data ?? {});
 
-      const employeeCode = String(data.employee_code ?? "").trim();
-      const firstName = String(data.first_name ?? "").trim();
+    const employeeCode = String(data.employee_code ?? "").trim();
+    const firstName = String(data.first_name ?? "").trim();
 
-      if (!employeeCode || !firstName) {
-        throw new Error(`Row ${row.row_no}: employee_code and first_name are required`);
-      }
-
-      if (employeeCode.startsWith("IDC")) {
-        throw new Error(`Row ${row.row_no}: IDC employees are not allowed`);
-      }
-
-      // Resolve branch
-      let branchId: string | null = null;
-      if (data.branch_code) {
-        const [[br]] = await db.execute<RowDataPacket[]>(
-          `SELECT id FROM branch_master WHERE branch_code = ? LIMIT 1`,
-          [String(data.branch_code)]
-        );
-        branchId = br?.id ?? null;
-      }
-
-      // Resolve department
-      let departmentId: string | null = null;
-      if (data.department_code) {
-        const [[dep]] = await db.execute<RowDataPacket[]>(
-          `SELECT id FROM department_master WHERE dept_code = ? LIMIT 1`,
-          [String(data.department_code)]
-        );
-        departmentId = dep?.id ?? null;
-      }
-
-      // Resolve designation
-      let designationId: string | null = null;
-      if (data.designation_code) {
-        const [[des]] = await db.execute<RowDataPacket[]>(
-          `SELECT id FROM designation_master WHERE designation_code = ? LIMIT 1`,
-          [String(data.designation_code)]
-        );
-        designationId = des?.id ?? null;
-      }
-
-      // Resolve cost centre.
-      //
-      // Added because this INSERT, like every other employee-creation path, omitted
-      // cost_centre_id entirely — leaving the manual Edit Employee dialog as the column's
-      // only writer in the backend and 185 active employees with no cost centre at all.
-      // Restricted to active_status = 1 so a bulk sheet cannot attach staff to a closed
-      // cost centre, and left NULL when the code does not match rather than failing the
-      // row: an unknown cost centre should not stop an employee being loaded.
-      let costCentreId: string | null = null;
-      if (data.cost_centre_code) {
-        const [[cc]] = await db.execute<RowDataPacket[]>(
-          `SELECT id FROM cost_centre_master WHERE cost_centre_code = ? AND active_status = 1 LIMIT 1`,
-          [String(data.cost_centre_code).trim()]
-        );
-        costCentreId = cc?.id ?? null;
-      }
-
-      // Resolve process and LOB.
-      //
-      // The EMPLOYEE_MASTER template has advertised process_code and lob_code as accepted
-      // columns all along, and this importer silently ignored both — so an operator filling
-      // the sheet in good faith got an employee with no process, and no error to say why.
-      // Same defect as the cost centre above, on columns the template already promises.
-      let processId: string | null = null;
-      if (data.process_code) {
-        const [[pr]] = await db.execute<RowDataPacket[]>(
-          `SELECT id FROM process_master WHERE process_code = ? AND active_status = 1 LIMIT 1`,
-          [String(data.process_code).trim()]
-        );
-        processId = pr?.id ?? null;
-      }
-
-      let lobId: string | null = null;
-      if (data.lob_code) {
-        const [[lb]] = await db.execute<RowDataPacket[]>(
-          `SELECT id FROM lob_master WHERE lob_code = ? AND active_status = 1 LIMIT 1`,
-          [String(data.lob_code).trim()]
-        );
-        lobId = lb?.id ?? null;
-      }
-
-      const doj = data.date_of_joining
-        ? String(data.date_of_joining).slice(0, 10)
-        : null;
-      const lastName = data.last_name ? String(data.last_name).trim() : null;
-      const mobile = data.mobile ? String(data.mobile).trim() : null;
-      const email = data.email ? String(data.email).trim() : null;
-      const gender = data.gender ? String(data.gender).trim() : null;
-      const employmentType = data.employment_type
-        ? String(data.employment_type).trim()
-        : "PERMANENT";
-
-      await db.execute(
-        `INSERT INTO employees
-           (employee_code, first_name, last_name, mobile, official_email,
-            gender, date_of_joining, branch_id, department_id, designation_id,
-            cost_centre_id, process_id, lob_id, employment_type, active_status,
-            employment_status, created_by)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active',?)
-         ON DUPLICATE KEY UPDATE
-           first_name = VALUES(first_name),
-           last_name = VALUES(last_name),
-           mobile = COALESCE(VALUES(mobile), mobile),
-           official_email = COALESCE(VALUES(official_email), official_email),
-           gender = COALESCE(VALUES(gender), gender),
-           date_of_joining = COALESCE(VALUES(date_of_joining), date_of_joining),
-           branch_id = COALESCE(VALUES(branch_id), branch_id),
-           department_id = COALESCE(VALUES(department_id), department_id),
-           designation_id = COALESCE(VALUES(designation_id), designation_id),
-           -- COALESCE, matching every other org column here: a sheet that omits the
-           -- cost centre column must not wipe a value already on the record. 184 of these
-           -- were recovered by hand from db_bill, and a routine re-upload silently
-           -- blanking them would undo that without anyone noticing.
-           cost_centre_id = COALESCE(VALUES(cost_centre_id), cost_centre_id),
-           process_id = COALESCE(VALUES(process_id), process_id),
-           lob_id = COALESCE(VALUES(lob_id), lob_id),
-           employment_type = VALUES(employment_type)`,
-        [
-          employeeCode, toStoredNameRequired(firstName), toStoredName(lastName), mobile, email,
-          gender, doj, branchId, departmentId, designationId,
-          costCentreId, processId, lobId, employmentType, importedByUserId,
-        ]
-      );
-
-      await db.execute(
-        `UPDATE upload_batch_row SET row_status = 'imported' WHERE id = ?`,
-        [row.id]
-      );
-      try {
-        const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode, createdBy: importedByUserId });
-        if (lmsResult.message) {
-          console.warn(`[Bulk Import] LMS provisioning for ${employeeCode}: ${lmsResult.message}`);
-        }
-      } catch (err) {
-        console.error(`[Bulk Import] LMS provisioning failed for ${employeeCode}:`, err instanceof Error ? err.message : String(err));
-      }
-      importedRows++;
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+    if (!employeeCode || !firstName) {
+      const msg = `Row ${row.row_no}: employee_code and first_name are required`;
       errors.push(msg);
-      await db.execute(
-        `UPDATE upload_batch_row SET row_status = 'error', error_messages = ? WHERE id = ?`,
-        // error_messages, plural, and it is a JSON column holding an array of
-        // strings - the same shape reporting-manager-bulk and roster-assignment-bulk
-        // already write. The column named here was error_message, which does not
-        // exist, so this UPDATE raised ER_BAD_FIELD_ERROR. It sits inside the per-row
-        // catch, so the failure of one row made the handler itself throw and took the
-        // whole import down with an error about a column instead of recording why the
-        // row failed.
-        [JSON.stringify([msg.slice(0, 500)]), row.id]
-      );
+      errorUpdates.push({ rowId: row.id, message: msg });
       errorRows++;
+      continue;
+    }
+    if (employeeCode.startsWith("IDC")) {
+      const msg = `Row ${row.row_no}: IDC employees are not allowed`;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      errorRows++;
+      continue;
+    }
+
+    const branchCode = data.branch_code ? String(data.branch_code) : null;
+    const departmentCode = data.department_code ? String(data.department_code) : null;
+    const designationCode = data.designation_code ? String(data.designation_code) : null;
+    const costCentreCode = data.cost_centre_code ? String(data.cost_centre_code).trim() : null;
+    const processCode = data.process_code ? String(data.process_code).trim() : null;
+    const lobCode = data.lob_code ? String(data.lob_code).trim() : null;
+
+    if (branchCode) branchCodes.add(branchCode);
+    if (departmentCode) departmentCodes.add(departmentCode);
+    if (designationCode) designationCodes.add(designationCode);
+    if (costCentreCode) costCentreCodes.add(costCentreCode);
+    if (processCode) processCodes.add(processCode);
+    if (lobCode) lobCodes.add(lobCode);
+
+    parsed.push({
+      rowId: row.id, rowNo: row.row_no, employeeCode, firstName,
+      lastName: data.last_name ? String(data.last_name).trim() : null,
+      mobile: data.mobile ? String(data.mobile).trim() : null,
+      email: data.email ? String(data.email).trim() : null,
+      gender: data.gender ? String(data.gender).trim() : null,
+      doj: data.date_of_joining ? String(data.date_of_joining).slice(0, 10) : null,
+      employmentType: data.employment_type ? String(data.employment_type).trim() : "PERMANENT",
+      branchCode, departmentCode, designationCode, costCentreCode, processCode, lobCode,
+    });
+  }
+
+  // Six bulk lookups (one per referenced master table) instead of up to six
+  // SELECTs per row. cost_centre_code and process_code/lob_code are also
+  // restricted to active_status = 1, same as the original per-row queries.
+  const [branchIds, departmentIds, designationIds, costCentreIds, processIds, lobIds] = await Promise.all([
+    bulkLookup(`SELECT id, branch_code AS code FROM branch_master WHERE branch_code`, branchCodes),
+    bulkLookup(`SELECT id, dept_code AS code FROM department_master WHERE dept_code`, departmentCodes),
+    bulkLookup(`SELECT id, designation_code AS code FROM designation_master WHERE designation_code`, designationCodes),
+    bulkLookup(`SELECT id, cost_centre_code AS code FROM cost_centre_master WHERE active_status = 1 AND cost_centre_code`, costCentreCodes),
+    bulkLookup(`SELECT id, process_code AS code FROM process_master WHERE active_status = 1 AND process_code`, processCodes),
+    bulkLookup(`SELECT id, lob_code AS code FROM lob_master WHERE active_status = 1 AND lob_code`, lobCodes),
+  ]);
+
+  let importedRows = 0;
+  const importedRowIds: string[] = [];
+  const provisionQueue: string[] = [];
+
+  // Chunked multi-row upsert instead of one INSERT per row. If a chunk's
+  // statement fails (a constraint violation on one of its rows), that chunk
+  // alone is retried row-by-row so only the actually-bad row ends up marked
+  // as an error — every other row in the batch still lands, matching the
+  // original per-row loop's error isolation.
+  const buildParams = (r: ParsedRow) => [
+    r.employeeCode, toStoredNameRequired(r.firstName), toStoredName(r.lastName), r.mobile, r.email,
+    r.gender, r.doj,
+    r.branchCode ? branchIds.get(r.branchCode) ?? null : null,
+    r.departmentCode ? departmentIds.get(r.departmentCode) ?? null : null,
+    r.designationCode ? designationIds.get(r.designationCode) ?? null : null,
+    r.costCentreCode ? costCentreIds.get(r.costCentreCode) ?? null : null,
+    r.processCode ? processIds.get(r.processCode) ?? null : null,
+    r.lobCode ? lobIds.get(r.lobCode) ?? null : null,
+    r.employmentType, importedByUserId,
+  ];
+
+  const insertSql = (placeholders: string) => `
+    INSERT INTO employees
+       (employee_code, first_name, last_name, mobile, official_email,
+        gender, date_of_joining, branch_id, department_id, designation_id,
+        cost_centre_id, process_id, lob_id, employment_type, active_status,
+        employment_status, created_by)
+     VALUES ${placeholders}
+     ON DUPLICATE KEY UPDATE
+       first_name = VALUES(first_name),
+       last_name = VALUES(last_name),
+       mobile = COALESCE(VALUES(mobile), mobile),
+       official_email = COALESCE(VALUES(official_email), official_email),
+       gender = COALESCE(VALUES(gender), gender),
+       date_of_joining = COALESCE(VALUES(date_of_joining), date_of_joining),
+       branch_id = COALESCE(VALUES(branch_id), branch_id),
+       department_id = COALESCE(VALUES(department_id), department_id),
+       designation_id = COALESCE(VALUES(designation_id), designation_id),
+       cost_centre_id = COALESCE(VALUES(cost_centre_id), cost_centre_id),
+       process_id = COALESCE(VALUES(process_id), process_id),
+       lob_id = COALESCE(VALUES(lob_id), lob_id),
+       employment_type = VALUES(employment_type)`;
+
+  for (const rowsInChunk of chunk(parsed, CHUNK_SIZE)) {
+    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active',?)").join(", ");
+    const params = rowsInChunk.flatMap(buildParams);
+
+    try {
+      await db.execute(insertSql(placeholders), params);
+      for (const r of rowsInChunk) {
+        importedRowIds.push(r.rowId);
+        provisionQueue.push(r.employeeCode);
+        importedRows++;
+      }
+    } catch {
+      for (const r of rowsInChunk) {
+        try {
+          await db.execute(insertSql("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active',?)"), buildParams(r));
+          importedRowIds.push(r.rowId);
+          provisionQueue.push(r.employeeCode);
+          importedRows++;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`Row ${r.rowNo}: ${msg}`);
+          errorUpdates.push({ rowId: r.rowId, message: msg.slice(0, 500) });
+          errorRows++;
+        }
+      }
+    }
+  }
+
+  if (importedRowIds.length > 0) {
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'imported'
+       WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
+      importedRowIds
+    );
+  }
+  if (errorUpdates.length > 0) {
+    const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
+    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
+    const ids = errorUpdates.map((u) => u.rowId);
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
+       WHERE id IN (${ids.map(() => "?").join(",")})`,
+      [...caseParams, ...ids]
+    );
+  }
+
+  // Best-effort per-employee LMS provisioning, exactly as before: failures are
+  // logged and never turn a successfully imported row into an error.
+  for (const employeeCode of provisionQueue) {
+    try {
+      const lmsResult = await provisionLmsIdentityForEmployee({ employeeCode, createdBy: importedByUserId });
+      if (lmsResult.message) {
+        console.warn(`[Bulk Import] LMS provisioning for ${employeeCode}: ${lmsResult.message}`);
+      }
+    } catch (err) {
+      console.error(`[Bulk Import] LMS provisioning failed for ${employeeCode}:`, err instanceof Error ? err.message : String(err));
     }
   }
 

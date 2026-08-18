@@ -18,20 +18,76 @@ function parseDay(val: string | undefined): number | null {
   return n !== undefined ? n : null;
 }
 
+interface BatchRow extends RowDataPacket {
+  id: string;
+  row_no: number;
+  normalized_data: unknown;
+}
+
+interface EmployeeRow extends RowDataPacket {
+  employee_code: string;
+  id: string;
+  process_id: string;
+  branch_id: string;
+}
+
+interface MaxOrderRow extends RowDataPacket {
+  week_start_date: string;
+  process_id: string;
+  max_order: number;
+}
+
+interface ParsedRow {
+  rowId: string;
+  rowNo: number;
+  employeeCode: string;
+  weekStartDate: string;
+  day1: number;
+  day2: number | null;
+  reason: string | null;
+}
+
+interface PreparedRow {
+  rowId: string;
+  prefId: string;
+  employeeId: string;
+  processId: string;
+  branchId: string;
+  weekStartDate: string;
+  day1: number;
+  day2: number | null;
+  reason: string | null;
+  submissionOrder: number;
+}
+
+const CHUNK_SIZE = 200;
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 export async function importWeekOffPreferenceBatch(
   batchId: string,
   userId: string
 ): Promise<{ imported: number; skipped: number; errors: string[] }> {
-  const [batchRows] = await db.execute<RowDataPacket[]>(
+  const [batchRows] = await db.execute<BatchRow[]>(
     "SELECT * FROM upload_batch_row WHERE upload_batch_id = ? AND row_status IN ('valid','pending') ORDER BY row_no ASC",
     [batchId]
   );
 
-  let imported = 0;
-  let skipped = 0;
-  const errors: string[] = [];
+  if (batchRows.length === 0) {
+    return { imported: 0, skipped: 0, errors: [] };
+  }
 
-  for (const batchRow of batchRows as RowDataPacket[]) {
+  const parsed: ParsedRow[] = [];
+  const errors: string[] = [];
+  let skipped = 0;
+  const errorUpdates: Array<{ rowId: string; message: string }> = [];
+  const employeeCodes = new Set<string>();
+
+  for (const batchRow of batchRows) {
     const raw = (typeof batchRow.normalized_data === "string"
       ? JSON.parse(batchRow.normalized_data)
       : batchRow.normalized_data) as Record<string, string>;
@@ -41,10 +97,7 @@ export async function importWeekOffPreferenceBatch(
     if (!employee_code || !week_start_date || preferred_day_1 === undefined) {
       const msg = `Row ${batchRow.row_no}: missing employee_code, week_start_date or preferred_day_1`;
       errors.push(msg);
-      await db.execute(
-        "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
-        [JSON.stringify([msg]), batchRow.id]
-      );
+      errorUpdates.push({ rowId: batchRow.id, message: msg });
       skipped++;
       continue;
     }
@@ -53,60 +106,157 @@ export async function importWeekOffPreferenceBatch(
     if (day1 === null) {
       const msg = `Row ${batchRow.row_no}: invalid preferred_day_1 '${preferred_day_1}'`;
       errors.push(msg);
-      await db.execute(
-        "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
-        [JSON.stringify([msg]), batchRow.id]
-      );
+      errorUpdates.push({ rowId: batchRow.id, message: msg });
       skipped++;
       continue;
     }
 
-    const day2 = parseDay(preferred_day_2) ?? null;
+    parsed.push({
+      rowId: batchRow.id, rowNo: batchRow.row_no, employeeCode: employee_code,
+      weekStartDate: week_start_date, day1, day2: parseDay(preferred_day_2) ?? null,
+      reason: reason ?? null,
+    });
+    employeeCodes.add(employee_code);
+  }
 
-    // Resolve employee
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      "SELECT id, process_id, branch_id FROM employees WHERE employee_code = ? AND employment_status = 'active' LIMIT 1",
-      [employee_code]
+  // One bulk employee lookup instead of one SELECT per row.
+  const employeeMap = new Map<string, EmployeeRow>();
+  if (employeeCodes.size > 0) {
+    const codes = Array.from(employeeCodes);
+    const [rows] = await db.execute<EmployeeRow[]>(
+      `SELECT id, employee_code, process_id, branch_id FROM employees
+       WHERE employee_code IN (${codes.map(() => "?").join(",")}) AND employment_status = 'active'`,
+      codes
     );
-    if (!(empRows as RowDataPacket[]).length) {
-      const msg = `Row ${batchRow.row_no}: employee_code '${employee_code}' not found or inactive`;
+    for (const r of rows) employeeMap.set(r.employee_code, r);
+  }
+
+  const resolved: Array<ParsedRow & { employeeId: string; processId: string; branchId: string }> = [];
+  for (const row of parsed) {
+    const emp = employeeMap.get(row.employeeCode);
+    if (!emp) {
+      const msg = `Row ${row.rowNo}: employee_code '${row.employeeCode}' not found or inactive`;
       errors.push(msg);
-      await db.execute(
-        "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
-        [JSON.stringify([msg]), batchRow.id]
-      );
+      errorUpdates.push({ rowId: row.rowId, message: msg });
       skipped++;
       continue;
     }
-    const emp = (empRows as RowDataPacket[])[0];
+    resolved.push({ ...row, employeeId: emp.id, processId: emp.process_id, branchId: emp.branch_id });
+  }
 
-    // Get next submission_order for this process/week
-    const [seqRows] = await db.execute<RowDataPacket[]>(
-      "SELECT COALESCE(MAX(submission_order),0)+1 AS next_order FROM week_off_preference WHERE week_start_date=? AND process_id=?",
-      [week_start_date, emp.process_id]
+  // submission_order is a running MAX+1 per (week_start_date, process_id) —
+  // genuinely sequential, so it cannot simply be parallelized. Instead of one
+  // "SELECT MAX..." round trip per row, fetch each referenced (week, process)
+  // group's CURRENT max once, then assign each row's order locally as we walk
+  // the rows in the same row_no order the original per-row loop used — same
+  // result, one query instead of N.
+  const weekDates = Array.from(new Set(resolved.map((r) => r.weekStartDate)));
+  const processIds = Array.from(new Set(resolved.map((r) => r.processId)));
+  const groupMax = new Map<string, number>();
+  if (weekDates.length > 0 && processIds.length > 0) {
+    const [rows] = await db.execute<MaxOrderRow[]>(
+      `SELECT week_start_date, process_id, COALESCE(MAX(submission_order),0) AS max_order
+       FROM week_off_preference
+       WHERE week_start_date IN (${weekDates.map(() => "?").join(",")})
+         AND process_id IN (${processIds.map(() => "?").join(",")})
+       GROUP BY week_start_date, process_id`,
+      [...weekDates, ...processIds]
     );
-    const submissionOrder = (seqRows as RowDataPacket[])[0]?.next_order ?? 1;
+    for (const r of rows) {
+      groupMax.set(`${String(r.week_start_date).slice(0, 10)}|${r.process_id}`, Number(r.max_order));
+    }
+  }
 
-    const prefId = randomUUID();
+  const prepared: PreparedRow[] = [];
+  for (const row of resolved) {
+    const key = `${row.weekStartDate}|${row.processId}`;
+    const nextOrder = (groupMax.get(key) ?? 0) + 1;
+    groupMax.set(key, nextOrder);
+    prepared.push({
+      rowId: row.rowId, prefId: randomUUID(), employeeId: row.employeeId,
+      processId: row.processId, branchId: row.branchId, weekStartDate: row.weekStartDate,
+      day1: row.day1, day2: row.day2, reason: row.reason, submissionOrder: nextOrder,
+    });
+  }
+
+  let imported = 0;
+  const importedRowUpdates: Array<{ rowId: string; prefId: string }> = [];
+
+  // Chunked multi-row upsert instead of one INSERT per row. If a chunk's
+  // statement fails (a constraint violation on one of its rows), that chunk
+  // alone is retried row-by-row so only the actually-bad row ends up marked
+  // as an error — every other row in the batch still lands.
+  for (const rowsInChunk of chunk(prepared, CHUNK_SIZE)) {
+    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,'submitted',?,?)").join(", ");
+    const params = rowsInChunk.flatMap((r) => [
+      r.prefId, r.employeeId, r.processId, r.branchId, r.weekStartDate,
+      r.day1, r.day2, r.reason, r.submissionOrder, userId,
+    ]);
+
+    try {
+      await db.execute(
+        `INSERT INTO week_off_preference
+           (id, employee_id, process_id, branch_id, week_start_date,
+            preferred_day_1, preferred_day_2, reason, status, submission_order, created_by)
+         VALUES ${placeholders}
+         ON DUPLICATE KEY UPDATE
+           preferred_day_1 = VALUES(preferred_day_1),
+           preferred_day_2 = VALUES(preferred_day_2),
+           reason = VALUES(reason),
+           status = 'submitted'`,
+        params
+      );
+      for (const r of rowsInChunk) {
+        importedRowUpdates.push({ rowId: r.rowId, prefId: r.prefId });
+        imported++;
+      }
+    } catch {
+      for (const r of rowsInChunk) {
+        try {
+          await db.execute(
+            `INSERT INTO week_off_preference
+               (id, employee_id, process_id, branch_id, week_start_date,
+                preferred_day_1, preferred_day_2, reason, status, submission_order, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?)
+             ON DUPLICATE KEY UPDATE
+               preferred_day_1 = VALUES(preferred_day_1),
+               preferred_day_2 = VALUES(preferred_day_2),
+               reason = VALUES(reason),
+               status = 'submitted'`,
+            [r.prefId, r.employeeId, r.processId, r.branchId, r.weekStartDate,
+             r.day1, r.day2, r.reason, r.submissionOrder, userId]
+          );
+          importedRowUpdates.push({ rowId: r.rowId, prefId: r.prefId });
+          imported++;
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(msg);
+          errorUpdates.push({ rowId: r.rowId, message: msg.slice(0, 500) });
+          skipped++;
+        }
+      }
+    }
+  }
+
+  if (importedRowUpdates.length > 0) {
+    const cases = importedRowUpdates.map(() => "WHEN ? THEN ?").join(" ");
+    const caseParams = importedRowUpdates.flatMap((u) => [u.rowId, u.prefId]);
+    const ids = importedRowUpdates.map((u) => u.rowId);
     await db.execute(
-      `INSERT INTO week_off_preference
-         (id, employee_id, process_id, branch_id, week_start_date,
-          preferred_day_1, preferred_day_2, reason, status, submission_order, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?)
-       ON DUPLICATE KEY UPDATE
-         preferred_day_1 = VALUES(preferred_day_1),
-         preferred_day_2 = VALUES(preferred_day_2),
-         reason = VALUES(reason),
-         status = 'submitted'`,
-      [prefId, emp.id, emp.process_id, emp.branch_id, week_start_date,
-       day1, day2, reason ?? null, submissionOrder, userId]
+      `UPDATE upload_batch_row SET row_status = 'imported', target_record_id = CASE id ${cases} END
+       WHERE id IN (${ids.map(() => "?").join(",")})`,
+      [...caseParams, ...ids]
     );
-
+  }
+  if (errorUpdates.length > 0) {
+    const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
+    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
+    const ids = errorUpdates.map((u) => u.rowId);
     await db.execute(
-      "UPDATE upload_batch_row SET row_status='imported', target_record_id=? WHERE id=?",
-      [prefId, batchRow.id]
+      `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
+       WHERE id IN (${ids.map(() => "?").join(",")})`,
+      [...caseParams, ...ids]
     );
-    imported++;
   }
 
   await db.execute(

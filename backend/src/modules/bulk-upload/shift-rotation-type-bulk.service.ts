@@ -1,5 +1,5 @@
 import { db } from "../../db/mysql.js";
-import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import type { RowDataPacket } from "mysql2";
 
 const VALID_TYPES = new Set(["frozen", "weekly", "daily", "rotating"]);
 
@@ -9,9 +9,16 @@ interface BatchRow extends RowDataPacket {
   normalized_data: unknown;
 }
 
-// An UPDATE does not return rows. mysql2 resolves a non-SELECT to a ResultSetHeader, so typing
-// the result as a RowDataPacket[] and reading result[0].affectedRows read an index that is
-// always undefined — see the call site below for what that produced.
+interface EmployeeRow extends RowDataPacket {
+  employee_code: string;
+}
+
+interface ParsedRow {
+  rowId: string;
+  rowNo: number;
+  employeeCode: string;
+  rotationType: string;
+}
 
 export async function importShiftRotationTypeBatch(
   batchId: string,
@@ -22,9 +29,15 @@ export async function importShiftRotationTypeBatch(
     [batchId]
   );
 
-  let imported = 0;
-  let skipped = 0;
+  if (batchRows.length === 0) {
+    return { imported: 0, skipped: 0, errors: [] };
+  }
+
+  const parsed: ParsedRow[] = [];
   const errors: string[] = [];
+  let skipped = 0;
+  const errorUpdates: Array<{ rowId: string; message: string }> = [];
+  const codes = new Set<string>();
 
   for (const batchRow of batchRows) {
     const raw = (typeof batchRow.normalized_data === "string"
@@ -36,10 +49,7 @@ export async function importShiftRotationTypeBatch(
     if (!employee_code || !shift_rotation_type) {
       const msg = `Row ${batchRow.row_no}: missing employee_code or shift_rotation_type`;
       errors.push(msg);
-      await db.execute(
-        "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
-        [JSON.stringify([msg]), batchRow.id]
-      );
+      errorUpdates.push({ rowId: batchRow.id, message: msg });
       skipped++;
       continue;
     }
@@ -47,41 +57,100 @@ export async function importShiftRotationTypeBatch(
     if (!VALID_TYPES.has(shift_rotation_type.toLowerCase())) {
       const msg = `Row ${batchRow.row_no}: invalid shift_rotation_type '${shift_rotation_type}' — must be frozen/weekly/daily/rotating`;
       errors.push(msg);
-      await db.execute(
-        "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
-        [JSON.stringify([msg]), batchRow.id]
-      );
+      errorUpdates.push({ rowId: batchRow.id, message: msg });
       skipped++;
       continue;
     }
 
-    const [result] = await db.execute<ResultSetHeader>(
-      "UPDATE employees SET shift_rotation_type = ?, updated_by = ? WHERE employee_code = ? AND employment_status = 'active'",
-      [shift_rotation_type.toLowerCase(), userId, employee_code]
+    parsed.push({
+      rowId: batchRow.id, rowNo: batchRow.row_no,
+      employeeCode: employee_code, rotationType: shift_rotation_type.toLowerCase(),
+    });
+    codes.add(employee_code);
+  }
+
+  // One bulk existence check covering every employee_code in the file,
+  // instead of relying on each row's own UPDATE's affectedRows.
+  const foundCodes = new Set<string>();
+  if (codes.size > 0) {
+    const codeList = Array.from(codes);
+    const [rows] = await db.execute<EmployeeRow[]>(
+      `SELECT employee_code FROM employees
+       WHERE employee_code IN (${codeList.map(() => "?").join(",")}) AND employment_status = 'active'`,
+      codeList
     );
-    // Was `result[0]?.affectedRows ?? 0` against a RowDataPacket[] type. result IS the header,
-    // so result[0] was always undefined and `affected` was always 0 — not a race, deterministic.
-    // Every row therefore took the branch below: the UPDATE genuinely landed on the employee,
-    // and the batch then reported "employee_code not found or inactive" for all of them and
-    // imported_rows = 0. The natural response to that message is to fix the sheet and upload
-    // again, which applies the same change a second time.
-    const affected = result.affectedRows ?? 0;
-    if (affected === 0) {
-      const msg = `Row ${batchRow.row_no}: employee_code '${employee_code}' not found or inactive`;
-      errors.push(msg);
-      await db.execute(
-        "UPDATE upload_batch_row SET row_status='error', error_messages=? WHERE id=?",
-        [JSON.stringify([msg]), batchRow.id]
-      );
-      skipped++;
-      continue;
-    }
+    for (const r of rows) foundCodes.add(r.employee_code);
+  }
 
+  let imported = 0;
+  const importedRowIds: string[] = [];
+  const notFound: ParsedRow[] = [];
+  const found: ParsedRow[] = [];
+
+  for (const row of parsed) {
+    if (foundCodes.has(row.employeeCode)) {
+      found.push(row);
+    } else {
+      notFound.push(row);
+    }
+  }
+
+  for (const row of notFound) {
+    const msg = `Row ${row.rowNo}: employee_code '${row.employeeCode}' not found or inactive`;
+    errors.push(msg);
+    errorUpdates.push({ rowId: row.rowId, message: msg });
+    skipped++;
+  }
+
+  // A duplicate employee_code across rows keeps the LAST row's rotation type
+  // — matching the original per-row loop, where a later row's sequential
+  // UPDATE always overwrote an earlier one for the same employee.
+  const lastByCode = new Map<string, string>();
+  for (const row of found) lastByCode.set(row.employeeCode, row.rotationType);
+
+  const codesByType = new Map<string, string[]>();
+  for (const [code, type] of lastByCode) {
+    if (!codesByType.has(type)) codesByType.set(type, []);
+    codesByType.get(type)!.push(code);
+  }
+
+  // One bulk UPDATE per distinct rotation type value, instead of one per row.
+  //
+  // The original per-row UPDATE also set `updated_by = ?`, but `employees` has
+  // no such column (only `updated_at`) — every single row threw ER_BAD_FIELD_ERROR
+  // on this UPDATE, uncaught, which crashed the entire import on its first valid
+  // row every time this was ever run. schema-column-refs.test.ts (which scans
+  // every write in the repo against the real column list) confirms `updated_by`
+  // does not exist on `employees`. Fixed here rather than carried forward.
+  for (const [type, codesForType] of codesByType) {
     await db.execute(
-      "UPDATE upload_batch_row SET row_status='imported' WHERE id=?",
-      [batchRow.id]
+      `UPDATE employees SET shift_rotation_type = ?, updated_at = NOW()
+       WHERE employee_code IN (${codesForType.map(() => "?").join(",")}) AND employment_status = 'active'`,
+      [type, ...codesForType]
     );
+  }
+
+  for (const row of found) {
+    importedRowIds.push(row.rowId);
     imported++;
+  }
+
+  if (importedRowIds.length > 0) {
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'imported'
+       WHERE id IN (${importedRowIds.map(() => "?").join(",")})`,
+      importedRowIds
+    );
+  }
+  if (errorUpdates.length > 0) {
+    const cases = errorUpdates.map(() => "WHEN ? THEN ?").join(" ");
+    const caseParams = errorUpdates.flatMap((u) => [u.rowId, JSON.stringify([u.message])]);
+    const ids = errorUpdates.map((u) => u.rowId);
+    await db.execute(
+      `UPDATE upload_batch_row SET row_status = 'error', error_messages = CASE id ${cases} END
+       WHERE id IN (${ids.map(() => "?").join(",")})`,
+      [...caseParams, ...ids]
+    );
   }
 
   await db.execute(
