@@ -149,7 +149,7 @@ export const lifecycleService = {
 
   async listDocuments(employeeId: string) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      "SELECT * FROM employee_documents WHERE employee_id = ? ORDER BY created_at DESC",
+      "SELECT *, doc_name AS document_name FROM employee_documents WHERE employee_id = ? ORDER BY created_at DESC",
       [employeeId]
     );
     return rows as RowDataPacket[];
@@ -157,7 +157,7 @@ export const lifecycleService = {
 
   async getExpiredOrExpiringDocuments(daysAhead = 30) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT d.*, e.employee_code, e.full_name
+      `SELECT d.*, d.doc_name AS document_name, e.employee_code, e.full_name
        FROM employee_documents d
        JOIN employees e ON e.id = d.employee_id
        WHERE d.expiry_date IS NOT NULL AND d.expiry_date <= DATE_ADD(CURDATE(), INTERVAL ? DAY)
