@@ -78,8 +78,16 @@ async function applyTransferOn(
     );
     await exec.execute("UPDATE employees SET process_id = ? WHERE id = ?", [masterId, employee_id]);
 
-  } else if (transfer_type === "reporting_manager") {
-    // to_value is the new manager's employee_id for RM transfers.
+  } else if (transfer_type === "cost_centre") {
+    const masterId = await resolveMaster(
+      "SELECT id FROM cost_centre_master WHERE id = ? OR cost_centre_code COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
+      "cost_centre",
+      "cost_centre_master"
+    );
+    await exec.execute("UPDATE employees SET cost_centre_id = ? WHERE id = ?", [masterId, employee_id]);
+
+  } else if (transfer_type === "reporting" || transfer_type === "reporting_manager") {
+    // Handle both ENUM value 'reporting' and legacy code reference 'reporting_manager'
     await exec.execute(
       `UPDATE employees SET reporting_manager_id = ? WHERE id = ?`,
       [to_value, employee_id]
@@ -105,6 +113,7 @@ interface CreateTransfer {
   effective_date: string;
   reason?: string;
   initiated_by: string;
+  new_reporting_manager_id?: string; // Only for cost_centre transfers
 }
 
 interface CreatePromotion {
@@ -146,11 +155,31 @@ export const mobilityService = {
   },
 
   async createTransfer(data: CreateTransfer) {
+    // Validate cost_centre transfers
+    if (data.transfer_type === "cost_centre") {
+      const [ccRows] = await db.execute<RowDataPacket[]>(
+        "SELECT id FROM cost_centre_master WHERE id = ? OR cost_centre_code COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
+        [data.to_value, data.to_value]
+      );
+      if (!(ccRows as RowDataPacket[])[0]) {
+        throw mobilityError(422, `Transfer: cost_centre '${data.to_value}' not found in cost_centre_master`);
+      }
+      if (data.new_reporting_manager_id) {
+        const [mgrRows] = await db.execute<RowDataPacket[]>(
+          "SELECT id FROM employees WHERE id = ? AND active_status = 1 LIMIT 1",
+          [data.new_reporting_manager_id]
+        );
+        if (!(mgrRows as RowDataPacket[])[0]) {
+          throw mobilityError(422, `Transfer: reporting manager '${data.new_reporting_manager_id}' not found or inactive`);
+        }
+      }
+    }
+
     const id = randomUUID();
     await db.execute(
       `INSERT INTO transfer_record
-         (id, employee_id, transfer_type, from_value, to_value, effective_date, reason, initiated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, employee_id, transfer_type, from_value, to_value, effective_date, reason, initiated_by, new_reporting_manager_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         data.employee_id,
@@ -160,6 +189,7 @@ export const mobilityService = {
         data.effective_date,
         data.reason ?? null,
         data.initiated_by,
+        data.new_reporting_manager_id ?? null,
       ]
     );
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -249,6 +279,58 @@ export const mobilityService = {
             throw mobilityError(409, "Transfer has already been applied to the employee record");
           }
           await applyTransferOn(conn, employee_id, transfer_type, to_value);
+
+          // Cost centre cascade: read old RM, apply RM change, write job history
+          if (transfer_type === "cost_centre") {
+            const new_reporting_manager_id = (record as unknown as { new_reporting_manager_id?: string | null }).new_reporting_manager_id ?? null;
+
+            // 1. Read empSnap BEFORE cascade so we capture the OLD reporting_manager_id
+            const [empRows] = await conn.execute<RowDataPacket[]>(
+              `SELECT branch_id, department_id, process_id, reporting_manager_id
+               FROM employees WHERE id = ?`,
+              [employee_id]
+            );
+            const empSnap = (empRows as RowDataPacket[])[0] ?? {};
+
+            // 2. Apply RM cascade
+            if (new_reporting_manager_id) {
+              await conn.execute(
+                `UPDATE employees SET reporting_manager_id = ? WHERE id = ?`,
+                [new_reporting_manager_id, employee_id]
+              );
+            }
+
+            // 3. Insert job history with from_manager_id = old value (empSnap)
+            await conn.execute(
+              `INSERT INTO employee_job_history
+                 (id, employee_id, effective_date, change_type,
+                  from_cost_centre_id, to_cost_centre_id,
+                  from_manager_id, to_manager_id,
+                  from_branch_id, to_branch_id,
+                  from_department_id, to_department_id,
+                  from_process_id, to_process_id,
+                  reason, approved_by, created_by)
+               VALUES (?, ?, ?, 'cost_centre_change', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                randomUUID(),
+                employee_id,
+                effectiveDateStr,
+                from_value,                                                                    // from_cost_centre_id
+                to_value,                                                                      // to_cost_centre_id
+                empSnap.reporting_manager_id ?? null,                                          // from_manager_id (old)
+                new_reporting_manager_id ?? empSnap.reporting_manager_id ?? null,              // to_manager_id
+                empSnap.branch_id ?? null,
+                empSnap.branch_id ?? null,
+                empSnap.department_id ?? null,
+                empSnap.department_id ?? null,
+                empSnap.process_id ?? null,
+                empSnap.process_id ?? null,
+                (record as unknown as { reason?: string | null }).reason ?? null,
+                data.approved_by,
+                data.approved_by,
+              ]
+            );
+          }
         }
 
         await conn.execute(
