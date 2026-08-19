@@ -238,35 +238,45 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
   const hasProvision = await tableExists("billing_provision_snapshot");
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT branch_id, cost_centre_id, process_id, SUM(amount) AS amount FROM (
-        -- SOURCE A: invoice line items (detailed breakdown where available)
-        SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
-               pc.process_id AS process_id, p.amount AS amount
-          FROM billing_invoice_particular_snapshot p
-          LEFT JOIN cost_centre_master ccm
-                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-                  = p.cost_centre_code COLLATE utf8mb4_unicode_ci
-          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
-         WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
-        ${hasProvision ? `
+    `${hasProvision ? `
+     WITH invoice_actual AS (
+       SELECT p.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_centre_code,
+              ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
+              pc.process_id AS process_id, SUM(p.amount) AS invoice_amount
+         FROM billing_invoice_particular_snapshot p
+         LEFT JOIN cost_centre_master ccm
+                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                 = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+         LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
+        WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
+        GROUP BY p.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id, ccm.id, pc.process_id
+     ),
+     provision_actual AS (
+       SELECT ps.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_centre_code,
+              ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
+              pc.process_id AS process_id,
+              SUM(CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) AS provision_amount
+         FROM billing_provision_snapshot ps
+         LEFT JOIN cost_centre_master ccm
+                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                 = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
+         LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
+        WHERE ps.period_code = ? AND ps.revenue_active = 1 AND ${OWN_COMPANY_SQL}
+        GROUP BY ps.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id, ccm.id, pc.process_id
+     )
+     SELECT branch_id, cost_centre_id, process_id, SUM(amount) AS amount FROM (
+        SELECT branch_id, cost_centre_id, process_id, invoice_amount AS amount
+          FROM invoice_actual
         UNION ALL
-        -- SOURCE B: monthly billing confirmation (primary source for most cost centres)
-        -- Excluded for cost centres already covered by SOURCE A to prevent double-counting.
-        SELECT ccm.branch_id, ccm.id AS cost_centre_id, pc.process_id,
-               (CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) / 100 AS amount
-          FROM billing_provision_snapshot ps
-          LEFT JOIN cost_centre_master ccm
-                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-                  = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
-          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
-         WHERE ps.period_code = ? AND ps.revenue_active = 1 AND ${OWN_COMPANY_SQL}
-           AND NOT EXISTS (
-             SELECT 1 FROM billing_invoice_particular_snapshot p2
-              WHERE p2.cost_centre_code COLLATE utf8mb4_unicode_ci = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
-                AND p2.period_code COLLATE utf8mb4_unicode_ci = ps.period_code COLLATE utf8mb4_unicode_ci
-           )` : ''}
+        SELECT p.branch_id, p.cost_centre_id, p.process_id,
+               GREATEST(p.provision_amount - COALESCE(i.invoice_amount, 0), 0) AS amount
+          FROM provision_actual p
+          LEFT JOIN invoice_actual i
+                 ON i.cost_centre_code = p.cost_centre_code
+                AND COALESCE(i.branch_id, '') = COALESCE(p.branch_id, '')
+                AND COALESCE(i.cost_centre_id, '') = COALESCE(p.cost_centre_id, '')
+                AND COALESCE(i.process_id, '') = COALESCE(p.process_id, '')
         UNION ALL
-        -- SOURCE C: credit notes (always subtracted regardless of which source provided the positive)
         SELECT ccm.branch_id, ccm.id, pc.process_id, -cn.total_amt
           FROM billing_credit_note_snapshot cn
           LEFT JOIN cost_centre_master ccm
@@ -275,7 +285,26 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
           LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
          WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}
      ) netted
-      GROUP BY branch_id, cost_centre_id, process_id`,
+      GROUP BY branch_id, cost_centre_id, process_id` : `
+     SELECT branch_id, cost_centre_id, process_id, SUM(amount) AS amount FROM (
+        SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
+               pc.process_id AS process_id, p.amount AS amount
+          FROM billing_invoice_particular_snapshot p
+          LEFT JOIN cost_centre_master ccm
+                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                  = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
+         WHERE p.period_code = ? AND ${OWN_COMPANY_SQL}
+        UNION ALL
+        SELECT ccm.branch_id, ccm.id, pc.process_id, -cn.total_amt
+          FROM billing_credit_note_snapshot cn
+          LEFT JOIN cost_centre_master ccm
+                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                  = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
+          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
+         WHERE cn.period_code = ? AND cn.is_approved = 1 AND ${OWN_COMPANY_SQL}
+     ) netted
+      GROUP BY branch_id, cost_centre_id, process_id`}`,
     hasProvision ? [periodCode, periodCode, periodCode] : [periodCode, periodCode]
   );
   return accumulate(rows);

@@ -214,6 +214,7 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
   const out = new Map<string, number>();
   if (!(await tableExists("billing_invoice_particular_snapshot"))) return out;
   const hasProvision = await tableExists("billing_provision_snapshot");
+  const hasCreditNote = await tableExists("billing_credit_note_snapshot");
 
   // Invoice particulars WHERE conditions
   const invWhere: string[] = ["p.period_code = ?", OWN_COMPANY_SQL];
@@ -242,33 +243,84 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
                                 WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
     provParams.push(...s.processIds);
   }
-  provWhere.push(`NOT EXISTS (
-    SELECT 1 FROM billing_invoice_particular_snapshot p2
-    WHERE p2.cost_centre_code COLLATE utf8mb4_unicode_ci = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
-      AND p2.period_code COLLATE utf8mb4_unicode_ci = ps.period_code COLLATE utf8mb4_unicode_ci
-  )`);
 
-  const allParams = hasProvision ? [...invParams, ...provParams] : invParams;
+  const creditWhere: string[] = ["cn.period_code = ?", "cn.is_approved = 1", OWN_COMPANY_SQL];
+  const creditParams: unknown[] = [period];
+  if (s.costCentreIds.length) {
+    creditWhere.push(`ccm.id IN (${marks(s.costCentreIds)})`);
+    creditParams.push(...s.costCentreIds);
+  }
+  if (s.processIds.length) {
+    creditWhere.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                                  WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
+    creditParams.push(...s.processIds);
+  }
+
+  const allParams = [
+    ...invParams,
+    ...(hasProvision ? provParams : []),
+    ...(hasCreditNote ? creditParams : []),
+  ];
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT branch_id, SUM(amount) AS amount FROM (
+    `${hasProvision ? `
+     WITH invoice_actual AS (
+       SELECT p.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_centre_code,
+              ccm.branch_id AS branch_id, SUM(p.amount) AS invoice_amount
+         FROM billing_invoice_particular_snapshot p
+         LEFT JOIN cost_centre_master ccm
+                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                 = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+        WHERE ${invWhere.join(" AND ")}
+        GROUP BY p.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id
+     ),
+     provision_actual AS (
+       SELECT ps.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_centre_code,
+              ccm.branch_id AS branch_id,
+              SUM(CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) AS provision_amount
+         FROM billing_provision_snapshot ps
+         LEFT JOIN cost_centre_master ccm
+                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                 = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
+        WHERE ${provWhere.join(" AND ")}
+        GROUP BY ps.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id
+     )
+     SELECT branch_id, SUM(amount) AS amount FROM (
+       SELECT branch_id, invoice_amount AS amount FROM invoice_actual
+       UNION ALL
+       SELECT p.branch_id,
+              GREATEST(p.provision_amount - COALESCE(i.invoice_amount, 0), 0) AS amount
+         FROM provision_actual p
+         LEFT JOIN invoice_actual i
+                ON i.cost_centre_code = p.cost_centre_code
+               AND COALESCE(i.branch_id, '') = COALESCE(p.branch_id, '')
+       ${hasCreditNote ? `
+       UNION ALL
+       SELECT ccm.branch_id AS branch_id, -cn.total_amt AS amount
+         FROM billing_credit_note_snapshot cn
+         LEFT JOIN cost_centre_master ccm
+                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                 = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
+        WHERE ${creditWhere.join(" AND ")}` : ""}
+     ) combined
+     GROUP BY branch_id` : `
+     SELECT branch_id, SUM(amount) AS amount FROM (
        SELECT ccm.branch_id AS branch_id, p.amount AS amount
          FROM billing_invoice_particular_snapshot p
          LEFT JOIN cost_centre_master ccm
                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
                  = p.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE ${invWhere.join(" AND ")}
-     ${hasProvision ? `
+       ${hasCreditNote ? `
        UNION ALL
-       SELECT ccm.branch_id AS branch_id,
-              (CASE WHEN ps.billing_amt > 0 THEN ps.billing_amt ELSE ps.provision_amt END) / 100 AS amount
-         FROM billing_provision_snapshot ps
+       SELECT ccm.branch_id AS branch_id, -cn.total_amt AS amount
+         FROM billing_credit_note_snapshot cn
          LEFT JOIN cost_centre_master ccm
                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-                 = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
-        WHERE ${provWhere.join(" AND ")}` : ""}
+                 = cn.cost_centre_code COLLATE utf8mb4_unicode_ci
+        WHERE ${creditWhere.join(" AND ")}` : ""}
      ) combined
-     GROUP BY branch_id`,
+     GROUP BY branch_id`}`,
     allParams,
   );
   for (const r of rows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));

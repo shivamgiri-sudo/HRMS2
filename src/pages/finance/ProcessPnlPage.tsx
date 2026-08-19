@@ -12,9 +12,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { downloadBpoPnlExport, useBpoProcessPnl } from "@/hooks/useBpoProcessPnl";
 import { usePnlStatement, type PnlStatementViewBy } from "@/hooks/usePnlStatement";
+import { useCeoOverview } from "@/hooks/useCeoOverview";
 import { CeoOverviewPanel } from "@/components/finance/pnl/CeoOverviewPanel";
 import { PnlStatementView } from "@/components/finance/pnl/PnlStatementView";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
+import { PnlReconciliationPanel } from "@/components/finance/pnl/PnlReconciliationPanel";
 import { BpoPnlMatrixTable } from "@/components/finance/pnl/BpoPnlMatrixTable";
 import { ProcessPnlAlertsWorkspace } from "@/components/finance/pnl/ProcessPnlAlertsWorkspace";
 import { ProcessPnlMatrixToolbar } from "@/components/finance/pnl/ProcessPnlMatrixToolbar";
@@ -73,7 +75,7 @@ export default function ProcessPnlPage() {
   const clientId = searchParams.get("clientId") ?? "";
   const search = searchParams.get("search") ?? "";
   const [draftSearch, setDraftSearch] = useState(search);
-  const [activeTab, setActiveTab] = useState<"overview" | "matrix" | "statement" | "alerts">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "live" | "matrix" | "statement" | "alerts">("overview");
   const [statementViewBy, setStatementViewBy] = useState<PnlStatementViewBy>("process");
   const [matrixPreset, setMatrixPreset] = useState<ProcessPnlMatrixPreset>("summary");
   const [statusFilter, setStatusFilter] = useState<ProcessPnlStatusFilter>("all");
@@ -384,6 +386,7 @@ export default function ProcessPnlPage() {
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="flex flex-1 flex-col overflow-hidden">
           <TabsList className="mx-4 mt-3 w-fit shrink-0">
             <TabsTrigger value="overview">CEO Overview</TabsTrigger>
+            <TabsTrigger value="live">Live P&amp;L</TabsTrigger>
             <TabsTrigger value="matrix">Process Matrix</TabsTrigger>
             <TabsTrigger value="statement">P&amp;L Statement</TabsTrigger>
             <TabsTrigger value="alerts">Alerts &amp; Reconciliation</TabsTrigger>
@@ -483,6 +486,10 @@ export default function ProcessPnlPage() {
 
               </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="live" className="flex-1 overflow-auto px-4 py-3 m-0">
+            <PnlReconciliationPanel period={period} branchId={branchId || undefined} />
           </TabsContent>
 
           <TabsContent value="matrix" className="flex-1 overflow-auto px-4 py-3 m-0">
