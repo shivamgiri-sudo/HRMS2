@@ -4653,7 +4653,14 @@ export const REPORT_CATALOG: ReportDefinition[] = [
 
   {
     code: "asset-inventory-report",
-    name: "Asset Inventory Report",
+    // Was "Asset Inventory Report" — same rename already applied to src/lib/report-catalog.ts
+    // (a77d5293) was missed here. This backend copy's .name is what report-suite.routes.ts
+    // actually uses as the live XLSX sheet/export title (buildSecureXlsxBuffer,
+    // sheetName/reportName), so the export a user downloads was still indistinguishable
+    // from the sibling "asset-inventory" report even after the frontend tile was fixed —
+    // found by an independent QA re-audit. Neutral, not claiming either is more correct,
+    // same reasoning as the frontend rename.
+    name: "Asset Inventory Report (Alternate Source)",
     category: "Assets",
     subcategory: "Inventory",
     description: "Full asset register with current assignment status",
