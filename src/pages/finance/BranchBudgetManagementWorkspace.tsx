@@ -905,9 +905,32 @@ export default function BranchBudgetManagementWorkspace() {
   const processes = unwrapList(processResponse).filter(
     (item) => Number(item.active_status ?? 1) === 1 && (!branchId || !item.branch_id || item.branch_id === branchId)
   );
-  const costCentres = unwrapList(costCentreResponse).filter(
-    (item) => !branchId || !item.branch_id || item.branch_id === branchId
-  );
+  /**
+   * Cost centres offered by the "Direct to cost centre" picker and the Excel import.
+   *
+   * Two defects in the previous filter (`!branchId || !item.branch_id || item.branch_id === branchId`):
+   *
+   *  1. `!item.branch_id` admitted every cost centre whose branch_id is NULL into EVERY branch.
+   *     That column is nullable and cost_centre_master tracks such rows explicitly
+   *     (costCentreService.list emits needs_migration for exactly this case), so unmapped cost
+   *     centres could be attached to any branch's budget line. Nothing revalidates a direct
+   *     costCentreId against the branch on save, so it would simply persist.
+   *  2. `!branchId` offered the entire company list before a branch was chosen.
+   *
+   * It is also intersected with activeCostCentres — the branch-budget endpoint the allocation
+   * engine itself uses (listActiveCostCentres), which additionally excludes closed and
+   * not-yet-live cost centres via close_date/go_live_date. /api/org/cost-centres only filters
+   * active_status, so a closed-but-still-flagged-active cost centre used to be offered here and
+   * then rejected, or silently missing, everywhere the engine ran. The two lists now agree.
+   * Falls back to the branch filter alone while that query is still in flight.
+   */
+  const engineCostCentreIds = new Set(activeCostCentres.map((cc) => cc.id));
+  const costCentres = unwrapList(costCentreResponse).filter((item) => {
+    if (!branchId) return false;
+    if (item.branch_id !== branchId) return false;
+    if (!activeCostCentresQuery.isSuccess) return true;
+    return engineCostCentreIds.has(item.id);
+  });
   const vendors = unwrapList(vendorResponse).filter(
     (item) => Number(item.is_active ?? item.active_status ?? 1) === 1
   );
@@ -1500,7 +1523,13 @@ export default function BranchBudgetManagementWorkspace() {
     }
   }
 
-  function canReview(budget: BranchBudgetSummary) {
+  /**
+   * Reviewability depends only on the budget's own stage and the caller's capabilities — never on
+   * whether the budget happens to appear in the currently filtered list. Widened from
+   * BranchBudgetSummary to the shared shape so the review dialog can ask about a
+   * BranchBudgetDetail too; see the canAct comment in the dialog.
+   */
+  function canReview(budget: { status: string }) {
     if (budget.status === "submitted") return Boolean(capabilities?.canReviewBranchStage);
     if (budget.status === "branch_head_approved") return Boolean(capabilities?.canReviewFinanceStage);
     if (budget.status === "finance_head_approved") return Boolean(capabilities?.canReviewAccountsStage);
@@ -2276,7 +2305,14 @@ export default function BranchBudgetManagementWorkspace() {
                   {reviewDetailQuery.data && (() => {
                     const rd = reviewDetailQuery.data;
                     const budgetStatus = rd.status;
-                    const canAct = budgets.some((b) => b.id === rd.id && canReview(b));
+                    // Was: budgets.some((b) => b.id === rd.id && canReview(b)) — which required the
+                    // budget to be present in the period/branch-filtered list. The Approval Inbox
+                    // deliberately surfaces budgets awaiting this user from ANY branch and period, so
+                    // opening one from there always failed that test and the dialog rendered
+                    // read-only: no Approve, no Reject, no Request revision, with nothing explaining
+                    // why. Stage plus capability is the real rule, and the backend enforces it again
+                    // on submit regardless of what the UI shows.
+                    const canAct = canReview(rd);
                     return (
                       <div className="space-y-5">
                         {/* Status banner */}
@@ -2406,7 +2442,7 @@ export default function BranchBudgetManagementWorkspace() {
                     <Button variant="outline" onClick={() => { setReviewingBudgetId(null); setDialogRemarks(""); setDialogLineNotes({}); }}>
                       Close
                     </Button>
-                    {reviewDetailQuery.data && budgets.some((b) => b.id === reviewDetailQuery.data!.id && canReview(b)) && (
+                    {reviewDetailQuery.data && canReview(reviewDetailQuery.data) && (
                       <>
                         <Button variant="destructive" disabled={reviewBudget.isPending} onClick={() => void reviewFromDialog("reject")}>
                           <XCircle className="mr-1 h-3.5 w-3.5" />Reject

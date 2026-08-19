@@ -100,9 +100,12 @@ budgetCoverageRouter.get(
           // Changing or removing a head/sub-head that budgets already reference is Super Admin
           // only; Finance Head keeps the ability to add new ones via canManageExpenseMaster.
           canEditExpenseMaster: isSuperAdmin,
-          canReviewBranchStage: isSuperAdmin || roles.includes("branch_head"),
+          // Finance Head reviews at EVERY stage (owner decision, 2026-08-19), so it appears in
+          // all three. Must stay in step with REVIEW_STAGES in branch-budget.service.ts, which is
+          // the enforcing side — these three flags only decide whether the UI offers the buttons.
+          canReviewBranchStage: isSuperAdmin || roles.some(r => ["branch_head", "finance_head"].includes(r)),
           canReviewFinanceStage: isSuperAdmin || roles.includes("finance_head"),
-          canReviewAccountsStage: isSuperAdmin || roles.includes("accounts_head"),
+          canReviewAccountsStage: isSuperAdmin || roles.some(r => ["accounts_head", "finance_head"].includes(r)),
         },
       });
     } catch (error) {

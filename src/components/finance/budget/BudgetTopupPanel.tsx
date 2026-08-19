@@ -98,10 +98,16 @@ export function BudgetTopupPanel({
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
 
   const listQuery = useQuery({
-    queryKey: ["budget-topups", branchId],
+    // period is part of the key AND the request. It was omitted from both, so the panel showed
+    // every top-up request the branch had ever raised while the rest of the workspace was scoped
+    // to one month — the tab silently disagreed with the period shown above it. The endpoint has
+    // always accepted a period filter (process-pnl.routes.ts /pnl/budget-topups); only the client
+    // failed to send it.
+    queryKey: ["budget-topups", branchId, period],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (branchId) params.set("branchId", branchId);
+      if (period) params.set("period", period);
       const response = await hrmsApi.get<{ success: boolean; data: BudgetTopupRequest[] }>(
         `/api/finance/pnl/budget-topups?${params}`
       );

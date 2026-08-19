@@ -32,6 +32,59 @@ export type BudgetStatus =
   | "revision_required"
   | "closed";
 
+/**
+ * Who may act at each review stage, and what that stage does.
+ *
+ * Keyed by the budget's CURRENT status, not by the reviewer's role: one role used to map to
+ * exactly one status, which meant finance_head could only ever act on branch_head_approved and
+ * super_admin could not review at all (it mapped to null and 403d despite sitting in
+ * BUDGET_REVIEW_ROLES).
+ *
+ * finance_head appears at every stage by owner decision (2026-08-19) — Finance Head approves
+ * branch budgets at all levels. Approving an earlier stage still stamps THAT stage's column, so
+ * the chain is completed step by step and every stage keeps its own audit row; no stage is
+ * skipped and no approval is back-dated.
+ */
+const REVIEW_STAGES = {
+  submitted: {
+    key: "branch_head" as const,
+    label: "Branch Head",
+    next: "branch_head_approved" as BudgetStatus,
+    column: "branch_head_approved",
+    roles: new Set(["branch_head", "finance_head", "super_admin"]),
+  },
+  branch_head_approved: {
+    key: "finance_head" as const,
+    label: "Finance Head",
+    next: "finance_head_approved" as BudgetStatus,
+    column: "finance_head_approved",
+    roles: new Set(["finance_head", "super_admin"]),
+  },
+  finance_head_approved: {
+    key: "accounts_head" as const,
+    label: "Accounts Head",
+    next: "active" as BudgetStatus,
+    column: "accounts_head_approved",
+    roles: new Set(["accounts_head", "finance_head", "super_admin"]),
+  },
+} as const;
+
+/** Any role that can review at some stage. Checked before the budget row is even read. */
+const REVIEW_CAPABLE_ROLES = new Set(
+  Object.values(REVIEW_STAGES).flatMap((stage) => [...stage.roles])
+);
+
+/**
+ * Roles exempt from actor-identity maker-checker (owner decision, 2026-08-19).
+ *
+ * These two may approve a budget they submitted, or approve consecutive stages themselves.
+ * Everyone else is still blocked from reviewing their own work. This trades a preventive
+ * control for a detective one: branch-budget.service.ts logs every stage with actor id, role
+ * and timestamp, and the workspace now renders the approver's NAME, so one person completing a
+ * whole chain is plainly visible in the approval history even though it is permitted.
+ */
+const MAKER_CHECKER_EXEMPT_ROLES = new Set(["finance_head", "super_admin"]);
+
 export type BudgetPlanningLevel = "branch" | "cost_centre";
 
 export interface BudgetLineInput {
@@ -1934,14 +1987,7 @@ export const branchBudgetService = {
     lineCorrections?: BudgetLineCorrectionInput[]
   ) {
     const role = actorRole.toLowerCase();
-    const expectedStatus = role === "branch_head"
-      ? "submitted"
-      : role === "finance_head"
-        ? "branch_head_approved"
-        : role === "accounts_head"
-          ? "finance_head_approved"
-          : null;
-    if (!expectedStatus) {
+    if (!REVIEW_CAPABLE_ROLES.has(role)) {
       throw refuse(403, "BUDGET_NO_REVIEW_ROLE", `Role ${actorRole} cannot review branch budgets`);
     }
     if (decision !== "approve" && !remarks?.trim()) {
@@ -1974,69 +2020,63 @@ export const branchBudgetService = {
       if (!rows[0]) throw refuse(404, "BUDGET_NOT_FOUND", "Budget not found");
       const currentStatus = String(rows[0].status) as BudgetStatus;
       const currentRevision = Number(rows[0].revision_no ?? 0);
-      if (currentStatus !== expectedStatus) {
+      // The stage is now decided by the budget's CURRENT STATUS, not by the reviewer's role.
+      // Previously each role mapped to exactly one status, which is why finance_head could only
+      // ever act on branch_head_approved and super_admin — despite being in BUDGET_REVIEW_ROLES —
+      // could not review anything at all (it mapped to null and always 403d).
+      const stage = REVIEW_STAGES[currentStatus as keyof typeof REVIEW_STAGES];
+      if (!stage) {
+        throw refuse(403, "BUDGET_NO_REVIEW_ROLE",
+          `Budget in status ${currentStatus} is not awaiting review`
+        );
+      }
+      if (!stage.roles.has(role)) {
         throw refuse(403, "BUDGET_NO_REVIEW_ROLE",
           `Role ${actorRole} cannot review budget in status ${currentStatus}`
         );
       }
 
       // P0P1-4: Enforce actor-identity maker-checker — role membership is not sufficient.
-      // A finance_admin or multi-role user holding both submitter and approver roles must not
-      // be able to self-approve at any stage.
-      if (decision === "approve") {
+      // A multi-role user holding both submitter and approver roles must not self-approve.
+      //
+      // EXEMPTION (owner decision, 2026-08-19): finance_head and super_admin are exempt and may
+      // approve a budget they submitted or already approved at an earlier stage. This is a
+      // deliberate relaxation of segregation of duties for those two roles only — every other
+      // reviewer is still blocked. The approval log records each stage with the actor's name and
+      // timestamp, so a single person completing multiple stages remains visible after the fact
+      // rather than prevented up front.
+      if (decision === "approve" && !MAKER_CHECKER_EXEMPT_ROLES.has(role)) {
         const submittedBy = rows[0].submitted_by ? String(rows[0].submitted_by) : null;
         const bhApprovedBy = rows[0].branch_head_approved_by ? String(rows[0].branch_head_approved_by) : null;
         const fhApprovedBy = rows[0].finance_head_approved_by ? String(rows[0].finance_head_approved_by) : null;
-        if (role === "branch_head" && submittedBy && submittedBy === actorId) {
-          throw refuse(409, "BUDGET_MAKER_CHECKER",
-            "Maker-checker violation: the same person cannot submit and Branch Head-approve the same budget"
-          );
-        }
-        if (role === "finance_head") {
-          if (submittedBy && submittedBy === actorId) {
+        // Every actor who already touched this budget at or before the current stage. A reviewer
+        // may not be any of them. Built from the stage rather than the role so the rule cannot
+        // drift apart from the stage table above.
+        const priorActors: { id: string | null; label: string }[] = [
+          { id: submittedBy, label: "submitted this budget" },
+          ...(stage.key === "finance_head" || stage.key === "accounts_head"
+            ? [{ id: bhApprovedBy, label: "performed the Branch Head approval" }] : []),
+          ...(stage.key === "accounts_head"
+            ? [{ id: fhApprovedBy, label: "performed the Finance Head approval" }] : []),
+        ];
+        for (const prior of priorActors) {
+          if (prior.id && prior.id === actorId) {
             throw refuse(409, "BUDGET_MAKER_CHECKER",
-              "Maker-checker violation: Finance Head cannot be the person who submitted this budget"
-            );
-          }
-          if (bhApprovedBy && bhApprovedBy === actorId) {
-            throw refuse(409, "BUDGET_MAKER_CHECKER",
-              "Maker-checker violation: Finance Head cannot be the person who performed the Branch Head approval"
-            );
-          }
-        }
-        if (role === "accounts_head") {
-          if (submittedBy && submittedBy === actorId) {
-            throw refuse(409, "BUDGET_MAKER_CHECKER",
-              "Maker-checker violation: Accounts Head cannot be the person who submitted this budget"
-            );
-          }
-          if (bhApprovedBy && bhApprovedBy === actorId) {
-            throw refuse(409, "BUDGET_MAKER_CHECKER",
-              "Maker-checker violation: Accounts Head cannot be the person who performed the Branch Head approval"
-            );
-          }
-          if (fhApprovedBy && fhApprovedBy === actorId) {
-            throw refuse(409, "BUDGET_MAKER_CHECKER",
-              "Maker-checker violation: Accounts Head cannot be the person who performed the Finance Head approval"
+              `Maker-checker violation: the same person cannot ${prior.label} and also approve it at the ${stage.label} stage`
             );
           }
         }
       }
 
+      // Both derive from the STAGE being performed, so a finance_head acting on a 'submitted'
+      // budget completes the Branch Head step (and is stamped into branch_head_approved_by)
+      // rather than skipping the stage. Every stage therefore keeps its own audit row.
       const nextStatus: BudgetStatus = decision === "reject"
         ? "rejected"
         : decision === "revision"
           ? "revision_required"
-          : role === "branch_head"
-            ? "branch_head_approved"
-            : role === "finance_head"
-              ? "finance_head_approved"
-              : "active";
-      const approvalPrefix = role === "branch_head"
-        ? "branch_head_approved"
-        : role === "finance_head"
-          ? "finance_head_approved"
-          : "accounts_head_approved";
+          : stage.next;
+      const approvalPrefix = stage.column;
 
       const [result] = await connection.execute<ResultSetHeader>(
         `UPDATE finance_budget_header
@@ -2050,7 +2090,7 @@ export const branchBudgetService = {
           actorId,
           decision === "approve" ? null : remarks?.trim(),
           id,
-          expectedStatus,
+          currentStatus,
         ]
       );
       if (result.affectedRows !== 1) {
