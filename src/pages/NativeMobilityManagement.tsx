@@ -5,10 +5,11 @@ import {
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useCostCentres } from "@/hooks/useCostCentres";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type TransferType = "branch" | "department" | "process" | "location" | "reporting";
+type TransferType = "branch" | "department" | "process" | "location" | "reporting" | "cost_centre";
 type MobilityStatus = "pending" | "approved" | "rejected" | "completed";
 
 type TransferRecord = {
@@ -52,6 +53,7 @@ type TransferForm = {
   to_value: string;
   effective_date: string;
   reason: string;
+  new_reporting_manager_id: string; // mandatory when transfer_type === "cost_centre"
 };
 
 type PromotionForm = {
@@ -82,7 +84,7 @@ const STATUS_COLORS: Record<MobilityStatus, string> = {
 };
 
 const TRANSFER_TYPE_OPTIONS: TransferType[] = [
-  "branch", "department", "process", "location", "reporting",
+  "branch", "department", "process", "location", "reporting", "cost_centre",
 ];
 
 const DEFAULT_TRANSFER_FORM: TransferForm = {
@@ -92,6 +94,7 @@ const DEFAULT_TRANSFER_FORM: TransferForm = {
   to_value: "",
   effective_date: "",
   reason: "",
+  new_reporting_manager_id: "",
 };
 
 const DEFAULT_PROMOTION_FORM: PromotionForm = {
@@ -142,6 +145,8 @@ export default function NativeMobilityManagement() {
   const [transferForm, setTransferForm] = useState<TransferForm>(DEFAULT_TRANSFER_FORM);
   const [promotionForm, setPromotionForm] = useState<PromotionForm>(DEFAULT_PROMOTION_FORM);
 
+  const { costCentres } = useCostCentres();
+
   const load = async () => {
     setLoading(true);
     setMessage("");
@@ -165,21 +170,30 @@ export default function NativeMobilityManagement() {
   // ── Transfer submit ────────────────────────────────────────────────────────
 
   const submitTransfer = async () => {
-    const { employee_id, transfer_type, from_value, to_value, effective_date } = transferForm;
-    if (!employee_id.trim() || !from_value.trim() || !to_value.trim() || !effective_date) {
-      setMessage("Employee ID, from, to, and effective date are required.");
+    const { employee_id, transfer_type, from_value, to_value, effective_date, new_reporting_manager_id } = transferForm;
+    if (!employee_id.trim() || !to_value.trim() || !effective_date) {
+      setMessage("Employee ID, to value, and effective date are required.");
+      return;
+    }
+    // cost_centre requires a reporting manager
+    if (transfer_type === "cost_centre" && !new_reporting_manager_id.trim()) {
+      setMessage("New Reporting Manager ID is required for cost centre transfers.");
       return;
     }
     setSubmitting(true);
     try {
-      await hrmsApi.post("/api/mobility/transfers", {
+      const payload: Record<string, string> = {
         employee_id: employee_id.trim(),
         transfer_type,
         from_value: from_value.trim(),
         to_value: to_value.trim(),
         effective_date,
-        reason: transferForm.reason || undefined,
-      });
+      };
+      if (transferForm.reason) payload.reason = transferForm.reason;
+      if (transfer_type === "cost_centre" && new_reporting_manager_id.trim()) {
+        payload.new_reporting_manager_id = new_reporting_manager_id.trim();
+      }
+      await hrmsApi.post("/api/mobility/transfers", payload);
       setShowTransferModal(false);
       setTransferForm(DEFAULT_TRANSFER_FORM);
       setMessage("Transfer initiated successfully.");
@@ -355,24 +369,59 @@ export default function NativeMobilityManagement() {
                 ))}
               </select>
             </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="From">
-                <input
-                  value={transferForm.from_value}
-                  onChange={(e) => setTransferForm({ ...transferForm, from_value: e.target.value })}
-                  placeholder="Current value"
-                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
-                />
-              </Field>
-              <Field label="To">
-                <input
-                  value={transferForm.to_value}
-                  onChange={(e) => setTransferForm({ ...transferForm, to_value: e.target.value })}
-                  placeholder="New value"
-                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
-                />
-              </Field>
-            </div>
+            {transferForm.transfer_type === "cost_centre" ? (
+              <>
+                <Field label="From Cost Centre ID">
+                  <input
+                    value={transferForm.from_value}
+                    onChange={(e) => setTransferForm({ ...transferForm, from_value: e.target.value })}
+                    placeholder="Current cost centre ID or code"
+                    className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
+                  />
+                </Field>
+                <Field label="To Cost Centre">
+                  <select
+                    value={transferForm.to_value}
+                    onChange={(e) => setTransferForm({ ...transferForm, to_value: e.target.value })}
+                    className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
+                  >
+                    <option value="">Select cost centre…</option>
+                    {costCentres.map((cc) => (
+                      <option key={cc.id} value={cc.id}>
+                        {cc.cost_centre_code} — {cc.cost_centre_name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="New Reporting Manager ID *">
+                  <input
+                    value={transferForm.new_reporting_manager_id}
+                    onChange={(e) => setTransferForm({ ...transferForm, new_reporting_manager_id: e.target.value })}
+                    placeholder="New manager employee UUID (required)"
+                    className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
+                  />
+                </Field>
+              </>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="From">
+                  <input
+                    value={transferForm.from_value}
+                    onChange={(e) => setTransferForm({ ...transferForm, from_value: e.target.value })}
+                    placeholder="Current value"
+                    className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
+                  />
+                </Field>
+                <Field label="To">
+                  <input
+                    value={transferForm.to_value}
+                    onChange={(e) => setTransferForm({ ...transferForm, to_value: e.target.value })}
+                    placeholder="New value"
+                    className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
+                  />
+                </Field>
+              </div>
+            )}
             <Field label="Effective Date">
               <input
                 type="date"
