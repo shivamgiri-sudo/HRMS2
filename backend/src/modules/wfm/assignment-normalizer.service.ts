@@ -4,7 +4,7 @@
  * Builds on the shift parser from Task 2.
  */
 
-import { parseShiftString, ShiftParserResult } from './shift-parser.service';
+import { parseShiftString, ShiftParserResult } from './shift-parser.service.js';
 
 export type AssignmentType =
   | 'SHIFT'

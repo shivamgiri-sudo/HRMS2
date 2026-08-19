@@ -577,7 +577,7 @@ export const costCentreService = {
     if (limit && limit > 0) {
       limitVal = Math.min(limit, 500);
       const offset = page && page > 1 ? (page - 1) * limitVal : 0;
-      limitClause = `LIMIT ${limitVal} OFFSET ${offset}`;
+      limitClause = `LIMIT ${limitVal + 1} OFFSET ${offset}`;
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(

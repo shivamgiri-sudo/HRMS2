@@ -316,11 +316,15 @@ router.post(
         evidenceSkippedAlreadySynced++;
       } else {
         try {
+          // Set source='manual' to protect from sync overwrites
           await db.execute(
-            `INSERT INTO apr (ReportDate, UserID, campaign_id, Net_Login)
-             VALUES (?, ?, ?, SEC_TO_TIME(? * 60))
-             ON DUPLICATE KEY UPDATE Net_Login = VALUES(Net_Login)`,
-            [row.attendance_date, row.employee_code, MANUAL_UPLOAD_CAMPAIGN, row.net_login_minutes],
+            `INSERT INTO apr (ReportDate, UserID, campaign_id, Net_Login, source, uploaded_by)
+             VALUES (?, ?, ?, SEC_TO_TIME(? * 60), 'manual', ?)
+             ON DUPLICATE KEY UPDATE
+               Net_Login = VALUES(Net_Login),
+               source = 'manual',
+               uploaded_by = VALUES(uploaded_by)`,
+            [row.attendance_date, row.employee_code, MANUAL_UPLOAD_CAMPAIGN, row.net_login_minutes, (req.authUser as any).id],
           );
           evidenceRecorded++;
         } catch (err) {
