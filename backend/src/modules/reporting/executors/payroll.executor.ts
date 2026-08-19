@@ -936,10 +936,21 @@ export async function neftTransferFile(
   // column is not safely ignorable for the disagreeing population (see the corrected note in
   // bank-payment-readiness.service.ts), so a mismatch here must exclude the row, not just be
   // logged, the same as bank-advice does.
+  //
+  // FIXED same day, caught by an independent QA re-audit that actually executed this clause
+  // against the live schema rather than only regex-matching the SQL source (the existing
+  // contract test does the latter, which is why this shipped broken): CONVERT(...USING
+  // utf8mb4) alone resolves to the server's default utf8mb4_0900_ai_ci collation, which
+  // collides with e.bank_account_number's explicit utf8mb4_unicode_ci column collation the
+  // moment they're compared with <>/= — ER_CANT_AGGREGATE_2COLLATIONS, thrown on every
+  // invocation regardless of data, not just for the mismatched population this clause targets.
+  // The REGEXP clause two blocks below never hit this because REGEXP doesn't trigger MySQL's
+  // explicit-collation clash the way <>/= does — only this new equality comparison needed the
+  // explicit COLLATE.
   clauses.push(`NOT (
     e.bank_account_number IS NOT NULL AND TRIM(e.bank_account_number) <> ''
-    AND ebd.account_number IS NOT NULL AND TRIM(CONVERT(ebd.account_number USING utf8mb4)) <> ''
-    AND TRIM(e.bank_account_number) <> TRIM(CONVERT(ebd.account_number USING utf8mb4))
+    AND ebd.account_number IS NOT NULL AND TRIM(CONVERT(ebd.account_number USING utf8mb4) COLLATE utf8mb4_unicode_ci) <> ''
+    AND TRIM(e.bank_account_number) <> TRIM(CONVERT(ebd.account_number USING utf8mb4) COLLATE utf8mb4_unicode_ci)
   )`);
   // employee_bank_detail.account_number is varbinary(500), not text — REGEXP against it
   // directly throws ER_CHARACTER_SET_MISMATCH ("Character set 'binary' cannot be used in

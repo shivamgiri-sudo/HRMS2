@@ -1372,7 +1372,9 @@
       "expires_at",
       "decline_reason",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "min_wage_provisional",
+      "min_wage_check_note"
     ],
     "ats_onboarding_bridge": [
       "id",
@@ -12473,7 +12475,9 @@
       "source_id",
       "created_by",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "min_wage_provisional",
+      "min_wage_check_note"
     ],
     "salary_package_master_old_schema": [
       "id",
