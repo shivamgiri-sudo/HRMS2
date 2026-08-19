@@ -1,9 +1,10 @@
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { revenueRiskService } from "../revenue-risk/revenue-risk.service.js";
 import { payrollGovernanceService } from "../payroll/payroll-governance.service.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { CLOSED_RUN_STATUSES_SQL } from "../payroll/run-status.js";
 
 interface PeopleRiskRow extends RowDataPacket {
   employee_id: string;
@@ -52,9 +53,9 @@ interface RevenueRiskRow {
 
 interface PayrollRunRow extends RowDataPacket {
   id: string;
-  run_period: string | null;
-  run_date: string | null;
+  run_month: string | null;
   status: string | null;
+  created_at: string | null;
 }
 
 interface AttendanceGapRow extends RowDataPacket {
@@ -89,6 +90,19 @@ function dueDate(days: number) {
   return date.toISOString().slice(0, 10);
 }
 
+// business_action_queue.title is varchar(500) and .source_id is char(36); a
+// signal's title can carry a raw underlying error message (e.g.
+// payroll-governance's CHECK_ERROR wraps the failing query's own error text,
+// which is unbounded) or an id built from more than one source. Clamping here
+// protects every caller uniformly instead of each sync function having to
+// know the schema limit — proven live: 10 of 119 payroll-readiness rows hit
+// ER_DATA_TOO_LONG on title before this was added, and the whole insert (plus
+// the activity-log row) was lost for those, silently, because syncPayrollReadiness
+// only console.error's a per-run failure and moves on.
+function clamp(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
 async function ensureAction(input: {
   source_module: string;
   source_id: string;
@@ -100,6 +114,13 @@ async function ensureAction(input: {
   owner_role?: string | null;
   due_date?: string | null;
 }, actorUserId: string) {
+  // Clamp once, up front, so the dedup lookup below and the INSERT agree on
+  // the same value — clamping only at INSERT time would look up the
+  // unclamped source_id, never find the (clamped) row a prior run wrote, and
+  // re-insert a duplicate action every sync cycle.
+  const sourceId = clamp(input.source_id, 36);
+  const title = clamp(input.title, 500);
+
   const [existing] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM business_action_queue
       WHERE source_module = ?
@@ -107,7 +128,7 @@ async function ensureAction(input: {
         AND risk_type = ?
         AND status NOT IN ('completed','cancelled')
       LIMIT 1`,
-    [input.source_module, input.source_id, input.risk_type]
+    [input.source_module, sourceId, input.risk_type]
   );
   if (existing.length > 0) return { id: existing[0].id, created: false };
 
@@ -119,10 +140,10 @@ async function ensureAction(input: {
     [
       id,
       input.source_module,
-      input.source_id,
+      sourceId,
       input.risk_type,
       input.severity,
-      input.title,
+      title,
       input.description ?? null,
       input.owner_user_id ?? null,
       input.owner_role ?? null,
@@ -310,14 +331,24 @@ export const businessActionSignalSync = {
   },
 
   async syncPayrollReadiness(actorUserId: string) {
-    if (!(await tableExists("payroll_run"))) return { scanned: 0, created: 0, skipped: 0, reason: "payroll_run missing" };
+    // The real payroll-run table is salary_prep_run — there is no table named
+    // payroll_run in mas_hrms (verified live: information_schema.tables has no
+    // such row). tableExists("payroll_run") therefore always returned false and
+    // this sync short-circuited on every single scheduled run, even though
+    // payrollGovernanceService.readiness() itself works fine and reads
+    // salary_prep_run directly. "Open" here reuses the same closed-status
+    // definition the payroll module already standardised on (run-status.ts) —
+    // status is 'FINALIZED'/'locked'/'disbursed' when a run is settled and
+    // should not be re-flagged; anything else (draft/processing/approved) is
+    // still a candidate for a readiness check.
+    if (!(await tableExists("salary_prep_run"))) return { scanned: 0, created: 0, skipped: 0, reason: "salary_prep_run missing" };
 
-    // Query active payroll runs
+    // Query open (not-yet-closed) payroll runs
     const [runs] = await db.execute<PayrollRunRow[]>(
-      `SELECT id, run_period, run_date, status
-       FROM payroll_run
-       WHERE status IN ('draft', 'pending_approval') AND is_locked = 0
-       ORDER BY run_date DESC
+      `SELECT id, run_month, status, created_at
+       FROM salary_prep_run
+       WHERE LOWER(status) NOT IN (${CLOSED_RUN_STATUSES_SQL})
+       ORDER BY created_at DESC
        LIMIT 10`
     );
 
@@ -337,13 +368,21 @@ export const businessActionSignalSync = {
 
             const result = await ensureAction({
               source_module: 'payroll',
-              source_id: `${run.id}_${issue.code}`,
+              // business_action_queue.source_id is char(36) and run.id alone is
+              // already a 36-char UUID, so appending "_<issue code>" always
+              // overflowed and every INSERT here failed with ER_DATA_TOO_LONG
+              // (proven live: 10/10 scanned issues, 0 created, error caught and
+              // only console.error'd by the per-run try/catch below — the same
+              // silent-failure shape as elsewhere in this codebase). Hash the
+              // composite key down to 32 hex chars instead; still deterministic
+              // per run+issue so the existing-row dedup in ensureAction still works.
+              source_id: createHash('md5').update(`${run.id}_${issue.code}`).digest('hex'),
               risk_type: 'payroll_readiness',
               severity,
               title: `${issue.message} (${issue.count} employees)`,
-              description: `Period: ${run.run_period ?? 'N/A'}\nSample: ${sampleCodes}`,
+              description: `Period: ${run.run_month ?? 'N/A'}\nSample: ${sampleCodes}`,
               owner_role: 'payroll_hr',
-              due_date: run.run_date ?? dueDate(severity === 'critical' ? 1 : 2),
+              due_date: dueDate(severity === 'critical' ? 1 : 2),
             }, actorUserId);
 
             if (result.created) created += 1;

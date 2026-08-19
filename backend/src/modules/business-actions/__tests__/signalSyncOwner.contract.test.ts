@@ -55,4 +55,63 @@ describe("business action signal sync", () => {
     // for them and the action must not end up ownerless.
     expect(code()).toMatch(/owner_role:\s*\w+\.reporting_manager_user_id\s*\?\s*null\s*:\s*['"]hr['"]/);
   });
+
+  /**
+   * Payroll readiness sync: proven live against production mas_hrms.
+   *
+   * There is no table named payroll_run in mas_hrms (confirmed via
+   * information_schema.tables) — the real payroll-run table is
+   * salary_prep_run. tableExists("payroll_run") therefore always returned
+   * false and syncPayrollReadiness short-circuited on every scheduled run,
+   * even though payrollGovernanceService.readiness() itself reads
+   * salary_prep_run directly and works.
+   */
+  it("reads the real payroll run table, not the nonexistent payroll_run", () => {
+    const src = liveCode();
+    expect(src).toContain('tableExists("salary_prep_run")');
+    expect(src).not.toMatch(/tableExists\(["']payroll_run["']\)/);
+    expect(src).toMatch(/FROM\s+salary_prep_run/);
+    expect(src).not.toMatch(/FROM\s+payroll_run\b/);
+  });
+
+  it("filters open payroll runs using the shared closed-status definition", () => {
+    // run-status.ts is the single source of truth for "settled; do not
+    // recompute" (FINALIZED/locked/disbursed) — reuse it here rather than
+    // guessing at status strings salary_prep_run doesn't actually use
+    // ('pending_approval' never appears live; 'draft'/'processing'/'approved' do).
+    const src = code();
+    expect(src).toContain("CLOSED_RUN_STATUSES_SQL");
+    expect(src).not.toMatch(/status\s+IN\s*\(\s*'draft'\s*,\s*'pending_approval'\s*\)/);
+  });
+
+  /**
+   * business_action_queue.source_id is char(36). run.id is already a 36-char
+   * UUID, so `${run.id}_${issue.code}` always overflowed and every INSERT for
+   * a payroll-readiness issue failed with ER_DATA_TOO_LONG (proven live:
+   * 10/10 scanned issues, 0 created, before this fix). The per-run try/catch
+   * only console.error'd it — a silent failure identical in shape to others
+   * already found in this codebase.
+   */
+  it("hashes the payroll issue source_id instead of concatenating past the column limit", () => {
+    const src = code();
+    expect(src).toMatch(/createHash\(['"]md5['"]\)\.update\(`\$\{run\.id\}_\$\{issue\.code\}`\)\.digest\(['"]hex['"]\)/);
+    expect(src).not.toContain("source_id: `${run.id}_${issue.code}`");
+  });
+
+  /**
+   * ensureAction's dedup SELECT and its INSERT must clamp source_id/title the
+   * same way and reuse the same clamped value — clamping only inside the
+   * INSERT tuple would look up the row by the raw (unclamped) value, never
+   * find what a prior run actually stored, and re-insert a duplicate action
+   * every sync cycle instead of deduping against it.
+   */
+  it("clamps title/source_id once and reuses the clamped value for both the lookup and the insert", () => {
+    const src = code();
+    const ensureActionBody = src.slice(src.indexOf("async function ensureAction"));
+    expect(ensureActionBody).toMatch(/const sourceId = clamp\(input\.source_id, 36\)/);
+    expect(ensureActionBody).toMatch(/const title = clamp\(input\.title, 500\)/);
+    // The SELECT (dedup lookup) must bind the clamped variable, not input.source_id directly.
+    const selectClause = ensureActionBody.slice(0, ensureActionBody.indexOf("INSERT INTO business_action_queue"));
+    expect(selectClause).toContain("[input.source_module, sourceId, input.risk_type]");
+  });
 });
