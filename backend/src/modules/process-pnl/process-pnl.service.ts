@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
+import { getInvoicedRevenueActuals, OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
 import type {
   PnlQueryFilters,
   PnlSummaryResponse,
@@ -635,41 +636,78 @@ async function getRevenueDailyMap(processIds: string[], start: string, end: stri
   return map;
 }
 
+/*
+ * `billing_invoice` (the HRMS-native invoice table this used to read) has 0 rows in production —
+ * it is a real, separate ERP invoicing feature (erp.service.ts, migration 036_erp_billing.sql)
+ * that nobody has switched on yet, not an abandoned table. Real, reconciled billing revenue lives
+ * in the db_bill mirror instead: billing_invoice_particular_snapshot (line items) with
+ * billing_provision_snapshot as the confirmed-billing fallback and billing_credit_note_snapshot
+ * netted out, exactly as ceo-overview.service.ts / pnl-actuals.service.ts already read it.
+ * getInvoicedRevenueActuals() is that same query, exported so every P&L surface (this one,
+ * bpo-pnl.service.ts, pnl-statement.service.ts) shares one implementation instead of drifting.
+ *
+ * Only the net revenue figure is available from that source at process grain — the legacy mirror
+ * does not carry per-invoice payment status joined to a process the way billing_invoice's schema
+ * implied, so collectedRevenue/outstandingRevenue/invoiceCount stay at 0 rather than inventing a
+ * shape no sibling service uses. They were already 0 in production (billing_invoice being empty),
+ * so this is not a regression on those fields — only invoicedRevenue/recognizedRevenue move from
+ * always-zero to the real figure.
+ */
 async function getInvoiceMap(processIds: string[], start: string, end: string): Promise<Map<string, InvoiceMeta>> {
   const map = new Map<string, InvoiceMeta>();
-  if (processIds.length === 0 || !(await tableExists("billing_invoice"))) return map;
+  if (processIds.length === 0) return map;
 
-  const rows = await queryRows<RowDataPacket>(
-    `SELECT
-        process_id,
-        SUM(CASE WHEN status <> 'draft' THEN COALESCE(net_amount, 0) ELSE 0 END) AS recognized_revenue,
-        SUM(CASE WHEN status <> 'draft' THEN COALESCE(net_amount, 0) ELSE 0 END) AS invoiced_revenue,
-        SUM(CASE WHEN status = 'paid' THEN COALESCE(net_amount, 0) ELSE 0 END) AS collected_revenue,
-        SUM(CASE WHEN status <> 'paid' AND status <> 'draft' THEN COALESCE(net_amount, 0) ELSE 0 END) AS outstanding_revenue,
-        SUM(COALESCE(adjustments, 0)) AS adjustments,
-        COUNT(*) AS invoice_count,
-        MAX(COALESCE(paid_at, sent_at, created_at)) AS freshness
-      FROM billing_invoice
-      WHERE process_id IN (${placeholders(processIds)})
-        AND period_from <= ?
-        AND period_to >= ?
-      GROUP BY process_id`,
-    [...processIds, end, start]
-  );
+  const period = start.slice(0, 7);
+  const actuals = await getInvoicedRevenueActuals(period);
+  const processIdSet = new Set(processIds);
 
-  for (const row of rows) {
-    map.set(String(row.process_id), {
-      invoicedRevenue: toNumber(row.invoiced_revenue),
-      recognizedRevenue: toNumber(row.recognized_revenue),
-      collectedRevenue: toNumber(row.collected_revenue),
-      outstandingRevenue: toNumber(row.outstanding_revenue),
-      invoiceCount: toNumber(row.invoice_count),
-      adjustments: toNumber(row.adjustments),
-      freshness: (row.freshness as string | null) ?? null,
+  for (const [processId, amount] of actuals.byProcess.entries()) {
+    if (!processIdSet.has(processId)) continue;
+    const revenue = toNumber(amount);
+    map.set(processId, {
+      invoicedRevenue: revenue,
+      recognizedRevenue: revenue,
+      collectedRevenue: 0,
+      outstandingRevenue: 0,
+      invoiceCount: 0,
+      adjustments: 0,
+      freshness: null,
     });
   }
 
   return map;
+}
+
+/*
+ * Invoice-line detail for a single process, for the Revenue-tab and Ledger UI lists that used to
+ * read individual billing_invoice rows. billing_invoice_particular_snapshot is the line-item
+ * mirror those rows came from in spirit, joined to the process the same way
+ * getIndirectCostActuals/revenueByBranch resolve one: through the employees posted to the cost
+ * centre, because cost_centre_master.process_id is NULL on every live row.
+ *
+ * Fields with no equivalent in the mirror (status, gst_amount, sent_at, paid_at) are left null
+ * rather than guessed — the mirror does not carry a payment/dispatch lifecycle, only what was
+ * billed.
+ */
+async function getSnapshotInvoiceLines(processId: string, period: string): Promise<RowDataPacket[]> {
+  if (!(await tableExists("billing_invoice_particular_snapshot"))) return [];
+  return queryRows<RowDataPacket>(
+    `SELECT p.bill_source_id, p.cost_centre_code, p.period_code, p.service, p.sub_category,
+            p.particulars, p.rate, p.qty, p.amount, p.billing_pattern, p.is_seat_line,
+            p.source_created_at
+       FROM billing_invoice_particular_snapshot p
+       LEFT JOIN cost_centre_master ccm
+              ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+               = p.cost_centre_code COLLATE utf8mb4_unicode_ci
+      WHERE p.period_code = ?
+        AND ${OWN_COMPANY_SQL}
+        AND ccm.id IN (
+          SELECT DISTINCT e.cost_centre_id FROM employees e
+           WHERE e.process_id = ? AND e.cost_centre_id IS NOT NULL
+        )
+      ORDER BY p.source_created_at DESC`,
+    [period, processId]
+  ).catch(() => []);
 }
 
 async function getPayrollMap(processIds: string[], period: string, end: string): Promise<Map<string, PayrollMeta>> {
@@ -1339,7 +1377,10 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
   const processClause = processId ? "AND process_id = ?" : "";
   const processJoinClause = processId ? "AND e.process_id = ?" : "";
   const expenseProcessClause = processId ? "AND CAST(ec.process_id AS CHAR) = ?" : "";
-  const hasBillingInvoice = await tableExists("billing_invoice");
+  // See getInvoiceMap's comment: billing_invoice is a genuinely separate, unused ERP feature
+  // with 0 rows. Real revenue for the trend comes from the same snapshot mirror every other
+  // process-pnl surface reads, via the shared getInvoicedRevenueActuals() helper.
+  const hasInvoiceSnapshot = await tableExists("billing_invoice_particular_snapshot");
   const salaryColumns = await listColumns("salary_prep_line").catch(() => new Set<string>());
   const hasExpenseClaims = await tableExists("expense_claims");
   const hasExpenseItems = await tableExists("expense_items");
@@ -1374,24 +1415,30 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
     const seriesSql = monthSeriesSql(months);
     const seriesParams = monthSeriesParams(months);
 
-    const revenueRows = await queryRows<RowDataPacket>(
-      hasBillingInvoice
-        ? `SELECT ms.month_key, SUM(CASE WHEN bi.status <> 'draft' THEN COALESCE(bi.net_amount, 0) ELSE 0 END) AS total
-             FROM (${seriesSql}) ms
-             LEFT JOIN billing_invoice bi
-               ON bi.period_from <= ms.end_date
-              AND bi.period_to >= ms.start_date
-            GROUP BY ms.month_key`
-        : `SELECT ms.month_key, SUM(COALESCE(prd.actual_revenue_estimate, 0)) AS total
-             FROM (${seriesSql}) ms
-             LEFT JOIN process_revenue_daily prd
-               ON prd.revenue_date BETWEEN ms.start_date AND ms.end_date
-            GROUP BY ms.month_key`,
-      seriesParams
-    );
-    for (const row of revenueRows) {
-      const entry = seriesByMonth.get(String(row.month_key));
-      if (entry) entry.revenue = toNumber(row.total);
+    if (hasInvoiceSnapshot) {
+      // getInvoicedRevenueActuals is period-based (not a date-range join), so each month in the
+      // series is resolved with its own call rather than folded into the UNION ALL month-series
+      // trick the SQL fallback below still uses.
+      for (const month of months) {
+        const actuals = await getInvoicedRevenueActuals(month);
+        let total = 0;
+        for (const amount of actuals.byProcess.values()) total += amount;
+        const entry = seriesByMonth.get(month);
+        if (entry) entry.revenue = total;
+      }
+    } else {
+      const revenueRows = await queryRows<RowDataPacket>(
+        `SELECT ms.month_key, SUM(COALESCE(prd.actual_revenue_estimate, 0)) AS total
+           FROM (${seriesSql}) ms
+           LEFT JOIN process_revenue_daily prd
+             ON prd.revenue_date BETWEEN ms.start_date AND ms.end_date
+          GROUP BY ms.month_key`,
+        seriesParams
+      );
+      for (const row of revenueRows) {
+        const entry = seriesByMonth.get(String(row.month_key));
+        if (entry) entry.revenue = toNumber(row.total);
+      }
     }
 
     const payrollRows = await queryRows<RowDataPacket>(
@@ -1469,16 +1516,19 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
 
   for (const month of months) {
     const { start, end } = monthRange(month);
-    const revenueRows = await queryRows<RowDataPacket>(
-      hasBillingInvoice
-        ? `SELECT SUM(CASE WHEN status <> 'draft' THEN COALESCE(net_amount, 0) ELSE 0 END) AS total
-             FROM billing_invoice
-            WHERE period_from <= ? AND period_to >= ? ${processClause}`
-        : `SELECT SUM(COALESCE(actual_revenue_estimate, 0)) AS total
-             FROM process_revenue_daily
-            WHERE revenue_date BETWEEN ? AND ? ${processClause}`,
-      processId ? [end, start, processId] : [end, start]
-    );
+    let monthRevenue: number;
+    if (hasInvoiceSnapshot) {
+      const actuals = await getInvoicedRevenueActuals(month);
+      monthRevenue = processId ? (actuals.byProcess.get(processId) ?? 0) : 0;
+    } else {
+      const revenueRows = await queryRows<RowDataPacket>(
+        `SELECT SUM(COALESCE(actual_revenue_estimate, 0)) AS total
+           FROM process_revenue_daily
+          WHERE revenue_date BETWEEN ? AND ? ${processClause}`,
+        processId ? [end, start, processId] : [end, start]
+      );
+      monthRevenue = toNumber(revenueRows[0]?.total);
+    }
 
     const payrollRows = await queryRows<RowDataPacket>(
       `SELECT SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS total
@@ -1549,16 +1599,16 @@ async function buildTrend(processId: string | null, filters: PnlQueryFilters) {
 
       series.push({
         month,
-        revenue: monthlyRecord?.revenueMtd ?? toNumber(revenueRows[0]?.total),
+        revenue: monthlyRecord?.revenueMtd ?? monthRevenue,
         directCost: monthlyRecord?.directCost ?? (toNumber(payrollRows[0]?.total) + toNumber(expenseRows[0]?.total)),
         indirectCost: monthlyRecord?.indirectCost ?? 0,
         operatingProfit: monthlyRecord?.operatingProfit
-          ?? (toNumber(revenueRows[0]?.total) - toNumber(payrollRows[0]?.total) - toNumber(expenseRows[0]?.total)),
+          ?? (monthRevenue - toNumber(payrollRows[0]?.total) - toNumber(expenseRows[0]?.total)),
       });
       continue;
     }
 
-    const revenue = toNumber(revenueRows[0]?.total);
+    const revenue = monthRevenue;
     const directCost = toNumber(payrollRows[0]?.total) + toNumber(expenseRows[0]?.total);
     const indirectCost = indirectTotal;
 
@@ -1779,36 +1829,27 @@ export const processPnlService = {
   async getRevenue(processId: string, filters: Partial<PnlQueryFilters>, detailContext?: ProcessDetailContext) {
     const { context, record, start, end } = detailContext ?? await getProcessDetailContext(processId, filters);
 
-    const invoices = await queryRows<RowDataPacket>(
-      await tableExists("billing_invoice")
-        ? `SELECT
-            id,
-            invoice_ref,
-            period_from,
-            period_to,
-            billable_units,
-            rate,
-            gross_amount,
-            adjustments,
-            net_amount,
-            gst_amount,
-            total_amount,
-            status,
-            sent_at,
-            paid_at,
-            created_at
-           FROM billing_invoice
-          WHERE process_id = ?
-            AND period_from <= ?
-            AND period_to >= ?
-          ORDER BY created_at DESC`
-        : `SELECT NULL AS id, NULL AS invoice_ref, NULL AS period_from, NULL AS period_to,
-                  0 AS billable_units, 0 AS rate, 0 AS gross_amount, 0 AS adjustments,
-                  0 AS net_amount, 0 AS gst_amount, 0 AS total_amount, NULL AS status,
-                  NULL AS sent_at, NULL AS paid_at, NULL AS created_at
-           WHERE 1 = 0`,
-      [processId, end, start]
-    ).catch(() => []);
+    // billing_invoice has 0 rows in production (unused ERP feature, see getInvoiceMap's comment) —
+    // the line-item detail comes from the same db_bill snapshot mirror as the revenue KPI above.
+    const invoiceLines = await getSnapshotInvoiceLines(processId, context.filters.period);
+    const invoices = invoiceLines.map((row) => ({
+      id: String(row.bill_source_id),
+      invoice_ref: (row.particulars as string | null) || (row.service as string | null) || null,
+      period_from: start,
+      period_to: end,
+      billable_units: toNumber(row.qty),
+      rate: toNumber(row.rate),
+      gross_amount: toNumber(row.amount),
+      adjustments: 0,
+      net_amount: toNumber(row.amount),
+      // No equivalent in the mirror — left null rather than guessed; see getSnapshotInvoiceLines.
+      gst_amount: null,
+      total_amount: toNumber(row.amount),
+      status: null,
+      sent_at: null,
+      paid_at: null,
+      created_at: row.source_created_at,
+    }));
 
     const contract = await queryRows<RowDataPacket>(
       await tableExists("client_contract_master")
@@ -2258,23 +2299,19 @@ export const processPnlService = {
     const entries: Array<Record<string, unknown>> = [];
     const vendorPaymentColumns = await listColumns("vendor_payment_tracking").catch(() => new Set<string>());
 
-    if (await tableExists("billing_invoice")) {
-      const invoiceRows = await queryRows<RowDataPacket>(
-        `SELECT invoice_ref, created_at, net_amount, status
-           FROM billing_invoice
-          WHERE process_id = ?
-            AND period_from <= ?
-            AND period_to >= ?`,
-        [processId, end, start]
-      ).catch(() => []);
+    // billing_invoice has 0 rows in production (unused ERP feature, see getInvoiceMap's comment) —
+    // ledger revenue entries come from the same db_bill snapshot mirror as the revenue KPI above.
+    {
+      const invoiceRows = await getSnapshotInvoiceLines(processId, context.filters.period);
 
       for (const row of invoiceRows) {
         entries.push({
           entryType: "revenue",
-          reference: row.invoice_ref,
-          entryDate: row.created_at,
-          amount: toNumber(row.net_amount),
-          status: row.status,
+          reference: (row.particulars as string | null) || (row.service as string | null) || `INV-${row.bill_source_id}`,
+          entryDate: row.source_created_at,
+          amount: toNumber(row.amount),
+          // No payment-lifecycle status in the mirror; see getSnapshotInvoiceLines.
+          status: null,
         });
       }
     }
