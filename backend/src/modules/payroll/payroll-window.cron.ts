@@ -5,7 +5,7 @@ import { getIstDateString } from '../../utils/dateUtils.js';
 import { leaveService } from '../leave/leave.service.js';
 import { CLOSED_RUN_STATUSES_SQL } from './run-status.js';
 import { notifyPayrollWindowClosing } from './payroll.notifications.js';
-import { triggerPayrollBranchReadinessIncomplete } from '../work-inbox/work-inbox.triggers.js';
+import { triggerPayrollBranchReadinessIncomplete, triggerPayrollSignOffPending } from '../work-inbox/work-inbox.triggers.js';
 
 let _timer: ReturnType<typeof setInterval> | null = null;
 
@@ -152,6 +152,48 @@ export async function runPayrollBranchReadinessReminders(): Promise<void> {
   }
 }
 
+/**
+ * created_by values known to be synthetic/test runs, never a real payroll month. Mirrors
+ * SYNTHETIC_RUN_CREATORS in payroll-signoff.routes.ts (not exported from there) — same
+ * list, same reasoning: a v1-UUID test run rendering identically to a real one in the UI
+ * must not be offered as something for payroll_head to sign off.
+ */
+const SYNTHETIC_RUN_CREATORS_FOR_SIGNOFF = ["test-auto-gen", "codex-e2e", "smoke-test", "demo-seed"];
+
+/**
+ * Daily cron: nudge payroll_head that a run has finished calculation and is waiting on
+ * finance sign-off. PAYROLL_SIGN_OFF_PENDING was a registered Work Inbox item_type with
+ * zero producers anywhere in the app. The mutation that puts a run into this state —
+ * payrollCalculate.service.ts setting status='processing' on successful calculation — is
+ * payroll calculation logic and is out of scope to touch, so this follows the
+ * runPayrollBranchReadinessReminders() precedent: a scan over the same queue
+ * payroll-signoff.routes.ts's GET /runs already serves, so a work item never advertises a
+ * run that endpoint would not actually list.
+ */
+export async function runPayrollSignOffReminders(): Promise<void> {
+  const placeholders = SYNTHETIC_RUN_CREATORS_FOR_SIGNOFF.map(() => '?').join(', ');
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, run_month
+       FROM salary_prep_run
+      WHERE LOWER(COALESCE(status, '')) = 'processing'
+        AND finance_approved_at IS NULL
+        AND LOWER(COALESCE(created_by, '')) NOT IN (${placeholders})`,
+    SYNTHETIC_RUN_CREATORS_FOR_SIGNOFF
+  );
+
+  for (const row of rows as Array<{ id: string; run_month: string }>) {
+    try {
+      await triggerPayrollSignOffPending(row.id, row.run_month);
+    } catch (err) {
+      console.warn(`[payroll-window-cron] sign-off reminder failed for run ${row.id}:`, err);
+    }
+  }
+
+  if (rows.length > 0) {
+    console.log(`[payroll-window-cron] payroll sign-off pending: notified for ${rows.length} run(s)`);
+  }
+}
+
 export function startPayrollWindowClosureScheduler(): void {
   if (_timer) return;
 
@@ -159,6 +201,7 @@ export function startPayrollWindowClosureScheduler(): void {
   runPayrollWindowClosure()
     .then(() => runPayrollWindowClosingWarning())
     .then(() => runPayrollBranchReadinessReminders())
+    .then(() => runPayrollSignOffReminders())
     .catch((e: unknown) =>
       console.error('[payroll-window-cron] startup run failed:', e)
     );
@@ -167,6 +210,7 @@ export function startPayrollWindowClosureScheduler(): void {
     () => runPayrollWindowClosure()
       .then(() => runPayrollWindowClosingWarning())
       .then(() => runPayrollBranchReadinessReminders())
+      .then(() => runPayrollSignOffReminders())
       .catch((e: unknown) =>
         console.error('[payroll-window-cron] scheduled run failed:', e)
       ),

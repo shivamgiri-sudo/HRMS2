@@ -258,6 +258,61 @@ export async function triggerPayrollProcessSignOff(
   });
 }
 
+export async function triggerRegularizationPending(
+  regularizationId: string,
+  employeeName: string,
+  branchId?: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "REGULARIZATION_PENDING",
+    title: `Regularization awaiting approval: ${employeeName}`,
+    description: "An attendance regularization request is waiting on manager/WFM approval.",
+    moduleCode: "attendance",
+    entityType: "regularization",
+    entityId: regularizationId,
+    assignedToRole: "manager",
+    branchId,
+    priority: "medium",
+    dueAt: dueAt("REGULARIZATION_PENDING"),
+  });
+}
+
+export async function triggerResignationPendingReview(
+  exitRequestId: string,
+  employeeName: string,
+  branchId?: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "RESIGNATION_PENDING_REVIEW",
+    title: `Resignation awaiting HR review: ${employeeName}`,
+    description: "A newly submitted resignation is waiting on HR/manager review.",
+    moduleCode: "exit",
+    entityType: "resignation",
+    entityId: exitRequestId,
+    assignedToRole: "hr",
+    branchId,
+    priority: "high",
+    dueAt: dueAt("RESIGNATION_PENDING_REVIEW"),
+  });
+}
+
+export async function triggerPayrollSignOffPending(
+  runId: string,
+  runMonth: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "PAYROLL_SIGN_OFF_PENDING",
+    title: `Payroll run awaiting sign-off: ${runMonth}`,
+    description: `The ${runMonth} payroll run has finished calculation and is waiting on finance sign-off.`,
+    moduleCode: "payroll",
+    entityType: "payroll_run",
+    entityId: runId,
+    assignedToRole: "payroll_head",
+    priority: "critical",
+    dueAt: dueAt("PAYROLL_SIGN_OFF_PENDING"),
+  });
+}
+
 export async function triggerPayrollProcessFreezeRequest(
   branchId: string,
   processId: string,

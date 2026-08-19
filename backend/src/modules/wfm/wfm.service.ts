@@ -5,6 +5,7 @@ import { queueAutoAwards } from "../engagement/badge.service.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { sendSMS } from "../communication/sms.helper.js";
 import { captureAttendanceSnapshot } from "../../shared/attendanceSnapshot.js";
+import { triggerRegularizationPending } from "../work-inbox/work-inbox.triggers.js";
 // The engine's own classifiers and configured floors — a regularization must
 // judge a corrected day exactly as the engine would, not by a second rulebook.
 import {
@@ -501,6 +502,22 @@ export const wfmService = {
       }
     } catch {
       // Non-fatal — notification failure should not block submission
+    }
+
+    // Registry-backed Action Centre item (REGULARIZATION_PENDING) — distinct from the
+    // work_inbox_item notifications above: those target specific users (manager/WFM leads)
+    // and carry no registry entry, while this is role-assigned and dedupes on
+    // (entityType, entityId, itemType) so re-review flows never double it. Non-blocking,
+    // same as every other trigger call site in this file.
+    try {
+      const [empInfoWi] = await db.execute<RowDataPacket[]>(
+        `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS full_name
+         FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+      );
+      const empName = (empInfoWi[0] as any)?.full_name ?? input.employeeId;
+      await triggerRegularizationPending(id, empName, branchId ?? undefined);
+    } catch {
+      // Non-fatal — work item creation failure should not block submission
     }
 
     // SMS — regularization submitted (fire-and-forget)

@@ -12,6 +12,7 @@ import { notifyResignationSubmitted, notifyResignationDecision } from "./exit.no
 import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
 import { recordExitFollowUpFailure } from "./exit-followup-recovery.js";
 import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
+import { triggerResignationPendingReview } from "../work-inbox/work-inbox.triggers.js";
 
 // Singleton transporter — created once at module load, not per-call
 const mailer = nodemailer.createTransport({
@@ -236,6 +237,22 @@ export const exitService = {
       const phone = emp?.mobile ?? emp?.personal_phone ?? null;
       if (phone) sendSMS(phone, 'separation_initiated', { name: emp.name }).catch(() => {});
     } catch { /* non-fatal */ }
+
+    // Registry-backed Action Centre item (RESIGNATION_PENDING_REVIEW). Gated on
+    // exitSubType 'resignation' (the schema default — see exit.validation.ts) so
+    // involuntary exits (termination, absconding, contract_end, ...) raised through the
+    // same createExitRequest path do not surface as a "resignation" queue item.
+    // Non-blocking, matching every other side-effect in this function.
+    if ((input.exitSubType ?? "resignation") === "resignation") {
+      try {
+        const [empRow2] = await db.execute<RowDataPacket[]>(
+          `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, branch_id
+           FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+        );
+        const emp2 = (empRow2[0] as any);
+        await triggerResignationPendingReview(id, emp2?.name ?? input.employeeId, emp2?.branch_id ?? undefined);
+      } catch { /* non-fatal */ }
+    }
 
     return this.getExitRequest(id);
   },
