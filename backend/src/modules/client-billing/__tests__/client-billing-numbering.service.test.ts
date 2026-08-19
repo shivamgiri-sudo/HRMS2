@@ -61,3 +61,18 @@ describe("mintBillNumber", () => {
     expect(params).toEqual(["bill", "09|Mas Callnet India Pvt Ltd|2026-27"]);
   });
 });
+
+describe("mintCreditNoteNumber", () => {
+  it("formats as CN-<stateCode>-<NN>/<FYshort>, zero-padded below 10", async () => {
+    execute.mockResolvedValueOnce([{ insertId: 3 }, []]);
+    const result = await clientBillingNumberingService.mintCreditNoteNumber("09", "Mas Callnet India Pvt Ltd", "2026-27");
+    expect(result).toBe("CN-09-03/26-27");
+  });
+
+  it("scopes the counter row to kind='credit_note'", async () => {
+    execute.mockResolvedValueOnce([{ insertId: 1 }, []]);
+    await clientBillingNumberingService.mintCreditNoteNumber("09", "Mas Callnet India Pvt Ltd", "2026-27");
+    const [, params] = execute.mock.calls[0];
+    expect(params).toEqual(["credit_note", "09|Mas Callnet India Pvt Ltd|2026-27"]);
+  });
+});

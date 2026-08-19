@@ -546,7 +546,10 @@
     "1238_dispatch_log_skipped_status.sql",
     "1240_emergency_contact_onboarding_backfill.sql",
     "migrations/1300_client_billing_foundation.sql",
-    "migrations/1301_client_billing_approval_workflow.sql"
+    "migrations/1301_client_billing_approval_workflow.sql",
+    "migrations/1302_client_billing_credit_notes.sql",
+    "1241_minimum_wage_gate_columns.sql",
+    "migrations/430_rbac_matrix_applied_grants.sql"
   ],
   "approvedDeletions": [
     {
@@ -563,7 +566,9 @@
   "knownDangling": [
     "migrations/426_employee_geofence_alerts.sql",
     "migrations/1300_client_billing_foundation.sql",
-    "migrations/1301_client_billing_approval_workflow.sql"
+    "migrations/1301_client_billing_approval_workflow.sql",
+    "migrations/1302_client_billing_credit_notes.sql",
+    "migrations/430_rbac_matrix_applied_grants.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
