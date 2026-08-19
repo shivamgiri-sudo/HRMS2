@@ -13,6 +13,7 @@ import { buildScopeWhereClause, hasAnyRole as hasAnyRoleAsync, hasScopedAccess, 
 import { statutoryRegimeForFinancialYear } from "./statutory-regime.js";
 import { loadFlatStatutoryConfig } from "./statutory-config.loader.js";
 import { getPartAAvailability } from "./tds-certificate-part-a.service.js";
+import { resolvePii } from "../../shared/piiCiphertext.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { resolveAccountNumber } from "../../shared/fieldEncryption.js";
 
@@ -910,7 +911,7 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
             e.first_name, e.last_name,
             COALESCE(eu.uan, eu.member_id, e.epf_number) AS epf_number,
             eu.uan AS uan_number,
-            e.pan_number,
+            e.pan_number, e.pan_number_encrypted,
             e.esic_number AS esi_number,
             CASE WHEN e.bank_account_number IS NOT NULL
               THEN CONCAT('XXXX', RIGHT(e.bank_account_number, 4))
@@ -955,6 +956,12 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
 
   // For each line, fetch detailed component breakdown
   for (const line of rows as any[]) {
+    // PAN was serialized straight from the plaintext column; employees also carries
+    // pan_number_encrypted for exactly this read. Prefer ciphertext, fall back to
+    // plaintext (resolvePii already handles both, and never throws on a read path).
+    line.pan_number = resolvePii(line.pan_number_encrypted, line.pan_number).value;
+    delete line.pan_number_encrypted;
+
     const [components] = await db.execute<RowDataPacket[]>(
       `SELECT component_code, component_name, component_type, amount, taxable
        FROM salary_prep_line_component
@@ -1188,7 +1195,7 @@ router.get("/payslip/legacy-detail/:employeeCode/:payMonth", requireAuth, h(asyn
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT lps.*,
             e.first_name, e.last_name,
-            e.pan_number,
+            e.pan_number, e.pan_number_encrypted,
             CASE WHEN e.bank_account_number IS NOT NULL
               THEN CONCAT('XXXX', RIGHT(e.bank_account_number, 4))
               ELSE NULL END AS bank_account_masked,
@@ -1207,7 +1214,10 @@ router.get("/payslip/legacy-detail/:employeeCode/:payMonth", requireAuth, h(asyn
   if (!(rows as any[]).length) {
     return res.status(404).json({ success: false, message: "Legacy payslip not found" });
   }
-  return res.json({ success: true, data: (rows as any[])[0] });
+  const legacyRow = (rows as any[])[0];
+  legacyRow.pan_number = resolvePii(legacyRow.pan_number_encrypted, legacyRow.pan_number).value;
+  delete legacyRow.pan_number_encrypted;
+  return res.json({ success: true, data: legacyRow });
 }));
 
 // GET /api/payroll/payslip/:runId/:employeeId — admin/hr/finance/payroll or employee own
@@ -1695,7 +1705,7 @@ router.get(
       // The employee_documents join went with it: `ed` was referenced for pan_number and nothing
       // else, so it was scanning a 207,616-row table to contribute one column that did not exist.
       `SELECT CONCAT_WS(' ', e.first_name, e.last_name) AS name,
-              e.pan_number AS pan,
+              e.pan_number AS pan, e.pan_number_encrypted,
               dm.designation_name AS designation,
               e.date_of_joining
          FROM employees e
@@ -1704,8 +1714,11 @@ router.get(
       [employeeId]
     );
     const emp = (empRows as Array<{
-      name: string; pan: string | null; designation: string | null; date_of_joining: string | null;
+      name: string; pan: string | null; pan_number_encrypted: string | null; designation: string | null; date_of_joining: string | null;
     }>)[0];
+    if (emp) {
+      emp.pan = resolvePii(emp.pan_number_encrypted, emp.pan).value;
+    }
 
     // Derive financial year for declaration lookup
     const [yr, mo] = run.run_month.split("-").map(Number);
@@ -2777,8 +2790,12 @@ router.get("/summary", requireRole("admin", "super_admin", "finance", "payroll")
 router.get("/compliance", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
   const [compliance] = await db.execute<RowDataPacket[]>(`
     SELECT e.id, e.employee_code, CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
-           e.pan_number, e.uan_number, e.epf_number, e.esic_number,
-           CASE WHEN e.pan_number IS NOT NULL AND e.pan_number != '' THEN 'Valid' ELSE 'Missing' END as pan_status,
+           e.pan_number, e.pan_number_encrypted, e.uan_number, e.epf_number, e.esic_number,
+           -- 'Valid' if either the ciphertext or the legacy plaintext column is populated —
+           -- an employee whose PAN now lives only in pan_number_encrypted must not read as Missing.
+           CASE WHEN (e.pan_number IS NOT NULL AND e.pan_number != '')
+                  OR (e.pan_number_encrypted IS NOT NULL AND e.pan_number_encrypted != '')
+                THEN 'Valid' ELSE 'Missing' END as pan_status,
            CASE WHEN e.uan_number IS NOT NULL AND e.uan_number != '' THEN 'Valid' ELSE 'Missing' END as uan_status,
            CASE WHEN e.epf_number IS NOT NULL AND e.epf_number != '' THEN 'Valid' ELSE 'Missing' END as epf_status,
            CASE WHEN e.esic_number IS NOT NULL AND e.esic_number != '' THEN 'Valid' ELSE 'Missing' END as esic_status
@@ -2787,6 +2804,10 @@ router.get("/compliance", requireRole("admin", "super_admin", "finance", "payrol
     ORDER BY e.employee_code
     LIMIT 100
   `);
+  for (const row of compliance as any[]) {
+    row.pan_number = resolvePii(row.pan_number_encrypted, row.pan_number).value;
+    delete row.pan_number_encrypted;
+  }
   return res.json({ success: true, data: compliance });
 }));
 

@@ -4,6 +4,7 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { queueAutoAwards } from "../engagement/badge.service.js";
+import { resolvePii } from "../../shared/piiCiphertext.js";
 
 export interface PayslipData {
   id: string;
@@ -183,7 +184,7 @@ export const payslipService = {
               e.first_name, e.last_name,
               COALESCE(esa.ctc_annual, e.ctc) AS ctc_annual,
               e.ctc,
-              e.pan_number,
+              e.pan_number, e.pan_number_encrypted,
               COALESCE(eu.uan, eu.member_id, e.epf_number) AS epf_number,
               eu.uan AS uan_number,
               e.esic_number      AS esi_number,
@@ -228,6 +229,8 @@ export const payslipService = {
     );
     const rec = (rows as PayslipData[])[0];
     if (!rec) throw new Error("Payslip not found");
+    (rec as any).pan_number = resolvePii((rec as any).pan_number_encrypted, (rec as any).pan_number).value;
+    delete (rec as any).pan_number_encrypted;
 
     const [components] = await db.execute<RowDataPacket[]>(
       `SELECT component_code, component_name, component_type, amount, taxable, reason

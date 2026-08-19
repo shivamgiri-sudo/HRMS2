@@ -739,6 +739,15 @@ export async function calculatePayrollRunScoped(
             -- between a paid and an unpaid final working day.
             ${EMPLOYMENT_END_DATE_SELECT} AS employment_end_date,
             e.date_of_birth,
+            -- Deliberately reads the plaintext column, not pan_number_encrypted, unlike the
+            -- API-response read sites elsewhere in this module. This value never leaves the
+            -- server — it is only compared against PLACEHOLDER_PANS below to decide whether
+            -- TDS should be skipped, never serialized to any response — and the 2026-08-10
+            -- backfill wrote ciphertext that matches plaintext exactly, so switching this one
+            -- read to decrypt-then-compare would add a failure mode (decrypt error → wrong
+            -- guard result → wrong TDS) to real tax calculation logic for no PII-exposure
+            -- benefit. Left as-is on purpose; revisit only if the plaintext column is ever
+            -- dropped or diverges from ciphertext.
             TRIM(COALESCE(e.pan_number, '')) AS pan_number
        FROM employees e
        -- Point-in-time salary selection. See the block comment above this query for why

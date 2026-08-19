@@ -10,6 +10,7 @@ import multer from "multer";
 import { randomUUID } from "crypto";
 import { recalculateOpenPayrollForEmployee } from "./payroll-targeted-recalculation.service.js";
 import { payslipService } from "./payslip.service.js";
+import { resolvePii } from "../../shared/piiCiphertext.js";
 
 export const payrollMoreRouter = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -49,7 +50,7 @@ payrollMoreRouter.get("/form16-data/:runId/:employeeId", h(async (req: Authentic
 
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT CONCAT_WS(' ', e.first_name, e.last_name) AS name,
-            e.pan_number AS pan,
+            e.pan_number AS pan, e.pan_number_encrypted,
             dm.designation_name AS designation,
             e.date_of_joining
        FROM employees e
@@ -57,7 +58,10 @@ payrollMoreRouter.get("/form16-data/:runId/:employeeId", h(async (req: Authentic
       WHERE e.id = ? LIMIT 1`,
     [employeeId],
   );
-  const emp = empRows[0] as { name: string; pan: string | null; designation: string | null; date_of_joining: string | null } | undefined;
+  const emp = empRows[0] as { name: string; pan: string | null; pan_number_encrypted: string | null; designation: string | null; date_of_joining: string | null } | undefined;
+  if (emp) {
+    emp.pan = resolvePii(emp.pan_number_encrypted, emp.pan).value;
+  }
 
   const [yr, mo] = run.run_month.split("-").map(Number);
   const fyStart = mo >= 4 ? yr : yr - 1;
