@@ -22,6 +22,12 @@ import { startDashboardSnapshotScheduler } from "./modules/dashboards/dashboard-
 import { startPerformanceIngestionScheduler, stopPerformanceIngestionScheduler } from "./modules/performance-ingestion/performance-scheduler.service.js";
 import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.cron.js";
 import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-reconciliation.worker.js";
+// D-1 Daily Manager Intelligence Briefing Engine — dual-registered here AND in
+// workers/all-workers.ts, same convention as every other scheduler in this file
+// (see the ats-reminders/sla-breach note below this block for why a single-file
+// registration silently never runs in the WORKERS_PROCESS=external topology).
+// Off by default: MANAGER_DAILY_BRIEF_ENABLED must be explicitly "true".
+import { startManagerDailyBriefScheduler } from "./modules/management/daily-brief/daily-brief.cron.js";
 import { bootstrapCosecIntegration } from "./modules/wfm/cosec-integration.bootstrap.js";
 import { startCosecSyncWorker } from "./modules/wfm/cosec-sync.worker.js";
 import { startAccessExpiryScheduler } from "./workers/access-expiry.worker.js";
@@ -197,6 +203,9 @@ function startServer() {
         startCommunicationCleanup();
         startAttendanceEngineScheduler();
         startAttendanceReconciliationWorker();
+        // No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true — see daily-brief.cron.ts's
+        // header for the dependency-timing evidence behind its default run time.
+        startManagerDailyBriefScheduler();
         // Pulls biometric punches from the NCOSEC SQL Server — the only feed that
         // populates integration_biometric_daily, and so the source every non-Operations
         // employee's payroll attendance is built from.

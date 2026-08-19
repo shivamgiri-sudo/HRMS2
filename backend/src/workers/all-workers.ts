@@ -38,6 +38,11 @@ import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./emp
 import { initBusinessActionSyncJobs, stopBusinessActionSyncJobs } from "../cron/business-action-sync.cron.js";
 import { startDashboardSnapshotScheduler, stopDashboardSnapshotScheduler } from "../modules/dashboards/dashboard-snapshot.cron.js";
 import { startAttendanceReconciliationWorker, stopAttendanceReconciliationWorker } from "../modules/wfm/attendance-reconciliation.worker.js";
+// D-1 Daily Manager Intelligence Briefing Engine — dual-registered here AND in
+// server.ts (see the "These five were registered in server.ts ONLY" note above for
+// why a single-file registration silently never runs in one of the two worker
+// topologies). No-ops unless MANAGER_DAILY_BRIEF_ENABLED=true.
+import { startManagerDailyBriefScheduler, stopManagerDailyBriefScheduler } from "../modules/management/daily-brief/daily-brief.cron.js";
 import { startRetentionCron } from "./privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "../modules/ats/ats-reminders.cron.js";
 import { startPayrollWindowClosureScheduler, stopPayrollWindowClosureScheduler } from "../modules/payroll/payroll-window.cron.js";
@@ -208,6 +213,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startAttendanceReconciliationWorker(); return Promise.resolve(); },
   },
   {
+    name: "manager-daily-brief",
+    start: () => { startManagerDailyBriefScheduler(); return Promise.resolve(); },
+  },
+  {
     name: "dashboard-snapshot",
     start: () => { startDashboardSnapshotScheduler(); return Promise.resolve(); },
   },
@@ -364,6 +373,7 @@ function shutdown(): void {
   stopBusinessActionSyncJobs();
   stopDashboardSnapshotScheduler();
   stopAttendanceReconciliationWorker();
+  stopManagerDailyBriefScheduler();
   stopAccessExpiryScheduler();
   stopIntegrationScheduler();
   stopEsignComplianceWorker();

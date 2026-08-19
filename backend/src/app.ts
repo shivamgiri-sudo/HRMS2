@@ -94,6 +94,7 @@ import { appointmentLetterRouter } from "./modules/letters/appointmentLetter.rou
 import { atsExtRouter } from "./modules/ats-extensions/ats-ext.routes.js";
 import { wfmExtRouter } from "./modules/wfm-extensions/wfm-ext.routes.js";
 import { managementRouter } from "./modules/management/management.routes.js";
+import { dailyBriefRouter } from "./modules/management/daily-brief/daily-brief.routes.js";
 import { rosterGovRouter } from "./modules/roster/roster.governance.routes.js";
 import { weekoffPreferenceRouter } from "./modules/roster/weekoff-preference.routes.js";
 import { rosterSelfSecureRouter } from "./modules/roster/roster.self.secure.routes.js";
@@ -486,6 +487,9 @@ app.use("/api/letters", appointmentLetterRouter);
 app.use("/api/wfm-ext", wfmExtRouter);
 app.use("/api/management", managementRouter);
 app.use("/api/management", managementCommandCenterRouter);
+// Phase B (MVP) D-1 Daily Manager Intelligence Briefing Engine — preview-only, dry-run,
+// no scheduler/cron wiring yet. See modules/management/daily-brief/.
+app.use("/api/management/daily-brief", dailyBriefRouter);
 app.use("/api/roster-gov", rosterSelfSecureRouter);
 app.use("/api/roster-gov", weekoffPreferenceRouter);
 app.use("/api/roster-gov", rosterGovRouter);
