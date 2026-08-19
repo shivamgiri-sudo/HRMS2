@@ -52,20 +52,73 @@ describe("neftTransferFile requires a usable, real-looking account and a routabl
     );
   });
 
-  it("does not touch the separately-flagged dual-account-source disagreement", () => {
-    // That decision belongs to whoever reconciles employees.bank_account_number vs
-    // employee_bank_detail (see ACCOUNT_SOURCE_JOIN's own comment) — this fix must not silently
-    // fold that unresolved question into a payability guard scoped to ebd alone.
+  it("excludes a row where employees.bank_account_number disagrees with employee_bank_detail (2026-08-18)", () => {
+    // Was: "does not touch the separately-flagged dual-account-source disagreement" — that gap is
+    // exactly what let a CONFLICT employee's real, unmasked account leave the app with only a
+    // text label as the warning. bankAdvice() already excluded this; neftTransferFile() — the
+    // sibling this file's own doc-comment calls "what payroll actually generates" — did not, and
+    // was the higher-consequence gap of the two. Mirrors bankAdvice()'s own guard shape.
     const guardBlock = NEFT_TRANSFER_FILE.slice(
       NEFT_TRANSFER_FILE.indexOf("clauses.push(`(\n    (ebd.account_number"),
       NEFT_TRANSFER_FILE.indexOf("const base = `"),
     );
-    expect(guardBlock).not.toContain("acct_chk");
-    expect(guardBlock).not.toContain("e.bank_account_number");
+    expect(guardBlock).toMatch(
+      /NOT \(\s*e\.bank_account_number IS NOT NULL AND TRIM\(e\.bank_account_number\) <> ''/,
+    );
+    // COLLATE utf8mb4_unicode_ci is required, not decorative — see the live-execution test
+    // below. Without it this clause throws ER_CANT_AGGREGATE_2COLLATIONS on the real schema
+    // on every invocation (CONVERT(...USING utf8mb4) alone resolves to the server's default
+    // utf8mb4_0900_ai_ci, which collides with e.bank_account_number's explicit
+    // utf8mb4_unicode_ci column collation) — a regression this same regex-only assertion
+    // shipped once already, because matching the SQL text proves nothing about whether MySQL
+    // can actually execute it.
+    expect(guardBlock).toMatch(
+      /TRIM\(e\.bank_account_number\) <> TRIM\(CONVERT\(ebd\.account_number USING utf8mb4\) COLLATE utf8mb4_unicode_ci\)/,
+    );
   });
 
   it("still excludes draft/cancelled runs and non-positive net salary (pre-existing gates kept)", () => {
     expect(NEFT_TRANSFER_FILE).toContain("NOT IN ('draft','cancelled')");
     expect(NEFT_TRANSFER_FILE).toContain("spl.net_salary > 0");
+  });
+});
+
+/**
+ * Live-execution guard for the collation trap above.
+ *
+ * A prior version of the disagreement clause shipped with CONVERT(ebd.account_number USING
+ * utf8mb4) but no explicit COLLATE, and passed the entire suite — the regex assertions above
+ * only prove the SQL text looks right, never that MySQL can actually run it. On the real
+ * schema (employees.bank_account_number carries an explicit utf8mb4_unicode_ci column
+ * collation; the server default for a bare `USING utf8mb4` CONVERT is utf8mb4_0900_ai_ci),
+ * that clause threw ER_CANT_AGGREGATE_2COLLATIONS on every single invocation — not a data-
+ * dependent failure, a compile-time-equivalent one, so it broke the report for 100% of callers
+ * the moment it shipped, invisibly to a mocked-DB suite. This test exists so that class of bug
+ * fails CI instead of shipping again. Read-only (SELECT only) and skipped unless explicitly
+ * enabled, following this repo's existing RUN_ASSESSMENT_MYSQL_TESTS convention
+ * (ats-assessment/__tests__/assessment.mysql.integration.test.ts) — it needs a live DB
+ * connection this harness's default mocked db does not provide.
+ */
+const runLiveDbTests = process.env.RUN_REPORTING_MYSQL_TESTS === "1";
+const liveDbDescribe = runLiveDbTests ? describe : describe.skip;
+
+liveDbDescribe("neftTransferFile bank-mismatch clause — live execution", () => {
+  it("executes against the real schema without a collation error", async () => {
+    const { db } = await import("../../../db/mysql.js");
+    // Same join shape and clause the executor uses, trimmed to just this guard plus a cheap
+    // LIMIT — the point is proving MySQL accepts the comparison, not re-deriving row counts.
+    await expect(
+      db.execute(
+        `SELECT e.id
+           FROM employees e
+           LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id
+          WHERE NOT (
+            e.bank_account_number IS NOT NULL AND TRIM(e.bank_account_number) <> ''
+            AND ebd.account_number IS NOT NULL AND TRIM(CONVERT(ebd.account_number USING utf8mb4) COLLATE utf8mb4_unicode_ci) <> ''
+            AND TRIM(e.bank_account_number) <> TRIM(CONVERT(ebd.account_number USING utf8mb4) COLLATE utf8mb4_unicode_ci)
+          )
+          LIMIT 1`,
+      ),
+    ).resolves.not.toThrow();
   });
 });

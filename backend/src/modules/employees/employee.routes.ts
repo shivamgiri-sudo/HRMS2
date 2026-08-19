@@ -17,7 +17,7 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { isOfficialEmail } from "../../shared/officialEmail.js";
 import { bootstrapCandidateForEmployee } from "./employee-bgv-bootstrap.service.js";
 import { encryptField, decryptField } from "../../shared/fieldEncryption.js";
-import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
+import { encryptPanForSync, blindIndexPan, encryptAadhaarForSync, blindIndexAadhaar } from "../../shared/syncPiiEncryption.js";
 import { validateBankFields, validateStatutoryFields } from "../../shared/statutoryFormat.js";
 import { SELF_EDITABLE_PERSONAL_COLUMNS, dbColumnFor } from "./fieldOwnership.js";
 import { computeAccountBlindIndex, findDuplicateAccountOwner } from "../../shared/bankAccountDuplicate.js";
@@ -853,6 +853,37 @@ router.put("/:employeeId/statutory-details", ...hrProfileGate, h(async (req: any
       .catch((error) => {
         console.error(`[statutory] employees.uan_number sync failed for ${empId} (HR entry):`, error);
       });
+  }
+
+  // employee_statutory_info has no aadhaar_id_encrypted column at all (confirmed live:
+  // NO_PROTECTED_COLUMN_EXISTS, 3,954 plaintext rows, privacy-encryption-coverage.ts) — so
+  // unlike pan_number two blocks up, there is no ciphertext this route could write into that
+  // table. employees.aadhaar_number_encrypted is the one column that IS protected (live
+  // coverage: 30,117/30,117, effectively complete) and the sibling write path already syncs
+  // it — statutory-approval.routes.ts's approve step does exactly this UPDATE after an
+  // employee's own submission is approved. This HR-direct route bypasses that approval flow
+  // entirely and, before this fix, never touched the employees table for aadhaar_id at all:
+  // an HR-entered Aadhaar landed in employee_statutory_info.aadhaar_id (plaintext, no cipher
+  // possible in that table) and the canonical encrypted column went stale silently — the
+  // employee's own profile GET (resolvePii(emp.aadhaar_number_encrypted, emp.aadhaar_number))
+  // would keep showing the old value, or no value, indefinitely. Mirrors the uan_number sync
+  // immediately above and the aadhaar sync in statutory-approval.routes.ts line-for-line, so
+  // this route and its approval-gated sibling can no longer disagree on where the protected
+  // copy lives. Both helpers return null under a dev key (see fieldEncryption.ts), which
+  // writes NULL here rather than an undecryptable ciphertext — same safe-degrade already used
+  // for pan_number_encrypted above.
+  if (aadhaar_id !== undefined) {
+    await db.execute(
+      "UPDATE employees SET aadhaar_number = ?, aadhaar_number_encrypted = ?, aadhaar_blind_index = ? WHERE id = ?",
+      [
+        aadhaar_id,
+        encryptAadhaarForSync(aadhaar_id, "statutory-hr-entry"),
+        blindIndexAadhaar(aadhaar_id, "statutory-hr-entry"),
+        empId,
+      ]
+    ).catch((error) => {
+      console.error(`[statutory] employees.aadhaar sync failed for ${empId} (HR entry):`, error);
+    });
   }
 
   void logSensitiveAction({

@@ -6,6 +6,10 @@ import { Readable } from 'stream';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { emailService } from '../communication/email.service.js';
+import {
+  evaluateMinimumWageForBranchId,
+  evaluateMinimumWageForBranchName,
+} from '../payroll-masters/minimum-wage-gate.service.js';
 
 /**
  * Offer Letter Generation Service
@@ -62,6 +66,7 @@ export interface OfferLetter {
 interface CandidateRow extends RowDataPacket {
   id: string;
   candidate_id?: string;
+  branch_id?: string | null;
 }
 
 interface SalaryRow extends RowDataPacket {
@@ -109,6 +114,8 @@ export async function generateOfferLetter(data: OfferLetterData, templateId?: st
   success: boolean;
   offer_letter_id: string;
   pdf_url?: string;
+  min_wage_provisional?: boolean;
+  min_wage_check_note?: string;
 }> {
   const conn = await db.getConnection();
 
@@ -153,13 +160,25 @@ export async function generateOfferLetter(data: OfferLetterData, templateId?: st
     const esicEmployer = salary.esic_employee || 0;
     const ctc = salary.gross_salary + pfEmployer + esicEmployer;
 
+    // Minimum-wage floor gate. Never throws and never blocks offer generation — see
+    // minimum-wage-gate.service.ts. Checked against GROSS, not CTC: minimum wage is
+    // about what the employee actually receives, and CTC folds in employer-side PF/
+    // ESIC the employee never sees, which would understate a real shortfall.
+    // candidate.branch_id (a real FK) is preferred over the branch_name text passed
+    // on the offer payload; it falls back to that text only when the candidate has
+    // no branch_id on file.
+    const minWageState = candidate.branch_id
+      ? await evaluateMinimumWageForBranchId(candidate.branch_id, salary.gross_salary)
+      : await evaluateMinimumWageForBranchName(data.branch_name, salary.gross_salary);
+
     // Create offer letter record
     const [offerRes] = await conn.execute<ResultSetHeader>(
       `INSERT INTO ats_offer_letters (
         candidate_id, offer_date, joining_date, position, department,
         branch_name, salary_gross, salary_ctc, salary_basic, salary_hra,
-        salary_other_allowances, template_id, status, expires_at
-      ) VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', DATE_ADD(NOW(), INTERVAL 7 DAY))`,
+        salary_other_allowances, template_id, status, expires_at,
+        min_wage_provisional, min_wage_check_note
+      ) VALUES (?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', DATE_ADD(NOW(), INTERVAL 7 DAY), ?, ?)`,
       [
         data.candidate_id,
         data.joining_date,
@@ -172,6 +191,8 @@ export async function generateOfferLetter(data: OfferLetterData, templateId?: st
         salary.hra,
         salary.other_allowances || 0,
         templateId || null,
+        minWageState.provisional ? 1 : 0,
+        minWageState.note,
       ]
     );
 
@@ -222,6 +243,8 @@ export async function generateOfferLetter(data: OfferLetterData, templateId?: st
       success: true,
       offer_letter_id: offerId,
       pdf_url: pdfPath,
+      min_wage_provisional: minWageState.provisional,
+      min_wage_check_note: minWageState.note,
     };
   } catch (error: unknown) {
     await conn.rollback();

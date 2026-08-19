@@ -512,7 +512,16 @@ router.post("/runs/:id/freeze-attendance", requireRole("admin", "super_admin", "
   return res.json({ success: true, data, message: "Attendance frozen for payroll run" });
 }));
 
-router.patch("/runs/:id/status", requireRole("admin", "super_admin", "finance", "payroll"), h(c.updateRunStatus));
+// finance_head/payroll_head added 2026-08-19, caught by an independent QA re-audit: the
+// service-level head-role check inside updateRunStatus() for locked/disbursed (and the Lock
+// Run button's own frontend gate, src/pages/Payroll.tsx) already expected these two roles —
+// but this route-level requireRole() never included them, so the one live user holding
+// finance_head/payroll_head (and none of admin/super_admin/finance/payroll) got a 403 here
+// before that correctly-built service check ever ran. Widening this list doesn't change what
+// updateRunStatus() itself allows any of these roles to do — its own internal checks (head-role
+// gate on locked/disbursed, finance sign-off, PT-block safety, self-approval block) are the
+// real authorization boundary and are unchanged by this route-level fix.
+router.patch("/runs/:id/status", requireRole("admin", "super_admin", "finance", "payroll", "finance_head", "payroll_head"), h(c.updateRunStatus));
 router.get("/runs/:id/lines", requireRole("admin", "hr", "super_admin", "finance", "payroll"), h(c.listLines));
 
 // Action-level capabilities for current user

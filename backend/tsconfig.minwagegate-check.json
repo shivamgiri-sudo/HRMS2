@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/payroll-masters/minimum-wage-gate.service.ts",
+    "src/modules/payroll-masters/payrollMasters.service.ts",
+    "src/modules/ats/offer-letter.service.ts",
+    "src/modules/payroll-masters/__tests__/minimum-wage-gate.test.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

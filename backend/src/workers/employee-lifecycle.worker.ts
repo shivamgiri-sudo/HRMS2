@@ -1,16 +1,25 @@
 /**
  * Employee Lifecycle Worker
  *
- * Runs two scheduled jobs:
+ * Runs three scheduled jobs:
  * 1. Daily activation at 12:01 AM - activates employees whose joining date has arrived
  * 2. Hourly provisioning retry - retries failed provisioning task dispatch
+ * 3. Daily AWOL detection at 2:00 AM - flags active employees who have stopped showing
+ *    up with no leave applied and no exit filed (see awol-detection.service.ts). Hosted
+ *    here rather than as a new dual-registered cron: this worker is already started from
+ *    both server.ts and workers/all-workers.ts (see worker-registration-parity.contract.test.ts),
+ *    unconditionally once schedulers are enabled, so an AWOL_SUSPECTED work item is a
+ *    genuinely new, real-backlog signal that ships default-on without needing its own
+ *    server.ts/all-workers.ts registration or an explicit-enable flag.
  */
 
 import { runDailyActivationJob } from '../modules/employees/employee-activation.service.js';
 import { runProvisioningRetryJob } from '../jobs/provisioning-retry.job.js';
+import { runAwolDetectionScan } from '../modules/employees/awol-detection.service.js';
 
 let _activationTimer: ReturnType<typeof setTimeout> | null = null;
 let _retryTimer: ReturnType<typeof setInterval> | null = null;
+let _awolTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Calculate milliseconds until next 12:01 AM
@@ -20,6 +29,22 @@ function msUntilNextActivationRun(): number {
   const next = new Date();
   next.setDate(now.getDate() + (now.getHours() >= 0 && now.getMinutes() >= 1 ? 1 : 0));
   next.setHours(0, 1, 0, 0); // 12:01 AM
+  if (next <= now) {
+    next.setDate(next.getDate() + 1);
+  }
+  return next.getTime() - now.getTime();
+}
+
+/**
+ * Calculate milliseconds until next 2:00 AM.
+ *
+ * Staggered an hour after activation (12:01 AM) so the two daily jobs don't
+ * contend for the DB pool on the same tick.
+ */
+function msUntilNextAwolScanRun(): number {
+  const now = new Date();
+  const next = new Date();
+  next.setHours(2, 0, 0, 0); // 2:00 AM
   if (next <= now) {
     next.setDate(next.getDate() + 1);
   }
@@ -46,6 +71,16 @@ async function runActivation(): Promise<void> {
   _activationTimer = setTimeout(runActivation, 24 * 60 * 60 * 1000);
 }
 
+async function runAwolScan(): Promise<void> {
+  try {
+    await runAwolDetectionScan();
+  } catch (err) {
+    console.error('[employee-lifecycle] AWOL detection scan failed:', err);
+  }
+  // Schedule next run (24h)
+  _awolTimer = setTimeout(runAwolScan, 24 * 60 * 60 * 1000);
+}
+
 async function runRetry(): Promise<void> {
   try {
     const report = await runProvisioningRetryJob();
@@ -61,7 +96,7 @@ async function runRetry(): Promise<void> {
 }
 
 export function startEmployeeLifecycleWorker(): void {
-  if (_activationTimer || _retryTimer) return;
+  if (_activationTimer || _retryTimer || _awolTimer) return;
 
   // Daily activation at 12:01 AM
   const msUntilFirstRun = msUntilNextActivationRun();
@@ -75,9 +110,18 @@ export function startEmployeeLifecycleWorker(): void {
   _retryTimer = setInterval(runRetry, 60 * 60 * 1000);
   runRetry(); // Run immediately on start
   console.log('[employee-lifecycle] Provisioning retry scheduler started (hourly)');
+
+  // Daily AWOL detection scan at 2:00 AM
+  const msUntilAwolRun = msUntilNextAwolScanRun();
+  console.log(
+    `[employee-lifecycle] AWOL detection scan scheduled in ${Math.round(msUntilAwolRun / 60000)}m ` +
+    `(next 2:00 AM)`
+  );
+  _awolTimer = setTimeout(runAwolScan, msUntilAwolRun);
 }
 
 export function stopEmployeeLifecycleWorker(): void {
   if (_activationTimer) { clearTimeout(_activationTimer); _activationTimer = null; }
   if (_retryTimer) { clearInterval(_retryTimer); _retryTimer = null; }
+  if (_awolTimer) { clearTimeout(_awolTimer); _awolTimer = null; }
 }

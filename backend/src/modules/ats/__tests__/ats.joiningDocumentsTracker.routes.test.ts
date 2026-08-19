@@ -599,7 +599,8 @@ describe('POST /joining-documents-tracker/bulk-download', () => {
     expect(streamBulkDocumentsZip).toHaveBeenCalledWith(
       ['emp-1', 'emp-2'],
       null,
-      expect.anything()
+      expect.anything(),
+      'test-user-id'
     );
   });
 
@@ -619,7 +620,8 @@ describe('POST /joining-documents-tracker/bulk-download', () => {
     expect(streamBulkDocumentsZip).toHaveBeenCalledWith(
       ['emp-1'],
       ['APPOINTMENT_LETTER', 'ID_PROOF'],
-      expect.anything()
+      expect.anything(),
+      'test-user-id'
     );
   });
 

@@ -764,18 +764,24 @@ export const payrollGovernanceService = {
         "Salary advances with status='approved' are excluded from the recovery query (payrollCalculate.service.ts sums only status='active' rows) while a balance remains outstanding — approving an advance silently stops its recovery instead of confirming it. These employees will not have their outstanding advance deducted this run.",
         "recovery_deduction",
       )),
+      // 2026-08-19: excludes status='pending_approval' — that is the new loan-approval-gate
+      // state (loans.routes.ts POST /:id/approve), an expected pre-activation hold with real
+      // provenance, not an anomalous "recovery stopped" condition this warning exists to catch.
+      // 'rejected' loans are deliberately still flagged: an approver explicitly declined the
+      // loan, but if pending_amount is still nonzero that is worth a human look, same as any
+      // other non-active status with a balance.
       checkedIssue("recovery_deduction", "LOAN_RECOVERY_STOPPED_WITH_BALANCE", () => countIssue(
         `${eligibleSql}
           AND EXISTS (
             SELECT 1 FROM employee_loans el
              WHERE el.employee_id = e.id
-               AND el.status <> 'active'
+               AND el.status NOT IN ('active', 'pending_approval')
                AND COALESCE(el.pending_amount, 0) > 0.01
           )`,
         params,
         "LOAN_RECOVERY_STOPPED_WITH_BALANCE",
         "warning",
-        "Employee loans have an outstanding pending_amount but status is not 'active' (deduction_per_month is only summed from status='active' rows) — recovery has stopped while a balance remains. Verify whether this is an intended hold or a status error.",
+        "Employee loans have an outstanding pending_amount but status is not 'active' (deduction_per_month is only summed from status='active' rows) — recovery has stopped while a balance remains. Verify whether this is an intended hold or a status error. (Loans awaiting approval, status='pending_approval', are excluded — that is an expected pre-activation state, not an anomaly.)",
         "recovery_deduction",
       )),
 

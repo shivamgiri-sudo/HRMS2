@@ -754,4 +754,95 @@ describe('streamBulkDocumentsZip', () => {
 
     expect(freshMockArchive.finalize).toHaveBeenCalledTimes(1);
   });
+
+  // ── Branch Head scoping ──────────────────────────────────────────────────
+  // Mirrors getJoiningDocumentsTracker's isBranchHead check: a branch_head must
+  // not be able to pull another branch's verified documents through this
+  // bulk-download path just by supplying its employee_ids directly, even though
+  // the regular list-and-select flow already keeps them inside their own branch.
+
+  it('should restrict employee_ids to the branch_head actor\'s own branch before querying files', async () => {
+    vi.mocked(fsModule.existsSync).mockReturnValue(false);
+    const freshMockArchive = {
+      pipe: vi.fn(),
+      file: vi.fn(),
+      finalize: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+    };
+    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
+
+    vi.mocked(db.execute)
+      .mockResolvedValueOnce([[{ role_key: 'branch_head' }], []])            // getUserRoleKeys
+      .mockResolvedValueOnce([[{ id: 'actor-emp-1', employee_code: 'A1' }], []]) // getEmployeeForUser
+      .mockResolvedValueOnce([[{ branch_id: 'branch-A' }], []])              // actor's own branch_id
+      .mockResolvedValueOnce([[{ id: 'emp-1' }], []])                        // only emp-1 is in branch-A
+      .mockResolvedValueOnce([[], []]);                                     // final file query
+
+    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
+    await streamBulkDocumentsZip(['emp-1', 'emp-2'], null, mockRes, 'actor-user-1');
+
+    // Call 4 (0-indexed 3) is the "which of the requested ids are in my branch" check.
+    const scopeCall = vi.mocked(db.execute).mock.calls[3];
+    expect(scopeCall[0]).toMatch(/branch_id = \?/i);
+    expect(scopeCall[1]).toEqual([['emp-1', 'emp-2'], 'branch-A']);
+
+    // Call 5 (0-indexed 4) is the file query — must run against the scoped id list only.
+    const fileCall = vi.mocked(db.execute).mock.calls[4];
+    expect(fileCall[1]).toEqual([['emp-1']]);
+  });
+
+  it('should finalize an empty archive when a branch_head actor has no resolvable branch', async () => {
+    const freshMockArchive = {
+      pipe: vi.fn(),
+      file: vi.fn(),
+      finalize: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+    };
+    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
+
+    vi.mocked(db.execute)
+      .mockResolvedValueOnce([[{ role_key: 'branch_head' }], []]) // getUserRoleKeys
+      .mockResolvedValueOnce([[], []]);                            // getEmployeeForUser finds no employee record
+
+    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
+    await streamBulkDocumentsZip(['emp-1', 'emp-2'], null, mockRes, 'actor-user-1');
+
+    expect(freshMockArchive.finalize).toHaveBeenCalledTimes(1);
+    expect(freshMockArchive.file).not.toHaveBeenCalled();
+    // Only the two scope-resolution queries ran — the file query never fired.
+    expect(vi.mocked(db.execute)).toHaveBeenCalledTimes(2);
+  });
+
+  it('should not scope employee_ids for a non-branch_head actor (e.g. hr) — unchanged from before the fix', async () => {
+    const mockFiles = [
+      {
+        employee_code: 'EMP002',
+        full_name: 'Jane Roe',
+        document_code: 'ID_PROOF',
+        storage_path: 'emp-2/id.pdf',
+        original_filename: 'id.pdf',
+      },
+    ];
+    vi.mocked(fsModule.existsSync).mockReturnValue(false);
+    const freshMockArchive = {
+      pipe: vi.fn(),
+      file: vi.fn(),
+      finalize: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn(),
+    };
+    vi.mocked(archiver).mockReturnValue(freshMockArchive as ReturnType<typeof archiver>);
+
+    vi.mocked(db.execute)
+      .mockResolvedValueOnce([[{ role_key: 'hr' }], []]) // getUserRoleKeys — org-wide role
+      .mockResolvedValueOnce([mockFiles, []]);            // file query runs unrestricted
+
+    const mockRes = { pipe: vi.fn() } as unknown as import('express').Response;
+    await streamBulkDocumentsZip(['emp-1', 'emp-2'], null, mockRes, 'actor-user-1');
+
+    // Only the role lookup ran before the (unrestricted) file query — org-wide callers
+    // see exactly what they saw before this fix.
+    expect(vi.mocked(db.execute)).toHaveBeenCalledTimes(2);
+    const fileCall = vi.mocked(db.execute).mock.calls[1];
+    expect(fileCall[1]).toEqual([['emp-1', 'emp-2']]);
+  });
 });

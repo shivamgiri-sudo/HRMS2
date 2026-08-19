@@ -100,6 +100,23 @@ export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
     requiresScope:     true,
   },
   {
+    // Active employee: most recent attendance record (within 3 days) is 'absent', 3+ of
+    // the last 5 recorded attendance days are 'absent', no leave request (approved or
+    // pending) covers the last 10 days, and no exit_request row exists at all — i.e. they
+    // simply stopped showing up with nothing filed. See awol-detection.service.ts for the
+    // exact query. Deliberately distinct from bi.service.ts::getAttritionRiskSignal(),
+    // which is a read-only dashboard signal (no leave/exit exclusion, creates no task).
+    itemType:          "AWOL_SUSPECTED",
+    displayName:       "Employee possibly AWOL",
+    module:            "ATTENDANCE",
+    entityType:        "employee",
+    defaultAssigneeRoles: ["hr", "branch_head"],
+    defaultPriority:   ACTION_PRIORITY.HIGH,
+    defaultTtlHours:   48,
+    deeplinkPattern:   "/employees/{entityId}/360",
+    requiresScope:     true,
+  },
+  {
     itemType:          "ROSTER_PUBLISH_PENDING",
     displayName:       "Roster awaiting publish",
     module:            "ROSTER",

@@ -39,7 +39,7 @@ this one.
 - All mutating routes are `POST` only.
 - Errors that are real client/business failures: `throw Object.assign(new Error("message"), { statusCode: 400 })` — never a local `try/catch` in a route that masks unexpected failures. Follow `client-billing.routes.ts`'s existing pattern exactly (no route-local catch around a service call — let `h()`'s `.catch(next)` reach the shared `errorHandler`).
 - DB access through `db` from `backend/src/db/mysql.ts`; transactional work uses `db.getConnection()`, never mixes pool-level `db.execute` with an open transaction's `conn`.
-- **Before considering any task done, verify its SQL against a real MySQL 8 connection** — not only the mocked test suite. Use the read-only credentials below for a throwaway-table `PREPARE`/`CREATE`/`INSERT`/`DROP` cycle exactly like the ones used to catch and fix the foundation phase's two production-breaking bugs (a MySQL 8 reserved-word column name, and a surrogate `AUTO_INCREMENT` id silently breaking an `INSERT ... ON DUPLICATE KEY UPDATE` idiom). Connection: host `192.168.10.6` (fallback `122.184.128.90` if that times out — LAN vs public routing varies by network), port `3306`, user `shivam_user`, password `qwersdfg!@#hjk`, database `mas_hrms`. Never write to any real (non-throwaway, non-`x_`-prefixed) table.
+- **Before considering any task done, verify its SQL against a real MySQL 8 connection** — not only the mocked test suite. Use the read-only credentials below for a throwaway-table `PREPARE`/`CREATE`/`INSERT`/`DROP` cycle exactly like the ones used to catch and fix the foundation phase's two production-breaking bugs (a MySQL 8 reserved-word column name, and a surrogate `AUTO_INCREMENT` id silently breaking an `INSERT ... ON DUPLICATE KEY UPDATE` idiom). Connection: host `192.168.10.6` (fallback `122.184.128.90` if that times out — LAN vs public routing varies by network), port `3306`, user `shivam_user`, password **read from `backend/.env`'s `DB_PASSWORD`, never hardcode or paste it into a tracked file** — a live credential shipped in plaintext in this exact file earlier, found and scrubbed by an independent audit; do not reintroduce it — database `mas_hrms`. Never write to any real (non-throwaway, non-`x_`-prefixed) table.
 - Migration file numbered `NNN_description.sql` under `backend/sql/migrations/` — check `ls backend/sql/migrations/*.sql | grep -oE '[0-9]+' | sort -n | tail -3` AND `ls backend/sql/*.sql | grep -oE '^[0-9]+' | sort -n | tail -3` immediately before picking a number (both directories share one numbering space; the foundation phase's migration collided twice before landing on 1300 — start by trying `1301` but re-verify it's still free, this repo has many concurrent sessions).
 - Migration registration has TWO required steps, not one: (1) add the filename (with `migrations/` prefix) to the `MIGRATION_MANIFEST` array literal in `backend/src/db/runPendingMigrations.ts` — this is the actual runtime source; (2) regenerate `backend/sql/MIGRATION_MANIFEST.lock.json` by running `node backend/scripts/update-migration-lock.mjs --write`, never hand-edit the lock file. The foundation phase shipped with the lock file hand-edited but the TS array never touched, so the migration was silently never scheduled.
 
@@ -202,7 +202,7 @@ Run from `backend/` (adjust the host per Global Constraints if the first one tim
 ```bash
 node -e "
 import('mysql2/promise').then(async (m) => {
-  const conn = await m.createConnection({host:'192.168.10.6',port:3306,user:'shivam_user',password:'qwersdfg!@#hjk',database:'mas_hrms',connectTimeout:15000});
+  const conn = await m.createConnection({host:'192.168.10.6',port:3306,user:'shivam_user',password:process.env.DB_PASSWORD,database:'mas_hrms',connectTimeout:15000}); // DB_PASSWORD from backend/.env — never hardcode this, see the Connection note above
   const fs = await import('fs');
   const sql = fs.readFileSync('sql/migrations/1301_client_billing_approval_workflow.sql', 'utf8');
   const statements = sql.split(/;\s*\n/).map(s => s.trim()).filter(s => s.startsWith('CREATE TABLE'));
@@ -543,7 +543,7 @@ Run from `backend/` (same host fallback rule as Task 1):
 ```bash
 node -e "
 import('mysql2/promise').then(async (m) => {
-  const conn = await m.createConnection({host:'192.168.10.6',port:3306,user:'shivam_user',password:'qwersdfg!@#hjk',database:'mas_hrms',connectTimeout:15000});
+  const conn = await m.createConnection({host:'192.168.10.6',port:3306,user:'shivam_user',password:process.env.DB_PASSWORD,database:'mas_hrms',connectTimeout:15000}); // DB_PASSWORD from backend/.env — never hardcode this, see the Connection note above
   await conn.query('DROP TABLE IF EXISTS x_po_check');
   await conn.query('CREATE TABLE x_po_check (id CHAR(36) PRIMARY KEY, balance_amount DECIMAL(14,2))');
   const { randomUUID } = await import('crypto');
@@ -745,7 +745,7 @@ Expected: PASS, 10 tests (6 from Task 2 + 4 from this task).
 ```bash
 node -e "
 import('mysql2/promise').then(async (m) => {
-  const conn = await m.createConnection({host:'192.168.10.6',port:3306,user:'shivam_user',password:'qwersdfg!@#hjk',database:'mas_hrms',connectTimeout:15000});
+  const conn = await m.createConnection({host:'192.168.10.6',port:3306,user:'shivam_user',password:process.env.DB_PASSWORD,database:'mas_hrms',connectTimeout:15000}); // DB_PASSWORD from backend/.env — never hardcode this, see the Connection note above
   await conn.query('DROP TABLE IF EXISTS x_prov_check');
   await conn.query('CREATE TABLE x_prov_check (id CHAR(36) PRIMARY KEY, provision_balance DECIMAL(14,2))');
   const { randomUUID } = await import('crypto');

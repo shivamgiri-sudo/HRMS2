@@ -3414,7 +3414,12 @@ export const REPORT_CATALOG: ReportMeta[] = [
 
   {
     code: "asset-inventory-report",
-    name: "Asset Inventory Report",
+    // Was "Asset Inventory Report" — identical to asset-inventory's name above, a distinct
+    // implementation (this one is served by its own inline SQL block in report-suite.routes.ts,
+    // not the assetInventory executor). Renamed so the two tiles are distinguishable; not a
+    // claim that either is more correct — see hrms2-report-serving-layers memory for why that
+    // determination needs a live screen-vs-export comparison, not a guess.
+    name: "Asset Inventory Report (Alternate Source)",
     category: "Assets",
     subcategory: "Inventory",
     description: "Full asset register with current assignment status",
@@ -3455,7 +3460,12 @@ export const REPORT_CATALOG: ReportMeta[] = [
 
   {
     code: "bank-advice",
-    name: "Bank Advice / Transfer Sheet",
+    // Was "Bank Advice / Transfer Sheet" — identical to neft-transfer-file's name below, added
+    // yesterday by a bulk reachability fix that didn't check for the collision. neft-transfer-
+    // file is what payroll actually generates (see its own executor comment); this one reads
+    // the older employees.bank_account_number column instead of employee_bank_detail. Renamed
+    // so the two tiles are distinguishable in the Report Library, not hidden or removed.
+    name: "Bank Advice / Transfer Sheet (Legacy Account Source)",
     category: "Payroll",
     subcategory: "Monthly Processing",
     description: "Bank transfer file for salary disbursement",

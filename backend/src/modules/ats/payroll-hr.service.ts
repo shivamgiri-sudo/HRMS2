@@ -2,6 +2,7 @@ import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { randomUUID } from 'crypto';
 import { sendBranchHeadApprovalEmail } from './ats.email.service.js';
+import { triggerOfferApprovalPending } from '../work-inbox/work-inbox.triggers.js';
 
 /**
  * Payroll HR Validation Service
@@ -600,6 +601,11 @@ export async function notifyBranchHeadForApproval(candidateId: string, branchHea
       candidateId,
     ]
   );
+
+  // Additive alongside the portal_notification above, not a replacement — this is the
+  // one real creation point for OFFER_APPROVAL_PENDING (registered in
+  // action-item-registry.ts but until now had no producer anywhere in the backend).
+  await triggerOfferApprovalPending(candidateId, validation.candidate_name);
 
   return { success: true, message: 'Branch head notified for approval' };
 }
