@@ -44,7 +44,7 @@ import { loadValidatedRows } from "./load.ts";
 
 async function main() {
   const pool = mysql.createPool({
-    host: "192.168.10.6",
+    host: process.env.DB_HOST || "192.168.10.6",
     port: 3306,
     user: "shivam_user",
     password: process.env.DB_PASSWORD,
