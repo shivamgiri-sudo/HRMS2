@@ -63,10 +63,13 @@ interface LoanRecord {
   deduction_per_month: string | number;
   deducted_amount: string | number;
   pending_amount: string | number;
-  status: "active" | "completed" | "cancelled";
+  status: "active" | "completed" | "cancelled" | "pending_approval" | "rejected";
   reason: string | null;
   approved_by: string | null;
   approved_at: string | null;
+  rejected_by?: string | null;
+  rejected_at?: string | null;
+  rejection_reason?: string | null;
   cheque_number: string | null;
   cheque_bank: string | null;
   rtgs_number: string | null;
@@ -172,9 +175,17 @@ function statusBadgeClass(status: string): string {
       return "bg-green-100 text-green-800 border-green-200";
     case "cancelled":
       return "bg-slate-100 text-slate-600 border-slate-200";
+    case "pending_approval":
+      return "bg-amber-100 text-amber-800 border-amber-200";
+    case "rejected":
+      return "bg-red-100 text-red-700 border-red-200";
     default:
       return "bg-slate-100 text-slate-600 border-slate-200";
   }
+}
+
+function statusLabel(status: string): string {
+  return status === "pending_approval" ? "pending approval" : status;
 }
 
 // ---------------------------------------------------------------------------
@@ -354,6 +365,92 @@ function RecordPaymentDialog({
 }
 
 // ---------------------------------------------------------------------------
+// Sub-component: Reject Loan Dialog
+// ---------------------------------------------------------------------------
+
+interface RejectLoanDialogProps {
+  open: boolean;
+  loan: LoanRecord | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}
+
+function RejectLoanDialog({ open, loan, onClose, onSuccess }: RejectLoanDialogProps) {
+  const [reason, setReason] = useState("");
+
+  const mutation = useMutation<UpdateLoanResponse, Error, { id: string; reason: string }>({
+    mutationFn: ({ id, reason: r }) =>
+      hrmsApi.post<UpdateLoanResponse>(`/api/payroll/loans/${id}/reject`, {
+        reason: r || undefined,
+      }),
+    onSuccess: () => {
+      toast.success("Loan rejected.");
+      setReason("");
+      onSuccess();
+      onClose();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to reject loan.");
+    },
+  });
+
+  const handleSubmit = () => {
+    if (!loan) return;
+    mutation.mutate({ id: loan.id, reason });
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <XCircle className="h-5 w-5 text-red-600" />
+            Reject Loan Request
+          </DialogTitle>
+        </DialogHeader>
+
+        {loan && (
+          <div className="space-y-4 py-1">
+            <div className="rounded-md bg-slate-50 border border-slate-100 px-4 py-3 text-sm space-y-1">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Employee</span>
+                <span className="font-medium">{loan.employee_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Amount</span>
+                <span className="font-semibold">{fmtAmount(loan.amount)}</span>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="rejection_reason">Reason (optional)</Label>
+              <Input
+                id="rejection_reason"
+                placeholder="Why is this being rejected?"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              />
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={onClose} disabled={mutation.isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleSubmit}
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending ? "Rejecting…" : "Reject Loan"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sub-component: Loans Table
 // ---------------------------------------------------------------------------
 
@@ -361,6 +458,12 @@ interface LoansTableProps {
   loans: LoanRecord[];
   showAdminActions: boolean;
   onPaymentClick: (loan: LoanRecord) => void;
+  /** When provided (alongside onRejectClick), pending_approval rows get Approve/Reject
+   *  buttons instead of Record Payment. Caller is responsible for role-gating these —
+   *  see LoanManagement's canApproveLoans (finance_head/payroll_head/admin/super_admin,
+   *  mirroring Payroll.tsx's Lock Run gate). */
+  onApproveClick?: (loan: LoanRecord) => void;
+  onRejectClick?: (loan: LoanRecord) => void;
   showProgress?: boolean;
 }
 
@@ -368,6 +471,8 @@ function LoansTable({
   loans,
   showAdminActions,
   onPaymentClick,
+  onApproveClick,
+  onRejectClick,
   showProgress = false,
 }: LoansTableProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -466,7 +571,7 @@ function LoansTable({
                     variant="outline"
                     className={`text-xs capitalize ${statusBadgeClass(loan.status)}`}
                   >
-                    {loan.status}
+                    {statusLabel(loan.status)}
                   </Badge>
                 </TableCell>
                 {showAdminActions && (
@@ -481,6 +586,26 @@ function LoansTable({
                         <Wallet className="h-3.5 w-3.5 mr-1" />
                         Record Payment
                       </Button>
+                    )}
+                    {loan.status === "pending_approval" && onApproveClick && onRejectClick && (
+                      <div className="flex justify-end gap-1.5">
+                        <Button
+                          size="sm"
+                          className="h-7 px-2 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                          onClick={() => onApproveClick(loan)}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2 text-xs text-red-600 border-red-200 hover:bg-red-50"
+                          onClick={() => onRejectClick(loan)}
+                        >
+                          <XCircle className="h-3.5 w-3.5 mr-1" />
+                          Reject
+                        </Button>
+                      </div>
                     )}
                   </TableCell>
                 )}
@@ -884,9 +1009,11 @@ function AllLoansTab({ showAdminActions }: AllLoansTabProps) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
+            <SelectItem value="pending_approval">Pending Approval</SelectItem>
             <SelectItem value="active">Active</SelectItem>
             <SelectItem value="completed">Completed</SelectItem>
             <SelectItem value="cancelled">Cancelled</SelectItem>
+            <SelectItem value="rejected">Rejected</SelectItem>
           </SelectContent>
         </Select>
         <Button variant="outline" size="sm" onClick={() => void refetch()}>
@@ -1057,29 +1184,54 @@ function MyLoansTab({ employeeId }: MyLoansTabProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab: Pending Approval (active loans awaiting disbursement — finance view)
+// Tab: Pending Approval (loans awaiting the approval gate — finance/payroll
+// head view). Renamed 2026-08-19 from its pre-existing "active loans awaiting
+// disbursement" meaning, which never actually gated anything — every loan
+// created via POST / was already status='active' the moment it existed. It
+// now shows the real gate: status='pending_approval' rows, with Approve /
+// Reject actions instead of Record Payment. Record Payment for already-active
+// loans lives on the All Loans tab (LoansTable's own status==='active' branch),
+// unchanged.
 // ---------------------------------------------------------------------------
 
-function PendingApprovalTab() {
+interface PendingApprovalTabProps {
+  canApproveLoans: boolean;
+}
+
+function PendingApprovalTab({ canApproveLoans }: PendingApprovalTabProps) {
   const queryClient = useQueryClient();
-  const [paymentLoan, setPaymentLoan] = useState<LoanRecord | null>(null);
+  const [approvingLoan, setApprovingLoan] = useState<LoanRecord | null>(null);
+  const [rejectingLoan, setRejectingLoan] = useState<LoanRecord | null>(null);
 
   const { data, isLoading, isError, refetch } = useQuery<LoansListResponse>({
-    queryKey: ["loans-pending-active"],
+    queryKey: ["loans-pending-approval"],
     queryFn: () =>
-      hrmsApi.get<LoansListResponse>("/api/payroll/loans?status=active&limit=200"),
+      hrmsApi.get<LoansListResponse>("/api/payroll/loans?status=pending_approval&limit=200"),
     staleTime: 30_000,
   });
 
-  const handlePaymentSuccess = () => {
-    void queryClient.invalidateQueries({ queryKey: ["loans-pending-active"] });
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["loans-pending-approval"] });
+    void queryClient.invalidateQueries({ queryKey: ["loans-all"] });
   };
+
+  const approveMutation = useMutation<UpdateLoanResponse, Error, string>({
+    mutationFn: (id) => hrmsApi.post<UpdateLoanResponse>(`/api/payroll/loans/${id}/approve`, {}),
+    onSuccess: () => {
+      toast.success("Loan approved and activated.");
+      invalidate();
+    },
+    onError: (err) => {
+      toast.error(err.message || "Failed to approve loan.");
+    },
+    onSettled: () => setApprovingLoan(null),
+  });
 
   return (
     <div className="mt-4 space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-500">
-          Active loans awaiting disbursement or pending first deduction.
+          Loans awaiting approval before they become active and payroll-deduction-eligible.
         </p>
         <Button variant="outline" size="sm" onClick={() => void refetch()}>
           <RefreshCw className="h-3.5 w-3.5 mr-1" />
@@ -1100,16 +1252,21 @@ function PendingApprovalTab() {
       {!isLoading && !isError && (
         <LoansTable
           loans={data?.data ?? []}
-          showAdminActions
-          onPaymentClick={(loan) => setPaymentLoan(loan)}
+          showAdminActions={canApproveLoans}
+          onPaymentClick={() => undefined}
+          onApproveClick={canApproveLoans ? (loan) => { setApprovingLoan(loan); approveMutation.mutate(loan.id); } : undefined}
+          onRejectClick={canApproveLoans ? (loan) => setRejectingLoan(loan) : undefined}
         />
       )}
+      {approvingLoan && approveMutation.isPending && (
+        <p className="text-xs text-slate-400">Approving {approvingLoan.employee_name}…</p>
+      )}
 
-      <RecordPaymentDialog
-        open={!!paymentLoan}
-        loan={paymentLoan}
-        onClose={() => setPaymentLoan(null)}
-        onSuccess={handlePaymentSuccess}
+      <RejectLoanDialog
+        open={!!rejectingLoan}
+        loan={rejectingLoan}
+        onClose={() => setRejectingLoan(null)}
+        onSuccess={invalidate}
       />
     </div>
   );
@@ -1130,6 +1287,12 @@ export default function LoanManagement() {
   );
   const canCreate = roleKeys.some((r) =>
     ["super_admin", "admin", "payroll_head", "finance"].includes(r)
+  );
+  // Matches the backend's own head-level gate for approving/rejecting a loan
+  // (loans.routes.ts POST /:id/approve, /:id/reject — mirrors payroll.service.ts::
+  // updateRunStatus's closing-role tier), same pattern as Payroll.tsx's Lock Run button.
+  const canApproveLoans = roleKeys.some((r) =>
+    ["finance_head", "payroll_head", "admin", "super_admin"].includes(r)
   );
 
   const defaultTab = isAdmin ? "all" : "mine";
@@ -1185,7 +1348,7 @@ export default function LoanManagement() {
           {/* Pending Approval Tab */}
           {isFinance && (
             <TabsContent value="pending">
-              <PendingApprovalTab />
+              <PendingApprovalTab canApproveLoans={canApproveLoans} />
             </TabsContent>
           )}
         </Tabs>

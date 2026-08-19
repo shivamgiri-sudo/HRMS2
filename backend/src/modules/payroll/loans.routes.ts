@@ -59,7 +59,7 @@ loansRouter.get(
       conditions.push("el.employee_id = ?");
       params.push(employee_id);
     }
-    if (status && ["active", "completed", "cancelled"].includes(status)) {
+    if (status && ["active", "completed", "cancelled", "pending_approval", "rejected"].includes(status)) {
       conditions.push("el.status = ?");
       params.push(status);
     }
@@ -197,17 +197,23 @@ loansRouter.post(
     const loanId = randomUUID();
     const pendingAmount = Number(amount);
 
+    // Approval gate (2026-08-19): this used to insert status='active' directly — immediately
+    // deduction-eligible in payroll — and self-stamp approved_by/approved_at with the creator's
+    // own id, which is fake provenance (it recorded who created the row, not who approved it).
+    // It now lands in 'pending_approval' and leaves approved_by/approved_at NULL until a real
+    // approver acts via POST /:id/approve. created_by records the real creator so that route can
+    // block self-approval. See backend/sql/1242_employee_loans_approval_gate.sql.
     await db.execute<ResultSetHeader>(
       `INSERT INTO employee_loans
          (id, employee_id, employee_code, loan_type, amount, start_date, end_date,
           installments, deduction_per_month, deducted_amount, pending_amount, status,
           guarantor_name, guarantor_emp_code, guarantor_emp_id,
-          reason, approved_by, approved_at,
+          reason, created_by,
           cheque_number, cheque_bank, cheque_date,
           rtgs_number, rtgs_date,
           branch_name, cost_center)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'active',
-               ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'pending_approval',
+               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         loanId,
         employee_id,
@@ -248,6 +254,7 @@ loansRouter.post(
         start_date,
         installments,
         deduction_per_month,
+        status: "pending_approval",
       } as Record<string, unknown>,
       req,
     });
@@ -257,6 +264,162 @@ loansRouter.post(
       [loanId]
     );
     return res.status(201).json({ success: true, data: (newRows as RowDataPacket[])[0] });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /:id/approve
+// Activate a pending_approval loan. Head-level roles only, mirroring
+// payroll.service.ts::updateRunStatus's closing-role tier. Self-approval by
+// the creator of the loan is blocked. Optimistic-lock UPDATE mirrors
+// leave.service.ts::reviewRequest's affected-rows pattern.
+// ---------------------------------------------------------------------------
+loansRouter.post(
+  "/:id/approve",
+  requireAuth,
+  h(async (req, res) => {
+    const userId = req.authUser!.id;
+    if (!(await hasAnyRole(userId, "finance_head", "payroll_head", "admin", "super_admin"))) {
+      return res.status(403).json({
+        success: false,
+        message: "Approving a loan is reserved for Finance or Payroll heads.",
+      });
+    }
+
+    const { id } = req.params;
+    const [existing] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
+      [id]
+    );
+    type LoanRow = RowDataPacket & Record<string, unknown>;
+    const loan = (existing as LoanRow[])[0];
+    if (!loan) {
+      return res.status(404).json({ success: false, message: "Loan not found" });
+    }
+
+    if (loan.created_by && String(loan.created_by) === String(userId)) {
+      return res.status(403).json({
+        success: false,
+        message: "You created this loan record, so it must be approved by someone else",
+        code: "LOAN_SELF_APPROVAL",
+      });
+    }
+
+    if (String(loan.status) !== "pending_approval") {
+      return res.status(409).json({
+        success: false,
+        message: `This loan is '${loan.status}', not pending approval — nothing to approve.`,
+      });
+    }
+
+    const [result] = await db.execute<ResultSetHeader>(
+      `UPDATE employee_loans
+          SET status = 'active', approved_by = ?, approved_at = NOW()
+        WHERE id = ? AND status = 'pending_approval'`,
+      [userId, id]
+    );
+    if ((result as ResultSetHeader).affectedRows !== 1) {
+      return res.status(409).json({
+        success: false,
+        message: "This loan was already acted on by another action. Refresh and try again.",
+      });
+    }
+
+    void logSensitiveAction({
+      actor_user_id: userId,
+      actor_role: req.authUser!.role,
+      action_type: "loan_approved",
+      module_key: "payroll_loans",
+      entity_type: "employee_loan",
+      entity_id: id,
+      old_value_json: { status: loan.status },
+      new_value_json: { status: "active", approved_by: userId },
+      req,
+    });
+
+    const [updated] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
+      [id]
+    );
+    return res.json({ success: true, data: (updated as RowDataPacket[])[0] });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// POST /:id/reject
+// Reject a pending_approval loan. Same role tier and self-approval block as
+// /approve. Body: { reason? }.
+// ---------------------------------------------------------------------------
+loansRouter.post(
+  "/:id/reject",
+  requireAuth,
+  h(async (req, res) => {
+    const userId = req.authUser!.id;
+    if (!(await hasAnyRole(userId, "finance_head", "payroll_head", "admin", "super_admin"))) {
+      return res.status(403).json({
+        success: false,
+        message: "Rejecting a loan is reserved for Finance or Payroll heads.",
+      });
+    }
+
+    const { id } = req.params;
+    const { reason } = req.body as { reason?: unknown };
+
+    const [existing] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
+      [id]
+    );
+    type LoanRow = RowDataPacket & Record<string, unknown>;
+    const loan = (existing as LoanRow[])[0];
+    if (!loan) {
+      return res.status(404).json({ success: false, message: "Loan not found" });
+    }
+
+    if (loan.created_by && String(loan.created_by) === String(userId)) {
+      return res.status(403).json({
+        success: false,
+        message: "You created this loan record, so it must be reviewed by someone else",
+        code: "LOAN_SELF_APPROVAL",
+      });
+    }
+
+    if (String(loan.status) !== "pending_approval") {
+      return res.status(409).json({
+        success: false,
+        message: `This loan is '${loan.status}', not pending approval — nothing to reject.`,
+      });
+    }
+
+    const [result] = await db.execute<ResultSetHeader>(
+      `UPDATE employee_loans
+          SET status = 'rejected', rejected_by = ?, rejected_at = NOW(), rejection_reason = ?
+        WHERE id = ? AND status = 'pending_approval'`,
+      [userId, reason ? String(reason) : null, id]
+    );
+    if ((result as ResultSetHeader).affectedRows !== 1) {
+      return res.status(409).json({
+        success: false,
+        message: "This loan was already acted on by another action. Refresh and try again.",
+      });
+    }
+
+    void logSensitiveAction({
+      actor_user_id: userId,
+      actor_role: req.authUser!.role,
+      action_type: "loan_rejected",
+      module_key: "payroll_loans",
+      entity_type: "employee_loan",
+      entity_id: id,
+      old_value_json: { status: loan.status },
+      new_value_json: { status: "rejected", rejected_by: userId, rejection_reason: reason ?? null },
+      req,
+    });
+
+    const [updated] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
+      [id]
+    );
+    return res.json({ success: true, data: (updated as RowDataPacket[])[0] });
   })
 );
 
@@ -302,8 +465,26 @@ loansRouter.patch(
     }
 
     if (body.status !== undefined) {
-      if (!["active", "completed", "cancelled"].includes(String(body.status))) {
+      if (!["active", "completed", "cancelled", "pending_approval", "rejected"].includes(String(body.status))) {
         return res.status(400).json({ success: false, message: "Invalid status value" });
+      }
+      // A pending_approval -> active or -> rejected transition is the approval decision
+      // itself — it must go through POST /:id/approve or POST /:id/reject (head-role check,
+      // self-approval block, real approved_by/approved_at or rejected_by/rejected_at/
+      // rejection_reason stamp), never this generic field-update route, which has no
+      // self-approval block and does not write those columns. Every other transition this
+      // route already allowed (e.g. active -> completed/cancelled) is unaffected.
+      if (
+        (body.status === "active" || body.status === "rejected") &&
+        String(loan.status) === "pending_approval"
+      ) {
+        return res.status(409).json({
+          success: false,
+          message:
+            body.status === "active"
+              ? "A pending loan can only be activated via POST /:id/approve, not PATCH."
+              : "A pending loan can only be rejected via POST /:id/reject, not PATCH.",
+        });
       }
       if (body.status === "completed") {
         sets.push("pending_amount = 0");

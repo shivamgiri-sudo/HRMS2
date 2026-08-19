@@ -5701,7 +5701,11 @@
       "legacy_created_at",
       "legacy_updated_at",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "created_by",
+      "rejected_by",
+      "rejected_at",
+      "rejection_reason"
     ],
     "employee_lob_assignment": [
       "id",
