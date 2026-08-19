@@ -485,6 +485,10 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                 <GrnTh sticky={false}>Branch</GrnTh>
                 <GrnTh sticky={false}>Vendor</GrnTh>
                 <GrnTh sticky={false} align="right">Amount</GrnTh>
+                {/* When the GRN was actually raised. Only Due and Bill dates were shown, and
+                    neither answers "when did this arrive for approval" — a GRN raised today can
+                    carry a bill date weeks old, so the two are routinely far apart. */}
+                <GrnTh sticky={false}>Raised</GrnTh>
                 <GrnTh sticky={false}>Due</GrnTh>
                 {backDated && <GrnTh sticky={false}>Acctg Period</GrnTh>}
                 <GrnTh sticky={false} align="right">Waiting</GrnTh>
@@ -521,6 +525,10 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     {row.vendor_name ?? (row.grn_type === "imprest" ? "Imprest" : "—")}
                   </GrnTd>
                   <GrnTd align="right" className="font-semibold">{money(row.amount_with_tax ?? row.amount)}</GrnTd>
+                  <GrnTd>
+                    {row.created_at ? dateLabel(row.created_at) : "—"}
+                    {row.bill_date && <GrnCellSub>bill {dateLabel(row.bill_date)}</GrnCellSub>}
+                  </GrnTd>
                   <GrnTd>{row.due_date ? dateLabel(row.due_date) : "—"}</GrnTd>
                   {backDated && (
                     <GrnTd>

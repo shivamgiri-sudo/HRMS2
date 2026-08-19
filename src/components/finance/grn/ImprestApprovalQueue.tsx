@@ -43,6 +43,9 @@ type ImprestRow = {
   ageing_days?: number | null;
   age_bucket?: string | null;
   created_by_name?: string | null;
+  /** When the voucher was raised. Distinct from bill_date, which is the expense date on the
+   *  receipt — an imprest raised today routinely carries a bill date from weeks earlier. */
+  created_at?: string | null;
   attachment_original_name?: string | null;
 };
 
@@ -176,6 +179,7 @@ export function ImprestApprovalQueue() {
                 <GrnTh>Pending with</GrnTh>
                 <GrnTh>Ageing</GrnTh>
                 <GrnTh>Raised by</GrnTh>
+                <GrnTh>Raised on</GrnTh>
                 <GrnTh>Action</GrnTh>
               </tr>
             </thead>
@@ -184,7 +188,7 @@ export function ImprestApprovalQueue() {
                 <tr key={row.id} className={GRN_TR}>
                   <GrnTd>
                     <span className="font-mono">{row.grn_number}</span>
-                    <GrnCellSub>{dateLabel(row.bill_date)}</GrnCellSub>
+                    <GrnCellSub>bill {dateLabel(row.bill_date)}</GrnCellSub>
                   </GrnTd>
                   <GrnTd>
                     {row.branch_name ?? "—"}
@@ -218,6 +222,10 @@ export function ImprestApprovalQueue() {
                     <GrnCellSub>since {dateLabel(row.pending_since)}</GrnCellSub>
                   </GrnTd>
                   <GrnTd>{row.created_by_name ?? "—"}</GrnTd>
+                  {/* The voucher cell's sub-line is the BILL date, which reads as the raised date
+                      and is not — an imprest raised today routinely carries a bill date from
+                      weeks earlier. Both are now labelled and both are shown. */}
+                  <GrnTd>{row.created_at ? dateLabel(row.created_at) : "—"}</GrnTd>
                   <GrnTd>
                     <div className="flex items-center gap-1">
                       <GrnIconButton

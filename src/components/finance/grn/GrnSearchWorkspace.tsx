@@ -347,6 +347,10 @@ export function GrnSearchWorkspace({
                   <GrnTh>Vendor</GrnTh>
                   <GrnTh>Head / Sub-head</GrnTh>
                   <GrnTh className="text-right">Amount</GrnTh>
+                  {/* When the GRN was raised. Only the bill date was shown (under Invoice), and it
+                      answers a different question — a GRN raised today routinely carries a bill
+                      date weeks older, so neither substitutes for the other. */}
+                  <GrnTh>Raised</GrnTh>
                   <GrnTh>Workflow</GrnTh>
                   <GrnTh>Billing</GrnTh>
                   <GrnTh>Action</GrnTh>
@@ -377,7 +381,7 @@ export function GrnSearchWorkspace({
                     </GrnTd>
                     <GrnTd>
                       {row.invoice_number ?? "—"}
-                      <GrnCellSub>{dateLabel(row.bill_date)}</GrnCellSub>
+                      <GrnCellSub>bill {dateLabel(row.bill_date)}</GrnCellSub>
                     </GrnTd>
                     <GrnTd>{row.vendor_name ?? (row.grn_type === "imprest" ? "Imprest" : "—")}</GrnTd>
                     <GrnTd>
@@ -388,6 +392,7 @@ export function GrnSearchWorkspace({
                     <GrnTd className="text-right tabular-nums">
                       {money(row.amount_with_tax ?? row.amount ?? 0)}
                     </GrnTd>
+                    <GrnTd>{row.created_at ? dateLabel(row.created_at) : "—"}</GrnTd>
                     <GrnTd>
                       <StatusStamp tone={grnStatusTone(row.status)}>
                         {labelStatus(row.status)}
