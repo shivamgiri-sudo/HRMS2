@@ -70,7 +70,10 @@ describe("approveInvoice", () => {
 
     const result = await clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1" });
 
-    expect(mintBillNumber).toHaveBeenCalledWith("09", "Mas Callnet India Pvt Ltd", "2026-27");
+    // Gap 3 fix: approveInvoice passes its own open-transaction `conn` through so the mint
+    // runs on that connection instead of a separate pool-level call (avoids mixing pool-level
+    // execute with an open transaction while a FOR UPDATE lock is held).
+    expect(mintBillNumber).toHaveBeenCalledWith("09", "Mas Callnet India Pvt Ltd", "2026-27", conn);
     expect(result).toEqual({ id: "inv-1", billNo: "09-01/26-27", invoiceStatus: "approved" });
     expect(conn.commit).toHaveBeenCalledTimes(1);
     expect(conn.release).toHaveBeenCalledTimes(1);
@@ -158,6 +161,7 @@ describe("rejectInvoice", () => {
       .mockResolvedValueOnce([{}, []]) // delete deduction 1
       .mockResolvedValueOnce([{}, []]) // refund provision 2
       .mockResolvedValueOnce([{}, []]) // delete deduction 2
+      .mockResolvedValueOnce([[], []]) // PO particulars lookup (none for this invoice)
       .mockResolvedValueOnce([{}, []]) // UPDATE client_invoice
       .mockResolvedValueOnce([{}, []]); // INSERT audit log
 
@@ -174,18 +178,19 @@ describe("rejectInvoice", () => {
     const refund2 = conn.execute.mock.calls[4];
     expect(refund2[1]).toEqual([3000, "prov-2"]);
 
-    const auditCall = conn.execute.mock.calls[7];
+    const auditCall = conn.execute.mock.calls[8];
     expect(String(auditCall[0])).toMatch(/INSERT INTO client_invoice_audit_log/);
     expect(auditCall[1]).toEqual(expect.arrayContaining(["inv-1", "rejected", "u-1", "client disputed the charge"]));
 
     expect(conn.commit).toHaveBeenCalledTimes(1);
   });
 
-  it("works with zero linked deductions (a proforma never drew any provision)", async () => {
+  it("works with zero linked deductions or PO particulars (a proforma never drew any provision or PO)", async () => {
     const conn = mockConnection();
     conn.execute
       .mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "proforma" }], []])
       .mockResolvedValueOnce([[], []]) // no deductions
+      .mockResolvedValueOnce([[], []]) // no PO particulars
       .mockResolvedValueOnce([{}, []]) // UPDATE client_invoice
       .mockResolvedValueOnce([{}, []]); // INSERT audit log
 
@@ -193,5 +198,35 @@ describe("rejectInvoice", () => {
       invoiceId: "inv-1", reason: "no longer needed", userId: "u-1",
     });
     expect(result).toEqual({ id: "inv-1", invoiceStatus: "rejected" });
+  });
+
+  it("Gap 1 fix: reversing an approved invoice's rejection also refunds every linked PO particular, not just provisions", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "approved" }], []]) // invoice lookup
+      .mockResolvedValueOnce([[], []]) // no provision deductions on this invoice
+      .mockResolvedValueOnce([[ // PO particulars linked to this invoice
+        { id: "part-1", po_id: "po-1", amount_consumed: 12000 },
+      ], []])
+      .mockResolvedValueOnce([{}, []]) // refund PO balance
+      .mockResolvedValueOnce([{}, []]) // delete the particular row
+      .mockResolvedValueOnce([{}, []]) // UPDATE client_invoice
+      .mockResolvedValueOnce([{}, []]); // INSERT audit log
+
+    const result = await clientBillingApprovalService.rejectInvoice({
+      invoiceId: "inv-1", reason: "PO cancelled by client", userId: "u-1",
+    });
+
+    expect(result).toEqual({ id: "inv-1", invoiceStatus: "rejected" });
+
+    const poRefundCall = conn.execute.mock.calls[3];
+    expect(String(poRefundCall[0])).toMatch(/UPDATE client_po_number SET balance_amount = balance_amount \+ \?/);
+    expect(poRefundCall[1]).toEqual([12000, "po-1"]);
+
+    const deleteParticularCall = conn.execute.mock.calls[4];
+    expect(String(deleteParticularCall[0])).toMatch(/DELETE FROM client_po_particular WHERE id = \?/);
+    expect(deleteParticularCall[1]).toEqual(["part-1"]);
+
+    expect(conn.commit).toHaveBeenCalledTimes(1);
   });
 });

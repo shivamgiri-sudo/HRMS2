@@ -47,7 +47,7 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
     if (input.poNumbers && input.poNumbers.length > 0) {
       const placeholders = input.poNumbers.map(() => "?").join(", ");
       const [rows] = await conn.execute<RowDataPacket[]>(
-        `SELECT id, balance_amount FROM client_po_number WHERE po_number IN (${placeholders}) AND cost_centre_id = ?`,
+        `SELECT id, balance_amount FROM client_po_number WHERE po_number IN (${placeholders}) AND cost_centre_id = ? FOR UPDATE`,
         [...input.poNumbers, invoice.cost_centre_id]
       );
       poRows = rows as Array<{ id: string; balance_amount: number }>;
@@ -74,7 +74,7 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
     }
 
     const billNo = await clientBillingNumberingService.mintBillNumber(
-      costCentre.stateCode, costCentre.companyName, invoice.finance_year
+      costCentre.stateCode, costCentre.companyName, invoice.finance_year, conn
     );
 
     if (poRows.length > 0) {
@@ -156,6 +156,27 @@ async function rejectInvoice(input: RejectInvoiceInput): Promise<RejectInvoiceRe
         [deduction.amount_used, deduction.provision_id]
       );
       await conn.execute(`DELETE FROM client_provision_deduction WHERE id = ?`, [deduction.id]);
+    }
+
+    // Mirrors the provision reversal immediately above — approveInvoice can consume PO
+    // balance (client_po_particular rows) as well as provision balance, and rejecting an
+    // already-approved invoice must reverse both, not just one. Before this, rejecting an
+    // approved invoice silently orphaned client_po_particular rows and permanently burned
+    // the PO's balance_amount. A plain UPDATE ... SET balance_amount = balance_amount + ?
+    // takes its own exclusive row lock atomically (InnoDB), so this is race-safe against a
+    // concurrent approveInvoice's SELECT ... FOR UPDATE on the same client_po_number row
+    // without needing a separate lock read first — same reasoning as the additive UPDATE
+    // pattern already used for client_provision above.
+    const [poParticularRows] = await conn.execute<RowDataPacket[]>(
+      `SELECT id, po_id, amount_consumed FROM client_po_particular WHERE invoice_id = ?`,
+      [input.invoiceId]
+    );
+    for (const particular of poParticularRows as Array<{ id: string; po_id: string; amount_consumed: number }>) {
+      await conn.execute(
+        `UPDATE client_po_number SET balance_amount = balance_amount + ? WHERE id = ?`,
+        [particular.amount_consumed, particular.po_id]
+      );
+      await conn.execute(`DELETE FROM client_po_particular WHERE id = ?`, [particular.id]);
     }
 
     await conn.execute(

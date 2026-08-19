@@ -76,3 +76,41 @@ describe("mintCreditNoteNumber", () => {
     expect(params).toEqual(["credit_note", "09|Mas Callnet India Pvt Ltd|2026-27"]);
   });
 });
+
+// Gap 3 fix: an optional `conn` lets a caller already inside an open transaction (approveInvoice,
+// createProforma) mint on that same connection instead of a separate pool-level `db.execute` call
+// — the mixing-pool-with-an-open-transaction hazard documented on each mint function above.
+describe("conn parameter (Gap 3 — avoid mixing pool-level execute with an open transaction)", () => {
+  it("mintBillNumber uses the pool-level db.execute when no conn is supplied (existing callers unaffected)", async () => {
+    execute.mockResolvedValueOnce([{ insertId: 1 }, []]);
+    await clientBillingNumberingService.mintBillNumber("09", "Mas Callnet India Pvt Ltd", "2026-27");
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it("mintBillNumber uses the caller's own conn.execute, not the pool's db.execute, when conn is supplied", async () => {
+    const connExecute = vi.fn().mockResolvedValueOnce([{ insertId: 5 }, []]);
+    const conn = { execute: connExecute };
+    const result = await clientBillingNumberingService.mintBillNumber("09", "Mas Callnet India Pvt Ltd", "2026-27", conn as never);
+    expect(result).toBe("09-05/26-27");
+    expect(connExecute).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("mintProformaNumber uses the caller's own conn.execute when conn is supplied", async () => {
+    const connExecute = vi.fn().mockResolvedValueOnce([{ insertId: 2 }, []]);
+    const conn = { execute: connExecute };
+    const result = await clientBillingNumberingService.mintProformaNumber("09", conn as never);
+    expect(result).toBe("PI/09/2");
+    expect(connExecute).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("mintCreditNoteNumber uses the caller's own conn.execute when conn is supplied", async () => {
+    const connExecute = vi.fn().mockResolvedValueOnce([{ insertId: 4 }, []]);
+    const conn = { execute: connExecute };
+    const result = await clientBillingNumberingService.mintCreditNoteNumber("09", "Mas Callnet India Pvt Ltd", "2026-27", conn as never);
+    expect(result).toBe("CN-09-04/26-27");
+    expect(connExecute).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
+  });
+});

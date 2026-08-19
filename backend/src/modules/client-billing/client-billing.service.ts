@@ -88,7 +88,7 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
     const { igst, cgst, sgst } = computeGst(totalAmount, costCentre.gstType, applyGst);
     const grandTotal = round2(totalAmount + igst + cgst + sgst);
 
-    const proformaNo = await clientBillingNumberingService.mintProformaNumber(costCentre.stateCode);
+    const proformaNo = await clientBillingNumberingService.mintProformaNumber(costCentre.stateCode, conn);
 
     await conn.execute<ResultSetHeader>(
       `INSERT INTO client_invoice

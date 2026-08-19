@@ -98,7 +98,9 @@ describe("createProforma", () => {
       lines: [{ particulars: "OB Dedicated Seat 1", qty: 1, rate: 30000 }], createdBy: "u-1",
     });
 
-    expect(mintProformaNumber).toHaveBeenCalledWith("09");
+    // Gap 3 fix: createProforma passes its own open-transaction `conn` through so the mint
+    // runs on that connection instead of a separate pool-level call.
+    expect(mintProformaNumber).toHaveBeenCalledWith("09", conn);
     expect(conn.beginTransaction).toHaveBeenCalledTimes(1);
     expect(conn.commit).toHaveBeenCalledTimes(1);
     expect(conn.rollback).not.toHaveBeenCalled();
