@@ -32,18 +32,27 @@ router.get("/transfers", h(async (req: AuthenticatedRequest, res: Response) => {
 
 // POST /transfers — admin/hr only
 router.post("/transfers", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { employee_id, transfer_type, from_value, to_value, effective_date, reason } = req.body as Record<string, string>;
-  if (!employee_id || !transfer_type || !from_value || !to_value || !effective_date) {
-    return res.status(400).json({ success: false, error: "employee_id, transfer_type, from_value, to_value, and effective_date are required" });
+  const { employee_id, transfer_type, from_value, to_value, effective_date, reason, new_reporting_manager_id } = req.body;
+  if (!employee_id || !transfer_type || !to_value || !effective_date) {
+    return res.status(400).json({ success: false, error: "Missing required fields" });
+  }
+  // Reporting manager is mandatory for cost_centre transfers
+  if (transfer_type === "cost_centre" && !new_reporting_manager_id) {
+    return res.status(400).json({ success: false, error: "new_reporting_manager_id is required for cost_centre transfers" });
+  }
+  // Not allowed for other transfer types
+  if (new_reporting_manager_id && transfer_type !== "cost_centre") {
+    return res.status(400).json({ success: false, error: "new_reporting_manager_id is only valid for cost_centre transfers" });
   }
   const data = await mobilityService.createTransfer({
     employee_id,
     transfer_type,
-    from_value,
+    from_value: from_value ?? "",
     to_value,
     effective_date,
     reason,
     initiated_by: req.authUser!.id,
+    new_reporting_manager_id,
   });
   return res.status(201).json({ success: true, data });
 }));
