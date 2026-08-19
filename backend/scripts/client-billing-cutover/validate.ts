@@ -215,6 +215,34 @@ async function main(): Promise<void> {
   }
   console.log(`[validate] A4: credit notes -> invoice matching — resolved=${a4Resolved} ambiguous=${a4Ambiguous} unresolved=${a4Unresolved}`);
 
+  // ── A4 addendum-2 independent SQL cross-check (bill_no + cost_center join) ──
+  // Re-derives the same resolved/ambiguous/unresolved split via a set-based SQL
+  // query, independent of the per-row matchCreditNoteInvoice() loop above, so
+  // the two methods must agree per this codebase's own validation discipline.
+  const [[a4SqlResolved]] = await db.query<any>(
+    `SELECT COUNT(*) AS c FROM (
+       SELECT cn.id
+       FROM client_credit_note_migration_staging cn
+       JOIN client_invoice_migration_staging inv
+         ON TRIM(inv.src_bill_no) = TRIM(cn.src_proforma_bill_no)
+         AND inv.src_bill_no IS NOT NULL AND TRIM(inv.src_bill_no) <> ''
+         AND TRIM(IFNULL(inv.src_cost_center, '')) = TRIM(IFNULL(cn.src_cost_center, ''))
+       WHERE cn.src_proforma_bill_no IS NOT NULL AND TRIM(cn.src_proforma_bill_no) <> ''
+       GROUP BY cn.id
+       HAVING COUNT(DISTINCT inv.target_id) = 1
+     ) t`,
+  );
+  const [[a4SqlUnresolvedNoBillNo]] = await db.query<any>(
+    `SELECT COUNT(*) AS c FROM client_credit_note_migration_staging
+     WHERE src_proforma_bill_no IS NULL OR TRIM(src_proforma_bill_no) = ''`,
+  );
+  const a4SqlAmbiguous = (cnMatchRows as any[]).length - a4SqlResolved.c - a4SqlUnresolvedNoBillNo.c;
+  console.log(
+    `[validate] A4 SQL cross-check (independent, bill_no+cost_center join): resolved=${a4SqlResolved.c} ambiguous=${a4SqlAmbiguous} unresolved(no proforma_bill_no)=${a4SqlUnresolvedNoBillNo.c} ${
+      a4SqlResolved.c === a4Resolved && a4SqlAmbiguous === a4Ambiguous && a4SqlUnresolvedNoBillNo.c === a4Unresolved ? "MATCH" : "MISMATCH!!"
+    }`,
+  );
+
   // ═══════════════════════ A1: gst_type derivation — credit notes ════════════
   // tbl_credit_note never carried its own vendor-GSTIN column (1305's own header:
   // the ~70 cost_*/eptp_*/InvoiceType* columns tbl_invoice has simply don't exist

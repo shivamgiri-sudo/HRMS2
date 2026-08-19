@@ -62,6 +62,20 @@
  *   target_invoice_id (or a specific unresolved reason) into
  *   validateCreditNoteRow instead of this file unconditionally failing every
  *   row.
+ *
+ * ── 2026-08-19 design addendum-2 — extends A4 ────────────────────────────────
+ * - matchCreditNoteInvoice()'s join now also requires the candidate invoice's
+ *   src_cost_center to agree with the credit note's, not just src_bill_no.
+ *   bill_no alone is not unique in the legacy data (§2), which is exactly why
+ *   86 of the 144 credit notes came out "ambiguous" under the bill_no-only
+ *   match. Re-verified live: adding the cost_center filter resolves all 86 to
+ *   exactly one invoice each (0 remain ambiguous) — the same cost-centre-
+ *   agreement trust signal already validated for the original 53 (0 of 53
+ *   disagreed there either). 139 of 144 credit notes now resolve; the
+ *   remaining 5 (no proforma_bill_no recorded at all) were tested against a
+ *   last-resort cost_center + finance_year + total_amount match and still
+ *   returned 2-5 candidate invoices each — not safely resolvable, so they stay
+ *   unresolved rather than being force-matched.
  */
 
 export interface CostCentreLookup {
@@ -155,14 +169,23 @@ export interface InvoiceMatchResult {
   error: string | null;
 }
 
-/** Matches one credit note to its originating invoice by proforma_bill_no
- *  (A4). Three disclosed outcomes, never a silent guess:
+/** Matches one credit note to its originating invoice by
+ *  (proforma_bill_no, cost_center) — the 2026-08-19 addendum-2 fix. `bill_no`
+ *  alone is not unique in the legacy data (§2), so the join now also requires
+ *  the candidate invoice's own `src_cost_center` to agree with the credit
+ *  note's — re-derived and double-checked live: adding this second join
+ *  column resolves ALL 86 rows that were previously "ambiguous" under a
+ *  bill_no-only match to exactly one invoice each (0 remain ambiguous after
+ *  the filter), matching the same cost-centre-agreement trust signal already
+ *  validated for the original 53 bill_no-only matches (0 of 53 disagreed).
+ *  Four disclosed outcomes, never a silent guess:
  *    - blank/absent proforma_bill_no -> unresolved ("no proforma_bill_no recorded")
- *    - 0 or >1 candidate invoices share that bill_no -> unresolved/ambiguous
- *    - exactly 1 candidate, but its own cost centre disagrees with the credit
- *      note's -> ambiguous (the addendum's own trust signal was "0 of 53
- *      disagree"; a disagreement found now would mean the match is not safe)
- *    - exactly 1 candidate, cost centres agree -> resolved */
+ *    - 0 candidate invoices share that bill_no at all -> unresolved
+ *    - after filtering candidates to those whose cost_center also agrees:
+ *        - 0 remain -> ambiguous (bill_no matched something, but no candidate's
+ *          cost centre agrees with the credit note's — not safely resolvable)
+ *        - >1 remain -> ambiguous (a genuine (bill_no, cost_center) collision)
+ *        - exactly 1 remains -> resolved */
 export function matchCreditNoteInvoice(
   proformaBillNo: string | null,
   creditNoteCostCenter: string | null,
@@ -187,23 +210,25 @@ export function matchCreditNoteInvoice(
       error: `invoice_id unresolvable - no invoice found with bill_no ${JSON.stringify(key)}`,
     };
   }
-  if (candidates.length > 1) {
+  const cnCostCenter = (creditNoteCostCenter ?? "").trim();
+  const matching = candidates.filter((c) => (c.costCenterCode ?? "").trim() === cnCostCenter);
+  if (matching.length === 0) {
     return {
       status: "ambiguous",
       targetInvoiceId: null,
       vendorGstin: null,
-      error: `invoice_id ambiguous - ${candidates.length} candidate invoices share this bill_no`,
+      error: `invoice_id ambiguous - ${candidates.length} candidate invoice(s) share this bill_no but none has a cost centre matching the credit note's "${cnCostCenter}"`,
     };
   }
-  const only = candidates[0];
-  if ((only.costCenterCode ?? "").trim() !== (creditNoteCostCenter ?? "").trim()) {
+  if (matching.length > 1) {
     return {
       status: "ambiguous",
       targetInvoiceId: null,
       vendorGstin: null,
-      error: `invoice_id ambiguous - matched invoice's cost centre "${only.costCenterCode ?? ""}" disagrees with credit note's cost centre "${creditNoteCostCenter ?? ""}"`,
+      error: `invoice_id ambiguous - ${matching.length} candidate invoices share this bill_no and cost centre`,
     };
   }
+  const only = matching[0];
   return {
     status: "resolved",
     targetInvoiceId: only.targetInvoiceId,

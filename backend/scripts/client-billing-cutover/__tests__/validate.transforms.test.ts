@@ -300,7 +300,13 @@ describe("buildInvoiceBillNoIndex / matchCreditNoteInvoice (A4)", () => {
     expect(result.error).toContain("no invoice found with bill_no");
   });
 
-  it("is ambiguous when more than one invoice shares the bill_no (the design §2 collision bug)", () => {
+  // Pre-addendum-2 this bill_no collision (§2) was an unconditional "ambiguous"
+  // whenever >1 invoice shared the bill_no. Addendum-2 disambiguates it via the
+  // credit note's own cost_center — when exactly one of the colliding
+  // invoices' cost centres agrees, that one resolves cleanly (see the
+  // dedicated addendum-2 tests below for the genuinely-still-ambiguous cases:
+  // both candidates share the cost centre too, or neither does).
+  it("resolves via cost_center when more than one invoice shares the bill_no but only one cost centre agrees (the design §2 collision bug, disambiguated by addendum-2)", () => {
     const index = buildInvoiceBillNoIndex([
       { src_bill_no: "09-129/20-21", target_id: "inv-uuid-1", src_cost_center: "BSS/BLD/06/650" },
       { src_bill_no: "09-129/20-21", target_id: "inv-uuid-2", src_cost_center: "BO/DEL" },
@@ -311,9 +317,12 @@ describe("buildInvoiceBillNoIndex / matchCreditNoteInvoice (A4)", () => {
       index,
       invoiceVendorGstinByTargetId,
     );
-    expect(result.status).toBe("ambiguous");
-    expect(result.error).toContain("2 candidate invoices share this bill_no");
-    expect(result.targetInvoiceId).toBeNull();
+    expect(result).toEqual({
+      status: "resolved",
+      targetInvoiceId: "inv-uuid-1",
+      vendorGstin: "07AAACV1234A1Z5",
+      error: null,
+    });
   });
 
   it("is ambiguous (not silently accepted) when the sole candidate's cost centre disagrees with the credit note's", () => {
@@ -322,7 +331,61 @@ describe("buildInvoiceBillNoIndex / matchCreditNoteInvoice (A4)", () => {
     ]);
     const result = matchCreditNoteInvoice("09-129/20-21", "BO/DEL", index, invoiceVendorGstinByTargetId);
     expect(result.status).toBe("ambiguous");
-    expect(result.error).toContain("disagrees with credit note's cost centre");
+    expect(result.error).toContain("none has a cost centre matching");
+    expect(result.targetInvoiceId).toBeNull();
+  });
+
+  // ── 2026-08-19 addendum-2: bill_no ambiguity resolved by requiring the
+  // candidate's own cost_center to also agree with the credit note's — proven
+  // live to resolve all 86 previously-ambiguous rows to exactly one match.
+  it("resolves cleanly when multiple invoices share the bill_no but only one has an agreeing cost centre (addendum-2)", () => {
+    const index = buildInvoiceBillNoIndex([
+      { src_bill_no: "09-129/20-21", target_id: "inv-uuid-1", src_cost_center: "BSS/BLD/06/650" },
+      { src_bill_no: "09-129/20-21", target_id: "inv-uuid-2", src_cost_center: "BO/DEL" },
+    ]);
+    const result = matchCreditNoteInvoice(
+      "09-129/20-21",
+      "BO/DEL",
+      index,
+      invoiceVendorGstinByTargetId,
+    );
+    expect(result).toEqual({
+      status: "resolved",
+      targetInvoiceId: "inv-uuid-2",
+      vendorGstin: null,
+      error: null,
+    });
+  });
+
+  it("is still ambiguous when more than one invoice shares BOTH the bill_no and the cost centre (a genuine collision on both columns)", () => {
+    const index = buildInvoiceBillNoIndex([
+      { src_bill_no: "09-129/20-21", target_id: "inv-uuid-1", src_cost_center: "BSS/BLD/06/650" },
+      { src_bill_no: "09-129/20-21", target_id: "inv-uuid-2", src_cost_center: "BSS/BLD/06/650" },
+    ]);
+    const result = matchCreditNoteInvoice(
+      "09-129/20-21",
+      "BSS/BLD/06/650",
+      index,
+      invoiceVendorGstinByTargetId,
+    );
+    expect(result.status).toBe("ambiguous");
+    expect(result.error).toContain("2 candidate invoices share this bill_no and cost centre");
+    expect(result.targetInvoiceId).toBeNull();
+  });
+
+  it("is ambiguous when the bill_no matches several invoices but none of their cost centres agree with the credit note's", () => {
+    const index = buildInvoiceBillNoIndex([
+      { src_bill_no: "09-129/20-21", target_id: "inv-uuid-1", src_cost_center: "BSS/BLD/06/650" },
+      { src_bill_no: "09-129/20-21", target_id: "inv-uuid-2", src_cost_center: "BO/DEL" },
+    ]);
+    const result = matchCreditNoteInvoice(
+      "09-129/20-21",
+      "SOME/OTHER/CODE",
+      index,
+      invoiceVendorGstinByTargetId,
+    );
+    expect(result.status).toBe("ambiguous");
+    expect(result.error).toContain("2 candidate invoice(s) share this bill_no but none has a cost centre matching");
     expect(result.targetInvoiceId).toBeNull();
   });
 
