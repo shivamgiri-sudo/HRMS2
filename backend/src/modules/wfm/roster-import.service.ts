@@ -1,0 +1,362 @@
+/**
+ * Task 5: Roster Import Service — Upload & Preview
+ * Parses a roster spreadsheet, runs validation, inserts preview rows.
+ * No roster assignments are committed here.
+ */
+
+import * as XLSX from 'xlsx';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2';
+import { db } from '../../db/mysql.js';
+import { analyzeHeaders } from './header-alias.service.js';
+import { normalizeAssignment, NormalizerConfig } from './assignment-normalizer.service.js';
+
+// ── Public types ────────────────────────────────────────────────────────────
+
+export interface BatchSummary {
+  totalEmployees: number;
+  totalAssignments: number;
+  valid: number;
+  warnings: number;
+  errors: number;
+  needsMapping: number;
+  unassigned: number;
+  dateRangeStart: string | null;
+  dateRangeEnd: string | null;
+}
+
+// ── Internal types ───────────────────────────────────────────────────────────
+
+interface RowEntry {
+  rowNumber: number;
+  employeeIdRaw: string;
+  employeeNameRaw: string;
+  rosterDate: string;        // YYYY-MM-DD
+  rawValue: string;
+  normalizedType: string;
+  validationState: 'VALID' | 'WARNING' | 'ERROR';
+  messages: string[];
+  extraMetadata: Record<string, string>;
+  /** Internal: duplicate key → index into rowEntries array */
+  dupKey: string;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function toYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+async function hasApprovedLeave(employeeIdRaw: string, rosterDate: string): Promise<boolean> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT 1 FROM leave_request
+       WHERE employee_id = ? AND status = 'approved' AND leave_date = ?
+       LIMIT 1`,
+      [employeeIdRaw, rosterDate]
+    );
+    return rows.length > 0;
+  } catch {
+    // If table absent or error, be permissive (no false warning)
+    return true;
+  }
+}
+
+// ── Main service functions ───────────────────────────────────────────────────
+
+export async function createImportBatch(params: {
+  processId: string;
+  cycleId?: string;
+  importMode: 'NEW' | 'UPDATE';
+  fileBuffer: Buffer;
+  fileName: string;
+  createdBy: string;
+}): Promise<{ batchId: number; summary: BatchSummary }> {
+  const { processId, cycleId, importMode, fileBuffer, fileName, createdBy } = params;
+
+  // ── Step 1: Parse file ───────────────────────────────────────────────────
+  const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as string[][];
+
+  // ── Step 2: Detect header row ────────────────────────────────────────────
+  const headerResult = analyzeHeaders(rows);
+  if (headerResult.headerRowIndex === -1) {
+    throw new Error('Could not detect header row — ensure the file has at least 2 date columns');
+  }
+
+  const { headerRowIndex, dateColumns, identityColumns } = headerResult;
+
+  // ── Step 3: Insert batch record (PARSING) ────────────────────────────────
+  const [batchInsert] = await db.execute<ResultSetHeader>(
+    `INSERT INTO wfm_roster_import_batch
+       (process_id, cycle_id, import_mode, file_name, status, created_by)
+     VALUES (?, ?, ?, ?, 'PARSING', ?)`,
+    [processId, cycleId ?? null, importMode, fileName, createdBy]
+  );
+  const batchId = batchInsert.insertId;
+
+  // ── Step 4: Build normalizer config ─────────────────────────────────────
+  const normConfig: NormalizerConfig = {
+    importMode,
+    hdMapsTo: 'NEEDS_MAPPING',
+  };
+
+  // ── Step 5: Process data rows ────────────────────────────────────────────
+  const rowEntries: RowEntry[] = [];
+  // Duplicate tracker: key = `${empIdRaw}|${rosterDate}` → first entry index
+  const dupMap = new Map<string, number>();
+
+  const dataRows = rows.slice(headerRowIndex + 1);
+
+  for (let ri = 0; ri < dataRows.length; ri++) {
+    const dataRow = dataRows[ri];
+    const absoluteRowNumber = headerRowIndex + 2 + ri; // 1-based spreadsheet row
+
+    // Extract identity field values
+    let employeeIdRaw = '';
+    let employeeNameRaw = '';
+    const extraMetadata: Record<string, string> = {};
+
+    for (const idCol of identityColumns) {
+      const val = String(dataRow[idCol.index] ?? '').trim();
+      const canonical = idCol.mapping.mappedTo;
+      if (canonical === 'employeeId') {
+        employeeIdRaw = val;
+      } else if (canonical === 'employeeName') {
+        employeeNameRaw = val;
+      } else if (canonical !== null) {
+        extraMetadata[canonical] = val;
+      } else {
+        // unmapped column — store under source header
+        extraMetadata[idCol.header] = val;
+      }
+    }
+
+    // Skip entirely blank data rows
+    const rowHasData = dataRow.some((c) => String(c ?? '').trim() !== '');
+    if (!rowHasData) continue;
+
+    // For each date column, create one row entry
+    for (const dateCol of dateColumns) {
+      const cellValue = String(dataRow[dateCol.index] ?? '').trim();
+      const rosterDate = toYMD(dateCol.parsedDate);
+
+      const normalized = normalizeAssignment(cellValue, normConfig);
+
+      let validationState: 'VALID' | 'WARNING' | 'ERROR' = 'VALID';
+      const messages: string[] = [];
+
+      // ── Validation Rules ────────────────────────────────────────────────
+      if (!employeeIdRaw) {
+        validationState = 'ERROR';
+        messages.push('Missing employee ID in row');
+      } else if (normalized.type === 'HARD_ERROR') {
+        validationState = 'ERROR';
+        messages.push('Literal 0 is not a valid assignment');
+      } else if (normalized.type === 'NEEDS_MAPPING') {
+        validationState = 'ERROR';
+        messages.push(`Shift/status '${cellValue}' not recognized — add to alias map`);
+      } else if (normalized.type === 'UNASSIGNED') {
+        validationState = 'WARNING';
+        messages.push('Cell is blank — will be UNASSIGNED');
+      }
+      // LEAVE check will be done after initial pass (async DB check)
+
+      const dupKey = `${employeeIdRaw}|${rosterDate}`;
+
+      rowEntries.push({
+        rowNumber: absoluteRowNumber,
+        employeeIdRaw,
+        employeeNameRaw,
+        rosterDate,
+        rawValue: cellValue,
+        normalizedType: normalized.type,
+        validationState,
+        messages,
+        extraMetadata,
+        dupKey,
+      });
+    }
+  }
+
+  // ── Step 6: Duplicate detection ──────────────────────────────────────────
+  for (let i = 0; i < rowEntries.length; i++) {
+    const entry = rowEntries[i];
+    const firstIdx = dupMap.get(entry.dupKey);
+    if (firstIdx === undefined) {
+      dupMap.set(entry.dupKey, i);
+    } else {
+      const first = rowEntries[firstIdx];
+      if (first.normalizedType === entry.normalizedType) {
+        // Same value: keep first, mark duplicate as WARNING
+        if (entry.validationState !== 'ERROR') {
+          entry.validationState = 'WARNING';
+        }
+        entry.messages.push('Duplicate assignment — deduplicated');
+      } else {
+        // Different value: both are ERROR
+        first.validationState = 'ERROR';
+        if (!first.messages.includes('Conflicting assignments for same employee+date')) {
+          first.messages.push('Conflicting assignments for same employee+date');
+        }
+        entry.validationState = 'ERROR';
+        entry.messages.push('Conflicting assignments for same employee+date');
+      }
+    }
+  }
+
+  // ── Step 7: Async LEAVE validation (DB check) ───────────────────────────
+  for (const entry of rowEntries) {
+    if (
+      entry.normalizedType === 'LEAVE' &&
+      entry.validationState !== 'ERROR' &&
+      entry.employeeIdRaw
+    ) {
+      const approved = await hasApprovedLeave(entry.employeeIdRaw, entry.rosterDate);
+      if (!approved) {
+        entry.validationState = 'WARNING';
+        entry.messages.push('Roster marks LEAVE but no approved leave request found');
+      }
+    }
+  }
+
+  // ── Step 8: Insert rows into DB ─────────────────────────────────────────
+  for (const entry of rowEntries) {
+    await db.execute(
+      `INSERT INTO wfm_roster_import_row
+         (batch_id, row_number, employee_id_raw, employee_name_raw,
+          roster_date, raw_value, normalized_type,
+          validation_state, validation_messages, extra_metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        batchId,
+        entry.rowNumber,
+        entry.employeeIdRaw || null,
+        entry.employeeNameRaw || null,
+        entry.rosterDate,
+        entry.rawValue,
+        entry.normalizedType,
+        entry.validationState,
+        JSON.stringify(entry.messages),
+        Object.keys(entry.extraMetadata).length > 0
+          ? JSON.stringify(entry.extraMetadata)
+          : null,
+      ]
+    );
+  }
+
+  // ── Step 9: Build summary ────────────────────────────────────────────────
+  const uniqueEmployees = new Set(rowEntries.map((r) => r.employeeIdRaw).filter(Boolean));
+  const validCount = rowEntries.filter((r) => r.validationState === 'VALID').length;
+  const warningCount = rowEntries.filter((r) => r.validationState === 'WARNING').length;
+  const errorCount = rowEntries.filter((r) => r.validationState === 'ERROR').length;
+  const needsMappingCount = rowEntries.filter((r) => r.normalizedType === 'NEEDS_MAPPING').length;
+  const unassignedCount = rowEntries.filter((r) => r.normalizedType === 'UNASSIGNED').length;
+
+  const allDates = rowEntries.map((r) => r.rosterDate).sort();
+  const dateRangeStart = allDates.length > 0 ? allDates[0] : null;
+  const dateRangeEnd = allDates.length > 0 ? allDates[allDates.length - 1] : null;
+
+  const summary: BatchSummary = {
+    totalEmployees: uniqueEmployees.size,
+    totalAssignments: rowEntries.length,
+    valid: validCount,
+    warnings: warningCount,
+    errors: errorCount,
+    needsMapping: needsMappingCount,
+    unassigned: unassignedCount,
+    dateRangeStart,
+    dateRangeEnd,
+  };
+
+  // ── Step 10: Update batch record to PREVIEW ──────────────────────────────
+  await db.execute(
+    `UPDATE wfm_roster_import_batch
+     SET status = 'PREVIEW',
+         total_rows = ?,
+         valid_rows = ?,
+         warning_rows = ?,
+         error_rows = ?,
+         needs_mapping_rows = ?,
+         date_range_start = ?,
+         date_range_end = ?,
+         validation_summary_json = ?
+     WHERE id = ?`,
+    [
+      rowEntries.length,
+      validCount,
+      warningCount,
+      errorCount,
+      needsMappingCount,
+      dateRangeStart,
+      dateRangeEnd,
+      JSON.stringify(summary),
+      batchId,
+    ]
+  );
+
+  return { batchId, summary };
+}
+
+export async function getImportBatch(
+  batchId: number
+): Promise<{ batch: any; summary: BatchSummary }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM wfm_roster_import_batch WHERE id = ?`,
+    [batchId]
+  );
+  if (rows.length === 0) {
+    throw Object.assign(new Error('Import batch not found'), { statusCode: 404 });
+  }
+  const batch = rows[0];
+  const summary: BatchSummary = batch.validation_summary_json
+    ? (typeof batch.validation_summary_json === 'string'
+        ? JSON.parse(batch.validation_summary_json)
+        : batch.validation_summary_json)
+    : {
+        totalEmployees: 0,
+        totalAssignments: batch.total_rows ?? 0,
+        valid: batch.valid_rows ?? 0,
+        warnings: batch.warning_rows ?? 0,
+        errors: batch.error_rows ?? 0,
+        needsMapping: batch.needs_mapping_rows ?? 0,
+        unassigned: 0,
+        dateRangeStart: batch.date_range_start ?? null,
+        dateRangeEnd: batch.date_range_end ?? null,
+      };
+  return { batch, summary };
+}
+
+export async function getImportRows(
+  batchId: number,
+  options: {
+    page: number;
+    limit: number;
+    state?: 'VALID' | 'WARNING' | 'ERROR';
+  }
+): Promise<{ rows: any[]; total: number }> {
+  const { page, limit, state } = options;
+  const offset = (page - 1) * limit;
+
+  const stateClause = state ? ' AND validation_state = ?' : '';
+  const stateParams = state ? [state] : [];
+
+  const [countRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM wfm_roster_import_row WHERE batch_id = ?${stateClause}`,
+    [batchId, ...stateParams]
+  );
+  const total = (countRows[0] as any).cnt as number;
+
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM wfm_roster_import_row
+     WHERE batch_id = ?${stateClause}
+     ORDER BY row_number ASC, roster_date ASC
+     LIMIT ? OFFSET ?`,
+    [batchId, ...stateParams, limit, offset]
+  );
+
+  return { rows: rows as any[], total };
+}
