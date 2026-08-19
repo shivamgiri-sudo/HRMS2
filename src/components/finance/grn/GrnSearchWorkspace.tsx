@@ -85,7 +85,7 @@ const EMPTY: Filters = {
   grnNumber: "", invoiceNumber: "", head: "", subHead: "", status: "", grnType: "",
   billingCycleStatus: "", accountingPeriod: "", billDateFrom: "", billDateTo: "",
   amountFrom: "", amountTo: "", multiMonth: "",
-  source: "new", branchId: "", processId: "", costCentreId: "",
+  source: "all", branchId: "", processId: "", costCentreId: "",
 };
 
 const STATUS_OPTIONS = [
@@ -236,7 +236,7 @@ export function GrnSearchWorkspace({
           <GrnSelect value={draft.source} onChange={(e) => {
             const nextSource = e.target.value;
             // Process filtering only works for source="new" (backend joins g.process_id
-            // directly). "legacy"/"all" go through listLegacyGrns, which links Process via
+            // directly). "all" goes through listLegacyGrns, which links Process via
             // employees.cost_centre_id — empty on nearly every employee row, so the filter
             // silently zeroed every legacy result rather than erroring (delta-audit
             // 2026-08-14, Section K item 7, Option B approved: remove from the UI until the
@@ -245,9 +245,8 @@ export function GrnSearchWorkspace({
             // sent anyway.
             setDraft((f) => ({ ...f, source: nextSource, processId: nextSource === "new" ? f.processId : "" }));
           }}>
-            <option value="new">New HRMS only</option>
-            <option value="legacy">Legacy (db_bill) only</option>
-            <option value="all">All sources</option>
+            <option value="all">All GRNs</option>
+            <option value="new">Native HRMS only</option>
           </GrnSelect>
 
           <GrnSelect value={draft.branchId} onChange={(e) => set("branchId")(e.target.value)}>
@@ -287,6 +286,7 @@ export function GrnSearchWorkspace({
             <option value="">Any type</option>
             <option value="vendor">Vendor</option>
             <option value="imprest">Imprest</option>
+            <option value="salary">Salary (historical P&amp;L)</option>
           </GrnSelect>
           <GrnSelect value={draft.multiMonth} onChange={(e) => set("multiMonth")(e.target.value)}>
             <option value="">Multi-month: any</option>
@@ -360,20 +360,11 @@ export function GrnSearchWorkspace({
                 {rows.map((row) => (
                   <tr
                     key={row.id}
-                    className={`${GRN_TR} ${onOpenGrn && !String(row.id ?? "").startsWith("leg_") ? "cursor-pointer" : ""}`}
-                    onClick={
-                      onOpenGrn && !String(row.id ?? "").startsWith("leg_")
-                        ? () => onOpenGrn(row.id)
-                        : undefined
-                    }
+                    className={`${GRN_TR} ${onOpenGrn ? "cursor-pointer" : ""}`}
+                    onClick={onOpenGrn ? () => onOpenGrn(row.id) : undefined}
                   >
                     <GrnTd>
                       <span className="font-mono">{row.grn_number}</span>
-                      {row.source_type === "legacy" && (
-                        <span className="ml-1.5 rounded bg-amber-100 px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
-                          Legacy
-                        </span>
-                      )}
                       <GrnCellSub>
                         {row.branch_name ?? "—"}
                         {row.is_multi_month ? " · multi-month" : ""}
@@ -383,7 +374,7 @@ export function GrnSearchWorkspace({
                       {row.invoice_number ?? "—"}
                       <GrnCellSub>bill {dateLabel(row.bill_date)}</GrnCellSub>
                     </GrnTd>
-                    <GrnTd>{row.vendor_name ?? (row.grn_type === "imprest" ? "Imprest" : "—")}</GrnTd>
+                    <GrnTd>{row.vendor_name ?? (row.grn_type === "imprest" ? "Imprest" : row.grn_type === "salary" ? "Salary" : "—")}</GrnTd>
                     <GrnTd>
                       {row.head ?? "—"}
                       <GrnCellSub>{row.sub_head ?? "—"}</GrnCellSub>
