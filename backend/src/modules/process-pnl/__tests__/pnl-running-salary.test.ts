@@ -1,6 +1,33 @@
-import { describe, expect, it } from "vitest";
-import { resolveBucket } from "../pnl-running-salary.service.js";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { resolveBucket, refreshRunningSalarySnapshot } from "../pnl-running-salary.service.js";
 import { getStatement, type ComponentDefinition, type StatementDependencies } from "../pnl-statement.service.js";
+
+// ---------------------------------------------------------------------------
+// Mocks for refreshRunningSalarySnapshot tests
+// Paths are resolved from THIS test file's location (__tests__/):
+//   "../../../db/mysql.js"          → src/db/mysql.js          (service imports ../../db/mysql.js from process-pnl/)
+//   "../../payroll/running-salary.service.js" → src/modules/payroll/running-salary.service.js
+//   "../cost-centre-history.service.js"       → src/modules/process-pnl/cost-centre-history.service.js
+// ---------------------------------------------------------------------------
+vi.mock("../../../db/mysql.js", () => ({
+  db: {
+    execute: vi.fn().mockResolvedValue([[], []]),
+    query: vi.fn().mockResolvedValue([{ affectedRows: 1 }]),
+  },
+}));
+
+vi.mock("../../payroll/running-salary.service.js", () => ({
+  computeRunningSalary: vi.fn(),
+}));
+
+vi.mock("../cost-centre-history.service.js", () => ({
+  getCostCentrePeriods: vi.fn(),
+}));
+
+// Static imports of mocked modules — must come after vi.mock() declarations
+import { db } from "../../../db/mysql.js";
+import { computeRunningSalary } from "../../payroll/running-salary.service.js";
+import { getCostCentrePeriods } from "../cost-centre-history.service.js";
 
 /**
  * The running-month salary snapshot exists so a branch can see its Operating Profit part-way
@@ -233,5 +260,104 @@ describe("pnl-statement — running salary snapshot", () => {
     });
     const result = await getStatement({ period: openPeriod() }, "branch", deps);
     expect((result.columns.find((c) => c.id === "b1") as any).peopleCostCoveragePct).toBe(100);
+  });
+});
+
+describe("getCostCentrePeriods integration in refreshRunningSalarySnapshot", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("produces single row when no mid-month CC transfer exists", async () => {
+    // loadEmployees returns one employee
+    vi.mocked(db.execute).mockResolvedValueOnce([[
+      {
+        id: "emp-1",
+        employee_code: "E001",
+        branch_id: "b1",
+        process_id: "p1",
+        cost_centre_id: "cc-1",
+        department_name: "OPERATIONS",
+        designation_name: "Customer Support Executive",
+        rule_bucket: null,
+      },
+    ], []]);
+
+    // computeRunningSalary returns a salary of 31000
+    vi.mocked(computeRunningSalary).mockResolvedValueOnce({
+      earned_salary_till_date: 31000,
+      gross_monthly: 35000,
+      earned_payable_days: 22,
+      projected_payable_days: 31,
+    } as any);
+
+    // getCostCentrePeriods: single period — no mid-month transfer
+    vi.mocked(getCostCentrePeriods).mockResolvedValueOnce([
+      { costCentreId: "cc-1", fromDate: "2026-08-01", toDate: "2026-08-31", days: 31 },
+    ]);
+
+    // flushRows db.query
+    vi.mocked(db.query).mockResolvedValueOnce([{ affectedRows: 1 }] as any);
+
+    const result = await refreshRunningSalarySnapshot("2026-08", { asOfDate: "2026-08-22" });
+
+    expect(result.snapshotted).toBe(1);
+    expect(result.totalEarned).toBe(31000);
+    expect(result.byBucket.agent_salary).toBe(31000);
+
+    // db.query (flushRows) should have been called with one row
+    const queryCall = vi.mocked(db.query).mock.calls[0];
+    // The VALUES section should have exactly one placeholder
+    expect((queryCall[0] as string).match(/\(UUID\(\)/g)?.length).toBe(1);
+  });
+
+  it("produces two rows when mid-month CC transfer exists", async () => {
+    // loadEmployees returns one employee
+    vi.mocked(db.execute).mockResolvedValueOnce([[
+      {
+        id: "emp-2",
+        employee_code: "E002",
+        branch_id: "b1",
+        process_id: "p1",
+        cost_centre_id: "cc-new",
+        department_name: "OPERATIONS",
+        designation_name: "Customer Support Executive",
+        rule_bucket: null,
+      },
+    ], []]);
+
+    // computeRunningSalary returns earned_salary_till_date of 31000
+    vi.mocked(computeRunningSalary).mockResolvedValueOnce({
+      earned_salary_till_date: 31000,
+      gross_monthly: 35000,
+      earned_payable_days: 31,
+      projected_payable_days: 31,
+    } as any);
+
+    // getCostCentrePeriods: two periods — transfer on 2026-08-15
+    vi.mocked(getCostCentrePeriods).mockResolvedValueOnce([
+      { costCentreId: "cc-old", fromDate: "2026-08-01", toDate: "2026-08-14", days: 14 },
+      { costCentreId: "cc-new", fromDate: "2026-08-15", toDate: "2026-08-31", days: 17 },
+    ]);
+
+    // flushRows db.query
+    vi.mocked(db.query).mockResolvedValueOnce([{ affectedRows: 2 }] as any);
+
+    const result = await refreshRunningSalarySnapshot("2026-08", { asOfDate: "2026-08-31" });
+
+    // Should produce 2 snapshot rows (one per CC period)
+    expect(result.snapshotted).toBe(2);
+
+    // Apportioned totals should sum to the original earned (within rounding)
+    const expectedOld = Math.round(31000 * (14 / 31) * 100) / 100;
+    const expectedNew = Math.round(31000 * (17 / 31) * 100) / 100;
+    expect(result.totalEarned).toBeCloseTo(expectedOld + expectedNew, 2);
+
+    // Both amounts go to agent_salary bucket (same process-mapped front-line agent)
+    expect(result.byBucket.agent_salary).toBeCloseTo(expectedOld + expectedNew, 2);
+
+    // db.query (flushRows) should have been called with two placeholders
+    const queryCall = vi.mocked(db.query).mock.calls[0];
+    expect((queryCall[0] as string).match(/\(UUID\(\)/g)?.length).toBe(2);
   });
 });

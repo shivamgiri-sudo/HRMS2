@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { computeRunningSalary } from "../payroll/running-salary.service.js";
+import { getCostCentrePeriods } from "./cost-centre-history.service.js";
 
 /**
  * Snapshots each employee's running-month salary so the P&L can show a live Operating Profit %
@@ -265,18 +266,56 @@ export async function refreshRunningSalarySnapshot(
         continue;
       }
       const bucket = resolveBucket(employee);
+      const grossMonthly = Number(running.gross_monthly ?? 0);
+      const earnedDays = Number(running.earned_payable_days ?? 0);
+      const totalDays = Number(running.projected_payable_days ?? 0);
 
-      pending.push({
-        employee,
-        bucket,
-        earned,
-        grossMonthly: Number(running.gross_monthly ?? 0),
-        earnedDays: Number(running.earned_payable_days ?? 0),
-        totalDays: Number(running.projected_payable_days ?? 0),
-      });
-      byBucket[bucket] += earned;
-      totalEarned += earned;
-      snapshotted += 1;
+      // Check for mid-month cost centre transfer
+      const monthStart = `${periodCode}-01`;
+      // monthEnd: last day of periodCode month
+      const [yr, mo] = periodCode.split("-").map(Number);
+      const monthEnd = new Date(yr, mo, 0).toISOString().slice(0, 10); // last day of month
+
+      const ccPeriods = await getCostCentrePeriods(employee.id, monthStart, monthEnd);
+
+      if (ccPeriods.length > 1) {
+        // Mid-month transfer: apportion earned salary by days
+        const totalPeriodDays = ccPeriods.reduce((s, p) => s + p.days, 0);
+        for (const period of ccPeriods) {
+          const ratio = period.days / totalPeriodDays;
+          const apportionedEarned = Math.round(earned * ratio * 100) / 100;
+          const apportionedGross = Math.round(grossMonthly * ratio * 100) / 100;
+          const apportionedEarnedDays = Math.round(earnedDays * ratio * 100) / 100;
+          const apportionedTotalDays = Math.round(totalDays * ratio * 100) / 100;
+
+          // Override employee's cost_centre_id for this snapshot row
+          const employeeForPeriod = { ...employee, cost_centre_id: period.costCentreId };
+          pending.push({
+            employee: employeeForPeriod as typeof employee,
+            bucket,
+            earned: apportionedEarned,
+            grossMonthly: apportionedGross,
+            earnedDays: apportionedEarnedDays,
+            totalDays: apportionedTotalDays,
+          });
+          byBucket[bucket] += apportionedEarned;
+          totalEarned += apportionedEarned;
+          snapshotted += 1;
+        }
+      } else {
+        // No mid-month transfer: single row as before
+        pending.push({
+          employee,
+          bucket,
+          earned,
+          grossMonthly,
+          earnedDays,
+          totalDays,
+        });
+        byBucket[bucket] += earned;
+        totalEarned += earned;
+        snapshotted += 1;
+      }
 
       if (pending.length >= INSERT_BATCH_SIZE) {
         // Hand the batch off before awaiting, so a concurrent worker cannot append to the array
