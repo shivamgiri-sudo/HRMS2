@@ -8,6 +8,7 @@ import { db } from "../../db/mysql.js";
 import { clientBillingService } from "./client-billing.service.js";
 import { clientBillingApprovalService } from "./client-billing-approval.service.js";
 import { clientBillingCreditNoteService } from "./client-billing-credit-note.service.js";
+import { clientBillingPdfService } from "./client-billing-pdf.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -75,6 +76,16 @@ router.get(
   })
 );
 
+router.get(
+  "/proformas/:id/pdf",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const pdf = await clientBillingPdfService.generateInvoicePdf(req.params.id);
+    res.setHeader("Content-Type", "application/pdf");
+    res.send(pdf);
+  })
+);
+
 router.post(
   "/invoices/:id/approve",
   requireRole(...ALLOWED_ROLES),
@@ -115,6 +126,16 @@ router.get(
       [req.params.id]
     );
     res.json({ success: true, data: rows });
+  })
+);
+
+router.get(
+  "/invoices/:id/pdf",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const pdf = await clientBillingPdfService.generateInvoicePdf(req.params.id);
+    res.setHeader("Content-Type", "application/pdf");
+    res.send(pdf);
   })
 );
 

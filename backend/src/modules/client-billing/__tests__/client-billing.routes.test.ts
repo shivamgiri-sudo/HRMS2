@@ -21,14 +21,36 @@ vi.mock("../client-billing-credit-note.service.js", () => ({
   clientBillingCreditNoteService: { createCreditNote, approveCreditNote },
 }));
 
+const { generateInvoicePdf } = vi.hoisted(() => ({ generateInvoicePdf: vi.fn() }));
+vi.mock("../client-billing-pdf.service.js", () => ({
+  clientBillingPdfService: { generateInvoicePdf },
+}));
+
+// requireAuth/requireRole default to an authenticated "finance" caller (in ALLOWED_ROLES) so every
+// pre-existing test below keeps passing unchanged. Two opt-in test headers let the new PDF-route
+// tests exercise the 401/403 boundaries without touching any other test in this file:
+//   x-test-no-auth: any value -> requireAuth responds 401 (unauthenticated)
+//   x-test-role: <role>       -> requireAuth sets that role instead of "finance"
 vi.mock("../../../middleware/authMiddleware.js", () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = { id: "u-1", email: "finance@teammas.in", role: "finance", isDemo: false };
+  requireAuth: (req: any, res: any, next: any) => {
+    if (req.headers["x-test-no-auth"]) {
+      return res.status(401).json({ success: false, message: "Unauthenticated" });
+    }
+    req.authUser = {
+      id: "u-1", email: "finance@teammas.in",
+      role: String(req.headers["x-test-role"] ?? "finance"), isDemo: false,
+    };
     next();
   },
 }));
 vi.mock("../../../middleware/requireRole.js", () => ({
-  requireRole: () => (_req: any, _res: any, next: any) => next(),
+  requireRole: (...roles: string[]) => (req: any, res: any, next: any) => {
+    const role = req.authUser?.role;
+    if (!role || !roles.includes(role)) {
+      return res.status(403).json({ success: false, message: "Forbidden" });
+    }
+    next();
+  },
 }));
 
 let clientBillingRouter: typeof import("../client-billing.routes.js")["clientBillingRouter"];
@@ -45,6 +67,7 @@ beforeAll(async () => {
 beforeEach(() => {
   createProforma.mockReset();
   execute.mockReset();
+  generateInvoicePdf.mockReset();
 });
 
 describe("POST /api/client-billing/proformas", () => {
@@ -128,6 +151,45 @@ describe("GET /api/client-billing/proformas/:id", () => {
   });
 });
 
+describe("GET /api/client-billing/proformas/:id/pdf", () => {
+  it("returns 401 when the caller is not authenticated", async () => {
+    const res = await request(app)
+      .get("/api/client-billing/proformas/inv-1/pdf")
+      .set("x-test-no-auth", "1");
+    expect(res.status).toBe(401);
+    expect(generateInvoicePdf).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 for a role outside ALLOWED_ROLES", async () => {
+    const res = await request(app)
+      .get("/api/client-billing/proformas/inv-1/pdf")
+      .set("x-test-role", "employee");
+    expect(res.status).toBe(403);
+    expect(generateInvoicePdf).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 with the service's error message for an unknown id", async () => {
+    generateInvoicePdf.mockRejectedValueOnce(
+      Object.assign(new Error("Invoice missing not found"), { statusCode: 400 })
+    );
+    const res = await request(app).get("/api/client-billing/proformas/missing/pdf");
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/Invoice missing not found/);
+  });
+
+  it("returns a PDF buffer for a valid id", async () => {
+    const fakePdf = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(600, 0x20)]);
+    generateInvoicePdf.mockResolvedValueOnce(fakePdf);
+    const res = await request(app).get("/api/client-billing/proformas/inv-1/pdf");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/application\/pdf/);
+    expect(Buffer.isBuffer(res.body) ? res.body : Buffer.from(res.text, "binary")).toBeTruthy();
+    const bodyBuffer: Buffer = Buffer.isBuffer(res.body) ? res.body : Buffer.from(res.text, "binary");
+    expect(bodyBuffer.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+    expect(generateInvoicePdf).toHaveBeenCalledWith("inv-1");
+  });
+});
+
 describe("POST /api/client-billing/invoices/:id/approve", () => {
   beforeEach(() => {
     approveInvoice.mockReset();
@@ -196,6 +258,44 @@ describe("GET /api/client-billing/invoices/:id/audit-log", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveLength(2);
+  });
+});
+
+describe("GET /api/client-billing/invoices/:id/pdf", () => {
+  it("returns 401 when the caller is not authenticated", async () => {
+    const res = await request(app)
+      .get("/api/client-billing/invoices/inv-1/pdf")
+      .set("x-test-no-auth", "1");
+    expect(res.status).toBe(401);
+    expect(generateInvoicePdf).not.toHaveBeenCalled();
+  });
+
+  it("returns 403 for a role outside ALLOWED_ROLES", async () => {
+    const res = await request(app)
+      .get("/api/client-billing/invoices/inv-1/pdf")
+      .set("x-test-role", "employee");
+    expect(res.status).toBe(403);
+    expect(generateInvoicePdf).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 with the service's error message for an unknown id", async () => {
+    generateInvoicePdf.mockRejectedValueOnce(
+      Object.assign(new Error("Invoice missing not found"), { statusCode: 400 })
+    );
+    const res = await request(app).get("/api/client-billing/invoices/missing/pdf");
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/Invoice missing not found/);
+  });
+
+  it("returns a PDF buffer for a valid id", async () => {
+    const fakePdf = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(600, 0x20)]);
+    generateInvoicePdf.mockResolvedValueOnce(fakePdf);
+    const res = await request(app).get("/api/client-billing/invoices/inv-1/pdf");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/application\/pdf/);
+    const bodyBuffer: Buffer = Buffer.isBuffer(res.body) ? res.body : Buffer.from(res.text, "binary");
+    expect(bodyBuffer.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+    expect(generateInvoicePdf).toHaveBeenCalledWith("inv-1");
   });
 });
 
