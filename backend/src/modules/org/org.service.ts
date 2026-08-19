@@ -197,6 +197,20 @@ async function softDelete(table: string, id: string): Promise<void> {
 async function setStatus(table: string, id: string, status: number): Promise<void> {
   assertMasterTable(table);
   const activeStatus = status === 1 ? 1 : 0;
+  // Reactivating a cost centre only flipped active_status, leaving behind whatever close_date
+  // it carried from when it was actually closed. branch-budget-allocation.service.ts's
+  // listActiveCostCentres additionally requires close_date IS NULL OR close_date > CURDATE(),
+  // so a cost centre reactivated through this endpoint stayed permanently invisible to budget
+  // allocation despite reading "active" everywhere else in the app. Clearing close_date on
+  // reactivation only (never on deactivation, which should keep its historical close date)
+  // makes the two flags agree again.
+  if (table === "cost_centre_master" && activeStatus === 1) {
+    await db.execute(
+      `UPDATE ${table} SET active_status = ?, close_date = NULL, updated_at = NOW() WHERE id = ?`,
+      [activeStatus, id]
+    );
+    return;
+  }
   await db.execute(`UPDATE ${table} SET active_status = ?, updated_at = NOW() WHERE id = ?`, [activeStatus, id]);
 }
 

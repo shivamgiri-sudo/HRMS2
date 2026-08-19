@@ -821,7 +821,13 @@ export default function BranchBudgetManagementWorkspace() {
 
   const { data: branchResponse } = useQuery({
     queryKey: ["budget-branches"],
-    queryFn: () => hrmsApi.get<any>("/api/org/branches?limit=200"),
+    // include_duplicates=1: branch_master holds real, distinct branches that share the same
+    // name in different case (e.g. "Head Office" in Mumbai vs "HEAD OFFICE" in Noida — see
+    // backend/sql/1115_reactivate_operational_branches.sql). The default listing silently
+    // dedupes same-named rows to one survivor, which made this picker resolve "Head Office" to
+    // whichever one happened to sort first — hiding the other branch's cost centres entirely
+    // from budget creation. Both must be shown and disambiguated (see branchLabel below).
+    queryFn: () => hrmsApi.get<any>("/api/org/branches?limit=200&include_duplicates=1"),
   });
   const { data: processResponse } = useQuery({
     queryKey: ["budget-processes"],
@@ -864,6 +870,22 @@ export default function BranchBudgetManagementWorkspace() {
   const vendors = unwrapList(vendorResponse).filter(
     (item) => Number(item.is_active ?? item.active_status ?? 1) === 1
   );
+
+  /* Two or more branches can legitimately share a display name in different case (see the
+   * include_duplicates comment above) — appending city/branch_code only for names that
+   * actually collide keeps every other branch's label unchanged. */
+  const branchNameCounts = new Map<string, number>();
+  for (const b of branches) {
+    const key = String(b.branch_name ?? b.name ?? "").trim().toLocaleLowerCase();
+    branchNameCounts.set(key, (branchNameCounts.get(key) ?? 0) + 1);
+  }
+  const branchLabel = (branch: any): string => {
+    const name = branch.branch_name ?? branch.name ?? "";
+    const key = String(name).trim().toLocaleLowerCase();
+    if ((branchNameCounts.get(key) ?? 0) <= 1) return name;
+    const disambiguator = branch.city ?? branch.branch_code;
+    return disambiguator ? `${name} (${disambiguator})` : name;
+  };
 
   useEffect(() => {
     if (!detailQuery.data || loadedDetailId === detailQuery.data.id) return;
@@ -1513,7 +1535,10 @@ export default function BranchBudgetManagementWorkspace() {
             {(branchId || period) && (
               <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-1.5 text-xs text-slate-500">
                 <span className="font-medium text-slate-700">
-                  {branches.find((b) => b.id === branchId)?.branch_name ?? branches.find((b) => b.id === branchId)?.name ?? (branchId ? "Branch" : "No branch selected")}
+                  {(() => {
+                    const current = branches.find((b) => b.id === branchId);
+                    return current ? branchLabel(current) : (branchId ? "Branch" : "No branch selected");
+                  })()}
                 </span>
                 <span>·</span>
                 <span>{period ?? "No period selected"}</span>
@@ -1541,7 +1566,7 @@ export default function BranchBudgetManagementWorkspace() {
               {/* Compacted: three tall stacked blocks became one inline row. This is a context
                   selector, not a form to fill in, so it should not occupy a card's worth of height
                   above the grid that actually does the work. */}
-              <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500"><div className="w-52 space-y-1"><Label>Period *</Label><MonthYearPicker value={period} onChange={(value) => { if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "period", value }); } else { setPeriod(value); setSavedBudgetId(null); setLoadedDetailId(null); } }} /></div><div className="w-56 space-y-1"><Label>{branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={branchLocked} onChange={(event) => { const v = event.target.value; if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "branch", value: v }); } else { setBranchId(v); setSavedBudgetId(null); setLoadedDetailId(null); } }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.branch_name ?? branch.name}</option>)}</select></div><div className="w-28 space-y-1"><Label>Financial year</Label><div className="flex h-9 items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-600" title="Set by Period — April to March. Not independently editable.">{financialYear(period)}</div></div></CardContent></Card>
+              <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500"><div className="w-52 space-y-1"><Label>Period *</Label><MonthYearPicker value={period} onChange={(value) => { if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "period", value }); } else { setPeriod(value); setSavedBudgetId(null); setLoadedDetailId(null); } }} /></div><div className="w-56 space-y-1"><Label>{branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={branchLocked} onChange={(event) => { const v = event.target.value; if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "branch", value: v }); } else { setBranchId(v); setSavedBudgetId(null); setLoadedDetailId(null); } }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branchLabel(branch)}</option>)}</select></div><div className="w-28 space-y-1"><Label>Financial year</Label><div className="flex h-9 items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-600" title="Set by Period — April to March. Not independently editable.">{financialYear(period)}</div></div></CardContent></Card>
               {/* The branch picker above is locked and empty whenever capabilities failed to load.
                   Say why — an unexplained empty dropdown reads as a broken page, and the server's
                   own message ("not mapped to an active employee branch") is the actionable one. */}
