@@ -34,6 +34,11 @@ const LINES = [
   { line_type: "charge", particulars: "OB Dedicated Seat 1", qty: 1, rate: 30000, amount: 30000 },
 ];
 
+const LINES_WITH_DEDUCTION = [
+  { line_type: "charge", particulars: "OB Dedicated Seat 1", qty: 1, rate: 30000, amount: 30000 },
+  { line_type: "deduction", particulars: "Downtime credit", qty: 1, rate: 1200, amount: 1200 },
+];
+
 const COST_CENTRE_ROW = {
   billToAddress1: "3rd Floor, Tower A", billToAddress2: "Cyber City", billToAddress3: "Gurugram",
   shipToAddress1: null, shipToAddress2: null, shipToAddress3: null,
@@ -78,6 +83,22 @@ describe("generateInvoicePdf", () => {
 
     expect(Buffer.isBuffer(buffer)).toBe(true);
     expect(buffer.length).toBeGreaterThan(0);
+    expect(buffer.subarray(0, 5).toString("latin1")).toBe("%PDF-");
+  });
+
+  it("renders without throwing when a line is a deduction (amount flips sign in the display)", async () => {
+    execute
+      .mockResolvedValueOnce([[PROFORMA_INVOICE], []])
+      .mockResolvedValueOnce([LINES_WITH_DEDUCTION, []])
+      .mockResolvedValueOnce([[COST_CENTRE_ROW], []]);
+
+    const buffer = await clientBillingPdfService.generateInvoicePdf(PROFORMA_INVOICE.id);
+
+    // Exercises the `line_type === "deduction"` sign-flip branch in the line-items table —
+    // pdfkit compresses its content streams by default, so we can't cheaply assert the
+    // rendered text itself; this asserts the branch executes cleanly end-to-end and still
+    // produces a valid PDF, closing the coverage gap flagged in review.
+    expect(Buffer.isBuffer(buffer)).toBe(true);
     expect(buffer.subarray(0, 5).toString("latin1")).toBe("%PDF-");
   });
 
