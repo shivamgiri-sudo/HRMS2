@@ -45,6 +45,72 @@ export function mapGstFields(gstTypeRaw: string | null): {
   return { target_gst_type: trimmed, target_apply_gst: 1 };
 }
 
+// ── A1 (2026-08-19 addendum, supersedes design §5.2 / mapGstFields's own NULL
+// result for a blank legacy GSTType): client_invoice.gst_type /
+// client_credit_note.gst_type are VARCHAR(20) NOT NULL with no DEFAULT, so
+// mapGstFields's `target_gst_type: null` for a blank GSTType is not insertable.
+//
+// computeGstType() is a strict superset of mapGstFields: a non-blank legacy
+// GSTType still passes straight through unchanged (identical to mapGstFields).
+// Only the genuinely-blank case is handled differently — instead of NULL, it is
+// derived when derivable, or classified honestly instead of guessed:
+//
+//   1. If the vendor's own GSTIN (cost_VendorGSTNo / src_cost_vendorgstno) looks
+//      like a real 15-char GSTIN (`^\d{2}[A-Z0-9]{13}$` — no existing GSTIN
+//      validator was found anywhere else in this codebase, confirmed by search;
+//      this is the addendum's own exact pattern) AND the row's cost centre
+//      resolves to a branch with a known gst_state_code: derive
+//      Integrated/Intrastate by comparing the GSTIN's 2-digit state prefix
+//      against that branch's own gst_state_code — the SAME comparison
+//      client-billing.service.ts's createProforma() already relies on (it reads
+//      cost_centre_master.gst_type + branch_master.gst_state_code directly
+//      rather than re-deriving them, because this derivation is expected to
+//      already have happened once, at cost-centre setup time; this addendum
+//      performs that same one-time derivation for historical rows that never
+//      had it done at all). apply_gst = 1.
+//   2. Otherwise (malformed/absent/foreign GSTIN, OR no resolvable branch state
+//      code — which also naturally covers pre-GST-era rows and rows with an
+//      explicit legacy apply_gst=0, since those essentially never carry a
+//      valid-looking modern GSTIN on file): gst_type = 'Not Applicable',
+//      apply_gst = 0. A real, honest classification, not a NULL stand-in — the
+//      frontend's GstBreakdown / PDF's drawTaxSummary already guard on
+//      apply_gst before rendering any tax line, so nothing downstream needs to
+//      change to handle it correctly.
+//
+// branchStateCode is resolved by the caller (validate.ts, live, fresh off
+// cost_centre_master.branch_id -> branch_master.gst_state_code) — this function
+// stays a pure transform with no DB access of its own.
+const GSTIN_RE = /^\d{2}[A-Z0-9]{13}$/;
+
+export interface GstTypeInput {
+  /** legacy GSTType column (row.GSTType / src_gsttype) */
+  gstTypeRaw: string | null;
+  /** legacy cost_VendorGSTNo column (src_cost_vendorgstno on invoices; for a
+   *  credit note, the caller resolves this from its matched invoice — see A4) */
+  vendorGstin: string | null;
+  /** resolved live: cost_centre_master.branch_id -> branch_master.gst_state_code
+   *  for this row's own cost centre; null when unresolvable */
+  branchStateCode: string | null;
+}
+
+export function computeGstType(input: GstTypeInput): {
+  target_gst_type: string;
+  target_apply_gst: 0 | 1;
+} {
+  const trimmedLegacy = (input.gstTypeRaw ?? "").trim();
+  if (trimmedLegacy !== "") {
+    return { target_gst_type: trimmedLegacy, target_apply_gst: 1 };
+  }
+  const gstin = (input.vendorGstin ?? "").trim().toUpperCase();
+  const branchStateCode = (input.branchStateCode ?? "").trim();
+  if (GSTIN_RE.test(gstin) && branchStateCode !== "") {
+    const vendorStateCode = gstin.slice(0, 2);
+    const gstType = vendorStateCode === branchStateCode ? "Intrastate" : "Integrated";
+    return { target_gst_type: gstType, target_apply_gst: 1 };
+  }
+  return { target_gst_type: "Not Applicable", target_apply_gst: 0 };
+}
+
 // ── §5.5: category normalization ──────────────────────────────────────────────
 // Built from a FRESH live query (2026-08-19) of every distinct db_bill.tbl_invoice
 // category, not the design doc's LIMIT-10 sample:
@@ -57,19 +123,26 @@ export function mapGstFields(gstTypeRaw: string | null): {
 //   - "Other"    -> "Others"        (1 row; singular vs the dominant plural form —
 //                                    same category, not a distinct one; found only
 //                                    by running the fresh unlimited query)
-// Blank category ('' or NULL, 470 + 44 = 514 rows) is normalized to NULL rather than
-// merged into any named category — it is a missing value, not a spelling variant of
-// one, so inventing a bucket for it would misrepresent what legacy actually recorded.
-// Everything else passes through verbatim (trimmed only).
+// ── A2 (2026-08-19 addendum, supersedes this comment's original "normalize blank
+// to NULL" call): client_invoice.category / client_credit_note.category are
+// VARCHAR(50) NOT NULL — blank/NULL is not insertable as NULL. Blank category
+// (510 invoice rows + 1 credit-note row, re-verified live) is defaulted to
+// 'Others' instead: already the dominant real category (70%+ of all rows), a
+// low-stakes reporting/filter field with no financial consequence, not worth a
+// more elaborate inference. This is a real, disclosed default — not a silent
+// data fabrication — and is exactly what 'Others' already means for every one
+// of the 8,006 rows that legitimately recorded it themselves.
 const CATEGORY_NORMALIZATION_MAP: Record<string, string> = {
   talktime: "Talk Time",
   other: "Others",
 };
 
-export function normalizeCategory(categoryRaw: string | null): string | null {
-  if (categoryRaw === null) return null;
+const BLANK_CATEGORY_DEFAULT = "Others";
+
+export function normalizeCategory(categoryRaw: string | null): string {
+  if (categoryRaw === null) return BLANK_CATEGORY_DEFAULT;
   const trimmed = categoryRaw.trim();
-  if (trimmed === "") return null;
+  if (trimmed === "") return BLANK_CATEGORY_DEFAULT;
   const key = trimmed.toLowerCase();
   return CATEGORY_NORMALIZATION_MAP[key] ?? trimmed;
 }

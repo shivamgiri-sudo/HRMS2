@@ -1,18 +1,33 @@
 import { describe, it, expect } from "vitest";
 import {
   buildCostCentreLookup,
+  buildBranchStateCodeLookup,
+  resolveBranchStateCode,
+  buildInvoiceBillNoIndex,
+  matchCreditNoteInvoice,
   validateInvoiceRow,
   validateCreditNoteRow,
   mapInvoiceStatus,
   mapCreditStatus,
+  COST_CENTRE_UNRESOLVED_MESSAGE,
   type InvoiceValidationInput,
   type CreditNoteValidationInput,
+  type InvoiceMatchResult,
 } from "../validate.transforms.js";
 
 const costCentre = buildCostCentreLookup([
-  { cost_centre_code: "BSS/BLD/06/650", id: "cc-uuid-1" },
-  { cost_centre_code: "BO/DEL", id: "cc-uuid-2" },
+  { cost_centre_code: "BSS/BLD/06/650", id: "cc-uuid-1", branch_id: "branch-uuid-1" },
+  { cost_centre_code: "BO/DEL", id: "cc-uuid-2", branch_id: "branch-uuid-2" },
 ]);
+
+// A credit note is validated with an already-resolved invoiceMatch (validate.ts's
+// job via matchCreditNoteInvoice) — this fixture represents a clean A4 match.
+const resolvedMatch: InvoiceMatchResult = {
+  status: "resolved",
+  targetInvoiceId: "invoice-target-uuid-1",
+  vendorGstin: "07AAACV1234A1Z5",
+  error: null,
+};
 
 function baseInvoice(overrides: Partial<InvoiceValidationInput> = {}): InvoiceValidationInput {
   return {
@@ -82,22 +97,27 @@ describe("validateInvoiceRow", () => {
     expect(result.error).toContain("invoice_date is NULL/blank/unrecoverable");
   });
 
-  it("flags NULL target_gst_type (design §5.2 vs live NOT NULL gst_type column)", () => {
+  it("flags NULL target_gst_type as defense-in-depth (A1 addendum: should no longer occur post-fix)", () => {
     const result = validateInvoiceRow(baseInvoice({ target_gst_type: null }), costCentre);
     expect(result.status).toBe("error");
     expect(result.error).toContain("gst_type is NULL");
   });
 
-  it("flags a legacy cost_center with no cost_centre_master match", () => {
+  it("accepts A1's 'Not Applicable' fallback value as a valid gst_type", () => {
+    const result = validateInvoiceRow(baseInvoice({ target_gst_type: "Not Applicable" }), costCentre);
+    expect(result.status).toBe("valid");
+  });
+
+  it("flags a legacy cost_center with no cost_centre_master match using A3's fixed, filterable message", () => {
     const result = validateInvoiceRow(baseInvoice({ src_cost_center: "UNKNOWN/CODE" }), costCentre);
     expect(result.status).toBe("error");
-    expect(result.error).toContain("cost_centre_id cannot be resolved");
+    expect(result.error).toContain(COST_CENTRE_UNRESOLVED_MESSAGE);
   });
 
   it("flags a blank cost_center the same way", () => {
     const result = validateInvoiceRow(baseInvoice({ src_cost_center: null }), costCentre);
     expect(result.status).toBe("error");
-    expect(result.error).toContain("cost_centre_id cannot be resolved");
+    expect(result.error).toContain(COST_CENTRE_UNRESOLVED_MESSAGE);
   });
 
   it("flags a non-numeric total (the real 'total'='8800\\r0' quirk found live)", () => {
@@ -145,26 +165,173 @@ describe("validateInvoiceRow", () => {
   });
 });
 
-describe("validateCreditNoteRow", () => {
-  it("ALWAYS flags invoice_id, even on an otherwise-clean row — no legacy linking column exists", () => {
-    const result = validateCreditNoteRow(baseCreditNote(), costCentre);
-    expect(result.status).toBe("error");
-    expect(result.error).toContain("invoice_id cannot be resolved");
+describe("validateCreditNoteRow (A4 addendum — invoiceMatch replaces the always-fail check)", () => {
+  it("a resolved invoiceMatch + otherwise-clean row is valid", () => {
+    const result = validateCreditNoteRow(baseCreditNote(), costCentre, resolvedMatch);
+    expect(result).toEqual({ status: "valid", error: null });
   });
 
-  it("still reports every other real issue alongside the always-present invoice_id one", () => {
-    const result = validateCreditNoteRow(baseCreditNote({ target_gst_type: null, src_category: null }), costCentre);
+  it("an unresolved invoiceMatch fails with its own specific reason", () => {
+    const unresolved: InvoiceMatchResult = {
+      status: "unresolved",
+      targetInvoiceId: null,
+      vendorGstin: null,
+      error: "invoice_id unresolvable - no proforma_bill_no recorded",
+    };
+    const result = validateCreditNoteRow(baseCreditNote(), costCentre, unresolved);
     expect(result.status).toBe("error");
-    expect(result.error).toContain("invoice_id cannot be resolved");
+    expect(result.error).toContain("invoice_id unresolvable - no proforma_bill_no recorded");
+  });
+
+  it("an ambiguous invoiceMatch fails with its own specific reason", () => {
+    const ambiguous: InvoiceMatchResult = {
+      status: "ambiguous",
+      targetInvoiceId: null,
+      vendorGstin: null,
+      error: "invoice_id ambiguous - 3 candidate invoices share this bill_no",
+    };
+    const result = validateCreditNoteRow(baseCreditNote(), costCentre, ambiguous);
+    expect(result.status).toBe("error");
+    expect(result.error).toContain("invoice_id ambiguous - 3 candidate invoices share this bill_no");
+  });
+
+  it("still reports every other real issue alongside an unresolved invoiceMatch", () => {
+    const unresolved: InvoiceMatchResult = {
+      status: "unresolved",
+      targetInvoiceId: null,
+      vendorGstin: null,
+      error: "invoice_id unresolvable - no proforma_bill_no recorded",
+    };
+    const result = validateCreditNoteRow(
+      baseCreditNote({ target_gst_type: null, src_category: null }),
+      costCentre,
+      unresolved,
+    );
+    expect(result.status).toBe("error");
+    expect(result.error).toContain("invoice_id unresolvable");
     expect(result.error).toContain("gst_type is NULL");
     expect(result.error).toContain("category is NULL/blank");
   });
 
-  it("a credit note with a resolvable cost centre still fails only on invoice_id + gst_type when those are the sole issues", () => {
-    const result = validateCreditNoteRow(baseCreditNote({ target_gst_type: null }), costCentre);
+  it("a credit note with a resolvable cost centre and a resolved match, but a stray gst_type NULL, fails on only that one issue", () => {
+    const result = validateCreditNoteRow(baseCreditNote({ target_gst_type: null }), costCentre, resolvedMatch);
     expect(result.status).toBe("error");
     const parts = result.error!.split("; ");
-    expect(parts).toHaveLength(2);
+    expect(parts).toHaveLength(1);
+    expect(parts[0]).toContain("gst_type is NULL");
+  });
+
+  it("flags an unresolved cost centre using A3's fixed message even with a resolved invoiceMatch", () => {
+    const result = validateCreditNoteRow(
+      baseCreditNote({ src_cost_center: "UNKNOWN/CODE" }),
+      costCentre,
+      resolvedMatch,
+    );
+    expect(result.status).toBe("error");
+    expect(result.error).toContain(COST_CENTRE_UNRESOLVED_MESSAGE);
+  });
+});
+
+describe("buildBranchStateCodeLookup / resolveBranchStateCode (A1)", () => {
+  const branchStateCodes = buildBranchStateCodeLookup([
+    { id: "branch-uuid-1", gst_state_code: "07" },
+    { id: "branch-uuid-2", gst_state_code: "09" },
+    { id: "branch-uuid-3", gst_state_code: null },
+  ]);
+
+  it("resolves a known cost centre's code straight through to its branch's gst_state_code", () => {
+    expect(resolveBranchStateCode("BSS/BLD/06/650", costCentre, branchStateCodes)).toBe("07");
+    expect(resolveBranchStateCode("BO/DEL", costCentre, branchStateCodes)).toBe("09");
+  });
+
+  it("trims the cost centre code before lookup", () => {
+    expect(resolveBranchStateCode("  BSS/BLD/06/650  ", costCentre, branchStateCodes)).toBe("07");
+  });
+
+  it("returns null for an unresolvable cost centre code", () => {
+    expect(resolveBranchStateCode("UNKNOWN/CODE", costCentre, branchStateCodes)).toBeNull();
+  });
+
+  it("returns null for blank/null input", () => {
+    expect(resolveBranchStateCode(null, costCentre, branchStateCodes)).toBeNull();
+    expect(resolveBranchStateCode("", costCentre, branchStateCodes)).toBeNull();
+  });
+});
+
+describe("buildInvoiceBillNoIndex / matchCreditNoteInvoice (A4)", () => {
+  const invoiceVendorGstinByTargetId = new Map<string, string | null>([
+    ["inv-uuid-1", "07AAACV1234A1Z5"],
+    ["inv-uuid-2", null],
+  ]);
+
+  it("resolves cleanly when exactly one invoice shares the bill_no and cost centres agree", () => {
+    const index = buildInvoiceBillNoIndex([
+      { src_bill_no: "09-129/20-21", target_id: "inv-uuid-1", src_cost_center: "BSS/BLD/06/650" },
+    ]);
+    const result = matchCreditNoteInvoice(
+      "09-129/20-21",
+      "BSS/BLD/06/650",
+      index,
+      invoiceVendorGstinByTargetId,
+    );
+    expect(result).toEqual({
+      status: "resolved",
+      targetInvoiceId: "inv-uuid-1",
+      vendorGstin: "07AAACV1234A1Z5",
+      error: null,
+    });
+  });
+
+  it("is unresolved when proforma_bill_no is blank/null", () => {
+    const index = buildInvoiceBillNoIndex([]);
+    for (const blank of [null, "", "   "]) {
+      const result = matchCreditNoteInvoice(blank, "BO/DEL", index, invoiceVendorGstinByTargetId);
+      expect(result.status).toBe("unresolved");
+      expect(result.error).toContain("no proforma_bill_no recorded");
+    }
+  });
+
+  it("is unresolved when no invoice carries that bill_no at all", () => {
+    const index = buildInvoiceBillNoIndex([
+      { src_bill_no: "09-129/20-21", target_id: "inv-uuid-1", src_cost_center: "BSS/BLD/06/650" },
+    ]);
+    const result = matchCreditNoteInvoice("09-999/20-21", "BO/DEL", index, invoiceVendorGstinByTargetId);
+    expect(result.status).toBe("unresolved");
+    expect(result.error).toContain("no invoice found with bill_no");
+  });
+
+  it("is ambiguous when more than one invoice shares the bill_no (the design §2 collision bug)", () => {
+    const index = buildInvoiceBillNoIndex([
+      { src_bill_no: "09-129/20-21", target_id: "inv-uuid-1", src_cost_center: "BSS/BLD/06/650" },
+      { src_bill_no: "09-129/20-21", target_id: "inv-uuid-2", src_cost_center: "BO/DEL" },
+    ]);
+    const result = matchCreditNoteInvoice(
+      "09-129/20-21",
+      "BSS/BLD/06/650",
+      index,
+      invoiceVendorGstinByTargetId,
+    );
+    expect(result.status).toBe("ambiguous");
+    expect(result.error).toContain("2 candidate invoices share this bill_no");
+    expect(result.targetInvoiceId).toBeNull();
+  });
+
+  it("is ambiguous (not silently accepted) when the sole candidate's cost centre disagrees with the credit note's", () => {
+    const index = buildInvoiceBillNoIndex([
+      { src_bill_no: "09-129/20-21", target_id: "inv-uuid-1", src_cost_center: "BSS/BLD/06/650" },
+    ]);
+    const result = matchCreditNoteInvoice("09-129/20-21", "BO/DEL", index, invoiceVendorGstinByTargetId);
+    expect(result.status).toBe("ambiguous");
+    expect(result.error).toContain("disagrees with credit note's cost centre");
+    expect(result.targetInvoiceId).toBeNull();
+  });
+
+  it("ignores invoices with a blank bill_no when indexing (design §5.4's never-billed rows)", () => {
+    const index = buildInvoiceBillNoIndex([
+      { src_bill_no: null, target_id: "inv-uuid-1", src_cost_center: "BSS/BLD/06/650" },
+      { src_bill_no: "", target_id: "inv-uuid-2", src_cost_center: "BSS/BLD/06/650" },
+    ]);
+    expect(index.size).toBe(0);
   });
 });
 

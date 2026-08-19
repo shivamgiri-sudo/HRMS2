@@ -3,6 +3,7 @@ import {
   shouldExcludeInvoice,
   shouldExcludeCreditNote,
   mapGstFields,
+  computeGstType,
   normalizeCategory,
   buildDescription,
   parseLegacyDecimal,
@@ -76,12 +77,71 @@ describe("normalizeCategory (design §5.5 — built from a fresh live query, not
     expect(normalizeCategory("first_bill")).toBe("first_bill");
     expect(normalizeCategory("Setup Cost")).toBe("Setup Cost");
   });
-  it("normalizes empty string to null, not a fabricated bucket", () => {
-    expect(normalizeCategory("")).toBeNull();
-    expect(normalizeCategory("   ")).toBeNull();
+  it("defaults blank/empty string to 'Others' (A1 addendum A2 — column is NOT NULL)", () => {
+    expect(normalizeCategory("")).toBe("Others");
+    expect(normalizeCategory("   ")).toBe("Others");
   });
-  it("normalizes null to null", () => {
-    expect(normalizeCategory(null)).toBeNull();
+  it("defaults null to 'Others'", () => {
+    expect(normalizeCategory(null)).toBe("Others");
+  });
+});
+
+describe("computeGstType (2026-08-19 addendum A1 — supersedes mapGstFields's NULL result for blank GSTType)", () => {
+  it("passes a non-blank legacy GSTType straight through, same as mapGstFields", () => {
+    expect(
+      computeGstType({ gstTypeRaw: "Integrated", vendorGstin: null, branchStateCode: null }),
+    ).toEqual({ target_gst_type: "Integrated", target_apply_gst: 1 });
+    expect(
+      computeGstType({ gstTypeRaw: "  Intrastate  ", vendorGstin: null, branchStateCode: "07" }),
+    ).toEqual({ target_gst_type: "Intrastate", target_apply_gst: 1 });
+  });
+
+  it("derives Intrastate when the vendor GSTIN's state prefix matches the branch state code", () => {
+    expect(
+      computeGstType({ gstTypeRaw: null, vendorGstin: "07AAACV1234A1Z5", branchStateCode: "07" }),
+    ).toEqual({ target_gst_type: "Intrastate", target_apply_gst: 1 });
+  });
+
+  it("derives Integrated when the vendor GSTIN's state prefix differs from the branch state code", () => {
+    expect(
+      computeGstType({ gstTypeRaw: null, vendorGstin: "09AAACV1234A1Z5", branchStateCode: "07" }),
+    ).toEqual({ target_gst_type: "Integrated", target_apply_gst: 1 });
+  });
+
+  it("is case-insensitive / trims the GSTIN before validating", () => {
+    expect(
+      computeGstType({ gstTypeRaw: "", vendorGstin: "  07aaacv1234a1z5  ", branchStateCode: "07" }),
+    ).toEqual({ target_gst_type: "Intrastate", target_apply_gst: 1 });
+  });
+
+  it("falls back to Not Applicable when the GSTIN is blank", () => {
+    expect(computeGstType({ gstTypeRaw: null, vendorGstin: null, branchStateCode: "07" })).toEqual({
+      target_gst_type: "Not Applicable",
+      target_apply_gst: 0,
+    });
+    expect(computeGstType({ gstTypeRaw: "", vendorGstin: "", branchStateCode: "07" })).toEqual({
+      target_gst_type: "Not Applicable",
+      target_apply_gst: 0,
+    });
+  });
+
+  it("falls back to Not Applicable when the GSTIN is 'NA' or otherwise malformed", () => {
+    expect(computeGstType({ gstTypeRaw: null, vendorGstin: "NA", branchStateCode: "07" })).toEqual({
+      target_gst_type: "Not Applicable",
+      target_apply_gst: 0,
+    });
+    expect(
+      computeGstType({ gstTypeRaw: null, vendorGstin: "not-a-gstin", branchStateCode: "07" }),
+    ).toEqual({ target_gst_type: "Not Applicable", target_apply_gst: 0 });
+  });
+
+  it("falls back to Not Applicable when no branch state code is resolvable, even with a valid-looking GSTIN", () => {
+    expect(
+      computeGstType({ gstTypeRaw: null, vendorGstin: "07AAACV1234A1Z5", branchStateCode: null }),
+    ).toEqual({ target_gst_type: "Not Applicable", target_apply_gst: 0 });
+    expect(
+      computeGstType({ gstTypeRaw: null, vendorGstin: "07AAACV1234A1Z5", branchStateCode: "" }),
+    ).toEqual({ target_gst_type: "Not Applicable", target_apply_gst: 0 });
   });
 });
 
