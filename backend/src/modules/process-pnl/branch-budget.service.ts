@@ -930,18 +930,22 @@ export const branchBudgetService = {
   },
 
   async listPendingForReviewer(actorRole: string, userId: string, userRoles: string[]) {
-    const targetStatus =
-      actorRole === "branch_head" ? "submitted" :
-      actorRole === "finance_head" ? "branch_head_approved" :
-      actorRole === "accounts_head" ? "finance_head_approved" : null;
-    if (!targetStatus) return [];
+    // Derived from REVIEW_STAGES so the inbox can never disagree with what review() will accept.
+    // This used to be its own role->status ternary, which broke the moment Finance Head gained
+    // authority at every stage: they could approve a 'submitted' budget but their inbox only ever
+    // listed 'branch_head_approved' ones, so the work was invisible until someone else surfaced
+    // it. super_admin was missing from the ternary entirely and always got an empty inbox.
+    const role = actorRole.toLowerCase();
+    const targetStatuses = (Object.keys(REVIEW_STAGES) as (keyof typeof REVIEW_STAGES)[])
+      .filter((status) => REVIEW_STAGES[status].roles.has(role));
+    if (targetStatuses.length === 0) return [];
     const branchScope = await resolveFinanceBranchScope({
       userId,
       primaryRole: actorRole,
       userRoles,
     });
-    const where: string[] = ["h.status = ?"];
-    const params: unknown[] = [targetStatus];
+    const where: string[] = [`h.status IN (${targetStatuses.map(() => "?").join(", ")})`];
+    const params: unknown[] = [...targetStatuses];
     if (branchScope !== undefined) {
       where.push("h.branch_id = ?");
       params.push(branchScope);
@@ -957,6 +961,7 @@ export const branchBudgetService = {
               h.pnl_budget_amount   AS pnl_budget,
               h.revision_no         AS revision_number,
               h.created_at, h.updated_at,
+              h.branch_id,
               bm.branch_name
          FROM finance_budget_header h
          LEFT JOIN branch_master bm ON bm.id = h.branch_id

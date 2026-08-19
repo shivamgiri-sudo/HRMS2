@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Inbox, Loader2, AlertTriangle } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -6,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 
 interface PendingBudget {
   id: string;
+  branch_id?: string | null;
   budget_number: string;
   period_code: string;
   status: string;
@@ -43,9 +45,25 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function BudgetApprovalInbox({
   onViewBudget,
+  branchId,
+  period,
 }: {
   onViewBudget: (id: string) => void;
+  /** The workspace's current branch/period. The inbox scopes to these so it agrees with the
+   *  rest of the page instead of contradicting it. */
+  branchId?: string;
+  period?: string;
 }) {
+  /**
+   * Scoped by default, but NEVER silently.
+   *
+   * The endpoint returns everything awaiting this user across all branches and periods, which is
+   * the right thing for it to return — an approver who only ever sees the branch they happen to
+   * have selected will miss work. So the filtering is done here, in view, and anything filtered
+   * out is counted and one click away. Hiding a pending approval with no trace would be a worse
+   * bug than the inconsistency this fixes.
+   */
+  const [showAll, setShowAll] = useState(false);
   const query = useQuery({
     queryKey: ["budget-pending-my-review"],
     queryFn: async () => {
@@ -76,14 +94,43 @@ export function BudgetApprovalInbox({
     );
   }
 
-  const rows = query.data ?? [];
+  const allRows = query.data ?? [];
+  const scopeActive = !showAll && Boolean(branchId || period);
+  const matchesScope = (row: PendingBudget) =>
+    (!branchId || !row.branch_id || row.branch_id === branchId)
+    && (!period || row.period_code === period);
+  const rows = scopeActive ? allRows.filter(matchesScope) : allRows;
+  const hiddenCount = allRows.length - rows.length;
+
+  /** Rendered under both the empty state and the populated list, so the escape hatch is present
+   *  in the case that matters most: nothing here, but work waiting elsewhere. */
+  const scopeNotice = hiddenCount > 0 ? (
+    <p className="text-xs text-amber-700">
+      {hiddenCount} more pending your approval in other branches or periods.{" "}
+      <button type="button" className="font-semibold underline" onClick={() => setShowAll(true)}>
+        Show all
+      </button>
+    </p>
+  ) : showAll && (branchId || period) ? (
+    <p className="text-xs text-slate-500">
+      Showing every branch and period.{" "}
+      <button type="button" className="font-semibold underline" onClick={() => setShowAll(false)}>
+        Back to {[branchId ? "this branch" : null, period].filter(Boolean).join(" · ")}
+      </button>
+    </p>
+  ) : null;
 
   if (rows.length === 0) {
     return (
       <div className="flex flex-col items-center gap-2 py-14 text-center">
         <Inbox className="h-10 w-10 text-slate-300" />
         <p className="text-sm font-semibold text-slate-700">Inbox is empty</p>
-        <p className="text-xs text-slate-500">No budgets are currently awaiting your review.</p>
+        <p className="text-xs text-slate-500">
+          {scopeActive && (branchId || period)
+            ? "Nothing awaiting your review for the selected branch and period."
+            : "No budgets are currently awaiting your review."}
+        </p>
+        {scopeNotice}
       </div>
     );
   }
@@ -91,8 +138,10 @@ export function BudgetApprovalInbox({
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-500">
-        {rows.length} budget{rows.length !== 1 ? "s" : ""} pending your approval · sorted oldest first
+        {rows.length} budget{rows.length !== 1 ? "s" : ""} pending your approval
+        {scopeActive && period ? ` for ${period}` : ""} · sorted oldest first
       </p>
+      {scopeNotice}
       <div className="overflow-auto rounded-2xl border border-slate-200 bg-white">
         <table className="min-w-full text-xs">
           <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">

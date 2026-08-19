@@ -312,11 +312,18 @@ export const departmentService = {
     const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
     // Pagination
+    // The cap silently truncated. 439 of 928 cost centres are active today against a limit of
+    // 500, so the callers that ask for limit=500 fit — with 61 rows of headroom. One bulk
+    // reactivation crosses that line, and because the rows come back ORDER BY cost_centre_code
+    // and are then filtered by branch in the browser, the branches whose codes sort last would
+    // lose their cost centres from the picker entirely, with no error and no empty state. One
+    // extra row is fetched purely to detect the edge and report it; it is never returned.
     let limitClause = "";
+    let limitVal: number | null = null;
     if (limit && limit > 0) {
-      const limitVal = Math.min(limit, 500);
+      limitVal = Math.min(limit, 500);
       const offset = page && page > 1 ? (page - 1) * limitVal : 0;
-      limitClause = `LIMIT ${limitVal} OFFSET ${offset}`;
+      limitClause = `LIMIT ${limitVal + 1} OFFSET ${offset}`;
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -597,6 +604,14 @@ export const costCentreService = {
       params
     );
 
+    // Drop the probe row and record that more exist, so the caller can say so instead of
+    // presenting a short list as if it were complete.
+    let truncated = false;
+    if (limitVal !== null && rows.length > limitVal) {
+      truncated = true;
+      rows.length = limitVal;
+    }
+
     if (employeeId) {
       for (const item of rows) {
         try {
@@ -607,7 +622,13 @@ export const costCentreService = {
         }
       }
     }
-    return rows;
+    if (truncated) {
+      console.warn(
+        `costCentreService.list truncated at ${limitVal} rows — the caller is seeing a partial `
+        + `cost-centre list. Raise the limit or paginate.`
+      );
+    }
+    return Object.assign(rows, { truncated });
   },
 
   getById: (id: string) => getById("cost_centre_master", id),

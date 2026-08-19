@@ -387,10 +387,33 @@ function isStalePlannedMarker(item: BudgetCoverageItem) {
   return item.planning_status === "planned" && item.budget_line_count <= 0;
 }
 
-function Metric({ label, value, tone = "slate" }: {
+/**
+ * What the three utilisation figures actually mean, in one place.
+ *
+ * "The reserved term here means what — somewhere it is showing amount and somewhere not" was a
+ * real report. Both halves have the same cause: the word was never defined anywhere in the UI, and
+ * because reserved_amount is NOT NULL DEFAULT 0 a budget with no GRN activity shows a legitimate
+ * Rs 0.00 that reads as missing data. It is not missing — it means nothing has been committed yet.
+ * So these are definitions rather than a formatting change: rendering a dash instead of Rs 0.00
+ * would replace one wrong impression with another.
+ */
+export const UTILISATION_HINTS = {
+  reserved:
+    "Committed to a GRN that Branch Head has approved but Finance Head has not. The money is "
+    + "earmarked, not yet spent. Rs 0.00 means no GRN has reserved against this budget yet.",
+  consumed:
+    "Fully approved spend — a GRN that has cleared Finance Head. Reserved becomes Consumed at "
+    + "that point; it is not counted twice.",
+  available:
+    "Gross budget minus Reserved minus Consumed. This is what can still be committed.",
+} as const;
+
+function Metric({ label, value, tone = "slate", hint }: {
   label: string;
   value: string;
   tone?: "slate" | "blue" | "emerald" | "amber" | "rose";
+  /** Plain-language definition, shown on hover. */
+  hint?: string;
 }) {
   const tones = {
     slate: "border-slate-200 bg-white",
@@ -400,8 +423,11 @@ function Metric({ label, value, tone = "slate" }: {
     rose: "border-rose-200 bg-rose-50/80",
   };
   return (
-    <div className={`rounded-2xl border p-4 ${tones[tone]}`}>
-      <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-600">{label}</p>
+    <div className={`rounded-2xl border p-4 ${tones[tone]}`} title={hint}>
+      <p className="text-xs font-semibold uppercase tracking-[0.15em] text-slate-600">
+        {label}
+        {hint ? <span className="ml-1 cursor-help font-normal text-slate-400" aria-hidden>&#9432;</span> : null}
+      </p>
       <p className="mt-2 text-lg font-black text-slate-950">{value}</p>
     </div>
   );
@@ -924,6 +950,10 @@ export default function BranchBudgetManagementWorkspace() {
    * then rejected, or silently missing, everywhere the engine ran. The two lists now agree.
    * Falls back to the branch filter alone while that query is still in flight.
    */
+  /* The cost-centre endpoint caps at 500 rows and used to truncate silently. It now reports it,
+   * and a partial list here means the "Direct to cost centre" picker is quietly missing options —
+   * worth saying out loud rather than letting someone conclude a cost centre does not exist. */
+  const costCentresTruncated = Boolean((costCentreResponse as { truncated?: boolean } | undefined)?.truncated);
   const engineCostCentreIds = new Set(activeCostCentres.map((cc) => cc.id));
   const costCentres = unwrapList(costCentreResponse).filter((item) => {
     if (!branchId) return false;
@@ -1644,6 +1674,17 @@ export default function BranchBudgetManagementWorkspace() {
                   above the grid that actually does the work. */}
               <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500">{/* Period moved to the context strip above, which is visible on every tab — see the comment
                   there. Kept out of this card rather than duplicated, so there is exactly one control. */}<div className="w-56 space-y-1"><Label>{branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={branchLocked} onChange={(event) => { const v = event.target.value; if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "branch", value: v }); } else { setBranchId(v); setSavedBudgetId(null); setLoadedDetailId(null); } }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branchLabel(branch)}</option>)}</select></div><div className="w-28 space-y-1"><Label>Financial year</Label><div className="flex h-9 items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-600" title="Set by Period — April to March. Not independently editable.">{financialYear(period)}</div></div></CardContent></Card>
+              {costCentresTruncated && (
+                <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    The cost-centre list was cut off at the server limit, so the cost-centre picker
+                    below is incomplete. A cost centre missing from it may still exist — do not treat
+                    its absence as confirmation. Ask an administrator to raise the limit.
+                  </span>
+                </div>
+              )}
+
               {/* The branch picker above is locked and empty whenever capabilities failed to load.
                   Say why — an unexplained empty dropdown reads as a broken page, and the server's
                   own message ("not mapped to an active employee branch") is the actionable one. */}
@@ -2165,6 +2206,14 @@ export default function BranchBudgetManagementWorkspace() {
                 <CardHeader>
                   <CardTitle>Approval and utilization</CardTitle>
                   <p className="mt-1 text-xs text-slate-500">Click a budget row to see its utilization breakdown below. Click <span className="font-medium">Review</span> to view its full detail before approving, requesting revision, or rejecting.</p>
+                  {/* Stated in the open, not only as a tooltip: "what does Reserved mean" was asked
+                      directly, and a figure nobody can interpret is worse than no figure. */}
+                  <p className="mt-1 text-[11px] leading-relaxed text-slate-400">
+                    <span className="font-semibold text-amber-700">Reserved</span> = committed to a GRN approved by Branch Head, awaiting Finance Head ·{" "}
+                    <span className="font-semibold text-emerald-700">Consumed</span> = fully approved spend ·{" "}
+                    <span className="font-semibold text-slate-600">Available</span> = gross − reserved − consumed.
+                    {" "}Rs 0.00 means nothing committed yet, not missing data.
+                  </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {Boolean(openCorrectionCount) && (
@@ -2216,9 +2265,9 @@ export default function BranchBudgetManagementWorkspace() {
                         </div>
                         <Metric label="Gross" value={money(Number(budget.gross_budget_amount))} />
                         <Metric label="P&L budget" value={money(Number(budget.pnl_budget_amount))} />
-                        <Metric label="Reserved" value={money(Number(budget.reserved_amount))} tone="amber" />
-                        <Metric label="Consumed" value={money(Number(budget.consumed_amount))} tone="emerald" />
-                        <Metric label="Available" value={money(available)} tone={available < 0 ? "rose" : "slate"} />
+                        <Metric label="Reserved" value={money(Number(budget.reserved_amount))} tone="amber" hint={UTILISATION_HINTS.reserved} />
+                        <Metric label="Consumed" value={money(Number(budget.consumed_amount))} tone="emerald" hint={UTILISATION_HINTS.consumed} />
+                        <Metric label="Available" value={money(available)} tone={available < 0 ? "rose" : "slate"} hint={UTILISATION_HINTS.available} />
                         <div className="flex flex-wrap justify-end gap-2">
                           <Button size="sm" variant="outline" onClick={() => setReviewingBudgetId(budget.id)}>
                             <Eye className="mr-1 h-3.5 w-3.5" />{canReview(budget) ? "Review" : "View"}
@@ -2736,6 +2785,8 @@ export default function BranchBudgetManagementWorkspace() {
 
             <TabsContent value="inbox" className="space-y-5">
               <BudgetApprovalInbox
+                branchId={branchId || undefined}
+                period={period || undefined}
                 onViewBudget={(id) => {
                   setReviewingBudgetId(id);
                   setTab("approval");

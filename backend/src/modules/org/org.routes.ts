@@ -206,7 +206,9 @@ router.get("/cost-centres", h(async (req: Request, res: Response) => {
     process_id: process_id as string | undefined,
   };
   const rows = await costCentreService.list(options);
-  return res.json({ data: rows });
+  // truncated rides alongside data rather than wrapping it, so every existing caller that reads
+  // response.data keeps working unchanged while a caller that cares can warn the user.
+  return res.json({ data: rows, truncated: Boolean((rows as { truncated?: boolean }).truncated) });
 }));
 
 // Cost-centres: billing summary for last 3 months (must be before /:id route)
