@@ -119,6 +119,41 @@ async function getAllAttendance(date: string): Promise<{ byDate: Map<string, num
 
 async function getAllPlannedHc(date: string): Promise<Map<string, number>> {
   const map = new Map<string, number>();
+
+  // Preferred: the live WFM/roster engine (wfm.roster.service.ts /
+  // auto-roster-synced.service.ts write here — 400k+ rows). It has no
+  // process_id/branch_id column, so join through employees, matching the
+  // pattern used elsewhere against this table (auto-roster-synced.service.ts,
+  // rta.service.ts). Only 'published' rows count as committed plan (draft
+  // assignments aren't a firm plan yet — same filter reconciliation uses).
+  // The engine publishes in arrears, so if `date` has no rows yet (e.g. it's
+  // today and this week hasn't been published), fall back to the most recent
+  // published roster_date at or before it — same "latest" pattern already
+  // used for attendance lag in getAllAttendance() above.
+  if (await tableExists("wfm_roster_assignment")) {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.process_id, COUNT(DISTINCT ra.employee_id) AS cnt
+         FROM wfm_roster_assignment ra
+         JOIN employees e ON e.id = ra.employee_id
+        WHERE ra.publish_status = 'published'
+          AND ra.roster_date = (
+                SELECT MAX(roster_date) FROM wfm_roster_assignment
+                 WHERE roster_date <= ? AND publish_status = 'published'
+              )
+        GROUP BY e.process_id`,
+      [date]
+    );
+    for (const row of rows as any[]) {
+      if (row.process_id) map.set(String(row.process_id), Number(row.cnt ?? 0));
+    }
+    if (map.size > 0) return map;
+  }
+
+  // Secondary: roster_assignment. Separate, reachable feature (own route +
+  // NativeRosterMasterBuilder.tsx UI) that currently holds 0 rows in
+  // production but isn't dead code — keep it as a real fallback so this
+  // function picks it up automatically if it's ever adopted, without
+  // preferring an empty table over the engine that's actually populated.
   if (await tableExists("roster_assignment")) {
     // roster_assignment has no process_id column — join through employees
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -132,8 +167,10 @@ async function getAllPlannedHc(date: string): Promise<Map<string, number>> {
     for (const row of rows as any[]) {
       if (row.process_id) map.set(String(row.process_id), Number(row.cnt ?? 0));
     }
-    return map;
+    if (map.size > 0) return map;
   }
+
+  // Final fallback: active employee headcount by process (no roster data at all).
   if (await tableExists("employees")) {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT process_id, COUNT(*) AS cnt
