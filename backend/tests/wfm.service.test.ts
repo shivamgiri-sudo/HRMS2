@@ -201,6 +201,12 @@ describe("wfmService.submitRegularization", () => {
     exec.mockResolvedValueOnce([[{ branch_id: null }], []]);
     exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]);
     exec.mockResolvedValueOnce([[], []]); // inbox employee lookup
+    // REGULARIZATION_PENDING work-inbox trigger (added 2026-08-19): a name lookup, then
+    // createWorkItemIfNotExists's own dedup-check SELECT + INSERT — 3 extra db.execute
+    // calls between the inbox-notification block and the SMS block below.
+    exec.mockResolvedValueOnce([[], []]); // trigger: employee name lookup
+    exec.mockResolvedValueOnce([[], []]); // trigger: work_item dedup check (none pending)
+    exec.mockResolvedValueOnce([{ affectedRows: 1 }, []]); // trigger: work_item INSERT
     exec.mockResolvedValueOnce([[], []]); // SMS employee lookup
     exec.mockResolvedValueOnce([[fakeReg], []]);
     const r = await wfmService.submitRegularization(
