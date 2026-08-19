@@ -551,7 +551,12 @@
     "1241_minimum_wage_gate_columns.sql",
     "migrations/430_rbac_matrix_applied_grants.sql",
     "1242_employee_loans_approval_gate.sql",
-    "migrations/1303_client_billing_page_access.sql"
+    "migrations/1303_client_billing_page_access.sql",
+    "1243_backfill_branch_gst_state_code.sql",
+    "1244_tds_slab_2025_26_new_regime_dedup.sql",
+    "1245_fix_head_office_cost_centre_branch_mixup.sql",
+    "1246_add_computers_26_27_cost_sub_head.sql",
+    "migrations/1304_client_billing_cutover_schema.sql"
   ],
   "approvedDeletions": [
     {
@@ -571,7 +576,8 @@
     "migrations/1301_client_billing_approval_workflow.sql",
     "migrations/1302_client_billing_credit_notes.sql",
     "migrations/430_rbac_matrix_applied_grants.sql",
-    "migrations/1303_client_billing_page_access.sql"
+    "migrations/1303_client_billing_page_access.sql",
+    "migrations/1304_client_billing_cutover_schema.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
@@ -663,6 +669,7 @@
     "1214_repair_live_payroll_schema_gaps.sql",
     "1234_imprest_allocation_accounting_period.sql",
     "1239_cost_centre_avore_ahmedabad.sql",
+    "1247_restore_cost_centre_display_names.sql",
     "127_ats_candidate_unique_constraints.sql",
     "133_phase2_security_fixes.sql",
     "136_incentive_module.sql",
