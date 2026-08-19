@@ -263,7 +263,7 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
            AND NOT EXISTS (
              SELECT 1 FROM billing_invoice_particular_snapshot p2
               WHERE p2.cost_centre_code COLLATE utf8mb4_unicode_ci = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
-                AND p2.period_code = ps.period_code
+                AND p2.period_code COLLATE utf8mb4_unicode_ci = ps.period_code COLLATE utf8mb4_unicode_ci
            )` : ''}
         UNION ALL
         -- SOURCE C: credit notes (always subtracted regardless of which source provided the positive)

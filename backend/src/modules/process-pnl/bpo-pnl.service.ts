@@ -1202,18 +1202,29 @@ async function getGrnVendorActuals(
     const bucketExpr = columns.has("pnl_bucket")
       ? "COALESCE(vpt.pnl_bucket, CASE WHEN vpt.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END)"
       : "CASE WHEN vpt.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END";
+    // GROUP BY through a derived table, not by the raw alias names: vendor_payment_tracking
+    // carries real columns named process_id and pnl_bucket, so `GROUP BY ... process_id,
+    // pnl_bucket` resolved to those raw columns rather than the COALESCE/CASE aliases above
+    // them (SQL prefers a real column over a same-named SELECT alias) — every row whose
+    // vpt.pnl_bucket was NULL fell into one NULL group whose CASE-derived bucket still depends
+    // on vpt.cost_class, so MySQL rightly refused it under only_full_group_by (ER_WRONG_FIELD_
+    // WITH_GROUP), and the whole /pnl/bpo/summary and /pnl/bpo/export endpoints 500'd. A derived
+    // table gives the outer GROUP BY columns that cannot collide with any real table column.
     const rows = await safeRows<RowDataPacket>(
-      `SELECT
-          vpt.branch_id,
-          ${resolveProcess("vpt")} AS process_id,
-          ${bucketExpr} AS pnl_bucket,
-          SUM(${amountExpr}) AS amount,
-          COUNT(*) AS item_count
-         FROM vendor_payment_tracking vpt
-         LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
-        WHERE ${recognitionExpr} = ?
-          AND ${actualVendorStatusExpr(columns)}
-        GROUP BY vpt.branch_id, process_id, pnl_bucket`,
+      `SELECT branch_id, process_id, pnl_bucket, SUM(amount) AS amount, SUM(item_count) AS item_count
+         FROM (
+           SELECT
+               vpt.branch_id AS branch_id,
+               ${resolveProcess("vpt")} AS process_id,
+               ${bucketExpr} AS pnl_bucket,
+               ${amountExpr} AS amount,
+               1 AS item_count
+             FROM vendor_payment_tracking vpt
+             LEFT JOIN cost_centre_master ccm ON ccm.id = vpt.cost_centre_id
+            WHERE ${recognitionExpr} = ?
+              AND ${actualVendorStatusExpr(columns)}
+         ) x
+        GROUP BY branch_id, process_id, pnl_bucket`,
       [period]
     );
     for (const row of rows) {
@@ -1245,23 +1256,29 @@ async function getGrnVendorActuals(
     const bucketExpr = columns.has("pnl_bucket")
       ? "COALESCE(g.pnl_bucket, CASE WHEN g.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END)"
       : "CASE WHEN g.cost_class = 'direct' THEN 'dsc_non_people' ELSE 'bmc_non_people' END";
+    // Same derived-table fix as the vendor_payment_tracking query above, and for the identical
+    // reason: grn_request also carries real process_id/pnl_bucket columns that shadowed the
+    // COALESCE/CASE aliases in a raw GROUP BY.
     const rows = await safeRows<RowDataPacket>(
-      `SELECT
-          g.branch_id,
-          ${resolveProcess("g")} AS process_id,
-          ${bucketExpr} AS pnl_bucket,
-          SUM(${amountExpr}) AS amount,
-          COUNT(*) AS item_count
-         FROM grn_request g
-         LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
-         LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = g.id
-        WHERE ${recognitionExpr} = ?
-          AND LOWER(REPLACE(COALESCE(g.status, ''), '_', ' ')) IN (
-            'approved','finance head approved','pending accounts payment','payment scheduled',
-            'partially paid','paid','posted'
-          )
-          AND vpt.id IS NULL
-        GROUP BY g.branch_id, process_id, pnl_bucket`,
+      `SELECT branch_id, process_id, pnl_bucket, SUM(amount) AS amount, SUM(item_count) AS item_count
+         FROM (
+           SELECT
+               g.branch_id AS branch_id,
+               ${resolveProcess("g")} AS process_id,
+               ${bucketExpr} AS pnl_bucket,
+               ${amountExpr} AS amount,
+               1 AS item_count
+             FROM grn_request g
+             LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
+             LEFT JOIN vendor_payment_tracking vpt ON vpt.grn_request_id = g.id
+            WHERE ${recognitionExpr} = ?
+              AND LOWER(REPLACE(COALESCE(g.status, ''), '_', ' ')) IN (
+                'approved','finance head approved','pending accounts payment','payment scheduled',
+                'partially paid','paid','posted'
+              )
+              AND vpt.id IS NULL
+         ) x
+        GROUP BY branch_id, process_id, pnl_bucket`,
       [period]
     );
     for (const row of rows) {

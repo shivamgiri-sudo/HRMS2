@@ -203,8 +203,12 @@ const OWN_COMPANY_SQL = `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name
  *              Used only where SOURCE A has no lines, preventing double-counting.
  *              Amounts are integer paise — divided by 100 to produce rupees.
  *
- * Both tables use utf8mb4_0900_ai_ci while cost_centre_master is utf8mb4_unicode_ci, so all
- * cost_centre_code joins need explicit COLLATE.
+ * Only billing_provision_snapshot uses utf8mb4_0900_ai_ci — billing_invoice_particular_snapshot
+ * and cost_centre_master both already use utf8mb4_unicode_ci (verified via information_schema,
+ * 2026-08-19; the "both tables" wording this comment used to carry was itself the reason the
+ * period_code half of the NOT EXISTS guard below went unfixed while cost_centre_code got COLLATE
+ * — every column compared against billing_provision_snapshot needs it, cost_centre_code was never
+ * the only one).
  */
 async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
   const out = new Map<string, number>();
@@ -241,7 +245,7 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
   provWhere.push(`NOT EXISTS (
     SELECT 1 FROM billing_invoice_particular_snapshot p2
     WHERE p2.cost_centre_code COLLATE utf8mb4_unicode_ci = ps.cost_centre_code COLLATE utf8mb4_unicode_ci
-      AND p2.period_code = ps.period_code
+      AND p2.period_code COLLATE utf8mb4_unicode_ci = ps.period_code COLLATE utf8mb4_unicode_ci
   )`);
 
   const allParams = hasProvision ? [...invParams, ...provParams] : invParams;
