@@ -21,7 +21,7 @@ import { db } from "../../db/mysql.js";
  * ai_rate_limit_bucket's PRIMARY KEY (user_id, window_start) — the working precedent this was
  * modeled on, which also has no surrogate id.
  */
-async function nextSequenceValue(kind: "proforma" | "bill", scopeKey: string): Promise<number> {
+async function nextSequenceValue(kind: "proforma" | "bill" | "credit_note", scopeKey: string): Promise<number> {
   const [result] = await db.execute<ResultSetHeader>(
     `INSERT INTO client_invoice_number_sequence (kind, scope_key, \`last_value\`, updated_at)
      VALUES (?, ?, LAST_INSERT_ID(1), NOW())
@@ -51,4 +51,18 @@ async function mintBillNumber(stateCode: string, companyName: string, financeYea
   return `${stateCode}-${idx}/${fyShort}`;
 }
 
-export const clientBillingNumberingService = { mintProformaNumber, mintBillNumber };
+/**
+ * New format (fixes a confirmed legacy bug: db_bill's credit_no is a DD-MM/FY-FY date stamp
+ * that collides whenever two credit notes are issued the same day — proven live, ids 163/164
+ * both carry "18-08/26-27"). CN-<state_code>-<NN>/<FYshort>, scoped per (state_code,
+ * company_name, finance_year) — same scoping and zero-pad rule as mintBillNumber.
+ */
+async function mintCreditNoteNumber(stateCode: string, companyName: string, financeYear: string): Promise<string> {
+  const scopeKey = `${stateCode}|${companyName}|${financeYear}`;
+  const n = await nextSequenceValue("credit_note", scopeKey);
+  const idx = n < 10 ? `0${n}` : String(n);
+  const fyShort = financeYear.slice(2);
+  return `CN-${stateCode}-${idx}/${fyShort}`;
+}
+
+export const clientBillingNumberingService = { mintProformaNumber, mintBillNumber, mintCreditNoteNumber };
