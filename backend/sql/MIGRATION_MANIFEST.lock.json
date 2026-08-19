@@ -556,7 +556,8 @@
     "1244_tds_slab_2025_26_new_regime_dedup.sql",
     "1245_fix_head_office_cost_centre_branch_mixup.sql",
     "1246_add_computers_26_27_cost_sub_head.sql",
-    "migrations/1304_client_billing_cutover_schema.sql"
+    "migrations/1304_client_billing_cutover_schema.sql",
+    "migrations/1305_client_billing_cutover_staging_fix.sql"
   ],
   "approvedDeletions": [
     {
@@ -577,7 +578,8 @@
     "migrations/1302_client_billing_credit_notes.sql",
     "migrations/430_rbac_matrix_applied_grants.sql",
     "migrations/1303_client_billing_page_access.sql",
-    "migrations/1304_client_billing_cutover_schema.sql"
+    "migrations/1304_client_billing_cutover_schema.sql",
+    "migrations/1305_client_billing_cutover_staging_fix.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
