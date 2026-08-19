@@ -41,6 +41,8 @@ export interface ReimbursementClaim {
   reviewed_by: string | null;
   reviewed_at: string | null;
   remarks: string | null;
+  payment_reference: string | null;
+  paid_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -289,5 +291,63 @@ export const benefitsService = {
       total_approved: Number(row.total_approved ?? 0),
       total_amount_approved: Number(row.total_amount_approved ?? 0),
     };
+  },
+
+  // ─── Mark Claim as Paid ────────────────────────────────────────────────────
+
+  async payClaim(id: string, paymentReference: string): Promise<ReimbursementClaim> {
+    const [check] = await db.execute<RowDataPacket[]>(
+      "SELECT id, status FROM reimbursement_claim WHERE id = ? LIMIT 1",
+      [id]
+    );
+    const existing = (check as { id: string; status: string }[])[0];
+    if (!existing) throw Object.assign(new Error("Claim not found"), { statusCode: 404 });
+    if (existing.status !== "approved") {
+      throw Object.assign(
+        new Error(`Cannot mark as paid: claim status is '${existing.status}', expected 'approved'`),
+        { statusCode: 400 }
+      );
+    }
+
+    await db.execute(
+      `UPDATE reimbursement_claim
+       SET status = 'paid', payment_reference = ?, paid_at = NOW(), updated_at = NOW()
+       WHERE id = ?`,
+      [paymentReference, id]
+    );
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT rc.*,
+              CONCAT(e.first_name, ' ', e.last_name) AS employee_name,
+              e.employee_code
+       FROM reimbursement_claim rc
+       LEFT JOIN employees e ON e.id = rc.employee_id
+       WHERE rc.id = ? LIMIT 1`,
+      [id]
+    );
+    return (rows as ReimbursementClaim[])[0];
+  },
+
+  // ─── Update Plan Active/Inactive ──────────────────────────────────────────
+
+  async updatePlan(id: string, isActive: boolean): Promise<BenefitPlan> {
+    const [check] = await db.execute<RowDataPacket[]>(
+      "SELECT id FROM benefit_plan WHERE id = ? LIMIT 1",
+      [id]
+    );
+    if (!(check as RowDataPacket[]).length) {
+      throw Object.assign(new Error("Benefit plan not found"), { statusCode: 404 });
+    }
+
+    await db.execute(
+      "UPDATE benefit_plan SET is_active = ?, updated_at = NOW() WHERE id = ?",
+      [isActive ? 1 : 0, id]
+    );
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM benefit_plan WHERE id = ? LIMIT 1",
+      [id]
+    );
+    return (rows as BenefitPlan[])[0];
   },
 };

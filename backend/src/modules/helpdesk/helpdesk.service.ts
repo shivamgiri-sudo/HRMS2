@@ -373,6 +373,7 @@ export const helpdeskService = {
     severity?: string;
     from?: string;
     to?: string;
+    q?: string;
   }) {
     const conds: string[] = [];
     const params: unknown[] = [];
@@ -382,6 +383,10 @@ export const helpdeskService = {
     if (filters.severity)    { conds.push("severity = ?");    params.push(filters.severity); }
     if (filters.from)        { conds.push("created_at >= ?"); params.push(filters.from + " 00:00:00"); }
     if (filters.to)          { conds.push("created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
+    if (filters.q?.trim())   {
+      conds.push("(grievance_code LIKE ? OR employee_id IN (SELECT id FROM employees WHERE full_name LIKE ?))");
+      params.push(`%${filters.q.trim()}%`, `%${filters.q.trim()}%`);
+    }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
     const [rows] = await db.execute<RowDataPacket[]>(

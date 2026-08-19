@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import {
   AlertTriangle, CheckCircle, Clock, EyeOff, FileText, Loader, Lock, RefreshCcw,
   Shield, ShieldAlert, TrendingUp, UserCheck, Users, X,
@@ -9,6 +9,14 @@ import { formatISTDate } from "@/lib/utils";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+type EmployeeSearchResult = {
+  id: string;
+  employee_code: string;
+  first_name: string;
+  last_name: string;
+  branch_name?: string;
+};
 
 type GrievanceSummary = {
   id: string;
@@ -123,6 +131,17 @@ export default function NativeGrievanceCommandCenter() {
   const [actionMsg, setActionMsg] = useState("");
   const [actionWorking, setActionWorking] = useState(false);
 
+  // Fix 2A — employee search picker
+  const [assigneeQuery, setAssigneeQuery] = useState("");
+  const [assigneeResults, setAssigneeResults] = useState<EmployeeSearchResult[]>([]);
+  const [assigneeSelected, setAssigneeSelected] = useState<{ id: string; displayName: string } | null>(null);
+  const [assigneeSearching, setAssigneeSearching] = useState(false);
+  const [assigneeCommittee, setAssigneeCommittee] = useState("");
+  const assigneeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Fix 2D — case list search
+  const [grievanceSearch, setGrievanceSearch] = useState("");
+
   // Filters
   const [filterStatus, setFilterStatus]     = useState("");
   const [filterSeverity, setFilterSeverity] = useState("");
@@ -165,6 +184,10 @@ export default function NativeGrievanceCommandCenter() {
     setNoteText("");
     setResNote("");
     setAssignee("");
+    setAssigneeQuery("");
+    setAssigneeResults([]);
+    setAssigneeSelected(null);
+    setAssigneeCommittee("");
     setTimeline([]);
     try {
       const [detailRes, timelineRes] = await Promise.allSettled([
@@ -181,6 +204,47 @@ export default function NativeGrievanceCommandCenter() {
   };
 
   const closeDrawer = () => { setSelected(null); setTimeline([]); };
+
+  // Fix 2A — debounced employee search
+  const searchEmployees = useCallback((query: string) => {
+    if (assigneeDebounceRef.current) clearTimeout(assigneeDebounceRef.current);
+    setAssigneeResults([]);
+    if (query.length < 2) return;
+    assigneeDebounceRef.current = setTimeout(async () => {
+      setAssigneeSearching(true);
+      try {
+        const res = await hrmsApi.get<{ data: EmployeeSearchResult[] }>(
+          `/api/employees?recordStatus=active&limit=10&search=${encodeURIComponent(query)}`
+        );
+        setAssigneeResults(res.data ?? []);
+      } catch {
+        setAssigneeResults([]);
+      } finally {
+        setAssigneeSearching(false);
+      }
+    }, 300);
+  }, []);
+
+  // Fix 2C / 2A — PATCH a grievance field (due_date, assigned_to_user_id, etc.)
+  const patchGrievance = useCallback(async (id: string, body: Record<string, unknown>, successMsg = "Updated") => {
+    setActionWorking(true);
+    setActionMsg("");
+    try {
+      await hrmsApi.patch(`/api/helpdesk/grievances/${id}`, body);
+      setActionMsg(successMsg);
+      await load();
+      const [detailRes, timelineRes] = await Promise.allSettled([
+        hrmsApi.get<{ data: GrievanceDetail }>(`/api/helpdesk/grievances/${id}`),
+        hrmsApi.get<{ data: TimelineEntry[] }>(`/api/helpdesk/grievances/${id}/timeline`),
+      ]);
+      if (detailRes.status === "fulfilled") setSelected(detailRes.value.data ?? null);
+      if (timelineRes.status === "fulfilled") setTimeline(timelineRes.value.data ?? []);
+    } catch (e: any) {
+      setActionMsg(e.message ?? "Update failed");
+    } finally {
+      setActionWorking(false);
+    }
+  }, [load]);
 
   const doAction = async (action: string, body: Record<string, unknown>) => {
     if (!selected) return;
@@ -202,6 +266,17 @@ export default function NativeGrievanceCommandCenter() {
       setActionWorking(false);
     }
   };
+
+  // Fix 2D — client-side search filter
+  const filteredGrievances = useMemo(() => {
+    if (!grievanceSearch.trim()) return grievances;
+    const q = grievanceSearch.toLowerCase();
+    return grievances.filter(g =>
+      g.grievance_code.toLowerCase().includes(q) ||
+      (g.assigned_to ?? "").toLowerCase().includes(q) ||
+      (g.assigned_committee ?? "").toLowerCase().includes(q)
+    );
+  }, [grievances, grievanceSearch]);
 
   return (
     <DashboardLayout>
@@ -324,10 +399,18 @@ export default function NativeGrievanceCommandCenter() {
 
             {/* Case list */}
             <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-              <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+              <div className="px-5 py-3 border-b border-gray-100 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:justify-between">
                 <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-                  <Shield size={14} className="text-red-400" /> Cases ({grievances.length})
+                  <Shield size={14} className="text-red-400" /> Cases ({filteredGrievances.length}{filteredGrievances.length !== grievances.length ? ` of ${grievances.length}` : ""})
                 </h2>
+                {/* Fix 2D — search input */}
+                <input
+                  type="search"
+                  placeholder="Search by code or name…"
+                  value={grievanceSearch}
+                  onChange={e => setGrievanceSearch(e.target.value)}
+                  className="w-full sm:w-56 border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+                />
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -344,7 +427,7 @@ export default function NativeGrievanceCommandCenter() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {grievances.map(g => {
+                    {filteredGrievances.map(g => {
                       const sevCfg = SEVERITY_CONFIG[g.severity] ?? SEVERITY_CONFIG.low;
                       const staCls = STATUS_CONFIG[g.status] ?? "bg-gray-100 text-gray-500";
                       const sla = getSlaStatus(g.due_date, g.status);
@@ -398,8 +481,10 @@ export default function NativeGrievanceCommandCenter() {
                         </tr>
                       );
                     })}
-                    {grievances.length === 0 && (
-                      <tr><td colSpan={8} className="py-10 text-center text-gray-400">No grievances in this period</td></tr>
+                    {filteredGrievances.length === 0 && (
+                      <tr><td colSpan={8} className="py-10 text-center text-gray-400">
+                        {grievanceSearch.trim() ? "No cases match your search" : "No grievances in this period"}
+                      </td></tr>
                     )}
                   </tbody>
                 </table>
@@ -459,6 +544,27 @@ export default function NativeGrievanceCommandCenter() {
                     {selected.escalation_level > 0 ? ` Escalation L${selected.escalation_level}` : " Not escalated"}
                   </div>
 
+                  {/* Due date — Fix 2C */}
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-semibold text-gray-500 uppercase shrink-0">Due Date</span>
+                    <input
+                      type="date"
+                      value={selected.due_date ?? ""}
+                      onChange={e => {
+                        if (e.target.value) {
+                          patchGrievance(selected.id, { due_date: e.target.value }, "Due date updated");
+                        }
+                      }}
+                      className="border border-gray-200 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                    {(() => {
+                      const sla = getSlaStatus(selected.due_date, selected.status);
+                      if (sla === "overdue") return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-100 text-red-700 border border-red-300">Overdue</span>;
+                      if (sla === "due-soon") return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-300">Due Soon</span>;
+                      return null;
+                    })()}
+                  </div>
+
                   {/* Description */}
                   {selected.description_clean && (
                     <div>
@@ -516,25 +622,93 @@ export default function NativeGrievanceCommandCenter() {
                         </button>
                       </div>
 
-                      {/* Assign to HR */}
+                      {/* Assign to HR Individual — Fix 2A */}
                       <div>
                         <label className="block text-xs font-semibold text-gray-500 uppercase mb-1.5">
                           Assign to HR Individual
                         </label>
-                        <div className="flex gap-2">
-                          <input
-                            value={assignee}
-                            onChange={e => setAssignee(e.target.value)}
-                            placeholder="HR name or employee ID"
-                            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                          />
-                          <button
-                            disabled={!assignee.trim() || actionWorking}
-                            onClick={() => doAction("assign", { assignee }).then(() => setAssignee(""))}
-                            className="flex items-center gap-1.5 px-4 py-2 bg-[#1B6AB5] text-white text-sm rounded-lg disabled:opacity-50 hover:bg-blue-700"
-                          >
-                            <UserCheck size={13} /> Assign
-                          </button>
+                        {assigneeSelected ? (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-1.5 rounded-full">
+                              <UserCheck size={11} />
+                              {assigneeSelected.displayName}
+                            </span>
+                            <button
+                              className="text-xs text-gray-400 hover:text-gray-600 underline"
+                              onClick={() => { setAssigneeSelected(null); setAssigneeQuery(""); setAssigneeResults([]); }}
+                            >
+                              Change
+                            </button>
+                            <button
+                              disabled={actionWorking}
+                              onClick={() => {
+                                if (!selected) return;
+                                patchGrievance(selected.id, { assigned_to_user_id: assigneeSelected.id }, "Assigned successfully").then(() => {
+                                  setAssigneeSelected(null);
+                                  setAssigneeQuery("");
+                                });
+                              }}
+                              className="flex items-center gap-1.5 px-4 py-1.5 bg-[#1B6AB5] text-white text-sm rounded-lg disabled:opacity-50 hover:bg-blue-700"
+                            >
+                              <UserCheck size={13} /> Confirm Assign
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="relative">
+                            <input
+                              value={assigneeQuery}
+                              onChange={e => { setAssigneeQuery(e.target.value); searchEmployees(e.target.value); }}
+                              placeholder="Search by name or employee code…"
+                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            />
+                            {assigneeSearching && (
+                              <div className="absolute right-3 top-2.5"><Loader size={14} className="animate-spin text-gray-400" /></div>
+                            )}
+                            {assigneeResults.length > 0 && (
+                              <ul className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                                {assigneeResults.map(emp => (
+                                  <li
+                                    key={emp.id}
+                                    className="px-3 py-2 text-sm cursor-pointer hover:bg-blue-50"
+                                    onClick={() => {
+                                      setAssigneeSelected({
+                                        id: emp.id,
+                                        displayName: `${emp.first_name} ${emp.last_name} (${emp.employee_code})${emp.branch_name ? ` — ${emp.branch_name}` : ""}`,
+                                      });
+                                      setAssigneeQuery("");
+                                      setAssigneeResults([]);
+                                    }}
+                                  >
+                                    <span className="font-medium">{emp.first_name} {emp.last_name}</span>
+                                    <span className="text-gray-400 text-xs ml-2">{emp.employee_code}</span>
+                                    {emp.branch_name && <span className="text-gray-400 text-xs ml-2">· {emp.branch_name}</span>}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        )}
+                        {/* Committee assignment */}
+                        <div className="mt-2">
+                          <label className="block text-xs text-gray-500 mb-1">Assign to Committee (optional)</label>
+                          <div className="flex gap-2">
+                            <input
+                              value={assigneeCommittee}
+                              onChange={e => setAssigneeCommittee(e.target.value)}
+                              placeholder="Committee name"
+                              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                            />
+                            <button
+                              disabled={!assigneeCommittee.trim() || actionWorking}
+                              onClick={() => {
+                                if (!selected) return;
+                                patchGrievance(selected.id, { assigned_committee: assigneeCommittee.trim() }, "Committee assigned").then(() => setAssigneeCommittee(""));
+                              }}
+                              className="px-3 py-2 bg-gray-100 text-gray-700 text-sm rounded-lg disabled:opacity-50 hover:bg-gray-200"
+                            >
+                              Set
+                            </button>
+                          </div>
                         </div>
                       </div>
 

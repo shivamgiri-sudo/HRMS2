@@ -16,11 +16,18 @@ const h =
 
 // ─── Benefit Plans ─────────────────────────────────────────────────────────
 
-// GET /plans — any authenticated user
+// GET /plans — any authenticated user; ?all=true shows inactive plans (admin/hr only)
 benefitsRouter.get(
   "/plans",
-  h(async (_req, res) => {
-    const plans = await benefitsService.listPlans();
+  h(async (req, res) => {
+    const userId = req.authUser!.id;
+    const showAll = req.query.all === "true";
+    let activeOnly = true;
+    if (showAll) {
+      const privileged = await hasRole(userId, "admin", "hr", "super_admin");
+      if (privileged) activeOnly = false;
+    }
+    const plans = await benefitsService.listPlans(activeOnly);
     return res.json({ success: true, data: plans });
   })
 );
@@ -223,5 +230,35 @@ benefitsRouter.patch(
       remarks ?? null
     );
     return res.json({ success: true, data: claim });
+  })
+);
+
+// POST /claims/:id/pay — admin/hr only
+benefitsRouter.post(
+  "/claims/:id/pay",
+  requireRole("admin", "hr"),
+  h(async (req, res) => {
+    const { paymentReference } = req.body as { paymentReference?: string };
+    if (!paymentReference?.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, error: "paymentReference is required" });
+    }
+    const claim = await benefitsService.payClaim(req.params.id, paymentReference.trim());
+    return res.json({ success: true, data: claim });
+  })
+);
+
+// PATCH /plans/:id — admin/hr/super_admin only
+benefitsRouter.patch(
+  "/plans/:id",
+  requireRole("admin", "hr", "super_admin"),
+  h(async (req, res) => {
+    const { is_active } = req.body as { is_active?: boolean };
+    if (is_active === undefined || is_active === null) {
+      return res.status(400).json({ success: false, error: "is_active (boolean) is required" });
+    }
+    const plan = await benefitsService.updatePlan(req.params.id, Boolean(is_active));
+    return res.json({ success: true, data: plan });
   })
 );

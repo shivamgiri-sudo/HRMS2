@@ -290,6 +290,7 @@ export async function getGrievanceCommandCenter(filters: {
   severity?: string;
   from?: string;
   to?: string;
+  q?: string;
 }) {
   const [dashboard, cases] = await Promise.all([
     getGrievanceDashboard(filters),

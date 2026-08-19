@@ -12,6 +12,7 @@ import { notifyResignationSubmitted, notifyResignationDecision } from "./exit.no
 import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
 import { recordExitFollowUpFailure } from "./exit-followup-recovery.js";
 import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
+import { triggerResignationPendingReview } from "../work-inbox/work-inbox.triggers.js";
 
 // Singleton transporter — created once at module load, not per-call
 const mailer = nodemailer.createTransport({
@@ -96,6 +97,8 @@ export const exitService = {
               CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
               b.branch_name,
               p.process_name,
+              dept.dept_name AS department_name,
+              CONCAT_WS(' ', mgr.first_name, mgr.last_name) AS reporting_manager_name,
               hs.engagement_score,
               hs.regrettable_exit,
               hs.risk_label,
@@ -115,6 +118,8 @@ export const exitService = {
          LEFT JOIN employees e ON e.id = er.employee_id
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN process_master p ON p.id = e.process_id
+         LEFT JOIN department_master dept ON dept.id = e.department_id
+         LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
          LEFT JOIN exit_employee_health_snapshot hs ON hs.exit_request_id = er.id
          LEFT JOIN (
            SELECT exit_request_id,
@@ -122,7 +127,6 @@ export const exitService = {
                   SUM(CASE WHEN status IN ('cleared','waived') THEN 1 ELSE 0 END) AS cleared_tasks
              FROM exit_clearance_task GROUP BY exit_request_id
          ) clearance ON clearance.exit_request_id = er.id
-         LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
          LEFT JOIN (
            SELECT exit_request_id, owner_role
              FROM (
@@ -236,6 +240,22 @@ export const exitService = {
       const phone = emp?.mobile ?? emp?.personal_phone ?? null;
       if (phone) sendSMS(phone, 'separation_initiated', { name: emp.name }).catch(() => {});
     } catch { /* non-fatal */ }
+
+    // Registry-backed Action Centre item (RESIGNATION_PENDING_REVIEW). Gated on
+    // exitSubType 'resignation' (the schema default — see exit.validation.ts) so
+    // involuntary exits (termination, absconding, contract_end, ...) raised through the
+    // same createExitRequest path do not surface as a "resignation" queue item.
+    // Non-blocking, matching every other side-effect in this function.
+    if ((input.exitSubType ?? "resignation") === "resignation") {
+      try {
+        const [empRow2] = await db.execute<RowDataPacket[]>(
+          `SELECT CONCAT(first_name,' ',COALESCE(last_name,'')) AS name, branch_id
+           FROM employees WHERE id = ? LIMIT 1`, [input.employeeId]
+        );
+        const emp2 = (empRow2[0] as any);
+        await triggerResignationPendingReview(id, emp2?.name ?? input.employeeId, emp2?.branch_id ?? undefined);
+      } catch { /* non-fatal */ }
+    }
 
     return this.getExitRequest(id);
   },

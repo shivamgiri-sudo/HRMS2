@@ -291,7 +291,7 @@ export default function NativeSupportCommandCenter() {
           <FilterField label="From" type="date" value={from} onChange={setFrom} />
           <FilterField label="To"   type="date" value={to}   onChange={setTo} />
           <SelectFilter label="Category" value={category} onChange={setCategory}
-            options={["hr","payroll","it","general","asset","attendance"]} />
+            options={["hr","payroll","it","general","asset","attendance","admin","leave","other"]} />
           <SelectFilter label="Priority" value={priority} onChange={setPriority}
             options={["urgent","high","medium","low"]} />
           <SelectFilter label="Status" value={status} onChange={setStatus}

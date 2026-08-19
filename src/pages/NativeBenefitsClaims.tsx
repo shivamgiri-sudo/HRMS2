@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BadgeCheck,
   CheckCircle2,
@@ -9,6 +9,8 @@ import {
   Plus,
   RefreshCcw,
   ShieldCheck,
+  ToggleLeft,
+  ToggleRight,
   X,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -58,7 +60,18 @@ interface ReimbursementClaim {
   reviewed_by: string | null;
   reviewed_at: string | null;
   remarks: string | null;
+  payment_reference: string | null;
+  paid_at: string | null;
   created_at: string;
+}
+
+// Employee picker result
+interface EmpSearchResult {
+  id: string;
+  employee_code: string;
+  name: string;
+  branch_name: string;
+  process_name: string;
 }
 
 interface ClaimStats {
@@ -195,6 +208,136 @@ function InputField({
 
 const inputCls =
   "w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors";
+
+// ─── Employee Search Picker ───────────────────────────────────────────────────
+
+function EmployeeSearchPicker({
+  selectedId,
+  selectedLabel,
+  onSelect,
+  onClear,
+}: {
+  selectedId: string;
+  selectedLabel: string;
+  onSelect: (id: string, label: string) => void;
+  onClear: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<EmpSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Debounced search
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setResults([]);
+      setOpen(false);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await hrmsApi.get<{ data: Array<Record<string, unknown>> }>(
+          `/api/employees?recordStatus=active&limit=10&search=${encodeURIComponent(q)}`
+        );
+        if (cancelled) return;
+        const mapped = (res?.data ?? []).map((e) => ({
+          id: String(e.id ?? ""),
+          employee_code: String(e.employee_code ?? ""),
+          name: [e.first_name, e.last_name].filter(Boolean).join(" ") || String(e.full_name ?? ""),
+          branch_name: String(e.branch_name ?? ""),
+          process_name: String(e.process_name ?? ""),
+        })).filter((e) => e.id);
+        setResults(mapped);
+        setOpen(mapped.length > 0);
+      } catch {
+        if (!cancelled) { setResults([]); setOpen(false); }
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [query]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  if (selectedId) {
+    return (
+      <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+        <BadgeCheck className="h-4 w-4 text-emerald-600 shrink-0" />
+        <span className="flex-1 text-sm font-semibold text-emerald-900">{selectedLabel}</span>
+        <button
+          type="button"
+          onClick={onClear}
+          className="cursor-pointer rounded-lg border border-emerald-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+        >
+          Change
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="relative">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => { if (results.length > 0) setOpen(true); }}
+          placeholder="Type name or employee code to search…"
+          className={inputCls}
+        />
+        {searching && (
+          <Loader className="absolute right-4 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-slate-400" />
+        )}
+      </div>
+      {open && results.length > 0 && (
+        <div className="absolute z-50 mt-1 w-full rounded-2xl border bg-white shadow-xl overflow-hidden">
+          {results.map((emp) => (
+            <button
+              key={emp.id}
+              type="button"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                const label = `${emp.name} (${emp.employee_code})`;
+                onSelect(emp.id, label);
+                setQuery("");
+                setResults([]);
+                setOpen(false);
+              }}
+              className="w-full cursor-pointer px-4 py-3 text-left hover:bg-blue-50 transition-colors border-b last:border-0"
+            >
+              <div className="font-semibold text-sm text-slate-950">
+                {emp.name}
+                <span className="ml-2 font-mono text-xs text-slate-500">{emp.employee_code}</span>
+              </div>
+              <div className="text-xs text-slate-400 mt-0.5">
+                {[emp.branch_name, emp.process_name].filter(Boolean).join(" · ")}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+      {open && results.length === 0 && !searching && query.trim().length >= 2 && (
+        <div className="absolute z-50 mt-1 w-full rounded-2xl border bg-white shadow-xl px-4 py-3 text-sm text-slate-400">
+          No active employees found.
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── Tab 1: My Claims ─────────────────────────────────────────────────────────
 
@@ -457,6 +600,11 @@ function ClaimsManagementTab() {
   const [reviewRemarks, setReviewRemarks] = useState("");
   const [processing, setProcessing] = useState<string | null>(null);
 
+  // Mark as Paid
+  const [payTarget, setPayTarget] = useState<ReimbursementClaim | null>(null);
+  const [payRef, setPayRef] = useState("");
+  const [paying, setPaying] = useState(false);
+
   const load = async () => {
     setLoading(true);
     setMessage("");
@@ -497,6 +645,28 @@ function ClaimsManagementTab() {
       setMessage((err as Error)?.message ?? "Review failed.");
     } finally {
       setProcessing(null);
+    }
+  };
+
+  const markPaid = async () => {
+    if (!payTarget) return;
+    if (!payRef.trim()) {
+      setMessage("Payment reference is required.");
+      return;
+    }
+    setPaying(true);
+    try {
+      await hrmsApi.post(`/api/benefits/claims/${payTarget.id}/pay`, {
+        paymentReference: payRef.trim(),
+      });
+      setPayTarget(null);
+      setPayRef("");
+      setMessage("Claim marked as paid.");
+      await load();
+    } catch (err: unknown) {
+      setMessage((err as Error)?.message ?? "Mark paid failed.");
+    } finally {
+      setPaying(false);
     }
   };
 
@@ -609,32 +779,45 @@ function ClaimsManagementTab() {
                       <StatusBadge status={c.status} />
                     </td>
                     <td className="p-4">
-                      {c.status === "submitted" && (
-                        <div className="flex gap-2">
+                      <div className="flex flex-wrap gap-2">
+                        {c.status === "submitted" && (
+                          <>
+                            <button
+                              onClick={() => {
+                                setReviewTarget(c);
+                                setReviewAction("approved");
+                                setReviewRemarks("");
+                              }}
+                              disabled={processing === c.id}
+                              className="cursor-pointer rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => {
+                                setReviewTarget(c);
+                                setReviewAction("rejected");
+                                setReviewRemarks("");
+                              }}
+                              disabled={processing === c.id}
+                              className="cursor-pointer rounded-lg bg-red-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+                            >
+                              Reject
+                            </button>
+                          </>
+                        )}
+                        {c.status === "approved" && (
                           <button
                             onClick={() => {
-                              setReviewTarget(c);
-                              setReviewAction("approved");
-                              setReviewRemarks("");
+                              setPayTarget(c);
+                              setPayRef("");
                             }}
-                            disabled={processing === c.id}
-                            className="cursor-pointer rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                            className="cursor-pointer rounded-lg bg-purple-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-purple-700 transition-colors"
                           >
-                            Approve
+                            Mark Paid
                           </button>
-                          <button
-                            onClick={() => {
-                              setReviewTarget(c);
-                              setReviewAction("rejected");
-                              setReviewRemarks("");
-                            }}
-                            disabled={processing === c.id}
-                            className="cursor-pointer rounded-lg bg-red-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-red-700 transition-colors disabled:opacity-50"
-                          >
-                            Reject
-                          </button>
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -697,6 +880,47 @@ function ClaimsManagementTab() {
           </div>
         </ModalShell>
       )}
+
+      {/* Mark Paid Dialog */}
+      {payTarget && (
+        <ModalShell title="Mark Claim as Paid" onClose={() => setPayTarget(null)}>
+          <div className="space-y-4 p-6">
+            <div className="rounded-2xl bg-slate-50 p-4 text-sm">
+              <div className="font-semibold text-slate-700">
+                {payTarget.employee_name ?? payTarget.employee_id}
+              </div>
+              <div className="mt-1 text-slate-500 capitalize">
+                {payTarget.claim_type} &mdash; ₹
+                {Number(payTarget.amount).toLocaleString("en-IN", { minimumFractionDigits: 2 })}
+              </div>
+            </div>
+            <InputField label="Payment Reference *">
+              <input
+                value={payRef}
+                onChange={(e) => setPayRef(e.target.value)}
+                placeholder="UTR / cheque / transfer reference…"
+                className={inputCls}
+                autoFocus
+              />
+            </InputField>
+          </div>
+          <div className="flex gap-3 border-t p-6">
+            <button
+              onClick={() => setPayTarget(null)}
+              className="flex-1 cursor-pointer rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => void markPaid()}
+              disabled={paying || !payRef.trim()}
+              className="flex-1 cursor-pointer rounded-2xl bg-purple-600 py-3 text-sm font-bold text-white hover:bg-purple-700 transition-colors disabled:opacity-50"
+            >
+              {paying ? "Processing…" : "Confirm Payment"}
+            </button>
+          </div>
+        </ModalShell>
+      )}
     </div>
   );
 }
@@ -711,9 +935,11 @@ function BenefitPlansTab() {
   const [saving, setSaving] = useState(false);
 
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
+  const [selectedEmployeeLabel, setSelectedEmployeeLabel] = useState("");
   const [enrollments, setEnrollments] = useState<BenefitEnrollment[]>([]);
   const [loadingEnroll, setLoadingEnroll] = useState(false);
   const [enrolling, setEnrolling] = useState<string | null>(null);
+  const [togglingPlan, setTogglingPlan] = useState<string | null>(null);
 
   const [planForm, setPlanForm] = useState({
     plan_name: "",
@@ -731,7 +957,7 @@ function BenefitPlansTab() {
     setLoading(true);
     setMessage("");
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: BenefitPlan[] }>("/api/benefits/plans");
+      const res = await hrmsApi.get<{ success: boolean; data: BenefitPlan[] }>("/api/benefits/plans?all=true");
       setPlans(res.data ?? []);
     } catch (err: unknown) {
       setMessage((err as Error)?.message ?? "Failed to load plans");
@@ -809,6 +1035,21 @@ function BenefitPlansTab() {
     }
   };
 
+  const togglePlan = async (plan: BenefitPlan) => {
+    setTogglingPlan(plan.id);
+    try {
+      await hrmsApi.patch(`/api/benefits/plans/${plan.id}`, {
+        is_active: !plan.is_active,
+      });
+      setMessage(`Plan "${plan.plan_name}" ${plan.is_active ? "deactivated" : "activated"}.`);
+      await loadPlans();
+    } catch (err: unknown) {
+      setMessage((err as Error)?.message ?? "Toggle failed.");
+    } finally {
+      setTogglingPlan(null);
+    }
+  };
+
   const isEnrolled = (planId: string) =>
     enrollments.some((e) => e.plan_id === planId && e.status !== "inactive");
 
@@ -849,16 +1090,24 @@ function BenefitPlansTab() {
       {/* Employee enrollment lookup */}
       <div className="rounded-3xl border bg-white p-5 shadow-sm">
         <h3 className="mb-4 font-bold text-slate-950">Employee Enrollment View</h3>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div className="flex-1">
+        <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto_auto]">
+          <div>
             <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-              Employee UUID
+              Search Employee
             </label>
-            <input
-              value={selectedEmployeeId}
-              onChange={(e) => setSelectedEmployeeId(e.target.value)}
-              placeholder="Paste employee UUID to view / manage enrollments"
-              className={inputCls}
+            <EmployeeSearchPicker
+              selectedId={selectedEmployeeId}
+              selectedLabel={selectedEmployeeLabel}
+              onSelect={(id, label) => {
+                setSelectedEmployeeId(id);
+                setSelectedEmployeeLabel(label);
+                void loadEnrollments(id);
+              }}
+              onClear={() => {
+                setSelectedEmployeeId("");
+                setSelectedEmployeeLabel("");
+                setEnrollments([]);
+              }}
             />
           </div>
           <div>
@@ -883,14 +1132,16 @@ function BenefitPlansTab() {
               className={inputCls}
             />
           </div>
-          <button
-            onClick={() => void loadEnrollments(selectedEmployeeId)}
-            disabled={loadingEnroll || !selectedEmployeeId.trim()}
-            className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors cursor-pointer disabled:opacity-50"
-          >
-            <ChevronDown className="h-4 w-4" />
-            Load
-          </button>
+          <div className="flex items-end">
+            <button
+              onClick={() => void loadEnrollments(selectedEmployeeId)}
+              disabled={loadingEnroll || !selectedEmployeeId.trim()}
+              className="inline-flex items-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700 transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+            >
+              <ChevronDown className="h-4 w-4" />
+              Refresh
+            </button>
+          </div>
         </div>
 
         {enrollments.length > 0 && (
@@ -922,10 +1173,13 @@ function BenefitPlansTab() {
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {plans.map((plan) => {
             const enrolled = isEnrolled(plan.id);
+            const active = Boolean(plan.is_active);
             return (
               <div
                 key={plan.id}
-                className="rounded-3xl border bg-white p-5 shadow-sm hover:shadow-md transition-shadow"
+                className={`rounded-3xl border bg-white p-5 shadow-sm hover:shadow-md transition-all ${
+                  !active ? "opacity-50" : ""
+                }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex-1">
@@ -944,13 +1198,26 @@ function BenefitPlansTab() {
                       </p>
                     )}
                   </div>
-                  <div
-                    className={`mt-0.5 rounded-full px-2 py-0.5 text-xs font-semibold ${
-                      plan.is_active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"
+                  {/* Active / Inactive toggle */}
+                  <button
+                    onClick={() => void togglePlan(plan)}
+                    disabled={togglingPlan === plan.id}
+                    title={active ? "Click to deactivate" : "Click to activate"}
+                    className={`mt-0.5 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50 ${
+                      active
+                        ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                        : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                     }`}
                   >
-                    {plan.is_active ? "Active" : "Inactive"}
-                  </div>
+                    {togglingPlan === plan.id ? (
+                      <Loader className="h-3 w-3 animate-spin" />
+                    ) : active ? (
+                      <ToggleRight className="h-3.5 w-3.5" />
+                    ) : (
+                      <ToggleLeft className="h-3.5 w-3.5" />
+                    )}
+                    {active ? "Active" : "Inactive"}
+                  </button>
                 </div>
 
                 {selectedEmployeeId.trim() && (
