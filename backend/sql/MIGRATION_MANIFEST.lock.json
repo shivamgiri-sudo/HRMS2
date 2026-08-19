@@ -523,6 +523,7 @@
     "1201_shift_versioning_backfill.sql",
     "1210_minimum_rest_policy.sql",
     "1212_roster_swap_lifecycle.sql",
+    "1500_wfm_roster_import_engine.sql",
     "460_budget_line_tax_amendment.sql",
     "440_finance_phase1.sql",
     "441_finance_phases_2_3_4.sql",
@@ -560,9 +561,10 @@
     "migrations/1305_client_billing_cutover_staging_fix.sql",
     "migrations/1306_client_billing_cutover_addendum_columns.sql",
     "migrations/1307_client_billing_cutover_missing_cost_centres.sql",
-    "migrations/1308_client_billing_tally_fields.sql",
     "1248_grn_dbbill_migration_schema.sql",
-    "1502_apr_source_column.sql"
+    "1502_apr_source_column.sql",
+    "migrations/1308_client_billing_tally_fields.sql",
+    "1252_kpi_role_template_metrics.sql"
   ],
   "approvedDeletions": [
     {
@@ -680,9 +682,11 @@
     "1234_imprest_allocation_accounting_period.sql",
     "1239_cost_centre_avore_ahmedabad.sql",
     "1247_restore_cost_centre_display_names.sql",
+    "1250_cost_centre_transfer_support.sql",
     "127_ats_candidate_unique_constraints.sql",
     "133_phase2_security_fixes.sql",
     "136_incentive_module.sql",
+    "1501_apr_multi_server_config.sql",
     "175_clean_department_master.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",

@@ -129,10 +129,6 @@ export function assertConnectorType(
   }
 }
 
-function boundedMaxRows(dataset: PerformanceDataset): number {
-  return performanceDatasetMaxRows(dataset);
-}
-
 function queryArguments(
   config: DatabaseDatasetConfig,
   input: { from: string; to: string; checkpoint?: string | null },
@@ -145,6 +141,12 @@ function queryArguments(
   return (config.queryParams ?? ["from", "to"]).map((name) => values[name]);
 }
 
+function validateSourceRows(dataset: PerformanceDataset, rows: SourceRow[]): SourceRow[] {
+  assertSourceRowLimit(rows.length, performanceDatasetMaxRows(dataset));
+  assertSourceRowColumns(dataset, rows);
+  return rows;
+}
+
 async function readDatabaseRows(
   dataset: PerformanceDataset,
   input: { from: string; to: string; checkpoint?: string | null },
@@ -155,17 +157,13 @@ async function readDatabaseRows(
   assertConnectorType(dataset.sourceType, credentials.db_type);
 
   const config = dataset.config as DatabaseDatasetConfig;
-  const maxRows = boundedMaxRows(dataset);
 
   if (credentials.db_type === "mysql") {
     const query = String(config.queryMysql ?? "");
     assertReadOnlyQuery(query);
     const pool = await getPoolForKey(dataset.connectorKey) as mysql.Pool;
     const [rows] = await pool.execute(query, queryArguments(config, input));
-    const sourceRows = rows as SourceRow[];
-    assertSourceRowLimit(sourceRows.length, maxRows);
-    assertSourceRowColumns(dataset, sourceRows);
-    return sourceRows;
+    return validateSourceRows(dataset, rows as SourceRow[]);
   }
 
   const query = String(config.queryMssql ?? "");
@@ -176,23 +174,32 @@ async function readDatabaseRows(
   request.input("to", sql.NVarChar(50), input.to);
   request.input("checkpoint", sql.NVarChar(500), input.checkpoint ?? "");
   const result = await request.query(query);
-  const sourceRows = result.recordset as SourceRow[];
-  assertSourceRowLimit(sourceRows.length, maxRows);
-  assertSourceRowColumns(dataset, sourceRows);
-  return sourceRows;
+  return validateSourceRows(dataset, result.recordset as SourceRow[]);
 }
 
-function workbookRows(dataset: PerformanceDataset, buffer: Buffer, maxRows: number): SourceRow[] {
-  const workbook = XLSX.read(buffer, { type: "buffer", cellDates: true, raw: false });
-  const firstSheet = workbook.SheetNames[0];
-  if (!firstSheet) return [];
-  const rows = XLSX.utils.sheet_to_json<SourceRow>(workbook.Sheets[firstSheet], {
+function workbookRows(buffer: Buffer, dataset: PerformanceDataset): SourceRow[] {
+  let workbook: XLSX.WorkBook;
+  try {
+    workbook = XLSX.read(buffer, { type: "buffer", cellDates: true, raw: false });
+  } catch {
+    throw Object.assign(new Error("Source workbook or CSV could not be parsed"), { statusCode: 400 });
+  }
+  const configuredSheet = String((dataset.config as { sheetName?: string }).sheetName ?? "").trim();
+  const sheetName = configuredSheet || workbook.SheetNames[0];
+  if (!sheetName || !workbook.Sheets[sheetName]) {
+    throw Object.assign(
+      new Error(configuredSheet
+        ? `Configured worksheet ${configuredSheet} was not found`
+        : "Source workbook has no readable worksheet"),
+      { statusCode: 400 },
+    );
+  }
+  const rows = XLSX.utils.sheet_to_json<SourceRow>(workbook.Sheets[sheetName], {
     defval: null,
     raw: false,
+    blankrows: false,
   });
-  assertSourceRowLimit(rows.length, maxRows);
-  assertSourceRowColumns(dataset as PerformanceDataset, rows);
-  return rows;
+  return validateSourceRows(dataset, rows);
 }
 
 async function googleSheetRows(dataset: PerformanceDataset): Promise<SourceRow[]> {
@@ -211,7 +218,7 @@ async function googleSheetRows(dataset: PerformanceDataset): Promise<SourceRow[]
       }
     },
   });
-  return workbookRows(dataset, Buffer.from(response.data), boundedMaxRows(dataset));
+  return workbookRows(Buffer.from(response.data), dataset);
 }
 
 export async function readPerformanceSourceRows(
@@ -221,6 +228,7 @@ export async function readPerformanceSourceRows(
     to: string;
     checkpoint?: string | null;
     uploadBuffer?: Buffer | null;
+    sourceFileName?: string | null;
   },
 ): Promise<SourceRow[]> {
   if (dataset.sourceType === "mysql" || dataset.sourceType === "mssql") {
@@ -231,7 +239,7 @@ export async function readPerformanceSourceRows(
   }
   if (dataset.sourceType === "excel" || dataset.sourceType === "csv") {
     if (!input.uploadBuffer) throw new Error("An Excel or CSV file is required for this dataset");
-    return inspectManualUploadFile(dataset, input.uploadBuffer, null).rows;
+    return inspectManualUploadFile(dataset, input.uploadBuffer, input.sourceFileName).rows;
   }
   throw new Error(`Unsupported performance source type: ${dataset.sourceType}`);
 }

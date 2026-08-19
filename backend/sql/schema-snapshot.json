@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 960,
-  "columnCount": 13378,
+  "tableCount": 965,
+  "columnCount": 13569,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -3705,7 +3705,9 @@
       "approved_by",
       "approved_at",
       "created_by",
-      "created_at"
+      "created_at",
+      "tally_head",
+      "client_tally_name"
     ],
     "client_credit_note_line": [
       "id",
@@ -3738,7 +3740,9 @@
       "updated_at",
       "rejected_reason",
       "rejected_by",
-      "rejected_at"
+      "rejected_at",
+      "tally_head",
+      "client_tally_name"
     ],
     "client_invoice_audit_log": [
       "id",
@@ -11381,7 +11385,8 @@
       "escalation_level_2_email",
       "process_type",
       "billing_rate_per_hour",
-      "close_date"
+      "close_date",
+      "planning_mode"
     ],
     "process_metric_definition": [
       "id",
@@ -12239,7 +12244,17 @@
       "reason",
       "change_date",
       "changed_by",
-      "created_at"
+      "created_at",
+      "old_shift_id",
+      "new_shift_id",
+      "old_assignment_type",
+      "new_assignment_type",
+      "amendment_reason",
+      "notified_at",
+      "ack_required",
+      "acked_at",
+      "is_late_change",
+      "lead_time_hours"
     ],
     "roster_coverage_action": [
       "id",
@@ -14888,6 +14903,22 @@
       "active_status",
       "created_at"
     ],
+    "wfm_header_mapping_profile": [
+      "id",
+      "process_id",
+      "profile_name",
+      "source_identifier",
+      "column_mappings",
+      "shift_alias_overrides",
+      "status_alias_overrides",
+      "blank_handling",
+      "hd_maps_to",
+      "is_default",
+      "is_active",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
     "wfm_process_planning_rule": [
       "id",
       "process_id",
@@ -15101,6 +15132,44 @@
       "is_read",
       "created_at"
     ],
+    "wfm_roster_import_batch": [
+      "id",
+      "process_id",
+      "cycle_id",
+      "import_mode",
+      "file_name",
+      "file_format",
+      "status",
+      "total_rows",
+      "valid_rows",
+      "warning_rows",
+      "error_rows",
+      "needs_mapping_rows",
+      "date_range_start",
+      "date_range_end",
+      "mapping_profile_id",
+      "validation_summary_json",
+      "created_by",
+      "created_at",
+      "committed_by",
+      "committed_at"
+    ],
+    "wfm_roster_import_row": [
+      "id",
+      "batch_id",
+      "row_number",
+      "employee_id",
+      "employee_id_raw",
+      "employee_name_raw",
+      "roster_date",
+      "raw_value",
+      "normalized_type",
+      "resolved_shift_id",
+      "validation_state",
+      "validation_messages",
+      "extra_metadata_json",
+      "created_at"
+    ],
     "wfm_roster_manager_task": [
       "id",
       "plan_id",
@@ -15185,6 +15254,22 @@
       "rest_override_used",
       "created_at"
     ],
+    "wfm_rta_exception": [
+      "id",
+      "alert_id",
+      "employee_id",
+      "exception_date",
+      "exception_type",
+      "exception_state",
+      "disposition_type",
+      "disposition_owner_id",
+      "disposition_comment",
+      "disposition_at",
+      "regularization_id",
+      "roster_amendment_id",
+      "created_at",
+      "updated_at"
+    ],
     "wfm_shift": [
       "id",
       "shift_code",
@@ -15192,6 +15277,14 @@
       "start_time",
       "end_time",
       "active_status"
+    ],
+    "wfm_shift_alias": [
+      "id",
+      "shift_id",
+      "alias",
+      "is_active",
+      "created_at",
+      "created_by"
     ],
     "wfm_shift_master": [
       "id",
