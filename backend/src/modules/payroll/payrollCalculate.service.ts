@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { logger } from "../../lib/logger.js";
 import { missingTdsConfigKeys } from "./statutory-regime.js";
 // The closed-run set was `["locked", "disbursed"]`, which matched no row in
 // production — runs finish as FINALIZED — so this guard never fired.
@@ -779,6 +780,54 @@ export async function calculatePayrollRunScoped(
     [run.run_month, runId, ...empParams]
   );
   const employees = empRows as EmployeeRow[];
+
+  // Reconcile salary_prep_line against the current eligible population on a full
+  // (non-targeted) recalculation. Nothing before this ever removed a line: an
+  // employee who qualified under an older/buggy employmentWindowPredicate() but no
+  // longer qualifies just keeps their stale row forever, because the write loop
+  // below only INSERT ... ON DUPLICATE KEY UPDATEs employees it currently selects —
+  // it never visits, and so never corrects or removes, anyone it no longer selects.
+  // Confirmed live: 118 lines for already-exited employees survived the 2026-08-16
+  // selection fix in the 2026-07 run for exactly this reason (none double-paid —
+  // zero have a matching full_final_calculation row — but an undisbursed run would
+  // pay them through ordinary payroll if left as-is). Scoped recalculations
+  // (options.employeeIds set) intentionally leave every other employee's line
+  // untouched, so this only runs on a full recalc, and isRunClosed() above already
+  // refuses locked/disbursed/finalized runs before this line is ever reached.
+  if (!isTargetedRun) {
+    const currentIds = employees.map((e) => e.employee_id);
+    const [staleRows] = await db.execute<RowDataPacket[]>(
+      `SELECT spl.id, spl.employee_id, sp.acknowledged_at
+         FROM salary_prep_line spl
+         LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
+        WHERE spl.run_id = ?
+          ${currentIds.length ? `AND spl.employee_id NOT IN (${currentIds.map(() => "?").join(",")})` : ""}`,
+      currentIds.length ? [runId, ...currentIds] : [runId]
+    );
+    const stale = staleRows as Array<{ id: string; employee_id: string; acknowledged_at: string | null }>;
+    const deletable = stale.filter((r) => !r.acknowledged_at);
+    const acknowledgedButStale = stale.filter((r) => r.acknowledged_at);
+    if (acknowledgedButStale.length) {
+      // A payslip already exists and was acknowledged by someone who no longer
+      // belongs in this run. salary_payslip cascade-deletes with its line
+      // (007_payroll.sql), so removing the line would silently destroy a record
+      // the employee has already seen — left in place deliberately, needs a human
+      // decision rather than a cascade delete.
+      logger.warn(
+        `[payroll] run ${runId}: ${acknowledgedButStale.length} employee(s) no longer eligible ` +
+        `have an ACKNOWLEDGED payslip on this run — not purged, needs manual review: ` +
+        acknowledgedButStale.map((r) => r.employee_id).join(", ")
+      );
+    }
+    if (deletable.length) {
+      // salary_prep_line_component cascades with the line (137_schema_gaps.sql).
+      await db.execute(
+        `DELETE FROM salary_prep_line WHERE id IN (${deletable.map(() => "?").join(",")})`,
+        deletable.map((r) => r.id)
+      );
+      logger.info(`[payroll] run ${runId}: purged ${deletable.length} stale line(s) for employees no longer eligible`);
+    }
+  }
 
   // 4. Derive working days from run_month (Mon–Sat = 26 assumed; real impl queries holidays)
   const [year, month] = run.run_month.split("-").map(Number);
