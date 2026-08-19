@@ -46,6 +46,25 @@ export function CreditNoteDetailDialog({ creditNoteId, onOpenChange }: Props) {
               <dd>{creditNote.credit_date}</dd>
               <dt className="text-muted-foreground">GST type</dt>
               <dd>{creditNote.gst_type}</dd>
+              {(creditNote.tally_head || creditNote.client_tally_name) && (
+                <>
+                  <dt className="text-muted-foreground">Tally reference</dt>
+                  <dd>
+                    {creditNote.tally_head ?? "—"}
+                    {creditNote.client_tally_name && creditNote.client_tally_name !== creditNote.tally_head && (
+                      <span className="text-muted-foreground"> ({creditNote.client_tally_name})</span>
+                    )}
+                  </dd>
+                </>
+              )}
+              {creditNote.is_migrated === 1 && (
+                <>
+                  <dt className="text-muted-foreground">Source</dt>
+                  <dd className="text-muted-foreground">
+                    Historical record{creditNote.legacy_id ? ` (legacy id ${creditNote.legacy_id})` : ""}
+                  </dd>
+                </>
+              )}
             </dl>
 
             <div className="max-h-[40vh] overflow-y-auto rounded-md border">

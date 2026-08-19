@@ -49,6 +49,25 @@ export function InvoiceDetailDialog({ invoiceId, onOpenChange }: Props) {
               <dd>{invoice.invoice_date}</dd>
               <dt className="text-muted-foreground">GST type</dt>
               <dd>{invoice.gst_type}</dd>
+              {(invoice.tally_head || invoice.client_tally_name) && (
+                <>
+                  <dt className="text-muted-foreground">Tally reference</dt>
+                  <dd>
+                    {invoice.tally_head ?? "—"}
+                    {invoice.client_tally_name && invoice.client_tally_name !== invoice.tally_head && (
+                      <span className="text-muted-foreground"> ({invoice.client_tally_name})</span>
+                    )}
+                  </dd>
+                </>
+              )}
+              {invoice.is_migrated === 1 && (
+                <>
+                  <dt className="text-muted-foreground">Source</dt>
+                  <dd className="text-muted-foreground">
+                    Historical record{invoice.legacy_id ? ` (legacy id ${invoice.legacy_id})` : ""}
+                  </dd>
+                </>
+              )}
               {invoice.rejected_reason && (
                 <>
                   <dt className="text-muted-foreground">Rejected reason</dt>

@@ -55,6 +55,15 @@ export interface InvoiceRow {
   rejected_reason: string | null;
   rejected_by: string | null;
   rejected_at: string | null;
+  /** Internal accounting reference, frozen at creation time from
+   *  cost_centre_master.tally_head/billing_client_name — never shown on the
+   *  client-facing PDF, only in the finance-team detail view (migration 1308). */
+  tally_head: string | null;
+  client_tally_name: string | null;
+  /** Set on rows loaded by the 2026-08-19 historical cutover; 0/absent-equivalent
+   *  for anything created through the live workflow. */
+  is_migrated?: 0 | 1;
+  legacy_id?: number | null;
 }
 
 /** `GET /proformas/:id` and `GET /invoices/:id` (same route) attach `lines` to the invoice row. */
@@ -97,6 +106,13 @@ export interface CreditNoteRow {
   approved_at: string | null;
   created_by: string;
   created_at: string;
+  /** See InvoiceRow's own doc comment — same frozen-snapshot/detail-view-only
+   *  convention (migration 1308). Never backfilled for migrated credit notes
+   *  (legacy tbl_credit_note never had this column at all). */
+  tally_head: string | null;
+  client_tally_name: string | null;
+  is_migrated?: 0 | 1;
+  legacy_id?: number | null;
 }
 
 export interface CreditNoteDetail extends CreditNoteRow {
