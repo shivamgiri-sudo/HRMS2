@@ -17,8 +17,9 @@ import {
   getGrievanceCommandCenter,
   getSupportCommandCenter,
   getItDepthAnalysis,
-  refreshSlaBreachFlags,
 } from "./helpdesk-sla.service.js";
+import { inboxService } from "../inbox/inbox.service.js";
+import { db } from "../../db/mysql.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -65,7 +66,6 @@ router.get("/command-center", requireRole("admin", "hr", "super_admin", "manager
 }));
 
 router.get("/dashboard", requireRole("admin", "hr", "super_admin", "manager", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
-  await refreshSlaBreachFlags();
   const data = await getHelpdeskDashboard(req.query as any);
   return res.json({ success: true, data });
 }));
@@ -183,6 +183,22 @@ router.post("/tickets/:id/assign", requireRole(...HELPDESK_ADMIN_ROLES), h(async
     ipAddress: req.ip,
     userAgent: req.headers["user-agent"],
   });
+  // Fire-and-forget: notify the assignee
+  try {
+    const ticket = await helpdeskService.getTicket(req.params.id) as any;
+    if (ticket) {
+      await inboxService.createItem({
+        user_id: assigned_to,
+        type: "helpdesk_ticket_assigned",
+        title: "New ticket assigned to you",
+        description: `Ticket ${ticket.ticket_code}: ${ticket.subject}`,
+        entity_type: "helpdesk_ticket",
+        entity_id: req.params.id,
+        action_url: `/helpdesk`,
+        priority: "normal",
+      });
+    }
+  } catch (_) { /* fire-and-forget — never block the response */ }
   res.json({ data });
 }));
 
@@ -209,6 +225,26 @@ router.post("/tickets/:id/resolve", requireRole(...HELPDESK_ADMIN_ROLES), h(asyn
   if (!resolution_note) return res.status(400).json({ error: "resolution_note required" });
   if (!(await loadTicketInScope(req))) return res.status(404).json({ error: "Not found" });
   const data = await helpdeskService.updateTicket(req.params.id, { status: "resolved", resolution_note, root_cause });
+  // Fire-and-forget: notify the ticket reporter
+  try {
+    const ticket = await helpdeskService.getTicket(req.params.id) as any;
+    if (ticket?.employee_id) {
+      const [uRows] = await db.execute("SELECT user_id FROM employees WHERE id = ? LIMIT 1", [ticket.employee_id]) as any;
+      const reporterUserId = (uRows as any[])[0]?.user_id;
+      if (reporterUserId) {
+        await inboxService.createItem({
+          user_id: reporterUserId,
+          type: "helpdesk_ticket_resolved",
+          title: "Your helpdesk ticket has been resolved",
+          description: `Ticket ${ticket.ticket_code} has been resolved`,
+          entity_type: "helpdesk_ticket",
+          entity_id: req.params.id,
+          action_url: `/helpdesk`,
+          priority: "normal",
+        });
+      }
+    }
+  } catch (_) { /* fire-and-forget — never block the response */ }
   res.json({ data });
 }));
 
@@ -382,6 +418,48 @@ router.patch("/grievances/:id", requireRole("admin", "hr"), h(async (req: Authen
     ipAddress: req.ip,
     userAgent: req.headers["user-agent"],
   });
+  res.json({ data });
+}));
+
+// POST /grievances/:id/status — frontend NativeGrievanceCommandCenter status transitions
+router.post("/grievances/:id/status", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { status } = req.body;
+  const VALID_STATUSES = ["under_review", "resolved", "submitted", "closed", "escalated"];
+  if (!status || !VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ error: `status must be one of: ${VALID_STATUSES.join(", ")}` });
+  }
+  const grievance = await helpdeskService.getGrievance(req.params.id, ["admin", "hr"]) as any;
+  if (!grievance) return res.status(404).json({ error: "Not found" });
+  const data = await helpdeskService.updateGrievance(req.params.id, { status });
+  await writeSensitiveAuditLog({
+    actorUserId: req.authUser!.id,
+    actionType: "GRIEVANCE_STATUS_CHANGED",
+    moduleKey: "PEOPLE_EXPERIENCE",
+    entityType: "grievance",
+    entityId: req.params.id,
+    changeSummary: { status, previous_status: grievance.status },
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+  // Fire-and-forget: notify the grievance submitter (skip if anonymous)
+  try {
+    if (!grievance.is_anonymous && grievance.employee_id) {
+      const [uRows] = await db.execute("SELECT user_id FROM employees WHERE id = ? LIMIT 1", [grievance.employee_id]) as any;
+      const reporterUserId = (uRows as any[])[0]?.user_id;
+      if (reporterUserId) {
+        await inboxService.createItem({
+          user_id: reporterUserId,
+          type: "grievance_status_changed",
+          title: `Your grievance status has changed to ${status}`,
+          description: `Grievance ${grievance.grievance_code}`,
+          entity_type: "grievance",
+          entity_id: req.params.id,
+          action_url: `/helpdesk`,
+          priority: "normal",
+        });
+      }
+    }
+  } catch (_) { /* fire-and-forget — never block the response */ }
   res.json({ data });
 }));
 

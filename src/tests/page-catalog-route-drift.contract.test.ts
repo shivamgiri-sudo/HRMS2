@@ -72,7 +72,6 @@ function grantedPageCodes(): Set<string> {
 const KNOWN_UNMAPPED_PAGE_CODES = [
   "APPOINTMENT_ESIGN",
   "ATS_OFFER",
-  "BENEFITS",
   "CLIENT_MASTER",
   "COACHING",
   "COMPLIANCE_DASHBOARD",

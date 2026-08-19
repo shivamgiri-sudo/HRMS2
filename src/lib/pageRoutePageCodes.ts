@@ -28,6 +28,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/attendance/disputes": "ATTENDANCE_DISPUTES",
   "/admin/discard-center": "DISCARD_CENTER",
   "/audit-log": "AUDIT_LOG",
+  "/benefits": "BENEFITS",
   "/bulk-upload": "BULK_UPLOAD",
   "/career-planning": "CAREER_PLANNING",
   "/ceo/dashboard": "CEO_DASHBOARD",

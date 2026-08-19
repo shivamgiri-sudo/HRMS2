@@ -5,6 +5,8 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { benefitsService } from "./benefits.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { db } from "../../db/mysql.js";
+import { inboxService } from "../../modules/inbox/inbox.service.js";
 
 export const benefitsRouter = Router();
 benefitsRouter.use(requireAuth);
@@ -229,6 +231,31 @@ benefitsRouter.patch(
       req.authUser!.id,
       remarks ?? null
     );
+    // fire-and-forget: notify the employee of the claim decision
+    try {
+      const [uRows] = await db.execute(
+        "SELECT user_id FROM employees WHERE id = ? LIMIT 1",
+        [claim.employee_id]
+      );
+      const recipientUserId = (uRows as { user_id: string | null }[])[0]?.user_id;
+      if (recipientUserId) {
+        await inboxService.createItem({
+          user_id: recipientUserId,
+          type: action === "approved" ? "benefit_claim_approved" : "benefit_claim_rejected",
+          title:
+            action === "approved"
+              ? "Your benefit claim has been approved"
+              : "Your benefit claim was not approved",
+          description: `Claim for ${claim.claim_type} — ₹${claim.amount}`,
+          entity_type: "reimbursement_claim",
+          entity_id: req.params.id,
+          action_url: `/benefits`,
+          priority: "normal",
+        });
+      }
+    } catch {
+      /* notifications are fire-and-forget */
+    }
     return res.json({ success: true, data: claim });
   })
 );
@@ -245,6 +272,28 @@ benefitsRouter.post(
         .json({ success: false, error: "paymentReference is required" });
     }
     const claim = await benefitsService.payClaim(req.params.id, paymentReference.trim());
+    // fire-and-forget: notify the employee that their claim has been paid
+    try {
+      const [uRows] = await db.execute(
+        "SELECT user_id FROM employees WHERE id = ? LIMIT 1",
+        [claim.employee_id]
+      );
+      const recipientUserId = (uRows as { user_id: string | null }[])[0]?.user_id;
+      if (recipientUserId) {
+        await inboxService.createItem({
+          user_id: recipientUserId,
+          type: "benefit_claim_paid",
+          title: "Your benefit claim has been paid",
+          description: `Claim for ${claim.claim_type} — ₹${claim.amount}. Payment reference: ${paymentReference.trim()}`,
+          entity_type: "reimbursement_claim",
+          entity_id: req.params.id,
+          action_url: `/benefits`,
+          priority: "normal",
+        });
+      }
+    } catch {
+      /* notifications are fire-and-forget */
+    }
     return res.json({ success: true, data: claim });
   })
 );
