@@ -1,6 +1,23 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 
+export type HelpdeskTicketScope = { sql: string; params: unknown[] };
+
+function applyTicketScope(
+  conds: string[],
+  params: unknown[],
+  scopeCondition?: HelpdeskTicketScope,
+) {
+  if (scopeCondition && scopeCondition.sql !== "1=1") {
+    conds.push(`(${scopeCondition.sql})`);
+    params.push(...scopeCondition.params);
+  }
+}
+
+function requiresEmployeeJoin(scopeCondition?: HelpdeskTicketScope, ...values: Array<unknown>) {
+  return Boolean(scopeCondition && scopeCondition.sql !== "1=1") || values.some(Boolean);
+}
+
 // ── SLA windows (hours) by priority × category ───────────────────────────────
 const SLA_HOURS_DEFAULT: Record<string, number> = {
   urgent: 2,
@@ -43,7 +60,7 @@ export async function getHelpdeskDashboard(filters: {
   assigned_to?: string;
   from?: string;
   to?: string;
-}) {
+}, scopeCondition?: HelpdeskTicketScope) {
   const conds: string[] = [];
   const params: unknown[] = [];
 
@@ -56,9 +73,10 @@ export async function getHelpdeskDashboard(filters: {
   if (filters.branch_id)  { conds.push("e.branch_id = ?");      params.push(filters.branch_id); }
   if (filters.process_id) { conds.push("e.process_id = ?");     params.push(filters.process_id); }
   if (filters.department_id){ conds.push("e.department_id = ?");params.push(filters.department_id); }
+  applyTicketScope(conds, params, scopeCondition);
 
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
-  const joinClause = (filters.branch_id || filters.process_id || filters.department_id)
+  const joinClause = requiresEmployeeJoin(scopeCondition, filters.branch_id, filters.process_id, filters.department_id)
     ? "JOIN employees e ON e.id = t.employee_id"
     : "LEFT JOIN employees e ON e.id = t.employee_id";
 
@@ -86,12 +104,18 @@ export async function getHelpdeskDashboard(filters: {
 
 export async function getHelpdeskSlaSummary(filters: {
   from?: string; to?: string; branch_id?: string; process_id?: string;
-}) {
+}, scopeCondition?: HelpdeskTicketScope) {
   const conds: string[] = [];
   const params: unknown[] = [];
   if (filters.from) { conds.push("t.created_at >= ?"); params.push(filters.from + " 00:00:00"); }
   if (filters.to)   { conds.push("t.created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
+  if (filters.branch_id)  { conds.push("e.branch_id = ?");  params.push(filters.branch_id); }
+  if (filters.process_id) { conds.push("e.process_id = ?"); params.push(filters.process_id); }
+  applyTicketScope(conds, params, scopeCondition);
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const joinClause = requiresEmployeeJoin(scopeCondition, filters.branch_id, filters.process_id)
+    ? "JOIN employees e ON e.id = t.employee_id"
+    : "";
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
@@ -101,35 +125,52 @@ export async function getHelpdeskSlaSummary(filters: {
        SUM(t.sla_breached = 0 AND t.status IN ('resolved','closed')) AS resolved_on_time,
        ROUND(AVG(CASE WHEN t.resolved_at IS NOT NULL
                       THEN TIMESTAMPDIFF(MINUTE, t.created_at, t.resolved_at) END), 0) AS avg_resolution_minutes
-     FROM helpdesk_ticket t ${where}
+     FROM helpdesk_ticket t ${joinClause} ${where}
      GROUP BY t.priority`,
     params
   );
   return { data: rows };
 }
 
-export async function getCategoryBreakdown(filters: { from?: string; to?: string }) {
+export async function getCategoryBreakdown(filters: {
+  from?: string;
+  to?: string;
+  branch_id?: string;
+  process_id?: string;
+  department_id?: string;
+}, scopeCondition?: HelpdeskTicketScope) {
   const conds: string[] = [];
   const params: unknown[] = [];
-  if (filters.from) { conds.push("created_at >= ?"); params.push(filters.from + " 00:00:00"); }
-  if (filters.to)   { conds.push("created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
+  if (filters.from) { conds.push("t.created_at >= ?"); params.push(filters.from + " 00:00:00"); }
+  if (filters.to)   { conds.push("t.created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
+  if (filters.branch_id)  { conds.push("e.branch_id = ?");      params.push(filters.branch_id); }
+  if (filters.process_id) { conds.push("e.process_id = ?");     params.push(filters.process_id); }
+  if (filters.department_id){ conds.push("e.department_id = ?");params.push(filters.department_id); }
+  applyTicketScope(conds, params, scopeCondition);
   const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  const joinClause = requiresEmployeeJoin(scopeCondition, filters.branch_id, filters.process_id, filters.department_id)
+    ? "JOIN employees e ON e.id = t.employee_id"
+    : "";
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT category,
+    `SELECT t.category,
             COUNT(*) AS total,
-            SUM(status NOT IN ('resolved','closed','cancelled')) AS open,
-            SUM(sla_breached = 1) AS breached,
-            ROUND(AVG(CASE WHEN resolved_at IS NOT NULL
-                           THEN TIMESTAMPDIFF(MINUTE, created_at, resolved_at) END), 0) AS avg_resolution_minutes
-       FROM helpdesk_ticket ${where}
-       GROUP BY category ORDER BY total DESC`,
+            SUM(t.status NOT IN ('resolved','closed','cancelled')) AS open,
+            SUM(t.sla_breached = 1) AS breached,
+            ROUND(AVG(CASE WHEN t.resolved_at IS NOT NULL
+                           THEN TIMESTAMPDIFF(MINUTE, t.created_at, t.resolved_at) END), 0) AS avg_resolution_minutes
+       FROM helpdesk_ticket t ${joinClause} ${where}
+       GROUP BY t.category ORDER BY total DESC`,
     params
   );
   return { data: rows };
 }
 
-export async function getOwnerWorkload() {
+export async function getOwnerWorkload(scopeCondition?: HelpdeskTicketScope) {
+  const conds: string[] = ["t.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)"];
+  const params: unknown[] = [];
+  applyTicketScope(conds, params, scopeCondition);
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT t.assigned_to,
             COALESCE(NULLIF(emp_ow.full_name,''), u.email, 'Unassigned') AS owner_name,
@@ -140,9 +181,10 @@ export async function getOwnerWorkload() {
             ROUND(AVG(CASE WHEN t.resolved_at IS NOT NULL
                            THEN TIMESTAMPDIFF(MINUTE, t.created_at, t.resolved_at) END), 0) AS avg_resolution_minutes
        FROM helpdesk_ticket t
+       LEFT JOIN employees e ON e.id = t.employee_id
        LEFT JOIN auth_user u ON u.id = t.assigned_to
        LEFT JOIN employees emp_ow ON emp_ow.user_id = u.id
-      WHERE t.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+      WHERE ${conds.join(" AND ")}
       -- owner_name must be grouped too. It is built from emp_ow.full_name and u.email, which
       -- MySQL cannot prove are functionally dependent on t.assigned_to across those LEFT JOINs,
       -- so under only_full_group_by (this server's mode) the whole statement was rejected and
@@ -151,18 +193,20 @@ export async function getOwnerWorkload() {
       -- which has always done it this way and works.
       GROUP BY t.assigned_to, owner_name
       ORDER BY open DESC
-      LIMIT 50`
+      LIMIT 50`,
+    params
   );
   return { data: rows };
 }
 
-export async function getAgingBuckets(filters: { branch_id?: string; process_id?: string }) {
+export async function getAgingBuckets(filters: { branch_id?: string; process_id?: string }, scopeCondition?: HelpdeskTicketScope) {
   const conds: string[] = ["t.status NOT IN ('resolved','closed','cancelled')"];
   const params: unknown[] = [];
   if (filters.branch_id)  { conds.push("e.branch_id = ?");  params.push(filters.branch_id); }
   if (filters.process_id) { conds.push("e.process_id = ?"); params.push(filters.process_id); }
+  applyTicketScope(conds, params, scopeCondition);
   const where = `WHERE ${conds.join(" AND ")}`;
-  const joinClause = (filters.branch_id || filters.process_id)
+  const joinClause = requiresEmployeeJoin(scopeCondition, filters.branch_id, filters.process_id)
     ? "JOIN employees e ON e.id = t.employee_id"
     : "LEFT JOIN employees e ON e.id = t.employee_id";
 
@@ -179,16 +223,29 @@ export async function getAgingBuckets(filters: { branch_id?: string; process_id?
   return { data: rows[0] ?? {} };
 }
 
-export async function getRootCauses(filters: { from?: string; to?: string }) {
+export async function getRootCauses(filters: {
+  from?: string;
+  to?: string;
+  branch_id?: string;
+  process_id?: string;
+  department_id?: string;
+}, scopeCondition?: HelpdeskTicketScope) {
   const conds: string[] = ["root_cause IS NOT NULL"];
   const params: unknown[] = [];
-  if (filters.from) { conds.push("created_at >= ?"); params.push(filters.from + " 00:00:00"); }
-  if (filters.to)   { conds.push("created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
+  if (filters.from) { conds.push("t.created_at >= ?"); params.push(filters.from + " 00:00:00"); }
+  if (filters.to)   { conds.push("t.created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
+  if (filters.branch_id)  { conds.push("e.branch_id = ?");      params.push(filters.branch_id); }
+  if (filters.process_id) { conds.push("e.process_id = ?");     params.push(filters.process_id); }
+  if (filters.department_id){ conds.push("e.department_id = ?");params.push(filters.department_id); }
+  applyTicketScope(conds, params, scopeCondition);
   const where = `WHERE ${conds.join(" AND ")}`;
+  const joinClause = requiresEmployeeJoin(scopeCondition, filters.branch_id, filters.process_id, filters.department_id)
+    ? "JOIN employees e ON e.id = t.employee_id"
+    : "";
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT root_cause, COUNT(*) AS total FROM helpdesk_ticket ${where}
-       GROUP BY root_cause ORDER BY total DESC LIMIT 20`,
+    `SELECT t.root_cause, COUNT(*) AS total FROM helpdesk_ticket t ${joinClause} ${where}
+       GROUP BY t.root_cause ORDER BY total DESC LIMIT 20`,
     params
   );
   return { data: rows };
@@ -204,15 +261,15 @@ export async function getSupportCommandCenter(filters: {
   assigned_to?: string;
   from?: string;
   to?: string;
-}) {
+}, scopeCondition?: HelpdeskTicketScope) {
   await refreshSlaBreachFlags();
   const [dashboard, slaSummary, categoryBreakdown, ownerWorkload, aging, rootCauses] = await Promise.all([
-    getHelpdeskDashboard(filters),
-    getHelpdeskSlaSummary(filters),
-    getCategoryBreakdown(filters),
-    getOwnerWorkload(),
-    getAgingBuckets(filters),
-    getRootCauses(filters),
+    getHelpdeskDashboard(filters, scopeCondition),
+    getHelpdeskSlaSummary(filters, scopeCondition),
+    getCategoryBreakdown(filters, scopeCondition),
+    getOwnerWorkload(scopeCondition),
+    getAgingBuckets(filters, scopeCondition),
+    getRootCauses(filters, scopeCondition),
   ]);
 
   return {
@@ -304,14 +361,15 @@ export async function getGrievanceCommandCenter(filters: {
 }
 
 // ── IT depth analysis ─────────────────────────────────────────────────────────
-export async function getItDepthAnalysis(filters: { from?: string; to?: string; branch_id?: string }) {
+export async function getItDepthAnalysis(filters: { from?: string; to?: string; branch_id?: string }, scopeCondition?: HelpdeskTicketScope) {
   const conds: string[] = ["t.category IN ('IT','it')"];
   const params: unknown[] = [];
   if (filters.from)      { conds.push("t.created_at >= ?"); params.push(filters.from + " 00:00:00"); }
   if (filters.to)        { conds.push("t.created_at <= ?"); params.push(filters.to   + " 23:59:59"); }
   if (filters.branch_id) { conds.push("e.branch_id = ?");   params.push(filters.branch_id); }
+  applyTicketScope(conds, params, scopeCondition);
   const where = `WHERE ${conds.join(" AND ")}`;
-  const joinClause = filters.branch_id
+  const joinClause = requiresEmployeeJoin(scopeCondition, filters.branch_id)
     ? "JOIN employees e ON e.id = t.employee_id"
     : "LEFT JOIN employees e ON e.id = t.employee_id";
 

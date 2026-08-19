@@ -94,12 +94,14 @@ router.use(requireAuth);
 // ── Support Command Center APIs ───────────────────────────────────────────────
 
 router.get("/command-center", requireRole("admin", "hr", "super_admin", "manager", "process_manager", "it", "branch_it", "it_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const data = await getSupportCommandCenter(req.query as any);
+  const scope = await resolveHelpdeskTicketScope(req.authUser);
+  const data = await getSupportCommandCenter(req.query as any, scope);
   return res.json({ success: true, data });
 }));
 
 router.get("/dashboard", requireRole("admin", "hr", "super_admin", "manager", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const data = await getHelpdeskDashboard(req.query as any);
+  const scope = await resolveHelpdeskTicketScope(req.authUser);
+  const data = await getHelpdeskDashboard(req.query as any, scope);
   return res.json({ success: true, data });
 }));
 
@@ -109,7 +111,8 @@ router.get("/sla-summary", requireRole("admin", "hr", "super_admin"), h(async (r
 }));
 
 router.get("/category-breakdown", requireRole("admin", "hr", "super_admin", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const data = await getCategoryBreakdown(req.query as any);
+  const scope = await resolveHelpdeskTicketScope(req.authUser);
+  const data = await getCategoryBreakdown(req.query as any, scope);
   return res.json({ success: true, data });
 }));
 
@@ -119,7 +122,8 @@ router.get("/owner-workload", requireRole("admin", "hr", "super_admin"), h(async
 }));
 
 router.get("/aging", requireRole("admin", "hr", "super_admin", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const data = await getAgingBuckets(req.query as any);
+  const scope = await resolveHelpdeskTicketScope(req.authUser);
+  const data = await getAgingBuckets(req.query as any, scope);
   return res.json({ success: true, data });
 }));
 
@@ -129,7 +133,8 @@ router.get("/root-causes", requireRole("admin", "hr", "super_admin"), h(async (r
 }));
 
 router.get("/it-analysis", requireRole("admin", "hr", "super_admin", "it", "branch_it", "it_admin", "manager", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const data = await getItDepthAnalysis(req.query as any);
+  const scope = await resolveHelpdeskTicketScope(req.authUser);
+  const data = await getItDepthAnalysis(req.query as any, scope);
   return res.json({ success: true, data });
 }));
 
@@ -321,13 +326,16 @@ router.post("/tickets/:id/comments", h(async (req: AuthenticatedRequest, res: Re
   if (!text) return res.status(400).json({ error: "text required" });
 
   const wantInternal = !!is_internal;
-  if (wantInternal && !(await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES))) {
+  const isHelpdeskAdmin = await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES);
+  if (wantInternal && !isHelpdeskAdmin) {
     return res.status(403).json({ success: false, message: "Only admin/hr/IT can post internal comments" });
   }
 
-  const ticket = await helpdeskService.getTicket(req.params.id) as any;
+  const ticket = isHelpdeskAdmin
+    ? await loadTicketInScope(req) as any
+    : await helpdeskService.getTicket(req.params.id) as any;
   if (!ticket) return res.status(404).json({ error: "Not found" });
-  if (!(await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES))) {
+  if (!isHelpdeskAdmin) {
     const emp = await getEmployeeForUser(userId);
     if (!emp || emp.id !== ticket.employee_id) {
       return res.status(403).json({ success: false, message: "Forbidden" });
@@ -654,7 +662,7 @@ router.get("/agents", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: Authen
 
 router.post("/tickets/:id/take", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
-  const ticket = await helpdeskService.getTicket(req.params.id) as any;
+  const ticket = await loadTicketInScope(req) as any;
   if (!ticket) return res.status(404).json({ error: "Not found" });
   if (ticket.assigned_to && ticket.assigned_to !== userId) {
     return res.status(409).json({ success: false, error: "Ticket already assigned to another agent" });
@@ -678,6 +686,7 @@ router.post("/tickets/:id/take", requireRole(...HELPDESK_ADMIN_ROLES), h(async (
 router.post("/tickets/:id/hold", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { reason } = req.body;
   if (!reason?.trim()) return res.status(400).json({ error: "reason required" });
+  if (!(await loadTicketInScope(req))) return res.status(404).json({ error: "Not found" });
   const data = await helpdeskService.holdTicket(req.params.id, req.authUser!.id, reason.trim());
   return res.json({ success: true, data });
 }));
