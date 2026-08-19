@@ -2,6 +2,11 @@ import type WebSocket from 'ws';
 import type { IncomingMessage } from 'http';
 import { logger } from '../../logger.js';
 import { operationsLiveService } from './operations-live.service.js';
+import { authService } from '../auth/auth.service.js';
+import { isAccountRevoked } from '../../shared/accountStatus.js';
+import { getUserRoleContext } from '../../shared/roleResolver.js';
+import { normalizeRoleInputs, expandRoles } from '../../platform/policy/index.js';
+import { DEMO_TOKEN_MAP } from '../../shared/demoAuth.js';
 
 interface SubscribedClient {
   ws: WebSocket;
@@ -9,9 +14,64 @@ interface SubscribedClient {
   lastPing: number;
 }
 
+// Same authorization boundary as the equivalent HTTP surface (operations-live.routes.ts's
+// three requireRole(...) calls, unioned) — the live-status/roster-vs-actual/attrition-risk
+// data this socket streams is exactly what those routes gate. NOTE (2026-08-19): this handler
+// is not currently wired to any http.Server upgrade listener anywhere in the repo, and the
+// frontend's OperationsWebSocketClient (src/lib/operations-websocket.ts) only ever polls the
+// HTTP endpoints, never opens a raw WebSocket — so this class is presently unreachable dead
+// code. The token check below was still a real gap (any string satisfied it) and is fixed
+// here for correctness in case this is ever wired up, not because it is exploitable today.
+const OPERATIONS_WS_ALLOWED_ROLES = ["operations", "admin", "process_manager", "manager", "branch_head", "hr"];
+
 class OperationsWebSocketHandler {
   private clients: Map<string, SubscribedClient> = new Map();
   private broadcastInterval: NodeJS.Timeout | null = null;
+
+  /**
+   * Verify the connection's token the same way requireAuth + requireRole do for the
+   * equivalent HTTP endpoints: real JWT signature/expiry, reject a pre_auth (2FA-pending)
+   * token, reject a revoked/deactivated account, and require one of the roles the HTTP
+   * surface for this same data already requires. Returns the authenticated user id on
+   * success, or null (caller closes the socket) on any failure.
+   */
+  private async validateToken(token: string): Promise<string | null> {
+    // Demo bypass — mirrors authMiddleware.ts's requireAuth, only under the same explicit
+    // env gate, so this never silently accepts a demo token in production.
+    if (token.startsWith("mock-token")) {
+      const demoBypassEnabled =
+        process.env.INTERNAL_DEMO_BYPASS === "true" &&
+        process.env.NODE_ENV !== "production";
+      if (!demoBypassEnabled) return null;
+      const demo = DEMO_TOKEN_MAP[token];
+      if (!demo) return null;
+      const demoRoles = normalizeRoleInputs([demo.role]);
+      if (demoRoles.includes("super_admin")) return demo.id;
+      const expandedDemoRoles = expandRoles(demoRoles);
+      const expandedAllowed = expandRoles(normalizeRoleInputs(OPERATIONS_WS_ALLOWED_ROLES));
+      return expandedAllowed.some((role) => expandedDemoRoles.includes(role)) ? demo.id : null;
+    }
+
+    const mysqlUser = authService.verifyAccessToken(token);
+    if (!mysqlUser) return null;
+    // 2FA gate: a pre_auth token must not reach any real data endpoint, socket included.
+    if (mysqlUser.scope === "pre_auth") return null;
+    if (await isAccountRevoked(mysqlUser.id)) return null;
+
+    let roleKeys: string[] = [];
+    try {
+      const ctx = await getUserRoleContext(mysqlUser.id);
+      roleKeys = ctx.roleKeys;
+    } catch (error) {
+      logger.error({ err: error, userId: mysqlUser.id }, '[OperationsWS] role resolution failed');
+      return null;
+    }
+    const userRoles = normalizeRoleInputs(roleKeys);
+    if (userRoles.includes("super_admin")) return mysqlUser.id;
+    const expandedUserRoles = expandRoles(userRoles);
+    const expandedAllowedRoles = expandRoles(normalizeRoleInputs(OPERATIONS_WS_ALLOWED_ROLES));
+    return expandedAllowedRoles.some((role) => expandedUserRoles.includes(role)) ? mysqlUser.id : null;
+  }
 
   /**
    * Handle new WebSocket connection
@@ -30,8 +90,11 @@ class OperationsWebSocketHandler {
         return;
       }
 
-      // TODO: Validate token with auth service
-      // For now, accept all authenticated connections
+      const userId = await this.validateToken(token);
+      if (!userId) {
+        ws.close(1008, 'Invalid, expired, or unauthorized token');
+        return;
+      }
 
       const clientId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const client: SubscribedClient = {
@@ -41,7 +104,7 @@ class OperationsWebSocketHandler {
       };
 
       this.clients.set(clientId, client);
-      logger.info(`[OperationsWS] Client connected: ${clientId}`);
+      logger.info(`[OperationsWS] Client connected: ${clientId} (user ${userId})`);
 
       // Send welcome message
       this.sendMessage(ws, 'welcome', {
