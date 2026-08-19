@@ -8,6 +8,7 @@ import {
   vendorService, contractService, expenseService, procurementService,
   billingUnitService, billingInvoiceService, expensePolicyService,
 } from "./erp.service.js";
+import { syncVendorsFromDbBill } from "./vendor-sync.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -39,6 +40,15 @@ router.get(
       branchId: query.branchId?.trim() || undefined,
     });
     res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/vendors/sync-from-ispark",
+  requireRole("admin", "finance"),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const result = await syncVendorsFromDbBill();
+    res.json({ success: true, data: result });
   })
 );
 
