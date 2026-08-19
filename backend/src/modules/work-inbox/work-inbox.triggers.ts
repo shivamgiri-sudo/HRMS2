@@ -367,3 +367,35 @@ export async function triggerRosterPublishPending(
     dueAt: dueAt("ROSTER_PUBLISH_PENDING"),
   });
 }
+
+// ATTENDANCE_MISMATCH: one digest item per branch, not per attendance_reconciliation_issue
+// row or per employee — see attendance-mismatch-branch-digest.service.ts for why (that
+// table grows 500-990 rows/day across a near-1:1 count of distinct employees, so anything
+// finer-grained floods wfm/hr). entityId is the branch id, exactly like
+// triggerPayrollBranchReadinessIncomplete uses branchId as both entityId and branchId.
+//
+// createWorkItemIfNotExists dedups on (entityType, entityId, itemType, status='pending'),
+// so once a branch has a pending digest item, later calls here (the digest re-scans daily)
+// no-op rather than refresh the employee count in the title — the same "can go stale until
+// the item is completed" property runPayrollBranchReadinessReminders() already has for
+// PAYROLL_BRANCH_READINESS (fires once per branch per month, then no-ops while
+// readiness_status stays incomplete for the rest of the month). Not a new characteristic
+// introduced here.
+export async function triggerAttendanceMismatchBranchBacklog(
+  branchId: string,
+  branchName: string,
+  employeeCount: number
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "ATTENDANCE_MISMATCH",
+    title: `${employeeCount} employee${employeeCount === 1 ? "" : "s"} in ${branchName} have unresolved attendance exceptions`,
+    description: `Reconciliation against biometric, APR and payroll sources found unresolved attendance exceptions (most commonly missing biometric enrollment) for ${employeeCount} employee${employeeCount === 1 ? "" : "s"} in ${branchName}. Review in the Attendance Exception Engine.`,
+    moduleCode: "attendance",
+    entityType: "branch",
+    entityId: branchId,
+    assignedToRole: "wfm",
+    branchId,
+    priority: "medium",
+    dueAt: dueAt("ATTENDANCE_MISMATCH"),
+  });
+}

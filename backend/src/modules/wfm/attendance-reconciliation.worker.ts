@@ -1,6 +1,7 @@
 import { env } from "../../config/env.js";
 import { withWorkerLock, recordWorkerRun } from "../../workers/worker-utils.js";
 import { attendanceReconciliationService } from "./attendance-reconciliation.service.js";
+import { runAttendanceMismatchBranchDigest } from "./attendance-mismatch-branch-digest.service.js";
 
 const WORKER_NAME = "ncosec-attendance-reconciliation";
 
@@ -40,6 +41,15 @@ async function execute() {
     console.log(
       `[${WORKER_NAME}] from=${result.from} to=${result.to} issues=${result.detectedIssues} resolved=${result.resolvedIssues} autoFix=${result.autoFix.status}`
     );
+    // Follow-up step in the same run: digest the *currently* open backlog (not just what
+    // this run just wrote) into one Work Inbox item per branch. Isolated in its own
+    // try/catch so a digest failure never turns a successful reconciliation run into a
+    // reported failure.
+    try {
+      await runAttendanceMismatchBranchDigest();
+    } catch (error) {
+      console.error(`[${WORKER_NAME}] branch digest failed:`, error instanceof Error ? error.message : String(error));
+    }
   });
   if (!ran) console.log(`[${WORKER_NAME}] skipped because another instance owns the lock`);
 }

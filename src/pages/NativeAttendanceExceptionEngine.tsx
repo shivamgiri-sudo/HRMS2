@@ -32,6 +32,7 @@ import {
   RefreshCw,
   ShieldAlert,
   Search,
+  X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi, getAuthToken, getHrmsApiErrorStatus } from "@/lib/hrmsApi";
@@ -173,6 +174,11 @@ export default function NativeAttendanceExceptionEngine() {
   const [toDate, setToDate] = useState(searchParams.get("toDate") ?? "");
   const [searchInput, setSearchInput] = useState(searchParams.get("search") ?? "");
   const [search, setSearch] = useState(searchParams.get("search") ?? "");
+  // Deep-link only (no dropdown — there's no branch-list endpoint loaded on this page).
+  // The Work Inbox ATTENDANCE_MISMATCH digest deep-links here with ?branchId=..., which
+  // the backend (attendance-exceptions.routes.ts) already accepts and filters emp.branch_id
+  // on; this page just wasn't reading it from the URL before.
+  const [branchId, setBranchId] = useState(searchParams.get("branchId") ?? "");
 
   // Debounce the search box — it hits the server, unlike the mismatch queue's
   // current-page-only client filter.
@@ -190,8 +196,9 @@ export default function NativeAttendanceExceptionEngine() {
     if (fromDate) params.set("fromDate", fromDate);
     if (toDate) params.set("toDate", toDate);
     if (search) params.set("search", search);
+    if (branchId) params.set("branchId", branchId);
     return params.toString();
-  }, [status, issueType, severity, fromDate, toDate, search]);
+  }, [status, issueType, severity, fromDate, toDate, search, branchId]);
 
   // Keep the URL in step with the filters so the view is shareable and refresh-safe.
   useEffect(() => {
@@ -308,6 +315,32 @@ export default function NativeAttendanceExceptionEngine() {
             </Button>
           </div>
         </div>
+
+        {/* Branch filter, active only when this page was reached via a branch deep-link
+            (e.g. the Work Inbox ATTENDANCE_MISMATCH digest item). No dropdown here — just
+            a visible indicator + a way to clear it, since there's no branch-list endpoint
+            loaded on this page. */}
+        {branchId && (
+          <Card className="border-blue-200 bg-blue-50">
+            <CardContent className="flex items-center justify-between gap-3 p-4">
+              <p className="text-sm font-semibold text-blue-900">
+                Filtered to branch:{" "}
+                <span className="font-black">
+                  {rows[0]?.branch_name ?? branchId}
+                </span>
+              </p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-blue-700 hover:text-blue-900"
+                onClick={() => setBranchId("")}
+              >
+                <X className="mr-1 h-3.5 w-3.5" />
+                Clear
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Access denied — a role that passes the page gate but not the data API */}
         {isForbidden && (

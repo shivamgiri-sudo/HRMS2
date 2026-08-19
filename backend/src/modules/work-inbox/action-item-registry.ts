@@ -77,15 +77,27 @@ export const ACTION_ITEM_REGISTRY: ActionItemDefinition[] = [
     requiresScope:     true,
   },
   // ── Attendance / WFM ─────────────────────────────────────────────────────────
+  // ATTENDANCE_MISMATCH had zero producers until attendance-mismatch-branch-digest.service.ts
+  // (2026-08-19) — attendance_reconciliation_issue grows 500-990 rows/day across a nearly
+  // 1:1 count of distinct employees, so a per-row or per-employee trigger would flood
+  // wfm/hr. The item is a per-branch digest instead ("N employees in this branch have
+  // unresolved attendance exceptions"), one per branch with a nonzero open backlog.
+  // deeplinkPattern was previously "/wfm/mismatch-queue?id={entityId}", which resolves
+  // individual attendance_daily_record rows — a different table entirely (see
+  // attendance-exceptions.routes.ts's header comment) and not something a branch id could
+  // ever address. Repointed to the page that actually serves attendance_reconciliation_issue,
+  // filtered to the branch. entityType corrected from "attendance_record" to "branch" to
+  // match what entityId actually holds (a branch_master id, passed as branchId to
+  // createWorkItemIfNotExists exactly like PAYROLL_BRANCH_READINESS does).
   {
     itemType:          "ATTENDANCE_MISMATCH",
-    displayName:       "Attendance mismatch to review",
+    displayName:       "Attendance exceptions unresolved in branch",
     module:            "WFM",
-    entityType:        "attendance_record",
+    entityType:        "branch",
     defaultAssigneeRoles: ["wfm", "hr"],
     defaultPriority:   ACTION_PRIORITY.MEDIUM,
     defaultTtlHours:   48,
-    deeplinkPattern:   "/wfm/mismatch-queue?id={entityId}",
+    deeplinkPattern:   "/wfm/attendance-exceptions?branchId={entityId}&status=open",
     requiresScope:     true,
   },
   {
