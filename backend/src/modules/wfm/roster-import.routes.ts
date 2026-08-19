@@ -10,6 +10,7 @@ import {
   createImportBatch,
   getImportBatch,
   getImportRows,
+  commitImportBatch,
 } from './roster-import.service.js';
 
 const upload = multer({
@@ -130,6 +131,27 @@ rosterImportRouter.get(
     } catch (err: any) {
       console.error('[roster-import] GET rows error:', err);
       res.status(500).json({ error: 'Failed to retrieve rows' });
+    }
+  }
+);
+
+// ── POST /api/wfm/roster-imports/:batchId/commit ─────────────────────────
+rosterImportRouter.post(
+  '/:batchId/commit',
+  requireRole(...WFM_ROLES),
+  async (req, res) => {
+    try {
+      const batchId = parseInt(req.params.batchId, 10);
+      if (isNaN(batchId)) {
+        res.status(400).json({ success: false, error: 'Invalid batchId' });
+        return;
+      }
+      const committedBy = (req as any).user?.id;
+      const { overrideWarnings } = req.body;
+      const result = await commitImportBatch(batchId, committedBy, { overrideWarnings });
+      res.json({ success: true, ...result });
+    } catch (err) {
+      res.status(400).json({ success: false, error: err instanceof Error ? err.message : 'Commit failed' });
     }
   }
 );

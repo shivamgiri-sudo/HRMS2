@@ -330,6 +330,144 @@ export async function getImportBatch(
   return { batch, summary };
 }
 
+// ── Commit types ─────────────────────────────────────────────────────────────
+
+export interface CommitResult {
+  assignmentsCreated: number;
+  assignmentsUpdated: number;
+  skipped: number;
+}
+
+// ── commitImportBatch ─────────────────────────────────────────────────────────
+
+export async function commitImportBatch(
+  batchId: number,
+  committedBy: string,
+  options: { overrideWarnings?: boolean }
+): Promise<CommitResult> {
+  // Step 1: Fetch batch
+  const [batchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM wfm_roster_import_batch WHERE id = ?`,
+    [batchId]
+  );
+  if ((batchRows as RowDataPacket[]).length === 0) {
+    throw new Error('Import batch not found');
+  }
+  const batch = (batchRows as RowDataPacket[])[0];
+
+  // Step 2: Check status
+  if (batch.status !== 'PREVIEW' && batch.status !== 'READY') {
+    throw new Error('Batch is not in a committable state');
+  }
+
+  // Step 3: Check for hard errors
+  const [errorCountRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM wfm_roster_import_row
+     WHERE batch_id = ? AND validation_state = 'ERROR'`,
+    [batchId]
+  );
+  const errorCount = (errorCountRows as RowDataPacket[])[0].cnt as number;
+  if (errorCount > 0 && !options.overrideWarnings) {
+    throw new Error(`Batch has ${errorCount} errors — resolve or use overrideWarnings`);
+  }
+
+  // Step 4: Check warnings
+  const [warnCountRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM wfm_roster_import_row
+     WHERE batch_id = ? AND validation_state = 'WARNING'`,
+    [batchId]
+  );
+  const warnCount = (warnCountRows as RowDataPacket[])[0].cnt as number;
+  if (warnCount > 0 && !options.overrideWarnings) {
+    throw new Error('Batch has warnings — pass overrideWarnings: true to proceed');
+  }
+
+  // Step 5: Maker-checker
+  if (batch.created_by === committedBy) {
+    throw new Error('Uploader cannot approve their own import (maker-checker policy)');
+  }
+
+  // Step 6: Fetch committable rows (exclude NO_CHANGE, NEEDS_MAPPING, ERROR when overrideWarnings)
+  const [importRows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM wfm_roster_import_row
+     WHERE batch_id = ?
+       AND validation_state IN ('VALID', 'WARNING')
+       AND normalized_type NOT IN ('NO_CHANGE', 'NEEDS_MAPPING', 'HARD_ERROR')`,
+    [batchId]
+  );
+  const rows = importRows as RowDataPacket[];
+
+  // Step 7: Begin transaction and insert/update assignments
+  const conn = await (db as any).getConnection();
+  await conn.beginTransaction();
+
+  let assignmentsCreated = 0;
+  let assignmentsUpdated = 0;
+  let skipped = 0;
+
+  try {
+    for (const row of rows) {
+      const importMode = batch.import_mode as 'NEW' | 'UPDATE';
+
+      if (importMode === 'NEW') {
+        // INSERT IGNORE — skip if already exists
+        const [result] = await conn.execute(
+          `INSERT IGNORE INTO wfm_roster_assignment
+             (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, created_at)
+           VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, NOW())`,
+          [row.employee_id_raw, row.roster_date, row.normalized_type, batchId]
+        );
+        if ((result as ResultSetHeader).affectedRows > 0) {
+          assignmentsCreated++;
+        } else {
+          skipped++;
+        }
+      } else {
+        // UPDATE mode — ON DUPLICATE KEY UPDATE
+        const [result] = await conn.execute(
+          `INSERT INTO wfm_roster_assignment
+             (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, created_at)
+           VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, NOW())
+           ON DUPLICATE KEY UPDATE
+             assignment_type = VALUES(assignment_type),
+             lifecycle_state = 'DRAFT',
+             import_batch_id = VALUES(import_batch_id)`,
+          [row.employee_id_raw, row.roster_date, row.normalized_type, batchId]
+        );
+        const header = result as ResultSetHeader;
+        if (header.affectedRows === 1) {
+          assignmentsCreated++;
+        } else if (header.affectedRows === 2) {
+          // MySQL returns 2 for ON DUPLICATE KEY UPDATE that changed a row
+          assignmentsUpdated++;
+        } else {
+          // affectedRows === 0 means ON DUPLICATE KEY UPDATE but no change
+          assignmentsUpdated++;
+        }
+      }
+    }
+
+    // Update batch status
+    await conn.execute(
+      `UPDATE wfm_roster_import_batch
+       SET status = 'COMMITTED', committed_by = ?, committed_at = NOW()
+       WHERE id = ?`,
+      [committedBy, batchId]
+    );
+
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+
+  return { assignmentsCreated, assignmentsUpdated, skipped };
+}
+
+// ── getImportRows ─────────────────────────────────────────────────────────────
+
 export async function getImportRows(
   batchId: number,
   options: {
