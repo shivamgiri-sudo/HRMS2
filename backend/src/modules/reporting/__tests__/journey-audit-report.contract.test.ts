@@ -21,7 +21,9 @@ describe("journey audit report service contracts", () => {
     expect(svc).toContain('"salary_prep_run"');
     expect(svc).toContain('"exit_request"');
     expect(svc).toContain('"exit_approval_log"');
-    expect(svc).toContain('"exit_clearance_checklist"');
+    // 2026-08-19: was exit_clearance_checklist (0 live rows, abandoned) — this source now
+    // registers exit_clearance_task, which the exit module actually writes (24 live rows).
+    expect(svc).toContain('"exit_clearance_task"');
   });
 
   it("resolves actor identity through user-to-employee linkage not name matching", () => {

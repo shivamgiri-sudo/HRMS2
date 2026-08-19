@@ -58,6 +58,23 @@ describe("reports must read the table that holds the data", () => {
     expect(sql).toContain("COALESCE(er.submitted_at, er.created_at) BETWEEN ? AND ?");
   });
 
+  it("clearance-status-register's EXPORT executor also reads exit_clearance_task, not the empty checklist table", () => {
+    // 2026-08-19: the screen route above was fixed to read the right table, but the
+    // GET /:code/export path (buildSecureXlsxBuffer -> executeReport -> clearanceStatusRegister)
+    // is a completely separate code path with its own SQL, and nobody had checked it — it was
+    // still reading exit_clearance_checklist (0 rows), so the export silently reported zero
+    // pending clearances for every exiting employee while the on-screen report (this same
+    // test file, the assertion above) showed the real 24. This is exactly the gap the
+    // screen-vs-export duality this codebase has been burned by before: fixing one path does
+    // not fix the other, and nothing enforced that until now.
+    const exitExecutor = read("src/modules/reporting/executors/exit.executor.ts");
+    const start = exitExecutor.indexOf("export async function clearanceStatusRegister");
+    expect(start, "clearanceStatusRegister executor not found").toBeGreaterThan(-1);
+    const fn = exitExecutor.slice(start, exitExecutor.indexOf("\nexport async function", start + 1));
+    expect(fn).toContain("exit_clearance_task");
+    expect(fn).not.toContain("exit_clearance_checklist");
+  });
+
   it("monthly-attrition-summary has no inline block reading the empty attrition_record", () => {
     // attrition_record exists and holds 0 rows, so the report showed zero attrition for every
     // month and every branch while 1,666 employees left between January and July 2026 — 165 in

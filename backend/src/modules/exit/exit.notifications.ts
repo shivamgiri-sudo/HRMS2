@@ -196,6 +196,13 @@ export async function notifyFullFinalReady(exitRequestId: string): Promise<void>
  * The count is what makes this actionable — "3 items still open" is a task, "someone is
  * leaving" is a fact they already knew. Null when the checklist cannot be read, rather
  * than 0, which would read as "all clear".
+ *
+ * 2026-08-19: was reading exit_clearance_checklist, an abandoned table with 0 live rows —
+ * the try/catch below only ever catches a thrown error (e.g. table missing), not "query
+ * ran fine, matched nothing", so every one of these notifications was silently reporting
+ * `pending: 0` — a false "all clear" — for every exiting employee, the exact failure mode
+ * this doc comment says it wants to avoid. The exit module actually writes
+ * exit_clearance_task (24 live rows); switched to that.
  */
 export async function notifyLastWorkingDayApproaching(exitRequestId: string): Promise<void> {
   try {
@@ -207,8 +214,8 @@ export async function notifyLastWorkingDayApproaching(exitRequestId: string): Pr
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) AS pending,
-                GROUP_CONCAT(DISTINCT department ORDER BY department SEPARATOR ', ') AS departments
-           FROM exit_clearance_checklist
+                GROUP_CONCAT(DISTINCT clearance_area ORDER BY clearance_area SEPARATOR ', ') AS departments
+           FROM exit_clearance_task
           WHERE exit_request_id = ? AND status = 'pending'`,
         [exitRequestId],
       );

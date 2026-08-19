@@ -38,7 +38,10 @@ const SOURCE_REGISTRY: SourceSpec[] = [
   { key: "ASSET_ASSIGNMENT", title: "ASSET CUSTODY", table: "asset_assignment", requiredColumns: ["id", "asset_id", "employee_id", "assigned_date", "returned_date", "created_at"], authoritativeFor: ["ASSET ISSUE", "ASSET RETURN"], activityDateColumn: "created_at", actorColumn: "assigned_by", immutable: true },
   { key: "EXIT_REQUEST", title: "EXIT REQUEST", table: "exit_request", requiredColumns: ["id", "employee_id", "exit_type", "exit_sub_type", "status", "created_at"], authoritativeFor: ["RESIGNATION/TERMINATION INITIATION", "EXIT STATUS", "LAST WORKING DAY"], activityDateColumn: "created_at", actorColumn: "initiated_by_user_id", immutable: false },
   { key: "EXIT_APPROVAL", title: "EXIT APPROVAL HISTORY", table: "exit_approval_log", requiredColumns: ["id", "exit_request_id", "stage", "action", "action_by", "action_by_role", "created_at"], authoritativeFor: ["EXIT DISCUSSION", "EXIT APPROVAL/REJECTION/REVOCATION"], activityDateColumn: "created_at", actorColumn: "action_by", immutable: true },
-  { key: "EXIT_CLEARANCE", title: "EXIT CLEARANCE HISTORY", table: "exit_clearance_checklist", requiredColumns: ["id", "exit_request_id", "department", "status", "created_at"], authoritativeFor: ["DEPARTMENT CLEARANCE", "EXIT RECOVERY"], activityDateColumn: "created_at", actorColumn: "assigned_to", immutable: true },
+  // 2026-08-19: was exit_clearance_checklist (0 live rows, abandoned) — exit_clearance_task
+  // is what the exit module writes (24 live rows); department -> clearance_area, assigned_to
+  // -> owner_user_id (a real user id — owner_role holds a role string like 'payroll'/'wfm').
+  { key: "EXIT_CLEARANCE", title: "EXIT CLEARANCE HISTORY", table: "exit_clearance_task", requiredColumns: ["id", "exit_request_id", "clearance_area", "status", "created_at"], authoritativeFor: ["DEPARTMENT CLEARANCE", "EXIT RECOVERY"], activityDateColumn: "created_at", actorColumn: "owner_user_id", immutable: true },
   { key: "SENSITIVE_ACTION", title: "SENSITIVE ACTION LOG", table: "sensitive_action_log", requiredColumns: ["id", "action_type", "module_key", "created_at"], authoritativeFor: ["SENSITIVE DATA CHANGE", "PRIVILEGED ACTION"], activityDateColumn: "created_at", actorColumn: "actor_user_id", immutable: true },
   { key: "AUDIT_LOG", title: "SYSTEM AUDIT LOG", table: "audit_log", requiredColumns: ["id", "action_type", "module_key", "created_at"], authoritativeFor: ["SYSTEM USER ACTIVITY", "CONTROL EVIDENCE"], activityDateColumn: "created_at", actorColumn: "actor_user_id", immutable: true },
   { key: "ATS_OFFER", title: "OFFER MANAGEMENT", table: "ats_offer", requiredColumns: ["id", "candidate_id", "status", "offer_date", "created_at"], authoritativeFor: ["OFFER CREATED", "OFFER STATUS", "OFFER ACCEPTED/REJECTED"], activityDateColumn: "created_at", actorColumn: "prepared_by", immutable: false },
@@ -252,16 +255,19 @@ export const journeyAuditReportService = {
       params.push(filters.from, `${filters.to} 23:59:59`, ...branch.params);
     }
 
-    if (has(columns, "exit_clearance_checklist", ["id", "exit_request_id", "department", "status", "created_at"])) {
+    // 2026-08-19: was exit_clearance_checklist (0 live rows) — exit_clearance_task is what
+    // the exit module writes (24 live rows). department -> clearance_area, assigned_to ->
+    // owner_user_id (a real user id, unlike owner_role which holds a role string).
+    if (has(columns, "exit_clearance_task", ["id", "exit_request_id", "clearance_area", "status", "created_at"])) {
       parts.push(`SELECT e.employee_code,DATE_FORMAT(COALESCE(ec.cleared_at,ec.created_at),'%d-%b-%Y'),NULL,NULL,e.full_name,
-        'EXIT CLEARANCE',ec.department,ec.status,COALESCE(ec.cleared_at,ec.created_at),DATE(COALESCE(ec.cleared_at,ec.created_at)),
-        COALESCE(actor_employee.employee_code,actor_user_employee.employee_code,CAST(ec.assigned_to AS CHAR),'SYSTEM'),
-        COALESCE(actor_employee.full_name,actor_user_employee.full_name,'SYSTEM'),ec.department,
-        ec.id,'exit_clearance_checklist',IF(ec.cleared_at IS NULL,'exit_clearance_checklist.created_at','exit_clearance_checklist.cleared_at'),'AUTHORITATIVE',NULL,ec.status,
+        'EXIT CLEARANCE',ec.clearance_area,ec.status,COALESCE(ec.cleared_at,ec.created_at),DATE(COALESCE(ec.cleared_at,ec.created_at)),
+        COALESCE(actor_employee.employee_code,actor_user_employee.employee_code,CAST(ec.owner_user_id AS CHAR),'SYSTEM'),
+        COALESCE(actor_employee.full_name,actor_user_employee.full_name,'SYSTEM'),ec.clearance_area,
+        ec.id,'exit_clearance_task',IF(ec.cleared_at IS NULL,'exit_clearance_task.created_at','exit_clearance_task.cleared_at'),'AUTHORITATIVE',NULL,ec.status,
         ec.remarks,ec.remarks,b.branch_name,p.process_name,d.department_name
-       FROM exit_clearance_checklist ec JOIN exit_request xr ON xr.id=ec.exit_request_id JOIN employees e ON e.id=xr.employee_id
+       FROM exit_clearance_task ec JOIN exit_request xr ON xr.id=ec.exit_request_id JOIN employees e ON e.id=xr.employee_id
        LEFT JOIN branch_master b ON b.id=e.branch_id LEFT JOIN process_master p ON p.id=e.process_id LEFT JOIN department_master d ON d.id=e.department_id
-       ${commonActorJoins("ec.assigned_to")}
+       ${commonActorJoins("ec.owner_user_id")}
        WHERE COALESCE(ec.cleared_at,ec.created_at) BETWEEN ? AND ? AND (${branch.sql})`);
       params.push(filters.from, `${filters.to} 23:59:59`, ...branch.params);
     }

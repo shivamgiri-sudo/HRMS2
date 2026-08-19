@@ -331,8 +331,13 @@ export async function fnfSettlementRegister(
 
 // ---------------------------------------------------------------------------
 // clearance-status-register
-// Actual table: exit_clearance_checklist (011_exit_management.sql).
-// One row per dept per exit — aggregate across depts for a summary view.
+// Reads exit_clearance_task, not exit_clearance_checklist (2026-08-19 fix).
+// exit_clearance_checklist is the older, abandoned table — 0 live rows — the exit
+// module writes exit_clearance_task instead (24 live rows). This executor was still
+// reading the empty one, so the export silently reported zero pending clearances for
+// every exiting employee while the on-screen report (report-suite.routes.ts, already
+// fixed) showed the real data. clearance_area replaces the old department column.
+// One row per task per exit — aggregate across tasks for a summary view.
 // ---------------------------------------------------------------------------
 export async function clearanceStatusRegister(
   filters: ExecFilters,
@@ -358,14 +363,14 @@ export async function clearanceStatusRegister(
            er.last_working_day_confirmed AS last_working_day,
            SUM(CASE WHEN ec.status = 'cleared' THEN 1 ELSE 0 END) AS depts_cleared,
            COUNT(ec.id) AS depts_total,
-           MAX(CASE WHEN ec.status NOT IN ('cleared','waived') THEN ec.department ELSE NULL END) AS pending_dept,
+           MAX(CASE WHEN ec.status NOT IN ('cleared','waived') THEN ec.clearance_area ELSE NULL END) AS pending_dept,
            COALESCE(sp_cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(sp_cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name
       FROM employees e
       LEFT JOIN exit_request er              ON er.employee_id = e.id
-      LEFT JOIN exit_clearance_checklist ec  ON ec.exit_request_id = er.id
+      LEFT JOIN exit_clearance_task ec       ON ec.exit_request_id = er.id
       LEFT JOIN branch_master b              ON b.id = e.branch_id
       LEFT JOIN process_master p             ON p.id = e.process_id
       LEFT JOIN cost_centre_master sp_cc     ON sp_cc.id = e.cost_centre_id
