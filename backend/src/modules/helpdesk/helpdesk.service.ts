@@ -590,6 +590,7 @@ export const helpdeskService = {
     file_name: string;
     file_type?: string;
     description?: string;
+    file_url?: string;
   }) {
     await db.execute(
       `UPDATE grievance SET evidence_count = evidence_count + 1, updated_at = NOW() WHERE id = ?`,

@@ -1,5 +1,9 @@
 import { Router } from "express";
 import type { Response } from "express";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { randomUUID } from "crypto";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -20,6 +24,35 @@ import {
 } from "./helpdesk-sla.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
 import { db } from "../../db/mysql.js";
+import { registerUpload } from "../document-vault/documentVault.service.js";
+
+// ── Grievance evidence multer setup ───────────────────────────────────────────
+const EVIDENCE_UPLOADS_DIR = path.resolve(process.cwd(), "uploads", "grievance-evidence");
+const EVIDENCE_ALLOWED_EXT = new Set([".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx"]);
+
+const evidenceStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    fs.mkdirSync(EVIDENCE_UPLOADS_DIR, { recursive: true });
+    cb(null, EVIDENCE_UPLOADS_DIR);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${randomUUID()}${ext}`);
+  },
+});
+
+const evidenceUpload = multer({
+  storage: evidenceStorage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (EVIDENCE_ALLOWED_EXT.has(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`File type ${ext} not allowed. Allowed: ${[...EVIDENCE_ALLOWED_EXT].join(", ")}`));
+    }
+  },
+});
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -547,12 +580,67 @@ router.post("/grievances/:id/reopen", requireRole("admin", "hr"), h(async (req: 
   res.json({ data });
 }));
 
-router.post("/grievances/:id/evidence", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { file_name, file_type, description } = req.body;
-  if (!file_name) return res.status(400).json({ error: "file_name required" });
-  const data = await helpdeskService.addEvidenceMetadata(req.params.id, req.authUser!.id, { file_name, file_type, description });
-  res.status(201).json({ data });
-}));
+router.post(
+  "/grievances/:id/evidence",
+  requireRole("admin", "hr"),
+  (req: any, res: any, next: any) => {
+    evidenceUpload.single("file")(req, res, (err) => {
+      if (err instanceof multer.MulterError) {
+        return res.status(400).json({ error: `Upload error: ${err.message}` });
+      }
+      if (err) {
+        return res.status(400).json({ error: err.message });
+      }
+      next();
+    });
+  },
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const effectiveName: string =
+      (req.body?.file_name as string | undefined) ?? req.file?.originalname ?? "";
+    const effectiveType: string | undefined =
+      (req.body?.file_type as string | undefined) ?? req.file?.mimetype;
+    const description: string | undefined = req.body?.description;
+
+    if (!effectiveName) {
+      return res.status(400).json({ error: "file_name required" });
+    }
+
+    let file_url: string | undefined;
+
+    if (req.file) {
+      const storedFilename = req.file.filename;
+      const filePath = req.file.path;
+      const fileUrl = `/api/files/grievance-evidence/${storedFilename}`;
+
+      try {
+        await registerUpload({
+          uploadedByUser: req.authUser!.id,
+          category: "grievance-evidence",
+          storedFilename,
+          originalFilename: req.file.originalname,
+          mimeType: req.file.mimetype,
+          fileSizeBytes: req.file.size,
+          accessLevel: "internal",
+        });
+        file_url = fileUrl;
+      } catch (vaultErr) {
+        console.error("[grievance-evidence] vault registration failed:", vaultErr);
+        try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+        return res.status(500).json({
+          error: "Failed to register file in document vault. Upload rolled back.",
+          code: "VAULT_REGISTRATION_FAILED",
+        });
+      }
+    }
+
+    const data = await helpdeskService.addEvidenceMetadata(
+      req.params.id,
+      req.authUser!.id,
+      { file_name: effectiveName, file_type: effectiveType, description, file_url },
+    );
+    res.status(201).json({ data });
+  }),
+);
 
 // ── Agents list (for assign dropdown) ─────────────────────────────────────────
 

@@ -6,7 +6,7 @@ import {
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { DashboardLoading, FilterField, KpiTile, SelectFilter } from "@/components/command-center/CommandCenterUi";
 import { formatISTDate } from "@/lib/utils";
-import { hrmsApi } from "@/lib/hrmsApi";
+import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -130,6 +130,7 @@ export default function NativeGrievanceCommandCenter() {
   const [assignee, setAssignee]   = useState("");
   const [actionMsg, setActionMsg] = useState("");
   const [actionWorking, setActionWorking] = useState(false);
+  const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
 
   // Fix 2A — employee search picker
   const [assigneeQuery, setAssigneeQuery] = useState("");
@@ -262,6 +263,42 @@ export default function NativeGrievanceCommandCenter() {
       if (timelineRes.status === "fulfilled") setTimeline(timelineRes.value.data ?? []);
     } catch (e: any) {
       setActionMsg(e.message ?? `${action} failed`);
+    } finally {
+      setActionWorking(false);
+    }
+  };
+
+  const uploadEvidence = async () => {
+    if (!selected || !evidenceFile) return;
+    setActionWorking(true);
+    setActionMsg("");
+    try {
+      const token = getAuthToken() ?? "";
+      const fd = new FormData();
+      fd.append("file", evidenceFile);
+      fd.append("file_name", evidenceFile.name);
+      fd.append("file_type", evidenceFile.type);
+      fd.append("description", `Evidence for ${selected.grievance_code}`);
+      const res = await fetch(
+        `${window.location.origin}/api/helpdesk/grievances/${selected.id}/evidence`,
+        {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: fd,
+        },
+      );
+      if (!res.ok) throw new Error(`Upload failed: HTTP ${res.status}`);
+      setEvidenceFile(null);
+      setActionMsg("Evidence uploaded");
+      await load();
+      const [dr, tr] = await Promise.allSettled([
+        hrmsApi.get<{ data: GrievanceDetail }>(`/api/helpdesk/grievances/${selected.id}`),
+        hrmsApi.get<{ data: TimelineEntry[] }>(`/api/helpdesk/grievances/${selected.id}/timeline`),
+      ]);
+      if (dr.status === "fulfilled") setSelected(dr.value.data ?? null);
+      if (tr.status === "fulfilled") setTimeline(tr.value.data ?? []);
+    } catch (e: any) {
+      setActionMsg(e.message ?? "Upload failed");
     } finally {
       setActionWorking(false);
     }
@@ -729,6 +766,29 @@ export default function NativeGrievanceCommandCenter() {
                         >
                           Save Note
                         </button>
+                      </div>
+
+                      {/* Evidence attachment */}
+                      <div className="mt-4">
+                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Evidence</p>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="file"
+                            accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                            className="text-sm text-gray-600 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:text-xs file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200"
+                            onChange={(e) => setEvidenceFile(e.target.files?.[0] ?? null)}
+                          />
+                          <button
+                            onClick={uploadEvidence}
+                            disabled={!evidenceFile || actionWorking}
+                            className="px-3 py-1 text-xs rounded bg-indigo-600 text-white disabled:opacity-50"
+                          >
+                            Upload
+                          </button>
+                        </div>
+                        {selected.evidence_count > 0 && (
+                          <p className="text-xs text-gray-400 mt-1">{selected.evidence_count} evidence file(s) attached</p>
+                        )}
                       </div>
 
                       {/* Close with resolution */}

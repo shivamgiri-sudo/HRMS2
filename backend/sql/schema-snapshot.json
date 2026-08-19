@@ -1,6 +1,6 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 950,
+  "tableCount": 960,
   "columnCount": 13378,
   "tables": {
     "_migrations": [
@@ -3681,6 +3681,85 @@
       "created_at",
       "updated_at"
     ],
+    "client_credit_note": [
+      "id",
+      "invoice_id",
+      "cost_centre_id",
+      "category",
+      "finance_year",
+      "month_label",
+      "credit_date",
+      "description",
+      "credit_no",
+      "credit_status",
+      "gst_type",
+      "apply_gst",
+      "total_amount",
+      "igst_amount",
+      "cgst_amount",
+      "sgst_amount",
+      "grand_total",
+      "approved_by",
+      "approved_at",
+      "created_by",
+      "created_at"
+    ],
+    "client_credit_note_line": [
+      "id",
+      "credit_note_id",
+      "particulars",
+      "qty",
+      "rate",
+      "amount"
+    ],
+    "client_invoice": [
+      "id",
+      "cost_centre_id",
+      "invoice_status",
+      "category",
+      "finance_year",
+      "month_label",
+      "invoice_date",
+      "description",
+      "proforma_no",
+      "bill_no",
+      "gst_type",
+      "apply_gst",
+      "total_amount",
+      "igst_amount",
+      "cgst_amount",
+      "sgst_amount",
+      "grand_total",
+      "created_by",
+      "created_at",
+      "updated_at",
+      "rejected_reason",
+      "rejected_by",
+      "rejected_at"
+    ],
+    "client_invoice_audit_log": [
+      "id",
+      "invoice_id",
+      "action",
+      "actor_id",
+      "reason",
+      "created_at"
+    ],
+    "client_invoice_line": [
+      "id",
+      "invoice_id",
+      "line_type",
+      "particulars",
+      "qty",
+      "rate",
+      "amount",
+      "created_at"
+    ],
+    "client_invoice_number_sequence": [
+      "kind",
+      "scope_key",
+      "updated_at"
+    ],
     "client_master": [
       "id",
       "client_code",
@@ -3710,6 +3789,41 @@
       "api_key",
       "webhook_url",
       "updated_at"
+    ],
+    "client_po_number": [
+      "id",
+      "cost_centre_id",
+      "po_number",
+      "period_from",
+      "period_to",
+      "total_amount",
+      "balance_amount",
+      "created_at",
+      "updated_at"
+    ],
+    "client_po_particular": [
+      "id",
+      "po_id",
+      "invoice_id",
+      "amount_consumed",
+      "consumed_at"
+    ],
+    "client_provision": [
+      "id",
+      "cost_centre_id",
+      "finance_year",
+      "month_label",
+      "provision_amount",
+      "provision_balance",
+      "created_at",
+      "updated_at"
+    ],
+    "client_provision_deduction": [
+      "id",
+      "provision_id",
+      "invoice_id",
+      "amount_used",
+      "deducted_at"
     ],
     "client_user": [
       "id",
@@ -8087,7 +8201,8 @@
       "disbursed_at",
       "created_by",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "accounting_period"
     ],
     "imprest_allocation_sequence": [
       "period_code",
