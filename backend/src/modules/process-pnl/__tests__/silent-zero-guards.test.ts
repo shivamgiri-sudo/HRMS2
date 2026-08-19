@@ -76,6 +76,23 @@ describe("safeRows tolerates a missing table and nothing else", () => {
   });
 });
 
+describe("the allocation overlay backing /pnl/bpo/summary and /pnl/bpo/export uses safeRows too", () => {
+  /**
+   * This file backs two of the six P&L endpoints and was never migrated onto safeRows when
+   * a1661272 fixed the sibling bpo-pnl.service.ts — allocationPolicies, newAllocationRows and
+   * both legacyAllocatedGrnRows queries each carried their own `.catch(() => [])`, so a schema
+   * drift on pnl_allocation_policy / vw_process_pnl_grn_allocation / vendor_payment_tracking /
+   * grn_request still degraded to a silently empty allocation set with HTTP 200.
+   */
+  it("no query in this file swallows every error with a bare catch", () => {
+    const source = read("bpo-pnl-allocation-overlay.service.ts");
+    expect(source).not.toMatch(/\.catch\(\(\) => \[\]\)/);
+    expect(source).toContain("safeRows<AllocationPolicyRow>");
+    expect(source).toContain("safeRows<AllocationViewRow>");
+    expect(source).toContain("safeRows<LegacyAttributionRow>");
+  });
+});
+
 describe("a rollup reports what it could not measure", () => {
   it("the consolidation readiness row does not assert 0% for a failed read", () => {
     const routes = read("process-pnl.routes.ts");

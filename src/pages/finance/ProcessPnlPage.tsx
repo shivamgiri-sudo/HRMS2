@@ -370,6 +370,11 @@ export default function ProcessPnlPage() {
             <div className="flex gap-2">
               {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-14 w-36 rounded-xl shrink-0" />)}
             </div>
+          ) : bpoQuery.isError ? (
+            <p className="text-sm text-rose-600">
+              Could not load P&amp;L data for {period}.{" "}
+              <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
+            </p>
           ) : (
             <PnlExecutiveKpiStrip items={kpiItems} compact />
           )}
@@ -494,6 +499,11 @@ export default function ProcessPnlPage() {
             />
             {bpoQuery.isLoading ? (
               <Skeleton className="h-96 rounded-3xl" />
+            ) : bpoQuery.isError ? (
+              <p className="rounded-3xl border border-rose-200 bg-rose-50 px-4 py-6 text-center text-sm text-rose-600">
+                Could not load the process matrix for {period}.{" "}
+                <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
+              </p>
             ) : (
               <BpoPnlMatrixTable
                 rows={rows}
@@ -512,6 +522,8 @@ export default function ProcessPnlPage() {
             <PnlStatementView
               statement={statementQuery.data}
               isLoading={statementQuery.isLoading}
+              isError={statementQuery.isError}
+              onRetry={() => void statementQuery.refetch()}
               viewBy={statementViewBy}
               onViewByChange={setStatementViewBy}
               period={filters.period}
@@ -526,6 +538,11 @@ export default function ProcessPnlPage() {
                   {Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-72 rounded-md" />)}
                 </div>
               </div>
+            ) : bpoQuery.isError ? (
+              <p className="rounded-md border border-rose-200 bg-rose-50 px-4 py-6 text-center text-sm text-rose-600">
+                Could not load alerts &amp; reconciliation for {period}.{" "}
+                <button type="button" className="underline" onClick={() => void bpoQuery.refetch()}>Retry</button>
+              </p>
             ) : summary ? (
               <ProcessPnlAlertsWorkspace alerts={summary.alerts} period={period} rows={rows} />
             ) : null}

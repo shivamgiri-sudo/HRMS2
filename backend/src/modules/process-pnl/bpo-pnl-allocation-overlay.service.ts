@@ -1,7 +1,7 @@
 import type { RowDataPacket } from "mysql2";
-import { queryRows, tableExists } from "../../shared/dbHelpers.js";
+import { tableExists } from "../../shared/dbHelpers.js";
 import type { PnlQueryFilters } from "./process-pnl.types.js";
-import { bpoPnlService, type BpoPnlRow } from "./bpo-pnl.service.js";
+import { bpoPnlService, safeRows, type BpoPnlRow } from "./bpo-pnl.service.js";
 import { allocatePoolAmount, type AllocationShare, type ManualAllocationWarning } from "./bpo-pnl.calculation.js";
 
 type BpoPnlSummary = Awaited<ReturnType<typeof bpoPnlService.getSummary>>;
@@ -178,7 +178,12 @@ async function allocationPolicies(period: string) {
   const lastDay = new Date(year, month, 0).getDate();
   const start = `${period}-01`;
   const end = `${period}-${String(lastDay).padStart(2, "0")}`;
-  return queryRows<AllocationPolicyRow>(
+  // safeRows (not a blanket empty-array catch-all): a missing table still yields no rows, but a real
+  // query error — bad column, lock-wait timeout — now propagates instead of silently becoming
+  // "no allocation policy this period", which read as a fabricated zero on the P&L. See the
+  // safeRows doc comment in bpo-pnl.service.ts for the incident this pattern was built to close;
+  // this file backed /pnl/bpo/summary and /pnl/bpo/export and was never migrated onto it.
+  return safeRows<AllocationPolicyRow>(
     `SELECT branch_id, process_id, pool_type, allocation_driver, manual_allocation_pct
        FROM pnl_allocation_policy
       WHERE status = 'approved'
@@ -186,21 +191,21 @@ async function allocationPolicies(period: string) {
         AND (effective_to IS NULL OR effective_to >= ?)
       ORDER BY branch_id, pool_type, process_id`,
     [end, start]
-  ).catch(() => []);
+  );
 }
 
 async function newAllocationRows(period: string) {
-  return queryRows<AllocationViewRow>(
+  return safeRows<AllocationViewRow>(
     `SELECT process_id, branch_id, period_code, pnl_bucket,
             pnl_cost_amount, allocation_count, freshness
        FROM vw_process_pnl_grn_allocation
       WHERE period_code = ?`,
     [period]
-  ).catch(() => []);
+  );
 }
 
 async function legacyAllocatedGrnRows(period: string) {
-  const vendorRows = await queryRows<LegacyAttributionRow>(
+  const vendorRows = await safeRows<LegacyAttributionRow>(
     `SELECT
         COALESCE(vpt.process_id, ccm.process_id) AS process_id,
         vpt.branch_id,
@@ -227,9 +232,9 @@ async function legacyAllocatedGrnRows(period: string) {
         )
       GROUP BY process_id, vpt.branch_id, cost_class`,
     [period]
-  ).catch(() => []);
+  );
 
-  const grnRows = await queryRows<LegacyAttributionRow>(
+  const grnRows = await safeRows<LegacyAttributionRow>(
     `SELECT
         COALESCE(g.process_id, ccm.process_id) AS process_id,
         g.branch_id,
@@ -257,7 +262,7 @@ async function legacyAllocatedGrnRows(period: string) {
         )
       GROUP BY process_id, g.branch_id, cost_class`,
     [period]
-  ).catch(() => []);
+  );
 
   return [...vendorRows, ...grnRows];
 }

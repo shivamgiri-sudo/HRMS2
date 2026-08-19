@@ -31,12 +31,19 @@ function formatValue(value: number | null, format: string) {
 export function PnlStatementView({
   statement,
   isLoading,
+  isError,
+  onRetry,
   viewBy,
   onViewByChange,
   period,
 }: {
   statement: PnlStatement | undefined;
   isLoading: boolean;
+  /** True when the underlying query failed. Without this, a failed fetch and a genuinely
+   *  empty period both fell into "No data available", so a 401/500 looked identical to a
+   *  quiet month. */
+  isError?: boolean;
+  onRetry?: () => void;
   viewBy: PnlStatementViewBy;
   onViewByChange: (viewBy: PnlStatementViewBy) => void;
   /** Period the statement is showing (YYYY-MM). Required to refresh its people cost. */
@@ -161,6 +168,11 @@ export function PnlStatementView({
       {isLoading ? (
         <div className="flex h-40 items-center justify-center rounded-3xl border border-slate-200 bg-white">
           <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+        </div>
+      ) : isError ? (
+        <div className="rounded-3xl border border-rose-200 bg-rose-50 p-8 text-center text-sm text-rose-600">
+          Could not load the statement for this period.{" "}
+          {onRetry && <button type="button" className="underline" onClick={onRetry}>Retry</button>}
         </div>
       ) : !statement || statement.rows.length === 0 ? (
         <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
