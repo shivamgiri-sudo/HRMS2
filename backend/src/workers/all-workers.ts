@@ -46,6 +46,7 @@ import { startBreachSlaCron, stopBreachSlaCron } from "../modules/privacy/dpdp-b
 import { startCosecSyncWorker, stopCosecSyncWorker } from "../modules/wfm/cosec-sync.worker.js";
 import { startRtaNightlyCron, stopRtaNightlyCron } from "../modules/rta/rta-nightly.cron.js";
 import { startWalkinSlaCron, stopWalkinSlaCron } from "./walkin-sla.cron.js";
+import { startHelpdeskSlaCron, stopHelpdeskSlaCron } from "../modules/helpdesk/helpdesk-sla.cron.js";
 import { startInboxReconciliationWorker, stopInboxReconciliationWorker } from "./inbox-reconciliation.worker.js";
 import { startReportGenerationWorker, stopReportGenerationWorker } from "./report-generation.worker.js";
 import { startReportEmailDeliveryWorker, stopReportEmailDeliveryWorker } from "./report-email-delivery.worker.js";
@@ -257,6 +258,13 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startWalkinSlaCron(); return Promise.resolve(); },
   },
   {
+    // D-SLA-01: replaces the inline refreshSlaBreachFlags() call removed from
+    // GET /helpdesk/dashboard in 4829f0a6 — without this, sla_breached flags
+    // and the Support Command Center's breach badges never update.
+    name: "helpdesk-sla",
+    start: () => { startHelpdeskSlaCron(); return Promise.resolve(); },
+  },
+  {
     name: "inbox-reconciliation",
     start: () => { startInboxReconciliationWorker(); return Promise.resolve(); },
   },
@@ -389,6 +397,7 @@ function shutdown(): void {
   stopPayrollWindowClosureScheduler();
   stopBreachSlaCron();
   stopWalkinSlaCron();
+  stopHelpdeskSlaCron();
   stopInboxReconciliationWorker();
   stopReportGenerationWorker();
   stopReportEmailDeliveryWorker();

@@ -41,6 +41,7 @@ import { startLmsSyncWorker } from "./workers/lms-sync.worker.js";
 // block at its former start site below for what is missing and how to restore it.
 import { startMiraTriageScheduler } from "./modules/ai/mira-triage-scheduler.js";
 import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
+import { startHelpdeskSlaCron } from "./modules/helpdesk/helpdesk-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
 import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
@@ -224,6 +225,10 @@ function startServer() {
         initBusinessActionSyncJobs();
         startBreachSlaCron();
         startRetentionCron();
+        // D-SLA-01: replaces the inline refreshSlaBreachFlags() call removed from
+        // GET /helpdesk/dashboard in 4829f0a6 — without this, sla_breached flags
+        // and the Support Command Center's breach badges never update.
+        startHelpdeskSlaCron();
         // ── Onboarding reminders: FIXED BUT DELIBERATELY NOT STARTED ──────────
         //
         // This cron read three columns ats_onboarding_bridge does not have
@@ -259,7 +264,7 @@ function startServer() {
         // worker_config.enabled (0) and every subscription is_active=0.
         startReportSubscriptionWorker();
         console.log(
-          "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, performance-ingestion, business-action-sync, breach-sla, privacy-retention, ats-reminders, employee-lifecycle started",
+          "[schedulers] tenure, communication, attendance, attendance-reconciliation, legacy-sync, access-expiry, it-provisioning, leave-monthly, leave-annual, payroll-window, performance-ingestion, business-action-sync, breach-sla, privacy-retention, helpdesk-sla, ats-reminders, employee-lifecycle started",
         );
 
         // Start heavy workers (with distributed lock protection)
