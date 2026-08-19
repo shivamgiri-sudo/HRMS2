@@ -250,6 +250,36 @@ router.get("/my-roster/:cycleId", h(async (req: AuthenticatedRequest, res: Respo
   return res.json({ success: true, data });
 }));
 
+// ── Amendments ────────────────────────────────────────────────────────────────
+// List all amendments (change-log entries) for a published/active cycle
+router.get("/cycles/:cycleId/amendments", h(async (req: AuthenticatedRequest, res: Response) => {
+  const cycle = await rosterGovernanceService.getCycle(req.params.cycleId);
+  if (!(await canMonitorRoster(req, cycle.process_id, cycle.branch_id))) {
+    return res.status(403).json({ success: false, message: "Forbidden: mapped roster scope is required" });
+  }
+  const amendments = await rosterGovernanceService.listChangeLogs(req.params.cycleId);
+  return res.json({ amendments });
+}));
+
+// Create a post-publish amendment — requires roster ownership scope
+router.post("/cycles/:cycleId/amendments", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeId, date, newShiftId, newAssignmentType, reason } = req.body;
+  if (!employeeId || !date || !newAssignmentType || !reason) {
+    return res.status(400).json({ error: "employeeId, date, newAssignmentType, reason are required" });
+  }
+  const cycle = await rosterGovernanceService.getCycle(req.params.cycleId);
+  if (!(await canOwnRoster(req, cycle.process_id, cycle.branch_id))) {
+    return res.status(403).json({ success: false, message: "Forbidden: only mapped Process Manager/WFM may create amendments" });
+  }
+  const amendment = await rosterGovernanceService.createAmendment(
+    req.params.cycleId,
+    { employeeId, date, newShiftId, newAssignmentType, reason },
+    req.authUser!.id,
+    req
+  );
+  return res.status(201).json({ amendment });
+}));
+
 // ── Change Log ────────────────────────────────────────────────────────────────
 router.get("/cycles/:id/changes", h(async (req: AuthenticatedRequest, res: Response) => {
   if (!(await requireCycleMonitor(req, res))) return;

@@ -108,6 +108,15 @@ export interface ChangeLog extends RowDataPacket {
   change_date: string;
   changed_by: string;
   created_at: string;
+  // Amendment fields (nullable — added by Task 1 migration)
+  old_shift_id?: string | null;
+  new_shift_id?: string | null;
+  old_assignment_type?: string | null;
+  new_assignment_type?: string | null;
+  amendment_reason?: string | null;
+  is_late_change?: number;
+  lead_time_hours?: number | null;
+  notified_at?: string | null;
 }
 
 export interface CreateChangeLogInput {
@@ -494,6 +503,104 @@ export const rosterGovernanceService = {
     );
     await logSensitiveAction({ actor_user_id: userId, action_type: "ROSTER_POST_PUBLISH_CHANGE_RECORDED", module_key: "roster_gov", entity_type: "roster_change_log", entity_id: id, change_summary: { cycle_id: cycleId, employee_id: input.employee_id, change_type: input.change_type, process_id: cycle.process_id }, req });
     const [rows] = await db.execute<ChangeLog[]>("SELECT * FROM roster_change_log WHERE id = ? LIMIT 1", [id]);
+    return rows[0];
+  },
+
+  async createAmendment(
+    cycleId: string,
+    input: {
+      employeeId: string;
+      date: string;
+      newShiftId?: string;
+      newAssignmentType: string;
+      reason: string;
+      shortNoticeThresholdHours?: number;
+    },
+    userId: string,
+    req?: Request
+  ): Promise<ChangeLog> {
+    // 1. Fetch the cycle; must be post-publication
+    const cycle = await this.getCycle(cycleId);
+    if (!["published", "acknowledged", "active", "variance_review"].includes(cycle.status)) {
+      throw Object.assign(
+        new Error(`Amendments only allowed on published or active cycles. Current status: ${cycle.status}`),
+        { statusCode: 400 }
+      );
+    }
+
+    // 2. Fetch current assignment for employee+date
+    const [assignRows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM roster_daily_assignment
+       WHERE cycle_id = ? AND employee_id = ? AND roster_date = ? LIMIT 1`,
+      [cycleId, input.employeeId, input.date]
+    );
+    const currentAssignment = assignRows[0] ?? null;
+
+    // 3. Calculate lead_time_hours from now to shift start date
+    // Conservative estimate: treat shift start as midnight of the given date
+    const shiftStartEstimate = new Date(`${input.date}T00:00:00`);
+    const leadTimeHours = Math.round((shiftStartEstimate.getTime() - Date.now()) / (1000 * 3600));
+    const threshold = input.shortNoticeThresholdHours ?? 24;
+    const isLateChange = leadTimeHours < threshold ? 1 : 0;
+
+    // 4. Insert amendment into roster_change_log with new amendment columns
+    const changeId = randomUUID();
+    await db.execute(
+      `INSERT INTO roster_change_log
+         (id, cycle_id, employee_id, change_type, old_value_json, new_value_json,
+          reason, change_date, changed_by,
+          old_shift_id, new_shift_id,
+          old_assignment_type, new_assignment_type,
+          amendment_reason, is_late_change, lead_time_hours)
+       VALUES (?, ?, ?, 'shift_change', ?, ?, ?, ?, ?,
+               ?, ?,
+               ?, ?,
+               ?, ?, ?)`,
+      [
+        changeId, cycleId, input.employeeId,
+        JSON.stringify(currentAssignment ?? {}),
+        JSON.stringify({ newShiftId: input.newShiftId, newAssignmentType: input.newAssignmentType }),
+        input.reason, input.date, userId,
+        currentAssignment?.shift_template_id ?? null,
+        input.newShiftId ?? null,
+        null, // roster_daily_assignment has no assignment_type column
+        input.newAssignmentType,
+        input.reason,
+        isLateChange, leadTimeHours,
+      ]
+    );
+
+    // 5. Update roster_daily_assignment shift if a new shift is specified
+    if (currentAssignment && input.newShiftId) {
+      await db.execute(
+        `UPDATE roster_daily_assignment
+            SET shift_template_id = ?, updated_at = NOW()
+          WHERE cycle_id = ? AND employee_id = ? AND roster_date = ?`,
+        [input.newShiftId, cycleId, input.employeeId, input.date]
+      );
+    }
+
+    await logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "ROSTER_AMENDMENT_CREATED",
+      module_key: "roster_gov",
+      entity_type: "roster_change_log",
+      entity_id: changeId,
+      change_summary: {
+        cycle_id: cycleId,
+        employee_id: input.employeeId,
+        date: input.date,
+        is_late_change: isLateChange,
+        lead_time_hours: leadTimeHours,
+        process_id: cycle.process_id,
+      },
+      req,
+    });
+
+    const [rows] = await db.execute<ChangeLog[]>(
+      "SELECT * FROM roster_change_log WHERE id = ? LIMIT 1",
+      [changeId]
+    );
     return rows[0];
   },
 
