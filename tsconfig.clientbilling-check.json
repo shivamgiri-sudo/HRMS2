@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/lib/clientBillingApi.ts",
+    "src/pages/finance/ClientBillingWorkspacePage.tsx",
+    "src/config/routes/finance.routes.tsx",
+    "src/components/layout/navConfig.tsx",
+    "src/lib/pageRoutePageCodes.ts",
+    "src/vite-env.d.ts"
+  ]
+}

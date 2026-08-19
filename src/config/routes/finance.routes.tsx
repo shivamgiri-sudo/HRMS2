@@ -26,6 +26,7 @@ const ExpenseApprovals             = lazy(() => import("@/pages/expenses/Expense
 const FinanceQueue                 = lazy(() => import("@/pages/expenses/FinanceQueue"));
 const ExpenseReports               = lazy(() => import("@/pages/expenses/ExpenseReports"));
 const CostCentreManagementPage     = lazy(() => import("@/pages/finance/CostCentreManagementPage"));
+const ClientBillingWorkspacePage   = lazy(() => import("@/pages/finance/ClientBillingWorkspacePage"));
 
 const financeRoles = ['super_admin','admin','finance','finance_head','accounts_head','payroll_head'] as const;
 // Branch roles raise GRNs — the backend already grants them GRN write access and
@@ -38,6 +39,9 @@ const costCentreRoles = ['super_admin','admin','finance','finance_head','account
 // Must stay identical to the grant in backend/sql/1066_billability_page_access.sql and to
 // BILLABILITY_ROLES in backend/src/modules/process-pnl/billability.routes.ts.
 const billabilityRoles = ['super_admin','finance','payroll_head','payroll_branch'] as const;
+// Must stay identical to ALLOWED_ROLES in backend/src/modules/client-billing/client-billing.routes.ts
+// and to the grant in backend/sql/migrations/1303_client_billing_page_access.sql.
+const clientBillingRoles = ['super_admin','admin','finance','finance_head','accounts_head'] as const;
 
 export const financeRouteElements = (
   <>
@@ -55,6 +59,9 @@ export const financeRouteElements = (
       <Route path="/finance/branch-budget"           element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><Gate pageCode="FINANCE_BRANCH_BUDGET"><BranchBudgetManagementPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/budget-consolidation"    element={<ProtectedRoute roles={budgetConsolidationRoles}><Gate pageCode="FINANCE_BUDGET_CONSOLIDATION"><BudgetConsolidationPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/cost-centres"            element={<ProtectedRoute roles={costCentreRoles}><Gate pageCode="FINANCE_COST_CENTRES"><CostCentreManagementPage /></Gate></ProtectedRoute>} />
+      {/* Roles match ALLOWED_ROLES in client-billing.routes.ts and the grant in migration
+          1303 exactly — the frontend gate must never show a page the API would 403 on. */}
+      <Route path="/finance/client-billing"          element={<ProtectedRoute roles={clientBillingRoles}><Gate pageCode="FINANCE_CLIENT_BILLING"><ClientBillingWorkspacePage /></Gate></ProtectedRoute>} />
       {/* Roles here match the grant issued in migration 1064 exactly. If they drift, the page
           either 403s for someone who was granted it, or shows for someone the API will refuse. */}
       <Route path="/finance/billability"             element={<ProtectedRoute roles={billabilityRoles}><Gate pageCode="FINANCE_BILLABILITY_SEAT_COST"><BillabilitySeatCostPage /></Gate></ProtectedRoute>} />

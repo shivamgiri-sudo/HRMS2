@@ -549,7 +549,9 @@
     "migrations/1301_client_billing_approval_workflow.sql",
     "migrations/1302_client_billing_credit_notes.sql",
     "1241_minimum_wage_gate_columns.sql",
-    "migrations/430_rbac_matrix_applied_grants.sql"
+    "migrations/430_rbac_matrix_applied_grants.sql",
+    "1242_employee_loans_approval_gate.sql",
+    "migrations/1303_client_billing_page_access.sql"
   ],
   "approvedDeletions": [
     {
@@ -568,7 +570,8 @@
     "migrations/1300_client_billing_foundation.sql",
     "migrations/1301_client_billing_approval_workflow.sql",
     "migrations/1302_client_billing_credit_notes.sql",
-    "migrations/430_rbac_matrix_applied_grants.sql"
+    "migrations/430_rbac_matrix_applied_grants.sql",
+    "migrations/1303_client_billing_page_access.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
