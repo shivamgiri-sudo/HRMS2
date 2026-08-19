@@ -1,7 +1,8 @@
 import type { NextFunction, Response } from "express";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { REPORT_CATALOG } from "./report-catalog.js";
-import { resolveBranchScope, type BranchScope } from "./reporting.scope.js";
+import { resolveBranchScope, resolveFullScope, type BranchScope } from "./reporting.scope.js";
+import { appendScopeConditions, appendFilterConditions, type ExecFilters } from "./executors/types.js";
 
 export interface ScopedReportRequest extends AuthenticatedRequest {
   reportBranchScope?: BranchScope;
@@ -159,4 +160,44 @@ export function addScopedBranchOnlyFilters(
   alias: string
 ) {
   addScopedBranchClause(req, clauses, params, alias);
+}
+
+/**
+ * Full multi-dimensional scoping (branch AND process AND department AND cost centre) for
+ * screen-route (`GET /:code`) case blocks in report-suite.routes.ts, matching what the
+ * export path (executors/*.ts, dispatched through executeReport()) already enforces via
+ * appendScopeConditions.
+ *
+ * addScopedEmployeeFilters above enforces branch only; department/process/cost-centre from
+ * the query string are applied there as unenforced user-selected narrowing, never checked
+ * against what the user is actually scoped to. Several screen-route case blocks used that
+ * function (or, for leave-trend-monthly, no scope call at all) while their corresponding
+ * executor called the full appendScopeConditions for the same report code — so a
+ * process-restricted viewer could see more on screen than their own export, or their actual
+ * access, allowed. Confirmed live 2026-08-19: 26 users hold scope_type='process' in
+ * user_assignment_scope, and 1,016 active employees carry a process_id that would be wrongly
+ * included or excluded depending on which of the two code paths served the request. See the
+ * identical incident documented on lifecycleEvents in executors/employee.executor.ts.
+ *
+ * This mirrors the executor call exactly: appendScopeConditions(scope, ...) enforces the
+ * user's assigned scope, then appendFilterConditions(filters, ...) applies the same optional
+ * user-selected narrowing addScopedEmployeeFilters used to provide from the query string —
+ * narrowing that must stay within scope, not bypass it.
+ */
+export async function addFullScopedEmployeeFilters(
+  req: ScopedReportRequest,
+  clauses: string[],
+  params: unknown[],
+  alias = "e"
+): Promise<void> {
+  const scope = await resolveFullScope(req.authUser.id);
+  appendScopeConditions(scope, clauses, params, alias);
+  const filters: ExecFilters = {
+    branchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    processId: req.query.processId ? String(req.query.processId) : undefined,
+    departmentId: req.query.departmentId ? String(req.query.departmentId) : undefined,
+    costCentreId: req.query.costCentreId ? String(req.query.costCentreId) : undefined,
+    managerId: req.query.managerId ? String(req.query.managerId) : undefined,
+  };
+  appendFilterConditions(filters, clauses, params, alias);
 }

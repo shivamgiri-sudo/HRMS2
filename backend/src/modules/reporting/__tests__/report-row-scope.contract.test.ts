@@ -66,7 +66,7 @@ const unscoped = (() => {
     const body = part.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
     if (!/sql\s*=\s*`/.test(body)) continue;
     if (!/\bemployees\s+e\b|\bFROM employees\b|JOIN employees\b/i.test(body)) continue;
-    if (/addScopedEmployeeFilters\s*\(|addScopedBranchOnlyFilters\s*\(/.test(body)) continue;
+    if (/addScopedEmployeeFilters\s*\(|addScopedBranchOnlyFilters\s*\(|addFullScopedEmployeeFilters\s*\(/.test(body)) continue;
     found.add(m[1]);
   }
   return found;
@@ -88,7 +88,7 @@ const scanned = (() => {
   for (const part of routes.split(/(?=\n {4}case ")/)) {
     if (!/^\n {4}case "([a-z0-9-]+)"/.test(part)) continue;
     cases++;
-    if (/addScopedEmployeeFilters\s*\(/.test(part)) scoped++;
+    if (/addScopedEmployeeFilters\s*\(|addFullScopedEmployeeFilters\s*\(/.test(part)) scoped++;
   }
   return { cases, scoped };
 })();

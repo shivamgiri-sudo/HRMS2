@@ -10,6 +10,7 @@ import { buildIdentitySourceSnapshotReportSql, runIdentitySourceSnapshotSync } f
 import {
   addScopedEmployeeFilters,
   addScopedBranchOnlyFilters,
+  addFullScopedEmployeeFilters,
   reportCatalogAccessMiddleware,
   reportScopeMiddleware,
 } from "./reporting-access.js";
@@ -513,7 +514,12 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
 
   switch (code) {
     case "employee-master":
-      addScopedEmployeeFilters(req, clauses, params);
+      // Was branch-only (addScopedEmployeeFilters); the export path for this same code calls
+      // employeeMaster in executors/employee.executor.ts, which uses the full
+      // appendScopeConditions (branch AND process AND department AND cost centre). A
+      // process-scoped viewer saw more employees on screen than their own export allowed.
+      // See addFullScopedEmployeeFilters in reporting-access.ts.
+      await addFullScopedEmployeeFilters(req, clauses, params);
       // Had no active predicate at all, so the "Employee Master" export returned all 58,627
       // employee rows ever created — 57,502 of them inactive. Same 52x overstatement that
       // cc_headcount had, and it is why employee-master and headcount could never be
@@ -738,7 +744,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     // in the workbook.
 
     case "cost-centre-headcount":
-      // Two corrections, both to the predicate rather than the shape.
+      // Three corrections, all to the predicate rather than the shape.
       //
       // 1. This was the only report of the 65 inline blocks that never called
       //    addScopedEmployeeFilters. Its WHERE was hardcoded, so row scope was not applied at
@@ -752,10 +758,17 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       //    reconciled against headcount or employee-master. The two employees it drops are
       //    exactly the ones employee-status-conflicts exists to report.
       //
+      // 3. Even after (1) was addressed with addScopedEmployeeFilters, branch was the only
+      //    dimension it enforced. costCentreHeadcount in executors/employee.executor.ts (the
+      //    export path for this same code) calls the full appendScopeConditions — branch AND
+      //    process AND department AND cost centre — so a process-scoped viewer still saw
+      //    every process's headcount on screen. See addFullScopedEmployeeFilters in
+      //    reporting-access.ts.
+      //
       // Grouping already carried cost_centre_code, so this report was never subject to the
       // name-collision merge that the executor version had (927 cost centres share only 913
       // names — "Snapdeal" alone is six of them).
-      addScopedEmployeeFilters(req, clauses, params);
+      await addFullScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
       // COALESCE on the SELECT only, never on the GROUP BY. Grouping is left exactly as it was
       // so no row can merge or split and the headcount cannot move — this changes what an
@@ -778,10 +791,13 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
 
     case "confirmation-due-list": {
       const days = Number(req.query.days ?? 30);
-      // Row scope was absent — this read employee data with no branch restriction.
+      // Was branch-only (addScopedEmployeeFilters); confirmationDueList in
+      // executors/employee.executor.ts — the export path for this same code — calls the full
+      // appendScopeConditions (branch AND process AND department AND cost centre). A
+      // process-scoped viewer saw confirmation-due employees outside their process on screen.
       // Called FIRST so its clauses and params lead the bind list; the report's own
       // conditions are pushed after, in the order their placeholders appear.
-      addScopedEmployeeFilters(req, clauses, params);
+      await addFullScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
       clauses.push("ep.status = 'active'");
       clauses.push("ep.probation_end_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)");
@@ -807,10 +823,13 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
 
     case "contract-expiry-list": {
       const days = Number(req.query.days ?? 60);
-      // Row scope was absent — this read employee data with no branch restriction.
+      // Was branch-only (addScopedEmployeeFilters); contractExpiryList in
+      // executors/employee.executor.ts — the export path for this same code — calls the full
+      // appendScopeConditions (branch AND process AND department AND cost centre). A
+      // process-scoped viewer saw contract-expiry employees outside their process on screen.
       // Called FIRST so its clauses and params lead the bind list; the report's own
       // conditions are pushed after, in the order their placeholders appear.
-      addScopedEmployeeFilters(req, clauses, params);
+      await addFullScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
       clauses.push("ec.contract_end_date IS NOT NULL");
       clauses.push("ec.contract_end_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)");
@@ -836,7 +855,15 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     case "lifecycle-events": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      addScopedEmployeeFilters(req, clauses, params);
+      // Was branch-only, so a process-restricted viewer saw salary increments for every
+      // process in their branch on screen. This report exposes current_ctc and
+      // proposed_ctc across 14,467 salary_increment_request rows; NOIDA alone runs 20
+      // processes over 351 employees, 26 users hold an explicit scope_type='process'
+      // assignment, and any employee with a process_id resolves to a restricted process
+      // scope (983 active). lifecycleEvents in executors/employee.executor.ts — the export
+      // path for this same code — already calls appendScopeConditions directly; this makes
+      // the screen match it exactly instead of duplicating a second, weaker copy.
+      await addFullScopedEmployeeFilters(req, clauses, params);
       clauses.push("ele.effective_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                     COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
@@ -908,7 +935,11 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
     // ─── A3: Leave ────────────────────────────────────────────────────────────
     case "leave-allocation-register": {
       const year = Number(req.query.year ?? new Date().getFullYear());
-      addScopedEmployeeFilters(req, clauses, params);
+      // Was branch-only (addScopedEmployeeFilters); leaveAllocationRegister in
+      // executors/leave.executor.ts — the export path for this same code — calls the full
+      // appendScopeConditions (branch AND process AND department AND cost centre). A
+      // process-scoped viewer saw leave allocations outside their process on screen.
+      await addFullScopedEmployeeFilters(req, clauses, params);
       clauses.push("lbl.balance_year = ?"); params.push(year);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
                                         COALESCE(zpm.process_name, 'UNASSIGNED') AS process_name,
@@ -931,12 +962,21 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     case "leave-trend-monthly": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
+      // This block applied NO scope call at all — not even the weak branch-only one every
+      // other case here had. Any authenticated report viewer saw leave trends across the
+      // entire company regardless of branch, process, department or cost-centre scope.
+      // leaveTrendMonthly in executors/leave.executor.ts — the export path for this same
+      // code — joins `employees e` purely to scope on, even though no employee column
+      // reaches its SELECT, and calls the full appendScopeConditions. The join below exists
+      // for the same reason.
+      await addFullScopedEmployeeFilters(req, clauses, params);
       clauses.push("lr.from_date BETWEEN ? AND ?"); params.push(from, to);
       sql = `SELECT DATE_FORMAT(lr.from_date,'%Y-%m') AS month, lt.leave_code, lt.leave_name,
                     COUNT(*) AS applications_count,
                     SUM(CASE WHEN lr.status = 'approved' THEN lr.total_days ELSE 0 END) AS approved_days,
                     SUM(CASE WHEN lr.status = 'rejected' THEN 1 ELSE 0 END) AS rejected_count
                FROM leave_request lr
+               JOIN employees e ON e.id = lr.employee_id
                JOIN leave_type_master lt ON lt.id = lr.leave_type_id
               WHERE ${clauses.length ? clauses.join(" AND ") : "1=1"}
               GROUP BY DATE_FORMAT(lr.from_date,'%Y-%m'), lt.leave_code, lt.leave_name
@@ -1494,10 +1534,15 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
     case "clearance-status-register": {
       const from = dateParam(req.query.from, `${new Date().getFullYear()}-01-01`);
       const to = dateParam(req.query.to, new Date().toISOString().slice(0, 10));
-      // Row scope was absent — this read employee data with no branch restriction.
+      // Was branch-only (addScopedEmployeeFilters); clearanceStatusRegister in
+      // executors/exit.executor.ts — the export path for this same code — calls the full
+      // appendScopeConditions (branch AND process AND department AND cost centre). A
+      // process-scoped viewer saw exit-clearance tasks outside their process on screen.
+      // This is a separate, still-open issue from the table-name bug in this same report
+      // fixed in commit 212a84c7 (exit_clearance_task vs exit_clearance_checklist).
       // Called FIRST so its clauses and params lead the bind list; the report's own
       // conditions are pushed after, in the order their placeholders appear.
-      addScopedEmployeeFilters(req, clauses, params);
+      await addFullScopedEmployeeFilters(req, clauses, params);
       // COALESCE, because submitted_at is NULL on 2 of 2 exit_request rows — every one.
       // `submitted_at BETWEEN ? AND ?` on a NULL evaluates to UNKNOWN, so the row is dropped:
       // the report returned nothing even once it was reading the right table. The exit module

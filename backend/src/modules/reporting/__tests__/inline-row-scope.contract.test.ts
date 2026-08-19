@@ -59,11 +59,14 @@ const EMPLOYEE_GRAIN = /\b(FROM|JOIN)\s+`?employees`?\b|\bFROM\s+`?employee_[a-z
 
 /**
  * Any recognised row-scoping mechanism. addScopedEmployeeFilters is the inline one and
- * applies branch AND department AND process AND cost centre, including the
- * no-branch-scope sentinel that fails closed.
+ * applies branch only (department/process/cost-centre pass through unenforced as
+ * user-selected narrowing); addFullScopedEmployeeFilters is its full-scope counterpart —
+ * added 2026-08-19 — which resolves ExecScope and calls appendScopeConditions so the screen
+ * route enforces branch AND department AND process AND cost centre exactly like the export
+ * path, including the no-scope sentinel that fails closed.
  */
 const SCOPED =
-  /addScopedEmployeeFilters|appendScopeConditions|scopeFilter|scope\.branchIds|scope\.processIds/;
+  /addFullScopedEmployeeFilters|addScopedEmployeeFilters|appendScopeConditions|scopeFilter|scope\.branchIds|scope\.processIds/;
 
 describe("inline report blocks apply row scope", () => {
   const blocks = inlineBlocks();
