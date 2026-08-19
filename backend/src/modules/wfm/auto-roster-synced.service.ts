@@ -6,6 +6,7 @@ import { computeScheduledMinutes } from "./shift-scheduling.util.js";
 import { applyRestDecision, isRestPolicyFeatureActive, hasAnyRestPolicyConfigured, validateMinimumRest, logRestOverride } from "./rest-policy.service.js";
 import { checkEmployeeDateNotLocked } from "../roster/roster-lock-guard.js";
 import { resolveWeekOffScopeDefault } from "../roster/weekoff-policy.service.js";
+import { triggerRosterPublishPending } from "../work-inbox/work-inbox.triggers.js";
 
 type AnyRow = Record<string, any>;
 
@@ -1134,6 +1135,16 @@ export const autoRosterSyncedService = {
       event_message: remarks ?? "Roster approved for publish.",
       target_role: "wfm",
     });
+    // Work Inbox: the roster is now approved but not yet published — publish() is a
+    // separate action/role step, so surface it as an action item. Fired only here, at the
+    // exact moment approval_status becomes 'approved'; never a periodic backfill scan. See
+    // triggerRosterPublishPending's doc comment for the live-data verification behind this.
+    try {
+      const approvedPlan = await getPlan(planId);
+      await triggerRosterPublishPending(planId, String(approvedPlan.plan_name), approvedPlan.branch_id ?? undefined);
+    } catch {
+      // Non-fatal — work item creation failure should not block roster approval
+    }
     return { approval_status: "approved", coverage_score: coverage.score };
   },
 

@@ -333,3 +333,37 @@ export async function triggerPayrollProcessFreezeRequest(
     dueAt: dueAt("PAYROLL_PROCESS_FREEZE_REQUEST"),
   });
 }
+
+// ROSTER_PUBLISH_PENDING: fired once, at the moment a plan's
+// wfm_roster_plan_control.approval_status flips to 'approved' — the only gap in the
+// lifecycle where a roster sits waiting on a *separate* action (publish()) by the same or
+// another Process Manager. Deliberately not fired at plan creation (an empty just-created
+// draft isn't "awaiting publish", it's awaiting building) and not a periodic scan.
+//
+// Verified live 2026-08-19 before wiring this: wfm_roster_plan has ZERO rows and every one
+// of the 413,386 wfm_roster_assignment rows already carries publish_status='published' —
+// the "412,032 synthetic rows" finding referenced from rest-policy.service.ts is a single
+// bulk INSERT timestamped 2026-06-11 18:23:31 (decision_source='manual'), and the remaining
+// 1,354 rows are a second bulk load timestamped 2026-07-15 (decision_source='bulk_upload').
+// Both cohorts were written directly to the table, bypassing createPlan()/approve()
+// entirely, and are already terminal (published) — so they can never re-enter 'approved'
+// and can never reach this trigger. There is nothing to grandfather (no existing backlog
+// exists in this state) and no risk of the historical bulk data ever firing it.
+export async function triggerRosterPublishPending(
+  planId: string,
+  planName: string,
+  branchId?: string
+): Promise<void> {
+  await createWorkItemIfNotExists({
+    itemType: "ROSTER_PUBLISH_PENDING",
+    title: `Roster awaiting publish: ${planName}`,
+    description: "This roster has been approved and is waiting to be published.",
+    moduleCode: "wfm",
+    entityType: "roster_draft",
+    entityId: planId,
+    assignedToRole: "process_manager",
+    branchId,
+    priority: "high",
+    dueAt: dueAt("ROSTER_PUBLISH_PENDING"),
+  });
+}
