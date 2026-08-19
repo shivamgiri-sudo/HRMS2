@@ -558,7 +558,9 @@
     "1246_add_computers_26_27_cost_sub_head.sql",
     "migrations/1304_client_billing_cutover_schema.sql",
     "migrations/1305_client_billing_cutover_staging_fix.sql",
-    "migrations/1306_client_billing_cutover_addendum_columns.sql"
+    "migrations/1306_client_billing_cutover_addendum_columns.sql",
+    "1248_grn_dbbill_migration_schema.sql",
+    "1502_apr_source_column.sql"
   ],
   "approvedDeletions": [
     {
@@ -674,7 +676,6 @@
     "1234_imprest_allocation_accounting_period.sql",
     "1239_cost_centre_avore_ahmedabad.sql",
     "1247_restore_cost_centre_display_names.sql",
-    "1248_grn_dbbill_migration_schema.sql",
     "127_ats_candidate_unique_constraints.sql",
     "133_phase2_security_fixes.sql",
     "136_incentive_module.sql",

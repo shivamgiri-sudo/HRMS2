@@ -383,7 +383,10 @@
       "process_name",
       "branch_name",
       "reporting_manager",
-      "cost_centre"
+      "cost_centre",
+      "source",
+      "uploaded_by",
+      "upload_batch_id"
     ],
     "apr_eligibility_config": [
       "id",
