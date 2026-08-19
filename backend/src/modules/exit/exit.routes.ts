@@ -260,15 +260,15 @@ exitRouter.post(
   "/ff/:id/verify",
   requireRole("admin", "hr", "finance", "payroll"),
   h(async (req, res) => {
-    const data = await ffService.setProvisionalFalse(req.params.id, req.authUser!.id, req);
-    await logSensitiveAction({
-      actor_user_id: req.authUser!.id,
-      action_type: "FF_PROVISIONAL_CLEARED",
-      module_key: "exit",
-      entity_type: "full_final_calculation",
-      entity_id: req.params.id,
-      req,
-    });
+    // Reason is mandatory (CLAUDE.md: the provisional override "requires ... an audit
+    // reason"). setProvisionalFalse now writes the single sensitive-action entry itself
+    // (with the reason attached) — this route used to log a second, thinner duplicate
+    // entry right after; removed rather than kept alongside the service's own log.
+    const reason = String(req.body?.reason ?? "").trim();
+    if (!reason) {
+      return res.status(400).json({ success: false, message: "reason is required to clear a provisional F&F calculation" });
+    }
+    const data = await ffService.setProvisionalFalse(req.params.id, req.authUser!.id, reason, req);
     return res.json({ success: true, data, message: "F&F marked as verified (provisional cleared)" });
   })
 );

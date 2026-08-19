@@ -223,6 +223,13 @@ payrollExtendedRouter.get("/runs/:id/neft-export", requireRole("admin", "finance
 }));
 
 payrollExtendedRouter.get("/runs/:id/ecr", requireRole("admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+  // ECR carries PF wage/UAN data for every employee on the run — same sensitivity as
+  // neft-export/bank-exception-report above, but this endpoint had no scope check at
+  // all, only the role list. A branch-scoped finance/payroll user could pull ECR data
+  // for any runId regardless of branch. Same hasExportScope gate as its siblings.
+  if (!(await hasExportScope(req.authUser!.id))) {
+    return res.status(403).json({ success: false, message: ORG_WIDE_REQUIRED_MSG });
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT eu.uan, eu.member_id, CONCAT_WS(' ', e.first_name, e.last_name) AS member_name,
             spl.gross_salary AS wages, spl.pf_employee AS epf_contribution,

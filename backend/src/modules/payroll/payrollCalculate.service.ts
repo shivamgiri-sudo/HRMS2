@@ -201,6 +201,24 @@ export interface GratuityResult {
    * twenty-year employee they had completed 0 years.
    */
   reason?: "not_configured" | "no_joining_date" | "below_minimum_service";
+  /**
+   * True when `amount` was reduced to fit the configured `gratuity_statutory_cap`
+   * (Payment of Gratuity Act ceiling, currently Rs 20,00,000). `uncappedAmount` holds
+   * what the formula produced before the cap was applied, for audit/display.
+   */
+  capApplied?: boolean;
+  uncappedAmount?: number;
+  /**
+   * True when eligible/amount were computed with NO statutory cap configured at all
+   * (`gratuity_statutory_cap` missing from statutory_config). CLAUDE.md requires a
+   * cap to be configured before gratuity is non-provisional; until then this flag
+   * lets callers (F&F review, approval gates) treat the amount as provisional rather
+   * than final, without blocking every existing eligibility/config check that
+   * already passed. See calculateGratuity below — the live path previously had no
+   * cap parameter at all, so a settlement above the statutory ceiling would have
+   * been paid in full with nothing catching it.
+   */
+  capMissing?: boolean;
 }
 
 /**
@@ -234,7 +252,8 @@ export async function calculateGratuity(
   const [cfgRows] = await db.execute<RowDataPacket[]>(
     `SELECT config_key, config_value FROM statutory_config
      WHERE config_key IN ('gratuity_min_months','gratuity_day_divisor','gratuity_multiplier_days',
-                          'gratuity_min_service_months','gratuity_divisor','gratuity_multiplier')
+                          'gratuity_min_service_months','gratuity_divisor','gratuity_multiplier',
+                          'gratuity_statutory_cap')
        AND is_active = 1`,
     []
   );
@@ -277,10 +296,26 @@ export async function calculateGratuity(
     return { eligible: false, amount: 0, years: fullYears, reason: "below_minimum_service" };
   }
 
-  const amount = Math.round(
+  const uncappedAmount = Math.round(
     ((lastBasicMonthly / divisor) * multiplier * eligibleYears) * 100
   ) / 100;
-  return { eligible: true, amount, years: eligibleYears };
+
+  const cap = cfg["gratuity_statutory_cap"];
+  if (cap === undefined) {
+    // No cap configured — CLAUDE.md requires one before gratuity is treated as
+    // final. Amount is still returned (not blocked, to avoid disrupting every
+    // exit that already relies on the eligibility/config checks above) but
+    // flagged provisional so callers don't quietly pay an uncapped amount.
+    return { eligible: true, amount: uncappedAmount, years: eligibleYears, capMissing: true };
+  }
+
+  const amount = Math.min(uncappedAmount, cap);
+  return {
+    eligible: true,
+    amount,
+    years: eligibleYears,
+    ...(amount < uncappedAmount ? { capApplied: true, uncappedAmount } : {}),
+  };
 }
 
 // ─── TDS ──────────────────────────────────────────────────────────────────────

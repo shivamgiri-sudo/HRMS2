@@ -6,6 +6,8 @@ import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { businessCommandService } from "./business-command.service.js";
 import { revenueRiskService } from "../revenue-risk/revenue-risk.service.js";
+import { hasRole } from "../../shared/accessGuard.js";
+import { PAYROLL_ROLES } from "../../platform/policy/roles.js";
 
 export const businessCommandRouter = Router();
 businessCommandRouter.use(requireAuth);
@@ -17,8 +19,29 @@ interface LatestDateRow extends RowDataPacket {
   latest_date: string | null;
 }
 
-businessCommandRouter.get("/overview", h(async (_req, res) => {
-  res.json({ success: true, data: await businessCommandService.overview() });
+/**
+ * Whether the caller may see salary/payroll totals in this dashboard.
+ *
+ * /overview was returning org-wide gross/net payroll figures (executive_summary.
+ * latest_payroll_gross_inr, the `payroll` block, data_confidence.payroll) to any
+ * authenticated user regardless of role — this route only ever checked requireAuth.
+ * CLAUDE.md is explicit that payroll/salary data must never surface through a
+ * non-payroll endpoint, so the fields are redacted per-caller here rather than the
+ * whole dashboard being locked behind a payroll role — same pattern already used in
+ * management.routes.ts's callerHasPayrollAccess.
+ */
+async function callerHasPayrollAccess(userId: string): Promise<boolean> {
+  return hasRole(userId, ...(PAYROLL_ROLES as string[]));
+}
+
+businessCommandRouter.get("/overview", h(async (req, res) => {
+  const data = await businessCommandService.overview() as Record<string, any>;
+  if (!(await callerHasPayrollAccess(req.authUser!.id))) {
+    data.executive_summary = { ...data.executive_summary, latest_payroll_gross_inr: null };
+    data.payroll = { latest_gross: null, latest_net: null };
+    data.data_confidence = { ...data.data_confidence, payroll: null };
+  }
+  res.json({ success: true, data });
 }));
 
 businessCommandRouter.get("/revenue-risk/options", h(async (_req, res) => {

@@ -168,9 +168,13 @@ function FfSettlementPanel({ exitRequests }: { exitRequests: ExitRow[] }) {
 
   const handleVerify = async () => {
     if (!ff) return;
+    // Clearing the provisional flag now requires an audit reason (CLAUDE.md: the
+    // override "requires ... an audit reason"); the backend rejects an empty one.
+    const reason = window.prompt("Reason for clearing the provisional F&F calculation:")?.trim();
+    if (!reason) return;
     setActing(true);
     try {
-      await hrmsApi.post(`/api/exit/ff/${ff.id}/verify`, {});
+      await hrmsApi.post(`/api/exit/ff/${ff.id}/verify`, { reason });
       toast({ title: "Marked as verified — provisional cleared" });
       await loadFf(selectedId);
     } catch (err: any) {

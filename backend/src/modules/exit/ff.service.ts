@@ -501,8 +501,18 @@ export const ffService = {
   async setProvisionalFalse(
     id: string,
     verifiedBy: string,
+    reason: string,
     req?: Request
   ): Promise<FullFinalCalculation> {
+    // CLAUDE.md requires this override to carry "an audit reason" — the role gate
+    // and actor/timestamp were already recorded, but no caller ever supplied why the
+    // provisional flag was cleared. Reason is now mandatory rather than optional so
+    // existing callers can't silently keep omitting it.
+    const trimmedReason = String(reason ?? "").trim();
+    if (!trimmedReason) {
+      throw new Error("A reason is required to clear a provisional F&F calculation");
+    }
+
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM full_final_calculation WHERE id = ? LIMIT 1",
       [id]
@@ -523,7 +533,7 @@ export const ffService = {
       module_key: "exit",
       entity_type: "full_final_calculation",
       entity_id: id,
-      change_summary: { exit_request_id: rec.exit_request_id, verified_by: verifiedBy },
+      change_summary: { exit_request_id: rec.exit_request_id, verified_by: verifiedBy, reason: trimmedReason },
       req,
     });
 
@@ -634,10 +644,17 @@ export const ffService = {
       };
     }
 
+    let note = `Draft calculation over ${result.years} completed years on a last basic of ${lastBasicMonthly.toFixed(2)}. Requires verification before F&F approval.`;
+    if (result.capMissing) {
+      note += " No gratuity_statutory_cap configured — this amount is uncapped and must be checked against the Payment of Gratuity Act ceiling before approval.";
+    } else if (result.capApplied) {
+      note += ` Statutory cap applied: formula produced ${result.uncappedAmount}, capped to ${result.amount}.`;
+    }
+
     return {
       amount: result.amount,
       status: "draft",
-      note: `Draft calculation over ${result.years} completed years on a last basic of ${lastBasicMonthly.toFixed(2)}. Requires verification before F&F approval.`,
+      note,
     };
   },
 };
