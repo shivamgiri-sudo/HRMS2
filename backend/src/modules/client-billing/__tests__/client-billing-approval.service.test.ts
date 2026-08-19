@@ -37,6 +37,31 @@ beforeEach(() => {
 });
 
 describe("approveInvoice", () => {
+  it("design §3 guard: refuses to approve a migrated historical invoice (is_migrated=1)", async () => {
+    const conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, is_migrated: 1 }], []]);
+
+    await expect(
+      clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1" })
+    ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/migrated historical record/) });
+
+    expect(mintBillNumber).not.toHaveBeenCalled();
+    expect(conn.rollback).toHaveBeenCalledTimes(1);
+  });
+
+  it("design §3 guard: does NOT refuse a normal is_migrated=0 invoice on that basis (mints normally)", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, is_migrated: 0 }], []])
+      .mockResolvedValueOnce([[{ companyName: "Mas Callnet India Pvt Ltd", stateCode: "09" }], []])
+      .mockResolvedValueOnce([{}, []])
+      .mockResolvedValueOnce([{}, []]);
+    mintBillNumber.mockResolvedValueOnce("09-01/26-27");
+
+    const result = await clientBillingApprovalService.approveInvoice({ invoiceId: "inv-1", userId: "u-1" });
+    expect(result).toEqual({ id: "inv-1", billNo: "09-01/26-27", invoiceStatus: "approved" });
+  });
+
   it("refuses when the invoice is not in proforma status", async () => {
     const conn = mockConnection();
     conn.execute.mockResolvedValueOnce([[{ ...APPROVABLE_INVOICE, invoice_status: "approved" }], []]);
@@ -130,6 +155,31 @@ describe("approveInvoice", () => {
 });
 
 describe("rejectInvoice", () => {
+  it("design §3 guard: refuses to reject a migrated historical invoice (is_migrated=1)", async () => {
+    const conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "approved", is_migrated: 1 }], []]);
+
+    await expect(
+      clientBillingApprovalService.rejectInvoice({ invoiceId: "inv-1", reason: "test", userId: "u-1" })
+    ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/migrated historical record/) });
+    expect(conn.rollback).toHaveBeenCalledTimes(1);
+  });
+
+  it("design §3 guard: does NOT refuse a normal is_migrated=0 invoice on that basis", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ id: "inv-1", invoice_status: "proforma", is_migrated: 0 }], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([[], []])
+      .mockResolvedValueOnce([{}, []])
+      .mockResolvedValueOnce([{}, []]);
+
+    const result = await clientBillingApprovalService.rejectInvoice({
+      invoiceId: "inv-1", reason: "no longer needed", userId: "u-1",
+    });
+    expect(result).toEqual({ id: "inv-1", invoiceStatus: "rejected" });
+  });
+
   it("requires a non-empty reason", async () => {
     const conn = mockConnection();
 

@@ -32,6 +32,38 @@ beforeEach(() => {
 });
 
 describe("createCreditNote", () => {
+  it("design §3 guard: refuses to create a credit note against a migrated historical invoice (is_migrated=1)", async () => {
+    const conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ ...APPROVED_INVOICE, is_migrated: 1 }], []]);
+
+    await expect(
+      clientBillingCreditNoteService.createCreditNote({
+        invoiceId: "inv-1", category: "Subscription", financeYear: "2026-27",
+        monthLabel: "Aug-26", creditDate: "2026-08-19",
+        lines: [{ particulars: "Refund", qty: 1, rate: 1000 }], userId: "u-1",
+      })
+    ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/migrated historical record/) });
+    expect(mintCreditNoteNumber).not.toHaveBeenCalled();
+    expect(conn.rollback).toHaveBeenCalledTimes(1);
+  });
+
+  it("design §3 guard: does NOT refuse a normal is_migrated=0 invoice on that basis", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ ...APPROVED_INVOICE, is_migrated: 0 }], []])
+      .mockResolvedValueOnce([[COST_CENTRE], []])
+      .mockResolvedValueOnce([{}, []])
+      .mockResolvedValueOnce([{}, []]);
+    mintCreditNoteNumber.mockResolvedValueOnce("CN-09-01/26-27");
+
+    const result = await clientBillingCreditNoteService.createCreditNote({
+      invoiceId: "inv-1", category: "Subscription", financeYear: "2026-27",
+      monthLabel: "Aug-26", creditDate: "2026-08-19",
+      lines: [{ particulars: "Service credit", qty: 1, rate: 4500 }], userId: "u-1",
+    });
+    expect(result.creditNo).toBe("CN-09-01/26-27");
+  });
+
   it("rejects an empty line list before touching the database", async () => {
     const conn = mockConnection();
     await expect(
@@ -95,6 +127,24 @@ describe("createCreditNote", () => {
 });
 
 describe("approveCreditNote", () => {
+  it("design §3 guard: refuses to approve a migrated historical credit note (is_migrated=1)", async () => {
+    const conn = mockConnection();
+    conn.execute.mockResolvedValueOnce([[{ id: "cn-1", credit_status: "draft", is_migrated: 1 }], []]);
+    await expect(
+      clientBillingCreditNoteService.approveCreditNote({ creditNoteId: "cn-1", userId: "u-1" })
+    ).rejects.toMatchObject({ statusCode: 400, message: expect.stringMatching(/migrated historical record/) });
+    expect(conn.rollback).toHaveBeenCalledTimes(1);
+  });
+
+  it("design §3 guard: does NOT refuse a normal is_migrated=0 credit note on that basis", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[{ id: "cn-1", credit_status: "draft", credit_no: "CN-09-01/26-27", total_amount: 4500, igst_amount: 810, cgst_amount: 0, sgst_amount: 0, grand_total: 5310, is_migrated: 0 }], []])
+      .mockResolvedValueOnce([{}, []]);
+    const result = await clientBillingCreditNoteService.approveCreditNote({ creditNoteId: "cn-1", userId: "u-2" });
+    expect(result.creditStatus).toBe("approved");
+  });
+
   it("refuses when already approved", async () => {
     const conn = mockConnection();
     conn.execute.mockResolvedValueOnce([[{ id: "cn-1", credit_status: "approved" }], []]);

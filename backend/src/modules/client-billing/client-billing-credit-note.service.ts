@@ -65,12 +65,22 @@ async function createCreditNote(input: CreateCreditNoteInput): Promise<CreditNot
     await conn.beginTransaction();
 
     const [invoiceRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT id, invoice_status, cost_centre_id, finance_year FROM client_invoice WHERE id = ? LIMIT 1`,
+      `SELECT id, invoice_status, cost_centre_id, finance_year, is_migrated FROM client_invoice WHERE id = ? LIMIT 1`,
       [input.invoiceId]
     );
-    const invoice = invoiceRows[0] as { id: string; invoice_status: string; cost_centre_id: string; finance_year: string } | undefined;
+    const invoice = invoiceRows[0] as
+      | { id: string; invoice_status: string; cost_centre_id: string; finance_year: string; is_migrated: number }
+      | undefined;
     if (!invoice) {
       throw clientError(`Invoice ${input.invoiceId} not found`);
+    }
+    // design §3: a migrated historical invoice is a read-only record — the live
+    // create-credit-note workflow must never attach a NEW credit note to it (that
+    // is what the cutover's own load.ts does directly, via A4's proforma_bill_no
+    // matching, for genuinely historical credit notes — this guard is only about
+    // the live UI/API path issuing a brand-new one going forward).
+    if (invoice.is_migrated) {
+      throw clientError(`Invoice ${input.invoiceId} is a migrated historical record (is_migrated=1) — a new credit note cannot be issued against it through the live workflow`);
     }
     if (invoice.invoice_status !== "approved") {
       throw clientError(`Invoice ${input.invoiceId} is not approved (currently: ${invoice.invoice_status}) — a credit note can only be issued against an approved invoice`);
@@ -134,15 +144,22 @@ async function approveCreditNote(input: ApproveCreditNoteInput): Promise<CreditN
     await conn.beginTransaction();
 
     const [rows] = await conn.execute<RowDataPacket[]>(
-      `SELECT id, credit_status, credit_no, total_amount, igst_amount, cgst_amount, sgst_amount, grand_total
+      `SELECT id, credit_status, credit_no, total_amount, igst_amount, cgst_amount, sgst_amount, grand_total, is_migrated
        FROM client_credit_note WHERE id = ? LIMIT 1 FOR UPDATE`,
       [input.creditNoteId]
     );
     const creditNote = rows[0] as
-      | { id: string; credit_status: string; credit_no: string; total_amount: number; igst_amount: number; cgst_amount: number; sgst_amount: number; grand_total: number }
+      | {
+          id: string; credit_status: string; credit_no: string; total_amount: number; igst_amount: number;
+          cgst_amount: number; sgst_amount: number; grand_total: number; is_migrated: number;
+        }
       | undefined;
     if (!creditNote) {
       throw clientError(`Credit note ${input.creditNoteId} not found`);
+    }
+    // design §3: a migrated historical credit note is read-only through the live workflow.
+    if (creditNote.is_migrated) {
+      throw clientError(`Credit note ${input.creditNoteId} is a migrated historical record (is_migrated=1) and cannot be approved through the live workflow`);
     }
     if (creditNote.credit_status === "approved") {
       throw clientError(`Credit note ${input.creditNoteId} is already approved`);

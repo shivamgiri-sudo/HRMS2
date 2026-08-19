@@ -29,15 +29,21 @@ async function approveInvoice(input: ApproveInvoiceInput): Promise<ApproveInvoic
     await conn.beginTransaction();
 
     const [invoiceRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT id, invoice_status, cost_centre_id, finance_year, grand_total
+      `SELECT id, invoice_status, cost_centre_id, finance_year, grand_total, is_migrated
        FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
       [input.invoiceId]
     );
     const invoice = invoiceRows[0] as
-      | { id: string; invoice_status: string; cost_centre_id: string; finance_year: string; grand_total: number }
+      | { id: string; invoice_status: string; cost_centre_id: string; finance_year: string; grand_total: number; is_migrated: number }
       | undefined;
     if (!invoice) {
       throw clientError(`Invoice ${input.invoiceId} not found`);
+    }
+    // design §3: a migrated historical row is read-only through the live workflow —
+    // never re-approved/re-rejected. Checked before the status check below so the
+    // error message is unambiguous about WHY the mutation is refused.
+    if (invoice.is_migrated) {
+      throw clientError(`Invoice ${input.invoiceId} is a migrated historical record (is_migrated=1) and cannot be approved through the live workflow`);
     }
     if (invoice.invoice_status !== "proforma") {
       throw clientError(`Invoice ${input.invoiceId} is not in proforma status (currently: ${invoice.invoice_status})`);
@@ -135,12 +141,16 @@ async function rejectInvoice(input: RejectInvoiceInput): Promise<RejectInvoiceRe
     await conn.beginTransaction();
 
     const [invoiceRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT id, invoice_status FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
+      `SELECT id, invoice_status, is_migrated FROM client_invoice WHERE id = ? LIMIT 1 FOR UPDATE`,
       [input.invoiceId]
     );
-    const invoice = invoiceRows[0] as { id: string; invoice_status: string } | undefined;
+    const invoice = invoiceRows[0] as { id: string; invoice_status: string; is_migrated: number } | undefined;
     if (!invoice) {
       throw clientError(`Invoice ${input.invoiceId} not found`);
+    }
+    // design §3: a migrated historical row is read-only through the live workflow.
+    if (invoice.is_migrated) {
+      throw clientError(`Invoice ${input.invoiceId} is a migrated historical record (is_migrated=1) and cannot be rejected through the live workflow`);
     }
     if (invoice.invoice_status === "rejected") {
       throw clientError(`Invoice ${input.invoiceId} is already rejected`);
