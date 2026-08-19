@@ -942,11 +942,22 @@ export const branchBudgetService = {
         ORDER BY l.created_at, l.id`,
       [id]
     );
+    // actor_name joined the same way the corrections query below does — on employees.user_id,
+    // NOT employees.id, because actor_user_id is written from actor(req).id (the auth_user id).
+    // Without this the log carried only a role string, so an approval chain read
+    // "finance_head approved" with no way to tell WHICH finance_head, on a record that exists
+    // specifically to answer that question. Verified against live data: every actor_user_id
+    // sampled from the 173 logged rows resolves to an employees row through user_id.
+    // LEFT JOIN so a system actor with no employee row still yields its log entry.
     const [approvals] = await db.execute<RowDataPacket[]>(
-      `SELECT *
-         FROM finance_budget_approval_log
-        WHERE budget_id = ?
-        ORDER BY created_at, id`,
+      `SELECT a.*,
+              COALESCE(NULLIF(TRIM(e.full_name), ''),
+                       NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), '')) AS actor_name,
+              e.employee_code AS actor_employee_code
+         FROM finance_budget_approval_log a
+         LEFT JOIN employees e ON e.user_id = a.actor_user_id
+        WHERE a.budget_id = ?
+        ORDER BY a.created_at, a.id`,
       [id]
     );
 

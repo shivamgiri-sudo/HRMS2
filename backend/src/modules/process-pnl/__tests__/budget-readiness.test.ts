@@ -113,9 +113,13 @@ const THREE_COST_CENTRES: FakeCostCentre[] = [
 ];
 
 describe("checkSharingMethodReadiness", () => {
-  it("marks all four methods ready when every cost centre has complete data", async () => {
+  it("marks every supported method ready when every cost centre has complete data", async () => {
+    // seat/floor/device/hiring joined the readiness set once it was found they hard-throw
+    // MONTHLY_DRIVER_MISSING at save with no prior warning, so the "complete data" fixture has
+    // to supply them too — the engine treats <= 0 as missing for all four.
     const drivers: FakeDriver[] = THREE_COST_CENTRES.map((cc) => ({
       cost_centre_id: cc.id, planned_headcount: 5, revenue_rate_per_head: 50000,
+      seat_count: 10, floor_area_sqft: 250, device_count: 8, hiring_volume: 3,
       remarks: null, status: "draft", updated_by: null, updated_at: null,
     }));
     const meters: FakeMeter[] = THREE_COST_CENTRES.map((cc, i) => ({ id: `m${i}`, cost_centre_id: cc.id }));
@@ -128,8 +132,52 @@ describe("checkSharingMethodReadiness", () => {
     );
     expect(result.every((r) => r.ready)).toBe(true);
     expect(result.map((r) => r.method).sort()).toEqual(
-      ["grade_weighted_headcount", "meter_wise", "revenue_share", "total_manpower"].sort()
+      [
+        "device_count", "floor_area", "grade_weighted_headcount", "hiring_volume",
+        "meter_wise", "revenue_share", "seat_count", "total_manpower",
+      ].sort()
     );
+  });
+
+  /**
+   * Regression: seat_count / floor_area / device_count / hiring_volume are hard blockers in
+   * computeLineAllocations (MONTHLY_DRIVER_MISSING, 409) and are the seeded
+   * default_allocation_driver on 26 of 38 sub-heads, yet readiness did not report on them at all.
+   * A planner picking one got no warning anywhere and then a failed save. Before the fix this
+   * test fails on the first assertion: the method is simply absent from the result.
+   */
+  it("flags the simple-driver methods not ready when their driver value is zero or absent", async () => {
+    const drivers: FakeDriver[] = THREE_COST_CENTRES.map((cc) => ({
+      cost_centre_id: cc.id,
+      planned_headcount: 5,
+      revenue_rate_per_head: 50000,
+      // cc1 is fully equipped; cc2 has an explicit zero; cc3 omits them entirely.
+      seat_count: cc.id === "cc1" ? 10 : cc.id === "cc2" ? 0 : undefined,
+      device_count: cc.id === "cc1" ? 4 : undefined,
+      remarks: null, status: "draft", updated_by: null, updated_at: null,
+    }));
+
+    const result = await checkSharingMethodReadiness(
+      "branch-1", "2026-08",
+      fakeExecutor({ costCentres: THREE_COST_CENTRES, drivers })
+    );
+
+    const seat = result.find((r) => r.method === "seat_count");
+    expect(seat, "seat_count must be reported by readiness at all").toBeDefined();
+    expect(seat!.ready).toBe(false);
+    // Zero counts as missing, exactly as the engine treats it — not just the absent one.
+    expect(seat!.missingCostCentres.map((c) => c.name).sort()).toEqual(["Collections", "Support"]);
+
+    const device = result.find((r) => r.method === "device_count");
+    expect(device, "device_count must be reported by readiness at all").toBeDefined();
+    expect(device!.ready).toBe(false);
+    expect(device!.missingCostCentres).toHaveLength(2);
+
+    // A method whose driver nobody supplied is not ready for every cost centre.
+    const hiring = result.find((r) => r.method === "hiring_volume");
+    expect(hiring, "hiring_volume must be reported by readiness at all").toBeDefined();
+    expect(hiring!.ready).toBe(false);
+    expect(hiring!.missingCostCentres).toHaveLength(3);
   });
 
   it("flags total_manpower and revenue_share not ready when a cost centre has no monthly driver", async () => {

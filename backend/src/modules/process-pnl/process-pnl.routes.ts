@@ -91,6 +91,13 @@ const BUDGET_READ_ROLES = [
   "finance",
   "finance_head",
   "accounts_head",
+  // Matches the ceo/coo addition to READ_ROLES in budget-coverage.routes.ts — without it the
+  // capabilities call would succeed while every actual budget read (cost-centres, monthly
+  // drivers, readiness, cost-centre-utilization) still 403d, which is a worse failure than
+  // the lockout it replaces. Read-only: BUDGET_CREATE_ROLES and BUDGET_REVIEW_ROLES are
+  // deliberately unchanged, so ceo/coo can view budgets but cannot create or approve one.
+  "ceo",
+  "coo",
 ] as const;
 const BUDGET_CREATE_ROLES = ["super_admin", "admin", "branch_admin"] as const;
 const BUDGET_REVIEW_ROLES = ["branch_head", "finance_head", "accounts_head", "super_admin"] as const;

@@ -752,6 +752,47 @@ export default function BranchBudgetManagementWorkspace() {
   }, [detailQuery.data]);
 
   /**
+   * Single place that changes the period, so the always-visible context strip and the Plan
+   * Builder card cannot drift apart on the unsaved-changes guard.
+   */
+  const changePeriod = (value: string) => {
+    if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "period", value }); return; }
+    setPeriod(value);
+    setSavedBudgetId(null);
+    setLoadedDetailId(null);
+  };
+
+  /**
+   * Which budget the Approval & Utilization breakdown describes.
+   *
+   * The breakdown used to read utilizationByHead, i.e. whichever budget detailId happened to
+   * point at — savedBudgetId, else budgets[0], which is ORDER BY created_at DESC. With no branch
+   * selected the tab lists every branch's budget for the period, so the table underneath showed
+   * the most recently CREATED budget while the user was looking at a different row, with no
+   * heading saying so. Reported as "two budgets approved but the detail below is for which?".
+   * Null means "follow detailId", preserving the previous behaviour until a row is picked.
+   */
+  const [utilizationBudgetId, setUtilizationBudgetId] = useState<string | null>(null);
+  const utilizationDetailId = utilizationBudgetId ?? detailId;
+  const utilizationDetailQuery = useBranchBudgetDetail(utilizationDetailId);
+  const utilizationBudget = budgets.find((b) => b.id === utilizationDetailId);
+  /** Same shape as utilizationByHead, but for the explicitly selected budget. */
+  const selectedUtilizationByHead = useMemo(() => {
+    const map = new Map<string, { head: string; subHead: string | null; planned: number; reserved: number; consumed: number; available: number }>();
+    (utilizationDetailQuery.data?.lines ?? []).forEach((l) => {
+      const subHead = l.sub_head ?? null;
+      const key = `${l.head}|${subHead ?? ""}`;
+      const entry = map.get(key) ?? { head: l.head, subHead, planned: 0, reserved: 0, consumed: 0, available: 0 };
+      entry.planned += Number(l.gross_amount ?? 0);
+      entry.reserved += Number(l.reserved_amount ?? 0);
+      entry.consumed += Number(l.consumed_amount ?? 0);
+      entry.available += Number(l.available_gross_amount ?? 0);
+      map.set(key, entry);
+    });
+    return [...map.values()].sort((a, b) => a.head.localeCompare(b.head) || (a.subHead ?? "").localeCompare(b.subHead ?? ""));
+  }, [utilizationDetailQuery.data]);
+
+  /**
    * Cost Centre Budget vs Actual.
    *
    * This used to aggregate `detailQuery.data.lines` on `cost_centre_id` in the browser, which only
@@ -1541,7 +1582,13 @@ export default function BranchBudgetManagementWorkspace() {
                   })()}
                 </span>
                 <span>·</span>
-                <span>{period ?? "No period selected"}</span>
+                {/* The period selector used to exist ONLY inside the Plan Builder tab, while
+                    approval / rollup / matrix / variance / coverage all render period-dependent
+                    data. On those tabs the period was a fixed label the user could not change and,
+                    in most of them, could not even see. Putting the control in the strip that is
+                    already rendered above every tab makes the period adjustable from wherever the
+                    user actually is, without giving each tab its own competing copy. */}
+                <MonthYearPicker value={period} onChange={changePeriod} className="h-7 w-40 text-xs" />
                 {currentBudget && <span>{statusBadge(currentBudget.status)}</span>}
               </div>
             )}
@@ -1566,7 +1613,8 @@ export default function BranchBudgetManagementWorkspace() {
               {/* Compacted: three tall stacked blocks became one inline row. This is a context
                   selector, not a form to fill in, so it should not occupy a card's worth of height
                   above the grid that actually does the work. */}
-              <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500"><div className="w-52 space-y-1"><Label>Period *</Label><MonthYearPicker value={period} onChange={(value) => { if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "period", value }); } else { setPeriod(value); setSavedBudgetId(null); setLoadedDetailId(null); } }} /></div><div className="w-56 space-y-1"><Label>{branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={branchLocked} onChange={(event) => { const v = event.target.value; if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "branch", value: v }); } else { setBranchId(v); setSavedBudgetId(null); setLoadedDetailId(null); } }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branchLabel(branch)}</option>)}</select></div><div className="w-28 space-y-1"><Label>Financial year</Label><div className="flex h-9 items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-600" title="Set by Period — April to March. Not independently editable.">{financialYear(period)}</div></div></CardContent></Card>
+              <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500">{/* Period moved to the context strip above, which is visible on every tab — see the comment
+                  there. Kept out of this card rather than duplicated, so there is exactly one control. */}<div className="w-56 space-y-1"><Label>{branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={branchLocked} onChange={(event) => { const v = event.target.value; if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "branch", value: v }); } else { setBranchId(v); setSavedBudgetId(null); setLoadedDetailId(null); } }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branchLabel(branch)}</option>)}</select></div><div className="w-28 space-y-1"><Label>Financial year</Label><div className="flex h-9 items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-600" title="Set by Period — April to March. Not independently editable.">{financialYear(period)}</div></div></CardContent></Card>
               {/* The branch picker above is locked and empty whenever capabilities failed to load.
                   Say why — an unexplained empty dropdown reads as a broken page, and the server's
                   own message ("not mapped to an active employee branch") is the actionable one. */}
@@ -2087,7 +2135,7 @@ export default function BranchBudgetManagementWorkspace() {
               <Card className="rounded-3xl border-slate-200 shadow-sm">
                 <CardHeader>
                   <CardTitle>Approval and utilization</CardTitle>
-                  <p className="mt-1 text-xs text-slate-500">Click <span className="font-medium">Review</span> on any budget request to view its full detail before approving, requesting revision, or rejecting.</p>
+                  <p className="mt-1 text-xs text-slate-500">Click a budget row to see its utilization breakdown below. Click <span className="font-medium">Review</span> to view its full detail before approving, requesting revision, or rejecting.</p>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   {Boolean(openCorrectionCount) && (
@@ -2109,8 +2157,26 @@ export default function BranchBudgetManagementWorkspace() {
 
                   {budgets.map((budget) => {
                     const available = Number(budget.gross_budget_amount) - Number(budget.reserved_amount) - Number(budget.consumed_amount);
+                    // Deliberately NOT role="button": this row contains real buttons (Review /
+                    // Transfer / Delete), and nesting interactive elements inside a button role is
+                    // invalid. aria-current marks the selection instead, and the row stays
+                    // keyboard-reachable via tabIndex + onKeyDown. Clicks on the inner buttons
+                    // bubble up and select the row too, which is what we want.
                     return (
-                      <div key={budget.id} className="grid gap-4 rounded-2xl border border-slate-200 p-4 xl:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr_auto]">
+                      <div
+                        key={budget.id}
+                        tabIndex={0}
+                        aria-current={utilizationDetailId === budget.id ? "true" : undefined}
+                        onClick={() => setUtilizationBudgetId(budget.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setUtilizationBudgetId(budget.id); }
+                        }}
+                        className={`grid cursor-pointer gap-4 rounded-2xl border p-4 transition-colors xl:grid-cols-[1.2fr_1fr_1fr_1fr_1fr_1fr_auto] ${
+                          utilizationDetailId === budget.id
+                            ? "border-blue-400 bg-blue-50/40 ring-1 ring-blue-200"
+                            : "border-slate-200 hover:border-slate-300 hover:bg-slate-50/70"
+                        }`}
+                      >
                         <div>
                           <div className="flex gap-2">
                             <p className="font-semibold">{budget.budget_number}</p>
@@ -2165,7 +2231,17 @@ export default function BranchBudgetManagementWorkspace() {
                     </div>
                   )}
 
-                  <UtilizationBreakdown rows={utilizationByHead} loading={detailQuery.isLoading} />
+                  <UtilizationBreakdown
+                    rows={selectedUtilizationByHead}
+                    loading={utilizationDetailQuery.isLoading}
+                    caption={
+                      utilizationBudget
+                        ? `${utilizationBudget.budget_number} · ${utilizationBudget.branch_name} · ${utilizationBudget.period_code} · ${statusLabel(utilizationBudget.status)}`
+                        : utilizationDetailId
+                          ? "Selected budget"
+                          : null
+                    }
+                  />
                 </CardContent>
               </Card>
 
@@ -2283,9 +2359,24 @@ export default function BranchBudgetManagementWorkspace() {
                               {rd.approvals.map((a, idx) => (
                                 <div key={idx} className="flex items-start gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs">
                                   <span className="shrink-0">{statusBadge(a.action)}</span>
-                                  <span className="font-medium text-slate-700">{a.actor_role}</span>
+                                  {/* Who, not just what role. actor_name is resolved server-side from
+                                      employees.user_id; falling back to the role label keeps the row
+                                      readable for a system actor with no employee record. */}
+                                  <span className="font-medium text-slate-700">
+                                    {a.actor_name?.trim() || statusLabel(a.actor_role)}
+                                  </span>
+                                  <span className="shrink-0 rounded bg-slate-200 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600">
+                                    {a.actor_role}
+                                  </span>
+                                  {a.from_status && a.to_status && (
+                                    <span className="shrink-0 text-slate-400">{a.from_status} &rarr; {a.to_status}</span>
+                                  )}
                                   <span className="text-slate-500">{a.remarks ?? ""}</span>
-                                  <span className="ml-auto shrink-0 text-slate-400">{a.created_at ? new Date(a.created_at).toLocaleDateString() : ""}</span>
+                                  {/* Date AND time: two stages of the same chain can be seconds apart,
+                                      and a date alone made them look simultaneous. */}
+                                  <span className="ml-auto shrink-0 whitespace-nowrap text-slate-400">
+                                    {a.created_at ? new Date(a.created_at).toLocaleString() : ""}
+                                  </span>
                                 </div>
                               ))}
                             </div>
@@ -3000,9 +3091,13 @@ function Field({ label, children, span = 1 }: { label: string; children: React.R
 function UtilizationBreakdown({
   rows,
   loading,
+  caption,
 }: {
   rows: { head: string; subHead: string | null; planned: number; reserved: number; consumed: number; available: number }[];
   loading: boolean;
+  /** Which budget these numbers belong to. Without it the table sat under a list of several
+   *  budgets naming none of them. */
+  caption?: string | null;
 }) {
   if (loading) return (
     <div className="xl:col-span-4 flex justify-center py-8">
@@ -3014,7 +3109,12 @@ function UtilizationBreakdown({
   );
   return (
     <div className="xl:col-span-4">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Utilization by Head / Sub-head</p>
+      <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Utilization by Head / Sub-head</p>
+      <p className="mb-2 text-xs text-slate-500">
+        {caption
+          ? <>for <span className="font-semibold text-slate-700">{caption}</span></>
+          : <span className="italic">No budget selected — click a budget above to see its breakdown.</span>}
+      </p>
       <div className="overflow-x-auto rounded-xl border border-slate-200">
         <table className="w-full min-w-[720px] text-xs">
           <thead>

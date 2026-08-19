@@ -159,6 +159,10 @@ export interface BranchBudgetApprovalRecord {
   to_status: string;
   actor_user_id: string;
   actor_role: string;
+  /** Resolved server-side from employees.user_id (branch-budget.service.ts). Null only for an
+   *  actor with no employee row; the UI falls back to the role label in that case. */
+  actor_name: string | null;
+  actor_employee_code: string | null;
   remarks: string | null;
   created_at: string;
 }

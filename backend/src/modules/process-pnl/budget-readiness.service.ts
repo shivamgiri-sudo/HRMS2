@@ -18,14 +18,42 @@ interface Executor {
  * as a save-time failure.
  */
 
-export type WeightedSharingMethod = "total_manpower" | "revenue_share" | "meter_wise" | "grade_weighted_headcount";
+// seat_count/floor_area/device_count/hiring_volume were absent here while being HARD BLOCKERS in
+// computeLineAllocations' shared else-branch (MONTHLY_DRIVER_MISSING, 409) — and they are the
+// seeded default_allocation_driver on 26 of the 38 sub-heads, so they are the methods most likely
+// to be picked. The result was the worst possible ordering: no warning anywhere, then a failed
+// save. They behave exactly like total_manpower (a zero or absent value is "missing"), so they
+// are checked exactly like it.
+export type WeightedSharingMethod =
+  | "total_manpower"
+  | "revenue_share"
+  | "meter_wise"
+  | "grade_weighted_headcount"
+  | "seat_count"
+  | "floor_area"
+  | "device_count"
+  | "hiring_volume";
 
 const METHOD_LABELS: Record<WeightedSharingMethod, string> = {
   total_manpower: "Manpower (planned headcount)",
   revenue_share: "Revenue share",
   meter_wise: "Meter-wise (utility consumption)",
   grade_weighted_headcount: "Grade-weighted headcount (blended CTC)",
+  seat_count: "Seat count",
+  floor_area: "Floor area (sq ft)",
+  device_count: "Device count",
+  hiring_volume: "Hiring volume",
 };
+
+/** The finance_cost_centre_monthly_driver field each simple-driver method divides by. Mirrors
+ *  driverQuantity() in branch-budget-allocation.service.ts — the engine treats <= 0 as missing,
+ *  so the same rule is applied here rather than a second, kinder one. */
+const SIMPLE_DRIVER_FIELDS = {
+  seat_count: "seatCount",
+  floor_area: "floorAreaSqft",
+  device_count: "deviceCount",
+  hiring_volume: "hiringVolume",
+} as const;
 
 export interface SharingMethodReadiness {
   method: WeightedSharingMethod;
@@ -74,11 +102,21 @@ export async function checkSharingMethodReadiness(
     if (!cost) missingGrade.push(cc);
   }
 
+  const simpleDriverReadiness = (Object.keys(SIMPLE_DRIVER_FIELDS) as (keyof typeof SIMPLE_DRIVER_FIELDS)[])
+    .map((method) => toReadiness(
+      method,
+      costCentres.filter((cc) => {
+        const driver = driverByCostCentre.get(cc.id);
+        return !driver || Number(driver[SIMPLE_DRIVER_FIELDS[method]] ?? 0) <= 0;
+      })
+    ));
+
   return [
     toReadiness("total_manpower", missingManpower),
     toReadiness("revenue_share", missingRevenue),
     { ...toReadiness("meter_wise", unmetered), ready: meterReady },
     toReadiness("grade_weighted_headcount", missingGrade),
+    ...simpleDriverReadiness,
   ];
 }
 

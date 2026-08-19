@@ -20,6 +20,16 @@ const READ_ROLES = [
   "finance",
   "finance_head",
   "accounts_head",
+  // ceo/coo were absent here while being present in PNL_READ_ROLES, so they 403d on this
+  // endpoint. That is worse than a plain denial: the frontend reads branchLocked off a
+  // SUCCESSFUL capabilities call (BranchBudgetManagementWorkspace.tsx), and treats any
+  // failure as "scope unknown -> lock the picker". With no scopedBranchId to filter on, the
+  // branch dropdown then rendered ZERO branches — the whole workspace was unusable for the
+  // four live ceo-role holders. Both already hold global finance scope via
+  // OVERRIDING_GLOBAL_FINANCE_ROLES, so this grants no data they were not already entitled
+  // to on every other P&L surface; it only stops the page locking itself.
+  "ceo",
+  "coo",
 ] as const;
 const CREATE_ROLES = ["super_admin", "admin", "branch_admin"] as const;
 
@@ -79,8 +89,13 @@ budgetCoverageRouter.get(
           roles,
           scopedBranchId,
           branchLocked: Boolean(scopedBranchId),
-          canCreate: isSuperAdmin || roles.some(r =>
-            ["admin", "branch_admin", "branch_head", "finance_head", "accounts_head"].includes(r)),
+          // Must mirror BUDGET_CREATE_ROLES in process-pnl.routes.ts exactly. It previously
+          // also listed branch_head/finance_head/accounts_head, none of which the create
+          // route accepts — so those roles were shown an enabled "Create budget" control that
+          // always 403d on submit. The route is the security boundary; this is only the UI
+          // telling the truth about it. (A finance_head who also holds branch_admin, which is
+          // the live case, still gets canCreate through branch_admin.)
+          canCreate: isSuperAdmin || roles.some(r => ["admin", "branch_admin"].includes(r)),
           canManageExpenseMaster: isSuperAdmin || roles.includes("finance_head"),
           // Changing or removing a head/sub-head that budgets already reference is Super Admin
           // only; Finance Head keeps the ability to add new ones via canManageExpenseMaster.
