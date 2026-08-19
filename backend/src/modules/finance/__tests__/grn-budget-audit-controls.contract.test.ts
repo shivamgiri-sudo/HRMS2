@@ -238,14 +238,44 @@ describe("P0P1-4: Budget approval maker-checker checks actor ID at all three sta
     expect(reviewFn).toContain("finance_head_approved_by");
   });
 
-  it("branch-budget.service.ts review() has at least three distinct maker-checker violations", () => {
+  /**
+   * Rewritten 2026-08-19. The original asserted three literal `role === "..."` branches and three
+   * separate "Maker-checker violation" strings, because review() carried one hand-rolled block per
+   * role. review() is now stage-driven — the stage comes from the budget's status and the actors it
+   * must not match are derived from that stage — so the same rule is expressed once instead of
+   * three times. The INTENT of this test is unchanged and still enforced below: identity, not role
+   * membership, is what blocks a self-approval, and it is checked at every stage.
+   *
+   * The one deliberate behaviour change is the exemption: finance_head and super_admin may now
+   * approve their own work (owner decision — Finance Head approves at all levels). That exemption
+   * is asserted explicitly here so it cannot be widened silently.
+   */
+  it("branch-budget.service.ts review() enforces actor-identity maker-checker at every stage", () => {
     const svc = read("src/modules/process-pnl/branch-budget.service.ts");
     const reviewFn = svc.slice(svc.indexOf("async review("));
-    expect(reviewFn).toContain("role === \"branch_head\"");
-    expect(reviewFn).toContain("role === \"finance_head\"");
-    expect(reviewFn).toContain("role === \"accounts_head\"");
-    const count = (reviewFn.match(/Maker-checker violation/g) ?? []).length;
-    expect(count).toBeGreaterThanOrEqual(3);
+
+    // Identity, not role, is what throws.
+    expect(reviewFn).toContain("BUDGET_MAKER_CHECKER");
+    expect(reviewFn).toContain("Maker-checker violation");
+    expect(reviewFn).toContain("prior.id === actorId");
+
+    // All three prior-actor identities are still considered.
+    expect(reviewFn).toContain("submittedBy");
+    expect(reviewFn).toContain("bhApprovedBy");
+    expect(reviewFn).toContain("fhApprovedBy");
+
+    // Earlier approvers are only relevant at the later stages, and the stage decides.
+    expect(reviewFn).toContain('stage.key === "finance_head" || stage.key === "accounts_head"');
+    expect(reviewFn).toContain('stage.key === "accounts_head"');
+
+    // Exemption is exactly finance_head + super_admin — no wider.
+    expect(reviewFn).toContain("!MAKER_CHECKER_EXEMPT_ROLES.has(role)");
+    const exempt = svc.slice(svc.indexOf("const MAKER_CHECKER_EXEMPT_ROLES"));
+    const decl = exempt.slice(0, exempt.indexOf(");") + 1);
+    expect(decl).toContain('"finance_head"');
+    expect(decl).toContain('"super_admin"');
+    expect(decl).not.toContain('"branch_head"');
+    expect(decl).not.toContain('"accounts_head"');
   });
 });
 

@@ -19,6 +19,18 @@ router.use(requireAuth);
 // All list/get: any authenticated user (needed for dropdowns)
 // Create/update/delete: admin or hr
 
+/**
+ * Who is making an Org Masters change, for cost_centre_approval_log.
+ *
+ * Reads the same authUser the rest of the app uses; returns undefined when it is absent so the
+ * service simply skips the audit row rather than inventing an actor.
+ */
+function orgActor(req: Request): { id: string; role: string } | undefined {
+  const auth = (req as any).authUser;
+  if (!auth?.id) return undefined;
+  return { id: String(auth.id), role: String(auth.role ?? (req as any).userRoles?.[0] ?? "unknown") };
+}
+
 function buildCrud(
   path: string,
   svc: {
@@ -242,7 +254,7 @@ router.post("/cost-centres", requireRole("admin", "hr"), h(async (req: Request, 
 }));
 
 router.put("/cost-centres/:id", requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
-  const item = await costCentreService.update(req.params.id, req.body);
+  const item = await costCentreService.update(req.params.id, req.body, orgActor(req));
   res.json({ data: item });
 }));
 
@@ -262,7 +274,7 @@ router.patch("/cost-centres/:id/status", requireRole("admin", "hr"), h(async (re
   if (active_status !== 0 && active_status !== 1) {
     return res.status(400).json({ error: "active_status must be 0 or 1" });
   }
-  await costCentreService.setStatus(req.params.id, active_status);
+  await costCentreService.setStatus(req.params.id, active_status, orgActor(req));
   res.json({ ok: true });
 }));
 

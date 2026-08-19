@@ -194,9 +194,10 @@ async function softDelete(table: string, id: string): Promise<void> {
   await db.execute(`UPDATE ${table} SET active_status = 0 WHERE id = ?`, [id]);
 }
 
-async function setStatus(table: string, id: string, status: number): Promise<void> {
+async function setStatus(table: string, id: string, status: number, actor?: OrgActor): Promise<void> {
   assertMasterTable(table);
   const activeStatus = status === 1 ? 1 : 0;
+  const before = table === "cost_centre_master" ? await getById(table, id) : null;
   // Reactivating a cost centre only flipped active_status, leaving behind whatever close_date
   // it carried from when it was actually closed. branch-budget-allocation.service.ts's
   // listActiveCostCentres additionally requires close_date IS NULL OR close_date > CURDATE(),
@@ -209,9 +210,13 @@ async function setStatus(table: string, id: string, status: number): Promise<voi
       `UPDATE ${table} SET active_status = ?, close_date = NULL, updated_at = NOW() WHERE id = ?`,
       [activeStatus, id]
     );
+    await logCostCentreChange(id, "org_master_status", before, await getById(table, id), actor);
     return;
   }
   await db.execute(`UPDATE ${table} SET active_status = ?, updated_at = NOW() WHERE id = ?`, [activeStatus, id]);
+  if (table === "cost_centre_master") {
+    await logCostCentreChange(id, "org_master_status", before, await getById(table, id), actor);
+  }
 }
 
 // ── Branch ────────────────────────────────────────────────────────────────────
@@ -479,6 +484,54 @@ export const campaignService = {
   delete: (id: string) => softDelete("campaign_master", id),
 };
 
+/** Who performed an Org Masters write. Optional so existing callers keep compiling; when it is
+ *  absent nothing is logged, which is the pre-existing behaviour rather than a silent fake actor. */
+export interface OrgActor { id: string; role: string }
+
+/**
+ * Record a cost-centre change in cost_centre_approval_log.
+ *
+ * That table already existed, and finance/cost-centre-management.service.ts writes to it — but the
+ * Org Masters CRUD path (which is what the Cost Centres tab actually calls) never did, so the table
+ * held ZERO rows. The practical cost of that showed up on 2026-08-19: four cost centres had their
+ * cost_centre_name overwritten with their own code and their branch re-pointed, and there was no
+ * record anywhere of who did it or from which screen. This closes that hole for the fields worth
+ * reconstructing later.
+ *
+ * Deliberately best-effort: a failure to write the audit row must not fail the user's edit, which
+ * has already been committed by the time we get here. The error is logged instead of thrown.
+ */
+async function logCostCentreChange(
+  costCentreId: string,
+  action: string,
+  before: RowDataPacket | null,
+  after: RowDataPacket | null,
+  actor?: OrgActor
+): Promise<void> {
+  if (!actor?.id) return;
+  const WATCHED = ["cost_centre_code", "cost_centre_name", "branch_id", "client_id", "lob_id",
+                   "process_id", "department_id", "active_status", "close_date", "go_live_date"];
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const key of WATCHED) {
+    const from = before?.[key] ?? null;
+    const to = after?.[key] ?? null;
+    if (String(from ?? "") !== String(to ?? "")) changes[key] = { from, to };
+  }
+  if (Object.keys(changes).length === 0) return;
+  const status = String(after?.status ?? before?.status ?? "n/a");
+  try {
+    await db.execute(
+      `INSERT INTO cost_centre_approval_log
+         (id, cost_centre_id, action, from_status, to_status, actor_user_id, actor_role, remarks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [randomUUID(), costCentreId, action, status, status, actor.id, actor.role || "unknown",
+       JSON.stringify(changes)]
+    );
+  } catch (error) {
+    console.warn(`cost_centre_approval_log write failed for ${costCentreId}:`, error);
+  }
+}
+
 // ── Cost Centre ───────────────────────────────────────────────────────────────
 
 export const costCentreService = {
@@ -558,7 +611,7 @@ export const costCentreService = {
   },
 
   getById: (id: string) => getById("cost_centre_master", id),
-  setStatus: (id: string, status: number) => setStatus("cost_centre_master", id, status),
+  setStatus: (id: string, status: number, actor?: OrgActor) => setStatus("cost_centre_master", id, status, actor),
 
   async countOrphanedRecords(): Promise<{ total: number; orphaned: number }> {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -637,7 +690,10 @@ export const costCentreService = {
     branch_id?: string;
     process_id?: string;
     department_id?: string;
-  }) {
+  }, actor?: OrgActor) {
+    // Snapshot before the write so the audit row can record what actually changed. This is the
+    // path that silently renamed four cost centres on 2026-08-19 with no trace of who or where.
+    const before = await getById("cost_centre_master", id);
     await db.execute(
       `UPDATE cost_centre_master SET
          cost_centre_name = COALESCE(?, cost_centre_name),
@@ -658,7 +714,9 @@ export const costCentreService = {
         id,
       ]
     );
-    return getById("cost_centre_master", id);
+    const after = await getById("cost_centre_master", id);
+    await logCostCentreChange(id, "org_master_update", before, after, actor);
+    return after;
   },
 
   async migrate(id: string, data: {

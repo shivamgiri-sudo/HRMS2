@@ -2173,16 +2173,46 @@ export const branchBudgetService = {
               (l.quantity-l.reserved_quantity-l.consumed_quantity)
                 AS available_quantity,
               (l.gross_amount-l.reserved_amount-l.consumed_amount)
-                AS available_gross_amount
+                AS available_gross_amount,
+              -- Per-cost-centre headroom on a BRANCH-LEVEL line (cost_centre_id IS NULL).
+              --
+              -- The GRN engine gates on the budget LINE only: getLineForGrn filters on line id,
+              -- branch and status, and the condition above admits a branch-level line for ANY
+              -- cost centre. finance_budget_line_allocation — which holds each cost centre's
+              -- planned share of that line — is read nowhere in modules/finance. So a cost centre
+              -- budgeted a seventh of a line can consume all of it, and the overspend only
+              -- becomes visible afterwards on the utilization tab.
+              --
+              -- These two columns let the raiser SEE that before committing. They are advisory:
+              -- nothing here blocks a GRN (owner decision 2026-08-19, warn rather than block).
+              -- NULL when no cost centre was asked about, or when the line is already direct to
+              -- one cost centre (in which case available_gross_amount is already the answer).
+              alloc.gross_amount AS cost_centre_allocated_amount,
+              COALESCE(committed.committed_amount, 0) AS cost_centre_committed_amount
          FROM finance_budget_line l
          JOIN finance_budget_header h ON h.id = l.budget_id
          LEFT JOIN process_master pm ON pm.id = l.process_id
          LEFT JOIN cost_centre_master ccm ON ccm.id = l.cost_centre_id
          LEFT JOIN vendor_master vm ON vm.id = l.preferred_vendor_id
+         LEFT JOIN finance_budget_line_allocation alloc
+                ON alloc.budget_line_id = l.id
+               AND l.cost_centre_id IS NULL
+               AND alloc.cost_centre_id = ?
+         LEFT JOIN (
+                SELECT budget_line_id, cost_centre_id, SUM(amount_with_tax) AS committed_amount
+                  FROM grn_cost_allocation
+                 WHERE lifecycle_status IN ('reserved', 'consumed')
+                 GROUP BY budget_line_id, cost_centre_id
+              ) committed
+                ON committed.budget_line_id = l.id
+               AND committed.cost_centre_id = ?
         WHERE ${conditions.join(" AND ")}
         HAVING available_quantity > 0 AND available_gross_amount > 0
         ORDER BY l.head, l.sub_head, l.item_name`,
-      params
+      // The two joined placeholders are bound first because they appear before the WHERE clause.
+      // Passing null for both when no cost centre was asked about makes each join match nothing,
+      // so the advisory columns come back NULL/0 and the row is otherwise unchanged.
+      [filters.costCentreId ?? null, filters.costCentreId ?? null, ...params]
     );
     return rows;
   },

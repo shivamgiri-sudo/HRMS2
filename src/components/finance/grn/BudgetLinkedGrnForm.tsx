@@ -116,6 +116,12 @@ type BudgetLine = {
   justification: string;
   available_quantity: number;
   available_gross_amount: number;
+  /** This cost centre's planned share of a BRANCH-LEVEL line, and what it has already committed
+   *  against it. Advisory only — the GRN engine gates on the line, never on the cost centre — so
+   *  these exist to make an over-share GRN visible before it is raised. Null/absent for a line
+   *  already direct to one cost centre, where available_gross_amount is already the answer. */
+  cost_centre_allocated_amount?: number | string | null;
+  cost_centre_committed_amount?: number | string | null;
 };
 
 type AllocationDraft = {
@@ -268,6 +274,22 @@ function financialYearFromPeriod(period: string) {
   return month >= 4
     ? `${year}-${String(year + 1).slice(-2)}`
     : `${year - 1}-${String(year).slice(-2)}`;
+}
+
+/**
+ * Day count out of vendor_master.payment_terms, which is free text ("Net 30", "30 days", "45").
+ *
+ * Returns null when no sensible number is present, so the caller leaves whatever the raiser
+ * already has rather than inventing a date. Bounded to the same 0..365 range grn.service.ts
+ * validates server-side, so a nonsense term can never seed a value the API would then reject.
+ */
+function parsePaymentTermDays(raw: unknown): number | null {
+  if (raw === null || raw === undefined) return null;
+  const match = String(raw).match(/\d+/);
+  if (!match) return null;
+  const days = Number(match[0]);
+  if (!Number.isInteger(days) || days < 0 || days > 365) return null;
+  return days;
 }
 
 function addDays(dateString: string, days: number) {
@@ -437,7 +459,13 @@ export function BudgetLinkedGrnForm({
 
   const { data: branchResponse } = useQuery({
     queryKey: ["grn-budget-branches"],
-    queryFn: () => hrmsApi.get<any>("/api/org/branches?limit=200"),
+    // include_duplicates=1 for the same reason the Branch Budget workspace needs it:
+    // branch_master holds real, DISTINCT branches sharing a name in different case ("Head Office"
+    // Mumbai vs "HEAD OFFICE" Noida — see sql/1115_reactivate_operational_branches.sql, which
+    // warns against merging them). The default listing dedupes same-named rows to one arbitrary
+    // survivor, so this picker silently resolved "Head Office" to whichever sorted first and a
+    // GRN could be raised against the wrong branch entirely.
+    queryFn: () => hrmsApi.get<any>("/api/org/branches?limit=200&include_duplicates=1"),
   });
 
   const { data: companiesResponse } = useQuery({
@@ -498,6 +526,21 @@ export function BudgetLinkedGrnForm({
   const branches = unwrapList(branchResponse).filter(
     (branch) => Number(branch.active_status ?? 1) === 1
   );
+  /* Appends city/code only to names that actually collide, so every other branch label is
+   * unchanged. Mirrors branchLabel() in BranchBudgetManagementWorkspace.tsx. */
+  const grnBranchNameCounts = new Map<string, number>();
+  for (const b of branches) {
+    const key = String((b as any).branch_name ?? (b as any).name ?? "").trim().toLocaleLowerCase();
+    grnBranchNameCounts.set(key, (grnBranchNameCounts.get(key) ?? 0) + 1);
+  }
+  const branchLabel = (branch: any): string => {
+    const name = branch.branch_name ?? branch.name ?? "";
+    const key = String(name).trim().toLocaleLowerCase();
+    if ((grnBranchNameCounts.get(key) ?? 0) <= 1) return name;
+    const disambiguator = branch.city ?? branch.branch_code;
+    return disambiguator ? `${name} (${disambiguator})` : name;
+  };
+
   const vendors = unwrapList(vendorResponse);
 
   const { data: lineResponse, isLoading: linesLoading } = useQuery({
@@ -587,6 +630,24 @@ export function BudgetLinkedGrnForm({
 
   // Reset to fresh edit mode whenever editGrnId changes (makes pre-fill
   // correct regardless of whether the parent unmounts this component or not).
+  /**
+   * Seed Billing State (the MAS side of the GST determination) from the selected branch.
+   *
+   * branch_master.gst_state_code was backfilled for 40 of 45 branches by
+   * sql/1243_backfill_branch_gst_state_code.sql, yet this field was a plain dropdown the raiser
+   * had to set by hand on every GRN — the one value on the form that is never a judgement call,
+   * since it is fixed by where the branch physically is. Only ever fills a BLANK field, so a
+   * deliberate override and a loaded existing GRN are both left alone.
+   */
+  useEffect(() => {
+    if (form.billingStateCode) return;
+    if (!form.branchId) return;
+    const branch = branches.find((b: any) => b.id === form.branchId);
+    const code = String((branch as any)?.gst_state_code ?? "").trim();
+    if (!code) return;
+    setForm((current) => (current.billingStateCode ? current : { ...current, billingStateCode: code }));
+  }, [form.branchId, form.billingStateCode, branches]);
+
   useEffect(() => {
     if (!editGrnId) return;
     setCreated({ id: editGrnId, grnNumber: "…", submitted: false });
@@ -1897,7 +1958,7 @@ export function BudgetLinkedGrnForm({
                     className="h-8"
                     options={branches.map((branch) => ({
                       value: branch.id,
-                      label: branch.branch_name ?? branch.name,
+                      label: branchLabel(branch),
                       hint: branch.branch_code ?? undefined,
                     }))}
                     value={form.branchId}
@@ -2113,11 +2174,31 @@ export function BudgetLinkedGrnForm({
                         value={form.vendorId}
                         onChange={(value) => {
                           const picked = vendors.find((vendor) => vendor.id === value);
-                          setForm((current) => ({
-                            ...current,
-                            vendorId: value,
-                            vendorGstin: current.vendorGstin || (picked?.gst_number ?? ""),
-                          }));
+                          setForm((current) => {
+                            const gstin = current.vendorGstin || (picked?.gst_number ?? "");
+                            // vendor_master already stores gst_state_code (derived from the GSTIN
+                            // on write by erp.service.ts) and payment_terms, and NOTHING in the
+                            // GRN path read either of them — Vendor State was hand-picked and the
+                            // due date hand-typed on every GRN. Both are seeded here and both stay
+                            // editable: a prefill, not a lock, so a one-off term still works.
+                            const vendorState =
+                              current.vendorStateCode
+                              || (picked?.gst_state_code ?? "")
+                              || extractStateCodeFromGstin(gstin)
+                              || "";
+                            const termDays = parsePaymentTermDays(picked?.payment_terms);
+                            const seededDue =
+                              current.dueDate
+                              || (termDays !== null && current.billDate ? addDays(current.billDate, termDays) : current.dueDate);
+                            return {
+                              ...current,
+                              vendorId: value,
+                              vendorGstin: gstin,
+                              vendorStateCode: vendorState,
+                              paymentTermsDays: termDays ?? current.paymentTermsDays,
+                              dueDate: seededDue,
+                            };
+                          });
                         }}
                         search={vendorSearch}
                         onSearchChange={setVendorSearch}
@@ -2531,6 +2612,35 @@ export function BudgetLinkedGrnForm({
                       <span>{decimal(Number(resolvedLine.available_quantity))} {resolvedLine.unit} left</span>
                     </div>
                   )}
+
+                  {/* Cost-centre share caution.
+                      A branch-level budget line is offered to EVERY cost centre and the engine
+                      only checks the line's own balance, so a cost centre can consume far more
+                      than the share it was budgeted. That overspend is currently only visible
+                      after the fact on the utilization tab. This warns at raise time and
+                      deliberately does NOT block: the line-level gate is still the hard control. */}
+                  {(() => {
+                    if (!resolvedLine) return null;
+                    const allocated = Number(resolvedLine.cost_centre_allocated_amount ?? NaN);
+                    if (!Number.isFinite(allocated) || allocated <= 0) return null;
+                    const committed = Number(resolvedLine.cost_centre_committed_amount ?? 0);
+                    const thisAmount = Number(form.amount || 0);
+                    const shareLeft = allocated - committed;
+                    if (!Number.isFinite(thisAmount) || thisAmount <= shareLeft) return null;
+                    return (
+                      <div className="flex items-start gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                        <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
+                        <span>
+                          This cost centre was budgeted{" "}
+                          <span className="font-semibold">{money(allocated)}</span> of this
+                          branch-level line{committed > 0 ? <> and has already committed <span className="font-semibold">{money(committed)}</span></> : null},
+                          leaving <span className="font-semibold">{money(shareLeft)}</span>. This GRN is{" "}
+                          <span className="font-semibold">{money(thisAmount)}</span>. The line as a whole still has
+                          budget, so this is allowed — but the excess is funded from other cost centres&rsquo; shares.
+                        </span>
+                      </div>
+                    );
+                  })()}
 
                   {/* Selected head/sub-head has no matching budget line for this cost centre +
                       period — headOptions/subHeadOptions now include the full expense master, so
