@@ -157,6 +157,9 @@ export const mobilityService = {
   async createTransfer(data: CreateTransfer) {
     // Validate cost_centre transfers
     if (data.transfer_type === "cost_centre") {
+      if (!data.new_reporting_manager_id) {
+        throw mobilityError(422, "Transfer: new_reporting_manager_id is required for cost_centre transfers");
+      }
       const [ccRows] = await db.execute<RowDataPacket[]>(
         "SELECT id FROM cost_centre_master WHERE id = ? OR cost_centre_code COLLATE utf8mb4_unicode_ci = ? LIMIT 1",
         [data.to_value, data.to_value]
@@ -427,7 +430,7 @@ export const mobilityService = {
    */
   async applyPendingTransfers(): Promise<number> {
     const [pending] = await db.execute<RowDataPacket[]>(
-      `SELECT id, employee_id, transfer_type, to_value
+      `SELECT id, employee_id, transfer_type, from_value, to_value, new_reporting_manager_id, reason, effective_date
          FROM transfer_record
         WHERE status = 'completed'
           AND applied_at IS NULL
@@ -463,6 +466,52 @@ export const mobilityService = {
           String(row.to_value),
           transferId
         );
+        // For cost_centre: apply RM cascade and write job history (same as the inline path in updateTransfer)
+        if (String(row.transfer_type) === "cost_centre") {
+          const new_rm = row.new_reporting_manager_id ? String(row.new_reporting_manager_id) : null;
+          if (new_rm) {
+            await db.execute(
+              `UPDATE employees SET reporting_manager_id = ? WHERE id = ?`,
+              [new_rm, String(row.employee_id)]
+            );
+          }
+          // Read current employee snapshot for branch/dept/process context
+          const [empRows] = await db.execute<RowDataPacket[]>(
+            `SELECT branch_id, department_id, process_id, reporting_manager_id FROM employees WHERE id = ?`,
+            [String(row.employee_id)]
+          );
+          const empSnap = (empRows as RowDataPacket[])[0] ?? {};
+          const effectiveDateStr = String(row.effective_date).slice(0, 10);
+          await db.execute(
+            `INSERT INTO employee_job_history
+               (id, employee_id, effective_date, change_type,
+                from_cost_centre_id, to_cost_centre_id,
+                from_manager_id, to_manager_id,
+                from_branch_id, to_branch_id,
+                from_department_id, to_department_id,
+                from_process_id, to_process_id,
+                reason, approved_by, created_by)
+             VALUES (?, ?, ?, 'cost_centre_change', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              randomUUID(),
+              String(row.employee_id),
+              effectiveDateStr,
+              row.from_value ? String(row.from_value) : null,
+              String(row.to_value),
+              empSnap.reporting_manager_id ?? null,
+              new_rm ?? empSnap.reporting_manager_id ?? null,
+              empSnap.branch_id ?? null,
+              empSnap.branch_id ?? null,
+              empSnap.department_id ?? null,
+              empSnap.department_id ?? null,
+              empSnap.process_id ?? null,
+              empSnap.process_id ?? null,
+              row.reason ? String(row.reason) : null,
+              null, // no approver context in deferred worker
+              null,
+            ]
+          );
+        }
         applied++;
       } catch (err) {
         // Release the claim so a later run retries, rather than leaving the transfer

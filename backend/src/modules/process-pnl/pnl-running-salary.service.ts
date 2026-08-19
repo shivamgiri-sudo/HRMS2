@@ -169,6 +169,21 @@ interface SnapshotRow {
 
 async function flushRows(rows: SnapshotRow[], periodCode: string, asOfDate: string): Promise<void> {
   if (rows.length === 0) return;
+
+  // For employees with no cost centre, the unique key includes NULL which MySQL won't
+  // match on upsert (NULL != NULL). Delete their existing rows first so INSERT creates a fresh one.
+  const nullCcEmployeeIds = rows
+    .filter((r) => !r.employee.cost_centre_id)
+    .map((r) => r.employee.id);
+  if (nullCcEmployeeIds.length > 0) {
+    const nullPlaceholders = nullCcEmployeeIds.map(() => "?").join(",");
+    await db.execute(
+      `DELETE FROM pnl_running_salary_snapshot
+        WHERE period_code = ? AND employee_id IN (${nullPlaceholders}) AND cost_centre_id IS NULL`,
+      [periodCode, ...nullCcEmployeeIds]
+    );
+  }
+
   const placeholders = rows.map(() => "(UUID(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW())").join(",");
   const params: unknown[] = [];
   for (const row of rows) {

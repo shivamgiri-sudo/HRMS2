@@ -85,9 +85,12 @@ export async function getCostCentrePeriods(
 
   const startingCC = await getCostCentreAtDate(employeeId, monthStart);
   if (!startingCC && changes.length === 0) return [];
+  // If no starting CC but changes exist, we can't accurately split — return empty
+  // so the caller uses the single-row path with the current employee CC.
+  if (!startingCC) return [];
 
   const periods: CostCentrePeriod[] = [];
-  let currentCC = startingCC;
+  let currentCC: string | null = startingCC;
   let periodStart = monthStart;
 
   for (const change of changes) {
