@@ -7,6 +7,7 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { clientBillingService } from "./client-billing.service.js";
 import { clientBillingApprovalService } from "./client-billing-approval.service.js";
+import { clientBillingCreditNoteService } from "./client-billing-credit-note.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -114,6 +115,59 @@ router.get(
       [req.params.id]
     );
     res.json({ success: true, data: rows });
+  })
+);
+
+router.post(
+  "/credit-notes",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const body = req.body as {
+      invoiceId?: string; category?: string; financeYear?: string; monthLabel?: string;
+      creditDate?: string; description?: string; applyGst?: boolean;
+      lines?: Array<{ particulars: string; qty: number; rate: number }>;
+    };
+    if (!body.invoiceId || !body.category || !body.financeYear || !body.monthLabel || !body.creditDate) {
+      return res.status(400).json({ error: "invoiceId, category, financeYear, monthLabel, and creditDate are required" });
+    }
+    const data = await clientBillingCreditNoteService.createCreditNote({
+      invoiceId: body.invoiceId, category: body.category, financeYear: body.financeYear,
+      monthLabel: body.monthLabel, creditDate: body.creditDate, description: body.description,
+      applyGst: body.applyGst, lines: body.lines ?? [], userId: req.authUser!.id,
+    });
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.post(
+  "/credit-notes/:id/approve",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await clientBillingCreditNoteService.approveCreditNote({
+      creditNoteId: req.params.id, userId: req.authUser!.id,
+    });
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/credit-notes",
+  requireRole(...ALLOWED_ROLES),
+  h(async (_req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM client_credit_note ORDER BY created_at DESC`);
+    res.json({ success: true, data: rows });
+  })
+);
+
+router.get(
+  "/credit-notes/:id",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM client_credit_note WHERE id = ? LIMIT 1`, [req.params.id]);
+    const creditNote = rows[0];
+    if (!creditNote) return res.status(404).json({ error: "Credit note not found" });
+    const [lineRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM client_credit_note_line WHERE credit_note_id = ?`, [req.params.id]);
+    res.json({ success: true, data: { ...creditNote, lines: lineRows } });
   })
 );
 
