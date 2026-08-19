@@ -61,13 +61,17 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
     await conn.beginTransaction();
 
     const [costCentreRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT cc.gst_type AS gstType, b.gst_state_code AS stateCode
+      `SELECT cc.gst_type AS gstType, b.gst_state_code AS stateCode,
+              cc.tally_head AS tallyHead, cc.billing_client_name AS clientTallyName
        FROM cost_centre_master cc
        LEFT JOIN branch_master b ON b.id = cc.branch_id
        WHERE cc.id = ?`,
       [input.costCentreId]
     );
-    const costCentre = costCentreRows[0] as { gstType: string; stateCode: string | null } | undefined;
+    const costCentre = costCentreRows[0] as {
+      gstType: string; stateCode: string | null;
+      tallyHead: string | null; clientTallyName: string | null;
+    } | undefined;
     if (!costCentre) {
       throw Object.assign(new Error(`cost_centre_master ${input.costCentreId} not found`), { statusCode: 400 });
     }
@@ -94,12 +98,16 @@ async function createProforma(input: CreateProformaInput): Promise<ProformaResul
       `INSERT INTO client_invoice
          (id, cost_centre_id, invoice_status, category, finance_year, month_label, invoice_date,
           description, proforma_no, gst_type, apply_gst, total_amount, igst_amount, cgst_amount,
-          sgst_amount, grand_total, created_by)
-       VALUES (?, ?, 'proforma', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          sgst_amount, grand_total, created_by, tally_head, client_tally_name)
+       VALUES (?, ?, 'proforma', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         invoiceId, input.costCentreId, input.category, input.financeYear, input.monthLabel,
         input.invoiceDate, input.description ?? null, proformaNo, costCentre.gstType,
         applyGst ? 1 : 0, totalAmount, igst, cgst, sgst, grandTotal, input.createdBy,
+        // Frozen at creation time, same as legacy's own cost_TallyHead/cost_client_tally_name
+        // snapshot — Tally posting must reflect what was true then, not whatever
+        // cost_centre_master says later if the ledger head is renamed.
+        costCentre.tallyHead ?? null, costCentre.clientTallyName ?? null,
       ]
     );
 

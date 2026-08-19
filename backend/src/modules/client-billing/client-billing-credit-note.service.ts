@@ -87,13 +87,17 @@ async function createCreditNote(input: CreateCreditNoteInput): Promise<CreditNot
     }
 
     const [costCentreRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT cc.company_name AS companyName, cc.gst_type AS gstType, b.gst_state_code AS stateCode
+      `SELECT cc.company_name AS companyName, cc.gst_type AS gstType, b.gst_state_code AS stateCode,
+              cc.tally_head AS tallyHead, cc.billing_client_name AS clientTallyName
        FROM cost_centre_master cc
        LEFT JOIN branch_master b ON b.id = cc.branch_id
        WHERE cc.id = ?`,
       [invoice.cost_centre_id]
     );
-    const costCentre = costCentreRows[0] as { companyName: string; gstType: string; stateCode: string | null } | undefined;
+    const costCentre = costCentreRows[0] as {
+      companyName: string; gstType: string; stateCode: string | null;
+      tallyHead: string | null; clientTallyName: string | null;
+    } | undefined;
     if (!costCentre || !costCentre.stateCode) {
       throw clientError(`Cost centre ${invoice.cost_centre_id} has no branch GST state code — cannot mint a credit note number`);
     }
@@ -111,12 +115,16 @@ async function createCreditNote(input: CreateCreditNoteInput): Promise<CreditNot
       `INSERT INTO client_credit_note
          (id, invoice_id, cost_centre_id, category, finance_year, month_label, credit_date,
           description, credit_no, credit_status, gst_type, apply_gst, total_amount, igst_amount,
-          cgst_amount, sgst_amount, grand_total, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)`,
+          cgst_amount, sgst_amount, grand_total, created_by, tally_head, client_tally_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         creditNoteId, input.invoiceId, invoice.cost_centre_id, input.category, input.financeYear,
         input.monthLabel, input.creditDate, input.description ?? null, creditNo, costCentre.gstType,
         applyGst ? 1 : 0, totalAmount, igst, cgst, sgst, grandTotal, input.userId,
+        // Legacy tbl_credit_note never had a TallyHead/client_tally_name column at all — this
+        // is new coverage, resolved live from cost_centre_master (no historical snapshot to
+        // match, unlike client_invoice's backfill from the cutover's own staging data).
+        costCentre.tallyHead ?? null, costCentre.clientTallyName ?? null,
       ]
     );
 

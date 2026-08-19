@@ -31,9 +31,9 @@ beforeEach(() => {
 });
 
 /** cost_centre_master + branch_master lookup row the SELECT returns. */
-function mockCostCentreLookup(overrides: Partial<{ gstType: string; stateCode: string }> = {}) {
+function mockCostCentreLookup(overrides: Partial<{ gstType: string; stateCode: string; tallyHead: string | null; clientTallyName: string | null }> = {}) {
   conn.execute.mockResolvedValueOnce([
-    [{ gstType: "Integrated", stateCode: "09", ...overrides }],
+    [{ gstType: "Integrated", stateCode: "09", tallyHead: null, clientTallyName: null, ...overrides }],
     [],
   ]);
 }
@@ -165,6 +165,46 @@ describe("createProforma", () => {
     });
 
     expect(result).toMatchObject({ igstAmount: 0, cgstAmount: 0, sgstAmount: 0, grandTotal: 10000 });
+  });
+
+  it("snapshots tally_head/client_tally_name from cost_centre_master at creation time", async () => {
+    mockCostCentreLookup({
+      gstType: "Integrated", stateCode: "09",
+      tallyHead: "VODAFONE MOBILE SERVICES LTD. (DELHI)", clientTallyName: "Vodafone Mobile Services Ltd",
+    });
+    mintProformaNumber.mockResolvedValueOnce("PI/09/7976");
+    conn.execute.mockResolvedValueOnce([{}, []]); // invoice INSERT
+    conn.execute.mockResolvedValueOnce([{}, []]); // line INSERT
+
+    await clientBillingService.createProforma({
+      costCentreId: "cc-1", category: "Non Subscription", financeYear: "2026-27",
+      monthLabel: "Aug-26", invoiceDate: "2026-08-18",
+      lines: [{ particulars: "Base charge", qty: 1, rate: 10000 }], createdBy: "u-1",
+    });
+
+    // Second conn.execute call is the client_invoice INSERT; its param array's last two
+    // positional values are tally_head/client_tally_name per the INSERT column list.
+    const insertCall = conn.execute.mock.calls[1];
+    const params = insertCall[1] as unknown[];
+    expect(params[params.length - 2]).toBe("VODAFONE MOBILE SERVICES LTD. (DELHI)");
+    expect(params[params.length - 1]).toBe("Vodafone Mobile Services Ltd");
+  });
+
+  it("stores tally_head/client_tally_name as NULL when the cost centre has neither set", async () => {
+    mockCostCentreLookup({ gstType: "Integrated", stateCode: "09" }); // tallyHead/clientTallyName default to null
+    mintProformaNumber.mockResolvedValueOnce("PI/09/7977");
+    conn.execute.mockResolvedValueOnce([{}, []]);
+    conn.execute.mockResolvedValueOnce([{}, []]);
+
+    await clientBillingService.createProforma({
+      costCentreId: "cc-1", category: "Non Subscription", financeYear: "2026-27",
+      monthLabel: "Aug-26", invoiceDate: "2026-08-18",
+      lines: [{ particulars: "Base charge", qty: 1, rate: 10000 }], createdBy: "u-1",
+    });
+
+    const params = conn.execute.mock.calls[1][1] as unknown[];
+    expect(params[params.length - 2]).toBeNull();
+    expect(params[params.length - 1]).toBeNull();
   });
 
   it("rolls back and releases the connection when a line insert fails", async () => {

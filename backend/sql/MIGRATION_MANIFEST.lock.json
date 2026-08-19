@@ -560,6 +560,7 @@
     "migrations/1305_client_billing_cutover_staging_fix.sql",
     "migrations/1306_client_billing_cutover_addendum_columns.sql",
     "migrations/1307_client_billing_cutover_missing_cost_centres.sql",
+    "migrations/1308_client_billing_tally_fields.sql",
     "1248_grn_dbbill_migration_schema.sql",
     "1502_apr_source_column.sql"
   ],
@@ -585,7 +586,8 @@
     "migrations/1304_client_billing_cutover_schema.sql",
     "migrations/1305_client_billing_cutover_staging_fix.sql",
     "migrations/1306_client_billing_cutover_addendum_columns.sql",
-    "migrations/1307_client_billing_cutover_missing_cost_centres.sql"
+    "migrations/1307_client_billing_cutover_missing_cost_centres.sql",
+    "migrations/1308_client_billing_tally_fields.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

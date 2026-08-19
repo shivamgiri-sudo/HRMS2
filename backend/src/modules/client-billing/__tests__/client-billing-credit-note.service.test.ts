@@ -124,6 +124,32 @@ describe("createCreditNote", () => {
     expect(conn.commit).toHaveBeenCalledTimes(1);
     expect(conn.release).toHaveBeenCalledTimes(1);
   });
+
+  it("resolves tally_head/client_tally_name live from cost_centre_master at creation time", async () => {
+    const conn = mockConnection();
+    conn.execute
+      .mockResolvedValueOnce([[APPROVED_INVOICE], []])
+      .mockResolvedValueOnce([[{
+        ...COST_CENTRE,
+        tallyHead: "VODAFONE MOBILE SERVICES LTD. (DELHI)",
+        clientTallyName: "Vodafone Mobile Services Ltd",
+      }], []])
+      .mockResolvedValueOnce([{}, []])
+      .mockResolvedValueOnce([{}, []]);
+    mintCreditNoteNumber.mockResolvedValueOnce("CN-09-02/26-27");
+
+    await clientBillingCreditNoteService.createCreditNote({
+      invoiceId: "inv-1", category: "Subscription", financeYear: "2026-27",
+      monthLabel: "Aug-26", creditDate: "2026-08-19",
+      lines: [{ particulars: "Service credit", qty: 1, rate: 4500 }], userId: "u-1",
+    });
+
+    // Third conn.execute call is the client_credit_note INSERT; its last two positional
+    // params are tally_head/client_tally_name per the INSERT column list.
+    const params = conn.execute.mock.calls[2][1] as unknown[];
+    expect(params[params.length - 2]).toBe("VODAFONE MOBILE SERVICES LTD. (DELHI)");
+    expect(params[params.length - 1]).toBe("Vodafone Mobile Services Ltd");
+  });
 });
 
 describe("approveCreditNote", () => {
