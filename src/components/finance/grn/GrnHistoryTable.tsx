@@ -49,6 +49,10 @@ type GrnHistoryRow = {
   finance_head_reviewed_by_name?: string | null;
   rejection_reason?: string | null;
   source_type?: 'new' | 'legacy' | null;
+  /** db_bill never captured WHY a GRN was rejected (verified: 0 of 2,107 rejected vendor rows
+   *  across its full history carry a RejectRemarks value) — only who and when. Shown alongside
+   *  rejection_reason rather than folded into it, since one can be present without the other. */
+  legacy_rejected_by_name?: string | null;
 };
 
 /** Longer than the redesign mock's six chips on purpose: every entry past "Rejected" is a real
@@ -257,13 +261,20 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
                 </GrnTd>
                 <GrnTd>
                   <StatusStamp tone={grnStatusTone(row.status)}>{labelStatus(row.status)}</StatusStamp>
-                  {row.status === "rejected" && row.rejection_reason && (
-                    <GrnCellSub
-                      className="max-w-[160px] truncate text-grn-crit"
-                      // Full text on hover — the column cannot afford the width, but the reason is
-                      // the whole point of a rejected row.
-                    >
-                      <span title={row.rejection_reason}>{row.rejection_reason}</span>
+                  {/* Legacy-rejected rows land on status='cancelled', not 'rejected' — db_bill's
+                      migration mapped both to one terminal state (migrate-grn-from-dbbill.ts's
+                      resolveStatus). Gated on the data actually being present, not the status
+                      label, so this never claims a reason/rejector that isn't there. */}
+                  {(row.rejection_reason || row.legacy_rejected_by_name) && (
+                    <GrnCellSub className="max-w-[160px] text-grn-crit">
+                      {row.legacy_rejected_by_name && (
+                        <span className="block truncate">Rejected by {row.legacy_rejected_by_name}</span>
+                      )}
+                      {row.rejection_reason && (
+                        // Full text on hover — the column cannot afford the width, but the reason
+                        // is the whole point of a rejected row.
+                        <span className="block truncate" title={row.rejection_reason}>{row.rejection_reason}</span>
+                      )}
                     </GrnCellSub>
                   )}
                 </GrnTd>

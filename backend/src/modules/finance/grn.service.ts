@@ -1037,10 +1037,31 @@ export const grnService = {
               ccm.cost_centre_name,
               h.budget_number,
               l.item_name AS budget_item_name,
-              CONCAT(cb.first_name, ' ', cb.last_name) AS created_by_name,
-              CONCAT(rb.first_name, ' ', rb.last_name) AS reviewed_by_name,
-              CONCAT(bhb.first_name, ' ', bhb.last_name) AS branch_head_reviewed_by_name,
-              CONCAT(fhb.first_name, ' ', fhb.last_name) AS finance_head_reviewed_by_name
+              -- listLegacyGrns (the source=legacy mirror) always sets this literal; a legacy row
+              -- migrated straight into grn_request needs the same signal computed from
+              -- bill_source_id, or the History "Legacy" badge and any future legacy-only styling
+              -- silently never fires for these 84,767 rows under the default source=new view.
+              CASE WHEN g.bill_source_id IS NOT NULL THEN 'legacy' ELSE 'new' END AS source_type,
+              -- Legacy rows (bill_source_id IS NOT NULL) never got a real created_by/
+              -- reviewed_by/*_reviewed_by FK — migrate-grn-from-dbbill.ts wrote a single
+              -- migration-sentinel user for all 84,767 of them, so these employees joins miss
+              -- and CONCAT(...) returns NULL. Falls back to the legacy_*_name columns
+              -- (sql/1511_grn_legacy_identity_columns.sql), resolved from db_bill's own
+              -- userid/ApprovedBy fields, so History/Approval Queue show a real name instead of
+              -- blank. legacy_approved_by_name is one flat field (db_bill never had a separate
+              -- Branch Head / Finance Head approval stage — verified never populated across its
+              -- full history), routed to whichever review column matches this row's own
+              -- two-stage model: Branch Head for imprest, Finance Head for vendor/salary.
+              COALESCE(CONCAT(cb.first_name, ' ', cb.last_name), g.legacy_raised_by_name) AS created_by_name,
+              COALESCE(CONCAT(rb.first_name, ' ', rb.last_name), g.legacy_approved_by_name) AS reviewed_by_name,
+              COALESCE(
+                CONCAT(bhb.first_name, ' ', bhb.last_name),
+                CASE WHEN g.grn_type = 'imprest' THEN g.legacy_approved_by_name END
+              ) AS branch_head_reviewed_by_name,
+              COALESCE(
+                CONCAT(fhb.first_name, ' ', fhb.last_name),
+                CASE WHEN g.grn_type <> 'imprest' THEN g.legacy_approved_by_name END
+              ) AS finance_head_reviewed_by_name
          FROM grn_request g
          LEFT JOIN branch_master bm ON bm.id = g.branch_id
          LEFT JOIN process_master pm ON pm.id = g.process_id
