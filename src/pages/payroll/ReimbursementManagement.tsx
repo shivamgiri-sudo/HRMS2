@@ -4,8 +4,11 @@ import {
   CheckCircle2,
   Clock,
   DollarSign,
+  FileText,
   PlusCircle,
   RefreshCw,
+  Send,
+  UserCheck,
   XCircle,
 } from "lucide-react";
 
@@ -48,12 +51,16 @@ import { Textarea } from "@/components/ui/textarea";
 // Types
 // ---------------------------------------------------------------------------
 
-type ClaimStatus = "draft" | "submitted" | "approved" | "rejected" | "processed";
+type ClaimStatus = "draft" | "submitted" | "manager_approved" | "branch_head_approved" | "approved" | "rejected" | "processed";
 type ClaimType = "LTA" | "MEDICAL" | "INTERNET" | "PHONE" | "FUEL" | "OTHER";
 
 interface ReimbursementClaim {
   id: string;
   employee_id: string;
+  branch_id?: string;
+  manager_reviewed_at?: string | null;
+  branch_head_reviewed_at?: string | null;
+  converted_to_grn_id?: string | null;
   employee_name?: string;
   employee_code?: string;
   claim_type: ClaimType;
@@ -106,11 +113,13 @@ const CLAIM_TYPE_LABELS: Record<ClaimType, string> = {
 
 function statusBadge(status: ClaimStatus) {
   const map: Record<ClaimStatus, { label: string; className: string }> = {
-    draft:     { label: "Draft",     className: "bg-slate-100 text-slate-700 border-slate-200" },
-    submitted: { label: "Submitted", className: "bg-blue-100 text-blue-800 border-blue-200" },
-    approved:  { label: "Approved",  className: "bg-green-100 text-green-800 border-green-200" },
-    rejected:  { label: "Rejected",  className: "bg-red-100 text-red-800 border-red-200" },
-    processed: { label: "Processed", className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
+    draft:                { label: "Draft",               className: "bg-slate-100 text-slate-700 border-slate-200" },
+    submitted:            { label: "Pending Manager",     className: "bg-blue-100 text-blue-800 border-blue-200" },
+    manager_approved:     { label: "Pending Branch Head", className: "bg-amber-100 text-amber-800 border-amber-200" },
+    branch_head_approved: { label: "Ready for GRN",       className: "bg-green-100 text-green-800 border-green-200" },
+    approved:             { label: "Approved",            className: "bg-green-100 text-green-800 border-green-200" },
+    rejected:             { label: "Rejected",            className: "bg-red-100 text-red-800 border-red-200" },
+    processed:            { label: "Processed",           className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
   };
   const { label, className } = map[status] ?? { label: status, className: "" };
   return <Badge variant="outline" className={`text-xs ${className}`}>{label}</Badge>;

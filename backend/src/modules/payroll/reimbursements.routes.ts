@@ -13,6 +13,7 @@ import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMid
 import { requireRole } from "../../middleware/requireRole.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
+import { reimbursementService } from "./reimbursement.service.js";
 
 export const reimbursementsRouter = Router();
 
@@ -443,3 +444,57 @@ reimbursementsRouter.delete(
     return res.json({ success: true, message: "Draft claim deleted" });
   })
 );
+
+// MULTI-LEVEL APPROVAL ENDPOINTS
+reimbursementsRouter.get("/manager-queue", requireAuth, h(async (req, res) => {
+  const claims = await reimbursementService.getManagerQueue(req.authUser!.id);
+  return res.json({ success: true, data: claims });
+}));
+
+reimbursementsRouter.get("/branch-head-queue", requireAuth, requireRole("branch_head", "super_admin"), h(async (req, res) => {
+  const [scopeRows] = await db.execute<RowDataPacket[]>(`SELECT DISTINCT COALESCE(uas.branch_id, e.branch_id) AS branch_id FROM user_roles ur LEFT JOIN user_assignment_scope uas ON uas.user_id = ur.user_id AND uas.active_status = 1 LEFT JOIN employees e ON e.user_id = ur.user_id WHERE ur.user_id = ? AND ur.role_key IN ('branch_head', 'super_admin') AND (uas.branch_id IS NOT NULL OR e.branch_id IS NOT NULL)`, [req.authUser!.id]);
+  let branchIds = (scopeRows as RowDataPacket[]).map((r) => r.branch_id as string).filter(Boolean);
+  if (req.authUser!.role === "super_admin" && !branchIds.length) { const [all] = await db.execute<RowDataPacket[]>("SELECT id FROM branch_master WHERE is_active = 1"); branchIds = (all as RowDataPacket[]).map((r) => r.id as string); }
+  const claims = await reimbursementService.getBranchHeadQueue(branchIds);
+  return res.json({ success: true, data: claims });
+}));
+
+reimbursementsRouter.get("/conversion-queue", requireAuth, requireRole("branch_admin", "imprest_manager", "finance_head", "finance", "super_admin"), h(async (req, res) => {
+  const userRole = req.authUser!.role ?? "";
+  const isWide = ["finance_head", "finance", "super_admin"].includes(userRole);
+  let branchIds: string[] | undefined;
+  if (!isWide) { const [scopeRows] = await db.execute<RowDataPacket[]>(`SELECT DISTINCT COALESCE(uas.branch_id, e.branch_id) AS branch_id FROM user_roles ur LEFT JOIN user_assignment_scope uas ON uas.user_id = ur.user_id AND uas.active_status = 1 LEFT JOIN employees e ON e.user_id = ur.user_id WHERE ur.user_id = ? AND (uas.branch_id IS NOT NULL OR e.branch_id IS NOT NULL)`, [req.authUser!.id]); branchIds = (scopeRows as RowDataPacket[]).map((r) => r.branch_id as string).filter(Boolean); }
+  const claims = await reimbursementService.getConversionQueue(branchIds);
+  return res.json({ success: true, data: claims });
+}));
+
+reimbursementsRouter.patch("/:id/manager-approve", requireAuth, h(async (req, res) => {
+  const body = req.body as { note?: string; amount_approved?: number };
+  await reimbursementService.managerApprove(req.params.id, req.authUser!.id, body.note, body.amount_approved, req);
+  return res.json({ success: true, message: "Claim approved by manager" });
+}));
+
+reimbursementsRouter.patch("/:id/manager-reject", requireAuth, h(async (req, res) => {
+  const body = req.body as { reason?: string };
+  if (!body.reason?.trim()) return res.status(400).json({ success: false, message: "Rejection reason required" });
+  await reimbursementService.managerReject(req.params.id, req.authUser!.id, body.reason, req);
+  return res.json({ success: true, message: "Claim rejected" });
+}));
+
+reimbursementsRouter.patch("/:id/branch-head-approve", requireAuth, requireRole("branch_head", "super_admin"), h(async (req, res) => {
+  const body = req.body as { note?: string; amount_approved?: number };
+  await reimbursementService.branchHeadApprove(req.params.id, req.authUser!.id, body.note, body.amount_approved, req);
+  return res.json({ success: true, message: "Claim approved by branch head" });
+}));
+
+reimbursementsRouter.patch("/:id/branch-head-reject", requireAuth, requireRole("branch_head", "super_admin"), h(async (req, res) => {
+  const body = req.body as { reason?: string };
+  if (!body.reason?.trim()) return res.status(400).json({ success: false, message: "Rejection reason required" });
+  await reimbursementService.branchHeadReject(req.params.id, req.authUser!.id, body.reason, req);
+  return res.json({ success: true, message: "Claim rejected" });
+}));
+
+reimbursementsRouter.post("/:id/convert-to-grn", requireAuth, requireRole("branch_admin", "imprest_manager", "finance_head", "finance", "super_admin"), h(async (req, res) => {
+  const result = await reimbursementService.convertToImprestGrn(req.params.id, req.authUser!.id, req.authUser!.role ?? "unknown");
+  return res.json({ success: true, message: `Converted to GRN ${result.grnNumber}`, grnId: result.grnId, grnNumber: result.grnNumber });
+}));
