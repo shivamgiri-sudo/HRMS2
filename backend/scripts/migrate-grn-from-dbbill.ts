@@ -103,7 +103,15 @@ function resolveStatus(
   if (status === 'Booked') return 'pending_accounts_payment';
   if (approvedByFhDate) return 'finance_head_approved';
   if (approvedByPhDate) return 'branch_head_approved';
-  if (approvalDate) return 'submitted';
+  // BUG (fixed 2026-08-20): this used to return 'submitted' here, i.e. a vendor GRN with a
+  // legacy ApprovalDate but no separately-recorded PH/FH date was filed as still awaiting
+  // Branch Head review. db_bill's PH/FH date columns are essentially never populated (verified
+  // against grn_entry_snapshot: 0 of 1,535 non-rejected rows carry either), so ApprovalDate is
+  // the only approval signal that exists for the vast majority of legacy vendor GRNs — treating
+  // it as "not yet approved" put ~18,500 already-approved vendor GRNs into the live Approval
+  // Queue. Matches how the Imprest and Salary branches above already treat a bare approvalDate:
+  // as the terminal pre-payment approved state, not the starting one.
+  if (approvalDate) return 'finance_head_approved';
   return 'submitted';
 }
 
