@@ -47,10 +47,9 @@ rosterImportRouter.post(
         sheetName?: string;
       };
 
-      if (!processId) {
-        res.status(400).json({ error: 'processId is required' });
-        return;
-      }
+      // processId is deliberately NOT required: the file identifies people by employee code and
+      // each employee carries their own process. It is still accepted, for the Roster Builder
+      // deep link which already knows the process.
 
       const mode = (importMode === 'UPDATE' ? 'UPDATE' : 'NEW') as 'NEW' | 'UPDATE';
       const createdBy = (req as any).user?.id ?? 'system';
@@ -255,3 +254,31 @@ rosterImportRouter.get(
     }
   }
 );
+
+// ── GET /api/wfm/roster-imports/view ──────────────────────────────────────
+// The roster as a table: one row per employee, dates across, with the context needed to read it
+// (reporting manager, process, branch, cost centre) and filters for branch / process / cost centre.
+rosterImportRouter.get('/view/table', requireRole(...WFM_ROLES), async (req, res) => {
+  try {
+    const { getRosterView } = await import('./roster-view.service.js');
+    const q = req.query as Record<string, string | undefined>;
+    if (!q.fromDate || !q.toDate) {
+      res.status(400).json({ error: 'fromDate and toDate are required (YYYY-MM-DD)' });
+      return;
+    }
+    const result = await getRosterView({
+      fromDate: q.fromDate,
+      toDate: q.toDate,
+      branchId: q.branchId || undefined,
+      processId: q.processId || undefined,
+      costCentreId: q.costCentreId || undefined,
+      search: q.search || undefined,
+      limit: q.limit ? parseInt(q.limit, 10) : undefined,
+      offset: q.offset ? parseInt(q.offset, 10) : undefined,
+    });
+    res.json(result);
+  } catch (err: any) {
+    console.error('[roster-view] error:', err);
+    res.status(500).json({ error: `Roster view failed: ${err?.message ?? 'unknown error'}` });
+  }
+});

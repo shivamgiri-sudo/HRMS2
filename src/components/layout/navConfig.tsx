@@ -200,6 +200,7 @@ export const navGroups: NavGroup[] = [
           { label: "Roster Planning",        href: "/wfm/roster",                icon: ic(Clock),         pageCode: "WFM_ROSTER",      description: "Roster" },
           { label: "Roster Workspace",       href: "/wfm/roster-workspace",      icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "Weekly shift grid and acknowledgement tracker" },
           { label: "Roster Import",          href: "/wfm/roster-import",         icon: ic(Upload),        pageCode: "WFM_ROSTER",      description: "Upload Excel roster — auto-detect headers, 12h/24h, night shifts" },
+          { label: "Roster",                 href: "/wfm/roster-view",           icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "See who is working what — filter by branch, process or person" },
           { label: "Roster Builder",         href: "/wfm/roster-builder",        icon: ic(CalendarDays),  pageCode: "WFM_ROSTER_BUILDER", description: "Build and publish a process's weekly roster — grid or bulk upload" },
           { label: "Roster Requests",        href: "/wfm/roster-requests",       icon: ic(ClipboardList), pageCode: "WFM_ROSTER",      description: "Review roster disputes and the week-offs employees have rejected" },
           { label: "Roster Rules",           href: "/wfm/roster-rules",          icon: ic(Settings2),     pageCode: "WFM_ROSTER",      description: "Capacity, week-offs, minimum rest, demand, planning rules and approvers" },

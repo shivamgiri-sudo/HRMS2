@@ -111,7 +111,14 @@ async function approvedLeaveLookup(
 // ── Main service functions ───────────────────────────────────────────────────
 
 export async function createImportBatch(params: {
-  processId: string;
+  /**
+   * Optional. A roster file already identifies its people by employee code, and each employee
+   * already carries their own process, branch and cost centre — so making the uploader pick a
+   * process was asking for information the file implies. Omit it and each row is filed against
+   * the employee's own process. 291 of 1,069 active employees have no process at all; their rows
+   * still import, with process simply blank, rather than the upload being blocked.
+   */
+  processId?: string;
   cycleId?: string;
   importMode: 'NEW' | 'UPDATE';
   fileBuffer: Buffer;
@@ -124,7 +131,8 @@ export async function createImportBatch(params: {
    */
   sheetName?: string;
 }): Promise<{ batchId: number; summary: BatchSummary; sheetName: string }> {
-  const { processId, cycleId, importMode, fileBuffer, fileName, createdBy } = params;
+  const { cycleId, importMode, fileBuffer, fileName, createdBy } = params;
+  const processId = params.processId ?? null;
   const requestedSheet = params.sheetName?.trim() || null;
 
   // ── Step 1: Parse file, and find the sheet the roster is actually on ─────
