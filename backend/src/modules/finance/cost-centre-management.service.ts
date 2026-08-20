@@ -64,17 +64,32 @@ export interface CostCentreInput {
   service_tax_no?: string;
   vendor_state_code?: string;
 
-  // Addresses
+  // Addresses (legacy has 5 lines)
   bill_to_address1?: string;
   bill_to_address2?: string;
   bill_to_address3?: string;
+  bill_to_address4?: string;
+  bill_to_address5?: string;
   bill_to_city?: string;
   bill_to_pincode?: string;
   ship_to_address1?: string;
   ship_to_address2?: string;
   ship_to_address3?: string;
+  ship_to_address4?: string;
+  ship_to_address5?: string;
   ship_to_city?: string;
   ship_to_pincode?: string;
+
+  // Legacy parity: grouping / categorization
+  tally_head?: string;
+  group_cost_center?: string;
+  cost_center_type?: string;
+  dialdee_type?: string;
+
+  // Legacy parity: procurement
+  jcc_no?: string;
+  grn?: string;
+  po_required?: boolean;
 
   // Dates
   association_date?: string;
@@ -332,8 +347,12 @@ export const costCentreManagementService = {
         -- is SAC (998593, call-centre services, on 343 rows), and this column feeds our own
         -- GSTR-1 HSN/SAC summary. hsn_code is empty on all 927 rows.
         hsn_code, sac_code, service_tax_no, vendor_state_code,
-        bill_to_address1, bill_to_address2, bill_to_address3, bill_to_city, bill_to_pincode,
-        ship_to_address1, ship_to_address2, ship_to_address3, ship_to_city, ship_to_pincode,
+        bill_to_address1, bill_to_address2, bill_to_address3, bill_to_address4, bill_to_address5,
+        bill_to_city, bill_to_pincode,
+        ship_to_address1, ship_to_address2, ship_to_address3, ship_to_address4, ship_to_address5,
+        ship_to_city, ship_to_pincode,
+        tally_head, group_cost_center, cost_center_type, dialdee_type,
+        jcc_no, grn, po_required,
         association_date, status, created_by, active_status
       ) VALUES (
         ?, ?, ?, ?, ?, ?, ?, ?,
@@ -341,8 +360,10 @@ export const costCentreManagementService = {
         ?, ?, ?, ?,
         ?, ?, ?, ?, ?, ?, ?,
         ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?, ?, ?, ?,
+        ?, ?, ?, ?,
+        ?, ?, ?,
         ?, 'draft', ?, 1
       )`,
       [
@@ -376,13 +397,24 @@ export const costCentreManagementService = {
         data.bill_to_address1 ?? null,
         data.bill_to_address2 ?? null,
         data.bill_to_address3 ?? null,
+        data.bill_to_address4 ?? null,
+        data.bill_to_address5 ?? null,
         data.bill_to_city ?? null,
         data.bill_to_pincode ?? null,
         data.ship_to_address1 ?? null,
         data.ship_to_address2 ?? null,
         data.ship_to_address3 ?? null,
+        data.ship_to_address4 ?? null,
+        data.ship_to_address5 ?? null,
         data.ship_to_city ?? null,
         data.ship_to_pincode ?? null,
+        data.tally_head ?? null,
+        data.group_cost_center ?? null,
+        data.cost_center_type ?? null,
+        data.dialdee_type ?? "shared",
+        data.jcc_no ?? null,
+        data.grn ?? null,
+        bool(data.po_required),
         data.association_date ?? null,
         actor.id,
       ]
@@ -450,13 +482,24 @@ export const costCentreManagementService = {
         bill_to_address1 = ?,
         bill_to_address2 = ?,
         bill_to_address3 = ?,
+        bill_to_address4 = ?,
+        bill_to_address5 = ?,
         bill_to_city = ?,
         bill_to_pincode = ?,
         ship_to_address1 = ?,
         ship_to_address2 = ?,
         ship_to_address3 = ?,
+        ship_to_address4 = ?,
+        ship_to_address5 = ?,
         ship_to_city = ?,
         ship_to_pincode = ?,
+        tally_head = ?,
+        group_cost_center = ?,
+        cost_center_type = ?,
+        dialdee_type = ?,
+        jcc_no = ?,
+        grn = ?,
+        po_required = ?,
         association_date = ?,
         updated_at = NOW()
       WHERE id = ?`,
@@ -483,21 +526,30 @@ export const costCentreManagementService = {
         data.payment_mode ?? existing.payment_mode,
         data.payment_terms ?? existing.payment_terms,
         data.hsn_code ?? existing.hsn_code,
-        // Falls back to the existing value, so the 364 codes that DID come across from db_bill
-        // survive an edit by anyone whose form does not send the field.
         data.sac_code ?? existing.sac_code,
         data.service_tax_no ?? existing.service_tax_no,
         data.vendor_state_code ?? existing.vendor_state_code,
         data.bill_to_address1 ?? existing.bill_to_address1,
         data.bill_to_address2 ?? existing.bill_to_address2,
         data.bill_to_address3 ?? existing.bill_to_address3,
+        data.bill_to_address4 ?? existing.bill_to_address4,
+        data.bill_to_address5 ?? existing.bill_to_address5,
         data.bill_to_city ?? existing.bill_to_city,
         data.bill_to_pincode ?? existing.bill_to_pincode,
         data.ship_to_address1 ?? existing.ship_to_address1,
         data.ship_to_address2 ?? existing.ship_to_address2,
         data.ship_to_address3 ?? existing.ship_to_address3,
+        data.ship_to_address4 ?? existing.ship_to_address4,
+        data.ship_to_address5 ?? existing.ship_to_address5,
         data.ship_to_city ?? existing.ship_to_city,
         data.ship_to_pincode ?? existing.ship_to_pincode,
+        data.tally_head ?? existing.tally_head,
+        data.group_cost_center ?? existing.group_cost_center,
+        data.cost_center_type ?? existing.cost_center_type,
+        data.dialdee_type ?? existing.dialdee_type,
+        data.jcc_no ?? existing.jcc_no,
+        data.grn ?? existing.grn,
+        data.po_required !== undefined ? bool(data.po_required) : existing.po_required,
         data.association_date ?? existing.association_date,
         id,
       ]

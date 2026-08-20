@@ -86,17 +86,32 @@ export interface CostCentreRecord {
   service_tax_no?: string;
   vendor_state_code?: string;
 
-  // Addresses
+  // Addresses (legacy has 5 lines)
   bill_to_address1?: string;
   bill_to_address2?: string;
   bill_to_address3?: string;
+  bill_to_address4?: string;
+  bill_to_address5?: string;
   bill_to_city?: string;
   bill_to_pincode?: string;
   ship_to_address1?: string;
   ship_to_address2?: string;
   ship_to_address3?: string;
+  ship_to_address4?: string;
+  ship_to_address5?: string;
   ship_to_city?: string;
   ship_to_pincode?: string;
+
+  // Legacy parity: grouping / categorization
+  tally_head?: string;
+  group_cost_center?: string;
+  cost_center_type?: string;
+  dialdee_type?: string;
+
+  // Legacy parity: procurement
+  jcc_no?: string;
+  grn?: string;
+  po_required?: boolean;
 
   // Dates
   association_date?: string;
@@ -172,17 +187,32 @@ export interface CostCentreInput {
   service_tax_no?: string;
   vendor_state_code?: string;
 
-  // Addresses
+  // Addresses (legacy has 5 lines)
   bill_to_address1?: string;
   bill_to_address2?: string;
   bill_to_address3?: string;
+  bill_to_address4?: string;
+  bill_to_address5?: string;
   bill_to_city?: string;
   bill_to_pincode?: string;
   ship_to_address1?: string;
   ship_to_address2?: string;
   ship_to_address3?: string;
+  ship_to_address4?: string;
+  ship_to_address5?: string;
   ship_to_city?: string;
   ship_to_pincode?: string;
+
+  // Legacy parity: grouping / categorization
+  tally_head?: string;
+  group_cost_center?: string;
+  cost_center_type?: string;
+  dialdee_type?: string;
+
+  // Legacy parity: procurement
+  jcc_no?: string;
+  grn?: string;
+  po_required?: boolean;
 
   // Dates
   association_date?: string;
