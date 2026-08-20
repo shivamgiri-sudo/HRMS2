@@ -61,6 +61,10 @@ const KNOWN_GAPS: Record<string, string> = {
   // component uses. Reachable ones are live defects; the rest are unfinished
   // scaffolding that cannot fire, and should be built or deleted, not rushed.
 
+  // Not a call at all — a scanner artifact.
+  "GET /api/wfm/processes":
+    "NOT A REAL CALL. The only occurrence is a string literal inside RosterBuilderPage.test.tsx, in a NEGATIVE assertion (`expect(pageSource).not.toContain('hrmsApi.get(\"/api/wfm/processes\"')`) that exists precisely to prove the page does NOT call this path. RosterBuilderPage.tsx calls `/api/processes` (mounted at app.ts:344), matching NativeWFMRoster.tsx:109. The scanner reads test sources verbatim and cannot tell an assertion-that-something-is-absent from a call. `/api/wfm/processes` is separately mounted as planningModeRouter (app.ts:581) but exposes no GET '/', which is why it surfaces as missing. Nothing to build or delete.",
+
   // Reachable — a user can hit this today.
   "POST /api/ats/onboarding/requests":
     "BLOCKED on a product decision, not wiring. useOnboardingRequest is a self-service flow: someone who is not yet an employee asks to be onboarded, posting {user_id, email, full_name, message}. ats_onboarding_request is a different concept entirely — HR-initiated candidate onboarding keyed by candidate_id/branch_id/requested_by, with 287 live rows — so writing that payload there would corrupt an active HR table. The GET half is broken for the same mismatch: it sits behind requireRole('hr','recruiter','admin','super_admin','payroll_hr'), which the non-employee caller cannot satisfy, and its rows carry no user_id for the client's find(r => r.user_id === user.id) to match. Needs its own table and a decision on who reviews these requests.",
