@@ -485,26 +485,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       });
       return;
     }
-    /*
-     * Mirror of the server-side gate in grnSmartService.review(), so the reviewer is told what to
-     * do in the Allocations tab instead of watching the request come back 400. The server remains
-     * the authority — this only saves a round trip and names the fix.
-     *
-     * Scoped to the Finance Head stage and to approval: Branch Head review of an unbudgeted GRN is
-     * allowed (nothing is reserved yet), and either stage may always reject one.
-     */
-    if (
-      decision === "approved"
-      && target.status === "branch_head_approved"
-      && unlinkedAllocations.length
-    ) {
-      toast({
-        title: "Link a budget line first",
-        description: `${unlinkedAllocations.length} cost-centre split(s) on this unbudgeted GRN have no approved budget line. Link them in the Allocations tab, then approve.`,
-        variant: "destructive",
-      });
-      return;
-    }
+    // No unbudgeted gate here on purpose. An unbudgeted GRN approves without a budget line —
+    // linking one is an option in the Allocations tab, never a precondition. See the note in
+    // grnSmartService.review() for what that does and does not cost.
     reviewMutation.mutate({ id: target.id, decision, note: reviewNote.trim() });
   }
 
@@ -934,19 +917,14 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                             Unbudgeted GRN — {unlinkedAllocations.length} of {workspace.allocations.length} splits have no budget line.
                           </p>
                           <p className="mt-1">
-                            This was raised against <span className="font-semibold">{parent?.head} / {parent?.sub_head}</span>,
-                            which had no approved budget in {targetPeriod}. Finance Head approval is blocked until every split is
-                            linked to an approved budget line for its own cost centre and period.
+                            Raised against <span className="font-semibold">{parent?.head} / {parent?.sub_head}</span>, which had
+                            no approved budget in {targetPeriod}. <span className="font-semibold">You can approve this as it
+                            stands</span> — the cost books to the P&amp;L and the payable is created either way. Approving
+                            unlinked simply means no budget line is decremented, and the GRN stays marked unbudgeted.
                             {canLinkBudget
-                              ? " Pick a line per split below, then Link."
-                              : " Only a Finance Head or Super Admin can link the budget."}
+                              ? " Linking a line below is optional: do it if this spend should draw down a real budget."
+                              : " Only a Finance Head or Super Admin can attach a budget line."}
                           </p>
-                          {canLinkBudget && !linkCandidatesQuery.isLoading && !linkCandidates.length && (
-                            <p className="mt-1 font-semibold">
-                              No approved budget lines exist for this branch in {targetPeriod} — create the budget first, then
-                              come back and link it.
-                            </p>
-                          )}
                         </>
                       ) : (
                         <p className="font-semibold">
@@ -968,8 +946,8 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                             : `Link ${pendingBudgetLinks.length || ""} budget line${pendingBudgetLinks.length === 1 ? "" : "s"}`.trim()}
                         </GrnButton>
                         <span className="text-[12px] text-grn-ink-soft">
-                          Linking a split reserves its amount against the chosen line straight away when the GRN has already
-                          passed Branch Head.
+                          Optional. Linking a split reserves its amount against the chosen line straight away when the GRN has
+                          already passed Branch Head.
                         </span>
                       </div>
                     )}

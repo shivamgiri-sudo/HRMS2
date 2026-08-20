@@ -1941,25 +1941,23 @@ export const grnSmartService = {
         }
         if (decision === "approved") {
           /*
-           * The control that keeps an UNBUDGETED GRN honest.
+           * An UNBUDGETED GRN approves WITHOUT a budget line. Deliberate, and asked for
+           * explicitly: linking is an option Finance Head has, never a gate they must pass.
            *
-           * Raising one without a budget line is allowed on purpose — the raiser should not be
-           * blocked because Finance has not built the budget yet. Approving one is not: Finance
-           * Head approval is the step that moves money from reserved into consumed and, for a
-           * vendor GRN, creates the payable. Letting an unlinked split through here would book
-           * spend that no budget ever accounted for and leave consumeAllocations() with nothing
-           * to consume, so the P&L would show the cost while every budget line still read fully
-           * available.
+           * What that costs is exactly one thing — no budget line is decremented, because there
+           * is no line to decrement. Everything else still happens, which is why this is safe
+           * rather than a hole:
+           *   - consumeAllocations() below marks EVERY row 'consumed', unlinked ones included,
+           *     and the P&L overlay aggregates on lifecycle_status = 'consumed' with no
+           *     dependency on budget_line_id — so the cost lands in the P&L in full.
+           *   - the vendor payable is created as normal; vendor-payment.service.ts already
+           *     stores a NULL budget_id/budget_line_id.
+           *   - is_unbudgeted = 1 stays on the GRN and on each allocation row, so spend that
+           *     bypassed a budget is identifiable rather than silently indistinguishable.
            *
-           * Rejection is deliberately NOT gated: a Finance Head must always be able to turn down
-           * an unbudgeted GRN without first linking a budget to it.
+           * The honest description is that this records unbudgeted spend instead of preventing
+           * it. Finance sees it, it hits the P&L, and no budget claims to have covered it.
            */
-          const unlinked = allocations.filter((allocation) => !hasBudgetLine(allocation));
-          if (unlinked.length) {
-            throw new Error(
-              `This is an unbudgeted GRN. Link an approved budget line to ${unlinked.length === allocations.length ? "every" : `the remaining ${unlinked.length}`} cost-centre split before approving.`
-            );
-          }
           await consumeAllocations(connection, allocations);
           newStatus = grn.grn_type === "vendor" ? "pending_accounts_payment" : "approved";
           // P1-5: Expected status in WHERE for atomic guard.

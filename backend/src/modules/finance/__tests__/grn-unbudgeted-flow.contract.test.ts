@@ -137,24 +137,41 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     expect(skips.length).toBe(4);
   });
 
-  it("Finance Head cannot approve while any split is unlinked, but can always reject", () => {
+  it("approval is NOT gated on linking a budget line", () => {
     const service = read("src/modules/finance/grn-smart.service.ts");
+    const queue = readRepo("src/components/finance/grn/SmartGrnApprovalQueue.tsx");
 
-    expect(service).toContain(
+    /*
+     * Deliberate product decision: an unbudgeted GRN approves without a budget line. Linking is
+     * an option Finance Head has, never a gate.
+     *
+     * This test exists because the opposite once shipped here, and because the blocker is the
+     * kind of thing a later reader "restores" as an obvious missing control. It is not missing.
+     */
+    expect(service).not.toContain("This is an unbudgeted GRN. Link an approved budget line to");
+    expect(service).not.toContain(
       "const unlinked = allocations.filter((allocation) => !hasBudgetLine(allocation));"
     );
-    expect(service).toContain("This is an unbudgeted GRN. Link an approved budget line to");
+    expect(queue).not.toContain("Link a budget line first");
 
-    // The gate sits inside the finance_head APPROVED arm only. If it had been hoisted above the
-    // decision branch, an unbudgeted GRN could never be turned down either — a reviewer trapped
-    // into linking a budget to something they want to refuse.
-    const financeArm = service.slice(service.indexOf('} else if (role === "finance_head") {'));
-    const gateIndex = financeArm.indexOf("This is an unbudgeted GRN.");
-    const approvedIndex = financeArm.indexOf('if (decision === "approved") {');
-    const rejectIndex = financeArm.indexOf("await releaseAllocations(connection, allocations);");
-    expect(approvedIndex).toBeGreaterThanOrEqual(0);
-    expect(gateIndex).toBeGreaterThan(approvedIndex);
-    expect(gateIndex).toBeLessThan(rejectIndex);
+    /*
+     * What makes approving-unlinked safe rather than a hole, and what must not regress:
+     * consumeAllocations() marks EVERY row consumed — the P&L overlay aggregates on
+     * lifecycle_status = 'consumed' with no dependency on budget_line_id, so the cost still
+     * reaches the P&L. Only the per-line budget reservation is skipped, because no line exists.
+     */
+    const consumeFn = service.slice(
+      service.indexOf("async function consumeAllocations("),
+      service.indexOf("async function releaseAllocations(")
+    );
+    expect(consumeFn).toContain("if (!hasBudgetLine(allocation)) continue;");
+    expect(consumeFn).toContain("SET lifecycle_status = 'consumed'");
+    // The status UPDATE is unconditional across the GRN's rows — it must NOT be filtered to
+    // linked ones, or unbudgeted spend would vanish from the P&L entirely.
+    expect(consumeFn).not.toContain("AND budget_line_id IS NOT NULL");
+
+    // The spend stays identifiable as unbudgeted rather than blending into budgeted spend.
+    expect(service).toContain("isUnbudgeted ? 1 : 0");
   });
 
   it("linking re-applies every draft-time budget check and reserves post-Branch-Head", () => {
@@ -220,9 +237,11 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     // Candidate lines are filtered to the split's own cost centre, matching the server rule.
     expect(queue).toContain('String(line.cost_centre_id ?? "") === String(alloc.cost_centre_id ?? "")');
 
-    // Client-side mirror of the approval gate, scoped to the finance stage and to approval only.
-    expect(queue).toContain('&& target.status === "branch_head_approved"');
-    expect(queue).toContain("Link a budget line first");
+    // No client-side approval gate either — the queue must not reintroduce one the server
+    // deliberately dropped.
+    expect(queue).not.toContain("Link a budget line first");
+    // The banner says approval is available now, rather than presenting linking as remedial.
+    expect(queue).toContain("You can approve this as it");
 
     // Picks are per-GRN — switching target must not carry a line chosen for another GRN's split.
     expect(queue).toContain("setBudgetLinks({});");
