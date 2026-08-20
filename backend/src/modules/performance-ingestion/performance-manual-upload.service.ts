@@ -253,7 +253,7 @@ export function inspectManualUploadFile(
   const headerCheck = assertRequiredColumns(dataset, columns);
   const rows = XLSX.utils.sheet_to_json<SourceRow>(sheet, {
     defval: null,
-    raw: false,
+    raw: true,
     blankrows: false,
   });
   const maxRows = performanceDatasetMaxRows(dataset);

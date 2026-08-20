@@ -672,6 +672,7 @@ export const performanceIngestionService = {
         to: input.to,
         checkpoint,
         uploadBuffer: input.uploadBuffer,
+        sourceFileName: input.sourceFileName,
       });
       sourceRows = rows.length;
       sample = rows.slice(0, 20);
