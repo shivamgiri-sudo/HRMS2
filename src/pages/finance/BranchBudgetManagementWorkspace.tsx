@@ -894,7 +894,7 @@ export default function BranchBudgetManagementWorkspace() {
     // dedupes same-named rows to one survivor, which made this picker resolve "Head Office" to
     // whichever one happened to sort first — hiding the other branch's cost centres entirely
     // from budget creation. Both must be shown and disambiguated (see branchLabel below).
-    queryFn: () => hrmsApi.get<any>("/api/org/branches?limit=200&include_duplicates=1"),
+    queryFn: () => hrmsApi.get<any>("/api/org/branches?limit=500&include_duplicates=1"),
   });
   const { data: processResponse } = useQuery({
     queryKey: ["budget-processes"],
@@ -915,7 +915,7 @@ export default function BranchBudgetManagementWorkspace() {
   const readinessQuery = useBudgetReadiness(branchId || null, period);
   const readiness = readinessQuery.data ?? [];
 
-  const allBranches = unwrapList(branchResponse).filter((item) => Number(item.active_status ?? 1) === 1);
+  const allBranches = unwrapList(branchResponse).filter((item) => Number(item.active_status) === 1);
   /*
    * Unresolved capabilities means "we do not know which branch this user is allowed to see",
    * and that must lock the picker rather than open it. /capabilities returns 400 for a
@@ -929,7 +929,7 @@ export default function BranchBudgetManagementWorkspace() {
     ? allBranches.filter((item) => item.id === capabilities?.scopedBranchId)
     : allBranches;
   const processes = unwrapList(processResponse).filter(
-    (item) => Number(item.active_status ?? 1) === 1 && (!branchId || !item.branch_id || item.branch_id === branchId)
+    (item) => Number(item.active_status) === 1 && (!branchId || !item.branch_id || item.branch_id === branchId)
   );
   /**
    * Cost centres offered by the "Direct to cost centre" picker and the Excel import.

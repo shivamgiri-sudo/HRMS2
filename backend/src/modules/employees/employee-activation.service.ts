@@ -15,9 +15,14 @@
 
 import { RowDataPacket } from 'mysql2';
 import { nonReactivatableSqlList } from "../exit/exitEmploymentStatus.js";
-import { randomUUID } from 'crypto';
+import { randomUUID, randomBytes } from 'crypto';
+import bcrypt from 'bcryptjs';
 import { db } from '../../db/mysql.js';
 import { sendSMS } from '../communication/sms.helper.js';
+
+function generateTempPassword(): string {
+  return randomBytes(12).toString('base64url') + 'A1!';
+}
 
 export interface ActivationResult {
   employeeId: string;
@@ -56,7 +61,8 @@ export async function activateEmployee(
   reason: string = 'Joining date reached'
 ): Promise<{ activated: boolean; alreadyActive: boolean }> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT active_status, employment_status, date_of_joining, employee_code
+    `SELECT active_status, employment_status, date_of_joining, employee_code,
+            user_id, COALESCE(official_email, email) AS login_email
      FROM employees WHERE id = ? LIMIT 1`,
     [employeeId]
   );
@@ -108,6 +114,60 @@ export async function activateEmployee(
       reason,
     ]
   );
+
+  // Auto-create auth account on activation date when no account exists yet.
+  // The employee is pre-boarded with active_status=0 and user_id=NULL; the
+  // moment their joining date is reached we provision login credentials so they
+  // can access HRMS from day one without waiting for a manual IT step.
+  if (!emp.user_id) {
+    const loginEmail: string | null = (emp as any).login_email ?? null;
+    if (loginEmail) {
+      try {
+        const newUserId = randomUUID();
+        const tempPwd   = generateTempPassword();
+        const pwdHash   = await bcrypt.hash(tempPwd, 10);
+
+        await db.execute(
+          `INSERT IGNORE INTO auth_user (id, email, password_hash, must_change_password, created_at)
+           VALUES (?, ?, ?, 1, NOW())`,
+          [newUserId, loginEmail, pwdHash]
+        );
+
+        // If another account already existed for this email (e.g., merged login),
+        // find it instead of using the just-inserted row.
+        const [existingRows] = await db.execute<RowDataPacket[]>(
+          `SELECT id FROM auth_user WHERE email = ? LIMIT 1`,
+          [loginEmail]
+        );
+        const resolvedUserId: string = (existingRows[0] as any)?.id ?? newUserId;
+
+        await db.execute(
+          `INSERT IGNORE INTO user_roles (id, user_id, role_key, active_status, created_at)
+           VALUES (UUID(), ?, 'Employee', 1, NOW())`,
+          [resolvedUserId]
+        );
+
+        await db.execute(
+          `UPDATE employees SET user_id = ? WHERE id = ?`,
+          [resolvedUserId, employeeId]
+        );
+
+        // Password-setup invitation token (7-day expiry)
+        const invToken = randomBytes(32).toString('hex');
+        const invTokenHash = randomBytes(16).toString('hex') + invToken.slice(0, 16); // opaque stored value
+        await db.execute(
+          `INSERT INTO auth_invitation
+             (id, email, invited_by, invitation_type, token_hash, expires_at, created_at)
+           VALUES (UUID(), ?, ?, 'password_setup', ?, DATE_ADD(NOW(), INTERVAL 7 DAY), NOW())`,
+          [loginEmail, actorUserId ?? 'system', invTokenHash]
+        );
+      } catch (authErr) {
+        // Auth account creation failure is logged but must not roll back activation —
+        // the employee is now Active; auth can be retried by IT provisioning.
+        console.error(`[EmployeeActivation] Auth account creation failed for ${emp.employee_code}:`, authErr);
+      }
+    }
+  }
 
   // SMS — HRMS access created / employee activated (fire-and-forget)
   try {

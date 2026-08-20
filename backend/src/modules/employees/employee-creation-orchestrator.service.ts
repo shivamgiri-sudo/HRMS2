@@ -346,7 +346,7 @@ export async function createEmployeeFromCandidate(
      */
     const rawCostCentre = offer.cost_centre ?? null;
     const [ccRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT cm.id
+      `SELECT cm.id, cm.cost_centre_code
          FROM cost_centre_master cm
         WHERE cm.id = COALESCE(
                 ?,
@@ -356,7 +356,8 @@ export async function createEmployeeFromCandidate(
         LIMIT 1`,
       [rawCostCentre, candidateId]
     );
-    const costCentreId = (ccRows[0] as { id?: string } | undefined)?.id ?? null;
+    const costCentreId   = (ccRows[0] as { id?: string; cost_centre_code?: string } | undefined)?.id ?? null;
+    const costCentreCode = (ccRows[0] as { id?: string; cost_centre_code?: string } | undefined)?.cost_centre_code ?? null;
     if (!costCentreId) {
       result.warnings.push(
         'No cost centre could be resolved for this employee; it must be set manually.'
@@ -373,10 +374,10 @@ export async function createEmployeeFromCandidate(
           personal_email, personal_phone, alternate_mobile,
           gender, date_of_birth, father_name, marital_status,
           address1, permanent_address1,
-          branch_id, process_id, department_id, designation_id, cost_centre_id,
+          branch_id, process_id, department_id, designation_id, cost_centre_id, cost_center_code,
           date_of_joining, salary_start_date, employment_type, reporting_manager_id,
           user_id, active_status, employment_status)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
+       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 'preboarding')`,
       [
         employeeId, employeeCode, toStoredNameRequired(firstName), toStoredNameRequired(lastName),
         candRow?.personal_email ?? null,
@@ -395,6 +396,7 @@ export async function createEmployeeFromCandidate(
         offer.department_id ?? null,
         offer.designation_id ?? null,
         costCentreId,
+        costCentreCode,
         offer.date_of_joining,
         salaryStartDate,
         offer.emp_type,
@@ -1264,6 +1266,21 @@ async function createRelatedEmployeeRecords(
         `Auto-approved from offer ${offer.id ?? ''} — Branch Head already approved this offer, ` +
           `which included the ${label} opt-out election; no separate Payroll HO review required.`,
       ]
+    );
+  }
+
+  // Salary assignment. Gives payroll a structure to run against from day one.
+  // effective_from uses salary_start_date (offer.date_of_salary) if HR set one,
+  // otherwise falls back to date_of_joining — mirrors the salary_start_date column
+  // written on the employees row at line ~323. INSERT IGNORE is idempotent on retry.
+  {
+    const annualCtc = Number(offer.offered_ctc ?? 0) * 12;
+    const salaryEffectiveFrom = offer.date_of_salary ?? offer.date_of_joining;
+    await conn.execute(
+      `INSERT IGNORE INTO employee_salary_assignment
+         (id, employee_id, structure_id, ctc_annual, effective_from, active_status)
+       VALUES (UUID(), ?, 'ss-std-001', ?, ?, 1)`,
+      [employeeId, annualCtc, salaryEffectiveFrom]
     );
   }
 

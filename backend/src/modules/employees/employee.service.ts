@@ -183,9 +183,11 @@ export const employeeService = {
       `INSERT INTO employees
          (id, employee_code, first_name, last_name, email, mobile, gender,
           date_of_birth, date_of_joining, salary_start_date, employment_type,
-          branch_id, department_id, process_id, designation_id, cost_centre_id,
+          branch_id, department_id, process_id, designation_id, cost_centre_id, cost_center_code,
           reporting_manager_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+         (SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1),
+         ?)`,
       [
         id,
         input.employeeCode,
@@ -202,6 +204,7 @@ export const employeeService = {
         input.departmentId ?? null,
         input.processId ?? null,
         input.designationId ?? null,
+        (input as any).costCentreId ?? null,
         (input as any).costCentreId ?? null,
         input.reportingManagerId ?? null,
       ]
@@ -524,7 +527,12 @@ export const employeeService = {
     if (input.branchId          !== undefined) { sets.push("branch_id = ?");            params.push(input.branchId ?? null); }
     if (input.departmentId      !== undefined) { sets.push("department_id = ?");        params.push(input.departmentId ?? null); }
     if (input.processId         !== undefined) { sets.push("process_id = ?");           params.push(input.processId ?? null); }
-    if ((input as any).costCentreId !== undefined) { sets.push("cost_centre_id = ?");   params.push((input as any).costCentreId ?? null); }
+    if ((input as any).costCentreId !== undefined) {
+      sets.push("cost_centre_id = ?");
+      params.push((input as any).costCentreId ?? null);
+      sets.push("cost_center_code = (SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1)");
+      params.push((input as any).costCentreId ?? null);
+    }
     if (input.designationId     !== undefined) { sets.push("designation_id = ?");       params.push(input.designationId ?? null); }
     if (input.reportingManagerId !== undefined) { sets.push("reporting_manager_id = ?"); params.push(input.reportingManagerId ?? null); }
     if (input.photoUrl          !== undefined) { sets.push("photo_url = ?");            params.push(input.photoUrl ?? null); }
