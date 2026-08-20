@@ -4,6 +4,7 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { exitController } from "./exit.controller.js";
 import { ffService } from "./ff.service.js";
+import { computeFfPreview } from "./ff-compute.service.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { canViewEmployee } from "../../shared/enterpriseScope.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -338,6 +339,22 @@ exitRouter.get(
         advances,
       },
     });
+  }),
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /ff/:exitRequestId/compute
+// Phase 1 F&F compute/preview engine (ff-compute.service.ts). Derives notice-pay
+// shortfall, leave encashment, gratuity and full advances/loan payoff from real
+// data — read-only, writes nothing. createFF remains the only write path; this
+// exists so its caller can prefill a real F&F draft instead of a blank form.
+// ─────────────────────────────────────────────────────────────────────────────
+exitRouter.get(
+  "/ff/:exitRequestId/compute",
+  requireRole("admin", "hr", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await computeFfPreview(req.params.exitRequestId);
+    return res.json({ success: true, data });
   }),
 );
 

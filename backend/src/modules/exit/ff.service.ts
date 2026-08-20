@@ -6,6 +6,9 @@ import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordMoneyEventAudit } from "../../shared/moneyEventAudit.js";
 import { calculateGratuity } from "../payroll/payrollCalculate.service.js";
 import { notifyFullFinalReady } from "./exit.notifications.js";
+// Type-only import — does not create a runtime circular dependency with
+// ff-compute.service.ts, which imports ffService from this file.
+import type { ComputedStatus } from "./ff-compute.service.js";
 
 /**
  * Every refusal in this file is a governance decision the operator needs to read: the
@@ -29,6 +32,14 @@ export interface FfInput {
   salaryHold?: number;
   advancesRecovery?: number;
   netPayable?: number;
+  /**
+   * Required when any of noticeRecovery / earnedLeaveEncashment / gratuityAmount /
+   * advancesRecovery differs from what ff-compute.service.ts's computeFfPreview()
+   * derived, by more than FF_NET_TOLERANCE. Same mandatory-reason shape as
+   * setProvisionalFalse's reason — a deviation from the computed figure must be
+   * explained, not silently overtyped. Not required when nothing deviates.
+   */
+  overrideReason?: string;
 }
 
 export interface FullFinalCalculation {
@@ -226,6 +237,50 @@ export const ffService = {
       );
     }
 
+    // Phase 1 compute engine: compare the caller's figures against what
+    // ff-compute.service.ts derived from real data, and require overrideReason for
+    // any deviation beyond FF_NET_TOLERANCE — mirrors setProvisionalFalse's mandatory
+    // reason for its own override. Dynamic import avoids a circular dependency
+    // (ff-compute.service.ts imports ffService for calculateGratuityFromEmployee /
+    // getPayrollAlreadyPaid). If the preview itself cannot be computed, that must
+    // never block settlement creation — it degrades to "no deviation check
+    // performed", the same failure posture as recordGratuityAudit below.
+    let deviations: Record<string, { supplied: number; computed: number }> | undefined;
+    try {
+      const { computeFfPreview } = await import("./ff-compute.service.js");
+      const preview = await computeFfPreview(exitRequestId);
+      const candidates: Array<[string, number | undefined, ComputedStatus, number]> = [
+        ["noticeRecovery", data.noticeRecovery, preview.notice.recovery_amount.status, preview.notice.recovery_amount.value],
+        ["earnedLeaveEncashment", data.earnedLeaveEncashment, preview.leave_encashment.amount.status, preview.leave_encashment.amount.value],
+        ["advancesRecovery", data.advancesRecovery, preview.advances_loans.total_recovery.status, preview.advances_loans.total_recovery.value],
+      ];
+      if (preview.gratuity.status === "draft") {
+        candidates.push(["gratuityAmount", data.gratuityAmount, "computed", preview.gratuity.amount]);
+      }
+      const found: Record<string, { supplied: number; computed: number }> = {};
+      for (const [field, supplied, status, computedValue] of candidates) {
+        if (status !== "computed") continue; // no real baseline to compare against
+        const suppliedNum = Number(supplied ?? 0);
+        if (Math.abs(suppliedNum - computedValue) > FF_NET_TOLERANCE) {
+          found[field] = { supplied: suppliedNum, computed: computedValue };
+        }
+      }
+      if (Object.keys(found).length > 0) {
+        deviations = found;
+        if (!String(data.overrideReason ?? "").trim()) {
+          throw ffError(
+            422,
+            `These figures differ from what the F&F compute engine derived: ${Object.entries(found)
+              .map(([f, v]) => `${f} (supplied ${v.supplied.toFixed(2)} vs computed ${v.computed.toFixed(2)})`)
+              .join(", ")}. Provide overrideReason to explain the deviation, or use the computed figures.`
+          );
+        }
+      }
+    } catch (err) {
+      if ((err as { statusCode?: number }).statusCode === 422) throw err; // real refusal, not a compute failure
+      console.error("[ff] compute-preview deviation check failed (non-fatal)", err);
+    }
+
     const id = randomUUID();
     await db.execute(
       `INSERT INTO full_final_calculation
@@ -261,7 +316,11 @@ export const ffService = {
       module_key: "exit",
       entity_type: "full_final_calculation",
       entity_id: id,
-      change_summary: { exit_request_id: exitRequestId, employee_id: exitReq.employee_id },
+      change_summary: {
+        exit_request_id: exitRequestId,
+        employee_id: exitReq.employee_id,
+        ...(deviations ? { computed_deviations: deviations, override_reason: data.overrideReason } : {}),
+      },
       req,
     });
 
