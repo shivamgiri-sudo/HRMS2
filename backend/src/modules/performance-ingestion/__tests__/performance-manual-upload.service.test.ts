@@ -66,6 +66,8 @@ describe("manual performance upload inspection", () => {
     ]);
     expect(inspection.fileHash).toMatch(/^[a-f0-9]{64}$/);
     expect(inspection.warnings).toEqual([]);
+    expect(new Date(inspection.rows[0]?.score_date as string).toISOString().slice(0, 10))
+      .toBe("2026-07-01");
   });
 
   it("rejects a file when a mapped metric column is missing", () => {
