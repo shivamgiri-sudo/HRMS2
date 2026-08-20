@@ -90,9 +90,13 @@ describe("finance surfaces read the fields their APIs actually return", () => {
   it("the invoice register asks for billing_invoice's real columns", () => {
     const page = read("pages/finance/ProcessPnlDetailPage.tsx");
     const service = backend("src/modules/process-pnl/process-pnl.service.ts");
-    // getRevenue selects invoice_ref/period_from/period_to/sent_at/paid_at — and no
-    // invoice_number, invoice_date or due_date, which is what the table used to ask for.
-    expect(service).toContain("invoice_ref,");
+    // UPDATED (af753429, 2026-08-19): getRevenue no longer selects raw SQL columns from
+    // billing_invoice — that table has 0 rows in production. It now maps invoice_ref from
+    // the db_bill snapshot mirror (getSnapshotInvoiceLines), so the shape is an object-
+    // literal key (`invoice_ref:`) rather than a SQL SELECT column list (`invoice_ref,`).
+    // Still asserting invoice_number/invoice_date/due_date never leak back in, and that
+    // the mapped field is genuinely invoice_ref, not the old table's invoice_number.
+    expect(service).toContain("invoice_ref:");
     expect(service).not.toContain("invoice_number");
     expect(page).not.toContain('key: "invoice_number"');
     expect(page).not.toContain('key: "invoice_date"');
