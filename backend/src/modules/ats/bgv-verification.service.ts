@@ -1278,13 +1278,15 @@ export async function listBgvQueueScoped(status: string | undefined, scopeClause
 export async function syncBgvChecksToReport(candidateId: string): Promise<{ synced: number }> {
   const [[checks], [docs]] = await Promise.all([
     db.execute<RowDataPacket[]>(
-      `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ?`,
+      // matched_name and match_score are needed for aadhaar_name_match /
+      // pan_name_match / bank_account_match columns — previously missing from
+      // this query so those three report columns were always null even when the
+      // API had confirmed a name match.
+      `SELECT check_type, status, matched_name, match_score
+         FROM candidate_bgv_check WHERE candidate_id = ?
+         ORDER BY updated_at DESC`,
       [candidateId]
     ),
-    // Drives the report's "Documents Received" checklist. Nothing used to write
-    // those nine flags at all, so the checklist printed entirely unticked even
-    // for candidates who had uploaded eight documents — which reads as "not
-    // provided" rather than "never recorded".
     db.execute<RowDataPacket[]>(
       `SELECT doc_type FROM candidate_onboarding_document
         WHERE candidate_id = ? AND deleted_at IS NULL`,
@@ -1295,27 +1297,21 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
   if (!checks.length && !docs.length) return { synced: 0 };
 
   const columnMap: Record<string, string> = {
-    pan:        "pan_status",
-    bank:       "bank_status",
-    aadhaar:    "aadhaar_status",
-    // aadhaar_offline is the Befisc XML path — it proves the same identity, so
-    // it feeds the same column rather than being dropped.
+    pan:             "pan_status",
+    bank:            "bank_status",
+    aadhaar:         "aadhaar_status",
     aadhaar_offline: "aadhaar_status",
-    court:      "criminal_status",
-    criminal:   "criminal_status",
-    education:  "education_status",
-    education_doc: "education_status",
-    employment: "employment_status",
-    experience: "employment_status", // alias — same verification category
-    address:    "address_status",
-    address_doc: "address_status",
-    digilocker: "digilocker_status",
+    court:           "criminal_status",
+    criminal:        "criminal_status",
+    education:       "education_status",
+    education_doc:   "education_status",
+    employment:      "employment_status",
+    experience:      "employment_status",
+    address:         "address_status",
+    address_doc:     "address_status",
+    digilocker:      "digilocker_status",
   };
 
-  // Report columns use ENUM('not_run','passed','failed','partial') — map check
-  // statuses to those values only. 'discrepancy' is not a valid ENUM value.
-  // waived = partial (HR explicitly decided the check is not required — it is a
-  // positive disposition but not a full-pass, so partial is the honest display).
   const statusMap: Record<string, string> = {
     verified:      "passed",
     waived:        "partial",
@@ -1327,31 +1323,75 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
     initiated:     "not_run",
   };
 
-  // Several check types can feed one report column (e.g. aadhaar and
-  // aadhaar_offline both prove identity). Collapse them per column instead of
-  // emitting duplicate SET clauses, where evaluation order would silently decide
-  // the winner and could let a 'pending' overwrite a 'passed'.
   const precedence: Record<string, number> = { passed: 4, partial: 3, failed: 2, not_run: 1 };
   const bestByColumn = new Map<string, string>();
+
+  // Best name per identity check type — for *_name_match report columns.
+  const bestNameByType = new Map<string, string>();
+
   for (const row of checks as RowDataPacket[]) {
-    const col = columnMap[String(row.check_type)];
-    if (!col) continue;
-    const mapped = statusMap[String(row.status)] ?? "pending";
-    const current = bestByColumn.get(col);
-    if (!current || (precedence[mapped] ?? 0) > (precedence[current] ?? 0)) {
-      bestByColumn.set(col, mapped);
+    const checkType = String(row.check_type);
+    const col = columnMap[checkType];
+    if (col) {
+      const mapped = statusMap[String(row.status)] ?? "not_run";
+      const current = bestByColumn.get(col);
+      if (!current || (precedence[mapped] ?? 0) > (precedence[current] ?? 0)) {
+        bestByColumn.set(col, mapped);
+      }
+    }
+
+    // Capture best matched_name per identity check type for name_match columns.
+    if (row.matched_name && ['aadhaar','aadhaar_offline','pan','bank','name_match'].includes(checkType)) {
+      const norm = checkType === 'aadhaar_offline' ? 'aadhaar' : checkType;
+      if (!bestNameByType.has(norm)) bestNameByType.set(norm, String(row.matched_name));
     }
   }
 
+  // Compute overall_status from live check data so the report column never stays
+  // stale (previously it was only set by the initial BGV flow and never re-synced).
+  const clearSet = new Set<string>();
+  const hasCriticalMismatch = (checks as RowDataPacket[]).some(
+    c => ['aadhaar','pan','bank'].includes(String(c.check_type)) && String(c.status) === 'mismatch'
+  );
+  for (const c of checks as RowDataPacket[]) {
+    if (['verified','waived'].includes(String(c.status))) clearSet.add(String(c.check_type));
+  }
+  const mandatoryMissing = ['aadhaar','pan'].filter(t => !clearSet.has(t));
+  // DigiLocker verified covers both aadhaar and pan as mandatory checks.
+  const digilockerClear = clearSet.has('digilocker');
+  const effectiveMissing = mandatoryMissing.filter(t => !(digilockerClear && ['aadhaar','pan'].includes(t)));
+  const overallStatus = hasCriticalMismatch ? 'hold'
+    : effectiveMissing.length === 0 ? 'clear'
+    : 'pending';
+
   const setClauses: string[] = [];
   const updateParams: unknown[] = [];
+
   for (const [col, mapped] of bestByColumn) {
     setClauses.push(`${col} = IF(locked = 1, ${col}, ?)`);
     updateParams.push(mapped);
   }
 
-  // Only ever tick a box, never clear one: `flag OR ?`. A signed-off report is
-  // left alone entirely, same as the status columns above.
+  // Sync overall_status (unlocked reports only).
+  setClauses.push(`overall_status = IF(locked = 1, overall_status, ?)`);
+  updateParams.push(overallStatus);
+
+  // Sync name_match columns from verified check results.
+  if (bestNameByType.has('aadhaar')) {
+    setClauses.push(`aadhaar_name_match = IF(locked = 1, aadhaar_name_match, ?)`);
+    updateParams.push(bestNameByType.get('aadhaar'));
+  }
+  if (bestNameByType.has('pan')) {
+    setClauses.push(`pan_name_match = IF(locked = 1, pan_name_match, ?)`);
+    updateParams.push(bestNameByType.get('pan'));
+  }
+  if (bestNameByType.has('bank') || bestNameByType.has('name_match')) {
+    const bankName = bestNameByType.get('bank') ?? bestNameByType.get('name_match');
+    setClauses.push(`bank_account_match = IF(locked = 1, bank_account_match, ?)`);
+    updateParams.push(bankName);
+  }
+
+  // Only ever tick a received-document box, never clear one.
   const receipts = receiptFlagsFromDocuments(docs.map((d) => d.doc_type));
   for (const [flag, received] of Object.entries(receipts)) {
     if (!received) continue;
@@ -1367,6 +1407,18 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
      ON DUPLICATE KEY UPDATE ${setClauses.join(", ")}, updated_at = NOW()`,
     [candidateId, ...updateParams]
   );
+
+  // Mirror bank BGV check result into candidate_onboarding_bank_detail so the
+  // bank section of the report shows a consistent status instead of "not_started".
+  const bankCheck = (checks as RowDataPacket[]).find(c => String(c.check_type) === 'bank');
+  if (bankCheck && ['verified','waived'].includes(String(bankCheck.status))) {
+    await db.execute(
+      `UPDATE candidate_onboarding_bank_detail
+          SET verification_status = 'verified', updated_at = NOW()
+        WHERE candidate_id = ? AND (verification_status IS NULL OR verification_status = 'not_started')`,
+      [candidateId]
+    );
+  }
 
   return { synced: setClauses.length };
 }

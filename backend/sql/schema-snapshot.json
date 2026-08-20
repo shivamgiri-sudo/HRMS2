@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 973,
-  "columnCount": 13861,
+  "tableCount": 974,
+  "columnCount": 13878,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -14318,6 +14318,12 @@
       "error_rows",
       "imported_rows",
       "batch_status",
+      "approval_status",
+      "branch_id",
+      "submitted_for_approval_at",
+      "approved_by",
+      "approved_at",
+      "approval_remarks",
       "error_summary",
       "metadata",
       "uploaded_by",
@@ -14335,6 +14341,8 @@
       "raw_data",
       "normalized_data",
       "row_status",
+      "created_entity_type",
+      "created_entity_id",
       "error_messages",
       "created_at"
     ],
@@ -15809,6 +15817,17 @@
       "revenue_date",
       "actual_revenue",
       "synced_at"
+    ],
+    "bulk_upload_locked_entity": [
+      "id",
+      "entity_type",
+      "entity_id",
+      "upload_batch_id",
+      "upload_batch_no",
+      "employee_id",
+      "locked_by",
+      "locked_at",
+      "lock_reason"
     ]
   }
 }
