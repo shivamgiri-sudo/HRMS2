@@ -117,6 +117,88 @@ export function OperationalSection({ data, onChange, disabled }: OperationalSect
           />
         </div>
       </div>
+
+      <h4 className="font-medium text-sm border-b pb-2 pt-4">Classification & Procurement</h4>
+
+      <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="tally_head">Tally Head</Label>
+          <Input
+            id="tally_head"
+            value={data.tally_head ?? ""}
+            onChange={(e) => onChange({ tally_head: e.target.value })}
+            placeholder="Tally account head"
+            disabled={disabled}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="cost_center_type">Cost Center Type</Label>
+          <Input
+            id="cost_center_type"
+            value={data.cost_center_type ?? ""}
+            onChange={(e) => onChange({ cost_center_type: e.target.value })}
+            placeholder="Voice / Non-Voice / BackOffice"
+            disabled={disabled}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="dialdee_type">Dialdee Type</Label>
+          <Input
+            id="dialdee_type"
+            value={data.dialdee_type ?? "shared"}
+            onChange={(e) => onChange({ dialdee_type: e.target.value })}
+            placeholder="shared / dedicated"
+            disabled={disabled}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="group_cost_center">Group Cost Center</Label>
+          <Input
+            id="group_cost_center"
+            value={data.group_cost_center ?? ""}
+            onChange={(e) => onChange({ group_cost_center: e.target.value })}
+            placeholder="Parent grouping code"
+            disabled={disabled}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="jcc_no">JCC Number</Label>
+          <Input
+            id="jcc_no"
+            value={data.jcc_no ?? ""}
+            onChange={(e) => onChange({ jcc_no: e.target.value })}
+            placeholder="JCC reference"
+            disabled={disabled}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="grn">GRN</Label>
+          <Input
+            id="grn"
+            value={data.grn ?? ""}
+            onChange={(e) => onChange({ grn: e.target.value })}
+            placeholder="GRN reference"
+            disabled={disabled}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-6 pt-2">
+        <div className="flex items-center justify-between rounded-lg border p-3">
+          <div>
+            <Label className="font-medium">PO Required</Label>
+            <p className="text-sm text-muted-foreground">Purchase order required for billing</p>
+          </div>
+          <Switch
+            checked={data.po_required ?? false}
+            onCheckedChange={(checked) => onChange({ po_required: checked })}
+            disabled={disabled}
+          />
+        </div>
+      </div>
     </div>
   );
 }

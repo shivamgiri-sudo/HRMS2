@@ -53,9 +53,28 @@ export interface CreateGrnPayload {
   branchId: string;
   /** Legal entity (MAS / IDC / Pikquick). Stored on grn_request after migration 1218. */
   companyCode?: string;
-  budgetLineId: string;
+  /**
+   * The approved budget line this GRN books against.
+   *
+   * Required for every ordinary GRN and optional only when isUnbudgeted is true — see the
+   * unbudgeted branch in createDraft() below for why that exception exists and what replaces it.
+   */
+  budgetLineId?: string;
   processId?: string;
   costCentreId?: string;
+  /**
+   * UNBUDGETED vendor GRN — the raiser picked a Head/Sub-head that has no approved budget line
+   * in any of the branch's cost centres, which the vendor form deliberately allows.
+   *
+   * When set, budgetLineId is absent and head/subHead carry the classification the budget line
+   * would otherwise have supplied. Finance Head must link a real budget line to every
+   * cost-centre split before the GRN can be approved (grnSmartService.linkUnbudgetedBudgetLines).
+   */
+  isUnbudgeted?: boolean;
+  /** Expense head — read from the budget line for a budgeted GRN, supplied here when unbudgeted. */
+  head?: string;
+  /** Expense sub-head — same rule as head. */
+  subHead?: string;
   vendorId?: string;
   vendorName?: string;
   quantity: number;
@@ -199,6 +218,142 @@ function legacyBranchCondition(
   )`;
   return { sql, params: [...ids, ...ids] };
 }
+/**
+ * Creates the DRAFT header for an UNBUDGETED vendor GRN — one raised against a Head/Sub-head that
+ * has no approved budget line anywhere in the branch, which the vendor form deliberately permits.
+ *
+ * This is a separate function rather than a set of `if (isUnbudgeted)` branches threaded through
+ * createDraft() because createDraft() derives essentially every column it writes from the budget
+ * line: head, sub_head, unit, unit_rate, the whole tax profile, the amounts, process_id,
+ * cost_centre_id, budget_id, the financial year and the period-match check. With no line to read,
+ * almost none of that logic applies, and interleaving the two would have meant guarding roughly
+ * twenty statements individually.
+ *
+ * What is written here is deliberately a THIN placeholder, and that is safe for exactly the same
+ * documented reason the budgeted vendor path already relies on: the follow-up
+ * PUT /api/finance/grns/:id/invoice-components call overwrites every meaningful header column
+ * (head, sub_head, quantity, unit, unit_rate, the full tax breakdown, all five amount columns,
+ * cost_class, process_id, cost_centre_id, allocation_mode) with the real
+ * N-cost-centre x M-component breakdown before the GRN can be submitted. head/sub_head are the
+ * one exception that must be RIGHT here rather than a placeholder: saveInvoiceComponents() reads
+ * them back off this row to build its synthetic budget lines for the unbudgeted case, so the
+ * classification the raiser chose has to survive this insert.
+ *
+ * budget_id and budget_line_id are left NULL and is_unbudgeted is set to 1. Approval is NOT
+ * open-ended: grnSmartService.review() refuses a Finance Head approval while any cost-centre
+ * split still has no budget line, so the spend cannot reach payment without a real budget behind
+ * it — it just does not need one to be RAISED.
+ */
+async function createUnbudgetedDraft(
+  payload: CreateGrnPayload,
+  paymentTermsDays: number,
+  actorUserId: string,
+  actorRole: string
+) {
+  const head = String(payload.head ?? "").trim();
+  const subHead = String(payload.subHead ?? "").trim();
+  if (!head) throw new Error("An expense head is required for an unbudgeted GRN");
+  if (!subHead) throw new Error("An expense sub-head is required for an unbudgeted GRN");
+  if (!payload.costCentreId) {
+    throw new Error("A cost centre is required for an unbudgeted GRN");
+  }
+
+  // The cost centre stands in for the budget line as the thing that ties this GRN to the branch,
+  // so it gets the same scrutiny getLineForGrn() applies to a line: it must exist, be active, and
+  // belong to the branch the GRN is being raised for. Without this an unbudgeted GRN would be the
+  // one create path able to attribute spend to another branch's cost centre.
+  const [costCentreRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, cost_centre_name, branch_id
+       FROM cost_centre_master
+      WHERE id = ? AND active_status = 1
+      LIMIT 1`,
+    [payload.costCentreId]
+  );
+  const costCentre = costCentreRows[0] as any;
+  if (!costCentre) throw new Error("Cost centre not found or inactive");
+  if (String(costCentre.branch_id) !== String(payload.branchId)) {
+    throw new Error("Cost centre does not belong to this branch");
+  }
+
+  const accountingPeriod = resolveAccountingPeriod({
+    accountingPeriod: payload.accountingPeriod,
+    billDate: payload.billDate!,
+  });
+  // Same P&L-close guard the budgeted path applies against the budget line's period_code. There
+  // is no line here, so it runs against the month the GRN actually books into.
+  if (await isPeriodLocked(accountingPeriod)) {
+    throw new Error(
+      `${accountingPeriod} is locked for P&L close. Raise this against the current open period.`
+    );
+  }
+
+  // Derived from the booking month rather than the budget line's period_code, which is the same
+  // value in every budgeted case — getLineForGrn()'s period_code must already equal the bill month
+  // (the "Bill date must fall within approved budget period" check enforces exactly that).
+  const financialYear = financialYearFromPeriod(accountingPeriod);
+  if (payload.financialYear && payload.financialYear !== financialYear) {
+    throw new Error(`Financial year must be ${financialYear} for this accounting period`);
+  }
+
+  // No budget line means no preferred_vendor_id to fall back on; the vendor the raiser picked is
+  // the only candidate, and resolveCanonicalVendor still enforces that a vendor GRN has one.
+  const vendor = await resolveCanonicalVendor(payload.grnType, payload.vendorId, null);
+
+  const id = randomUUID();
+  const numberFormat = await resolveGrnNumberFormat();
+  const grnNumber = numberFormat === "monthly_company"
+    ? await allocateMonthlyGrnNumber({ periodCode: accountingPeriod })
+    : await allocateGrnNumber(payload.branchId, financialYear);
+  const dueDate = addDays(payload.billDate!, paymentTermsDays);
+
+  await db.execute(
+    `INSERT INTO grn_request
+     (id, grn_number, grn_type, branch_id, company_code, process_id, cost_centre_id, cost_class,
+      vendor_id, vendor_name, head, sub_head, quantity, unit, unit_rate,
+      tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
+      amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount,
+      bill_date, accounting_period, payment_terms_days, due_date, description, remarks, status,
+      financial_year, budget_id, budget_line_id, is_unbudgeted, created_by, created_at)
+     VALUES (?,?,?,?,?,NULL,?,'direct',?,?,?,?,?,'amount',0,
+             'exclusive',0,'cgst_sgst',100,
+             0,0,0,0,0,
+             ?,?,?,?,?,?,'draft',?,NULL,NULL,1,?,NOW())`,
+    [
+      id,
+      grnNumber,
+      payload.grnType,
+      payload.branchId,
+      payload.companyCode?.trim() || null,
+      payload.costCentreId,
+      vendor.vendorId,
+      vendor.vendorName,
+      head,
+      subHead,
+      Number(payload.quantity),
+      payload.billDate,
+      accountingPeriod,
+      paymentTermsDays,
+      dueDate,
+      `${head} - ${subHead} (unbudgeted)`,
+      payload.remarks?.trim() || null,
+      financialYear,
+      actorUserId,
+    ]
+  );
+
+  await writeGrnAudit("CREATE_DRAFT_UNBUDGETED", id, actorUserId, actorRole, {
+    grn_number: grnNumber,
+    is_unbudgeted: true,
+    head,
+    sub_head: subHead,
+    cost_centre_id: payload.costCentreId,
+    cost_centre_name: costCentre.cost_centre_name ?? null,
+    accounting_period: accountingPeriod,
+    financial_year: financialYear,
+  });
+  return { id, grnNumber };
+}
+
 export const grnService = {
   async createDraft(payload: CreateGrnPayload, actorUserId: string, actorRole: string) {
     // P0-2: Provision type has no accounting lifecycle in application code.
@@ -209,7 +364,10 @@ export const grnService = {
       );
     }
     if (!payload.branchId) throw new Error("Branch is required");
-    if (!payload.budgetLineId) throw new Error("An approved budget line is required");
+    const isUnbudgeted = Boolean(payload.isUnbudgeted);
+    if (!isUnbudgeted && !payload.budgetLineId) {
+      throw new Error("An approved budget line is required");
+    }
     if (!payload.billDate || !/^\d{4}-\d{2}-\d{2}$/.test(payload.billDate)) {
       throw new Error("A valid bill/receipt date is required");
     }
@@ -222,8 +380,12 @@ export const grnService = {
       throw new Error("Payment terms must be a whole number between 0 and 365 days");
     }
 
+    if (isUnbudgeted) {
+      return await createUnbudgetedDraft(payload, paymentTermsDays, actorUserId, actorRole);
+    }
+
     const budgetLine = await branchBudgetService.getLineForGrn(
-      payload.budgetLineId,
+      payload.budgetLineId!,
       payload.branchId
     ) as any;
 
@@ -1037,10 +1199,31 @@ export const grnService = {
               ccm.cost_centre_name,
               h.budget_number,
               l.item_name AS budget_item_name,
-              CONCAT(cb.first_name, ' ', cb.last_name) AS created_by_name,
-              CONCAT(rb.first_name, ' ', rb.last_name) AS reviewed_by_name,
-              CONCAT(bhb.first_name, ' ', bhb.last_name) AS branch_head_reviewed_by_name,
-              CONCAT(fhb.first_name, ' ', fhb.last_name) AS finance_head_reviewed_by_name
+              -- listLegacyGrns (the source=legacy mirror) always sets this literal; a legacy row
+              -- migrated straight into grn_request needs the same signal computed from
+              -- bill_source_id, or the History "Legacy" badge and any future legacy-only styling
+              -- silently never fires for these 84,767 rows under the default source=new view.
+              CASE WHEN g.bill_source_id IS NOT NULL THEN 'legacy' ELSE 'new' END AS source_type,
+              -- Legacy rows (bill_source_id IS NOT NULL) never got a real created_by/
+              -- reviewed_by/*_reviewed_by FK — migrate-grn-from-dbbill.ts wrote a single
+              -- migration-sentinel user for all 84,767 of them, so these employees joins miss
+              -- and CONCAT(...) returns NULL. Falls back to the legacy_*_name columns
+              -- (sql/1511_grn_legacy_identity_columns.sql), resolved from db_bill's own
+              -- userid/ApprovedBy fields, so History/Approval Queue show a real name instead of
+              -- blank. legacy_approved_by_name is one flat field (db_bill never had a separate
+              -- Branch Head / Finance Head approval stage — verified never populated across its
+              -- full history), routed to whichever review column matches this row's own
+              -- two-stage model: Branch Head for imprest, Finance Head for vendor/salary.
+              COALESCE(CONCAT(cb.first_name, ' ', cb.last_name), g.legacy_raised_by_name) AS created_by_name,
+              COALESCE(CONCAT(rb.first_name, ' ', rb.last_name), g.legacy_approved_by_name) AS reviewed_by_name,
+              COALESCE(
+                CONCAT(bhb.first_name, ' ', bhb.last_name),
+                CASE WHEN g.grn_type = 'imprest' THEN g.legacy_approved_by_name END
+              ) AS branch_head_reviewed_by_name,
+              COALESCE(
+                CONCAT(fhb.first_name, ' ', fhb.last_name),
+                CASE WHEN g.grn_type <> 'imprest' THEN g.legacy_approved_by_name END
+              ) AS finance_head_reviewed_by_name
          FROM grn_request g
          LEFT JOIN branch_master bm ON bm.id = g.branch_id
          LEFT JOIN process_master pm ON pm.id = g.process_id
@@ -1127,18 +1310,24 @@ export const grnService = {
       params.push(filters.processId);
     }
 
+    // Mirrors the CASE below that derives the `status` column returned per row — see the note
+    // there on why entry_status alone cannot tell "approved" from "still pending".
     if (filters.status) {
       if (filters.status === "rejected") {
         conditions.push("g.is_rejected = 1");
       } else if (filters.status === "approved" || filters.status === "paid") {
-        conditions.push("g.is_rejected = 0 AND g.entry_status = 'Close'");
+        conditions.push(
+          "g.is_rejected = 0 AND (g.entry_status = 'Close' OR (g.entry_status <> 'Booked' AND g.approved_at IS NOT NULL))"
+        );
       } else if (
         filters.status === "pending_accounts_payment" ||
         filters.status === "payment_scheduled"
       ) {
         conditions.push("g.is_rejected = 0 AND g.entry_status = 'Booked'");
       } else if (filters.status === "submitted" || filters.status === "branch_head_approved") {
-        conditions.push("g.is_rejected = 0 AND g.entry_status = 'Open'");
+        conditions.push(
+          "g.is_rejected = 0 AND g.entry_status NOT IN ('Close', 'Booked') AND g.approved_at IS NULL"
+        );
       } else {
         conditions.push("1 = 0");
       }
@@ -1210,10 +1399,17 @@ export const grnService = {
           g.amount                                   AS amount,
           g.amount + g.cgst + g.sgst + g.igst        AS amount_with_tax,
           g.period_code                              AS accounting_period,
+          -- entry_status ('Open'/'Booked'/'Close') is db_bill's booking/payment bookkeeping,
+          -- NOT its approval workflow. 1,534 of 1,535 non-rejected rows synced here are
+          -- 'Open' with ApprovalDate already set (approved_at) — they were already approved
+          -- in db_bill and only stayed 'Open' because nothing downstream re-booked them.
+          -- Reading entry_status alone put every one of those already-approved GRNs into the
+          -- 'submitted' bucket, i.e. the live Approval Queue, instead of History/Approved.
           CASE
             WHEN g.is_rejected = 1           THEN 'rejected'
             WHEN g.entry_status = 'Close'    THEN 'approved'
             WHEN g.entry_status = 'Booked'   THEN 'pending_accounts_payment'
+            WHEN g.approved_at IS NOT NULL   THEN 'approved'
             ELSE                                  'submitted'
           END                                        AS status,
           g.entry_status                             AS legacy_entry_status,

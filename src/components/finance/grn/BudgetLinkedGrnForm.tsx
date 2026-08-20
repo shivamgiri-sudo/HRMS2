@@ -1376,7 +1376,27 @@ export function BudgetLinkedGrnForm({
   const checklist = [
     { label: "Proof attached", done: proofPresent },
     { label: "Details complete", done: !hasErrors },
-    { label: "Budget resolved", done: Boolean(splitMode ? allocations[0]?.budgetLineId : resolvedLine) },
+    /*
+     * Read the vendor cascade's own splits for a vendor GRN.
+     *
+     * This step tested `resolvedLine` — which belongs to the imprest cost-centre cascade and is
+     * never populated for a vendor GRN — so it read "not done" on every vendor GRN ever raised,
+     * budgeted or not, and dragged the readiness bar down with it. Display only: canSubmit above
+     * has never consulted this checklist.
+     *
+     * An unbudgeted GRN is legitimately complete without a budget line, so it gets its own label
+     * rather than a tick that would misstate what happens next — Finance Head links the budget
+     * during approval, and nothing is resolved until they do.
+     */
+    isVendor && isUnbudgetedExpense
+      ? { label: "Budget linked by Finance Head at approval", done: true }
+      : {
+          label: "Budget resolved",
+          done: isVendor
+            ? costCentreSplits.some((row) => row.included)
+              && costCentreSplits.every((row) => !row.included || Boolean(row.budgetLineId))
+            : Boolean(splitMode ? allocations[0]?.budgetLineId : resolvedLine),
+        },
     {
       label: "Server validations clear",
       done: Boolean(workspace?.validations?.length) && serverBlocking.length === 0,
@@ -1569,12 +1589,41 @@ export function BudgetLinkedGrnForm({
               },
             ];
 
+      /*
+       * UNBUDGETED vendor GRN: there is deliberately no budget line to find.
+       *
+       * The vendor cascade offers every Head/Sub-head in the expense master, not only the ones a
+       * budget covers, so a raiser can legitimately pick a combination with no line behind it —
+       * that is what isUnbudgetedExpense detects and what the amber notice under Sub-head tells
+       * them. costCentreSplits then carries an empty budgetLineId on every row.
+       *
+       * This lookup used to run regardless and end in `.find(...)!`, so it resolved to undefined
+       * and the next line threw "Cannot read properties of undefined (reading 'id')" — a raw
+       * TypeError surfaced to the user as "GRN could not be saved", with nothing sent to the
+       * server and no hint that the missing budget was the cause.
+       */
+      // The cost centre an unbudgeted header is attributed to: the first split the raiser
+      // actually included, matching the first row saveInvoiceComponents() will write.
+      const unbudgetedCostCentreId = costCentreSplits.find((row) => row.included)?.costCentreKey;
       const firstLine = isVendor
-        ? budgetLines.find((line) => line.id === costCentreSplits[0].budgetLineId)!
+        ? (isUnbudgetedExpense
+            ? undefined
+            : budgetLines.find((line) => line.id === costCentreSplits[0].budgetLineId))
         : splitMode
-          ? budgetLines.find((line) => line.id === rows[0].budgetLineId)!
-          : resolvedLine!;
-      attemptedLineIdRef.current = firstLine.id;
+          ? budgetLines.find((line) => line.id === rows[0].budgetLineId)
+          : resolvedLine ?? undefined;
+      /*
+       * Every path that is not the unbudgeted one still REQUIRES a line, and the non-null
+       * assertions above were hiding that. A stale budgetLines cache — a line deleted, a period
+       * rolled, a budget unapproved between load and save — lands here, and a named error is the
+       * difference between the raiser fixing their selection and filing a bug about a TypeError.
+       */
+      if (!firstLine && !(isVendor && isUnbudgetedExpense)) {
+        throw new Error(
+          "The selected budget line is no longer available. Reload the page and pick the Head/Sub-head again."
+        );
+      }
+      attemptedLineIdRef.current = firstLine?.id ?? null;
 
       let current = created;
       if (!current) {
@@ -1584,9 +1633,18 @@ export function BudgetLinkedGrnForm({
             grnType: form.grnType,
             branchId: form.branchId,
             companyCode: form.companyCode || undefined,
-            budgetLineId: firstLine.id,
-            processId: firstLine.process_id ?? undefined,
-            costCentreId: firstLine.cost_centre_id ?? undefined,
+            budgetLineId: firstLine?.id,
+            processId: firstLine?.process_id ?? undefined,
+            // Unbudgeted: no line to read a cost centre off, so the first INCLUDED split's own
+            // cost centre is sent instead. The server validates it is active and belongs to this
+            // branch, exactly as getLineForGrn() would have validated the line.
+            costCentreId: firstLine?.cost_centre_id ?? (isUnbudgetedExpense ? unbudgetedCostCentreId : undefined),
+            // Tells the server to take the unbudgeted create path, and carries the Head/Sub-head
+            // that a budget line would otherwise have supplied — saveInvoiceComponents() reads
+            // both back off the header to build its synthetic lines for the split rows.
+            isUnbudgeted: isVendor && isUnbudgetedExpense ? true : undefined,
+            head: isVendor && isUnbudgetedExpense ? form.head : undefined,
+            subHead: isVendor && isUnbudgetedExpense ? form.subHead : undefined,
             vendorId: isVendor ? form.vendorId : undefined,
             // Vendor: a trivial placeholder — the follow-up invoice-components call below fully
             // overwrites every meaningful header column with the real N-cost-centre x M-component
@@ -1599,7 +1657,9 @@ export function BudgetLinkedGrnForm({
             accountingPeriod: form.accountingPeriod || undefined,
             paymentTermsDays: isVendor ? Number(resolvedPaymentTerms) : 0,
             remarks: form.remarks || undefined,
-            financialYear: financialYearFromPeriod(firstLine.period_code),
+            // Unbudgeted has no line period_code; the server derives the year from the accounting
+            // month itself, which is the same value in every budgeted case anyway.
+            financialYear: firstLine ? financialYearFromPeriod(firstLine.period_code) : undefined,
           }
         );
         current = { ...result, submitted: false };

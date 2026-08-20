@@ -171,7 +171,6 @@ export const useNotifications = () => {
           playChime(p);
           const newest = newOnes[0];
           fireBrowserNotification(newest.title, newest.message || `You have a new ${p} priority notification`);
-          showNotificationToast(newest, false);
           break;
         }
       }
@@ -200,7 +199,6 @@ export const useNotifications = () => {
         fired += 1;
         playChime(cp);
         fireBrowserNotification(n.title, n.message || "Reminder: unactioned notification");
-        showNotificationToast(n, true);
         // Stop nagging after a few reminders. The item is still listed in the
         // bell and the Work Inbox; it just stops interrupting.
         if (fired >= MAX_REPEATS) {

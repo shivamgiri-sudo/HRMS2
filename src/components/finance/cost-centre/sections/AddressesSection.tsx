@@ -16,6 +16,8 @@ export function AddressesSection({ data, onChange, disabled }: AddressesSectionP
       ship_to_address1: data.bill_to_address1,
       ship_to_address2: data.bill_to_address2,
       ship_to_address3: data.bill_to_address3,
+      ship_to_address4: data.bill_to_address4,
+      ship_to_address5: data.bill_to_address5,
       ship_to_city: data.bill_to_city,
       ship_to_pincode: data.bill_to_pincode,
     });
@@ -53,6 +55,26 @@ export function AddressesSection({ data, onChange, disabled }: AddressesSectionP
               value={data.bill_to_address3 ?? ""}
               onChange={(e) => onChange({ bill_to_address3: e.target.value })}
               placeholder="Landmark"
+              disabled={disabled}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="bill_to_address4">Address Line 4</Label>
+            <Input
+              id="bill_to_address4"
+              value={data.bill_to_address4 ?? ""}
+              onChange={(e) => onChange({ bill_to_address4: e.target.value })}
+              placeholder="Additional details"
+              disabled={disabled}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="bill_to_address5">Address Line 5</Label>
+            <Input
+              id="bill_to_address5"
+              value={data.bill_to_address5 ?? ""}
+              onChange={(e) => onChange({ bill_to_address5: e.target.value })}
+              placeholder="Additional details"
               disabled={disabled}
             />
           </div>
@@ -125,6 +147,26 @@ export function AddressesSection({ data, onChange, disabled }: AddressesSectionP
               value={data.ship_to_address3 ?? ""}
               onChange={(e) => onChange({ ship_to_address3: e.target.value })}
               placeholder="Landmark"
+              disabled={disabled}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="ship_to_address4">Address Line 4</Label>
+            <Input
+              id="ship_to_address4"
+              value={data.ship_to_address4 ?? ""}
+              onChange={(e) => onChange({ ship_to_address4: e.target.value })}
+              placeholder="Additional details"
+              disabled={disabled}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="ship_to_address5">Address Line 5</Label>
+            <Input
+              id="ship_to_address5"
+              value={data.ship_to_address5 ?? ""}
+              onChange={(e) => onChange({ ship_to_address5: e.target.value })}
+              placeholder="Additional details"
               disabled={disabled}
             />
           </div>

@@ -277,8 +277,12 @@ export async function canAccessOnboardingDocument(
     params.user.id,
     ["hr", "manager", "process_manager", "payroll_hr", "payroll", "recruiter"],
     {
-      branchId: params.document.applied_for_branch ? String(params.document.applied_for_branch) : undefined,
-      processId: params.document.applied_for_process ? String(params.document.applied_for_process) : undefined,
+      branchId: params.document.branch_id_resolved
+        ? String(params.document.branch_id_resolved)
+        : params.document.applied_for_branch ? String(params.document.applied_for_branch) : undefined,
+      processId: params.document.process_id_resolved
+        ? String(params.document.process_id_resolved)
+        : params.document.applied_for_process ? String(params.document.applied_for_process) : undefined,
     },
     { allowAdminBypass: true, requireScopeForNonAdmin: true }
   );
@@ -2014,9 +2018,18 @@ export async function uploadOnboardingDocument(token: string, file: Express.Mult
 
 export async function getOnboardingDocument(documentId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT doc.*, c.applied_for_branch, c.applied_for_process
+    `SELECT doc.*,
+            c.applied_for_branch,
+            c.applied_for_process,
+            COALESCE(bm.id, emp.branch_id, c.applied_for_branch) AS branch_id_resolved,
+            COALESCE(pm.id, c.applied_for_process)               AS process_id_resolved
        FROM candidate_onboarding_document doc
        JOIN ats_candidate c ON c.id = doc.candidate_id
+       LEFT JOIN branch_master  bm  ON bm.id = c.applied_for_branch
+                                    OR LOWER(bm.branch_name) = LOWER(c.applied_for_branch)
+       LEFT JOIN process_master pm  ON pm.id = c.applied_for_process
+                                    OR LOWER(pm.process_name) = LOWER(c.applied_for_process)
+       LEFT JOIN employees      emp ON emp.employee_code = c.candidate_code
       WHERE doc.id = ? AND doc.deleted_at IS NULL
       LIMIT 1`,
     [documentId]
