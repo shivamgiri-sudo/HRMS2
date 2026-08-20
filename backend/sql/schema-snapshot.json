@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 969,
-  "columnCount": 13755,
+  "columnCount": 13768,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -4441,13 +4441,13 @@
       "ship_to_address5",
       "ship_to_city",
       "ship_to_pincode",
+      "association_date",
       "group_cost_center",
       "cost_center_type",
       "dialdee_type",
       "jcc_no",
       "grn",
-      "po_required",
-      "association_date"
+      "po_required"
     ],
     "cost_centre_reward_penalty": [
       "id",
@@ -7999,6 +7999,9 @@
       "attachment_file_mime",
       "status",
       "created_by",
+      "legacy_raised_by_name",
+      "legacy_approved_by_name",
+      "legacy_rejected_by_name",
       "submitted_at",
       "approved_by",
       "approved_at",
