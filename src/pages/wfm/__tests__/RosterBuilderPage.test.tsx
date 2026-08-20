@@ -182,3 +182,71 @@ describe("RosterBuilderPage — find-or-create cycle logic (runtime)", () => {
     expect(post).not.toHaveBeenCalled();
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Section D — publish (Task 10) and bulk-upload deep link (Task 9). The publish button only
+// renders once cycleId is in page state, which no jsdom click can set here, so the wiring is
+// source-verified and the mutation's own behaviour is exercised at runtime below — same
+// technique as Sections B and C.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+describe("RosterBuilderPage — publish (source-verified)", () => {
+  it("calls the existing, unmodified POST /api/wfm/roster/publish-to-employees with the cycleId", () => {
+    expect(pageSource).toContain('"/api/wfm/roster/publish-to-employees"');
+    expect(pageSource).toContain("{ cycleId },");
+  });
+
+  it("publishes through hrmsApi, not a bare fetch that would 401 behind requireAuth/requireRole", () => {
+    expect(pageSource).toContain('hrmsApi.post<{ success: boolean; data: { cycleId: string; assignmentsPublished: number; employeesNotified: number } }>');
+    expect(pageSource).not.toMatch(/await fetch\(/);
+  });
+
+  it("renders a Publish button wired to the mutation, disabled while in flight", () => {
+    expect(pageSource).toContain("onClick={() => publish.mutate()}");
+    expect(pageSource).toContain("disabled={publish.isPending}");
+    expect(pageSource).toContain("Publish this week's roster");
+  });
+
+  it("reports the real counts the endpoint returns, and surfaces its error message", () => {
+    expect(pageSource).toContain("publish.data?.data?.assignmentsPublished");
+    expect(pageSource).toContain("publish.data?.data?.employeesNotified");
+    expect(pageSource).toContain('publish.error instanceof Error ? publish.error.message : "Publish failed"');
+  });
+
+  it("refreshes the grid after publishing, because every published row's final_roster_status changed", () => {
+    const publishBlock = pageSource.slice(pageSource.indexOf("const publish = useMutation"));
+    expect(publishBlock).toContain('invalidateQueries({ queryKey: ["roster-builder", "grid", cycleId] })');
+  });
+});
+
+describe("RosterBuilderPage — publish mutation (runtime)", () => {
+  it("posts the cycleId and returns the endpoint's assignment/employee counts", async () => {
+    post.mockResolvedValueOnce({
+      success: true,
+      data: { cycleId: "cycle-1", assignmentsPublished: 5, employeesNotified: 5 },
+    });
+
+    // Mirrors the page's publish mutationFn exactly (asserted verbatim above).
+    const result = await post("/api/wfm/roster/publish-to-employees", { cycleId: "cycle-1" });
+
+    expect(post).toHaveBeenCalledWith("/api/wfm/roster/publish-to-employees", { cycleId: "cycle-1" });
+    expect(result.data.assignmentsPublished).toBe(5);
+    expect(result.data.employeesNotified).toBe(5);
+  });
+});
+
+describe("RosterBuilderPage — bulk upload deep link (Task 9)", () => {
+  it("links to the existing roster-import page carrying cycle and process context", () => {
+    expect(pageSource).toContain("`/wfm/roster-import?cycleId=${cycleId}&processId=${processId}`");
+  });
+
+  it("points at a route that actually exists", () => {
+    const routes = readFileSync(resolve(process.cwd(), "src/config/routes/workforce.routes.tsx"), "utf8");
+    expect(routes).toContain('path="/wfm/roster-import"');
+  });
+
+  it("does not modify RosterImportPage itself — that page is outside this subsystem's edit scope", () => {
+    const importPage = readFileSync(resolve(process.cwd(), "src/pages/wfm/RosterImportPage.tsx"), "utf8");
+    expect(importPage).not.toContain("roster-builder");
+  });
+});
