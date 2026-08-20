@@ -1127,18 +1127,24 @@ export const grnService = {
       params.push(filters.processId);
     }
 
+    // Mirrors the CASE below that derives the `status` column returned per row — see the note
+    // there on why entry_status alone cannot tell "approved" from "still pending".
     if (filters.status) {
       if (filters.status === "rejected") {
         conditions.push("g.is_rejected = 1");
       } else if (filters.status === "approved" || filters.status === "paid") {
-        conditions.push("g.is_rejected = 0 AND g.entry_status = 'Close'");
+        conditions.push(
+          "g.is_rejected = 0 AND (g.entry_status = 'Close' OR (g.entry_status <> 'Booked' AND g.approved_at IS NOT NULL))"
+        );
       } else if (
         filters.status === "pending_accounts_payment" ||
         filters.status === "payment_scheduled"
       ) {
         conditions.push("g.is_rejected = 0 AND g.entry_status = 'Booked'");
       } else if (filters.status === "submitted" || filters.status === "branch_head_approved") {
-        conditions.push("g.is_rejected = 0 AND g.entry_status = 'Open'");
+        conditions.push(
+          "g.is_rejected = 0 AND g.entry_status NOT IN ('Close', 'Booked') AND g.approved_at IS NULL"
+        );
       } else {
         conditions.push("1 = 0");
       }
@@ -1210,10 +1216,17 @@ export const grnService = {
           g.amount                                   AS amount,
           g.amount + g.cgst + g.sgst + g.igst        AS amount_with_tax,
           g.period_code                              AS accounting_period,
+          -- entry_status ('Open'/'Booked'/'Close') is db_bill's booking/payment bookkeeping,
+          -- NOT its approval workflow. 1,534 of 1,535 non-rejected rows synced here are
+          -- 'Open' with ApprovalDate already set (approved_at) — they were already approved
+          -- in db_bill and only stayed 'Open' because nothing downstream re-booked them.
+          -- Reading entry_status alone put every one of those already-approved GRNs into the
+          -- 'submitted' bucket, i.e. the live Approval Queue, instead of History/Approved.
           CASE
             WHEN g.is_rejected = 1           THEN 'rejected'
             WHEN g.entry_status = 'Close'    THEN 'approved'
             WHEN g.entry_status = 'Booked'   THEN 'pending_accounts_payment'
+            WHEN g.approved_at IS NOT NULL   THEN 'approved'
             ELSE                                  'submitted'
           END                                        AS status,
           g.entry_status                             AS legacy_entry_status,
