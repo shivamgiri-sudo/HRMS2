@@ -1,22 +1,38 @@
 -- WFM Roster Import Engine Schema
 -- Migration 1500: Tables for roster upload, preview, commit workflow
+--
+-- FIX 2026-08-20: every CHAR(36) FK column below now carries an explicit
+-- COLLATE utf8mb4_unicode_ci. Without it, MySQL 8's server default collation
+-- (utf8mb4_0900_ai_ci) applies instead, and every FOREIGN KEY here is rejected
+-- as incompatible against the referenced table's utf8mb4_unicode_ci id column
+-- (wfm_shift_master, process_master, adherence_alert, employees, auth_user —
+-- all verified utf8mb4_unicode_ci live). This migration never successfully ran
+-- (schema_migrations.success=0, no tables were created — CREATE TABLE with a
+-- bad FK rolls back atomically), so this is a same-file fix, not an edit of an
+-- applied migration. Same collation trap already documented and fixed
+-- elsewhere in this manifest (see 210_fix_el_accrual_ledger_collation.sql,
+-- 1028_salary_certificate_request_collation.sql, and the inline notes on
+-- 1116/530/1300-1302). old_shift_id/new_shift_id in section 7 below also get
+-- the explicit collation even though they carry no FK constraint themselves —
+-- defensive, since they will be joined against wfm_shift_master.id / this
+-- migration's own shift-id columns elsewhere.
 
 -- 1. Shift alias table for normalizing spreadsheet variations
 CREATE TABLE IF NOT EXISTS wfm_shift_alias (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  shift_id CHAR(36) NOT NULL,
+  shift_id CHAR(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   alias VARCHAR(100) NOT NULL,
   is_active TINYINT(1) DEFAULT 1,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   created_by CHAR(36),
   FOREIGN KEY (shift_id) REFERENCES wfm_shift_master(id),
   UNIQUE KEY uk_alias (alias)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 2. Import batch for roster uploads
 CREATE TABLE IF NOT EXISTS wfm_roster_import_batch (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  process_id CHAR(36) NOT NULL,
+  process_id CHAR(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   cycle_id CHAR(36),
   import_mode ENUM('NEW', 'UPDATE') NOT NULL DEFAULT 'NEW',
   file_name VARCHAR(255),
@@ -38,14 +54,14 @@ CREATE TABLE IF NOT EXISTS wfm_roster_import_batch (
   FOREIGN KEY (process_id) REFERENCES process_master(id),
   INDEX idx_status (status),
   INDEX idx_process (process_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 3. Individual import rows for preview
 CREATE TABLE IF NOT EXISTS wfm_roster_import_row (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   batch_id INT NOT NULL,
   row_number INT NOT NULL,
-  employee_id CHAR(36),
+  employee_id CHAR(36) COLLATE utf8mb4_unicode_ci,
   employee_id_raw VARCHAR(100),
   employee_name_raw VARCHAR(255),
   roster_date DATE NOT NULL,
@@ -60,12 +76,12 @@ CREATE TABLE IF NOT EXISTS wfm_roster_import_row (
   INDEX idx_batch (batch_id),
   INDEX idx_batch_state (batch_id, validation_state),
   INDEX idx_employee_date (employee_id, roster_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 4. Header mapping profiles (saved per process/source)
 CREATE TABLE IF NOT EXISTS wfm_header_mapping_profile (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  process_id CHAR(36),
+  process_id CHAR(36) COLLATE utf8mb4_unicode_ci,
   profile_name VARCHAR(100) NOT NULL,
   source_identifier VARCHAR(100),
   column_mappings JSON NOT NULL,
@@ -80,7 +96,7 @@ CREATE TABLE IF NOT EXISTS wfm_header_mapping_profile (
   updated_at TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (process_id) REFERENCES process_master(id),
   UNIQUE KEY uk_process_name (process_id, profile_name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 5. Add planning_mode to process table (ROSTER_LED is default)
 ALTER TABLE process_master ADD COLUMN IF NOT EXISTS planning_mode ENUM('ROSTER_LED', 'VOLUME_BASED') DEFAULT 'ROSTER_LED';
@@ -88,13 +104,13 @@ ALTER TABLE process_master ADD COLUMN IF NOT EXISTS planning_mode ENUM('ROSTER_L
 -- 6. RTA exception disposition tracking
 CREATE TABLE IF NOT EXISTS wfm_rta_exception (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  alert_id CHAR(36) NOT NULL,
-  employee_id CHAR(36) NOT NULL,
+  alert_id CHAR(36) COLLATE utf8mb4_unicode_ci NOT NULL,
+  employee_id CHAR(36) COLLATE utf8mb4_unicode_ci NOT NULL,
   exception_date DATE NOT NULL,
   exception_type ENUM('LATE', 'NO_SHOW', 'EARLY_EXIT', 'SHORT_HOURS', 'MISSED_PUNCH', 'ROSTER_MISMATCH', 'OVERTIME', 'OTHER') NOT NULL,
   exception_state ENUM('OPEN', 'ACKNOWLEDGED', 'ACTIONED', 'RESOLVED', 'ESCALATED') DEFAULT 'OPEN',
   disposition_type ENUM('CONTACTED_EMPLOYEE', 'TRANSPORT_ISSUE', 'SYSTEM_LOGIN_ISSUE', 'BIOMETRIC_ISSUE', 'APPROVED_EXCEPTION', 'EMERGENCY', 'SHIFT_CHANGE_PENDING', 'REGULARIZATION_REQUIRED', 'NO_RESPONSE', 'ESCALATE_TO_HR', 'OTHER'),
-  disposition_owner_id CHAR(36),
+  disposition_owner_id CHAR(36) COLLATE utf8mb4_unicode_ci,
   disposition_comment TEXT,
   disposition_at TIMESTAMP NULL,
   regularization_id CHAR(36),
@@ -107,12 +123,12 @@ CREATE TABLE IF NOT EXISTS wfm_rta_exception (
   INDEX idx_employee_date (employee_id, exception_date),
   INDEX idx_state (exception_state),
   INDEX idx_alert (alert_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 7. Extend roster_change_log for amendment workflow
 ALTER TABLE roster_change_log
-  ADD COLUMN IF NOT EXISTS old_shift_id CHAR(36),
-  ADD COLUMN IF NOT EXISTS new_shift_id CHAR(36),
+  ADD COLUMN IF NOT EXISTS old_shift_id CHAR(36) COLLATE utf8mb4_unicode_ci,
+  ADD COLUMN IF NOT EXISTS new_shift_id CHAR(36) COLLATE utf8mb4_unicode_ci,
   ADD COLUMN IF NOT EXISTS old_assignment_type VARCHAR(50),
   ADD COLUMN IF NOT EXISTS new_assignment_type VARCHAR(50),
   ADD COLUMN IF NOT EXISTS amendment_reason TEXT,
