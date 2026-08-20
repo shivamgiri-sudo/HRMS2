@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
 
@@ -344,11 +345,16 @@ export function FinanceReportsWorkspace() {
                   This label is the difference between a reader trusting the report and quietly
                   reconciling it against a bill-date view that will never tie. */}
               <Label className="text-xs">Finance Month (accounting period)</Label>
-              <Input
-                type="month"
-                className="h-9"
+              {/* MonthYearPicker, not <input type="month">: Safari has never implemented the
+                  native control and degrades it to a bare text box, which reads as "the month
+                  filter is broken" rather than as a browser gap. Same shared component the
+                  Branch Budget workspace uses; src/tests/finance-month-picker.contract.test.ts
+                  enforces this across every finance page. */}
+              <MonthYearPicker
                 value={draft.month}
-                onChange={(event) => set("month")(event.target.value)}
+                onChange={set("month")}
+                className="w-full"
+                selectClassName="h-9"
               />
             </div>
 
