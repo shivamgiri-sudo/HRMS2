@@ -36,14 +36,30 @@ export function resolveFinanceStageRole(input: {
         ? "finance_head"
         : null;
 
+  /*
+   * Both refusals carry a status. Without one, errorHandler.ts treats them as unexpected 500s
+   * and, in production, REPLACES the message with "An unexpected server error occurred. Please
+   * quote reference <hex>". Every caller here is a reviewer pressing Approve or Reject, so the
+   * two things they most need to be told — this stage is not yours, and this row is past the
+   * point where anyone can act — were the two things they could never see.
+   *
+   * The live case: accounts_head is in TOPUP_REVIEW_ROLES, so requireRole lets them through to
+   * a top-up's Approve button, but no top-up stage maps to accounts_head. They got the
+   * anonymous reference every time instead of "this stage requires the finance_head role".
+   *
+   * 409 for a status with no stage (the row's state forbids it), 403 for a role that owns no
+   * stage here — the same split budget-topup.service.ts already documents.
+   */
   if (!expectedRole) {
-    throw new Error(
-      `No approval role is valid for ${input.workflow} status ${input.currentStatus}`
+    throw Object.assign(
+      new Error(`No approval role is valid for ${input.workflow} status ${input.currentStatus}`),
+      { statusCode: 409, code: "WORKFLOW_NO_STAGE_FOR_STATUS" }
     );
   }
   if (!roles.has(expectedRole) && !roles.has("super_admin")) {
-    throw new Error(
-      `The current ${input.workflow} stage requires the ${expectedRole} role`
+    throw Object.assign(
+      new Error(`The current ${input.workflow} stage requires the ${expectedRole} role`),
+      { statusCode: 403, code: "WORKFLOW_WRONG_STAGE_ROLE" }
     );
   }
   return expectedRole;

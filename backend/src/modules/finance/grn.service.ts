@@ -341,6 +341,24 @@ async function createUnbudgetedDraft(
     ]
   );
 
+  // An unbudgeted GRN has no budget line to name, which is precisely why its origin is worth
+  // recording on the readable trail: it is the path that bypasses the approved budget.
+  await recordFinanceApprovalEvent({
+    entityType: "grn",
+    entityId: id,
+    action: "create",
+    fromStatus: null,
+    toStatus: "draft",
+    actorUserId,
+    actorRole,
+    details: {
+      grnNumber,
+      branchId: payload.branchId,
+      budgetLineId: null,
+      accountingPeriod,
+      unbudgeted: true,
+    },
+  });
   await writeGrnAudit("CREATE_DRAFT_UNBUDGETED", id, actorUserId, actorRole, {
     grn_number: grnNumber,
     is_unbudgeted: true,
@@ -541,6 +559,23 @@ export const grnService = {
       ]
     );
 
+    // A GRN's history should start where the GRN does. Without this the readable trail began
+    // at 'submitted' and could not answer who raised the document, against which budget line.
+    await recordFinanceApprovalEvent({
+      entityType: "grn",
+      entityId: id,
+      action: "create",
+      fromStatus: null,
+      toStatus: "draft",
+      actorUserId,
+      actorRole,
+      details: {
+        grnNumber,
+        branchId: payload.branchId,
+        budgetLineId: budgetLine.id,
+        unbudgeted: false,
+      },
+    });
     await writeGrnAudit("CREATE_DRAFT", id, actorUserId, actorRole, {
       grn_number: grnNumber,
       budget_id: budgetLine.budget_id,
@@ -597,6 +632,27 @@ export const grnService = {
 
     await writeGrnAudit("SUBMIT", grnId, actorUserId, actorRole, {
       remarks: payload.remarks,
+    });
+    /*
+     * Also recorded on the WORKFLOW trail, not only the security one.
+     *
+     * writeGrnAudit -> logSensitiveAction is deliberately non-throwing: it catches, prints to
+     * stderr and lets the operation continue. Correct for telemetry, wrong for the record of
+     * how a GRN moved through its approval chain — that trail already held approve, reject,
+     * return, resubmit and reverse, so 'submitted' was the one transition missing from the
+     * only history a reviewer can read back (GET /grns/:id/approval-history), and it is the
+     * transition that starts the chain. Both writes stay; they answer different questions.
+     */
+    await recordFinanceApprovalEvent({
+      entityType: "grn",
+      entityId: grnId,
+      action: "submit",
+      fromStatus: "draft",
+      toStatus: "submitted",
+      actorUserId,
+      actorRole,
+      remarks: payload.remarks?.trim() || null,
+      details: { grnNumber: String(grn.grn_number ?? ""), branchId: String(grn.branch_id ?? "") },
     });
     return { success: true, newStatus: "submitted" as const };
   },
@@ -941,6 +997,23 @@ export const grnService = {
       if (result.affectedRows !== 1) {
         throw new Error("GRN status changed before cancellation; refresh and try again");
       }
+      // Cancellation is terminal and can release consumed budget, so it belongs on the readable
+      // workflow trail as much as an approval does. On the SAME connection as the UPDATE and the
+      // release, per recordFinanceApprovalEvent's contract: if the cancellation rolls back, the
+      // event saying it happened must roll back with it.
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "grn",
+          entityId: grnId,
+          action: "cancel",
+          fromStatus: String(grn.status),
+          toStatus: "cancelled",
+          actorUserId,
+          actorRole,
+          details: { grnNumber: String(grn.grn_number ?? ""), branchId: String(grn.branch_id ?? "") },
+        },
+        connection
+      );
       await connection.commit();
     } catch (error) {
       await connection.rollback();

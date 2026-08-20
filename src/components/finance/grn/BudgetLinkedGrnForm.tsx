@@ -1575,6 +1575,34 @@ export function BudgetLinkedGrnForm({
       // GST-slab components — resolvedLine/singleLine belong to the OLD cost-centre cascade and
       // are never populated for a vendor GRN (vendor never sets form.costCentreKey), so this must
       // not be evaluated for isVendor. Imprest: exact existing single-line / split-mode behaviour.
+      /*
+       * The `!` on resolvedLine/singleLine was the last raw TypeError left in this function,
+       * and it fires EARLIER than the named guard further down — `rows` is built first, so the
+       * guard added for `firstLine` could never reach this.
+       *
+       * Both are `null`, not undefined, whenever the cascade has not settled: resolvedLine is
+       * null until exactly one budget line matches (or one is picked), and singleLine is null
+       * whenever there is no resolved line or no positive amount. Neither is an impossible
+       * state — it is the ordinary state of a half-filled form, which is exactly when someone
+       * presses Save draft. The readiness strip already says "Budget resolved" is outstanding;
+       * the save then died with "Cannot read properties of undefined (reading 'id')" and told
+       * the raiser nothing they could act on.
+       */
+      if (!isVendor && !splitMode) {
+        if (!resolvedLine) {
+          throw new Error(
+            "Pick the exact budget line first — the Head/Sub-head you chose matches more than one "
+              + "line, or none for this period. The Budget section shows which."
+          );
+        }
+        if (!singleLine) {
+          throw new Error(
+            form.amount > 0
+              ? "This budget line has no usable rate, so the amount cannot be turned into a quantity."
+              : "Enter the invoice amount before saving — the quantity is derived from it."
+          );
+        }
+      }
       const rows: AllocationDraft[] = isVendor
         ? []
         : splitMode
@@ -1588,6 +1616,16 @@ export function BudgetLinkedGrnForm({
                 remarks: "",
               },
             ];
+      // The two indexed reads below assume a row exists. Neither is guaranteed: a vendor GRN
+      // with every cost centre unticked leaves costCentreSplits[0] undefined, and split mode
+      // with no rows leaves rows[0] undefined. Both then threw a TypeError from inside a
+      // .find() predicate, which surfaced as the same anonymous "GRN could not be saved".
+      if (isVendor && !isUnbudgetedExpense && !costCentreSplits.length) {
+        throw new Error("Include at least one cost centre before saving.");
+      }
+      if (!isVendor && splitMode && !rows.length) {
+        throw new Error("Add at least one allocation row before saving.");
+      }
 
       /*
        * UNBUDGETED vendor GRN: there is deliberately no budget line to find.
@@ -1608,9 +1646,9 @@ export function BudgetLinkedGrnForm({
       const firstLine = isVendor
         ? (isUnbudgetedExpense
             ? undefined
-            : budgetLines.find((line) => line.id === costCentreSplits[0].budgetLineId))
+            : budgetLines.find((line) => line?.id === costCentreSplits[0]?.budgetLineId))
         : splitMode
-          ? budgetLines.find((line) => line.id === rows[0].budgetLineId)
+          ? budgetLines.find((line) => line?.id === rows[0]?.budgetLineId)
           : resolvedLine ?? undefined;
       /*
        * Every path that is not the unbudgeted one still REQUIRES a line, and the non-null
@@ -1662,6 +1700,16 @@ export function BudgetLinkedGrnForm({
             financialYear: firstLine ? financialYearFromPeriod(firstLine.period_code) : undefined,
           }
         );
+        /*
+         * Every call after this one is addressed as /api/finance/grns/${current.id}/... . If the
+         * create response ever came back without an id, those became literal ".../undefined/..."
+         * requests, and a missing /api/* route answers 401 — so a shape change here would have
+         * surfaced as an authentication error on a perfectly authenticated session. Refuse with
+         * the truth instead.
+         */
+        if (!result?.id) {
+          throw new Error("The GRN was not created — the server returned no GRN id. Nothing was saved.");
+        }
         current = { ...result, submitted: false };
         setCreated(current);
       }

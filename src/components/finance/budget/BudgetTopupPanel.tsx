@@ -29,6 +29,9 @@ type BudgetTopupRequest = {
   item_name: string;
   budget_number: string;
   branch_name: string | null;
+  /** The month this increase applies to. A top-up carries no period of its own — it is always
+   *  the parent budget header's period_code, which the list endpoint now returns. */
+  period_code: string | null;
   branch_head_reviewed_by: string | null;
   finance_head_reviewed_by: string | null;
   rejection_reason: string | null;
@@ -212,7 +215,12 @@ export function BudgetTopupPanel({
   return (
     <Card className="rounded-3xl border-slate-200 shadow-sm">
       <CardHeader className="flex flex-row items-center justify-between">
-        <CardTitle>Budget top-up requests</CardTitle>
+        {/* The month is the single most important fact about a top-up — it says which budget
+            gets bigger — and it appeared nowhere on this panel. It was only ever implied by the
+            workspace period picker in the strip above, which a reviewer scrolling a queue is not
+            looking at. Named here, and again on every row, because the queue is also reachable
+            deep-linked from a blocked GRN with a period the reviewer did not choose. */}
+        <CardTitle>Budget top-up requests{period ? ` — ${period}` : ""}</CardTitle>
         {canCreate && (
           <Button size="sm" onClick={() => setCreateOpen(true)}>
             <PlusCircle className="mr-1 h-3.5 w-3.5" />Request increase
@@ -234,7 +242,9 @@ export function BudgetTopupPanel({
                   <Badge variant="outline">{statusLabel(request.status)}</Badge>
                 </div>
                 <p className="mt-1 text-xs text-slate-500">
-                  {request.item_name} · {request.budget_number} · requested {money(request.requested_amount)}
+                  {request.item_name} · {request.budget_number}
+                  {request.period_code ? ` · ${request.period_code} budget` : ""}
+                  {" "}· requested {money(request.requested_amount)}
                 </p>
                 <p className="mt-1 text-xs text-slate-600">{request.reason}</p>
                 {request.status === "rejected" && request.rejection_reason && (
@@ -290,6 +300,13 @@ export function BudgetTopupPanel({
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Request a budget increase</DialogTitle></DialogHeader>
           <div className="space-y-3">
+            {/* Which month is being increased is decided by the workspace period, not by anything
+                in this dialog — the line picker only offers lines from that month. Stating it
+                makes an implicit choice explicit before someone submits against the wrong one. */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              Increasing the <strong>{period || "selected"}</strong> budget. Change the month in the
+              strip above the tabs to top up a different period.
+            </div>
             <div>
               <Label className="text-xs">Budget line *</Label>
               <Select value={selectedLineId} onValueChange={setSelectedLineId} disabled={!linesQuery.isLoading && !lines.length}>

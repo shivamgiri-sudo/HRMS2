@@ -1,9 +1,10 @@
-import { FileCheck2, FileClock, FileText, GitBranch, Search, Wallet } from "lucide-react";
+import { BarChart3, FileCheck2, FileClock, FileText, GitBranch, Search, Wallet } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnForm";
 import { GrnHistoryTable } from "@/components/finance/grn/GrnHistoryTable";
 import { GrnSearchWorkspace } from "@/components/finance/grn/GrnSearchWorkspace";
+import { FinanceReportsWorkspace } from "@/components/finance/grn/FinanceReportsWorkspace";
 import { ImprestWorkspace } from "@/components/finance/grn/imprest/ImprestWorkspace";
 import { GrnLobAttributionQueue } from "@/components/finance/grn/GrnLobAttributionQueue";
 import { SmartGrnApprovalQueue } from "@/components/finance/grn/SmartGrnApprovalQueue";
@@ -54,6 +55,27 @@ export default function NativeGRNManagement() {
   // role-gated, so `finance` and `payroll_head` — both of whom reach this page — opened a tab
   // whose only query 403s and which therefore renders as a permanently empty queue.
   const canAttribute = useCanAttributeGrnLob();
+
+  /*
+   * Reports mirror FINANCE_REPORT_ROLES in grn.routes.ts exactly.
+   *
+   * Deliberately WIDER than canReview: a branch_admin and an accounts_head cannot review a GRN,
+   * but both are expected to read the register for their own branch — that was the whole point
+   * of the request. Deliberately NARROWER than who can open this page: `hr` and `finance` reach
+   * GRN Management and are not on the server's report list, so showing them the tab would offer
+   * three reports that all 403.
+   *
+   * The tab is presentation. Row scope is still the server's: resolveFinanceBranchScopeSet pins
+   * a branch_admin to their own branches whatever branchId the filter sends.
+   */
+  const canViewReports = useHasRole(
+    "super_admin",
+    "admin",
+    "finance_head",
+    "accounts_head",
+    "branch_head",
+    "branch_admin"
+  );
 
   const summaryQuery = useGrnSummary();
   const summary = summaryQuery.data;
@@ -140,6 +162,11 @@ export default function NativeGRNManagement() {
               <TabsTrigger value="history" className={GRN_TAB_TRIGGER}>
                 <FileClock className="h-3.5 w-3.5" />History
               </TabsTrigger>
+              {canViewReports && (
+                <TabsTrigger value="reports" className={GRN_TAB_TRIGGER}>
+                  <BarChart3 className="h-3.5 w-3.5" />Reports
+                </TabsTrigger>
+              )}
             </TabsList>
           </div>
 
@@ -173,6 +200,13 @@ export default function NativeGRNManagement() {
           <TabsContent value="history" className="mt-4">
             <GrnHistoryTable onEdit={handleReopenForEdit} />
           </TabsContent>
+          {/* Register / Audit Trail / Top-up requests. History above is a status-chip view of
+              recent activity; these are the month-end reads finance reconciles against. */}
+          {canViewReports && (
+            <TabsContent value="reports" className="mt-4">
+              <FinanceReportsWorkspace />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
     </DashboardLayout>

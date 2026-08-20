@@ -20,6 +20,7 @@ import {
 } from "./finance-access-scope.js";
 import { resolveFinanceStageRole } from "./finance-workflow-role.js";
 import { grnService } from "./grn.service.js";
+import { grnReportService } from "./grn-report.service.js";
 import { smartGrnRouter } from "./grn-smart.routes.js";
 import { vendorExpenseMappingService } from "./vendor-expense-mapping.service.js";
 import { vendorApplicabilityService } from "./vendor-applicability.service.js";
@@ -35,6 +36,27 @@ const GRN_WRITE_ROLES: RoleKey[] = [
   "branch_admin",
 ];
 const GRN_READ_ROLES: RoleKey[] = [...GRN_WRITE_ROLES, "finance", "hr", "hr_admin"];
+/*
+ * Who may read the finance reports.
+ *
+ * Narrower than GRN_READ_ROLES on purpose. That list carries `hr`, `hr_admin` and `finance`
+ * because they legitimately open individual GRNs, but a report is a bulk read of a branch's
+ * spend with vendor names, invoice numbers, GST and payment dates on every row — a different
+ * disclosure entirely. This is the set the reports were asked for: the four finance/branch
+ * stage owners plus Super Admin, and `admin` alongside them because branch admins are commonly
+ * provisioned carrying it too.
+ *
+ * Row scope is NOT this list's job: resolveFinanceBranchScopeSet still pins a branch_admin or
+ * branch_head to their own branches, so being on this list buys the report, not the company.
+ */
+const FINANCE_REPORT_ROLES: RoleKey[] = [
+  "super_admin",
+  "admin",
+  "finance_head",
+  "accounts_head",
+  "branch_head",
+  "branch_admin",
+];
 /*
  * The GRN approval chain is two stages, not three.
  *
@@ -639,6 +661,113 @@ grnRouter.get(
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : "Failed to summarise GRNs";
       res.status(errorStatus(error, 400)).json({ error: message });
+    }
+  }
+);
+
+/*
+ * FINANCE REPORTS
+ *
+ * Mounted at /grn-reports/*, NOT under /grns/*. `grnRouter.get("/grns/:id")` matches any single
+ * segment, so a sibling "/grns/reports" would be swallowed by it and answered with "GRN not
+ * found" — the router-shadowing failure this module has already been bitten by. A distinct
+ * prefix cannot be shadowed by an :id route however the file is later reordered.
+ *
+ * Every one of these is read-only, role-gated to FINANCE_REPORT_ROLES, and row-scoped by
+ * resolveFinanceBranchScopeSet — a branch_admin gets their branches and nothing else, whatever
+ * branchId they send, because the requested branch narrows the scope set rather than replacing
+ * it.
+ */
+async function reportScope(req: AuthenticatedRequest) {
+  const user = actor(req);
+  return grnReportFiltersFrom(
+    req,
+    await resolveFinanceBranchScopeSet({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    })
+  );
+}
+
+function grnReportFiltersFrom(req: AuthenticatedRequest, branchScope: Awaited<ReturnType<typeof resolveFinanceBranchScopeSet>>) {
+  const str = (value: unknown) => (value ? String(value) : undefined);
+  return {
+    branchScope,
+    branchId: str(req.query.branchId),
+    financialYear: str(req.query.financialYear),
+    // `month` is the FINANCE month and filters accounting_period. See grn-report.service.ts.
+    month: str(req.query.month),
+    head: str(req.query.head),
+    subHead: str(req.query.subHead),
+    expenseMode: str(req.query.expenseMode),
+    grnNumber: str(req.query.grnNumber),
+    vendorId: str(req.query.vendorId),
+    status: str(req.query.status),
+    pendingWith: str(req.query.pendingWith),
+    limit: req.query.limit ? Number(req.query.limit) : undefined,
+  };
+}
+
+grnRouter.get(
+  "/grn-reports/register",
+  requireRole(...FINANCE_REPORT_ROLES),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const data = await grnReportService.register(await reportScope(req));
+      res.json({ success: true, ...data });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unable to build the GRN register";
+      res.status(errorStatus(error, 400)).json({ success: false, error: message });
+    }
+  }
+);
+
+grnRouter.get(
+  "/grn-reports/audit-trail",
+  requireRole(...FINANCE_REPORT_ROLES),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const data = await grnReportService.auditTrail({
+        ...(await reportScope(req)),
+        entityType: req.query.entityType ? String(req.query.entityType) : undefined,
+        action: req.query.action ? String(req.query.action) : undefined,
+        from: req.query.from ? String(req.query.from) : undefined,
+        to: req.query.to ? String(req.query.to) : undefined,
+      });
+      res.json({ success: true, ...data });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unable to build the audit trail";
+      res.status(errorStatus(error, 400)).json({ success: false, error: message });
+    }
+  }
+);
+
+grnRouter.get(
+  "/grn-reports/topups",
+  requireRole(...FINANCE_REPORT_ROLES),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const data = await grnReportService.topups(await reportScope(req));
+      res.json({ success: true, ...data });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unable to build the top-up report";
+      res.status(errorStatus(error, 400)).json({ success: false, error: message });
+    }
+  }
+);
+
+grnRouter.get(
+  "/grn-reports/filters",
+  requireRole(...FINANCE_REPORT_ROLES),
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const data = await grnReportService.filterOptions(await reportScope(req));
+      res.json({ success: true, data });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Unable to load report filters";
+      res.status(errorStatus(error, 400)).json({ success: false, error: message });
     }
   }
 );

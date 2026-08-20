@@ -12,6 +12,7 @@ import { resolvePendingWith } from "../finance/finance-workflow-role.js";
 import { lockActiveBudgetLine } from "./budget-consumption.service.js";
 import { isPeriodLocked } from "./finance-period-lock.js";
 import { refuse } from "./finance-error.js";
+import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 
 export type BudgetTopupStatus =
   | "submitted"
@@ -169,7 +170,7 @@ export const budgetTopupService = {
     }
 
     const [lineRows] = await db.execute<RowDataPacket[]>(
-      `SELECT l.id, l.budget_id, h.status AS budget_status, h.branch_id
+      `SELECT l.id, l.budget_id, l.unit_rate, h.status AS budget_status, h.branch_id, h.period_code
          FROM finance_budget_line l
          JOIN finance_budget_header h ON h.id = l.budget_id
         WHERE l.id = ?`,
@@ -185,6 +186,61 @@ export const budgetTopupService = {
       );
     }
 
+    /*
+     * The approver reads `requested_amount`; applyTopupToLine applies `requested_quantity`.
+     * Nothing tied the two together, and both are client-supplied — BudgetTopupPanel derives
+     * quantity as amount / unit_rate, but the API accepted any pair. So a request could be
+     * approved for Rs 15,000 and raise the line by something else entirely, with the queue,
+     * the approval and the audit trail all showing the number that was NOT applied.
+     *
+     * requestedQuantity === 0 was the same defect at its limit: it passed validation, reached
+     * 'applied', and increased the budget by nothing while reading as a granted increase.
+     *
+     * Cross-checked here rather than recomputed from the amount, so a mismatch is refused and
+     * visible instead of being silently corrected to a figure the requester never asked for.
+     * The tolerance absorbs the client's float division, nothing more.
+     */
+    const unitRate = Number(line.unit_rate);
+    if (!(unitRate > 0)) {
+      throw refuse(
+        409,
+        "TOPUP_LINE_HAS_NO_UNIT_RATE",
+        "This budget line has no unit rate, so an increase cannot be sized in units"
+      );
+    }
+    if (!(requestedQuantity > 0)) {
+      throw refuse(
+        400,
+        "TOPUP_QUANTITY_INVALID",
+        "Requested quantity must be greater than zero — a top-up of zero units raises no headroom"
+      );
+    }
+    const impliedAmount = roundMoney(requestedQuantity * unitRate);
+    // The tolerance is the quantisation error, not a flat rupee. requested_quantity is stored
+    // DECIMAL(18,4) and roundQuantity() matches it, so on a line whose unit_rate is large that
+    // last 0.0001 of a unit is worth far more than a rupee — a flat ±1 would refuse honest
+    // requests on exactly the most expensive lines.
+    const tolerance = Math.max(1, unitRate * 0.0001);
+    if (Math.abs(impliedAmount - requestedAmount) > tolerance) {
+      throw refuse(
+        400,
+        "TOPUP_AMOUNT_QUANTITY_MISMATCH",
+        `Requested amount and quantity disagree: ${requestedQuantity} x ${unitRate} = ${impliedAmount}, `
+          + `but ${requestedAmount} was requested. The approved amount must be the amount applied.`
+      );
+    }
+
+    // The lock is re-checked inside review()'s transaction before anything is applied, but
+    // refusing here too means a closed month is refused by the person who can still do
+    // something about it, rather than after a Branch Head has already spent their approval.
+    if (await isPeriodLocked(String(line.period_code))) {
+      throw refuse(
+        409,
+        "FINANCE_PERIOD_LOCKED",
+        `${line.period_code} is locked for P&L close, so its budget cannot be topped up.`
+      );
+    }
+
     const id = randomUUID();
     await db.execute(
       `INSERT INTO finance_budget_topup_request
@@ -192,6 +248,25 @@ export const budgetTopupService = {
        VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted')`,
       [id, input.budgetLineId, line.budget_id, actorId, requestedAmount, requestedQuantity, input.reason.trim()]
     );
+    // 1089's own comment names budget_topup as an entity_type of finance_approval_event, and
+    // nothing had ever written one: every top-up decision in production was unaudited.
+    await recordFinanceApprovalEvent({
+      entityType: "budget_topup",
+      entityId: id,
+      action: "submit",
+      fromStatus: null,
+      toStatus: "submitted",
+      actorUserId: actorId,
+      actorRole: _actorRole || "unknown",
+      remarks: input.reason.trim(),
+      details: {
+        budgetLineId: input.budgetLineId,
+        periodCode: String(line.period_code),
+        requestedAmount,
+        requestedQuantity,
+        unitRate,
+      },
+    });
     return this.get(id);
   },
 
@@ -270,9 +345,14 @@ export const budgetTopupService = {
     // LIMIT/OFFSET are not used here (no pagination yet, matches an already-fixed footgun in
     // grn.service.ts listGrns — mysql2 3.22.3 rejects them as execute() bind params).
     const [rows] = await db.query<RowDataPacket[]>(
+      // period_code is selected here for the same reason get() selects it: a top-up is an
+      // increase to ONE month's budget, and the request carries no period of its own — it is
+      // only ever the parent header's. Without this column the queue could not name the month
+      // it was asking a reviewer to approve, and BudgetTopupPanel showed head/amount/reason
+      // with no period anywhere on the row.
       `SELECT t.*,
-              l.head, l.sub_head, l.item_name,
-              h.budget_number, h.branch_id, bm.branch_name
+              l.head, l.sub_head, l.item_name, l.unit_rate,
+              h.budget_number, h.branch_id, h.period_code, bm.branch_name
          FROM finance_budget_topup_request t
          JOIN finance_budget_line l ON l.id = t.budget_line_id
          JOIN finance_budget_header h ON h.id = t.budget_id
@@ -348,6 +428,27 @@ export const budgetTopupService = {
             WHERE id = ?`,
           [remarks.trim(), actorId, remarks.trim(), id]
         );
+        // Same connection as the UPDATE, so the event and the transition commit or roll back
+        // together — a history row for an approval that rolled back is worse than none.
+        await recordFinanceApprovalEvent(
+          {
+            entityType: "budget_topup",
+            entityId: id,
+            action: "reject",
+            fromStatus: status,
+            toStatus: "rejected",
+            decision: "reject",
+            actorUserId: actorId,
+            actorRole: effectiveRole,
+            remarks: remarks.trim(),
+            details: {
+              periodCode: String(request.period_code ?? ""),
+              budgetLineId: String(request.budget_line_id),
+              requestedAmount: Number(request.requested_amount),
+            },
+          },
+          connection
+        );
         await connection.commit();
         return this.get(id);
       }
@@ -366,6 +467,25 @@ export const budgetTopupService = {
                   branch_head_reviewed_by = ?, branch_head_reviewed_at = NOW(), branch_head_review_note = ?
             WHERE id = ?`,
           [actorId, remarks?.trim() || null, id]
+        );
+        await recordFinanceApprovalEvent(
+          {
+            entityType: "budget_topup",
+            entityId: id,
+            action: "approve",
+            fromStatus: status,
+            toStatus: "branch_head_approved",
+            decision: "approve",
+            actorUserId: actorId,
+            actorRole: effectiveRole,
+            remarks: remarks?.trim() || null,
+            details: {
+              periodCode: String(request.period_code ?? ""),
+              budgetLineId: String(request.budget_line_id),
+              requestedAmount: Number(request.requested_amount),
+            },
+          },
+          connection
         );
         await connection.commit();
         return this.get(id);
@@ -397,6 +517,29 @@ export const budgetTopupService = {
                   finance_head_reviewed_by = ?, finance_head_reviewed_at = NOW(), finance_head_review_note = ?
             WHERE id = ?`,
           [actorId, remarks?.trim() || null, id]
+        );
+        // The one event that records money actually moving: this stage recomputes the budget
+        // line and re-sums the header. The quantity is recorded alongside the amount because
+        // the quantity is what applyTopupToLine used.
+        await recordFinanceApprovalEvent(
+          {
+            entityType: "budget_topup",
+            entityId: id,
+            action: "approve",
+            fromStatus: status,
+            toStatus: "applied",
+            decision: "approve",
+            actorUserId: actorId,
+            actorRole: effectiveRole,
+            remarks: remarks?.trim() || null,
+            details: {
+              periodCode: String(request.period_code ?? ""),
+              budgetLineId: String(request.budget_line_id),
+              requestedAmount: Number(request.requested_amount),
+              appliedQuantity: Number(request.requested_quantity),
+            },
+          },
+          connection
         );
         await connection.commit();
         return this.get(id);
