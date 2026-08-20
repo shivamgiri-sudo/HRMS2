@@ -100,6 +100,17 @@ export default function NativeBGVReportView() {
     </span>
   );
 
+  // Build a quick lookup from bgvChecks for match scores and provider details
+  const checkDetailMap = new Map<string, any>();
+  (bgvChecks || []).forEach((c: any) => {
+    // Keep the most recent (first due to ORDER BY updated_at DESC) entry per check_type
+    if (!checkDetailMap.has(c.check_type)) checkDetailMap.set(c.check_type, c);
+  });
+
+  // photo_match and name_match are internal system checks — surface them for HR
+  const photoCheck = checkDetailMap.get('photo_match');
+  const nameMatchCheck = checkDetailMap.get('name_match');
+
   const verificationChecks = [
     { name: 'Aadhaar Verification', status: report.aadhaar_status, match: report.aadhaar_name_match, remarks: report.aadhaar_remarks, type: 'aadhaar' },
     { name: 'DigiLocker KYC', status: report.digilocker_status || 'not_run', match: null, remarks: report.digilocker_remarks, type: 'digilocker' },
@@ -110,6 +121,9 @@ export default function NativeBGVReportView() {
     { name: 'Address Verification', status: report.address_status, match: null, remarks: report.address_remarks, type: 'address' },
     { name: 'Criminal / Court Records Check', status: report.criminal_status || report.court_status || 'not_run', match: null, remarks: report.criminal_remarks || report.court_remarks, type: 'court' },
     { name: 'E-Signature Verification', status: report.esignature_status, match: null, remarks: report.esignature_remarks, type: 'esignature' },
+    // Photo match and name reconciliation — internal system checks shown to HR
+    ...(photoCheck ? [{ name: 'Photo Identity Match', status: photoCheck.status, match: null, remarks: photoCheck.result_summary, type: 'photo_match' }] : []),
+    ...(nameMatchCheck ? [{ name: 'Cross-Source Name Match', status: nameMatchCheck.status, match: nameMatchCheck.matched_name ? `${nameMatchCheck.matched_name}${nameMatchCheck.match_score != null ? ` (${nameMatchCheck.match_score}%)` : ''}` : null, remarks: nameMatchCheck.result_summary, type: 'name_match' }] : []),
   ];
 
   return (
@@ -409,7 +423,17 @@ export default function NativeBGVReportView() {
                   ['Account Type', safeText(bank.account_type)],
                   ['Account Number', safeText(bank.account_no_masked)],
                   ['Name on Cheque', safeText(bank.name_on_cheque)],
-                  ['Verification Status', safeText(bank.verification_status)],
+                  // Show BGV check result first (authoritative), then onboarding bank detail status as fallback
+                  ['BGV Verification Status', (() => {
+                    const bankBgvCheck = checkDetailMap.get('bank');
+                    if (bankBgvCheck) return `${bankBgvCheck.status.toUpperCase().replace(/_/g,' ')} — via ${bankBgvCheck.provider_key || 'system'}`;
+                    return safeText(bank.verification_status);
+                  })()],
+                  ['Account Match', (() => {
+                    const bankBgvCheck = checkDetailMap.get('bank');
+                    if (bankBgvCheck?.matched_name) return `${bankBgvCheck.matched_name}${bankBgvCheck.match_score != null ? ` (Score: ${bankBgvCheck.match_score}%)` : ''}`;
+                    return report.bank_account_match || '-';
+                  })()],
                   ['Provider', safeText(bank.provider_name)],
                   ['Verified At', bank.verified_at ? formatISTDate(new Date(bank.verified_at)) : '-'],
                 ].map(([label, value], i) => (
@@ -534,7 +558,7 @@ export default function NativeBGVReportView() {
             </h2>
 
             {verificationChecks.map((check, idx) => {
-              const apiCheck = Array.isArray(bgvChecks) ? bgvChecks.find((c: any) => c.check_type === check.type) : null;
+              const apiCheck = checkDetailMap.get(check.type) ?? null;
               return (
                 <div key={idx} className="mb-6 pb-4 border-b border-slate-200 last:border-0">
                   <div className="flex items-center justify-between mb-3">
@@ -549,8 +573,18 @@ export default function NativeBGVReportView() {
                       </tr>
                       {check.match && (
                         <tr className="border-b border-slate-100">
-                          <td className="py-1 pr-4 font-semibold">Name/Account Match</td>
+                          <td className="py-1 pr-4 font-semibold">Name / Account Match</td>
                           <td className="py-1">{safeText(check.match)}</td>
+                        </tr>
+                      )}
+                      {apiCheck?.match_score != null && apiCheck.match_score > 0 && (
+                        <tr className="border-b border-slate-100">
+                          <td className="py-1 pr-4 font-semibold">Match Score</td>
+                          <td className="py-1">
+                            <span className={`font-bold ${apiCheck.match_score >= 80 ? 'text-emerald-700' : apiCheck.match_score >= 50 ? 'text-amber-700' : 'text-red-700'}`}>
+                              {apiCheck.match_score}%
+                            </span>
+                          </td>
                         </tr>
                       )}
                       {apiCheck?.provider_key && (

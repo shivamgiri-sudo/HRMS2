@@ -33,6 +33,7 @@ import {
   dispatchToVendor,
   updateVendorResult,
   syncBgvChecksToReport,
+  computeAndSaveScore,
   runNameMatchCheck,
   overrideNameMatchReview,
 } from "./bgv-verification.service.js";
@@ -590,6 +591,15 @@ router.get("/report/full", requireAuth, requireRole("admin", "hr"), h(async (req
   if (!candidateId) return res.status(400).json({ success: false, message: "candidateId required" });
   await requireBgvCandidateScope(req, candidateId);
 
+  // Always sync check results → report columns and recompute score before
+  // returning. This ensures pan_status / overall_status / name_match columns
+  // are never stale when the report is opened, even if the fire-and-forget sync
+  // that runs after each check update failed silently.
+  await Promise.all([
+    syncBgvChecksToReport(candidateId).catch(() => {}),
+    computeAndSaveScore(candidateId).catch(() => {}),
+  ]);
+
   // Fetch all data in parallel
   const [
     [reportRows],
@@ -642,11 +652,13 @@ router.get("/report/full", requireAuth, requireRole("admin", "hr"), h(async (req
       [candidateId]
     ),
     db.execute<RowDataPacket[]>(
-      // candidate_bgv_check has no deleted_at column — checks are not soft
-      // deleted. (candidate_onboarding_document does, which is where the
-      // pattern came from.) Filtering on it here 500'd the whole endpoint.
-      `SELECT check_type, status, provider_key, provider_reference_id, verified_at, result_summary
-         FROM candidate_bgv_check WHERE candidate_id = ?`,
+      // matched_name and match_score added so verification cards can show name
+      // match results and scores inline on the report. candidate_bgv_check has
+      // no deleted_at column — filtering on it here previously 500'd the endpoint.
+      `SELECT check_type, status, provider_key, provider_reference_id, verified_at,
+              result_summary, matched_name, match_score
+         FROM candidate_bgv_check WHERE candidate_id = ?
+         ORDER BY updated_at DESC`,
       [candidateId]
     ),
     db.execute<RowDataPacket[]>(
