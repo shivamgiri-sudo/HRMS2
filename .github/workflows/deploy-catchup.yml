@@ -1,0 +1,133 @@
+name: Deploy Catch-Up
+
+# Ships whatever is on main but never reached production.
+#
+# WHY THIS EXISTS
+#   "Deploy to Production" is push-triggered, so a commit gets exactly one deploy attempt. If that
+#   attempt does not succeed, nothing retries it — main simply stays ahead of the box until somebody
+#   happens to push again. Measured over 60 consecutive runs on 2026-08-20: 18 success, 13 failure,
+#   28 cancelled. Four commits were sitting undeployed at the time this was written, stranded since
+#   the last success ~40 minutes earlier, and the user had independently noticed commits from the
+#   preceding days missing from the server.
+#
+#   The 28 cancellations are NOT the problem and this does not try to prevent them. deploy.yml sets
+#   `cancel-in-progress: false`, so a running deploy is never killed; what gets cancelled is a run
+#   still PENDING in the concurrency group when a newer push arrives, because GitHub keeps at most
+#   one pending run per group. That is correct behaviour — the newer run contains the older commits.
+#   The failure mode is narrower: the newest attempt ends in failure or cancellation, pushes go
+#   quiet, and there is no third thing that notices.
+#
+# WHAT IT DOES
+#   Every 30 minutes, compares main's tip against the commit of the last SUCCESSFUL deploy. If they
+#   differ, it dispatches deploy.yml. That is all — the real deploy logic, its CI gate and its
+#   atomic dist swap are untouched and remain the single implementation.
+#
+# WHAT IT DELIBERATELY DOES NOT DO
+#   It will not retry a commit whose own deploy FAILED. A build that failed on its own merits will
+#   fail again, and re-running it every half hour would occupy the single self-hosted runner
+#   indefinitely and bury the real error under identical noise. That case needs a human, so it is
+#   reported loudly in the job summary and left alone. Only commits that were never attempted, or
+#   whose attempt was cancelled, are dispatched.
+
+on:
+  schedule:
+    # Every 30 minutes. Cheap: the default path is two API calls and no checkout.
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+# A separate group from deploy-production on purpose. Sharing it would make this checker queue
+# behind the very deploy it is meant to observe, and then cancel itself as pending runs supersede.
+concurrency:
+  group: deploy-catchup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write # required to dispatch deploy.yml
+
+jobs:
+  catch-up:
+    name: Ship anything main is holding
+    # Self-hosted for the same reason deploy.yml's own gate is: hosted runners were never assigned
+    # on this repo and every hosted job died in ~3 seconds with no steps. See the comment block at
+    # the top of deploy.yml's ci-gate.
+    runs-on: self-hosted
+    timeout-minutes: 10
+
+    steps:
+      - name: Compare main against the last successful deploy
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const workflow_id = "deploy.yml";
+
+            const mainRef = await github.rest.repos.getBranch({ owner, repo, branch: "main" });
+            const head = mainRef.data.commit.sha;
+            const shortHead = head.slice(0, 8);
+
+            // 100 is comfortably more than a busy day of pushes here, so the last success is in
+            // range even after a long run of failures.
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id, per_page: 100,
+            });
+            const all = runs.data.workflow_runs;
+
+            const lastSuccess = all.find((r) => r.conclusion === "success");
+            const lastSuccessSha = lastSuccess ? lastSuccess.head_sha : null;
+
+            const summary = [];
+            const say = (line) => { core.info(line); summary.push(line); };
+
+            say(`main tip:              ${shortHead}`);
+            say(`last successful deploy: ${lastSuccessSha ? lastSuccessSha.slice(0, 8) : "none found"}`);
+
+            if (lastSuccessSha === head) {
+              say("");
+              say("Production is current. Nothing to do.");
+              await core.summary.addRaw(summary.join("\n")).write();
+              return;
+            }
+
+            // Never pile onto a deploy that is already working. It is either deploying this very
+            // commit or one that supersedes it.
+            const active = all.filter(
+              (r) => r.status === "in_progress" || r.status === "queued" || r.status === "waiting"
+            );
+            if (active.length) {
+              say("");
+              say(`A deploy is already ${active[0].status} (run ${active[0].id}, ${active[0].head_sha.slice(0, 8)}). Leaving it alone.`);
+              await core.summary.addRaw(summary.join("\n")).write();
+              return;
+            }
+
+            // A commit whose own deploy failed will fail again. Report, do not retry — see the
+            // header note.
+            const attemptsOnHead = all.filter((r) => r.head_sha === head);
+            const failedOnHead = attemptsOnHead.find((r) => r.conclusion === "failure");
+            if (failedOnHead) {
+              say("");
+              say(`Deploy of ${shortHead} FAILED (run ${failedOnHead.id}) and is not retried automatically.`);
+              say("A build that failed on its own merits will fail again; this needs a human.");
+              say(failedOnHead.html_url);
+              await core.summary.addRaw(summary.join("\n")).write();
+              core.warning(`main (${shortHead}) is undeployed because its deploy failed — see run ${failedOnHead.id}`);
+              return;
+            }
+
+            const behind = await github.rest.repos.compareCommits({
+              owner, repo,
+              base: lastSuccessSha ?? head,
+              head,
+            }).then((r) => r.data.ahead_by).catch(() => null);
+
+            say("");
+            say(`main is ahead of production${behind != null ? ` by ${behind} commit(s)` : ""}. Dispatching deploy.yml.`);
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner, repo, workflow_id, ref: "main",
+            });
+
+            say("Dispatched.");
+            await core.summary.addRaw(summary.join("\n")).write();
