@@ -175,9 +175,30 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     expect(service).toContain("that budget line belongs to a different cost centre");
     expect(service).toContain("exceeds the line's available budget of");
 
-    // The reservation that Branch Head approval could not make is made now.
+    /*
+     * Quantity is re-derived against the line being linked, and reserved with that figure.
+     *
+     * An unbudgeted split is costed against a synthetic line with unit "amount" and unit_rate 1,
+     * so its stored quantity IS the rupee amount. Reserving 52,012 of those against a line
+     * approved for 12 months either fails on availability with a nonsensical message or, worse,
+     * silently swallows a line's entire quantity budget on one invoice. Derived the same way
+     * saveComponentAllocations() derives it: base / unit_rate.
+     */
+    expect(service).toContain(
+      "const linkedQuantity = roundQuantity(Number(allocation.amount_without_tax) / lineUnitRate);"
+    );
+    expect(service).toContain("remain approved on that line");
+    expect(service).toContain("has no approved unit rate to derive a consumed quantity from");
+    expect(service).toContain("quantity = ?, unit = ?, unit_rate = ?");
+
+    // The reservation that Branch Head approval could not make is made now — with the re-derived
+    // quantity, never the synthetic one.
     expect(service).toContain('if (String(allocation.lifecycle_status) === "reserved") {');
     expect(service).toContain("await budgetConsumptionService.reserve(");
+    const linkBody = service.slice(service.indexOf("async linkUnbudgetedBudgetLines("));
+    const reserveCall = linkBody.slice(linkBody.indexOf("await budgetConsumptionService.reserve("), linkBody.indexOf("linked.push({"));
+    expect(reserveCall).toContain("linkedQuantity,");
+    expect(reserveCall).not.toContain("Number(allocation.quantity)");
 
     // The header only reads as budgeted once nothing is left unlinked.
     expect(service).toContain("if (!stillUnlinked.length && remaining.length) {");
