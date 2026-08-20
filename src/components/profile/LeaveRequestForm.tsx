@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { CalendarIcon, Send, Loader2, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { format, differenceInDays, subDays, startOfDay, eachDayOfInterval, isWeekend, parseISO, isSameDay } from "date-fns";
+import { format, differenceInDays, subDays, startOfDay, eachDayOfInterval, parseISO, isSameDay } from "date-fns";
 import { normalizeDate } from "@/lib/utils";
 import { useLeaveTypes, useSubmitLeaveRequest } from "@/hooks/useLeaveRequests";
 import { useLeaveEligibility } from "@/hooks/useLeaveEligibility";
@@ -113,11 +113,16 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
   }, [ledgerBalances]);
 
 
+  // Week-off is roster-driven, not fixed to Saturday/Sunday (see backend
+  // classifyLeaveDays / getEmployeeLeaveScope, which is authoritative on
+  // submit) — so this client-side estimate only excludes company holidays,
+  // not weekends. The server has the final say on which of these days are
+  // actually chargeable against the employee's real roster.
   const daysCount = useMemo(() => {
     if (!startDate || !endDate) return 0;
     const holidayDates = holidays.map((h) => parseISO(normalizeDate(h.event_date)));
     return eachDayOfInterval({ start: startDate, end: endDate })
-      .filter((d) => !isWeekend(d) && !holidayDates.some((hd) => isSameDay(d, hd))).length;
+      .filter((d) => !holidayDates.some((hd) => isSameDay(d, hd))).length;
   }, [startDate, endDate, holidays]);
 
   const isRetroactiveRequest = useMemo(() => {
@@ -192,15 +197,19 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
                 }
                 const bal = leaveBalances[type.id];
                 if (!bal) return null;
+                const exhausted = bal.remaining <= 0;
                 return (
                   <Badge
                     key={type.id}
                     variant={isSelected ? "default" : "secondary"}
                     className={cn(
-                      "cursor-pointer text-xs py-1 px-2.5",
-                      bal.remaining <= 0 && "opacity-60"
+                      "text-xs py-1 px-2.5",
+                      exhausted ? "opacity-60 cursor-not-allowed" : "cursor-pointer"
                     )}
-                    onClick={() => setLeaveTypeId(type.id)}
+                    onClick={() => {
+                      if (exhausted) return;
+                      setLeaveTypeId(type.id);
+                    }}
                   >
                     {type.name}: {bal.remaining}/{bal.total}
                   </Badge>
@@ -341,6 +350,15 @@ export function LeaveRequestForm({ employeeId }: LeaveRequestFormProps) {
             <p className="text-sm text-muted-foreground">
               Duration: <span className="font-medium text-foreground">{daysCount} day{daysCount !== 1 ? "s" : ""}</span>
             </p>
+          )}
+
+          {startDate && endDate && daysCount === 0 && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                Selected range has no working days — every date falls on a weekend or a company holiday. Pick a different range.
+              </AlertDescription>
+            </Alert>
           )}
 
           {isRetroactiveRequest && (
