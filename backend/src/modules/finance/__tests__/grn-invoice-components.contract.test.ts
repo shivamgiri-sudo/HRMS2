@@ -158,6 +158,25 @@ describe("GRN invoice-GST-components (unified vendor-GRN flow)", () => {
     expect(service).toContain('code: "INVOICE_COMPONENT_RECONCILIATION"');
   });
 
+  it("INVOICE_COMPONENT_RECONCILIATION tolerates up to the same round-off the save path already allows", () => {
+    const service = read("src/modules/finance/grn-smart.service.ts");
+    // The submit-time re-check must not be stricter than saveComponentAllocations, or it blocks
+    // GRNs the save path deliberately accepted — which is exactly what a 0.01 tolerance did to a
+    // 6-way cost-centre split whose per-cell paise rounding left the grid 0.02 off the components.
+    expect(service).toContain("const GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE = 1.00;");
+    expect(service).toContain(
+      "blocking: Math.abs(componentDiff) > GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE,"
+    );
+    // The literal 0.01 must be gone from this check specifically.
+    const block = service.slice(
+      service.indexOf('code: "INVOICE_COMPONENT_RECONCILIATION"'),
+      service.indexOf('const exactDuplicates')
+    );
+    expect(block).not.toContain("0.01");
+    // ...but the sibling allocation check keeps its own tighter tolerance, untouched.
+    expect(service).toContain("blocking: !allocations.length || Math.abs(totalGross - parentGross) > 0.01,");
+  });
+
   it("the new route is additive — old PUT /:id/allocations route and saveAllocations remain untouched", () => {
     const routes = read("src/modules/finance/grn-smart.routes.ts");
     const service = read("src/modules/finance/grn-smart.service.ts");
