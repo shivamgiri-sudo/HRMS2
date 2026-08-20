@@ -4,7 +4,7 @@
  * The legacy sheet was 34 varchar(100) columns with its own header row stored as data, no period
  * scoping, no validation, and a single `downloadstatus` flag. Everything it fed was reconciled by
  * hand before filing. This module materialises the same hand-off as typed, validated, reproducible
- * batches (see 1514_gst_export_staging.sql for the schema rationale).
+ * batches (see 1520_gst_export_staging.sql for the schema rationale).
  *
  * The governing idea: a row that CANNOT legally be filed is still written, flagged `exception`,
  * with a machine-readable reason. Finance gets a worklist instead of a silently short return, and
@@ -205,7 +205,12 @@ export const gstExportService = {
    */
   async generateBatch(
     input: { exportType: GstExportType; companyGstin: string; periodMonth: string; notes?: string },
-    actorUserId: string,
+    /**
+     * NULL for scheduled runs. generated_by is nullable precisely so an automated batch is
+     * distinguishable from one a person asked for — a human always has an auth_user id, and
+     * inventing a sentinel account would blur that and violate the FK besides.
+     */
+    actorUserId: string | null,
     actorRole: string
   ) {
     const exportType = input.exportType;
@@ -296,7 +301,9 @@ export const gstExportService = {
 
       await connection.commit();
 
-      await logSensitiveAction({
+      // Scheduled runs have no actor to attribute the action to; the batch row's own
+      // generated_by IS NULL + generated_at is the record for those.
+      if (actorUserId) await logSensitiveAction({
         actor_user_id: actorUserId,
         actor_role: actorRole,
         action_type: "GST_EXPORT_GENERATED",
