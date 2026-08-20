@@ -16,6 +16,8 @@
 import {
   type FormEvent,
   type ReactNode,
+  createContext,
+  useContext,
   useMemo,
   useState,
   useEffect,
@@ -51,6 +53,25 @@ import {
 
 type Props = { children: ReactNode; subheader?: ReactNode };
 
+/**
+ * True once a DashboardLayout is already rendering above us.
+ *
+ * Almost every page in this app wraps itself in <DashboardLayout>, which is correct when the page
+ * owns the whole route. It stops being correct the moment one page renders another as a tab: the
+ * shell would then mount twice — two sidebars, two headers, and a second round of useNavBadges /
+ * useVersionCheck / useEmployeeProfile requests on every tab switch.
+ *
+ * Rather than strip the wrapper out of each page (which would mean editing working pages purely to
+ * suit a new container, and would break them if they were ever routed standalone again), a nested
+ * DashboardLayout detects the outer one and renders its children straight through. Top-level usage
+ * is completely unchanged — the context defaults to false, so a page that owns its route still gets
+ * the full shell exactly as before.
+ *
+ * This is what lets the consolidated Roster Rules page host the seven existing config pages as tabs
+ * without modifying any of them.
+ */
+const InsideDashboardLayout = createContext(false);
+
 const companyLogo = "/mcn-logo.png?v=999";
 
 
@@ -63,7 +84,20 @@ const BOTTOM_NAV = [
   { label: "Me",      href: "/profile",    icon: <User className="h-5 w-5" /> },
 ];
 
-export function DashboardLayout({ children, subheader }: Props) {
+/**
+ * Renders the full app shell, or nothing but its children when another DashboardLayout is already
+ * above it. The check lives in this thin wrapper rather than inside the shell because the shell
+ * calls a long list of hooks — an early return placed after them would change hook order between
+ * renders and violate the rules of hooks. useContext here is called unconditionally, so the order
+ * is stable either way.
+ */
+export function DashboardLayout(props: Props) {
+  const alreadyInsideLayout = useContext(InsideDashboardLayout);
+  if (alreadyInsideLayout) return <>{props.children}</>;
+  return <DashboardLayoutShell {...props} />;
+}
+
+function DashboardLayoutShell({ children, subheader }: Props) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [logoError, setLogoError] = useState(false);
@@ -227,6 +261,7 @@ export function DashboardLayout({ children, subheader }: Props) {
   ), [badgedGroups, logoError, companyLogo, myProfile, userInitials, displayVersion]);
 
   return (
+    <InsideDashboardLayout.Provider value={true}>
     <div className="min-h-dvh" style={{ background: "var(--surface-page)" }}>
       <PWAInstallBanner />
 
@@ -465,5 +500,6 @@ export function DashboardLayout({ children, subheader }: Props) {
         })}
       </nav>
     </div>
+    </InsideDashboardLayout.Provider>
   );
 }

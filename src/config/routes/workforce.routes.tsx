@@ -50,6 +50,7 @@ const NativeBranchWFMSpocConfig    = lazy(() => import("@/pages/NativeBranchWFMS
 const RosterWorkspace              = lazy(() => import("@/pages/wfm/RosterWorkspace"));
 const RosterPipelinePage           = lazy(() => import("@/pages/wfm/RosterPipelinePage"));
 const RosterImportPage             = lazy(() => import("@/pages/wfm/RosterImportPage"));
+const RosterRulesPage              = lazy(() => import("@/pages/wfm/RosterRulesPage"));
 const RosterBuilderPage            = lazy(() => import("@/pages/wfm/RosterBuilderPage"));
 
 export const workforceRouteElements = (
@@ -126,6 +127,19 @@ export const workforceRouteElements = (
         gains a capability it did not already have through the roster nav.
       */}
       <Route path="/wfm/roster-requests"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeRosterManagerQueue /></Gate></ProtectedRoute>} />
+      {/*
+        Roster Rules — the seven roster configuration screens as one tabbed page.
+
+        Composition, not replacement: each tab renders the existing page component unchanged, and
+        every original route below stays registered so deep links and bookmarks keep working. That
+        is deliberate — nothing is deleted until the consolidated page is proven in use.
+
+        Gated on WFM_ROSTER, the code the majority of the absorbed screens already sit behind, so no
+        role gains access to a screen it could not already open. The four that are role-gated only
+        (rest policy, week-off default, planning rules, slot requirements) keep their own route
+        guards untouched.
+      */}
+      <Route path="/wfm/roster-rules"      element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterRulesPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/extensions"    element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
       <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
       <Route path="/wfm/planning-rules"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />

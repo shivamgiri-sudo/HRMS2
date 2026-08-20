@@ -195,6 +195,8 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/wfm/planning-rules": "WFM_PLANNING_RULES",
   "/wfm/roster": "WFM_ROSTER",
   "/wfm/roster-builder": "WFM_ROSTER_BUILDER",
+  "/wfm/roster-rules": "WFM_ROSTER",
+  "/wfm/roster-requests": "WFM_ROSTER",
   "/roster-preference": "WFM_ROSTER",
   "/wfm-manager-approvals": "WFM_ROSTER",
   "/wfm/slot-requirements": "WFM_SLOT_REQUIREMENTS",

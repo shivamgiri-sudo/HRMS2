@@ -202,6 +202,7 @@ export const navGroups: NavGroup[] = [
           { label: "Roster Import",          href: "/wfm/roster-import",         icon: ic(Upload),        pageCode: "WFM_ROSTER",      description: "Upload Excel roster — auto-detect headers, 12h/24h, night shifts" },
           { label: "Roster Builder",         href: "/wfm/roster-builder",        icon: ic(CalendarDays),  pageCode: "WFM_ROSTER_BUILDER", description: "Build and publish a process's weekly roster — grid or bulk upload" },
           { label: "Roster Requests",        href: "/wfm/roster-requests",       icon: ic(ClipboardList), pageCode: "WFM_ROSTER",      description: "Review roster disputes and the week-offs employees have rejected" },
+          { label: "Roster Rules",           href: "/wfm/roster-rules",          icon: ic(Settings2),     pageCode: "WFM_ROSTER",      description: "Capacity, week-offs, minimum rest, demand, planning rules and approvers" },
           // Hidden — volume-based / superseded by import engine. Re-enable per-process when planning_mode=VOLUME_BASED:
           // { label: "Roster Pipeline",        href: "/wfm/roster-pipeline",       icon: ic(Workflow),      pageCode: "WFM_ROSTER",      description: "End-to-end roster planning wizard" },
           // { label: "Auto Roster",            href: "/wfm/auto-roster",           icon: ic(Calendar),      pageCode: "WFM_AUTO_ROSTER", description: "Auto roster" },
