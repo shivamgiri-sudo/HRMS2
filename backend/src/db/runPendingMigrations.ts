@@ -743,6 +743,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1502_apr_source_column.sql", // Adds source ENUM('sync','manual')/uploaded_by/upload_batch_id to apr, plus idx_apr_source — lets a manual upload be protected from being silently overwritten by the sync workers. Already correctly information_schema-guarded. Applied out of band; verified live 2026-08-20: all 3 columns + index exist.
   "1507_roster_daily_assignment_updated_at.sql", // Adds roster_daily_assignment.updated_at (DATETIME, DEFAULT/ON UPDATE CURRENT_TIMESTAMP, matching created_at's own type). roster.governance.service.ts's shift-reassignment path (Task 11 amendment workflow, commit 1ab6cbae) writes `updated_at = NOW()` against a column that has never existed — confirmed live before this migration: 0 such columns, every reassignment call throwing ER_BAD_FIELD_ERROR. Applied live 2026-08-20 with explicit approval; verified: column exists with the correct type/default.
   "1508_noida_cost_centre_status_sync.sql", // Syncs Noida branch cost centre active/inactive status against a user-provided master list of 15 active cost centres (2026-08-20).
+  "1509_itc_blocked_sub_heads.sql", // Sets default_recoverable_tax_pct=0 on ITC-blocked sub-heads (cafeteria, R&R, promotional gifts per GST Act S.17(5)) so GRN allocations against those lines use gross amount as P&L cost when vendor bills with GST.
   ];
 
 export type MigrationHealth = {
