@@ -15,9 +15,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { VendorSheet } from '@/components/finance/vendor/VendorSheet';
 import {
-  FileText, Loader2, RefreshCw,
+  FileText, Info, Loader2, RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -53,16 +55,23 @@ const CONTRACT_STATUS_COLOR: Record<string, string> = {
 
 // ── Main Component ─────────────────────────────────────────────────────────────
 
+interface VendorMappingSummary {
+  id: string; vendor_code: string; vendor_name: string;
+  vendor_type: VendorType; is_active: number; mapping_count: number;
+}
+
 export default function NativeVendorManagement() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<'vendors' | 'contracts'>('vendors');
+  const [tab, setTab] = useState<'vendors' | 'contracts' | 'mapping'>('vendors');
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('');
+  const [mappingUnmappedOnly, setMappingUnmappedOnly] = useState(false);
 
   // Sheet state
   const [sheetVendor, setSheetVendor] = useState<Vendor | null>(null);
   const [sheetMode, setSheetMode] = useState<'create' | 'edit' | 'detail'>('detail');
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetInitialTab, setSheetInitialTab] = useState<'identity' | 'mapping'>('identity');
 
   // ── Data
   // Vendor search runs on the server. vendorService.list already supports `q` and `limit`, and
@@ -98,6 +107,37 @@ export default function NativeVendorManagement() {
       return ((r as any)?.data ?? r ?? []) as Contract[];
     },
   });
+
+  const { data: enforcementData, refetch: refEnforcement } = useQuery({
+    queryKey: ['vendor-mapping-enforced'],
+    queryFn: async () => {
+      const r = await hrmsApi.get<any>('/api/finance/config/vendor-expense-mapping-enforced');
+      return (r as any)?.data?.enforced ?? (r as any)?.enforced ?? false;
+    },
+  });
+  const enforced: boolean = enforcementData ?? false;
+
+  const enforcementMutation = useMutation({
+    mutationFn: (on: boolean) => hrmsApi.patch('/api/finance/config/vendor-expense-mapping-enforced', { enforced: on }),
+    onSuccess: () => {
+      void refEnforcement();
+      qc.invalidateQueries({ queryKey: ['vendor-mapping-enforced'] });
+    },
+    onError: (e: any) => toast.error(e?.message ?? 'Could not update enforcement setting'),
+  });
+
+  const { data: mappingSummaryData, isLoading: loadingMapping, refetch: refMapping } = useQuery({
+    queryKey: ['vendor-mapping-summary', mappingUnmappedOnly],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (mappingUnmappedOnly) params.set('unmappedOnly', '1');
+      const r = await hrmsApi.get<any>(`/api/finance/vendors/mapping-summary?${params}`);
+      return ((r as any)?.data?.data ?? (r as any)?.data ?? []) as VendorMappingSummary[];
+    },
+    enabled: tab === 'mapping',
+  });
+  const mappingSummary = mappingSummaryData ?? [];
+  const unmappedCount = mappingSummary.filter(v => v.mapping_count === 0).length;
 
   // Already filtered by the server; re-filtering here would drop GSTIN matches the API found.
   const filteredVendors = vendorsData ?? [];
@@ -149,18 +189,19 @@ export default function NativeVendorManagement() {
           <Button
             size="sm"
             className="ml-auto shrink-0"
-            onClick={() => { setSheetVendor(null); setSheetMode('create'); setSheetOpen(true); }}
+            onClick={() => { setSheetVendor(null); setSheetMode('create'); setSheetInitialTab('identity'); setSheetOpen(true); }}
           >
             + Add Vendor
           </Button>
         </div>
 
         {/* ── Tabs ── */}
-        <Tabs value={tab} onValueChange={v => setTab(v as 'vendors' | 'contracts')} className="flex flex-1 flex-col overflow-hidden">
+        <Tabs value={tab} onValueChange={v => setTab(v as 'vendors' | 'contracts' | 'mapping')} className="flex flex-1 flex-col overflow-hidden">
           <div className="flex items-center gap-2 border-b px-4 py-2 shrink-0 flex-wrap">
             <TabsList>
               <TabsTrigger value="vendors">Vendors</TabsTrigger>
               <TabsTrigger value="contracts">Contracts</TabsTrigger>
+              <TabsTrigger value="mapping">Expense Mapping</TabsTrigger>
             </TabsList>
             <Input
               className="h-8 w-52"
@@ -189,6 +230,36 @@ export default function NativeVendorManagement() {
 
           {/* ── Vendors tab ── */}
           <TabsContent value="vendors" className="flex-1 overflow-auto m-0">
+
+            {/* Enforcement banner — visible to all finance roles; server gates write access */}
+            <div className="flex items-center gap-3 border-b bg-slate-50 px-4 py-2">
+              <Info className="h-4 w-4 shrink-0 text-slate-400" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-slate-600">
+                  <span className="font-semibold">Vendor expense mapping enforcement</span>
+                  {' '}— when ON, a GRN raiser can only book against the heads mapped to their selected
+                  vendor (intersected with approved branch budget). When OFF, all budgeted heads remain
+                  selectable regardless of mapping.
+                  {unmappedCount > 0 && (
+                    <span className="ml-1 text-amber-600 font-medium">
+                      {unmappedCount} vendor{unmappedCount !== 1 ? 's' : ''} currently unmapped (unrestricted until mapped).
+                    </span>
+                  )}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Label htmlFor="enforcement-toggle" className="text-xs font-medium text-slate-700 cursor-pointer">
+                  {enforced ? 'Enforced' : 'Advisory'}
+                </Label>
+                <Switch
+                  id="enforcement-toggle"
+                  checked={enforced}
+                  disabled={enforcementMutation.isPending}
+                  onCheckedChange={(on) => enforcementMutation.mutate(on)}
+                />
+              </div>
+            </div>
+
             {loadingV ? (
               <div className="flex items-center justify-center py-16">
                 <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
@@ -218,7 +289,7 @@ export default function NativeVendorManagement() {
                       <tr
                         key={v.id}
                         className="h-11 cursor-pointer border-b hover:bg-slate-50 transition-colors"
-                        onClick={() => { setSheetVendor(v); setSheetMode('detail'); setSheetOpen(true); }}
+                        onClick={() => { setSheetVendor(v); setSheetMode('detail'); setSheetInitialTab('identity'); setSheetOpen(true); }}
                       >
                         <td className="px-4 py-2 font-mono text-xs text-slate-500">{v.vendor_code}</td>
                         <td className="px-4 py-2">
@@ -246,7 +317,7 @@ export default function NativeVendorManagement() {
                             size="sm"
                             variant="ghost"
                             className="h-7 px-2 text-xs"
-                            onClick={() => { setSheetVendor(v); setSheetMode('edit'); setSheetOpen(true); }}
+                            onClick={() => { setSheetVendor(v); setSheetMode('edit'); setSheetInitialTab('identity'); setSheetOpen(true); }}
                           >
                             Edit
                           </Button>
@@ -308,6 +379,91 @@ export default function NativeVendorManagement() {
               </div>
             )}
           </TabsContent>
+
+          {/* ── Expense Mapping tab ── */}
+          <TabsContent value="mapping" className="flex-1 overflow-auto m-0">
+            <div className="flex items-center gap-3 border-b px-4 py-2">
+              <p className="text-xs text-slate-500 flex-1">
+                Click a vendor to configure its allowed expense heads. Vendors with no mapping are
+                unrestricted (all budgeted heads selectable) until enforcement is turned on.
+              </p>
+              <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="rounded"
+                  checked={mappingUnmappedOnly}
+                  onChange={e => setMappingUnmappedOnly(e.target.checked)}
+                />
+                Unmapped only
+              </label>
+              <Button size="sm" variant="ghost" onClick={() => { void refMapping(); }}>
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {loadingMapping ? (
+              <div className="flex items-center justify-center py-16">
+                <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+              </div>
+            ) : mappingSummary.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20">
+                <FileText className="h-12 w-12 mb-3 text-slate-200" />
+                <p className="font-semibold text-slate-700">No vendors found</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-white z-10 border-b">
+                    <tr>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 w-28">Code</th>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Vendor name</th>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 w-36">Type</th>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 w-36">Mapping</th>
+                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 w-20">Active</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {mappingSummary.map((v) => (
+                      <tr
+                        key={v.id}
+                        className="h-11 cursor-pointer border-b hover:bg-slate-50 transition-colors"
+                        onClick={() => {
+                          setSheetVendor(v as any);
+                          setSheetMode('detail');
+                          setSheetInitialTab('mapping');
+                          setSheetOpen(true);
+                        }}
+                      >
+                        <td className="px-4 py-2 font-mono text-xs text-slate-500">{v.vendor_code}</td>
+                        <td className="px-4 py-2 font-semibold text-slate-900">{v.vendor_name}</td>
+                        <td className="px-4 py-2">
+                          <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
+                            {VENDOR_TYPE_LABELS[v.vendor_type] ?? v.vendor_type}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2">
+                          {v.mapping_count === 0 ? (
+                            <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-2.5 py-0.5 text-xs font-semibold text-amber-700">
+                              Unmapped
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+                              {v.mapping_count} mapped
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2">
+                          <Badge variant={v.is_active ? 'default' : 'secondary'}>
+                            {v.is_active ? 'Active' : 'Inactive'}
+                          </Badge>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </TabsContent>
         </Tabs>
       </div>
 
@@ -317,7 +473,8 @@ export default function NativeVendorManagement() {
         mode={sheetMode}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
-        onSaved={() => { void refV(); }}
+        onSaved={() => { void refV(); void refMapping(); }}
+        initialTab={sheetInitialTab}
       />
     </DashboardLayout>
   );
