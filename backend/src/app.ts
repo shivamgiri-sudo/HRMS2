@@ -221,6 +221,7 @@ import bgvVerificationRouter from "./modules/ats/bgv-verification.routes.js";
 import { candidatePortalRouter } from "./modules/ats/candidate-portal.routes.js";
 import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
+import { gstExportRouter } from "./modules/gst/gst-export.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { imprestRouter } from "./modules/finance/imprest.routes.js";
 import { salaryVoucherRouter } from "./modules/finance/salary-voucher.routes.js";
@@ -510,6 +511,10 @@ app.use("/api/ijp", ijpRouter);
 app.use("/api/erp", erpRouter);
 app.use("/api/client-billing", clientBillingRouter);
 app.use("/api/finance", vendorPaymentRouter);
+// Its own /api/gst prefix, not bare /api/finance: every path here is period-and-registration
+// scoped, and mounting it alongside grnRouter's "/grns/:id"-shaped routes would expose it to the
+// same literal-segment shadowing that swallowed vendor-payments/aging.
+app.use("/api/gst", gstExportRouter);
 app.use("/api/finance", grnRouter);
 // Mounted at its own /imprest prefix rather than bare /api/finance, so no imprest path can
 // ever be shadowed by grnRouter's "/grns/:id"-shaped routes above it.
