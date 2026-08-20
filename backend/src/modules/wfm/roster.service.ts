@@ -27,6 +27,16 @@ export interface AssignInput {
    *  caller omits it and behavior is unchanged — cycle_id is simply never
    *  included in the INSERT/UPDATE column list when absent. */
   cycleId?: string | null;
+  /** Additive (2026-08-20): FK wfm_shift_template.id, written into the
+   *  wfm_roster_assignment.shift_template_id column — deliberately separate
+   *  from `shiftId` above, which writes the legacy shift_id column (FK
+   *  wfm_shift_master.id). Confirmed against the live DB (2026-08-20):
+   *  wfm_shift_template holds 23 UUID-keyed rows, wfm_shift_master holds 3
+   *  string-keyed rows ("shift-eve-001" etc.), zero ID overlap between them —
+   *  so a shiftTemplateId can never be safely passed through AssignInput.shiftId.
+   *  Only the roster-builder write path sets this today; every other existing
+   *  caller omits it and behavior is unchanged, same pattern as cycleId. */
+  shiftTemplateId?: string | null;
   shiftStartTime?: string | null;
   shiftEndTime?: string | null;
   branchName?: string | null;
@@ -300,6 +310,12 @@ export const rosterService = {
         placeholders.push("?");
         params.push(input.cycleId);
         updateClauses.push("cycle_id = VALUES(cycle_id)");
+      }
+      if (input.shiftTemplateId && raCols.has("shift_template_id")) {
+        insertCols.push("shift_template_id");
+        placeholders.push("?");
+        params.push(input.shiftTemplateId);
+        updateClauses.push("shift_template_id = VALUES(shift_template_id)");
       }
 
       await conn.execute(
