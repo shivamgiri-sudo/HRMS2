@@ -192,11 +192,39 @@ async function resolveNoticeShortfall(
   };
 }
 
+/**
+ * Leave encashment is a policy the organisation has explicitly decided against, not a rate
+ * that hasn't been configured yet — those are different states and must not collapse into
+ * one. Off unless a real statutory_config row turns it on (config_value='1', is_active=1);
+ * missing/inactive/anything-else-than-'1' is off. No migration seeds this key at all: its
+ * absence already means off, which is the current, deliberate, live policy.
+ */
+async function leaveEncashmentIsEnabled(): Promise<boolean> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT config_value FROM statutory_config
+        WHERE config_key = 'leave_encashment_enabled' AND is_active = 1
+        LIMIT 1`
+    );
+    const row = (rows as Array<{ config_value: string }>)[0];
+    return row ? Number(row.config_value) === 1 : false;
+  } catch {
+    // Same non-fatal posture as every other lookup in this file — an unreadable config
+    // table must not crash the whole preview. Off is also the safe failure direction here.
+    return false;
+  }
+}
+
 async function resolveLeaveEncashment(
   employeeId: string,
   year: number,
   grossMonthly: number | null
 ): Promise<FfComputePreview["leave_encashment"]> {
+  if (!(await leaveEncashmentIsEnabled())) {
+    const na = notApplicable(0, "Leave encashment is not offered — organisational policy, not a missing rate. Enable via the leave_encashment_enabled statutory_config key if this changes.");
+    return { el_balance_days: null, per_day_rate: na, amount: na };
+  }
+
   const { leaveService } = await import("../leave/leave.service.js");
   const balances = await leaveService.getBalance(employeeId, year);
   const el = (balances as Array<{ leave_code?: string; available_days?: number }>).find(

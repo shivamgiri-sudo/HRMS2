@@ -41,6 +41,7 @@ function mockDb(overrides: {
   exitRequest?: Record<string, unknown> | null;
   salary?: { ctc_annual: number } | null;
   notice?: Record<string, unknown> | null;
+  encashmentEnabled?: boolean;
   encashmentDivisor?: string | null;
   advancesOutstanding?: number;
   loansOutstanding?: number;
@@ -59,6 +60,9 @@ function mockDb(overrides: {
     }
     if (sql.includes("FROM employee_salary_assignment esa")) {
       return [overrides.salary === null ? [] : [overrides.salary ?? { ctc_annual: 600000 }]];
+    }
+    if (sql.includes("leave_encashment_enabled")) {
+      return [overrides.encashmentEnabled ? [{ config_value: "1" }] : []];
     }
     if (sql.includes("leave_encashment_day_divisor")) {
       return [overrides.encashmentDivisor === null || overrides.encashmentDivisor === undefined ? [] : [{ config_value: overrides.encashmentDivisor }]];
@@ -145,23 +149,34 @@ describe("computeFfPreview — notice pay", () => {
 });
 
 describe("computeFfPreview — leave encashment", () => {
-  it("computes an amount when the EL balance and rate are both available", async () => {
+  it("is off (not_applicable) by default — organisational policy, even with EL balance and rate both available", async () => {
     mockDb({ notice: DEFAULT_NOTICE_ROW, salary: { ctc_annual: 312000 }, encashmentDivisor: "26" });
+    getBalance.mockResolvedValue([{ leave_code: "EL", available_days: 10 }]);
+    const preview = await computeFfPreview(EXIT_REQUEST_ID);
+    expect(preview.leave_encashment.amount.status).toBe("not_applicable");
+    expect(preview.leave_encashment.amount.note).toMatch(/not offered|policy/i);
+    // Off by default means the balance/rate lookups never even had to run — getBalance should
+    // not have been called at all, confirming this short-circuits before touching leave data.
+    expect(getBalance).not.toHaveBeenCalled();
+  });
+
+  it("computes an amount when explicitly enabled and the EL balance and rate are both available", async () => {
+    mockDb({ notice: DEFAULT_NOTICE_ROW, salary: { ctc_annual: 312000 }, encashmentEnabled: true, encashmentDivisor: "26" });
     getBalance.mockResolvedValue([{ leave_code: "EL", available_days: 10 }]);
     const preview = await computeFfPreview(EXIT_REQUEST_ID);
     expect(preview.leave_encashment.amount.status).toBe("computed");
     expect(preview.leave_encashment.amount.value).toBe(10000); // (26000/26) * 10
   });
 
-  it("is pending_configuration and names the missing key when the rate isn't configured", async () => {
-    mockDb({ notice: DEFAULT_NOTICE_ROW, salary: { ctc_annual: 312000 }, encashmentDivisor: null });
+  it("is pending_configuration and names the missing key when enabled but the rate isn't configured", async () => {
+    mockDb({ notice: DEFAULT_NOTICE_ROW, salary: { ctc_annual: 312000 }, encashmentEnabled: true, encashmentDivisor: null });
     const preview = await computeFfPreview(EXIT_REQUEST_ID);
     expect(preview.leave_encashment.amount.status).toBe("pending_configuration");
     expect(preview.leave_encashment.amount.note).toMatch(/leave_encashment_day_divisor/);
   });
 
-  it("is not_applicable, not pending_configuration, when there's no EL row at all", async () => {
-    mockDb({ notice: DEFAULT_NOTICE_ROW, salary: { ctc_annual: 312000 } });
+  it("is not_applicable, not pending_configuration, when enabled but there's no EL row at all", async () => {
+    mockDb({ notice: DEFAULT_NOTICE_ROW, salary: { ctc_annual: 312000 }, encashmentEnabled: true });
     getBalance.mockResolvedValue([{ leave_code: "CL", available_days: 5 }]);
     const preview = await computeFfPreview(EXIT_REQUEST_ID);
     expect(preview.leave_encashment.amount.status).toBe("not_applicable");
@@ -271,7 +286,7 @@ describe("computeFfPreview — asset recovery (Phase 2)", () => {
 describe("computeFfPreview — TDS final-year true-up (Phase 2)", () => {
   it("computes a shortfall from YTD actuals plus taxable leave encashment, gratuity excluded", async () => {
     mockDb({
-      notice: DEFAULT_NOTICE_ROW, salary: { ctc_annual: 312000 }, encashmentDivisor: "26",
+      notice: DEFAULT_NOTICE_ROW, salary: { ctc_annual: 312000 }, encashmentEnabled: true, encashmentDivisor: "26",
       ytd: { months_paid: 2, gross_salary: 52000, tds_deducted: 1000 },
       declaration: { declared_hra: 0, declared_80c: 0, declared_80d: 0, regime: "new" },
       dob: "1990-05-15",
@@ -294,7 +309,7 @@ describe("computeFfPreview — TDS final-year true-up (Phase 2)", () => {
 
   it("exempts leave encashment up to a configured limit instead of taxing it in full", async () => {
     mockDb({
-      notice: DEFAULT_NOTICE_ROW, salary: { ctc_annual: 312000 }, encashmentDivisor: "26",
+      notice: DEFAULT_NOTICE_ROW, salary: { ctc_annual: 312000 }, encashmentEnabled: true, encashmentDivisor: "26",
       ytd: { months_paid: 2, gross_salary: 52000, tds_deducted: 1000 },
       exemptionLimit: "6000",
     });
