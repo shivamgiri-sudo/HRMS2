@@ -61,3 +61,31 @@ export async function getRosterGrid(filters: GridFilters): Promise<GridRow[]> {
     finalRosterStatus: r.final_roster_status ? String(r.final_roster_status) : null,
   }));
 }
+
+export interface ShiftTemplateTimes {
+  startTime: string;
+  endTime: string;
+}
+
+/**
+ * The template's own start/end times, resolved server-side.
+ *
+ * These feed AssignInput.shiftStartTime/shiftEndTime, which is what makes
+ * roster.service.ts run its minimum-rest validation at all — that check is gated on
+ * `if (input.shiftStartTime && input.shiftEndTime && ...)`, so an assign call that omits them
+ * silently skips the guard the other four roster-write engines enforce. Resolved here rather
+ * than accepted from the request body on purpose: a safety check fed by a client-supplied
+ * value is not a safety check.
+ *
+ * Returns null when the id matches no template, so the caller can refuse the write instead of
+ * assigning a shift that does not exist.
+ */
+export async function getShiftTemplateTimes(shiftTemplateId: string): Promise<ShiftTemplateTimes | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT start_time, end_time FROM wfm_shift_template WHERE id = ? LIMIT 1",
+    [shiftTemplateId]
+  );
+  const row = rows[0];
+  if (!row || row.start_time == null || row.end_time == null) return null;
+  return { startTime: String(row.start_time), endTime: String(row.end_time) };
+}
