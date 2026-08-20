@@ -3,7 +3,7 @@
  * Supports all wide-format roster spreadsheets:
  *  - Format A (Housing Owner): 24h times "10:00 - 19:00", double header rows, WO markers
  *  - Format B (Onfido/Analyst): 12h times "07:00pm-04:00am", single header, night shifts
- * Features: night-shift amber highlight, manual cell override, missing-employee WFM reminders.
+ * Features: night-shift amber highlight, manual cell override, missing-employee list.
  */
 
 import { useState, useRef, useCallback, useMemo } from "react";
@@ -38,7 +38,6 @@ import {
   Moon,
   Sun,
   Users,
-  Bell,
   ChevronDown,
   ChevronUp,
   Pencil,
@@ -246,7 +245,6 @@ export default function RosterImportPage() {
   const [dragOver, setDragOver] = useState(false);
   const [editingRow, setEditingRow] = useState<ImportRow | null>(null);
   const [showMissing, setShowMissing] = useState(false);
-  const [reminderSent, setReminderSent] = useState<Set<string>>(new Set());
 
   // Processes list
   const { data: procData } = useQuery({
@@ -375,12 +373,6 @@ export default function RosterImportPage() {
     setBatchId(null);
     uploadMutation.reset();
     commitMutation.reset();
-    setReminderSent(new Set());
-  };
-
-  const pushReminder = (emp: MissingEmployee) => {
-    hrmsApi.post(`/api/wfm/roster-imports/${batchId}/remind`, { employeeId: emp.id }).catch(() => {});
-    setReminderSent((prev) => new Set([...prev, emp.id]));
   };
 
   function fmtDateHeader(d: string) {
@@ -755,18 +747,6 @@ export default function RosterImportPage() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="gap-1.5 text-orange-600 border-orange-300 hover:bg-orange-50"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    missingEmployees.forEach((emp) => pushReminder(emp));
-                  }}
-                >
-                  <Bell className="h-3.5 w-3.5" />
-                  Push All Reminders
-                </Button>
                 {showMissing ? (
                   <ChevronUp className="h-4 w-4 text-slate-400" />
                 ) : (
@@ -783,7 +763,6 @@ export default function RosterImportPage() {
                       <th className="px-4 py-2 text-left">Code</th>
                       <th className="px-4 py-2 text-left">Name</th>
                       <th className="px-4 py-2 text-left">Designation</th>
-                      <th className="px-4 py-2 text-center w-28">WFM Reminder</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -792,22 +771,6 @@ export default function RosterImportPage() {
                         <td className="px-4 py-2 font-mono text-xs">{emp.employee_code}</td>
                         <td className="px-4 py-2 font-medium">{emp.full_name}</td>
                         <td className="px-4 py-2 text-slate-500">{emp.designation || "—"}</td>
-                        <td className="px-4 py-2 text-center">
-                          {reminderSent.has(emp.id) ? (
-                            <span className="text-xs text-green-600 flex items-center justify-center gap-1">
-                              <CheckCircle2 className="h-3.5 w-3.5" /> Sent
-                            </span>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-xs gap-1"
-                              onClick={() => pushReminder(emp)}
-                            >
-                              <Bell className="h-3 w-3" /> Remind
-                            </Button>
-                          )}
-                        </td>
                       </tr>
                     ))}
                   </tbody>

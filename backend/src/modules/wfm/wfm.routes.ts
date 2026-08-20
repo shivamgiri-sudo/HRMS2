@@ -856,11 +856,13 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
   if (new_shift_template_id) { updates.push("shift_template_id = ?"); vals.push(new_shift_template_id); }
   vals.push(assignmentId);
 
-  await dbConn.execute(`UPDATE wfm_roster_assignment SET ${updates.join(", ")} WHERE id = ?`, vals);
+  // State change and audit row are one transaction: a failure between them would otherwise commit
+  // the realignment and lose the record of who made it. See inManagerDecisionTx.
+  await inManagerDecisionTx(async (tx) => {
+  await tx.execute(`UPDATE wfm_roster_assignment SET ${updates.join(", ")} WHERE id = ?`, vals);
 
   // Write audit row
-  const { db: dbAudit } = await import("../../db/mysql.js");
-  await dbAudit.execute(
+  await tx.execute(
     `INSERT INTO roster_decision_audit
        (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
         override_by, override_reason, override_at, acted_by_role, old_value_json, new_value_json)
@@ -871,6 +873,7 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
        FROM wfm_roster_assignment WHERE id = ?`,
     [req.authUser!.id, reason, new_roster_date ?? null, new_shift_template_id ?? null, assignmentId]
   );
+  });
 
   // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
   // published -> acknowledged check the employee path runs must happen here too. Without
@@ -919,24 +922,27 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAut
     return res.status(409).json({ error: lockCheck.error });
   }
 
-  await dbConn.execute(
-    `UPDATE wfm_roster_assignment
-        SET final_roster_status = 'force_approved_by_manager',
-            manager_action_status = 'force_approved',
-            manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
-      WHERE id = ?`,
-    [req.authUser!.id, reason, assignmentId]
-  );
+  // State change and audit row are one transaction — see inManagerDecisionTx.
+  await inManagerDecisionTx(async (tx) => {
+    await tx.execute(
+      `UPDATE wfm_roster_assignment
+          SET final_roster_status = 'force_approved_by_manager',
+              manager_action_status = 'force_approved',
+              manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
+        WHERE id = ?`,
+      [req.authUser!.id, reason, assignmentId]
+    );
 
-  await dbConn.execute(
-    `INSERT INTO roster_decision_audit
-       (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
-        override_by, override_reason, override_at, acted_by_role)
-     SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
-            'force_approved', 'manager_force_approve', ?, ?, NOW(), 'manager'
-       FROM wfm_roster_assignment WHERE id = ?`,
-    [req.authUser!.id, reason, assignmentId]
-  );
+    await tx.execute(
+      `INSERT INTO roster_decision_audit
+         (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
+          override_by, override_reason, override_at, acted_by_role)
+       SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
+              'force_approved', 'manager_force_approve', ?, ?, NOW(), 'manager'
+         FROM wfm_roster_assignment WHERE id = ?`,
+      [req.authUser!.id, reason, assignmentId]
+    );
+  });
 
   // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
   // published -> acknowledged check the employee path runs must happen here too. Without
@@ -985,24 +991,27 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, re
     return res.status(409).json({ error: lockCheck.error });
   }
 
-  await dbConn.execute(
-    `UPDATE wfm_roster_assignment
-        SET final_roster_status = 'escalated_to_hr',
-            manager_action_status = 'escalated',
-            manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
-      WHERE id = ?`,
-    [req.authUser!.id, reason, assignmentId]
-  );
+  // State change and audit row are one transaction — see inManagerDecisionTx.
+  await inManagerDecisionTx(async (tx) => {
+    await tx.execute(
+      `UPDATE wfm_roster_assignment
+          SET final_roster_status = 'escalated_to_hr',
+              manager_action_status = 'escalated',
+              manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
+        WHERE id = ?`,
+      [req.authUser!.id, reason, assignmentId]
+    );
 
-  await dbConn.execute(
-    `INSERT INTO roster_decision_audit
-       (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
-        override_by, override_reason, override_at, acted_by_role)
-     SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
-            'escalated_to_hr', 'manager_escalate', ?, ?, NOW(), 'manager'
-       FROM wfm_roster_assignment WHERE id = ?`,
-    [req.authUser!.id, reason, assignmentId]
-  );
+    await tx.execute(
+      `INSERT INTO roster_decision_audit
+         (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
+          override_by, override_reason, override_at, acted_by_role)
+       SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
+              'escalated_to_hr', 'manager_escalate', ?, ?, NOW(), 'manager'
+         FROM wfm_roster_assignment WHERE id = ?`,
+      [req.authUser!.id, reason, assignmentId]
+    );
+  });
 
   return res.json({ success: true, message: "Escalated to HR/WFM" });
 }));
@@ -1045,24 +1054,27 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAu
     return res.status(409).json({ error: lockCheck.error });
   }
 
-  await dbConn.execute(
-    `UPDATE wfm_roster_assignment
-        SET final_roster_status = 'manager_rejected_employee_request',
-            manager_action_status = 'rejected_request',
-            manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
-      WHERE id = ?`,
-    [req.authUser!.id, reason, assignmentId]
-  );
+  // State change and audit row are one transaction — see inManagerDecisionTx.
+  await inManagerDecisionTx(async (tx) => {
+    await tx.execute(
+      `UPDATE wfm_roster_assignment
+          SET final_roster_status = 'manager_rejected_employee_request',
+              manager_action_status = 'rejected_request',
+              manager_action_by = ?, manager_action_at = NOW(), manager_action_reason = ?
+        WHERE id = ?`,
+      [req.authUser!.id, reason, assignmentId]
+    );
 
-  await dbConn.execute(
-    `INSERT INTO roster_decision_audit
-       (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
-        override_by, override_reason, override_at, acted_by_role)
-     SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
-            'manager_rejected_request', 'manager_reject_employee_request', ?, ?, NOW(), 'manager'
-       FROM wfm_roster_assignment WHERE id = ?`,
-    [req.authUser!.id, reason, assignmentId]
-  );
+    await tx.execute(
+      `INSERT INTO roster_decision_audit
+         (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
+          override_by, override_reason, override_at, acted_by_role)
+       SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
+              'manager_rejected_request', 'manager_reject_employee_request', ?, ?, NOW(), 'manager'
+         FROM wfm_roster_assignment WHERE id = ?`,
+      [req.authUser!.id, reason, assignmentId]
+    );
+  });
 
   // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
   // published -> acknowledged check the employee path runs must happen here too. Without
@@ -1109,6 +1121,43 @@ async function closeRosterAckInboxItem(
   } catch {
     // Non-fatal: the employee's answer is already recorded, and a stale inbox row is far
     // less harmful than failing their acknowledgement because the inbox table misbehaved.
+  }
+}
+
+/**
+ * Run a manager decision's state change and its audit row as ONE transaction.
+ *
+ * The four manager-review actions each perform two writes: an UPDATE that records the decision on
+ * the assignment, and an INSERT into roster_decision_audit that records who made it and why. They
+ * ran unwrapped, so a failure between them committed the first and lost the second — observed for
+ * real on 2026-08-20, when the audit INSERT died on a foreign key and left an assignment at
+ * 'force_approved_by_manager' with no audit row at all. A decision existing with no record of who
+ * took it is exactly what CLAUDE.md rule 8 forbids.
+ *
+ * The publish route already does this correctly; these four were the outliers.
+ *
+ * The pool is shared by ~45 workers and a single unreleased connection has previously starved all
+ * of them for 16 days, so release() is in a finally and runs on every path. rollback() is
+ * additionally guarded: if the connection died mid-transaction the rollback itself can throw, and
+ * that must not replace the original error, which is the one worth reporting.
+ */
+async function inManagerDecisionTx<T>(
+  fn: (tx: {
+    execute: (sql: string, params?: unknown[]) => Promise<[unknown, unknown]>;
+  }) => Promise<T>
+): Promise<T> {
+  const { db } = await import("../../db/mysql.js");
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    const result = await fn(conn as never);
+    await conn.commit();
+    return result;
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
   }
 }
 
