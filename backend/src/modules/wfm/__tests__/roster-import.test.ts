@@ -255,3 +255,110 @@ describe('roster-import service', () => {
     });
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Real-file shapes (added 2026-08-20, from two actual files: a 300-agent "Roster Planning"
+// sheet and a 7.6 MB 12-sheet weekly WFM workbook).
+//
+// Every test above builds its header row from hand-typed strings like '01-Aug-26'. A file
+// saved by Excel does not look like that: its date headers are date cells, which the sheet
+// reader returns as numbers, and the import crashed on the first one with
+// `TypeError: (header ?? "").trim is not a function`.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+describe('roster-import service — real spreadsheet shapes', () => {
+  beforeEach(() => {
+    state.batchAutoId = 1;
+    state.insertedRows.length = 0;
+    state.batchRecord = null;
+    mockExecute.mockClear();
+  });
+
+  /** A workbook whose date headers are genuine date cells, as Excel writes them. */
+  function buildDateHeaderWorkbook(sheets: Array<{ name: string; aoa: unknown[][] }>): Buffer {
+    const wb = XLSX.utils.book_new();
+    for (const s of sheets) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(s.aoa, { cellDates: true }), s.name);
+    }
+    return Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', cellDates: true }));
+  }
+
+  const REAL_SHAPE: unknown[][] = [
+    // The real file's first row is weekday labels above the dates, so the header row is row 2.
+    ['', '', '', '', 'Sat', 'Sun'],
+    ['MAS ID', 'Agent Name', 'DOJ', 'Shift Timing', new Date(2026, 7, 1), new Date(2026, 7, 2)],
+    ['MAS56168', 'KRISHAN KUMAR', new Date(2024, 5, 4), '10:00 - 19:00', '10:00 - 19:00', 'WO'],
+    ['MAS60006', 'ANKIT KUMAR', new Date(2025, 6, 17), '09:30 - 18:30', 'WO', '09:30 - 18:30'],
+  ];
+
+  it('parses a sheet whose date headers are real Excel date cells', async () => {
+    const { summary } = await createImportBatch({
+      processId: 'proc-1',
+      importMode: 'NEW',
+      fileBuffer: buildDateHeaderWorkbook([{ name: 'Roster Planning', aoa: REAL_SHAPE }]),
+      fileName: 'Roster.xlsx',
+      createdBy: 'user-1',
+    });
+
+    expect(summary.totalEmployees).toBe(2);
+    expect(summary.totalAssignments).toBe(4); // 2 employees x 2 dates
+    expect(summary.dateRangeStart).toBe('2026-08-01');
+    expect(summary.dateRangeEnd).toBe('2026-08-02');
+    // '10:00 - 19:00' and 'WO' both resolve; nothing lands in NEEDS_MAPPING.
+    expect(summary.needsMapping).toBe(0);
+  });
+
+  it('skips the weekday-label row above the dates and finds the real header row', async () => {
+    const { summary } = await createImportBatch({
+      processId: 'proc-1',
+      importMode: 'NEW',
+      fileBuffer: buildDateHeaderWorkbook([{ name: 'Roster Planning', aoa: REAL_SHAPE }]),
+      fileName: 'Roster.xlsx',
+      createdBy: 'user-1',
+    });
+    // 4 assignments, not 6: the 'Sat'/'Sun' row is a header, never an employee.
+    expect(summary.totalAssignments).toBe(4);
+    expect(summary.totalEmployees).toBe(2);
+  });
+
+  it('reads the FIRST sheet of a multi-sheet workbook and ignores the rest', async () => {
+    const buffer = buildDateHeaderWorkbook([
+      { name: 'Roster Planning', aoa: REAL_SHAPE },
+      { name: 'Summary', aoa: [['WC 17th Aug'], ['Req HC', 202.58]] },
+      { name: 'Floor Capacity', aoa: [['x', 'y'], [1, 2]] },
+    ]);
+
+    const { summary } = await createImportBatch({
+      processId: 'proc-1',
+      importMode: 'NEW',
+      fileBuffer: buffer,
+      fileName: 'Shift Roster.xlsx',
+      createdBy: 'user-1',
+    });
+
+    expect(summary.totalEmployees).toBe(2);
+    expect(summary.dateRangeStart).toBe('2026-08-01');
+  });
+
+  it('refuses a workbook whose first sheet has no date columns, as a 400 that names the sheet', async () => {
+    // The real weekly WFM workbook: first tab is an interval capacity grid, no date columns.
+    const buffer = buildDateHeaderWorkbook([
+      { name: 'Planning', aoa: [['', 'BST', 'IST', 'Mon', 'Tue'], ['', '00:00:00', '05:30:00', 22.77, 25.6]] },
+      { name: 'Roster Planning', aoa: REAL_SHAPE },
+    ]);
+
+    const err = await createImportBatch({
+      processId: 'proc-1',
+      importMode: 'NEW',
+      fileBuffer: buffer,
+      fileName: "Shift Roster WC 17 Aug'26.xlsx",
+      createdBy: 'user-1',
+    }).catch((e) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err.statusCode).toBe(400);
+    expect(err.code).toBe('ROSTER_IMPORT_NO_HEADER_ROW');
+    expect(err.message).toContain("'Planning'");
+    expect(err.message).toContain('FIRST sheet');
+  });
+});
