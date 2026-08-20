@@ -343,7 +343,7 @@ export interface CommitResult {
 export async function commitImportBatch(
   batchId: number,
   committedBy: string,
-  options: { overrideWarnings?: boolean }
+  options: { overrideWarnings?: boolean; cycleId?: string | null }
 ): Promise<CommitResult> {
   // Step 1: Fetch batch
   const [batchRows] = await db.execute<RowDataPacket[]>(
@@ -411,12 +411,19 @@ export async function commitImportBatch(
 
       if (importMode === 'NEW') {
         // INSERT IGNORE — skip if already exists
-        const [result] = await conn.execute(
-          `INSERT IGNORE INTO wfm_roster_assignment
-             (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, created_at)
-           VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, NOW())`,
-          [row.employee_id_raw, row.roster_date, row.normalized_type, batchId]
-        );
+        const [result] = options.cycleId
+          ? await conn.execute(
+              `INSERT IGNORE INTO wfm_roster_assignment
+                 (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, cycle_id, created_at)
+               VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, ?, NOW())`,
+              [row.employee_id_raw, row.roster_date, row.normalized_type, batchId, options.cycleId]
+            )
+          : await conn.execute(
+              `INSERT IGNORE INTO wfm_roster_assignment
+                 (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, created_at)
+               VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, NOW())`,
+              [row.employee_id_raw, row.roster_date, row.normalized_type, batchId]
+            );
         if ((result as ResultSetHeader).affectedRows > 0) {
           assignmentsCreated++;
         } else {
@@ -424,16 +431,28 @@ export async function commitImportBatch(
         }
       } else {
         // UPDATE mode — ON DUPLICATE KEY UPDATE
-        const [result] = await conn.execute(
-          `INSERT INTO wfm_roster_assignment
-             (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, created_at)
-           VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, NOW())
-           ON DUPLICATE KEY UPDATE
-             assignment_type = VALUES(assignment_type),
-             lifecycle_state = 'DRAFT',
-             import_batch_id = VALUES(import_batch_id)`,
-          [row.employee_id_raw, row.roster_date, row.normalized_type, batchId]
-        );
+        const [result] = options.cycleId
+          ? await conn.execute(
+              `INSERT INTO wfm_roster_assignment
+                 (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, cycle_id, created_at)
+               VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, ?, NOW())
+               ON DUPLICATE KEY UPDATE
+                 assignment_type = VALUES(assignment_type),
+                 lifecycle_state = 'DRAFT',
+                 import_batch_id = VALUES(import_batch_id),
+                 cycle_id = VALUES(cycle_id)`,
+              [row.employee_id_raw, row.roster_date, row.normalized_type, batchId, options.cycleId]
+            )
+          : await conn.execute(
+              `INSERT INTO wfm_roster_assignment
+                 (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, created_at)
+               VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, NOW())
+               ON DUPLICATE KEY UPDATE
+                 assignment_type = VALUES(assignment_type),
+                 lifecycle_state = 'DRAFT',
+                 import_batch_id = VALUES(import_batch_id)`,
+              [row.employee_id_raw, row.roster_date, row.normalized_type, batchId]
+            );
         const header = result as ResultSetHeader;
         if (header.affectedRows === 1) {
           assignmentsCreated++;

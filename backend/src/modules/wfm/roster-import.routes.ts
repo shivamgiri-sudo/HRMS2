@@ -149,8 +149,8 @@ rosterImportRouter.post(
         return;
       }
       const committedBy = (req as any).user?.id;
-      const { overrideWarnings } = req.body;
-      const result = await commitImportBatch(batchId, committedBy, { overrideWarnings });
+      const { overrideWarnings, cycleId } = req.body;
+      const result = await commitImportBatch(batchId, committedBy, { overrideWarnings, cycleId });
       res.json({ success: true, ...result });
     } catch (err) {
       res.status(400).json({ success: false, error: err instanceof Error ? err.message : 'Commit failed' });
