@@ -225,6 +225,15 @@ export function useOnboardingFull(token: string) {
   const [familyMembers, setFamilyMembers] = useState<FamilyMemberRow[]>([]);
   const [statutory, setStatutory] = useState<StatutoryForm>(EMPTY_STATUTORY);
   const [otpSent, setOtpSent] = useState(false);
+  /**
+   * Which channels the server actually got the OTP out on. The send response
+   * carries smsDelivered/emailDelivered per channel, and this screen used to
+   * throw it away and tell every candidate "an OTP will be sent to your
+   * registered mobile number" regardless — so when SMS was refused and only the
+   * email went out, the page still pointed people at their phone. Null until a
+   * send has been made.
+   */
+  const [otpChannels, setOtpChannels] = useState<{ sms: boolean; email: boolean } | null>(null);
   const [otpVerified, setOtpVerified] = useState(false);
   const [otpCode, setOtpCode] = useState("");
   const [consentAccepted, setConsentAccepted] = useState(false);
@@ -560,7 +569,18 @@ export function useOnboardingFull(token: string) {
 
   const sendOtp = async () => {
     setSaving(true);
-    try { await hrmsApi.post(`${API}/otp/send`, { token }); setOtpSent(true); }
+    try {
+      const res: any = await hrmsApi.post(`${API}/otp/send`, { token });
+      // The route returns smsDelivered/emailDelivered at the envelope's top
+      // level, but read through `data` too so a later move of those fields
+      // doesn't quietly turn both channels back into "false".
+      const flat = { ...(res?.data ?? {}), ...(res ?? {}) } as any;
+      setOtpChannels({
+        sms: Boolean(flat.smsDelivered ?? res?.data?.smsDelivered),
+        email: Boolean(flat.emailDelivered ?? res?.data?.emailDelivered),
+      });
+      setOtpSent(true);
+    }
     catch (e: any) { setError(e?.message || "Failed to send OTP"); }
     finally { setSaving(false); }
   };
@@ -939,7 +959,7 @@ export function useOnboardingFull(token: string) {
     status, bgv, bgvApiAvailable, employee, setEmployee, bank, setBank, qual, setQual,
     experience, setExperience, family, setFamily, languages, setLanguages,
     familyMembers, setFamilyMembers,
-    statutory, setStatutory, otpSent, otpVerified, otpCode, setOtpCode,
+    statutory, setStatutory, otpSent, otpVerified, otpCode, setOtpCode, otpChannels,
     consentAccepted, privacyConsentAccepted, completion,
     pfOptOutElected, pfOptOutSaving, pfOptOutConsented, pfOptOutConsentedAt, pfOptOutConsent,
     load, autosave, advanceStep,

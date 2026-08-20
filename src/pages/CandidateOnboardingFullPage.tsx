@@ -259,6 +259,7 @@ export default function CandidateOnboardingFullPage() {
           statutory={onb.statutory}
           setStatutory={onb.setStatutory}
           otpSent={onb.otpSent}
+          otpChannels={onb.otpChannels}
           otpVerified={onb.otpVerified}
           otpCode={onb.otpCode}
           setOtpCode={onb.setOtpCode}

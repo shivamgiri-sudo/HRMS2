@@ -7,6 +7,10 @@ const BASE_URL = 'https://pgapi.sparc.smartping.io/fe/api/v1';
 interface SmartPingSendResponse {
   messageId?: string;
   message_id?: string;
+  /** SmartPing's own outcome field, e.g. "SUBMIT_FAILED". Present on both 200s and 400s. */
+  state?: string;
+  statusCode?: number;
+  transactionId?: number;
   status?: string;
   error?: string;
   description?: string;
@@ -94,15 +98,55 @@ export class SmartPingProvider implements CommunicationProvider {
       const res = await axios.get<SmartPingSendResponse>(`${BASE_URL}/send`, {
         params,
         timeout: 10000,
+        // SmartPing returns its diagnosis in the body on 4xx too — e.g. 400
+        // {"state":"SUBMIT_FAILED","statusCode":2054,"description":"Invalid
+        // Msisdn [...] for country [IN]"}. Letting axios throw on those reduced
+        // every one of them to "Request failed with status code 400".
+        validateStatus: () => true,
       });
 
       const data = res.data;
-      const msgId = data?.messageId ?? data?.message_id ?? String(res.status);
+      const msgId =
+        data?.messageId ?? data?.message_id ??
+        (data?.transactionId ? String(data.transactionId) : String(res.status));
 
-      if (res.status === 200 || res.status === 201) {
+      // Judge the BODY, not the HTTP status. Live responses from this account,
+      // 2026-08-20:
+      //   accepted   -> 200 {"state":"SUBMIT_ACCEPTED","statusCode":200,
+      //                      "description":"Message accepted successfully","pdu":1}
+      //   bad auth   -> 200 {"state":"SUBMIT_FAILED","statusCode":2070,
+      //                      "description":"Authentication failure"}
+      //   bad msisdn -> 400 {"state":"SUBMIT_FAILED","statusCode":2054,...}
+      //
+      // The old check was `res.status === 200 -> success`, so both refusals
+      // above were reported as successful sends with message_id "200". That is
+      // why production logged "SMS=sent" for onboarding OTPs that candidates
+      // only ever received by email — nothing downstream could tell a submitted
+      // SMS from a refused one.
+      //
+      // Deny-list rather than allow-list, deliberately: an allow-list of
+      // known-good states was written first and omitted SUBMIT_ACCEPTED, which
+      // would have turned every genuinely working send into a reported failure.
+      // SmartPing's vocabulary of success states is undocumented, so only
+      // states that positively announce a problem count as failures.
+      // Note this reports SUBMISSION, not delivery — an accepted message can
+      // still be dropped by the operator (DLT registration, DND).
+      const state = String(data?.state ?? '').toUpperCase();
+      const refused = /FAIL|REJECT|ERROR|INVALID|EXPIRED|DENIED/.test(state);
+      const submitted = !refused && res.status < 300;
+
+      if (submitted) {
         return { success: true, message_id: msgId };
       }
-      return { success: false, error: data?.error ?? data?.description ?? `HTTP ${res.status}` };
+
+      const detail = data?.description ?? data?.error ?? '';
+      return {
+        success: false,
+        error:
+          `SmartPing refused the send${state ? ` (${state}` : ` (HTTP ${res.status}`}` +
+          `${data?.statusCode ? `/${data.statusCode}` : ''})` +
+          `${detail ? `: ${detail}` : ''}`,
+      };
     } catch (e) {
       return { success: false, error: e instanceof Error ? e.message : String(e) };
     }

@@ -546,7 +546,7 @@ export function Step9FamilyLang({
 // ── Step 10: Statutory + OTP + Submit ─────────────────────────────────────────
 
 export function Step10Statutory({
-  statutory, setStatutory, otpSent, otpVerified, otpCode, setOtpCode,
+  statutory, setStatutory, otpSent, otpVerified, otpCode, setOtpCode, otpChannels,
   saving, employee, bank, status, bgv, completion,
   pfOptOutElected, pfOptOutSaving, pfOptOutConsented, pfOptOutConsentedAt,
   onPfOptOutConsent,
@@ -557,6 +557,8 @@ export function Step10Statutory({
   setStatutory: React.Dispatch<React.SetStateAction<StatutoryForm>>;
   otpSent: boolean;
   otpVerified: boolean;
+  /** Which channels the server actually delivered on; null before the first send. */
+  otpChannels: { sms: boolean; email: boolean } | null;
   otpCode: string;
   setOtpCode: React.Dispatch<React.SetStateAction<string>>;
   saving: boolean;
@@ -731,18 +733,46 @@ export function Step10Statutory({
         )}
 
         {/* OTP Verification */}
-        <SectionHead sub="Verify your registered mobile number">Mobile OTP Verification</SectionHead>
+        <SectionHead sub="We send the same code to your mobile and your email">OTP Verification</SectionHead>
         {otpVerified ? (
           <InfoBox variant="success">
-            <p className="font-bold">Mobile Verified Successfully</p>
+            <p className="font-bold">OTP Verified Successfully</p>
             <p className="text-xs mt-0.5">{employee.mobileNumber} has been verified via OTP.</p>
           </InfoBox>
         ) : (
           <div className="rounded-xl border-2 border-slate-200 bg-slate-50 p-5 space-y-4">
+            {/*
+              This used to promise the code would arrive on the mobile, full
+              stop. The server sends over SMS *and* email on every request and
+              reports each channel's outcome, so when the SMS gateway refuses
+              the send the code arrives only by email — and the old wording left
+              candidates staring at a phone that was never going to ring. Say
+              where it is actually going, and after a send say where it went.
+            */}
             <p className="text-sm text-slate-700">
-              An OTP will be sent to your registered mobile number:{" "}
+              Your OTP is sent to both your registered mobile number{" "}
               <strong className="text-slate-950">{employee.mobileNumber || "Not entered"}</strong>
+              {" "}and your registered email address. Enter whichever reaches you first — it is the
+              same code.
             </p>
+            {otpSent && otpChannels && (
+              <InfoBox variant={otpChannels.sms || otpChannels.email ? "success" : "warning"}>
+                {otpChannels.sms && otpChannels.email ? (
+                  <p className="text-xs font-bold">OTP sent to your mobile and your email.</p>
+                ) : otpChannels.sms ? (
+                  <p className="text-xs font-bold">OTP sent to your mobile as an SMS.</p>
+                ) : otpChannels.email ? (
+                  <p className="text-xs font-bold">
+                    OTP sent to your registered email address. The SMS could not be delivered this
+                    time, so please check your inbox and spam folder.
+                  </p>
+                ) : (
+                  <p className="text-xs font-bold">
+                    We could not deliver the OTP on either channel. Please try Resend, or contact HR.
+                  </p>
+                )}
+              </InfoBox>
+            )}
             {!employee.mobileNumber && (
               <InfoBox variant="warning">
                 <p className="text-xs font-bold">Mobile number missing — go back to Step 2 and enter your mobile number first.</p>
@@ -890,7 +920,7 @@ export function Step10Statutory({
               )}
               {!otpVerified && (
                 <p className="text-xs text-red-700 font-semibold flex items-center gap-1.5">
-                  <AlertCircle className="h-3.5 w-3.5 shrink-0" /> Mobile OTP must be verified before submission
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" /> OTP must be verified before submission
                 </p>
               )}
               {!statutory.declarationAccepted && (
