@@ -166,6 +166,23 @@ exactly matching the pattern already used by the other 5 write paths.
 - Fixing the pre-existing "Push Reminder" dead-route bug on
   `RosterImportPage` (flagged only, not part of this work)
 
+## Note on a prior overlapping plan
+
+An untracked plan file, `docs/superpowers/plans/2026-08-19-wfm-roster-operating-model.md`
+(dated 2026-08-19, from a different session, never committed), covers
+overlapping ground: its Task 1 schema matches what's already live (the
+roster-import tables), and its Task 11 "Roster Amendment Workflow" — audit
+fields (`old/new_shift_id`, `amendment_reason`, `notified_at`,
+`ack_required`/`acked_at`, `is_late_change`, `lead_time_hours`) plus an
+adherence-baseline-protection rule — overlaps with subsystem 2 of this
+decomposition. Decision (2026-08-20, confirmed with the user): treat that
+plan as **superseded by this decomposition**, not resumed. Its concrete,
+useful design elements are folded in as they become relevant: subsystem 2
+absorbs the Task 11 amendment/audit fields and baseline-protection rule;
+subsystem 4 absorbs Task 10's RTA exception disposition workflow where
+relevant to shrinkage tracking. This subsystem (1, the builder) is unaffected
+since Tasks 9-11 don't touch it.
+
 ## Open items to verify before writing the implementation plan
 
 - Confirm `1500_wfm_roster_import_engine.sql` has actually applied cleanly on
