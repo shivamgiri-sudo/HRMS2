@@ -21,6 +21,11 @@ const { mockExecute, mockGetConnection, state } = vi.hoisted(() => {
   const mockConnExecute = vi.fn(async (sql: string, params?: any[]) => {
     const s = (sql as string).trim().toUpperCase();
 
+    // Employee code -> id resolution (commitImportBatch maps the spreadsheet CODE to employees.id).
+    if (s.startsWith('SELECT ID, EMPLOYEE_CODE FROM EMPLOYEES')) {
+      return [(params ?? []).map((code) => ({ id: `uuid-${code}`, employee_code: code }))];
+    }
+
     if (s.startsWith('INSERT IGNORE INTO WFM_ROSTER_ASSIGNMENT')) {
       state.assignmentInserts.push({ sql, params, mode: 'IGNORE' });
       // Simulate successful insert (affectedRows 1 = new row)
@@ -54,6 +59,11 @@ const { mockExecute, mockGetConnection, state } = vi.hoisted(() => {
 
   const mockExecute = vi.fn(async (sql: string, params?: any[]) => {
     const s = (sql as string).trim().toUpperCase();
+
+    // Employee code -> id resolution (commitImportBatch maps the spreadsheet CODE to employees.id).
+    if (s.startsWith('SELECT ID, EMPLOYEE_CODE FROM EMPLOYEES')) {
+      return [(params ?? []).map((code) => ({ id: `uuid-${code}`, employee_code: code }))];
+    }
 
     // Fetch batch
     if (s.startsWith('SELECT * FROM WFM_ROSTER_IMPORT_BATCH')) {
@@ -252,6 +262,10 @@ describe('commitImportBatch', () => {
 
     // Override connection execute to simulate an existing row (affectedRows=0)
     const conn = await mockGetConnection();
+    // the employee code -> id lookup runs on the connection first; let it through
+    (conn.execute as ReturnType<typeof vi.fn>).mockImplementationOnce(async (_sql: string, params?: any[]) => [
+      (params ?? []).map((code: any) => ({ id: `uuid-${code}`, employee_code: code })),
+    ]);
     (conn.execute as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => [{ affectedRows: 0 }]);
 
     const result = await commitImportBatch(1, 'approver-1', {});
@@ -267,6 +281,10 @@ describe('commitImportBatch', () => {
     state.importRows = [makeImportRow({ validation_state: 'VALID' })];
 
     const conn = await mockGetConnection();
+    // the employee code -> id lookup runs on the connection first; let it through
+    (conn.execute as ReturnType<typeof vi.fn>).mockImplementationOnce(async (_sql: string, params?: any[]) => [
+      (params ?? []).map((code: any) => ({ id: `uuid-${code}`, employee_code: code })),
+    ]);
     (conn.execute as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('DB failure'));
 
     await expect(

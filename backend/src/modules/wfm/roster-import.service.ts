@@ -535,6 +535,8 @@ export interface CommitResult {
   assignmentsCreated: number;
   assignmentsUpdated: number;
   skipped: number;
+  /** Rows whose employee code matched no employee — a data problem, not a duplicate. */
+  unmatchedEmployees: number;
 }
 
 // ── commitImportBatch ─────────────────────────────────────────────────────────
@@ -603,10 +605,33 @@ export async function commitImportBatch(
   let assignmentsCreated = 0;
   let assignmentsUpdated = 0;
   let skipped = 0;
+  let unmatchedEmployees = 0;
+
+  // employee_id_raw holds the spreadsheet's employee CODE ('MAS56168'); wfm_roster_assignment
+  // .employee_id is a char(36) UUID with a foreign key to employees.id. The code was being
+  // inserted straight into that column, so the FK rejected every row — and because the statement
+  // is INSERT IGNORE, the rejection was swallowed and simply counted as "skipped". A commit of
+  // 4,186 rows reported created 0 / skipped 4,179 and wrote nothing. Verified live 2026-08-20.
+  const codes = [...new Set(rows.map((r) => String(r.employee_id_raw ?? '')).filter(Boolean))];
+  const codeToId = new Map<string, string>();
+  if (codes.length) {
+    const [empRows] = await conn.execute(
+      `SELECT id, employee_code FROM employees WHERE employee_code IN (${codes.map(() => '?').join(',')})`,
+      codes
+    );
+    for (const e of empRows as RowDataPacket[]) codeToId.set(String(e.employee_code), String(e.id));
+  }
 
   try {
     for (const row of rows) {
       const importMode = batch.import_mode as 'NEW' | 'UPDATE';
+      const employeeId = codeToId.get(String(row.employee_id_raw ?? ''));
+      if (!employeeId) {
+        // Counted separately from "skipped": a code with no matching employee is a data problem
+        // the uploader can act on, not a duplicate row.
+        unmatchedEmployees++;
+        continue;
+      }
 
       if (importMode === 'NEW') {
         // INSERT IGNORE — skip if already exists
@@ -615,13 +640,13 @@ export async function commitImportBatch(
               `INSERT IGNORE INTO wfm_roster_assignment
                  (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, cycle_id, created_at)
                VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, ?, NOW())`,
-              [row.employee_id_raw, row.roster_date, row.normalized_type, batchId, options.cycleId]
+              [employeeId, row.roster_date, row.normalized_type, batchId, options.cycleId]
             )
           : await conn.execute(
               `INSERT IGNORE INTO wfm_roster_assignment
                  (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, created_at)
                VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, NOW())`,
-              [row.employee_id_raw, row.roster_date, row.normalized_type, batchId]
+              [employeeId, row.roster_date, row.normalized_type, batchId]
             );
         if ((result as ResultSetHeader).affectedRows > 0) {
           assignmentsCreated++;
@@ -640,7 +665,7 @@ export async function commitImportBatch(
                  lifecycle_state = 'DRAFT',
                  import_batch_id = VALUES(import_batch_id),
                  cycle_id = VALUES(cycle_id)`,
-              [row.employee_id_raw, row.roster_date, row.normalized_type, batchId, options.cycleId]
+              [employeeId, row.roster_date, row.normalized_type, batchId, options.cycleId]
             )
           : await conn.execute(
               `INSERT INTO wfm_roster_assignment
@@ -650,7 +675,7 @@ export async function commitImportBatch(
                  assignment_type = VALUES(assignment_type),
                  lifecycle_state = 'DRAFT',
                  import_batch_id = VALUES(import_batch_id)`,
-              [row.employee_id_raw, row.roster_date, row.normalized_type, batchId]
+              [employeeId, row.roster_date, row.normalized_type, batchId]
             );
         const header = result as ResultSetHeader;
         if (header.affectedRows === 1) {
@@ -681,7 +706,7 @@ export async function commitImportBatch(
     conn.release();
   }
 
-  return { assignmentsCreated, assignmentsUpdated, skipped };
+  return { assignmentsCreated, assignmentsUpdated, skipped, unmatchedEmployees };
 }
 
 // ── getImportRows ─────────────────────────────────────────────────────────────

@@ -43,6 +43,8 @@ describe('commitImportBatch — additive cycleId', () => {
     executeMock.mockResolvedValueOnce([[{ cnt: 0 }], undefined]); // error count
     executeMock.mockResolvedValueOnce([[{ cnt: 0 }], undefined]); // warning count
     executeMock.mockResolvedValueOnce([[{ employee_id_raw: 'emp-1', roster_date: '2026-08-24', normalized_type: 'SHIFT' }], undefined]); // rows
+    // employee code -> id resolution runs on the connection before the INSERT
+    connExecuteMock.mockResolvedValueOnce([[{ id: 'uuid-emp-1', employee_code: 'emp-1' }], undefined]);
     connExecuteMock.mockResolvedValueOnce([{ affectedRows: 1 }, undefined]); // INSERT
     connExecuteMock.mockResolvedValueOnce([{}, undefined]); // batch status update
   });
