@@ -7,7 +7,7 @@ import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import { dateLabel, grnStatusTone, labelStatus, money } from "@/components/finance/grn/grn-format";
 import {
   GRN_TR, GrnButton, GrnCard, GrnCardHeader, GrnCellSub, GrnChip, GrnEmptyState,
-  GrnIconButton, GrnTable, GrnTd, GrnTextarea, GrnTh,
+  GrnIconButton, GrnInput, GrnTable, GrnTd, GrnTextarea, GrnTh,
 } from "@/components/finance/grn/grn-ui";
 
 /**
@@ -93,10 +93,16 @@ export function ImprestApprovalQueue() {
     },
   });
 
+  const [billDateFrom, setBillDateFrom] = useState("");
+  const [billDateTo, setBillDateTo] = useState("");
+
   const query = useQuery({
-    queryKey: ["imprest-approval-queue"],
+    queryKey: ["imprest-approval-queue", billDateFrom, billDateTo],
     queryFn: async () => {
-      const r = await hrmsApi.get<any>("/api/finance/grns?grnType=imprest&limit=100");
+      const params = new URLSearchParams({ grnType: "imprest", limit: "100" });
+      if (billDateFrom) params.set("billDateFrom", billDateFrom);
+      if (billDateTo) params.set("billDateTo", billDateTo);
+      const r = await hrmsApi.get<any>(`/api/finance/grns?${params}`);
       const body = (r as any)?.data ?? r;
       return ((body?.data ?? body?.rows ?? body ?? []) as ImprestRow[]);
     },
@@ -159,6 +165,36 @@ export function ImprestApprovalQueue() {
           </GrnIconButton>
         }
       />
+
+      {/* Bill date range — same filter GRN Search and the vendor GRN approval queue use. No
+          vendor filter here: every row in this queue is imprest, which carries no vendor. */}
+      <div className="flex items-center gap-1 border-b border-grn-line-soft px-3 pb-3">
+        <span className="text-xs font-medium text-grn-ink-soft">Bill date:</span>
+        <GrnInput
+          type="date"
+          aria-label="Bill date from"
+          className="h-7 w-[136px] text-xs"
+          value={billDateFrom}
+          onChange={(e) => setBillDateFrom(e.target.value)}
+        />
+        <span className="text-xs text-grn-ink-soft">to</span>
+        <GrnInput
+          type="date"
+          aria-label="Bill date to"
+          className="h-7 w-[136px] text-xs"
+          value={billDateTo}
+          onChange={(e) => setBillDateTo(e.target.value)}
+        />
+        {(billDateFrom || billDateTo) && (
+          <GrnIconButton
+            aria-label="Clear date filters"
+            title="Clear date filters"
+            onClick={() => { setBillDateFrom(""); setBillDateTo(""); }}
+          >
+            ×
+          </GrnIconButton>
+        )}
+      </div>
 
       {rows.length === 0 ? (
         <GrnEmptyState

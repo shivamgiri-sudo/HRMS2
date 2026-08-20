@@ -17,11 +17,19 @@ import {
   GrnChip,
   GrnEmptyState,
   GrnIconButton,
+  GrnInput,
   GrnSearchInput,
   GrnTable,
   GrnTd,
   GrnTh,
 } from "@/components/finance/grn/grn-ui";
+// Same pattern BudgetLinkedGrnForm uses for its vendor picker: vendor_master holds ~1.8k rows,
+// so it is searched server-side rather than dumped into the DOM as a plain <select>.
+import { SearchableSelect } from "@/components/ui/searchable-select";
+
+function unwrapList<T>(response: any): T[] {
+  return (response?.data?.data ?? response?.data ?? response ?? []) as T[];
+}
 
 type GrnHistoryRow = {
   id: string;
@@ -75,23 +83,49 @@ function StageCell({ name, at, reachable }: { name?: string | null; at?: string 
   );
 }
 
+const GRN_TYPE_TABS = [
+  ["_all", "All types"],
+  ["vendor", "Vendor"],
+  ["imprest", "Imprest"],
+] as const;
+
 export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void } = {}) {
   const [status, setStatus] = useState<(typeof STATUS_TABS)[number][0]>("_all");
+  const [grnType, setGrnType] = useState<(typeof GRN_TYPE_TABS)[number][0]>("_all");
   const [search, setSearch] = useState("");
   const [source, setSource] = useState<"new" | "legacy" | "all">("new");
+  const [billDateFrom, setBillDateFrom] = useState("");
+  const [billDateTo, setBillDateTo] = useState("");
+  const [vendorId, setVendorId] = useState("");
+  const [vendorSearch, setVendorSearch] = useState("");
+
+  // Server-side searched, same endpoint and pattern as the GRN creation form's vendor picker.
+  const { data: vendorResponse, isFetching: vendorsLoading } = useQuery({
+    queryKey: ["grn-history-vendor-search", vendorSearch],
+    queryFn: () =>
+      hrmsApi.get<any>(
+        `/api/erp/vendors?is_active=1&limit=50&q=${encodeURIComponent(vendorSearch.trim())}`
+      ),
+  });
+  const vendors = unwrapList<{ id: string; vendor_name?: string; name?: string }>(vendorResponse);
 
   const listQuery = useQuery({
-    queryKey: ["grn-history", status, search, source],
+    queryKey: ["grn-history", status, grnType, search, source, billDateFrom, billDateTo, vendorId],
     queryFn: async () => {
       const params = new URLSearchParams({ limit: "100" });
       if (status !== "_all") params.set("status", status);
+      if (grnType !== "_all") params.set("grnType", grnType);
       if (search.trim()) params.set("search", search.trim());
+      if (billDateFrom) params.set("billDateFrom", billDateFrom);
+      if (billDateTo) params.set("billDateTo", billDateTo);
+      if (vendorId) params.set("vendorId", vendorId);
       params.set("source", source);
       const response = await hrmsApi.get<any>(`/api/finance/grns?${params}`);
       return (response?.data ?? response?.rows ?? []) as GrnHistoryRow[];
     },
   });
   const rows = listQuery.data ?? [];
+  const activeFilterCount = [billDateFrom, billDateTo, vendorId].filter(Boolean).length;
 
   return (
     <GrnCard>
@@ -106,6 +140,50 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search GRN, vendor, head or description"
         />
+        {/* Bill date range — filters g.bill_date server-side (billDateFrom/billDateTo), the same
+            columns GRN Search already uses. Applies to both new and legacy rows. */}
+        <div className="flex items-center gap-1">
+          <GrnInput
+            type="date"
+            aria-label="Bill date from"
+            className="h-7 w-[136px] text-xs"
+            value={billDateFrom}
+            onChange={(e) => setBillDateFrom(e.target.value)}
+          />
+          <span className="text-xs text-grn-ink-soft">to</span>
+          <GrnInput
+            type="date"
+            aria-label="Bill date to"
+            className="h-7 w-[136px] text-xs"
+            value={billDateTo}
+            onChange={(e) => setBillDateTo(e.target.value)}
+          />
+        </div>
+        <SearchableSelect
+          aria-label="Vendor"
+          className="h-7 w-[180px] text-xs"
+          loading={vendorsLoading}
+          options={vendors.map((vendor) => ({
+            value: vendor.id,
+            label: (vendor.vendor_name ?? vendor.name ?? "").trim(),
+          }))}
+          value={vendorId}
+          onChange={setVendorId}
+          placeholder="Any vendor"
+          searchPlaceholder="Type a vendor name…"
+          emptyText={vendorSearch.trim() ? "No vendor matches." : "Start typing to search."}
+          search={vendorSearch}
+          onSearchChange={setVendorSearch}
+        />
+        {activeFilterCount > 0 && (
+          <GrnIconButton
+            aria-label="Clear date and vendor filters"
+            title="Clear date and vendor filters"
+            onClick={() => { setBillDateFrom(""); setBillDateTo(""); setVendorId(""); setVendorSearch(""); }}
+          >
+            ×
+          </GrnIconButton>
+        )}
         <GrnIconButton onClick={() => void listQuery.refetch()} title="Refresh" aria-label="Refresh">
           <RefreshCw className={`h-3.5 w-3.5 ${listQuery.isFetching ? "animate-spin" : ""}`} />
         </GrnIconButton>
@@ -116,6 +194,12 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
         {(["new", "legacy", "all"] as const).map((s) => (
           <GrnChip key={s} active={source === s} onClick={() => setSource(s)}>
             {s === "new" ? "New HRMS" : s === "legacy" ? "Legacy (db_bill)" : "All"}
+          </GrnChip>
+        ))}
+        <span className="ml-3 text-xs font-medium text-grn-ink-soft">Type:</span>
+        {GRN_TYPE_TABS.map(([value, label]) => (
+          <GrnChip key={value} active={grnType === value} onClick={() => setGrnType(value)}>
+            {label}
           </GrnChip>
         ))}
       </div>

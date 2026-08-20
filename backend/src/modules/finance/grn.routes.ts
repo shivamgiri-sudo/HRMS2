@@ -571,7 +571,16 @@ grnRouter.get(
         return res.json(result);
       }
 
+      // Every legacy row is grn_type='vendor' (listLegacyGrns' SELECT hardcodes it — db_bill
+      // never mirrored imprest/salary entries into grn_entry_snapshot). A grnType=imprest filter
+      // must exclude legacy rows rather than silently ignore the filter and return them anyway.
+      const legacyExcludedByGrnType =
+        newOnlyFilters.grnType !== undefined && newOnlyFilters.grnType !== "vendor";
+
       if (source === "legacy") {
+        if (legacyExcludedByGrnType) {
+          return res.json({ data: [], total: 0, page: 1, limit: sharedFilters.limit ?? 30 });
+        }
         const result = await grnService.listLegacyGrns(sharedFilters);
         return res.json(result);
       }
@@ -579,7 +588,9 @@ grnRouter.get(
       // source === "all": fetch both, merge by created_at DESC, return top 100
       const [newResult, legResult] = await Promise.all([
         grnService.listGrns({ ...sharedFilters, ...newOnlyFilters, limit: 100 }),
-        grnService.listLegacyGrns({ ...sharedFilters, limit: 100 }),
+        legacyExcludedByGrnType
+          ? Promise.resolve({ data: [], total: 0, page: 1, limit: 100 })
+          : grnService.listLegacyGrns({ ...sharedFilters, limit: 100 }),
       ]);
 
       const merged = [...newResult.data, ...legResult.data].sort((a, b) => {

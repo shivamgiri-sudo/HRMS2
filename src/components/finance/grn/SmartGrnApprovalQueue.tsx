@@ -39,6 +39,7 @@ import {
   GrnChip,
   GrnEmptyState,
   GrnIconButton,
+  GrnInput,
   GrnKv,
   GrnKvList,
   GrnMetric,
@@ -50,6 +51,7 @@ import {
   GrnTextarea,
   GrnTh,
 } from "@/components/finance/grn/grn-ui";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -126,6 +128,10 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   const [myGrnsOnly, setMyGrnsOnly] = useState(false);
   const [filterBranch, setFilterBranch] = useState("");
   const [filterPeriod, setFilterPeriod] = useState("");
+  const [billDateFrom, setBillDateFrom] = useState("");
+  const [billDateTo, setBillDateTo] = useState("");
+  const [filterVendor, setFilterVendor] = useState("");
+  const [vendorSearch, setVendorSearch] = useState("");
   const [page, setPage] = useState(1);
   const didSetInitialTab = useRef(false);
   const [target, setTarget] = useState<GrnRow | null>(null);
@@ -170,12 +176,28 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
   });
   const branchOptions = branchesQuery.data ?? [];
 
+  // Server-side searched, same endpoint and pattern as the GRN creation form's vendor picker
+  // (vendor_master holds ~1.8k rows — too many to dump into a plain <select>).
+  const { data: vendorResponse, isFetching: vendorsLoading } = useQuery({
+    queryKey: ["grn-approval-vendor-search", vendorSearch],
+    queryFn: () =>
+      hrmsApi.get<any>(
+        `/api/erp/vendors?is_active=1&limit=50&q=${encodeURIComponent(vendorSearch.trim())}`
+      ),
+  });
+  const vendorOptions = ((vendorResponse?.data?.data ?? vendorResponse?.data ?? vendorResponse ?? []) as Array<{
+    id: string; vendor_name?: string; name?: string;
+  }>);
+
   // Per-status counts for the filter chips. Aggregated server-side, so a chip's number is the
   // true total rather than however many of that status happened to fit in the 100-row list.
   const summary = useGrnSummary().data;
 
   const listQuery = useQuery({
-    queryKey: ["grn-list", status, grnType, search, filterBranch, filterPeriod, page, myGrnsOnly],
+    queryKey: [
+      "grn-list", status, grnType, search, filterBranch, filterPeriod, page, myGrnsOnly,
+      billDateFrom, billDateTo, filterVendor,
+    ],
     queryFn: async () => {
       const params = new URLSearchParams({ limit: String(PAGE_SIZE), page: String(page) });
       if (status !== "_all") params.set("status", status);
@@ -184,6 +206,9 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       if (filterBranch) params.set("branchId", filterBranch);
       if (filterPeriod) params.set("accountingPeriod", filterPeriod);
       if (myGrnsOnly) params.set("createdBy", "me");
+      if (billDateFrom) params.set("billDateFrom", billDateFrom);
+      if (billDateTo) params.set("billDateTo", billDateTo);
+      if (filterVendor) params.set("vendorId", filterVendor);
       const response = await hrmsApi.get<any>(`/api/finance/grns?${params}`);
       return (response?.data ?? response?.rows ?? []) as GrnRow[];
     },
@@ -441,6 +466,40 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
             onChange={setFilterPeriod}
             emptyLabel="All periods"
             selectClassName="h-7 rounded border border-grn-line-soft bg-white px-2 text-xs text-grn-ink focus:outline-none focus:ring-1 focus:ring-grn-brand"
+          />
+          {/* Bill date range — same g.bill_date columns GRN Search already filters on. */}
+          <div className="flex items-center gap-1">
+            <GrnInput
+              type="date"
+              aria-label="Bill date from"
+              className="h-7 w-[136px] text-xs"
+              value={billDateFrom}
+              onChange={(e) => setBillDateFrom(e.target.value)}
+            />
+            <span className="text-xs text-grn-ink-soft">to</span>
+            <GrnInput
+              type="date"
+              aria-label="Bill date to"
+              className="h-7 w-[136px] text-xs"
+              value={billDateTo}
+              onChange={(e) => setBillDateTo(e.target.value)}
+            />
+          </div>
+          <SearchableSelect
+            aria-label="Vendor"
+            className="h-7 w-[180px] text-xs"
+            loading={vendorsLoading}
+            options={vendorOptions.map((vendor) => ({
+              value: vendor.id,
+              label: (vendor.vendor_name ?? vendor.name ?? "").trim(),
+            }))}
+            value={filterVendor}
+            onChange={setFilterVendor}
+            placeholder="Any vendor"
+            searchPlaceholder="Type a vendor name…"
+            emptyText={vendorSearch.trim() ? "No vendor matches." : "Start typing to search."}
+            search={vendorSearch}
+            onSearchChange={setVendorSearch}
           />
           <GrnChip active={backDated} onClick={() => setBackDated((v) => !v)}>
             Back-dated
