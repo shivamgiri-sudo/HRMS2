@@ -194,6 +194,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/wfm/team-attendance": "TEAM_ATTENDANCE",
   "/wfm/planning-rules": "WFM_PLANNING_RULES",
   "/wfm/roster": "WFM_ROSTER",
+  "/wfm/roster-builder": "WFM_ROSTER_BUILDER",
   "/roster-preference": "WFM_ROSTER",
   "/wfm-manager-approvals": "WFM_ROSTER",
   "/wfm/slot-requirements": "WFM_SLOT_REQUIREMENTS",
