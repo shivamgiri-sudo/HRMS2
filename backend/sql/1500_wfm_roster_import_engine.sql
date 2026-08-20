@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS wfm_roster_import_batch (
 CREATE TABLE IF NOT EXISTS wfm_roster_import_row (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   batch_id INT NOT NULL,
-  row_number INT NOT NULL,
+  `row_number` INT NOT NULL,
   employee_id CHAR(36) COLLATE utf8mb4_unicode_ci,
   employee_id_raw VARCHAR(100),
   employee_name_raw VARCHAR(255),
@@ -99,7 +99,14 @@ CREATE TABLE IF NOT EXISTS wfm_header_mapping_profile (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 5. Add planning_mode to process table (ROSTER_LED is default)
-ALTER TABLE process_master ADD COLUMN IF NOT EXISTS planning_mode ENUM('ROSTER_LED', 'VOLUME_BASED') DEFAULT 'ROSTER_LED';
+-- MySQL 8 does not support ADD COLUMN IF NOT EXISTS; guard via information_schema
+SET @sql = (SELECT IF(
+  COUNT(*) = 0,
+  'ALTER TABLE process_master ADD COLUMN planning_mode ENUM(''ROSTER_LED'', ''VOLUME_BASED'') DEFAULT ''ROSTER_LED''',
+  'SELECT 1'
+) FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'process_master' AND COLUMN_NAME = 'planning_mode');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- 6. RTA exception disposition tracking
 CREATE TABLE IF NOT EXISTS wfm_rta_exception (
@@ -125,15 +132,33 @@ CREATE TABLE IF NOT EXISTS wfm_rta_exception (
   INDEX idx_alert (alert_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 7. Extend roster_change_log for amendment workflow
-ALTER TABLE roster_change_log
-  ADD COLUMN IF NOT EXISTS old_shift_id CHAR(36) COLLATE utf8mb4_unicode_ci,
-  ADD COLUMN IF NOT EXISTS new_shift_id CHAR(36) COLLATE utf8mb4_unicode_ci,
-  ADD COLUMN IF NOT EXISTS old_assignment_type VARCHAR(50),
-  ADD COLUMN IF NOT EXISTS new_assignment_type VARCHAR(50),
-  ADD COLUMN IF NOT EXISTS amendment_reason TEXT,
-  ADD COLUMN IF NOT EXISTS notified_at TIMESTAMP NULL,
-  ADD COLUMN IF NOT EXISTS ack_required TINYINT(1) DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS acked_at TIMESTAMP NULL,
-  ADD COLUMN IF NOT EXISTS is_late_change TINYINT(1) DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS lead_time_hours INT;
+-- 7. Extend roster_change_log for amendment workflow (each column guarded individually for MySQL 8)
+SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE roster_change_log ADD COLUMN old_shift_id CHAR(36)', 'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_change_log' AND COLUMN_NAME = 'old_shift_id');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE roster_change_log ADD COLUMN new_shift_id CHAR(36)', 'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_change_log' AND COLUMN_NAME = 'new_shift_id');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE roster_change_log ADD COLUMN old_assignment_type VARCHAR(50)', 'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_change_log' AND COLUMN_NAME = 'old_assignment_type');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE roster_change_log ADD COLUMN new_assignment_type VARCHAR(50)', 'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_change_log' AND COLUMN_NAME = 'new_assignment_type');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE roster_change_log ADD COLUMN amendment_reason TEXT', 'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_change_log' AND COLUMN_NAME = 'amendment_reason');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE roster_change_log ADD COLUMN notified_at TIMESTAMP NULL', 'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_change_log' AND COLUMN_NAME = 'notified_at');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE roster_change_log ADD COLUMN ack_required TINYINT(1) DEFAULT 0', 'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_change_log' AND COLUMN_NAME = 'ack_required');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE roster_change_log ADD COLUMN acked_at TIMESTAMP NULL', 'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_change_log' AND COLUMN_NAME = 'acked_at');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE roster_change_log ADD COLUMN is_late_change TINYINT(1) DEFAULT 0', 'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_change_log' AND COLUMN_NAME = 'is_late_change');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(COUNT(*) = 0, 'ALTER TABLE roster_change_log ADD COLUMN lead_time_hours INT', 'SELECT 1') FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'roster_change_log' AND COLUMN_NAME = 'lead_time_hours');
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
