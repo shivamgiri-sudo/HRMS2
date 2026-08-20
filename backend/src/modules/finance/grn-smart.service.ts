@@ -4,6 +4,7 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { db } from "../../db/mysql.js";
+import { aiProviderConfigService } from "../ai/ai-provider-config.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 import {
@@ -110,6 +111,13 @@ export interface SmartGrnComponentSplitInput {
 /** Above this, the raiser must fix the invoice components themselves — a bigger mismatch
  *  than ordinary invoice rounding is a real data-entry error, not something to auto-absorb. */
 const GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT = 1.00;
+/** Tolerance for the INVOICE_COMPONENT_RECONCILIATION re-check at submit time.
+ *  Widened from 0.01 to 1.00 so it matches GRN_INVOICE_COMPONENT_ROUNDOFF_LIMIT above: the
+ *  save path already refuses any component/declared-total gap over ₹1, so a stricter figure
+ *  here only ever blocked GRNs the save path had deliberately accepted. Splitting one invoice
+ *  across many cost centres rounds each cell to paise independently, so the grid sum can sit a
+ *  few paise off the component total even when nothing is wrong. */
+const GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE = 1.00;
 /** Standard Indian GST slabs — kept in lockstep with src/lib/gst.ts's GST_RATES on the
  *  frontend; the dropdown there is the only way to reach this value from the UI. */
 const ALLOWED_GST_RATES = new Set([0, 5, 12, 18, 28]);
@@ -472,11 +480,13 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
     const componentDiff = roundMoney(reconciledTotal - parentGross);
     results.push({
       code: "INVOICE_COMPONENT_RECONCILIATION",
-      status: Math.abs(componentDiff) <= 0.01 ? "passed" : "failed",
-      severity: Math.abs(componentDiff) <= 0.01 ? "info" : "error",
-      blocking: Math.abs(componentDiff) > 0.01,
-      message: Math.abs(componentDiff) <= 0.01
-        ? "Invoice components plus round-off exactly match the GRN total"
+      status: Math.abs(componentDiff) <= GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE ? "passed" : "failed",
+      severity: Math.abs(componentDiff) <= GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE ? "info" : "error",
+      blocking: Math.abs(componentDiff) > GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE,
+      message: Math.abs(componentDiff) <= GRN_INVOICE_COMPONENT_RECONCILIATION_TOLERANCE
+        ? componentDiff === 0
+          ? "Invoice components plus round-off exactly match the GRN total"
+          : `Invoice components plus round-off match the GRN total within rounding (${componentDiff.toFixed(2)})`
         : `Invoice component total (incl. round-off) differs from the GRN total by ${componentDiff.toFixed(2)}`,
       details: { componentGross, roundOffAmount: Number(grn.round_off_amount || 0), reconciledTotal, parentGross },
     });
@@ -1458,8 +1468,29 @@ export const grnSmartService = {
     if (!document) throw new Error("GRN document not found");
     await db.execute("UPDATE grn_document SET extraction_status = 'processing' WHERE id = ?", [documentId]);
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || "";
-    const modelName = process.env.GRN_DOCUMENT_AI_MODEL || "gemini-1.5-flash";
+    // Key resolution order: env first (a deployment can always pin its own key), then the
+    // DB-managed provider config that the AI Provider admin screen and every other AI feature
+    // already use. Reading env alone left this extractor reporting "unconfigured" on a system
+    // where an active, is_default Gemini key was configured all along — the key existed, this
+    // was simply the one caller that never looked where it lives.
+    let apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || "";
+    let modelName = process.env.GRN_DOCUMENT_AI_MODEL || "";
+    let providerSource = apiKey ? "env" : "";
+    if (!apiKey) {
+      try {
+        const config = await aiProviderConfigService.getByKey("gemini", true);
+        if (config?.activeStatus === "active" && config.apiKey) {
+          apiKey = config.apiKey;
+          modelName = modelName || config.modelName || "";
+          providerSource = "ai_provider_config";
+        }
+      } catch (error) {
+        // A decryption or lookup failure must not take the upload down — fall through to the
+        // manual_review row below, which is the same outcome as having no key at all.
+        console.error("[GRN] Gemini provider config lookup failed:", error instanceof Error ? error.message : error);
+      }
+    }
+    modelName = modelName || "gemini-1.5-flash";
     if (!apiKey) {
       const extractionId = randomUUID();
       await db.execute(
@@ -1467,7 +1498,7 @@ export const grnSmartService = {
          (id, document_id, grn_request_id, provider, model_name, status,
           confidence_score, error_message)
          VALUES (?,?,?,?,?,'manual_review',0,?)`,
-        [extractionId, documentId, grnId, "unconfigured", null, "Configure GEMINI_API_KEY or GOOGLE_GENERATIVE_AI_API_KEY for automated extraction"]
+        [extractionId, documentId, grnId, "unconfigured", null, "No Gemini key available — set GEMINI_API_KEY, or configure an active Gemini provider under AI Providers"]
       );
       await db.execute("UPDATE grn_document SET extraction_status = 'manual_review' WHERE id = ?", [documentId]);
       return { id: extractionId, status: "manual_review", provider: "unconfigured" };
@@ -1519,6 +1550,7 @@ export const grnSmartService = {
       await db.execute("UPDATE grn_document SET extraction_status = 'completed' WHERE id = ?", [documentId]);
       await writeAudit("DOCUMENT_ANALYZED", grnId, actorUserId, "document_ai", {
         document_id: documentId, provider: "google_gemini", model: modelName, confidence,
+        key_source: providerSource,
       });
       await this.revalidate(grnId);
       return { id: extractionId, status: "completed", confidence, fields };
