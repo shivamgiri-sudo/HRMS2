@@ -592,6 +592,8 @@
     "migrations/1309_client_billing_unmapped_legacy_cost_centre.sql"
   ],
   "knownUnlisted": [
+    "1080_itc_blocked_sub_heads.sql",
+    "1510_cost_centre_legacy_parity.sql",
     "000_ai_supplemental.sql",
     "000_finance_supplemental.sql",
     "000_run_all.sql",
