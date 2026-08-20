@@ -213,7 +213,12 @@ export function calculateBudgetLine(line: BudgetLineInput) {
   const gstType: BudgetGstType = taxAmount === 0
     ? "none"
     : line.gstType ?? "cgst_sgst";
-  const recoverablePct = clamp(Number(line.recoverableTaxPct ?? 100), 0, 100);
+  // For non_gst/exempt lines we assume 0% ITC recoverability: taxAmount is 0 at budget
+  // time so the budget pnl_cost_amount is unaffected, but if a vendor ever raises a GST
+  // invoice against this line the GRN service inherits this value and correctly treats
+  // the full gross (base + tax) as P&L cost instead of silently zeroing the tax out.
+  const defaultRecoverable = ["exempt", "non_gst"].includes(line.taxTreatment) ? 0 : 100;
+  const recoverablePct = clamp(Number(line.recoverableTaxPct ?? defaultRecoverable), 0, 100);
   const recoverableTaxAmount = roundMoney(taxAmount * recoverablePct / 100);
   const pnlCostAmount = roundMoney(
     baseAmount + taxAmount - recoverableTaxAmount
@@ -742,11 +747,15 @@ async function replaceBudgetLines(
   // which do not vary across lines, so without this a 58-line budget re-read the same cost
   // centres and monthly drivers 58 times each — sequentially, inside this transaction.
   const lookupCache = createAllocationLookupCache();
+  const usedLineIds = new Set<string>();
 
   for (const item of calculated) {
     const line = item.line;
     const value = item.values;
-    const lineId = line.id || randomUUID();
+    let lineId = line.id || randomUUID();
+    // Guard against frontend sending duplicate IDs (causes PRIMARY key collision)
+    while (usedLineIds.has(lineId)) lineId = randomUUID();
+    usedLineIds.add(lineId);
     const planningLevel: BudgetPlanningLevel = line.planningLevel === "branch" ? "branch" : "cost_centre";
     await connection.execute(
       `INSERT INTO finance_budget_line
