@@ -26,7 +26,12 @@ const { mockExecute, state } = vi.hoisted(() => {
     }
 
     if (s.startsWith('INSERT INTO WFM_ROSTER_IMPORT_ROW')) {
-      state.insertedRows.push(_params ?? []);
+      // Rows are inserted in chunked multi-row statements, so params arrive as one flat array
+      // covering many rows. Split back into 10-column rows so assertions stay per-row.
+      const flat = _params ?? [];
+      for (let i = 0; i + 10 <= flat.length; i += 10) {
+        state.insertedRows.push(flat.slice(i, i + 10));
+      }
       return [{ insertId: state.insertedRows.length, affectedRows: 1 }];
     }
 
@@ -251,7 +256,7 @@ describe('roster-import service', () => {
           fileName: 'no-dates.xlsx',
           createdBy: 'user-1',
         })
-      ).rejects.toThrow('Could not detect header row');
+      ).rejects.toThrow('No sheet in this file looks like a roster');
     });
   });
 });
@@ -340,18 +345,43 @@ describe('roster-import service — real spreadsheet shapes', () => {
     expect(summary.dateRangeStart).toBe('2026-08-01');
   });
 
-  it('refuses a workbook whose first sheet has no date columns, as a 400 that names the sheet', async () => {
-    // The real weekly WFM workbook: first tab is an interval capacity grid, no date columns.
+  it('finds the roster when the FIRST sheet is not one — the reported production case', async () => {
+    // The real weekly WFM workbook: first tab is an interval capacity grid with no date columns,
+    // the roster is on a later tab. This previously threw ROSTER_IMPORT_NO_HEADER_ROW and the
+    // roster tab was never opened, so the file could not be imported at all. Reported 2026-08-20.
     const buffer = buildDateHeaderWorkbook([
       { name: 'Planning', aoa: [['', 'BST', 'IST', 'Mon', 'Tue'], ['', '00:00:00', '05:30:00', 22.77, 25.6]] },
       { name: 'Roster Planning', aoa: REAL_SHAPE },
+    ]);
+
+    const result = await createImportBatch({
+      processId: 'proc-1',
+      importMode: 'NEW',
+      fileBuffer: buffer,
+      fileName: "Shift Roster WC 17 Aug'26.xlsx",
+      createdBy: 'user-1',
+    });
+
+    expect(result.batchId).toBeGreaterThan(0);
+    // Proves it parsed the ROSTER tab, not merely that it stopped erroring: the capacity grid on
+    // 'Planning' has no employees or dated assignments to find.
+    expect(result.summary.totalEmployees).toBeGreaterThan(0);
+    expect(result.summary.totalAssignments).toBeGreaterThan(0);
+  });
+
+  it('refuses only when NO sheet is a roster, naming every tab it checked', async () => {
+    // The genuine "wrong file" case. The message must list the tabs, because the useful question
+    // is no longer "why not the first sheet" but "which of these was meant to be the roster".
+    const buffer = buildDateHeaderWorkbook([
+      { name: 'Planning', aoa: [['', 'BST', 'IST'], ['', '00:00:00', '05:30:00']] },
+      { name: 'Summary', aoa: [['Process', 'HC'], ['Onfido', 42]] },
     ]);
 
     const err = await createImportBatch({
       processId: 'proc-1',
       importMode: 'NEW',
       fileBuffer: buffer,
-      fileName: "Shift Roster WC 17 Aug'26.xlsx",
+      fileName: 'no-roster-anywhere.xlsx',
       createdBy: 'user-1',
     }).catch((e) => e);
 
@@ -359,6 +389,6 @@ describe('roster-import service — real spreadsheet shapes', () => {
     expect(err.statusCode).toBe(400);
     expect(err.code).toBe('ROSTER_IMPORT_NO_HEADER_ROW');
     expect(err.message).toContain("'Planning'");
-    expect(err.message).toContain('FIRST sheet');
+    expect(err.message).toContain("'Summary'");
   });
 });

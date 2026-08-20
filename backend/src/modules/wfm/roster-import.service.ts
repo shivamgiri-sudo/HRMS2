@@ -49,18 +49,62 @@ function toYMD(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-async function hasApprovedLeave(employeeIdRaw: string, rosterDate: string): Promise<boolean> {
+/**
+ * Which (employee code, date) pairs have an approved leave request, for the whole batch at once.
+ *
+ * The previous version was wrong three ways and, because it swallowed its own error and returned
+ * "permissive", none of them was visible:
+ *   1. It queried `leave_request.leave_date`, which does not exist. Leave is stored as a RANGE
+ *      (from_date / to_date). Every call threw ER_BAD_FIELD_ERROR — verified live 2026-08-20.
+ *   2. It matched `leave_request.employee_id` against the spreadsheet's employee CODE. That column
+ *      holds the employees.id UUID, so even with the right date column it could never match.
+ *   3. It ran one query PER LEAVE CELL. On a real roster that is hundreds of round trips, and over
+ *      the public database address it was slow enough to stall the import outright.
+ *
+ * Net effect: the "roster says LEAVE but no approved leave exists" warning could never fire, on a
+ * table holding 29,265 approved requests.
+ *
+ * One query now covers the batch, bounded to the roster's own date window, and the ranges are
+ * expanded into a lookup set. Still permissive on failure — a broken cross-check must not block an
+ * import — but it now logs, because silence is what hid this for so long.
+ */
+async function approvedLeaveLookup(
+  targets: Array<{ employeeIdRaw: string; rosterDate: string }>
+): Promise<{ keys: Set<string>; usable: boolean }> {
+  if (targets.length === 0) return { keys: new Set(), usable: true };
+
+  const codes = [...new Set(targets.map((t) => t.employeeIdRaw).filter(Boolean))];
+  if (codes.length === 0) return { keys: new Set(), usable: true };
+
+  const dates = targets.map((t) => t.rosterDate).filter(Boolean).sort();
+  const windowStart = dates[0];
+  const windowEnd = dates[dates.length - 1];
+
   try {
+    const placeholders = codes.map(() => '?').join(', ');
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT 1 FROM leave_request
-       WHERE employee_id = ? AND status = 'approved' AND leave_date = ?
-       LIMIT 1`,
-      [employeeIdRaw, rosterDate]
+      `SELECT e.employee_code AS code, lr.from_date AS fromDate, lr.to_date AS toDate
+         FROM leave_request lr
+         JOIN employees e ON e.id = lr.employee_id
+        WHERE lr.status = 'approved'
+          AND e.employee_code IN (${placeholders})
+          AND lr.to_date   >= ?
+          AND lr.from_date <= ?`,
+      [...codes, windowStart, windowEnd]
     );
-    return rows.length > 0;
-  } catch {
-    // If table absent or error, be permissive (no false warning)
-    return true;
+
+    const keys = new Set<string>();
+    for (const r of rows as Array<{ code: string; fromDate: Date | string; toDate: Date | string }>) {
+      const from = new Date(r.fromDate);
+      const to = new Date(r.toDate);
+      for (let d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+        keys.add(`${r.code}|${toYMD(d)}`);
+      }
+    }
+    return { keys, usable: true };
+  } catch (err) {
+    console.error('[roster-import] approved-leave cross-check unavailable', err);
+    return { keys: new Set(), usable: false };
   }
 }
 
@@ -73,33 +117,145 @@ export async function createImportBatch(params: {
   fileBuffer: Buffer;
   fileName: string;
   createdBy: string;
-}): Promise<{ batchId: number; summary: BatchSummary }> {
+  /**
+   * Which sheet to import. Omit to let the scan decide; it only errors as ambiguous when more
+   * than one sheet in the workbook genuinely looks like a roster, which is when the upload page
+   * shows a picker and sends the answer back here.
+   */
+  sheetName?: string;
+}): Promise<{ batchId: number; summary: BatchSummary; sheetName: string }> {
   const { processId, cycleId, importMode, fileBuffer, fileName, createdBy } = params;
+  const requestedSheet = params.sheetName?.trim() || null;
 
-  // ── Step 1: Parse file ───────────────────────────────────────────────────
-  // sheets: [0] — only the first sheet is ever used, two lines down, so parsing the other
-  // eleven was waste. Measured on a real 7.6 MB weekly WFM workbook (12 sheets): 2,936 ms to
-  // read all sheets vs 1,154 ms for the first alone, with the same first sheet in both.
-  const workbook = XLSX.read(fileBuffer, { type: 'buffer', sheets: [0] });
-  const sheetName = workbook.SheetNames[0];
-  const sheet = workbook.Sheets[sheetName];
-  // unknown[][], not string[][]: a real spreadsheet returns numbers and Dates in these cells
-  // (date headers come back as Excel serials), and the old string[][] cast made
-  // header-alias.service.ts throw 'trim is not a function' on the first real file. Every read
-  // below already coerces with String(...).
-  const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as unknown[][];
+  // ── Step 1: Parse file, and find the sheet the roster is actually on ─────
+  //
+  // This used to read `sheets: [0]` and use SheetNames[0] unconditionally. Real weekly WFM
+  // workbooks are not shaped that way: the one that surfaced this has 12 tabs with the roster
+  // well down the list and a 'Planning' grid first, so every upload was refused with "could not
+  // detect header row" no matter how correct the roster tab was. The previous fix improved that
+  // message but left the single-sheet limitation in place, so the file still could not be
+  // imported.
+  //
+  // Fast path preserved: the first sheet is still read alone first, and if it has a header row
+  // nothing else is parsed. That keeps the measured win on single-sheet files (1,154 ms vs
+  // 2,936 ms to read all 12 tabs of a 7.6 MB workbook). Only when the first sheet does NOT look
+  // like a roster do we pay to open the rest — the case that previously just failed.
+  const readRows = (wb: XLSX.WorkBook, name: string): unknown[][] =>
+    // unknown[][], not string[][]: a real spreadsheet returns numbers and Dates in these cells
+    // (date headers come back as Excel serials), and the old string[][] cast made
+    // header-alias.service.ts throw 'trim is not a function' on the first real file. Every read
+    // below already coerces with String(...).
+    XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '' }) as unknown[][];
+
+  //
+  // "First sheet with a detectable header row" is NOT good enough, and shipping it would have
+  // been worse than the original bug. Measured against the real 12-tab workbook: analyzeHeaders
+  // ACCEPTS 'OT Planning', 'AHT Deficit', 'Summary' and 'Projection-II' — capacity and analytics
+  // grids whose numeric column headers parse as dates. First-match would have silently imported
+  // 'OT Planning' as if it were the roster.
+  //
+  // What actually separates a roster from an analytics grid is that a roster NAMES THE EMPLOYEE.
+  // On that same workbook the identity mapping is decisive:
+  //   Roster - Analyst   -> employeeName (+8 more)   roster
+  //   Leadership Roster  -> employeeId, employeeName  roster
+  //   OT Planning        -> amName, tlName only       manager columns, not the employee
+  //   Summary            -> amName only               not a roster
+  //   AHT Deficit        -> nothing                   not a roster
+  // So a candidate must map employeeId or employeeName. Among those, prefer the one that
+  // identifies people most strongly, then the one with the most dated columns, then the largest —
+  // the main roster rather than a 31-row offcut.
+  const scoreSheet = (h: ReturnType<typeof analyzeHeaders>, rowCount: number): number => {
+    const mapped = new Set(
+      (h.identityColumns ?? [])
+        .map((c) => c.mapping?.mappedTo)
+        .filter((m): m is string => Boolean(m))
+    );
+    if (!mapped.has('employeeId') && !mapped.has('employeeName')) return -1; // not a roster
+    let score = 0;
+    if (mapped.has('employeeId')) score += 1000;
+    if (mapped.has('employeeName')) score += 1000;
+    score += mapped.size * 10;
+    score += (h.dateColumns?.length ?? 0) * 5;
+    score += Math.min(rowCount, 5000) / 1000;
+    return score;
+  };
+
+  const firstOnly = XLSX.read(fileBuffer, { type: 'buffer', sheets: [0] });
+  let sheetName = firstOnly.SheetNames[0];
+  let rows = readRows(firstOnly, sheetName);
+  let headerResult = analyzeHeaders(rows);
+  let allSheetNames = firstOnly.SheetNames;
+  let rejectedSheets: string[] = [];
+  const candidates: string[] = [];
+
+  if (scoreSheet(headerResult, rows.length) < 0) {
+    // sheetRows: 25 — detection only needs the header band, and reading all 12 tabs of a 7.6 MB
+    // workbook in full exhausts Node's heap (verified: FATAL ERROR JavaScript heap out of memory).
+    // Some tabs here are 291 rows x 765 columns. Detect cheaply, then re-read only the winner.
+    const probe = XLSX.read(fileBuffer, { type: 'buffer', sheetRows: 25 });
+    allSheetNames = probe.SheetNames;
+    let best = { score: -1, name: '' };
+    for (const candidate of probe.SheetNames) {
+      const probeRows = readRows(probe, candidate);
+      const probeHeader = analyzeHeaders(probeRows);
+      const score = scoreSheet(probeHeader, probeRows.length);
+      if (score < 0) { rejectedSheets.push(candidate); continue; }
+      candidates.push(candidate);
+      const wins = requestedSheet ? candidate === requestedSheet : score > best.score;
+      if (wins) best = { score: requestedSheet ? Number.MAX_SAFE_INTEGER : score, name: candidate };
+    }
+    if (requestedSheet && best.name !== requestedSheet) {
+      throw Object.assign(
+        new Error(
+          `Sheet '${requestedSheet}' is not a roster sheet in this file. ` +
+          (candidates.length
+            ? `Candidates: ${candidates.map((c) => `'${c}'`).join(', ')}.`
+            : `No sheet in this file looks like a roster.`)
+        ),
+        { statusCode: 400, code: 'ROSTER_IMPORT_SHEET_NOT_FOUND', candidates }
+      );
+    }
+    if (best.score >= 0 && !(!requestedSheet && candidates.length > 1)) {
+      // Full read of the chosen sheet only.
+      const chosen = XLSX.read(fileBuffer, { type: 'buffer', sheets: [best.name] });
+      sheetName = best.name;
+      rows = readRows(chosen, best.name);
+      headerResult = analyzeHeaders(rows);
+    }
+    if (best.score < 0) headerResult = { ...headerResult, headerRowIndex: -1 };
+
+    // More than one sheet can legitimately be a roster, and picking for the user would be a
+    // guess with real consequences. The real 12-tab workbook contains THREE: 'Roster - Analyst'
+    // (204 agents), 'Leadership Roster' (74 managers) and 'Sheet1' (31 rows). Scoring ranks
+    // 'Leadership Roster' top because it carries an employee code as well as a name — which is
+    // very probably NOT the sheet the uploader meant. Importing 74 managers instead of 204
+    // agents, silently, is exactly the class of failure this module is full of.
+    //
+    // So when the choice is ambiguous, refuse and name the candidates. requestedSheet lets the
+    // caller answer, which is what the sheet picker on the upload page sends back.
+    if (!requestedSheet && candidates.length > 1) {
+      throw Object.assign(
+        new Error(
+          `This file has ${candidates.length} sheets that could be the roster: ` +
+          `${candidates.map((c) => `'${c}'`).join(', ')}. Choose which one to import.`
+        ),
+        { statusCode: 409, code: 'ROSTER_IMPORT_AMBIGUOUS_SHEET', candidates }
+      );
+    }
+  }
 
   // ── Step 2: Detect header row ────────────────────────────────────────────
-  const headerResult = analyzeHeaders(rows);
   if (headerResult.headerRowIndex === -1) {
-    // statusCode 400, and the sheet is named: this is the ordinary "wrong file / wrong tab"
-    // case, not a server fault. A real weekly WFM workbook was uploaded whose first tab is a
-    // capacity grid with no date columns; without a statusCode the message is replaced by a
-    // generic 500 in production and the uploader is told nothing they can act on.
+    // statusCode 400: this is the ordinary "wrong file" case, not a server fault. Without a
+    // statusCode the message is replaced by a generic 500 in production and the uploader is told
+    // nothing they can act on. Now that every tab is checked, name them all — the useful question
+    // is no longer "why not the first sheet" but "which of these was supposed to be the roster".
+    const tabs = allSheetNames.map((n) => `'${n}'`).join(', ');
     throw Object.assign(
       new Error(
-        `Could not detect header row in sheet '${sheetName}' — the importer reads the FIRST sheet, ` +
-        `and it must have a row with at least 2 date columns.`
+        `No sheet in this file looks like a roster. Checked ${allSheetNames.length} sheet(s): ${tabs}. ` +
+        `A roster sheet needs a header row with at least 2 date columns AND a column identifying ` +
+        `the employee (employee code or name).`
       ),
       { statusCode: 400, code: 'ROSTER_IMPORT_NO_HEADER_ROW' }
     );
@@ -226,30 +382,47 @@ export async function createImportBatch(params: {
     }
   }
 
-  // ── Step 7: Async LEAVE validation (DB check) ───────────────────────────
-  for (const entry of rowEntries) {
-    if (
-      entry.normalizedType === 'LEAVE' &&
-      entry.validationState !== 'ERROR' &&
-      entry.employeeIdRaw
-    ) {
-      const approved = await hasApprovedLeave(entry.employeeIdRaw, entry.rosterDate);
-      if (!approved) {
+  // ── Step 7: LEAVE cross-check (one query for the whole batch) ───────────
+  const leaveTargets = rowEntries.filter(
+    (e) => e.normalizedType === 'LEAVE' && e.validationState !== 'ERROR' && e.employeeIdRaw
+  );
+  const { keys: approvedLeave, usable: leaveCheckUsable } = await approvedLeaveLookup(leaveTargets);
+  if (leaveCheckUsable) {
+    for (const entry of leaveTargets) {
+      if (!approvedLeave.has(`${entry.employeeIdRaw}|${entry.rosterDate}`)) {
         entry.validationState = 'WARNING';
         entry.messages.push('Roster marks LEAVE but no approved leave request found');
       }
     }
   }
+  // When the cross-check could not run, no warning is raised rather than a false one on every
+  // LEAVE cell — but it is logged above, not swallowed.
 
   // ── Step 8: Insert rows into DB ─────────────────────────────────────────
-  for (const entry of rowEntries) {
-    await db.execute(
-      `INSERT INTO wfm_roster_import_row
-         (batch_id, row_number, employee_id_raw, employee_name_raw,
-          roster_date, raw_value, normalized_type,
-          validation_state, validation_messages, extra_metadata_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
+  //
+  // Chunked multi-row INSERT, not one statement per cell. A real roster is employees x dates —
+  // the reported 301-row workbook is ~4,200 cells — and a per-row INSERT is that many round
+  // trips. On the production LAN that is merely slow; from off-LAN it stalls the import
+  // outright, which is how it was noticed.
+  //
+  // `row_number` MUST stay escaped-backticked: ROW_NUMBER is a RESERVED WORD in MySQL 8, so the
+  // unquoted column name made this INSERT fail with ER_PARSE_ERROR on EVERY import. The batch row
+  // is written before this point, so the visible result was a batch stuck at PARSING with 0 rows
+  // and a bare "Import failed". Verified live 2026-08-20 on MySQL 8.0.42: unquoted ->
+  // ER_PARSE_ERROR, backticked -> accepted. Production held exactly one such batch,
+  // 'Roster.xlsx', PARSING, total_rows 0. The backslashes are required — this is a template
+  // literal, so an unescaped backtick would terminate the SQL string.
+  //
+  // 500 rows per statement keeps each packet well inside max_allowed_packet while cutting a
+  // 4,200-cell import from 4,200 statements to 9.
+  const INSERT_CHUNK = 500;
+  for (let i = 0; i < rowEntries.length; i += INSERT_CHUNK) {
+    const chunk = rowEntries.slice(i, i + INSERT_CHUNK);
+    const values: unknown[] = [];
+    const tuples: string[] = [];
+    for (const entry of chunk) {
+      tuples.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      values.push(
         batchId,
         entry.rowNumber,
         entry.employeeIdRaw || null,
@@ -262,7 +435,15 @@ export async function createImportBatch(params: {
         Object.keys(entry.extraMetadata).length > 0
           ? JSON.stringify(entry.extraMetadata)
           : null,
-      ]
+      );
+    }
+    await db.execute(
+      `INSERT INTO wfm_roster_import_row
+         (batch_id, \`row_number\`, employee_id_raw, employee_name_raw,
+          roster_date, raw_value, normalized_type,
+          validation_state, validation_messages, extra_metadata_json)
+       VALUES ${tuples.join(', ')}`,
+      values
     );
   }
 
@@ -316,7 +497,7 @@ export async function createImportBatch(params: {
     ]
   );
 
-  return { batchId, summary };
+  return { batchId, summary, sheetName };
 }
 
 export async function getImportBatch(
@@ -528,7 +709,7 @@ export async function getImportRows(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM wfm_roster_import_row
      WHERE batch_id = ?${stateClause}
-     ORDER BY row_number ASC, roster_date ASC
+     ORDER BY \`row_number\` ASC, roster_date ASC
      LIMIT ? OFFSET ?`,
     [batchId, ...stateParams, limit, offset]
   );

@@ -74,7 +74,7 @@ const IDENTITY_ALIASES: Record<string, string[]> = {
 const ALIAS_TO_CANONICAL: Map<string, string> = new Map();
 for (const [canonical, aliases] of Object.entries(IDENTITY_ALIASES)) {
   for (const alias of aliases) {
-    ALIAS_TO_CANONICAL.set(alias.toLowerCase(), canonical);
+    ALIAS_TO_CANONICAL.set(normalizeAliasKey(alias), canonical);
   }
 }
 
@@ -214,11 +214,20 @@ export function parseColumnDate(header: unknown): Date | null {
 /**
  * Map a single column header to a canonical identity field.
  */
+/** Lowercase, strip punctuation, collapse whitespace — so 'Emp.Code' == 'emp code'. */
+function normalizeAliasKey(value: string): string {
+  return value.toLowerCase().replace(/[._\-\/]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 export function mapIdentityColumn(header: unknown): ColumnMapping {
   // Coerced but NOT trimmed: sourceHeader is contract ("preserves sourceHeader exactly"), and
   // only the alias lookup normalises whitespace.
   const sourceHeader = toHeaderString(header);
-  const canonical = ALIAS_TO_CANONICAL.get(sourceHeader.trim().toLowerCase());
+  // Punctuation and repeated spaces are collapsed before lookup: real headers are written
+  // 'Emp.Code', 'Emp_Code', 'Emp  Code' as freely as 'Emp Code'. Without this, 'Emp.Code' on the
+  // 'Roster - Analyst' tab mapped to nothing, every row imported with a null employee id, and all
+  // 1,421 of them then collided as "conflicting assignments for same employee+date".
+  const canonical = ALIAS_TO_CANONICAL.get(normalizeAliasKey(sourceHeader));
   if (canonical) {
     return { sourceHeader, mappedTo: canonical, confidence: 'HIGH' };
   }

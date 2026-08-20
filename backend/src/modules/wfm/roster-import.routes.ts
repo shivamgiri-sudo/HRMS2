@@ -40,10 +40,11 @@ rosterImportRouter.post(
         return;
       }
 
-      const { processId, importMode, cycleId } = req.body as {
+      const { processId, importMode, cycleId, sheetName } = req.body as {
         processId?: string;
         importMode?: string;
         cycleId?: string;
+        sheetName?: string;
       };
 
       if (!processId) {
@@ -57,6 +58,7 @@ rosterImportRouter.post(
       const result = await createImportBatch({
         processId,
         cycleId,
+        sheetName,
         importMode: mode,
         fileBuffer: req.file.buffer,
         fileName: req.file.originalname,
@@ -69,12 +71,24 @@ rosterImportRouter.post(
         summary: result.summary,
       });
     } catch (err: any) {
-      if (err?.message?.includes('Could not detect header row')) {
-        res.status(422).json({ error: err.message });
+      // Anything that named its own status is already a message written for the uploader
+      // (wrong tab, no date columns, unreadable file). Pass it through verbatim.
+      if (err?.statusCode) {
+        // candidates is what lets the upload page render a sheet picker instead of a dead end.
+        res.status(err.statusCode).json({
+          error: err.message,
+          code: err.code,
+          ...(err.candidates ? { candidates: err.candidates } : {}),
+        });
         return;
       }
       console.error('[roster-import] POST error:', err);
-      res.status(500).json({ error: 'Import failed', detail: err?.message });
+      // The cause used to go into `detail`, which nothing displays: hrmsApi reads `error` first
+      // (hrmsApi.ts:110), so the uploader saw a bare "Import failed" and the actual reason was
+      // dropped on the floor. Two files were reported as simply "failed" for exactly this
+      // reason. `detail` is kept for programmatic callers; the message now carries the cause.
+      const cause = err?.message ? String(err.message) : 'unknown error';
+      res.status(500).json({ error: `Import failed: ${cause}`, detail: cause });
     }
   }
 );

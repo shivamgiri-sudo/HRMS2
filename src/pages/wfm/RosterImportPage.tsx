@@ -286,9 +286,21 @@ export default function RosterImportPage() {
   });
   const missingEmployees: MissingEmployee[] = missingData?.employees ?? [];
 
+  /**
+   * Sheet choice.
+   *
+   * A real weekly workbook can hold more than one sheet that genuinely looks like a roster — the
+   * 12-tab file that prompted this has three ('Roster - Analyst' with 204 agents, 'Leadership
+   * Roster' with 74 managers, and a 31-row 'Sheet1'). The server refuses to guess between them
+   * and replies 409 ROSTER_IMPORT_AMBIGUOUS_SHEET with the candidate list; we keep the file so
+   * the same upload can be retried once the user picks, rather than making them drag it again.
+   */
+  const [sheetChoices, setSheetChoices] = useState<string[]>([]);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+
   // Upload mutation
   const uploadMutation = useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({ file, sheet }: { file: File; sheet?: string }) => {
       if (!processId) throw new Error("Select a process first");
       const fd = new FormData();
       fd.append("file", file);
@@ -297,10 +309,18 @@ export default function RosterImportPage() {
       // Only sent when the page was opened from Roster Builder's bulk-upload link. createImportBatch
       // takes cycleId as optional, so omitting it keeps the standalone upload behaving as before.
       if (cycleId) fd.append("cycleId", cycleId);
+      if (sheet) fd.append("sheetName", sheet);
       return hrmsApi.postForm<{ batchId: number; status: string }>("/api/wfm/roster-imports", fd);
     },
     onSuccess: (res) => {
+      setSheetChoices([]);
+      setPendingFile(null);
       setBatchId(res.batchId);
+    },
+    onError: (err: unknown) => {
+      const payload = (err as { payload?: { candidates?: unknown } })?.payload;
+      const candidates = Array.isArray(payload?.candidates) ? (payload!.candidates as string[]) : [];
+      setSheetChoices(candidates);
     },
   });
 
@@ -359,7 +379,9 @@ export default function RosterImportPage() {
   const handleFile = useCallback(
     (file: File) => {
       if (!processId) { alert("Please select a process first"); return; }
-      uploadMutation.mutate(file);
+      setSheetChoices([]);
+      setPendingFile(file);
+      uploadMutation.mutate({ file });
     },
     [processId, uploadMutation]
   );
@@ -488,8 +510,36 @@ export default function RosterImportPage() {
           </div>
         )}
 
-        {/* Upload error */}
-        {uploadMutation.isError && (
+        {/* Sheet picker — shown instead of a bare error when the workbook has more than one
+            sheet that could be the roster. The file is still held in memory, so choosing a sheet
+            retries the same upload rather than making the user find the file again. */}
+        {sheetChoices.length > 0 && pendingFile && (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-4">
+            <p className="font-semibold text-amber-900">Which sheet is the roster?</p>
+            <p className="mt-1 text-sm text-amber-800">
+              <span className="font-medium">{pendingFile.name}</span> has {sheetChoices.length} sheets
+              that could be a roster. Pick the one to import.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {sheetChoices.map((name) => (
+                <Button
+                  key={name}
+                  size="sm"
+                  variant="outline"
+                  disabled={uploadMutation.isPending}
+                  className="border-amber-400 bg-white text-amber-900 hover:bg-amber-100"
+                  onClick={() => uploadMutation.mutate({ file: pendingFile, sheet: name })}
+                >
+                  <FileSpreadsheet className="mr-1.5 h-3.5 w-3.5" />
+                  {name}
+                </Button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Upload error — suppressed while the sheet picker is offering a way forward. */}
+        {uploadMutation.isError && sheetChoices.length === 0 && (
           <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-red-700 text-sm">
             <strong>Upload failed:</strong> {(uploadMutation.error as Error).message}
           </div>
