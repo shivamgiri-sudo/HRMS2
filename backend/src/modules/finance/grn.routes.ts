@@ -130,6 +130,11 @@ function userHasRole(req: AuthenticatedRequest, role: string) {
 }
 
 function errorStatus(error: unknown, fallback: number) {
+  // An explicit statusCode on the thrown error wins. Without this the period-override refusal
+  // below built its Error with `{ statusCode: 403 }` and still reached the client as a 400 —
+  // the deliberate code was read by nothing, exactly as expenseMasterErrorStatus above reads it.
+  const explicit = (error as { statusCode?: number } | null)?.statusCode;
+  if (typeof explicit === "number") return explicit;
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   if (
     message.includes("only access")
@@ -677,14 +682,28 @@ grnRouter.post(
         );
       }
       // Gate period-end cut-off bookings (accounting month ≠ bill date month) to elevated roles.
+      //
+      // branch_admin added 2026-08-20. 139ee3b7 granted branch_admin the accounting-period
+      // override on the client, and 0337e3f3 ("align branch_admin's period override across
+      // client and server") widened the server — but only grn-smart.routes.ts's
+      // canOverridePeriod, which gates the invoice-components PUT. THIS list, on the CREATE
+      // call the same form makes first, was left behind, so the alignment was never complete:
+      // a branch_admin saw the period control enabled (BudgetLinkedGrnForm.tsx canOverridePeriod
+      // names them), set a different month, and the very first request of the save died 403
+      // with "GRN could not be saved" before anything was written.
+      //
+      // Keep this list identical to grn-smart.routes.ts's canOverridePeriod. It is ONLY the
+      // period override; the round-off tolerance (grn-smart.service.ts isElevatedRole) and the
+      // late-invoice reason requirement (grn-smart.routes.ts isRestrictedRole, which NAMES
+      // branch_admin as restricted) are different money controls and stay on their own lists.
       const requestedPeriod = String(req.body?.accountingPeriod ?? "").trim();
       const billPeriod = String(req.body?.billDate ?? "").slice(0, 7);
       if (requestedPeriod && requestedPeriod !== billPeriod) {
-        const periodOverrideRoles = ["finance_head", "accounts_head", "super_admin"];
+        const periodOverrideRoles = ["finance_head", "accounts_head", "super_admin", "branch_admin"];
         if (!user.roles.some((r: string) => periodOverrideRoles.includes(r))) {
           throw Object.assign(
             new Error(
-              "Only Finance Head, Accounts Head or Super Admin may book an invoice into a different accounting month"
+              "Only Finance Head, Accounts Head, Branch Admin or Super Admin may book an invoice into a different accounting month"
             ),
             { statusCode: 403 }
           );
