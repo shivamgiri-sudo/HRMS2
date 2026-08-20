@@ -864,7 +864,7 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
     `INSERT INTO roster_decision_audit
        (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
         override_by, override_reason, override_at, acted_by_role, old_value_json, new_value_json)
-     SELECT UUID(), COALESCE(generation_run_id,''), COALESCE(cycle_id,''), employee_id, roster_date,
+     SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
             'manager_realigned', 'manager_realign_action', ?, ?, NOW(), 'manager',
             JSON_OBJECT('status','pending_manager_action'),
             JSON_OBJECT('status','realigned_by_manager','new_roster_date',?,'new_shift_template_id',?)
@@ -872,6 +872,12 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/realign", requireAuth, req
     [req.authUser!.id, reason, new_roster_date ?? null, new_shift_template_id ?? null, assignmentId]
   );
 
+  // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
+  // published -> acknowledged check the employee path runs must happen here too. Without
+  // it a week whose final holdout was settled by a manager, rather than by the employee
+  // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
+  // this: 'escalated_to_hr' is still awaiting a human.
+  await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
   return res.json({ success: true, message: "Assignment realigned" });
 }));
 
@@ -926,12 +932,18 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/force-approve", requireAut
     `INSERT INTO roster_decision_audit
        (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
         override_by, override_reason, override_at, acted_by_role)
-     SELECT UUID(), COALESCE(generation_run_id,''), COALESCE(cycle_id,''), employee_id, roster_date,
+     SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
             'force_approved', 'manager_force_approve', ?, ?, NOW(), 'manager'
        FROM wfm_roster_assignment WHERE id = ?`,
     [req.authUser!.id, reason, assignmentId]
   );
 
+  // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
+  // published -> acknowledged check the employee path runs must happen here too. Without
+  // it a week whose final holdout was settled by a manager, rather than by the employee
+  // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
+  // this: 'escalated_to_hr' is still awaiting a human.
+  await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
   return res.json({ success: true, message: "Assignment force-approved" });
 }));
 
@@ -986,7 +998,7 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/escalate", requireAuth, re
     `INSERT INTO roster_decision_audit
        (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
         override_by, override_reason, override_at, acted_by_role)
-     SELECT UUID(), COALESCE(generation_run_id,''), COALESCE(cycle_id,''), employee_id, roster_date,
+     SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
             'escalated_to_hr', 'manager_escalate', ?, ?, NOW(), 'manager'
        FROM wfm_roster_assignment WHERE id = ?`,
     [req.authUser!.id, reason, assignmentId]
@@ -1046,12 +1058,18 @@ wfmRouter.post("/manager/weekoff-review/:assignmentId/reject-request", requireAu
     `INSERT INTO roster_decision_audit
        (id, run_id, cycle_id, employee_id, roster_date, decision_type, rule_applied,
         override_by, override_reason, override_at, acted_by_role)
-     SELECT UUID(), COALESCE(generation_run_id,''), COALESCE(cycle_id,''), employee_id, roster_date,
+     SELECT UUID(), generation_run_id, COALESCE(cycle_id,''), employee_id, roster_date,
             'manager_rejected_request', 'manager_reject_employee_request', ?, ?, NOW(), 'manager'
        FROM wfm_roster_assignment WHERE id = ?`,
     [req.authUser!.id, reason, assignmentId]
   );
 
+  // A manager resolution can clear the LAST thing a cycle was waiting on, so the same
+  // published -> acknowledged check the employee path runs must happen here too. Without
+  // it a week whose final holdout was settled by a manager, rather than by the employee
+  // acknowledging, would sit at 'published' forever. Escalation deliberately does NOT call
+  // this: 'escalated_to_hr' is still awaiting a human.
+  await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
   return res.json({ success: true, message: "Employee request rejected — original assignment retained" });
 }));
 
