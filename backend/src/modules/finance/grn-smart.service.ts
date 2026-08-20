@@ -190,16 +190,37 @@ async function lockBudgetLine(
 }
 
 async function loadAllocations(connection: PoolConnection, grnId: string, forUpdate = false) {
+  /*
+   * LEFT JOIN, not JOIN, on the two budget tables.
+   *
+   * An UNBUDGETED allocation row carries budget_line_id = NULL and budget_id = NULL by design —
+   * the raiser picked a Head/Sub-head with no approved budget line, and Finance Head links a real
+   * one during approval. Under the previous inner joins every such row was silently dropped from
+   * this result, which is not a cosmetic omission: review() reads these rows and throws
+   * "Smart GRN has no saved cost allocations" when the array is empty, so an unbudgeted GRN would
+   * have been unapprovable with an error naming the wrong problem, and getWorkspace() would have
+   * shown the reviewer an invoice with no splits at all.
+   *
+   * Nothing changes for a budgeted GRN: every one of its rows has both ids and still matches.
+   * The three budget_* label columns come back NULL for an unlinked split, which is the truth —
+   * callers that consume them (reserve/consume/release/reverseConsumption, and the approval gate
+   * in review()) all now branch on budget_line_id being present.
+   *
+   * FOR UPDATE is applied to the allocation table specifically rather than to the whole
+   * statement: locking those rows is the actual intent, and a NULL-supplying outer-joined side has
+   * nothing to lock. The budget lines are locked separately by lockBudgetLine() wherever they are
+   * about to be mutated. Verified against the live MySQL 8.0.42 that this parses and runs.
+   */
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT a.*, pm.process_name, ccm.cost_centre_name, h.budget_number,
             l.head AS budget_head, l.sub_head AS budget_sub_head, l.item_name AS budget_item_name
        FROM grn_cost_allocation a
-       JOIN finance_budget_line l ON l.id = a.budget_line_id
-       JOIN finance_budget_header h ON h.id = a.budget_id
+       LEFT JOIN finance_budget_line l ON l.id = a.budget_line_id
+       LEFT JOIN finance_budget_header h ON h.id = a.budget_id
        LEFT JOIN process_master pm ON pm.id = a.process_id
        LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
       WHERE a.grn_request_id = ?
-      ORDER BY a.sequence_no${forUpdate ? " FOR UPDATE" : ""}`,
+      ORDER BY a.sequence_no${forUpdate ? " FOR UPDATE OF a" : ""}`,
     [grnId]
   );
   return rows as any[];
@@ -573,8 +594,25 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
   return { results, score, documentMatchStatus, duplicateCount: duplicates.length };
 }
 
+/*
+ * An UNBUDGETED split (budget_line_id NULL) has no budget line to move money against, so every
+ * one of the four lifecycle helpers below skips it rather than passing the string "null" into
+ * budgetConsumptionService — which would have raised or, worse, matched nothing and silently
+ * reserved zero.
+ *
+ * Skipping is only safe because it is temporary and gated: review() refuses a Finance Head
+ * approval while any split is still unlinked, so a GRN can pass Branch Head with nothing
+ * reserved but can never reach payment without a real budget line behind every rupee. The
+ * lifecycle_status UPDATE that follows each loop still covers the unlinked rows, so their
+ * reserved/consumed/released state stays in step with the rest of the GRN.
+ */
+function hasBudgetLine(allocation: any) {
+  return allocation.budget_line_id != null && String(allocation.budget_line_id).length > 0;
+}
+
 async function reserveAllocations(connection: PoolConnection, allocations: any[]) {
   for (const allocation of allocations) {
+    if (!hasBudgetLine(allocation)) continue;
     await budgetConsumptionService.reserve(
       connection,
       String(allocation.budget_line_id),
@@ -593,6 +631,7 @@ async function reserveAllocations(connection: PoolConnection, allocations: any[]
 
 async function consumeAllocations(connection: PoolConnection, allocations: any[]) {
   for (const allocation of allocations) {
+    if (!hasBudgetLine(allocation)) continue;
     await budgetConsumptionService.consume(
       connection,
       String(allocation.budget_line_id),
@@ -612,6 +651,7 @@ async function consumeAllocations(connection: PoolConnection, allocations: any[]
 async function releaseAllocations(connection: PoolConnection, allocations: any[]) {
   for (const allocation of allocations) {
     if (String(allocation.lifecycle_status) !== "reserved") continue;
+    if (!hasBudgetLine(allocation)) continue;
     await budgetConsumptionService.release(
       connection,
       String(allocation.budget_line_id),
@@ -636,6 +676,7 @@ async function releaseAllocations(connection: PoolConnection, allocations: any[]
 async function reverseConsumedAllocations(connection: PoolConnection, allocations: any[]) {
   for (const allocation of allocations) {
     if (String(allocation.lifecycle_status) !== "consumed") continue;
+    if (!hasBudgetLine(allocation)) continue;
     await budgetConsumptionService.reverseConsumption(
       connection,
       String(allocation.budget_line_id),
@@ -1579,6 +1620,179 @@ export const grnSmartService = {
     return { success: true, newStatus: "submitted", validation };
   },
 
+  /**
+   * Links an approved budget line to each cost-centre split of an UNBUDGETED GRN.
+   *
+   * This is the second half of the unbudgeted flow and the reason raising one without a budget is
+   * safe. The raiser books the invoice against a Head/Sub-head that has no budget line; Finance
+   * Head, who is the person able to create or move budget in the first place, attaches a real line
+   * to every split before approving. review() refuses a Finance Head approval until that is done.
+   *
+   * Every check saveInvoiceComponents() applies when a split is linked at draft time is applied
+   * again here, because this path reaches the same end state by a different route: the line must
+   * belong to this branch and be active (lockBudgetLine), sit in the GRN's own consumption period,
+   * not be in a period closed for P&L, and match the cost centre the split was raised against —
+   * without that last one a Finance Head could quietly move spend onto another cost centre's
+   * budget after Branch Head had already reviewed the split.
+   *
+   * Capacity is checked against the line's live availability rather than assumed, and where the
+   * GRN has already passed Branch Head — so every split is sitting in lifecycle_status 'reserved'
+   * with nothing actually reserved, because there was no line to reserve against — the reservation
+   * is placed now, at link time. Skipping that would leave consumeAllocations() at approval
+   * consuming a reservation that was never made.
+   */
+  async linkUnbudgetedBudgetLines(
+    grnId: string,
+    links: Array<{ allocationId: string; budgetLineId: string }>,
+    actorUserId: string,
+    actorRole: string
+  ) {
+    if (!Array.isArray(links) || !links.length) {
+      throw new Error("At least one cost-centre split must be linked to a budget line");
+    }
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const grn = await lockGrn(connection, grnId);
+      if (Number(grn.is_unbudgeted) !== 1) {
+        throw new Error("This GRN was raised against an approved budget — there is nothing to link");
+      }
+      // Linking is an approval-stage action. Before submission the raiser still owns the splits
+      // and the next invoice-components save replaces every allocation row wholesale, which would
+      // discard the link; after Finance Head approval the budget has already moved.
+      if (!["submitted", "branch_head_approved"].includes(String(grn.status))) {
+        throw new Error(
+          `A budget line can only be linked while the GRN is awaiting review. Current status: ${grn.status}`
+        );
+      }
+
+      const allocations = await loadAllocations(connection, grnId, true);
+      const byId = new Map(allocations.map((allocation) => [String(allocation.id), allocation]));
+      const period = consumptionPeriodOf(grn);
+      if (await isPeriodLocked(period, connection)) {
+        throw new Error(
+          `${period} is locked for P&L close. This GRN must be raised against the current open period.`
+        );
+      }
+
+      const linked: Array<Record<string, unknown>> = [];
+      for (const link of links) {
+        const allocation = byId.get(String(link?.allocationId ?? ""));
+        if (!allocation) throw new Error("Cost-centre split not found on this GRN");
+        if (hasBudgetLine(allocation)) {
+          throw new Error(
+            `${allocation.cost_centre_name || "This cost centre"} is already linked to a budget line`
+          );
+        }
+        if (!link?.budgetLineId) {
+          throw new Error(
+            `${allocation.cost_centre_name || "Cost centre"}: select an approved budget line`
+          );
+        }
+
+        const line = await lockBudgetLine(connection, String(link.budgetLineId), String(grn.branch_id));
+        if (String(line.period_code) !== period) {
+          throw new Error(
+            `${allocation.cost_centre_name || "Cost centre"}: budget period ${line.period_code} does not match the accounting month ${period}`
+          );
+        }
+        if (String(line.cost_centre_id ?? "") !== String(allocation.cost_centre_id ?? "")) {
+          throw new Error(
+            `${allocation.cost_centre_name || "Cost centre"}: that budget line belongs to a different cost centre`
+          );
+        }
+
+        const availableAmount = roundMoney(
+          Number(line.gross_amount || 0)
+          - Number(line.reserved_amount || 0)
+          - Number(line.consumed_amount || 0)
+        );
+        if (Number(allocation.amount_with_tax) > availableAmount + 0.01) {
+          throw new Error(
+            `${allocation.cost_centre_name || "Cost centre"}: this split of ${Number(allocation.amount_with_tax).toFixed(2)} exceeds the line's available budget of ${availableAmount.toFixed(2)}`
+          );
+        }
+
+        await connection.execute(
+          `UPDATE grn_cost_allocation
+              SET budget_id = ?, budget_line_id = ?, process_id = ?, cost_class = ?
+            WHERE id = ? AND grn_request_id = ?`,
+          [
+            line.budget_id,
+            line.id,
+            line.process_id ?? allocation.process_id ?? null,
+            line.process_id || line.cost_centre_id ? "direct" : "indirect",
+            allocation.id,
+            grnId,
+          ]
+        );
+
+        // Branch Head has already approved: the split is marked 'reserved' but nothing was
+        // reserved, because there was no line. Place that reservation now against the line just
+        // linked, so the amounts stay in step with every budgeted GRN at the same stage.
+        if (String(allocation.lifecycle_status) === "reserved") {
+          await budgetConsumptionService.reserve(
+            connection,
+            String(line.id),
+            Number(allocation.amount_with_tax),
+            Number(allocation.quantity),
+            Number(allocation.amount_without_tax) || undefined
+          );
+        }
+
+        linked.push({
+          allocation_id: String(allocation.id),
+          cost_centre_id: allocation.cost_centre_id ?? null,
+          cost_centre_name: allocation.cost_centre_name ?? null,
+          budget_line_id: String(line.id),
+          budget_id: String(line.budget_id),
+          item_name: line.item_name ?? null,
+          amount_with_tax: Number(allocation.amount_with_tax),
+          reserved_now: String(allocation.lifecycle_status) === "reserved",
+        });
+      }
+
+      // Mirror the header onto the first split exactly as saveInvoiceComponents() does, but only
+      // once nothing is left unlinked — a half-linked GRN must not read as budgeted anywhere.
+      const remaining = await loadAllocations(connection, grnId);
+      const stillUnlinked = remaining.filter((allocation) => !hasBudgetLine(allocation));
+      if (!stillUnlinked.length && remaining.length) {
+        await connection.execute(
+          `UPDATE grn_request SET budget_id = ?, budget_line_id = ? WHERE id = ?`,
+          [remaining[0].budget_id, remaining[0].budget_line_id, grnId]
+        );
+      }
+
+      // is_unbudgeted deliberately stays 1. It records how the GRN was RAISED — which is the
+      // fact an auditor asking "what did we commit to before budgeting it?" needs — not whether
+      // it currently has a budget line, which the allocation rows already answer.
+      await writeAuditInTransaction(
+        connection,
+        "GRN_UNBUDGETED_BUDGET_LINKED",
+        grnId,
+        actorUserId,
+        actorRole,
+        {
+          linked_count: linked.length,
+          still_unlinked_count: stillUnlinked.length,
+          accounting_period: period,
+          links: linked,
+        }
+      );
+      await connection.commit();
+      return {
+        ...(await this.getWorkspace(grnId)),
+        linkedCount: linked.length,
+        remainingUnlinked: stillUnlinked.length,
+      };
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
+
   async review(
     grnId: string,
     decision: "approved" | "rejected",
@@ -1674,6 +1888,26 @@ export const grnSmartService = {
           throw new Error(`Finance Head can only review Branch Head-approved GRNs. Current status: ${grn.status}`);
         }
         if (decision === "approved") {
+          /*
+           * The control that keeps an UNBUDGETED GRN honest.
+           *
+           * Raising one without a budget line is allowed on purpose — the raiser should not be
+           * blocked because Finance has not built the budget yet. Approving one is not: Finance
+           * Head approval is the step that moves money from reserved into consumed and, for a
+           * vendor GRN, creates the payable. Letting an unlinked split through here would book
+           * spend that no budget ever accounted for and leave consumeAllocations() with nothing
+           * to consume, so the P&L would show the cost while every budget line still read fully
+           * available.
+           *
+           * Rejection is deliberately NOT gated: a Finance Head must always be able to turn down
+           * an unbudgeted GRN without first linking a budget to it.
+           */
+          const unlinked = allocations.filter((allocation) => !hasBudgetLine(allocation));
+          if (unlinked.length) {
+            throw new Error(
+              `This is an unbudgeted GRN. Link an approved budget line to ${unlinked.length === allocations.length ? "every" : `the remaining ${unlinked.length}`} cost-centre split before approving.`
+            );
+          }
           await consumeAllocations(connection, allocations);
           newStatus = grn.grn_type === "vendor" ? "pending_accounts_payment" : "approved";
           // P1-5: Expected status in WHERE for atomic guard.

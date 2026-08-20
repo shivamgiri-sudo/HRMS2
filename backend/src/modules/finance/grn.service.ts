@@ -53,9 +53,28 @@ export interface CreateGrnPayload {
   branchId: string;
   /** Legal entity (MAS / IDC / Pikquick). Stored on grn_request after migration 1218. */
   companyCode?: string;
-  budgetLineId: string;
+  /**
+   * The approved budget line this GRN books against.
+   *
+   * Required for every ordinary GRN and optional only when isUnbudgeted is true — see the
+   * unbudgeted branch in createDraft() below for why that exception exists and what replaces it.
+   */
+  budgetLineId?: string;
   processId?: string;
   costCentreId?: string;
+  /**
+   * UNBUDGETED vendor GRN — the raiser picked a Head/Sub-head that has no approved budget line
+   * in any of the branch's cost centres, which the vendor form deliberately allows.
+   *
+   * When set, budgetLineId is absent and head/subHead carry the classification the budget line
+   * would otherwise have supplied. Finance Head must link a real budget line to every
+   * cost-centre split before the GRN can be approved (grnSmartService.linkUnbudgetedBudgetLines).
+   */
+  isUnbudgeted?: boolean;
+  /** Expense head — read from the budget line for a budgeted GRN, supplied here when unbudgeted. */
+  head?: string;
+  /** Expense sub-head — same rule as head. */
+  subHead?: string;
   vendorId?: string;
   vendorName?: string;
   quantity: number;
@@ -199,6 +218,142 @@ function legacyBranchCondition(
   )`;
   return { sql, params: [...ids, ...ids] };
 }
+/**
+ * Creates the DRAFT header for an UNBUDGETED vendor GRN — one raised against a Head/Sub-head that
+ * has no approved budget line anywhere in the branch, which the vendor form deliberately permits.
+ *
+ * This is a separate function rather than a set of `if (isUnbudgeted)` branches threaded through
+ * createDraft() because createDraft() derives essentially every column it writes from the budget
+ * line: head, sub_head, unit, unit_rate, the whole tax profile, the amounts, process_id,
+ * cost_centre_id, budget_id, the financial year and the period-match check. With no line to read,
+ * almost none of that logic applies, and interleaving the two would have meant guarding roughly
+ * twenty statements individually.
+ *
+ * What is written here is deliberately a THIN placeholder, and that is safe for exactly the same
+ * documented reason the budgeted vendor path already relies on: the follow-up
+ * PUT /api/finance/grns/:id/invoice-components call overwrites every meaningful header column
+ * (head, sub_head, quantity, unit, unit_rate, the full tax breakdown, all five amount columns,
+ * cost_class, process_id, cost_centre_id, allocation_mode) with the real
+ * N-cost-centre x M-component breakdown before the GRN can be submitted. head/sub_head are the
+ * one exception that must be RIGHT here rather than a placeholder: saveInvoiceComponents() reads
+ * them back off this row to build its synthetic budget lines for the unbudgeted case, so the
+ * classification the raiser chose has to survive this insert.
+ *
+ * budget_id and budget_line_id are left NULL and is_unbudgeted is set to 1. Approval is NOT
+ * open-ended: grnSmartService.review() refuses a Finance Head approval while any cost-centre
+ * split still has no budget line, so the spend cannot reach payment without a real budget behind
+ * it — it just does not need one to be RAISED.
+ */
+async function createUnbudgetedDraft(
+  payload: CreateGrnPayload,
+  paymentTermsDays: number,
+  actorUserId: string,
+  actorRole: string
+) {
+  const head = String(payload.head ?? "").trim();
+  const subHead = String(payload.subHead ?? "").trim();
+  if (!head) throw new Error("An expense head is required for an unbudgeted GRN");
+  if (!subHead) throw new Error("An expense sub-head is required for an unbudgeted GRN");
+  if (!payload.costCentreId) {
+    throw new Error("A cost centre is required for an unbudgeted GRN");
+  }
+
+  // The cost centre stands in for the budget line as the thing that ties this GRN to the branch,
+  // so it gets the same scrutiny getLineForGrn() applies to a line: it must exist, be active, and
+  // belong to the branch the GRN is being raised for. Without this an unbudgeted GRN would be the
+  // one create path able to attribute spend to another branch's cost centre.
+  const [costCentreRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, cost_centre_name, branch_id
+       FROM cost_centre_master
+      WHERE id = ? AND active_status = 1
+      LIMIT 1`,
+    [payload.costCentreId]
+  );
+  const costCentre = costCentreRows[0] as any;
+  if (!costCentre) throw new Error("Cost centre not found or inactive");
+  if (String(costCentre.branch_id) !== String(payload.branchId)) {
+    throw new Error("Cost centre does not belong to this branch");
+  }
+
+  const accountingPeriod = resolveAccountingPeriod({
+    accountingPeriod: payload.accountingPeriod,
+    billDate: payload.billDate!,
+  });
+  // Same P&L-close guard the budgeted path applies against the budget line's period_code. There
+  // is no line here, so it runs against the month the GRN actually books into.
+  if (await isPeriodLocked(accountingPeriod)) {
+    throw new Error(
+      `${accountingPeriod} is locked for P&L close. Raise this against the current open period.`
+    );
+  }
+
+  // Derived from the booking month rather than the budget line's period_code, which is the same
+  // value in every budgeted case — getLineForGrn()'s period_code must already equal the bill month
+  // (the "Bill date must fall within approved budget period" check enforces exactly that).
+  const financialYear = financialYearFromPeriod(accountingPeriod);
+  if (payload.financialYear && payload.financialYear !== financialYear) {
+    throw new Error(`Financial year must be ${financialYear} for this accounting period`);
+  }
+
+  // No budget line means no preferred_vendor_id to fall back on; the vendor the raiser picked is
+  // the only candidate, and resolveCanonicalVendor still enforces that a vendor GRN has one.
+  const vendor = await resolveCanonicalVendor(payload.grnType, payload.vendorId, null);
+
+  const id = randomUUID();
+  const numberFormat = await resolveGrnNumberFormat();
+  const grnNumber = numberFormat === "monthly_company"
+    ? await allocateMonthlyGrnNumber({ periodCode: accountingPeriod })
+    : await allocateGrnNumber(payload.branchId, financialYear);
+  const dueDate = addDays(payload.billDate!, paymentTermsDays);
+
+  await db.execute(
+    `INSERT INTO grn_request
+     (id, grn_number, grn_type, branch_id, company_code, process_id, cost_centre_id, cost_class,
+      vendor_id, vendor_name, head, sub_head, quantity, unit, unit_rate,
+      tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
+      amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount,
+      bill_date, accounting_period, payment_terms_days, due_date, description, remarks, status,
+      financial_year, budget_id, budget_line_id, is_unbudgeted, created_by, created_at)
+     VALUES (?,?,?,?,?,NULL,?,'direct',?,?,?,?,?,'amount',0,
+             'exclusive',0,'cgst_sgst',100,
+             0,0,0,0,0,
+             ?,?,?,?,?,?,'draft',?,NULL,NULL,1,?,NOW())`,
+    [
+      id,
+      grnNumber,
+      payload.grnType,
+      payload.branchId,
+      payload.companyCode?.trim() || null,
+      payload.costCentreId,
+      vendor.vendorId,
+      vendor.vendorName,
+      head,
+      subHead,
+      Number(payload.quantity),
+      payload.billDate,
+      accountingPeriod,
+      paymentTermsDays,
+      dueDate,
+      `${head} - ${subHead} (unbudgeted)`,
+      payload.remarks?.trim() || null,
+      financialYear,
+      actorUserId,
+    ]
+  );
+
+  await writeGrnAudit("CREATE_DRAFT_UNBUDGETED", id, actorUserId, actorRole, {
+    grn_number: grnNumber,
+    is_unbudgeted: true,
+    head,
+    sub_head: subHead,
+    cost_centre_id: payload.costCentreId,
+    cost_centre_name: costCentre.cost_centre_name ?? null,
+    accounting_period: accountingPeriod,
+    financial_year: financialYear,
+  });
+  return { id, grnNumber };
+}
+
 export const grnService = {
   async createDraft(payload: CreateGrnPayload, actorUserId: string, actorRole: string) {
     // P0-2: Provision type has no accounting lifecycle in application code.
@@ -209,7 +364,10 @@ export const grnService = {
       );
     }
     if (!payload.branchId) throw new Error("Branch is required");
-    if (!payload.budgetLineId) throw new Error("An approved budget line is required");
+    const isUnbudgeted = Boolean(payload.isUnbudgeted);
+    if (!isUnbudgeted && !payload.budgetLineId) {
+      throw new Error("An approved budget line is required");
+    }
     if (!payload.billDate || !/^\d{4}-\d{2}-\d{2}$/.test(payload.billDate)) {
       throw new Error("A valid bill/receipt date is required");
     }
@@ -222,8 +380,12 @@ export const grnService = {
       throw new Error("Payment terms must be a whole number between 0 and 365 days");
     }
 
+    if (isUnbudgeted) {
+      return await createUnbudgetedDraft(payload, paymentTermsDays, actorUserId, actorRole);
+    }
+
     const budgetLine = await branchBudgetService.getLineForGrn(
-      payload.budgetLineId,
+      payload.budgetLineId!,
       payload.branchId
     ) as any;
 

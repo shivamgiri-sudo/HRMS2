@@ -250,6 +250,69 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       toast({ title: "Submission failed", description: error.message, variant: "destructive" }),
   });
 
+  /*
+   * UNBUDGETED GRN linking — the Finance Head half of the unbudgeted flow.
+   *
+   * A GRN raised against a Head/Sub-head with no approved budget arrives here with every
+   * cost-centre split carrying a NULL budget_line_id. The server refuses a Finance Head approval
+   * while that is true (grnSmartService.review), so this panel is the only way such a GRN can
+   * move forward: one approved budget line chosen per split, then POST .../link-budget.
+   */
+  const [budgetLinks, setBudgetLinks] = useState<Record<string, string>>({});
+
+  /* Choosing which budget absorbs an unbudgeted commitment is Finance's call, not a Branch
+     Head's — the same authority SMART_OVERRIDE_ROLES gates on the server. A Branch Head still
+     reviews the GRN at their own stage; they just do not pick the budget. */
+  const canLinkBudget = Boolean(capabilities?.canReviewFinanceStage);
+
+  /* Only splits the reviewer has actually chosen a line for are sent. A partial link is a valid,
+     resumable state: the server links what it is given and reports how many remain. */
+  const pendingBudgetLinks = useMemo(
+    () =>
+      Object.entries(budgetLinks)
+        .filter(([, budgetLineId]) => Boolean(budgetLineId))
+        .map(([allocationId, budgetLineId]) => ({ allocationId, budgetLineId })),
+    [budgetLinks]
+  );
+
+  const isUnbudgetedTarget = Number(parent?.is_unbudgeted ?? 0) === 1;
+  const unlinkedAllocations = useMemo(
+    () => (workspace?.allocations ?? []).filter((allocation) => !allocation.budget_line_id),
+    [workspace]
+  );
+  // The month the GRN books into — the same value consumptionPeriodOf() derives server-side, and
+  // the only period whose budget lines the server will accept for this GRN.
+  const targetPeriod = String(
+    parent?.accounting_period || String(parent?.bill_date ?? "").slice(0, 7) || ""
+  );
+
+  const linkCandidatesQuery = useQuery({
+    queryKey: ["grn-link-budget-lines", parent?.branch_id, targetPeriod],
+    enabled: Boolean(isUnbudgetedTarget && unlinkedAllocations.length && parent?.branch_id && targetPeriod),
+    queryFn: async () => {
+      const response = await hrmsApi.get<any>(
+        `/api/finance/pnl/budget-lines/available?branchId=${encodeURIComponent(
+          String(parent!.branch_id)
+        )}&period=${encodeURIComponent(targetPeriod)}`
+      );
+      return (response?.data ?? response?.rows ?? response ?? []) as Array<Record<string, any>>;
+    },
+  });
+  const linkCandidates = linkCandidatesQuery.data ?? [];
+
+  const linkBudgetMutation = useMutation({
+    mutationFn: (input: { id: string; links: Array<{ allocationId: string; budgetLineId: string }> }) =>
+      hrmsApi.post(`/api/finance/grns/${input.id}/link-budget`, { links: input.links }),
+    onSuccess: () => {
+      toast({ title: "Budget lines linked" });
+      setBudgetLinks({});
+      void workspaceQuery.refetch();
+      void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
+    },
+    onError: (error: Error) =>
+      toast({ title: "Could not link the budget", description: error.message, variant: "destructive" }),
+  });
+
   const reviewMutation = useMutation({
     mutationFn: (input: { id: string; decision: "approved" | "rejected"; note: string }) =>
       hrmsApi.post(`/api/finance/grns/${input.id}/review`, {
@@ -402,6 +465,12 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
    * Reject and Approve buttons, and `setDecision(x); submitDecision()` would have submitted the
    * *previous* decision — setState is asynchronous and submitDecision closes over the old value.
    */
+  // Clear half-made picks when the reviewer switches to a different GRN, so a budget line chosen
+  // for one GRN's split can never be posted against another's.
+  useEffect(() => {
+    setBudgetLinks({});
+  }, [target?.id]);
+
   function submitDecision(decision: "approved" | "rejected") {
     if (!target) return;
     if (decision === "rejected" && !reviewNote.trim()) {
@@ -412,6 +481,26 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
       toast({
         title: "Approval is blocked",
         description: "Resolve or obtain Finance override for every blocking validation.",
+        variant: "destructive",
+      });
+      return;
+    }
+    /*
+     * Mirror of the server-side gate in grnSmartService.review(), so the reviewer is told what to
+     * do in the Allocations tab instead of watching the request come back 400. The server remains
+     * the authority — this only saves a round trip and names the fix.
+     *
+     * Scoped to the Finance Head stage and to approval: Branch Head review of an unbudgeted GRN is
+     * allowed (nothing is reserved yet), and either stage may always reject one.
+     */
+    if (
+      decision === "approved"
+      && target.status === "branch_head_approved"
+      && unlinkedAllocations.length
+    ) {
+      toast({
+        title: "Link a budget line first",
+        description: `${unlinkedAllocations.length} cost-centre split(s) on this unbudgeted GRN have no approved budget line. Link them in the Allocations tab, then approve.`,
         variant: "destructive",
       });
       return;
@@ -835,6 +924,57 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
               {workspaceQuery.isLoading ? (
                 <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-grn-ink-soft" /></div>
               ) : workspace?.allocations?.length ? (
+                <>
+                {isUnbudgetedTarget && (
+                  <div className="p-4 pb-0">
+                    <GrnAlert tone={unlinkedAllocations.length ? "warn" : "ok"}>
+                      {unlinkedAllocations.length ? (
+                        <>
+                          <p className="font-semibold">
+                            Unbudgeted GRN — {unlinkedAllocations.length} of {workspace.allocations.length} splits have no budget line.
+                          </p>
+                          <p className="mt-1">
+                            This was raised against <span className="font-semibold">{parent?.head} / {parent?.sub_head}</span>,
+                            which had no approved budget in {targetPeriod}. Finance Head approval is blocked until every split is
+                            linked to an approved budget line for its own cost centre and period.
+                            {canLinkBudget
+                              ? " Pick a line per split below, then Link."
+                              : " Only a Finance Head or Super Admin can link the budget."}
+                          </p>
+                          {canLinkBudget && !linkCandidatesQuery.isLoading && !linkCandidates.length && (
+                            <p className="mt-1 font-semibold">
+                              No approved budget lines exist for this branch in {targetPeriod} — create the budget first, then
+                              come back and link it.
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <p className="font-semibold">
+                          Raised as unbudgeted — every split has since been linked to an approved budget line.
+                        </p>
+                      )}
+                    </GrnAlert>
+                    {canLinkBudget && unlinkedAllocations.length > 0 && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <GrnButton
+                          variant="primary"
+                          disabled={linkBudgetMutation.isPending || !pendingBudgetLinks.length}
+                          onClick={() =>
+                            linkBudgetMutation.mutate({ id: target!.id, links: pendingBudgetLinks })
+                          }
+                        >
+                          {linkBudgetMutation.isPending
+                            ? "Linking…"
+                            : `Link ${pendingBudgetLinks.length || ""} budget line${pendingBudgetLinks.length === 1 ? "" : "s"}`.trim()}
+                        </GrnButton>
+                        <span className="text-[12px] text-grn-ink-soft">
+                          Linking a split reserves its amount against the chosen line straight away when the GRN has already
+                          passed Branch Head.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <GrnTable minWidth={620}>
                   <thead>
                     <tr>
@@ -850,9 +990,45 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     {workspace.allocations.map((alloc, index) => (
                       <tr key={alloc.id} className={GRN_TR}>
                         <GrnTd className="font-grn-mono text-grn-ink-soft">{index + 1}</GrnTd>
-                        <GrnTd className="max-w-[160px]">
-                          <p className="truncate font-semibold">{alloc.budget_number}</p>
-                          <GrnCellSub className="truncate">{alloc.budget_head} / {alloc.budget_sub_head}</GrnCellSub>
+                        <GrnTd className="max-w-[220px]">
+                          {alloc.budget_line_id ? (
+                            <>
+                              <p className="truncate font-semibold">{alloc.budget_number}</p>
+                              <GrnCellSub className="truncate">{alloc.budget_head} / {alloc.budget_sub_head}</GrnCellSub>
+                            </>
+                          ) : canLinkBudget ? (
+                            /* Only lines for THIS split's own cost centre are offered. The server
+                               enforces the same rule, so a mismatch is refused rather than
+                               silently moving spend onto another cost centre's budget. */
+                            <GrnSelect
+                              value={budgetLinks[String(alloc.id)] ?? ""}
+                              onChange={(event) =>
+                                setBudgetLinks((current) => ({
+                                  ...current,
+                                  [String(alloc.id)]: event.target.value,
+                                }))
+                              }
+                            >
+                              <option value="">
+                                {linkCandidatesQuery.isLoading ? "Loading budget lines…" : "Link a budget line…"}
+                              </option>
+                              {linkCandidates
+                                .filter(
+                                  (line) =>
+                                    String(line.cost_centre_id ?? "") === String(alloc.cost_centre_id ?? "")
+                                )
+                                .map((line) => (
+                                  <option key={String(line.id)} value={String(line.id)}>
+                                    {line.head} / {line.sub_head} — {line.item_name} ({money(line.available_gross_amount)} left)
+                                  </option>
+                                ))}
+                            </GrnSelect>
+                          ) : (
+                            <>
+                              <p className="truncate font-semibold text-grn-warn">Unbudgeted</p>
+                              <GrnCellSub className="truncate">{parent?.head} / {parent?.sub_head}</GrnCellSub>
+                            </>
+                          )}
                         </GrnTd>
                         <GrnTd>{alloc.cost_centre_name ?? "Branch common"}</GrnTd>
                         <GrnTd align="right">{money(alloc.amount_without_tax)}</GrnTd>
@@ -862,6 +1038,7 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     ))}
                   </tbody>
                 </GrnTable>
+                </>
               ) : (
                 <p className="px-4 py-6 text-[12px] text-grn-ink-soft">
                   Legacy single-attribution GRN — no split allocations.
