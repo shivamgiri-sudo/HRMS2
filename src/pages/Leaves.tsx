@@ -236,7 +236,7 @@ const Leaves = () => {
       reviewNotes,
     }: {
       requestId: string;
-      status: "approved" | "rejected";
+      status: "approved" | "rejected" | "branch_head_approved" | "branch_head_rejected";
       reviewNotes: string;
     }) => {
       // Get reviewer info for notification
@@ -254,6 +254,11 @@ const Leaves = () => {
         remarks: reviewNotes.trim() || null,
       });
 
+      // "approved"/"rejected" for the template regardless of which tier decided —
+      // the employee cares that their leave was approved, not which approval
+      // stage did it, and "leave_status" has no branch_head_* variant.
+      const plainStatus = status.startsWith("branch_head_") ? status.replace("branch_head_", "") : status;
+
       // Notify employee (fire and forget)
       hrmsApi.post("/api/communication/dispatch/send", {
         template_name: "leave_status",
@@ -261,7 +266,7 @@ const Leaves = () => {
         // never a property of this type — it could only ever have been undefined.
         recipient_employee_ids: [selectedRequest?.employeeId].filter(Boolean) as string[],
         data: {
-          status,
+          status: plainStatus,
           reviewer_name: reviewerName,
           review_notes: reviewNotes.trim() || undefined,
         },
@@ -277,9 +282,10 @@ const Leaves = () => {
       queryClient.invalidateQueries({ queryKey: ["leave-stats"] });
       queryClient.invalidateQueries({ queryKey: ["leave-balances"] });
 
+      const approved = status === "approved" || status === "branch_head_approved";
       toast({
-        title: status === "approved" ? "Leave Approved" : "Leave Rejected",
-        description: `The leave request has been ${status}.`,
+        title: approved ? "Leave Approved" : "Leave Rejected",
+        description: `The leave request has been ${approved ? "approved" : "rejected"}.`,
       });
 
       setSelectedRequest(null);
@@ -318,9 +324,17 @@ const Leaves = () => {
   const confirmAction = () => {
     if (!selectedRequest || !actionType) return;
 
+    // The backend's canReviewLeave requires the branch_head_* status value
+    // for an escalated request — sending plain "approved"/"rejected" against
+    // a pending_branch_head row is rejected (400 Invalid leave review status).
+    const escalated = selectedRequest.status === "pending_branch_head";
+    const status = escalated
+      ? (actionType === "approve" ? "branch_head_approved" : "branch_head_rejected")
+      : (actionType === "approve" ? "approved" : "rejected");
+
     updateStatusMutation.mutate({
       requestId: selectedRequest.id,
-      status: actionType === "approve" ? "approved" : "rejected",
+      status,
       reviewNotes,
     });
   };
@@ -917,8 +931,21 @@ const Leaves = () => {
                       const isOwnRequest =
                         myEmployeeId && request.employeeId === myEmployeeId;
 
+                      // pending_branch_head requests are outside canApproveLeaves'
+                      // ordinary-manager scope by design — the backend's
+                      // canReviewLeave requires the configured exception-approver
+                      // role (branch_head by default) for that status tier, not
+                      // just "is a manager". Previously the buttons only ever
+                      // rendered for status === "pending" (exact match), so an
+                      // escalated request showed as a dead card with no action
+                      // for anyone, including an actual branch head. (2026-08-21)
                       const canApproveThisRequest =
-                        canApproveLeaves && !isOwnRequest && request.status === "pending";
+                        !isOwnRequest &&
+                        (request.status === "pending"
+                          ? canApproveLeaves
+                          : request.status === "pending_branch_head"
+                          ? isAdminOrHR || roles.includes("branch_head")
+                          : false);
 
                       return (
                         <LeaveRequestCard

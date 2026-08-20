@@ -349,6 +349,37 @@ async function clientAddresses(candidates: string[]): Promise<Set<string>> {
   return new Set(rows.map((r) => String(r.email)));
 }
 
+/**
+ * User ids (not email rows) holding `roleKey`, scoped to `branchId` when given. For
+ * callers that need an actual recipient to address in-app (work_inbox_item.user_id),
+ * not an email — resolveRecipients below is email-shaped and drops rows with no
+ * deliverable address. Reuses the same branch_head_assignments + role-scope sources
+ * as the 'branch_head' selector above so the two paths never disagree about who the
+ * branch head is.
+ */
+export async function resolveRoleHolderUserIds(roleKey: string, branchId: string | null): Promise<string[]> {
+  const scoped = branchId
+    ? await roleScopeRows([roleKey], { type: 'branch', branchIds: [branchId] }, 10)
+    : await roleScopeRows([roleKey], { type: 'all' }, 10);
+
+  let assigned: PersonRow[] = [];
+  if (roleKey === 'branch_head' && branchId) {
+    const [rows] = await db.execute<PersonRow[]>(
+      `SELECT ${PERSON_COLS}
+         FROM branch_head_assignments bha
+         JOIN branch_master b ON bha.branch_name IN (b.branch_name, b.branch_code)
+         JOIN employees e     ON e.id = bha.branch_head_id
+        WHERE b.id = ? AND bha.is_active = 1 AND ${ACTIVE}`, [branchId]);
+    assigned = rows;
+  }
+
+  const ids = new Set<string>();
+  for (const row of [...assigned, ...scoped]) {
+    if (row.user_id) ids.add(String(row.user_id));
+  }
+  return [...ids];
+}
+
 // ---------------------------------------------------------------------------
 // Public entry point
 // ---------------------------------------------------------------------------

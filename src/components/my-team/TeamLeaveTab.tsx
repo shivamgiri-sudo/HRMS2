@@ -30,11 +30,20 @@ interface LeaveRow {
 }
 
 const STATUS_STYLE: Record<string, string> = {
-  pending:   "bg-amber-100 text-amber-800",
-  approved:  "bg-emerald-100 text-emerald-800",
-  rejected:  "bg-rose-100 text-rose-800",
-  cancelled: "bg-slate-100 text-slate-600",
-  discarded: "bg-slate-100 text-slate-600",
+  pending:               "bg-amber-100 text-amber-800",
+  pending_branch_head:   "bg-orange-100 text-orange-800",
+  approved:              "bg-emerald-100 text-emerald-800",
+  branch_head_approved:  "bg-emerald-100 text-emerald-800",
+  rejected:              "bg-rose-100 text-rose-800",
+  branch_head_rejected:  "bg-rose-100 text-rose-800",
+  cancelled:             "bg-slate-100 text-slate-600",
+  discarded:             "bg-slate-100 text-slate-600",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  pending_branch_head:  "Escalated — Branch Head",
+  branch_head_approved: "Approved (Branch Head)",
+  branch_head_rejected: "Rejected (Branch Head)",
 };
 
 function LeaveTypePill({ name }: { name?: string }) {
@@ -64,14 +73,20 @@ function Avatar({ name }: { name: string }) {
 export default function TeamLeaveTab() {
   const [showHistory, setShowHistory] = useState(false);
   const [reviewTarget, setReviewTarget] = useState<{
-    id: string; action: "approved" | "rejected"; name: string;
+    id: string; action: "approved" | "rejected"; name: string; escalated: boolean;
   } | null>(null);
   const [remarks, setRemarks] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const statusFilter = showHistory ? "approved,rejected" : "pending";
+  // pending_branch_head requests (3rd-EL-occurrence escalation) previously never
+  // reached this fetch at all — the query was hardcoded to plain "pending" — so a
+  // Branch Head using this page (the one page whose role-gate is built for them,
+  // see MyTeamPage.tsx) never saw an escalated request to act on. (2026-08-21 audit)
+  const statusFilter = showHistory
+    ? "approved,rejected,branch_head_approved,branch_head_rejected"
+    : "pending,pending_branch_head";
 
   const { data, isLoading } = useQuery({
     queryKey: ["team-leaves", statusFilter],
@@ -86,8 +101,14 @@ export default function TeamLeaveTab() {
     if (!reviewTarget) return;
     setSubmitting(true);
     try {
+      // The backend's canReviewLeave requires the branch_head_* status value for
+      // an escalated request — sending plain "approved"/"rejected" against a
+      // pending_branch_head row is rejected (400 Invalid leave review status).
+      const status = reviewTarget.escalated
+        ? (reviewTarget.action === "approved" ? "branch_head_approved" : "branch_head_rejected")
+        : reviewTarget.action;
       await hrmsApi.patch(`/api/leave/requests/${reviewTarget.id}/review`, {
-        status: reviewTarget.action,
+        status,
         remarks: remarks.trim() || undefined,
       });
       toast({
@@ -184,7 +205,7 @@ export default function TeamLeaveTab() {
                   </TableCell>
                   <TableCell>
                     <span className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium capitalize ${STATUS_STYLE[r.status] ?? "bg-slate-100 text-slate-600"}`}>
-                      {r.status}
+                      {STATUS_LABEL[r.status] ?? r.status}
                     </span>
                   </TableCell>
                   {!showHistory && (
@@ -192,14 +213,14 @@ export default function TeamLeaveTab() {
                       <div className="flex items-center justify-center gap-2">
                         <button
                           type="button"
-                          onClick={() => setReviewTarget({ id: r.id, action: "approved", name: r.employee_name })}
+                          onClick={() => setReviewTarget({ id: r.id, action: "approved", name: r.employee_name, escalated: r.status === "pending_branch_head" })}
                           className="inline-flex items-center gap-1 rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer"
                         >
                           <CheckCircle2 className="h-3.5 w-3.5" />Approve
                         </button>
                         <button
                           type="button"
-                          onClick={() => setReviewTarget({ id: r.id, action: "rejected", name: r.employee_name })}
+                          onClick={() => setReviewTarget({ id: r.id, action: "rejected", name: r.employee_name, escalated: r.status === "pending_branch_head" })}
                           className="inline-flex items-center gap-1 rounded-lg border border-rose-300 bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-700 hover:bg-rose-100 transition-colors cursor-pointer"
                         >
                           <XCircle className="h-3.5 w-3.5" />Reject
@@ -225,6 +246,11 @@ export default function TeamLeaveTab() {
               {reviewTarget?.action === "approved" ? "Approve" : "Reject"} Leave
             </DialogTitle>
             <p className="text-sm text-slate-500">{reviewTarget?.name}</p>
+            {reviewTarget?.escalated && (
+              <p className="text-xs font-medium text-orange-600">
+                Escalated — 3rd Earned Leave occurrence this year. This decision requires Branch Head approval.
+              </p>
+            )}
           </DialogHeader>
           <Textarea
             placeholder="Add remarks (optional)"
