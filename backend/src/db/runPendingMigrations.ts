@@ -742,6 +742,7 @@ const MIGRATION_MANIFEST: string[] = [
   "1501_apr_multi_server_config.sql", // Seeds 3 GPI VICIdial server configs (apr_server_gpi01/gpi02/gpi5) into integration_config for apr-vicidial-sync.worker.ts, INACTIVE (active_status=0) with no credentials — those go through the encrypted external-DB credential screen separately. Plain INSERT ... ON DUPLICATE KEY UPDATE, no ALTER, no syntax issue. Applied out of band; verified live 2026-08-20: all 3 rows exist.
   "1502_apr_source_column.sql", // Adds source ENUM('sync','manual')/uploaded_by/upload_batch_id to apr, plus idx_apr_source — lets a manual upload be protected from being silently overwritten by the sync workers. Already correctly information_schema-guarded. Applied out of band; verified live 2026-08-20: all 3 columns + index exist.
   "1507_roster_daily_assignment_updated_at.sql", // Adds roster_daily_assignment.updated_at (DATETIME, DEFAULT/ON UPDATE CURRENT_TIMESTAMP, matching created_at's own type). roster.governance.service.ts's shift-reassignment path (Task 11 amendment workflow, commit 1ab6cbae) writes `updated_at = NOW()` against a column that has never existed — confirmed live before this migration: 0 such columns, every reassignment call throwing ER_BAD_FIELD_ERROR. Applied live 2026-08-20 with explicit approval; verified: column exists with the correct type/default.
+  "1508_noida_cost_centre_status_sync.sql", // Syncs Noida branch cost centre active/inactive status against a user-provided master list of 15 active cost centres (2026-08-20).
   ];
 
 export type MigrationHealth = {
