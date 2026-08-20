@@ -77,14 +77,32 @@ export async function createImportBatch(params: {
   const { processId, cycleId, importMode, fileBuffer, fileName, createdBy } = params;
 
   // ── Step 1: Parse file ───────────────────────────────────────────────────
-  const workbook = XLSX.read(fileBuffer, { type: 'buffer' });
-  const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  const rows: string[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as string[][];
+  // sheets: [0] — only the first sheet is ever used, two lines down, so parsing the other
+  // eleven was waste. Measured on a real 7.6 MB weekly WFM workbook (12 sheets): 2,936 ms to
+  // read all sheets vs 1,154 ms for the first alone, with the same first sheet in both.
+  const workbook = XLSX.read(fileBuffer, { type: 'buffer', sheets: [0] });
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  // unknown[][], not string[][]: a real spreadsheet returns numbers and Dates in these cells
+  // (date headers come back as Excel serials), and the old string[][] cast made
+  // header-alias.service.ts throw 'trim is not a function' on the first real file. Every read
+  // below already coerces with String(...).
+  const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as unknown[][];
 
   // ── Step 2: Detect header row ────────────────────────────────────────────
   const headerResult = analyzeHeaders(rows);
   if (headerResult.headerRowIndex === -1) {
-    throw new Error('Could not detect header row — ensure the file has at least 2 date columns');
+    // statusCode 400, and the sheet is named: this is the ordinary "wrong file / wrong tab"
+    // case, not a server fault. A real weekly WFM workbook was uploaded whose first tab is a
+    // capacity grid with no date columns; without a statusCode the message is replaced by a
+    // generic 500 in production and the uploader is told nothing they can act on.
+    throw Object.assign(
+      new Error(
+        `Could not detect header row in sheet '${sheetName}' — the importer reads the FIRST sheet, ` +
+        `and it must have a row with at least 2 date columns.`
+      ),
+      { statusCode: 400, code: 'ROSTER_IMPORT_NO_HEADER_ROW' }
+    );
   }
 
   const { headerRowIndex, dateColumns, identityColumns } = headerResult;

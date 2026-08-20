@@ -79,12 +79,56 @@ for (const [canonical, aliases] of Object.entries(IDENTITY_ALIASES)) {
 }
 
 /**
+ * Coerce whatever the sheet reader handed back into a header string.
+ *
+ * Added 2026-08-20 after a REAL roster file ("Roster Planning", 300 agents, 14 date columns)
+ * crashed the whole import with `TypeError: (header ?? "").trim is not a function`. The date
+ * headers in that file are genuine Excel date cells, and `XLSX.utils.sheet_to_json(..., {header: 1})`
+ * returns those as NUMBERS (serials) — never strings — so every function here that assumed a
+ * string threw on the first real-world file that was not typed by hand. The declared
+ * `string[][]` row type made it look safe; the sheet reader does not honour it.
+ *
+ * The throw was a bare TypeError with no statusCode, so in production it surfaces as a generic
+ * 500 rather than anything an uploader could act on.
+ */
+function toHeaderString(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (value instanceof Date) {
+    // ISO, which parseColumnDate understands below. Local getters, not toISOString: a date-only
+    // cell read as local midnight shifts to the previous day under UTC in IST.
+    const y = value.getFullYear();
+    const m = String(value.getMonth() + 1).padStart(2, '0');
+    const d = String(value.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  if (typeof value === 'number') {
+    // An Excel serial for a date-only cell is an integer; a serial carrying a time is not, and
+    // rounding it here keeps the column's calendar day.
+    return Number.isFinite(value) ? String(Math.round(value)) : '';
+  }
+  return String(value);
+}
+
+/**
  * Parse a spreadsheet column header as a date.
  * Returns a Date if the header is a recognised date pattern, or null otherwise.
+ *
+ * Accepts `unknown` on purpose — see toHeaderString: real spreadsheets hand back numbers and
+ * Dates in the header row, not just strings.
  */
-export function parseColumnDate(header: string): Date | null {
-  const trimmed = (header ?? '').trim();
+export function parseColumnDate(header: unknown): Date | null {
+  const trimmed = toHeaderString(header).trim();
   if (!trimmed) return null;
+
+  // ISO YYYY-MM-DD (with an optional time part, which sheet readers append for date cells).
+  const iso = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/.exec(trimmed);
+  if (iso) {
+    const year = parseInt(iso[1], 10);
+    const month = parseInt(iso[2], 10) - 1;
+    const day = parseInt(iso[3], 10);
+    if (month >= 0 && month <= 11 && day >= 1 && day <= 31) return new Date(year, month, day);
+    return null;
+  }
 
   // Excel serial number: integer in range 40000–50000
   if (/^\d+$/.test(trimmed)) {
@@ -170,23 +214,25 @@ export function parseColumnDate(header: string): Date | null {
 /**
  * Map a single column header to a canonical identity field.
  */
-export function mapIdentityColumn(header: string): ColumnMapping {
-  const key = (header ?? '').trim().toLowerCase();
-  const canonical = ALIAS_TO_CANONICAL.get(key);
+export function mapIdentityColumn(header: unknown): ColumnMapping {
+  // Coerced but NOT trimmed: sourceHeader is contract ("preserves sourceHeader exactly"), and
+  // only the alias lookup normalises whitespace.
+  const sourceHeader = toHeaderString(header);
+  const canonical = ALIAS_TO_CANONICAL.get(sourceHeader.trim().toLowerCase());
   if (canonical) {
-    return { sourceHeader: header, mappedTo: canonical, confidence: 'HIGH' };
+    return { sourceHeader, mappedTo: canonical, confidence: 'HIGH' };
   }
-  return { sourceHeader: header, mappedTo: null, confidence: 'NONE' };
+  return { sourceHeader, mappedTo: null, confidence: 'NONE' };
 }
 
 /**
  * Scan rows 0–19 (or all rows if fewer than 20).
  * Returns the index of the first row that contains at least 2 date columns, or -1.
  */
-export function detectHeaderRow(rows: string[][]): number {
+export function detectHeaderRow(rows: unknown[][]): number {
   const limit = Math.min(rows.length, 20);
   for (let i = 0; i < limit; i++) {
-    const row = rows[i];
+    const row = rows[i] ?? [];
     let dateCount = 0;
     for (const cell of row) {
       if (parseColumnDate(cell) !== null) {
@@ -202,7 +248,7 @@ export function detectHeaderRow(rows: string[][]): number {
  * Full header analysis: locate the header row, classify every column as
  * a date column, a mapped identity column, or an unmapped (extra_metadata) column.
  */
-export function analyzeHeaders(rows: string[][]): HeaderDetectionResult {
+export function analyzeHeaders(rows: unknown[][]): HeaderDetectionResult {
   const headerRowIndex = detectHeaderRow(rows);
 
   if (headerRowIndex === -1 || headerRowIndex >= rows.length) {
@@ -220,7 +266,7 @@ export function analyzeHeaders(rows: string[][]): HeaderDetectionResult {
   const unmappedColumns: IdentityColumn[] = [];
 
   for (let i = 0; i < headerRow.length; i++) {
-    const header = headerRow[i] ?? '';
+    const header = toHeaderString(headerRow[i]);
     const parsedDate = parseColumnDate(header);
 
     if (parsedDate !== null) {

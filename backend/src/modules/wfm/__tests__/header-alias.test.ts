@@ -233,3 +233,73 @@ describe('header-alias', () => {
     });
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Real-spreadsheet header cells (added 2026-08-20).
+//
+// A real 300-agent roster file ("Roster Planning" sheet, 14 date columns) crashed the entire
+// import with `TypeError: (header ?? "").trim is not a function`. Its date headers are genuine
+// Excel date cells, and XLSX.utils.sheet_to_json(..., {header: 1}) returns those as NUMBERS —
+// the declared string[][] row type is not honoured by the sheet reader. Every test above feeds
+// hand-typed strings, which is why none of them caught it.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+
+describe('header-alias — non-string header cells', () => {
+  // 46235 = 2026-08-01, 46236 = 2026-08-02 (Excel serial, epoch 1899-12-30)
+  const AUG_1 = 46235;
+  const AUG_2 = 46236;
+
+  it('parses a raw Excel serial NUMBER, not just its string form', () => {
+    const d = parseColumnDate(AUG_1 as unknown as string);
+    expect(d).not.toBeNull();
+    expect(d!.getFullYear()).toBe(2026);
+    expect(d!.getMonth()).toBe(7);
+    expect(d!.getDate()).toBe(1);
+  });
+
+  it('parses a Date object header without shifting the calendar day', () => {
+    const d = parseColumnDate(new Date(2026, 7, 1));
+    expect(d).not.toBeNull();
+    expect(d!.getFullYear()).toBe(2026);
+    expect(d!.getMonth()).toBe(7);
+    expect(d!.getDate()).toBe(1);
+  });
+
+  it('parses an ISO date string, which is how a date cell stringifies', () => {
+    const d = parseColumnDate('2026-08-01');
+    expect(d!.getMonth()).toBe(7);
+    expect(d!.getDate()).toBe(1);
+    const withTime = parseColumnDate('2026-08-01 00:00:00');
+    expect(withTime!.getDate()).toBe(1);
+  });
+
+  it('does not throw on a numeric identity cell', () => {
+    expect(() => mapIdentityColumn(12345 as unknown as string)).not.toThrow();
+    expect(mapIdentityColumn(12345 as unknown as string).sourceHeader).toBe('12345');
+  });
+
+  it('detects the header row of a sheet whose date headers are numbers', () => {
+    const rows: unknown[][] = [
+      ['', '', '', 'Sat', 'Sun'],
+      ['MAS ID', 'Agent Name', 'DOJ', AUG_1, AUG_2],
+      ['MAS56168', 'KRISHAN KUMAR', 45447, '10:00 - 19:00', 'WO'],
+    ];
+    expect(() => detectHeaderRow(rows as string[][])).not.toThrow();
+    expect(detectHeaderRow(rows as string[][])).toBe(1);
+  });
+
+  it('analyses the real file shape end to end: 2 date columns, identity columns mapped', () => {
+    const rows: unknown[][] = [
+      ['', '', '', 'Sat', 'Sun'],
+      ['MAS ID', 'Agent Name', 'DOJ', AUG_1, AUG_2],
+      ['MAS56168', 'KRISHAN KUMAR', 45447, '10:00 - 19:00', 'WO'],
+    ];
+    const result = analyzeHeaders(rows as string[][]);
+    expect(result.headerRowIndex).toBe(1);
+    expect(result.dateColumns.map((c) => c.index)).toEqual([3, 4]);
+    expect(result.dateColumns[0].parsedDate.getDate()).toBe(1);
+    expect(result.identityColumns.map((c) => c.mapping.mappedTo)).toEqual(['employeeId', 'employeeName', 'doj']);
+    // The header is carried forward as a string, so downstream metadata keys stay serialisable.
+    for (const col of result.identityColumns) expect(typeof col.header).toBe('string');
+  });
+});

@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/wfm/header-alias.service.ts",
+    "src/modules/wfm/roster-import.service.ts",
+    "src/modules/wfm/assignment-normalizer.service.ts"
+  ]
+}
