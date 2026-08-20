@@ -199,20 +199,21 @@ export const navGroups: NavGroup[] = [
         children: [
           { label: "Roster Planning",        href: "/wfm/roster",                icon: ic(Clock),         pageCode: "WFM_ROSTER",      description: "Roster" },
           { label: "Roster Workspace",       href: "/wfm/roster-workspace",      icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "Weekly shift grid and acknowledgement tracker" },
-          { label: "Roster Pipeline",        href: "/wfm/roster-pipeline",       icon: ic(Workflow),      pageCode: "WFM_ROSTER",      description: "End-to-end roster planning wizard" },
-          { label: "Auto Roster",            href: "/wfm/auto-roster",           icon: ic(Calendar),      pageCode: "WFM_AUTO_ROSTER", description: "Auto roster" },
-          { label: "Roster Master Builder",  href: "/roster-master-builder",     icon: ic(Calendar),      pageCode: "ROSTER_MASTER",   description: "Build roster masters" },
-          { label: "Roster Capacity Config", href: "/roster-capacity-config",    icon: ic(Settings2),     pageCode: "ROSTER_MASTER",   description: "Capacity settings" },
+          // Hidden — volume-based / superseded by import engine. Re-enable per-process when planning_mode=VOLUME_BASED:
+          // { label: "Roster Pipeline",        href: "/wfm/roster-pipeline",       icon: ic(Workflow),      pageCode: "WFM_ROSTER",      description: "End-to-end roster planning wizard" },
+          // { label: "Auto Roster",            href: "/wfm/auto-roster",           icon: ic(Calendar),      pageCode: "WFM_AUTO_ROSTER", description: "Auto roster" },
+          // { label: "Roster Master Builder",  href: "/roster-master-builder",     icon: ic(Calendar),      pageCode: "ROSTER_MASTER",   description: "Build roster masters" },
+          // { label: "Roster Capacity Config", href: "/roster-capacity-config",    icon: ic(Settings2),     pageCode: "ROSTER_MASTER",   description: "Capacity settings" },
+          // { label: "WFM Planning Rules",     href: "/wfm/planning-rules",        icon: ic(Settings2),     roles: ["admin","hr","wfm","manager","super_admin"], description: "Shift planning rules" },
+          // { label: "Slot Requirements",      href: "/wfm/slot-requirements",     icon: ic(Calendar),      roles: ["admin","hr","wfm","manager","super_admin"], description: "Slot capacity" },
+          // { label: "Workforce Planning",     href: "/workforce-planning",        icon: ic(Users),         pageCode: "WFM_AUTO_ROSTER", description: "Headcount planning" },
           { label: "WFM Manager Approvals", href: "/wfm-manager-approvals", icon: ic(ShieldCheck), pageCode: "WFM_ROSTER", description: "Manager roster approvals" },
           { label: "Week-off Day Rules",     href: "/wfm/weekoff-day-rules",     icon: ic(CalendarDays),  roles: ["admin","hr","wfm","manager","super_admin"], description: "Day-level rules" },
-          { label: "WFM Planning Rules",     href: "/wfm/planning-rules",        icon: ic(Settings2),     roles: ["admin","hr","wfm","manager","super_admin"], description: "Shift planning rules" },
-          { label: "Slot Requirements",      href: "/wfm/slot-requirements",     icon: ic(Calendar),      roles: ["admin","hr","wfm","manager","super_admin"], description: "Slot capacity" },
           // roles match each route's own gate exactly (see workforce.routes.tsx's comment) —
           // not copy-pasted from the siblings above, since the two backends allow different
           // read access: rest-policy has no manager read; week-off-default allows it.
           { label: "Minimum Rest Policy",    href: "/wfm/rest-policy",           icon: ic(ShieldAlert),   roles: ["admin","hr","wfm","super_admin"], description: "Minimum rest between shifts" },
           { label: "Week-off Default Policy", href: "/wfm/week-off-default",     icon: ic(CalendarOff),   roles: ["admin","hr","wfm","manager","super_admin"], description: "Last-resort week-off day default" },
-          { label: "Workforce Planning",     href: "/workforce-planning",        icon: ic(Users),         pageCode: "WFM_AUTO_ROSTER", description: "Headcount planning" },
           { label: "Week-off Fairness",      href: "/wfm/weekoff-fairness",      icon: ic(Target),        roles: ["admin","super_admin","wfm"], description: "Fairness scores & allocation" },
           { label: "Branch SPOC Config",     href: "/wfm/branch-spoc-config",    icon: ic(ShieldCheck),   roles: ["admin","super_admin"], description: "Branch WFM final-approver assignment" },
         ],
