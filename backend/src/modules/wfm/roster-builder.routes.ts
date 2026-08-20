@@ -57,12 +57,31 @@ rosterBuilderRouter.post(
     // choose the answer to its own safety check. A write with no template (clearing a cell) has
     // no shift to validate, and correctly passes nulls through as before.
     let shiftTimes: { startTime: string; endTime: string } | null = null;
+    let shiftIsNight = false;
     if (shiftTemplateId) {
       shiftTimes = await getShiftTemplateTimes(shiftTemplateId);
+      // A shift whose end time is not after its start crosses midnight, regardless of how the
+      // template's night_shift flag happens to be set.
+      if (shiftTimes) shiftIsNight = shiftTimes.endTime <= shiftTimes.startTime;
       if (!shiftTimes) {
         res.status(400).json({ error: "Unknown shift template, or that template has no start/end time" });
         return;
       }
+    }
+
+    // Approved leave is a hard block (owner ruling 2026-08-21) and applies here exactly as it does
+    // to the generators. This route previously had no leave check at all, so a planner could roster
+    // straight over someone's approved leave from the grid. isNightShift makes the guard also
+    // consult the day the shift ENDS: a shift finishing 06:00 on a leave day means the employee is
+    // off from the night before.
+    const { loadApprovedLeave, checkLeaveConflict } = await import("./roster-leave-guard.service.js");
+    const leave = await loadApprovedLeave([employeeId], rosterDate, rosterDate);
+    const verdict = checkLeaveConflict(leave, employeeId, rosterDate, {
+      isNightShift: Boolean(shiftIsNight),
+    });
+    if (verdict.blocked) {
+      res.status(409).json({ error: verdict.reason, code: "ROSTER_BLOCKED_BY_APPROVED_LEAVE" });
+      return;
     }
 
     const data = await rosterService.assignEmployee(

@@ -390,6 +390,44 @@ export async function createImportBatch(params: {
     }
   }
 
+  // ── Step 6b: roster-says-WORK vs approved leave ─────────────────────────
+  // The check below (step 7) looks the other way round: roster says LEAVE, is there a request?
+  // The direction that actually matters was missing — roster says WORK and the employee has
+  // approved leave. Flagged as an ERROR at preview so it is seen before someone commits several
+  // thousand rows, and refused again at commit.
+  {
+    const { loadApprovedLeave, checkLeaveConflict } = await import('./roster-leave-guard.service.js');
+    const codes = [...new Set(rowEntries.map((e) => e.employeeIdRaw).filter(Boolean))];
+    if (codes.length) {
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, employee_code FROM employees WHERE employee_code IN (${codes.map(() => '?').join(',')})`,
+        codes
+      );
+      const codeToEmpId = new Map<string, string>();
+      for (const e of empRows) codeToEmpId.set(String(e.employee_code), String(e.id));
+
+      const dates = rowEntries.map((e) => e.rosterDate).filter(Boolean).sort();
+      if (dates.length && codeToEmpId.size) {
+        const leaveMap = await loadApprovedLeave(
+          [...codeToEmpId.values()], dates[0], dates[dates.length - 1]);
+        for (const entry of rowEntries) {
+          const empId = codeToEmpId.get(entry.employeeIdRaw);
+          if (!empId) continue;
+          const v = checkLeaveConflict(leaveMap, empId, entry.rosterDate, {
+            assignmentType: entry.normalizedType,
+          });
+          if (v.blocked) {
+            entry.validationState = 'ERROR';
+            entry.messages.push(v.reason ?? 'Blocked by approved leave');
+          } else if (v.warning && entry.validationState === 'VALID') {
+            entry.validationState = 'WARNING';
+            entry.messages.push(v.reason ?? 'Half-day approved leave');
+          }
+        }
+      }
+    }
+  }
+
   // ── Step 7: LEAVE cross-check (one query for the whole batch) ───────────
   const leaveTargets = rowEntries.filter(
     (e) => e.normalizedType === 'LEAVE' && e.validationState !== 'ERROR' && e.employeeIdRaw
@@ -545,6 +583,8 @@ export interface CommitResult {
   skipped: number;
   /** Rows whose employee code matched no employee — a data problem, not a duplicate. */
   unmatchedEmployees: number;
+  /** Rows refused because the employee has approved leave that day. Never silently written. */
+  blockedByLeave: number;
 }
 
 // ── commitImportBatch ─────────────────────────────────────────────────────────
@@ -630,6 +670,24 @@ export async function commitImportBatch(
     for (const e of empRows as RowDataPacket[]) codeToId.set(String(e.employee_code), String(e.id));
   }
 
+  // Approved leave is a hard block (owner ruling 2026-08-21): a spreadsheet must not overwrite it.
+  // This path had no leave check at all, which mattered more than the generators having one — the
+  // spreadsheet is how rosters actually get built here. Loaded once for the batch rather than per
+  // row. A night shift is judged by the day it ENDS as well as the day it starts.
+  const { loadApprovedLeave, checkLeaveConflict } = await import('./roster-leave-guard.service.js');
+  const rosterDates = rows.map((r) => String(r.roster_date).slice(0, 10)).filter(Boolean).sort();
+  const leaveMap = rosterDates.length
+    ? await loadApprovedLeave([...codeToId.values()], rosterDates[0], rosterDates[rosterDates.length - 1])
+    : new Map();
+  const nightTemplates = new Set<string>();
+  {
+    const [nightRows] = await conn.execute(
+      `SELECT id FROM wfm_shift_template WHERE end_time IS NOT NULL AND start_time IS NOT NULL AND end_time <= start_time`
+    );
+    for (const t of nightRows as RowDataPacket[]) nightTemplates.add(String(t.id));
+  }
+  let blockedByLeave = 0;
+
   try {
     for (const row of rows) {
       const importMode = batch.import_mode as 'NEW' | 'UPDATE';
@@ -638,6 +696,17 @@ export async function commitImportBatch(
         // Counted separately from "skipped": a code with no matching employee is a data problem
         // the uploader can act on, not a duplicate row.
         unmatchedEmployees++;
+        continue;
+      }
+
+      const leaveVerdict = checkLeaveConflict(leaveMap, employeeId, String(row.roster_date).slice(0, 10), {
+        isNightShift: nightTemplates.has(String(row.shift_template_id ?? '')),
+        assignmentType: row.normalized_type,
+      });
+      if (leaveVerdict.blocked) {
+        // Counted and reported, never written. The rest of the file still imports — one protected
+        // day must not cost the planner the whole upload.
+        blockedByLeave++;
         continue;
       }
 
@@ -714,7 +783,7 @@ export async function commitImportBatch(
     conn.release();
   }
 
-  return { assignmentsCreated, assignmentsUpdated, skipped, unmatchedEmployees };
+  return { assignmentsCreated, assignmentsUpdated, skipped, unmatchedEmployees, blockedByLeave };
 }
 
 // ── getImportRows ─────────────────────────────────────────────────────────────
