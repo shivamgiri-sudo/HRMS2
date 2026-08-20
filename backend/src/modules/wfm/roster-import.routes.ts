@@ -11,6 +11,8 @@ import {
   getImportBatch,
   getImportRows,
   commitImportBatch,
+  updateImportRow,
+  getMissingEmployees,
 } from './roster-import.service.js';
 
 const upload = multer({
@@ -191,6 +193,51 @@ rosterImportRouter.patch(
     } catch (err: any) {
       console.error('[roster-import] PATCH header-mapping error:', err);
       res.status(500).json({ error: 'Failed to save header mapping' });
+    }
+  }
+);
+
+// ── PATCH /api/wfm/roster-imports/:batchId/rows/:rowId ───────────────────
+rosterImportRouter.patch(
+  '/:batchId/rows/:rowId',
+  requireRole(...WFM_ROLES),
+  async (req, res) => {
+    try {
+      const batchId = parseInt(req.params.batchId, 10);
+      const rowId = parseInt(req.params.rowId, 10);
+      if (isNaN(batchId) || isNaN(rowId)) {
+        res.status(400).json({ error: 'Invalid batchId or rowId' });
+        return;
+      }
+      const { rawValue } = req.body as { rawValue?: string };
+      if (rawValue === undefined || rawValue === null) {
+        res.status(400).json({ error: 'rawValue is required' });
+        return;
+      }
+      const result = await updateImportRow(batchId, rowId, rawValue);
+      res.json(result);
+    } catch (err: any) {
+      if (err?.statusCode === 404) { res.status(404).json({ error: err.message }); return; }
+      console.error('[roster-import] PATCH row error:', err);
+      res.status(500).json({ error: 'Failed to update row' });
+    }
+  }
+);
+
+// ── GET /api/wfm/roster-imports/:batchId/missing-employees ───────────────
+rosterImportRouter.get(
+  '/:batchId/missing-employees',
+  requireRole(...WFM_ROLES),
+  async (req, res) => {
+    try {
+      const batchId = parseInt(req.params.batchId, 10);
+      if (isNaN(batchId)) { res.status(400).json({ error: 'Invalid batchId' }); return; }
+      const result = await getMissingEmployees(batchId);
+      res.json(result);
+    } catch (err: any) {
+      if (err?.statusCode === 404) { res.status(404).json({ error: err.message }); return; }
+      console.error('[roster-import] GET missing-employees error:', err);
+      res.status(500).json({ error: 'Failed to get missing employees' });
     }
   }
 );

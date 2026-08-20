@@ -498,3 +498,115 @@ export async function getImportRows(
 
   return { rows: rows as any[], total };
 }
+
+// ── updateImportRow ────────────────────────────────────────────────────────────
+// Allows WFM to manually override a single cell's raw_value, re-normalizes it,
+// re-validates, and saves the updated row back to DB.
+export async function updateImportRow(
+  batchId: number,
+  rowId: number,
+  newRawValue: string,
+): Promise<{ row: any }> {
+  // Verify row belongs to batch
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM wfm_roster_import_row WHERE id = ? AND batch_id = ?`,
+    [rowId, batchId]
+  );
+  if ((existing as RowDataPacket[]).length === 0) {
+    throw Object.assign(new Error('Row not found in this batch'), { statusCode: 404 });
+  }
+  const prev = (existing as RowDataPacket[])[0];
+
+  // Fetch batch import mode
+  const [batchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT import_mode FROM wfm_roster_import_batch WHERE id = ?`,
+    [batchId]
+  );
+  const importMode = ((batchRows as RowDataPacket[])[0]?.import_mode ?? 'NEW') as 'NEW' | 'UPDATE';
+
+  // Re-normalize
+  const normalized = normalizeAssignment(newRawValue, { importMode, hdMapsTo: 'NEEDS_MAPPING' });
+
+  let newState: 'VALID' | 'WARNING' | 'ERROR' = 'VALID';
+  const messages: string[] = [];
+  if (!prev.employee_id_raw) {
+    newState = 'ERROR'; messages.push('Missing employee ID');
+  } else if (normalized.type === 'HARD_ERROR') {
+    newState = 'ERROR'; messages.push('Literal 0 is not valid');
+  } else if (normalized.type === 'NEEDS_MAPPING') {
+    newState = 'ERROR'; messages.push(`Shift/status '${newRawValue}' not recognized`);
+  } else if (normalized.type === 'UNASSIGNED') {
+    newState = 'WARNING'; messages.push('Cell is blank — will be UNASSIGNED');
+  }
+
+  await db.execute(
+    `UPDATE wfm_roster_import_row
+     SET raw_value = ?, normalized_type = ?, validation_state = ?, validation_messages = ?
+     WHERE id = ?`,
+    [newRawValue, normalized.type, newState, JSON.stringify(messages), rowId]
+  );
+
+  // Recompute batch totals
+  const [totals] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COUNT(*) AS total_rows,
+       SUM(validation_state = 'VALID') AS valid_rows,
+       SUM(validation_state = 'WARNING') AS warning_rows,
+       SUM(validation_state = 'ERROR') AS error_rows,
+       SUM(normalized_type = 'NEEDS_MAPPING') AS needs_mapping_rows
+     FROM wfm_roster_import_row WHERE batch_id = ?`,
+    [batchId]
+  );
+  const t = (totals as RowDataPacket[])[0];
+  await db.execute(
+    `UPDATE wfm_roster_import_batch
+     SET total_rows=?, valid_rows=?, warning_rows=?, error_rows=?, needs_mapping_rows=?
+     WHERE id=?`,
+    [t.total_rows, t.valid_rows, t.warning_rows, t.error_rows, t.needs_mapping_rows, batchId]
+  );
+
+  const [updated] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM wfm_roster_import_row WHERE id = ?`, [rowId]
+  );
+  return { row: (updated as RowDataPacket[])[0] };
+}
+
+// ── getMissingEmployees ───────────────────────────────────────────────────────
+// Returns active employees in the batch's process who do NOT appear
+// in any import row for this batch (i.e. their roster wasn't uploaded).
+export async function getMissingEmployees(
+  batchId: number,
+): Promise<{ employees: any[]; total: number }> {
+  // Get process_id for this batch
+  const [batchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT process_id FROM wfm_roster_import_batch WHERE id = ?`, [batchId]
+  );
+  if ((batchRows as RowDataPacket[]).length === 0) {
+    throw Object.assign(new Error('Batch not found'), { statusCode: 404 });
+  }
+  const processId = (batchRows as RowDataPacket[])[0].process_id;
+
+  // Get all employee_id_raw values already in this batch
+  const [importedRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT employee_id_raw FROM wfm_roster_import_row WHERE batch_id = ? AND employee_id_raw IS NOT NULL`,
+    [batchId]
+  );
+  const importedIds = new Set(
+    (importedRows as RowDataPacket[]).map((r) => (r.employee_id_raw as string).toUpperCase())
+  );
+
+  // Get all active employees in the process
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_code, full_name, designation
+     FROM employees
+     WHERE process_id = ? AND employment_status = 'active'
+     ORDER BY full_name`,
+    [processId]
+  );
+
+  const missing = (empRows as RowDataPacket[]).filter(
+    (e) => !importedIds.has((e.employee_code as string ?? '').toUpperCase())
+  );
+
+  return { employees: missing, total: missing.length };
+}
