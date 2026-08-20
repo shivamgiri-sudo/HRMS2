@@ -15817,6 +15817,17 @@
       "revenue_date",
       "actual_revenue",
       "synced_at"
+    ],
+    "bulk_upload_locked_entity": [
+      "id",
+      "entity_type",
+      "entity_id",
+      "upload_batch_id",
+      "upload_batch_no",
+      "employee_id",
+      "locked_by",
+      "locked_at",
+      "lock_reason"
     ]
   }
 }
