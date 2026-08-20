@@ -105,6 +105,27 @@ export const workforceRouteElements = (
       <Route path="/wfm/roster-import"    element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterImportPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-builder"    element={<ProtectedRoute><Gate pageCode="WFM_ROSTER_BUILDER"><RosterBuilderPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-pipeline"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterPipelinePage /></Gate></ProtectedRoute>} />
+      {/*
+        Roster Requests — the approval/exception inbox.
+
+        NativeRosterManagerQueue has been lazy-imported since it was written but no <Route> ever
+        rendered it, so it was unreachable in the running app. That broke a real loop, not just a
+        page: NativeMyRoster lets an employee reject an assigned week-off
+        (POST /api/wfm/my-weekoff/:id/reject), and this queue is the only UI that reviews those
+        rejections (GET /api/wfm/manager/weekoff-review). With no route, an employee could reject
+        and nobody could ever action it. It is the same story for roster disputes
+        (GET /api/roster-gov/manager-review-queue). All four backend endpoints exist and are
+        requireAuth + requireRole gated, so this exposes nothing new server-side — it just gives
+        the working page a door.
+
+        Deliberately mounted at /wfm/roster-requests rather than a name matching the component:
+        this is the URL the consolidated Requests inbox will keep once swaps and post-publish
+        change requests join it as sibling tabs, so the link never has to move.
+
+        Gated on the existing WFM_ROSTER page code on purpose — no new migration, and no role
+        gains a capability it did not already have through the roster nav.
+      */}
+      <Route path="/wfm/roster-requests"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeRosterManagerQueue /></Gate></ProtectedRoute>} />
       <Route path="/wfm/extensions"    element={<ProtectedRoute><Gate pageCode="WFM_EXTENSIONS"><NativeWFMExtensions /></Gate></ProtectedRoute>} />
       <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
       <Route path="/wfm/planning-rules"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />

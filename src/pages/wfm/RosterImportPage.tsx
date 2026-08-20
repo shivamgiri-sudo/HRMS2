@@ -149,7 +149,7 @@ function CellEditModal({ row, batchId, onClose }: CellEditModalProps) {
 
   const saveMutation = useMutation({
     mutationFn: () =>
-      hrmsApi.patch(`/wfm/roster-imports/${batchId}/rows/${row!.id}`, { rawValue: value }),
+      hrmsApi.patch(`/api/wfm/roster-imports/${batchId}/rows/${row!.id}`, { rawValue: value }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["roster-import-rows", batchId] });
       qc.invalidateQueries({ queryKey: ["roster-import-batch", batchId] });
@@ -224,7 +224,23 @@ function CellEditModal({ row, batchId, onClose }: CellEditModalProps) {
 export default function RosterImportPage() {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [processId, setProcessId] = useState("");
+
+  /**
+   * Roster Builder links here as /wfm/roster-import?cycleId=…&processId=… so a bulk upload can
+   * land inside the week the planner is already building. Until this read existed the params
+   * were dropped in the browser: commitImportBatch accepts a cycleId (roster-import.routes.ts)
+   * and writes it onto every assignment, but the page never sent one, so imported rows landed
+   * with cycle_id NULL. Publish selects `WHERE cycle_id = ? AND final_roster_status =
+   * 'generated'`, so those rows could never be published or acknowledged — 412,032 of the
+   * 413,386 live rows are in exactly that state. Reading the params here is what connects the
+   * bulk path to the publish gate.
+   *
+   * Opening the page directly (no query string) is still supported: cycleId stays null and the
+   * commit behaves exactly as before, creating cycle-less draft assignments.
+   */
+  const linkedParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const cycleId = linkedParams.get("cycleId");
+  const [processId, setProcessId] = useState(() => linkedParams.get("processId") ?? "");
   const [importMode, setImportMode] = useState<"NEW" | "UPDATE">("NEW");
   const [batchId, setBatchId] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -235,7 +251,7 @@ export default function RosterImportPage() {
   // Processes list
   const { data: procData } = useQuery({
     queryKey: ["processes-list"],
-    queryFn: () => hrmsApi.get<{ data: Process[] }>("/processes?limit=200"),
+    queryFn: () => hrmsApi.get<{ data: Process[] }>("/api/processes?limit=200"),
   });
   const processes: Process[] = procData?.data ?? [];
 
@@ -243,7 +259,7 @@ export default function RosterImportPage() {
   const { data: batchData, isLoading: batchLoading } = useQuery({
     queryKey: ["roster-import-batch", batchId],
     queryFn: () =>
-      hrmsApi.get<{ batch: ImportBatch }>(`/wfm/roster-imports/${batchId}`),
+      hrmsApi.get<{ batch: ImportBatch }>(`/api/wfm/roster-imports/${batchId}`),
     enabled: !!batchId,
     refetchInterval: (data) =>
       data?.state?.data?.batch?.status === "PARSING" ? 2000 : false,
@@ -255,7 +271,7 @@ export default function RosterImportPage() {
     queryKey: ["roster-import-rows", batchId],
     queryFn: () =>
       hrmsApi.get<{ rows: ImportRow[]; total: number }>(
-        `/wfm/roster-imports/${batchId}/rows?limit=5000`
+        `/api/wfm/roster-imports/${batchId}/rows?limit=5000`
       ),
     enabled: !!batchId && batch?.status === "PREVIEW",
   });
@@ -266,7 +282,7 @@ export default function RosterImportPage() {
     queryKey: ["roster-import-missing", batchId],
     queryFn: () =>
       hrmsApi.get<{ employees: MissingEmployee[]; total: number }>(
-        `/wfm/roster-imports/${batchId}/missing-employees`
+        `/api/wfm/roster-imports/${batchId}/missing-employees`
       ),
     enabled: !!batchId && batch?.status === "PREVIEW",
   });
@@ -280,7 +296,10 @@ export default function RosterImportPage() {
       fd.append("file", file);
       fd.append("processId", processId);
       fd.append("importMode", importMode);
-      return hrmsApi.postForm<{ batchId: number; status: string }>("/wfm/roster-imports", fd);
+      // Only sent when the page was opened from Roster Builder's bulk-upload link. createImportBatch
+      // takes cycleId as optional, so omitting it keeps the standalone upload behaving as before.
+      if (cycleId) fd.append("cycleId", cycleId);
+      return hrmsApi.postForm<{ batchId: number; status: string }>("/api/wfm/roster-imports", fd);
     },
     onSuccess: (res) => {
       setBatchId(res.batchId);
@@ -291,8 +310,8 @@ export default function RosterImportPage() {
   const commitMutation = useMutation({
     mutationFn: (overrideWarnings = false) =>
       hrmsApi.post<{ assignmentsCreated: number }>(
-        `/wfm/roster-imports/${batchId}/commit`,
-        { overrideWarnings }
+        `/api/wfm/roster-imports/${batchId}/commit`,
+        { overrideWarnings, cycleId }
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["roster-import-batch", batchId] });
@@ -360,7 +379,7 @@ export default function RosterImportPage() {
   };
 
   const pushReminder = (emp: MissingEmployee) => {
-    hrmsApi.post(`/wfm/roster-imports/${batchId}/remind`, { employeeId: emp.id }).catch(() => {});
+    hrmsApi.post(`/api/wfm/roster-imports/${batchId}/remind`, { employeeId: emp.id }).catch(() => {});
     setReminderSent((prev) => new Set([...prev, emp.id]));
   };
 

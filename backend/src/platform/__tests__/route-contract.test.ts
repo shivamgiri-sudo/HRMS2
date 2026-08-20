@@ -61,6 +61,10 @@ const KNOWN_GAPS: Record<string, string> = {
   // component uses. Reachable ones are live defects; the rest are unfinished
   // scaffolding that cannot fire, and should be built or deleted, not rushed.
 
+  // Reachable — a user can hit this today, and it silently does nothing.
+  "POST /api/wfm/roster-imports/:p/remind":
+    "REACHABLE DEAD BUTTON, pre-existing. RosterImportPage's missing-employee list renders a 'Remind' action that posts here (RosterImportPage.tsx:382). roster-import.routes.ts defines seven routes and none of them is /remind, so the call 401s (a nonexistent /api/* route answers 401, not 404) — and the call site ends in `.catch(() => {})`, so the rejection is swallowed and the user sees no error and no reminder. It only became visible to this scanner when the page's calls were given their missing /api prefix; before that every one of its paths resolved to the SPA fallback and the scanner could not match them. NOT invented by that fix. Two honest ways out, both needing an owner's call: build the endpoint against a chosen notification system (there are three in this repo and they do not know about each other), or remove the button. Do not silently keep a control that does nothing — see CLAUDE.md rule 9.",
+
   // Not a call at all — a scanner artifact.
   "GET /api/wfm/processes":
     "NOT A REAL CALL. The only occurrence is a string literal inside RosterBuilderPage.test.tsx, in a NEGATIVE assertion (`expect(pageSource).not.toContain('hrmsApi.get(\"/api/wfm/processes\"')`) that exists precisely to prove the page does NOT call this path. RosterBuilderPage.tsx calls `/api/processes` (mounted at app.ts:344), matching NativeWFMRoster.tsx:109. The scanner reads test sources verbatim and cannot tell an assertion-that-something-is-absent from a call. `/api/wfm/processes` is separately mounted as planningModeRouter (app.ts:581) but exposes no GET '/', which is why it surfaces as missing. Nothing to build or delete.",
