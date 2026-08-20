@@ -478,6 +478,48 @@ smartGrnRouter.get(
 
 // P0-1: All GRN submissions go through Smart validation. Zero allocation rows are an error
 // (ALLOCATIONS_REQUIRED), not a signal to fall through to the legacy path.
+/*
+ * Attaching an approved budget line to an UNBUDGETED GRN's cost-centre splits.
+ *
+ * SMART_OVERRIDE_ROLES — finance_head and super_admin — deliberately, not SMART_REVIEW_ROLES.
+ * This is the same authority as approving a validation exception, not the same as reviewing a
+ * GRN: it decides which budget absorbs an unbudgeted commitment, which is Finance's call and not
+ * a Branch Head's. A branch_head still reviews the GRN normally at their own stage; they simply
+ * cannot choose the budget it lands on.
+ *
+ * Mounted above the legacy grnRouter like every sibling here, and behind authorizeGrn so the
+ * caller's branch scope is checked before any lookup of substance.
+ */
+smartGrnRouter.post(
+  "/:id/link-budget",
+  requireWriteAccess,
+  requireRole(...SMART_OVERRIDE_ROLES),
+  authorizeGrn,
+  async (req: SmartRequest, res) => {
+    try {
+      const user = actor(req);
+      const rawLinks = Array.isArray(req.body?.links) ? req.body.links : [];
+      const links = rawLinks.map((link: any) => ({
+        allocationId: String(link?.allocationId ?? "").trim(),
+        budgetLineId: String(link?.budgetLineId ?? "").trim(),
+      }));
+      const data = await grnSmartService.linkUnbudgetedBudgetLines(
+        req.params.id,
+        links,
+        user.id,
+        user.role
+      );
+      res.json({ success: true, data });
+    } catch (error) {
+      const status = (error as { statusCode?: number })?.statusCode ?? 400;
+      res.status(status).json({
+        success: false,
+        error: error instanceof Error ? error.message : "Unable to link a budget line to this GRN",
+      });
+    }
+  }
+);
+
 smartGrnRouter.post(
   "/:id/submit",
   requireWriteAccess,
