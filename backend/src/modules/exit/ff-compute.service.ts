@@ -16,12 +16,22 @@
  * approval gate (which requires setProvisionalFalse + a reason to clear) is what actually
  * enforces that a settlement resting on unconfigured rates cannot be approved silently.
  *
- * Out of scope (Phase 2): asset recovery (asset_assignment has no cost column), TDS
- * final-year true-up on the exit month.
+ * Phase 2 (this revision) adds asset recovery and a TDS final-year true-up. Both stay on
+ * the same discipline: asset recovery is the full purchase cost of anything not returned
+ * (no depreciation concept exists anywhere in this codebase — inventing one would be a
+ * business-policy decision, not a bug fix). The TDS true-up is deliberately conservative
+ * where the codebase has no answer: there is no income-tax exemption-limit concept for
+ * gratuity or leave encashment anywhere here (only the Payment of Gratuity Act's payout
+ * ceiling, a different thing), so leave encashment is treated as fully taxable by default
+ * (safer to over-withhold than leave the employer under-deducted) unless a real
+ * leave_encashment_tax_exemption_limit is configured, and gratuity stays non-taxable,
+ * matching ff.service.ts's own already-shipped behaviour (tax_deducted is always 0 for
+ * gratuity in this path today — Phase 2 does not change that).
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
+import { taxEngineService } from "../payroll-compliance/taxEngine.service.js";
 import { ffService, type GratuityCalculation, type PayrollAlreadyPaid } from "./ff.service.js";
 
 export type ComputedStatus = "computed" | "not_applicable" | "pending_configuration";
@@ -67,6 +77,26 @@ export interface FfComputePreview {
     salary_advances_outstanding: number;
     employee_loans_outstanding: number;
     total_recovery: ComputedComponent<number>;
+  };
+
+  /** Full purchase cost of every asset still assigned (not returned). No depreciation applied. */
+  asset_recovery: {
+    open_assignments: Array<{ asset_code: string; asset_name: string; purchase_cost: number }>;
+    total_recovery: ComputedComponent<number>;
+  };
+
+  /**
+   * Shortfall to collect (positive) or excess to refund (negative) if the whole FY's tax
+   * liability is settled now instead of spread over the rest of a FY that, for a leaver,
+   * never comes. Preview only — does not feed into net_payable/salary_hold automatically.
+   */
+  tds_true_up: {
+    financial_year: string;
+    ytd_gross: number;
+    ytd_tds_deducted: number;
+    months_paid: number;
+    leave_encashment_taxable_amount: number;
+    true_up_amount: ComputedComponent<number>;
   };
 
   payroll_already_paid: PayrollAlreadyPaid[];
@@ -242,6 +272,157 @@ async function resolveAdvancesLoansFullPayoff(employeeId: string): Promise<FfCom
   };
 }
 
+async function resolveAssetRecovery(employeeId: string): Promise<FfComputePreview["asset_recovery"]> {
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT a.asset_code, a.asset_name, COALESCE(a.purchase_cost, 0) AS purchase_cost
+         FROM asset_assignment aa
+         JOIN asset_master a ON a.id = aa.asset_id
+        WHERE aa.employee_id = ? AND aa.returned_date IS NULL`,
+      [employeeId]
+    );
+    const openAssignments = (rows as Array<{ asset_code: string; asset_name: string; purchase_cost: number }>)
+      .map((r) => ({ asset_code: r.asset_code, asset_name: r.asset_name, purchase_cost: Number(r.purchase_cost) }));
+    const total = Math.round(openAssignments.reduce((sum, a) => sum + a.purchase_cost, 0) * 100) / 100;
+    return {
+      open_assignments: openAssignments,
+      total_recovery: computed(
+        total,
+        openAssignments.length
+          ? `Full purchase cost of ${openAssignments.length} unreturned asset(s) — no depreciation policy exists in this system, so this is the undepreciated original cost.`
+          : "No unreturned assets on file."
+      ),
+    };
+  } catch (err) {
+    // Same non-fatal posture as the employee_loans lookup above — an unavailable asset
+    // table must not take down the whole preview.
+    return { open_assignments: [], total_recovery: pending(0, `Asset recovery could not be determined: ${(err as Error).message}`) };
+  }
+}
+
+/**
+ * FY (April–March) that a given date falls in, as e.g. "2026-27".
+ */
+function financialYearFor(date: Date): { fyStart: number; label: string } {
+  const y = date.getFullYear();
+  const m = date.getMonth() + 1; // 1-12
+  const fyStart = m >= 4 ? y : y - 1;
+  return { fyStart, label: `${fyStart}-${String(fyStart + 1).slice(2)}` };
+}
+
+async function resolveTdsTrueUp(
+  employeeId: string,
+  lastWorkingDay: string | null,
+  leaveEncashmentAmount: number | null
+): Promise<FfComputePreview["tds_true_up"]> {
+  const asOf = lastWorkingDay ? new Date(lastWorkingDay) : new Date();
+  const { fyStart, label } = financialYearFor(asOf);
+  const fyFirstMonth = `${fyStart}-04`;
+  const fyLastMonth = `${fyStart + 1}-03`;
+  const emptyBase = { financial_year: label, ytd_gross: 0, ytd_tds_deducted: 0, months_paid: 0, leave_encashment_taxable_amount: 0 };
+
+  // Everything below — the YTD sum, declaration/DOB lookups, and the tax-engine call — is one
+  // try/catch: any of them failing (an unavailable table, an ambiguous slab config) must
+  // degrade this one component to pending_configuration, not crash the whole preview. Same
+  // non-fatal posture as asset recovery / advances-loans above.
+  try {
+    // Same canonical-per-month YTD aggregation payroll.routes.ts's /form16-data route already
+    // uses — real, backward-looking actuals, never a forward projection. For a leaver this
+    // naturally stops at whatever months actually happened; if the exit month's own payroll
+    // run hasn't been calculated/approved yet, its income is not yet reflected here.
+    const [fyRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS months_paid,
+              COALESCE(SUM(gross_salary), 0) AS gross_salary,
+              COALESCE(SUM(tds_deducted), 0) AS tds_deducted
+         FROM (
+           SELECT spr.run_month, spl.gross_salary,
+                  COALESCE(NULLIF(spl.tds_amount, 0), spl.tds) AS tds_deducted,
+                  ROW_NUMBER() OVER (
+                    PARTITION BY spr.run_month
+                    ORDER BY FIELD(spr.status, 'disbursed', 'finalized', 'locked', 'approved', 'completed'),
+                             spr.created_at DESC
+                  ) AS rn
+             FROM salary_prep_line spl
+             JOIN salary_prep_run spr ON spr.id = spl.run_id
+            WHERE spl.employee_id = ?
+              AND spr.run_month BETWEEN ? AND ?
+              AND spr.status IN ('locked', 'finalized', 'approved', 'disbursed', 'completed')
+              AND spl.status NOT IN ('excluded', 'blocked')
+         ) canonical
+        WHERE canonical.rn = 1`,
+      [employeeId, fyFirstMonth, fyLastMonth]
+    );
+    const fy = (fyRows as Array<{ months_paid: number; gross_salary: number; tds_deducted: number }>)[0];
+    const ytdGross = Number(fy?.gross_salary ?? 0);
+    const ytdTds = Number(fy?.tds_deducted ?? 0);
+    const monthsPaid = Number(fy?.months_paid ?? 0);
+
+    // Leave encashment: fully taxable by default (conservative — an under-collected true-up
+    // is an employer liability with interest; an over-collected one is merely refundable on
+    // the employee's own return). Exempted up to a configured limit only if one has actually
+    // been approved — never guessed.
+    const [cfgRows] = await db.execute<RowDataPacket[]>(
+      `SELECT config_value FROM statutory_config
+        WHERE config_key = 'leave_encashment_tax_exemption_limit' AND is_active = 1
+        LIMIT 1`
+    );
+    const exemptionLimit = (cfgRows as Array<{ config_value: string }>)[0]
+      ? Number((cfgRows as Array<{ config_value: string }>)[0].config_value)
+      : 0;
+    const rawEncashment = leaveEncashmentAmount ?? 0;
+    const taxableEncashment = Math.max(0, rawEncashment - exemptionLimit);
+
+    const [declRows] = await db.execute<RowDataPacket[]>(
+      "SELECT declared_hra, declared_80c, declared_80d, regime FROM tax_declaration WHERE employee_id = ? AND financial_year = ? LIMIT 1",
+      [employeeId, label]
+    );
+    const decl = (declRows as Array<{ declared_hra: number; declared_80c: number; declared_80d: number; regime: string | null }>)[0];
+
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      "SELECT date_of_birth FROM employees WHERE id = ? LIMIT 1",
+      [employeeId]
+    );
+    const dob = (empRows as Array<{ date_of_birth: string | null }>)[0]?.date_of_birth;
+    let employeeAge: number | null = null;
+    if (dob) {
+      const d = new Date(dob);
+      let age = asOf.getFullYear() - d.getFullYear();
+      const mDiff = asOf.getMonth() - d.getMonth();
+      if (mDiff < 0 || (mDiff === 0 && asOf.getDate() < d.getDate())) age--;
+      employeeAge = age;
+    }
+
+    const base = { financial_year: label, ytd_gross: ytdGross, ytd_tds_deducted: ytdTds, months_paid: monthsPaid, leave_encashment_taxable_amount: taxableEncashment };
+
+    // annualGross here IS the full year's actual income — YTD actuals plus the taxable
+    // leave-encashment addition. No forward projection: exit month is definitionally the
+    // last month of income for this FY, so there is nothing left to project.
+    const result = await taxEngineService.calculateMonthlyTds({
+      financialYear: label,
+      annualGross: ytdGross + taxableEncashment,
+      alreadyDeducted: ytdTds,
+      declaration: decl ? {
+        regime: decl.regime,
+        declared_hra: Number(decl.declared_hra) || 0,
+        declared_80c: Number(decl.declared_80c) || 0,
+        declared_80d: Number(decl.declared_80d) || 0,
+      } : null,
+      monthsRemaining: 1,
+      employeeAge,
+    });
+    // tax_annual already applies the correct slabs/rebate/cess — subtract what's already
+    // been deducted ourselves (not via tds_monthly, which floors at 0) so an overpayment
+    // surfaces as a negative true-up (refund), not a silently-hidden zero.
+    const trueUp = Math.round((result.tax_annual - ytdTds) * 100) / 100;
+    return { ...base, true_up_amount: computed(trueUp, `FY ${label} liability ${result.tax_annual.toFixed(2)} less ${ytdTds.toFixed(2)} already deducted across ${monthsPaid} paid month(s). ${trueUp < 0 ? "Negative = refund due." : "Positive = additional amount to collect."}`) };
+  } catch (err) {
+    return {
+      ...emptyBase,
+      true_up_amount: pending(0, `TDS true-up could not be computed: ${(err as Error).message}`),
+    };
+  }
+}
+
 export async function computeFfPreview(exitRequestId: string): Promise<FfComputePreview> {
   const [exitRows] = await db.execute<RowDataPacket[]>(
     "SELECT id, employee_id FROM exit_request WHERE id = ? LIMIT 1",
@@ -254,12 +435,21 @@ export async function computeFfPreview(exitRequestId: string): Promise<FfCompute
   const notice = await resolveNoticeShortfall(exitRequestId, exitReq.employee_id, grossMonthly);
   const asOfYear = notice.lastWorkingDay ? new Date(notice.lastWorkingDay).getFullYear() : new Date().getFullYear();
 
-  const [leaveEncashment, gratuity, advancesLoans, payrollAlreadyPaid] = await Promise.all([
+  const [leaveEncashment, gratuity, advancesLoans, assetRecovery, payrollAlreadyPaid] = await Promise.all([
     resolveLeaveEncashment(exitReq.employee_id, asOfYear, grossMonthly),
     ffService.calculateGratuityFromEmployee(exitReq.employee_id, notice.lastWorkingDay ?? undefined),
     resolveAdvancesLoansFullPayoff(exitReq.employee_id),
+    resolveAssetRecovery(exitReq.employee_id),
     ffService.getPayrollAlreadyPaid(exitReq.employee_id, notice.lastWorkingDay ?? new Date().toISOString().slice(0, 10)),
   ]);
+
+  // Depends on leaveEncashment's resolved amount, so runs after the batch above rather than
+  // inside it — a taxable-income figure computed from a still-in-flight value would be wrong.
+  const tdsTrueUp = await resolveTdsTrueUp(
+    exitReq.employee_id,
+    notice.lastWorkingDay,
+    leaveEncashment.amount.status === "computed" ? leaveEncashment.amount.value : null
+  );
 
   const { lastWorkingDay, ...noticeRest } = notice;
 
@@ -271,6 +461,8 @@ export async function computeFfPreview(exitRequestId: string): Promise<FfCompute
     leave_encashment: leaveEncashment,
     gratuity,
     advances_loans: advancesLoans,
+    asset_recovery: assetRecovery,
+    tds_true_up: tdsTrueUp,
     payroll_already_paid: payrollAlreadyPaid,
   };
 }
