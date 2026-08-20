@@ -1719,15 +1719,58 @@ export const grnSmartService = {
           );
         }
 
+        /*
+         * The consumed QUANTITY has to be re-derived against the line being linked, and this is
+         * the subtle part of the whole flow.
+         *
+         * An unbudgeted split was costed against a synthetic line with unit "amount" and
+         * unit_rate 1, so its stored quantity is literally the rupee amount. A real budget line
+         * is denominated in its own unit — 12 months, 40 headcount, 6 licences — and
+         * budgetConsumptionService.reserve() checks the quantity as well as the money. Reserving
+         * a quantity of 52,012 against a line approved for 12 months would fail on availability
+         * with a message about quantity that would read as nonsense to the reviewer, and where it
+         * did NOT fail it would be worse: a line's whole quantity budget consumed by one invoice.
+         *
+         * Derived exactly as saveComponentAllocations() derives it for a budgeted split —
+         * base / unit_rate — so a linked split ends up identical to one that had this budget line
+         * from the start.
+         *
+         * The MONEY is deliberately not recomputed. The invoice's own components are ground truth
+         * (the same principle the tax breakdown already follows) and the reviewer has already
+         * reconciled those totals; re-deriving them from the budget line at link time would move
+         * the numbers under them after Branch Head had signed off.
+         */
+        const lineUnitRate = Number(line.unit_rate);
+        if (!(lineUnitRate > 0)) {
+          throw new Error(
+            `${allocation.cost_centre_name || "Cost centre"}: that budget line has no approved unit rate to derive a consumed quantity from`
+          );
+        }
+        const linkedQuantity = roundQuantity(Number(allocation.amount_without_tax) / lineUnitRate);
+        const availableQuantity = roundQuantity(
+          Number(line.quantity || 0)
+          - Number(line.reserved_quantity || 0)
+          - Number(line.consumed_quantity || 0)
+        );
+        if (linkedQuantity > availableQuantity + 0.0001) {
+          throw new Error(
+            `${allocation.cost_centre_name || "Cost centre"}: this split needs ${linkedQuantity} ${line.unit} but only ${availableQuantity} ${line.unit} remain approved on that line`
+          );
+        }
+
         await connection.execute(
           `UPDATE grn_cost_allocation
-              SET budget_id = ?, budget_line_id = ?, process_id = ?, cost_class = ?
+              SET budget_id = ?, budget_line_id = ?, process_id = ?, cost_class = ?,
+                  quantity = ?, unit = ?, unit_rate = ?
             WHERE id = ? AND grn_request_id = ?`,
           [
             line.budget_id,
             line.id,
             line.process_id ?? allocation.process_id ?? null,
             line.process_id || line.cost_centre_id ? "direct" : "indirect",
+            linkedQuantity,
+            line.unit,
+            lineUnitRate,
             allocation.id,
             grnId,
           ]
@@ -1741,7 +1784,7 @@ export const grnSmartService = {
             connection,
             String(line.id),
             Number(allocation.amount_with_tax),
-            Number(allocation.quantity),
+            linkedQuantity,
             Number(allocation.amount_without_tax) || undefined
           );
         }
@@ -1754,6 +1797,9 @@ export const grnSmartService = {
           budget_id: String(line.budget_id),
           item_name: line.item_name ?? null,
           amount_with_tax: Number(allocation.amount_with_tax),
+          quantity: linkedQuantity,
+          unit: line.unit ?? null,
+          unit_rate: lineUnitRate,
           reserved_now: String(allocation.lifecycle_status) === "reserved",
         });
       }
