@@ -22,6 +22,11 @@ export interface AssignInput {
   rosterDate: string;
   shiftId?: string | null;
   planId?: string | null;
+  /** Additive (2026-08-20): FK weekly_roster_cycle.id. Only the new
+   *  roster-builder write path sets this today; every other existing
+   *  caller omits it and behavior is unchanged — cycle_id is simply never
+   *  included in the INSERT/UPDATE column list when absent. */
+  cycleId?: string | null;
   shiftStartTime?: string | null;
   shiftEndTime?: string | null;
   branchName?: string | null;
@@ -289,6 +294,12 @@ export const rosterService = {
         placeholders.push("?");
         params.push(scheduledMinutes);
         updateClauses.push("scheduled_minutes = VALUES(scheduled_minutes)");
+      }
+      if (input.cycleId) {
+        insertCols.push("cycle_id");
+        placeholders.push("?");
+        params.push(input.cycleId);
+        updateClauses.push("cycle_id = VALUES(cycle_id)");
       }
 
       await conn.execute(
