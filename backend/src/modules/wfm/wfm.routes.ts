@@ -1094,6 +1094,50 @@ async function closeRosterAckInboxItem(
   }
 }
 
+/**
+ * Advance a cycle from 'published' to 'acknowledged' once nobody is left to answer.
+ *
+ * VALID_TRANSITIONS (roster.governance.service.ts) allows published -> acknowledged, and
+ * acknowledged -> active is the gateway to the rest of the lifecycle — active, attendance_locked,
+ * payroll_input_ready. Nothing ever performed this transition, so a fully acknowledged week sat at
+ * 'published' forever and the lifecycle stalled one step after publish. Verified end to end
+ * against production 2026-08-20: all seven assignments reached 'acknowledged' and the cycle was
+ * still 'published'.
+ *
+ * The NOT EXISTS covers every state that is still waiting on a human, not just employee
+ * acknowledgement: a rejection moves an assignment to 'pending_manager_action' (and possibly on to
+ * 'escalated_to_hr'), and a week with an unresolved rejection is not acknowledged. So one holdout
+ * correctly keeps the whole cycle open rather than letting it advance around them.
+ *
+ * Guarded on status = 'published' so this can only ever perform that one legal transition — it
+ * cannot regress a cycle that has already moved on, which is the failure the publish route's own
+ * POST_PUBLISH_STATUSES check exists to prevent.
+ */
+async function advanceCycleIfFullyAcknowledged(
+  dbConn: { execute: (sql: string, params?: unknown[]) => Promise<[unknown, unknown]> },
+  assignmentId: string
+): Promise<void> {
+  try {
+    await dbConn.execute(
+      `UPDATE weekly_roster_cycle c
+          SET c.status = 'acknowledged', c.updated_at = NOW()
+        WHERE c.id = (SELECT a.cycle_id FROM wfm_roster_assignment a WHERE a.id = ?)
+          AND c.status = 'published'
+          AND NOT EXISTS (
+              SELECT 1 FROM wfm_roster_assignment p
+               WHERE p.cycle_id = c.id
+                 AND p.final_roster_status IN
+                     ('pending_employee_ack', 'pending_manager_action', 'escalated_to_hr'))`,
+      [assignmentId]
+    );
+  } catch (err) {
+    // Non-fatal for the same reason closeRosterAckInboxItem is: the employee's answer is already
+    // committed, and refusing it because the cycle header did not move would be worse. Logged
+    // rather than swallowed, so a cycle stuck at 'published' is diagnosable instead of silent.
+    console.error("[roster] failed to advance cycle to acknowledged", { assignmentId, err });
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MY ROSTER (week view) — /api/wfm/my-roster/weeks, /api/wfm/my-roster/week/:weekStart
 //
@@ -1262,6 +1306,7 @@ wfmRouter.post("/my-weekoff/:assignmentId/acknowledge", requireAuth, h(async (re
     });
   }
   await closeRosterAckInboxItem(dbConn, (emp as any).id, req.params.assignmentId);
+  await advanceCycleIfFullyAcknowledged(dbConn, req.params.assignmentId);
   return res.json({ success: true, message: "Acknowledged" });
 }));
 
