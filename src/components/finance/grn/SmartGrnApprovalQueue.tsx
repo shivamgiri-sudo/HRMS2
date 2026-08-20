@@ -798,10 +798,31 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                           </StatusStamp>
                         </button>
                       ))}
+                      {/* migrate-grn-from-dbbill.ts never copied the physical file db_bill
+                          recorded (expense_entry_master.grn_file) onto this server — only its
+                          filename was backfilled, into attachment_original_name. A GRN whose
+                          attachment_path/attachment_file_path is genuinely set (the working case,
+                          new-flow single-attachment uploads) keeps the real Open button; a legacy
+                          row with only a known filename gets an honest label instead of a button
+                          that can only ever 404. */}
                       {!workspace?.documents?.length && (
-                        <GrnButton className="w-full" onClick={() => void openDocument()}>
-                          <FileText className="h-3.5 w-3.5" />Open legacy attachment
-                        </GrnButton>
+                        (parent?.attachment_path || parent?.attachment_file_path) ? (
+                          <GrnButton className="w-full" onClick={() => void openDocument()}>
+                            <FileText className="h-3.5 w-3.5" />Open legacy attachment
+                          </GrnButton>
+                        ) : parent?.attachment_original_name ? (
+                          <div className="flex items-center gap-2 rounded-lg border border-dashed border-grn-line bg-grn-card p-2 text-left">
+                            <FileText className="h-4 w-4 shrink-0 text-grn-ink-soft" />
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-[12px] font-semibold text-grn-ink">
+                                {parent.attachment_original_name}
+                              </p>
+                              <p className="text-[10.5px] text-grn-ink-soft">
+                                On file in the legacy system — not migrated to HRMS storage
+                              </p>
+                            </div>
+                          </div>
+                        ) : null
                       )}
                     </div>
                   </div>
