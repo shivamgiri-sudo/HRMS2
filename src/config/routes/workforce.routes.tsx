@@ -51,6 +51,8 @@ const RosterWorkspace              = lazy(() => import("@/pages/wfm/RosterWorksp
 const RosterPipelinePage           = lazy(() => import("@/pages/wfm/RosterPipelinePage"));
 const RosterImportPage             = lazy(() => import("@/pages/wfm/RosterImportPage"));
 const RosterRulesPage              = lazy(() => import("@/pages/wfm/RosterRulesPage"));
+const RosterInsightsPage           = lazy(() => import("@/pages/wfm/RosterInsightsPage"));
+const RosterRequestsPage           = lazy(() => import("@/pages/wfm/RosterRequestsPage"));
 const RosterBuilderPage            = lazy(() => import("@/pages/wfm/RosterBuilderPage"));
 
 export const workforceRouteElements = (
@@ -126,7 +128,8 @@ export const workforceRouteElements = (
         Gated on the existing WFM_ROSTER page code on purpose — no new migration, and no role
         gains a capability it did not already have through the roster nav.
       */}
-      <Route path="/wfm/roster-requests"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeRosterManagerQueue /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-requests"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterRequestsPage /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-insights"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterInsightsPage /></Gate></ProtectedRoute>} />
       {/*
         Roster Rules — the seven roster configuration screens as one tabbed page.
 

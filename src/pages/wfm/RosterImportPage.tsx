@@ -418,7 +418,7 @@ export default function RosterImportPage() {
           <h1 className="text-2xl font-bold">Roster Upload</h1>
           <p className="text-slate-300 text-sm mt-1 max-w-2xl">
             Supports wide-format Excel rosters: 24h "10:00–19:00" or 12h "07:00pm–04:00am",
-            single or double header rows, WO/HD/blank normalization.
+            single or double header rows, WO and blank normalization.
             Night shifts highlighted amber. Click any cell to manually override.
           </p>
         </div>
