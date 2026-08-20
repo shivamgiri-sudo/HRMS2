@@ -4,8 +4,11 @@ import {
   CheckCircle2,
   Clock,
   DollarSign,
+  FileText,
   PlusCircle,
   RefreshCw,
+  Send,
+  UserCheck,
   XCircle,
 } from "lucide-react";
 
@@ -48,12 +51,16 @@ import { Textarea } from "@/components/ui/textarea";
 // Types
 // ---------------------------------------------------------------------------
 
-type ClaimStatus = "draft" | "submitted" | "approved" | "rejected" | "processed";
+type ClaimStatus = "draft" | "submitted" | "manager_approved" | "branch_head_approved" | "approved" | "rejected" | "processed";
 type ClaimType = "LTA" | "MEDICAL" | "INTERNET" | "PHONE" | "FUEL" | "OTHER";
 
 interface ReimbursementClaim {
   id: string;
   employee_id: string;
+  branch_id?: string;
+  manager_reviewed_at?: string | null;
+  branch_head_reviewed_at?: string | null;
+  converted_to_grn_id?: string | null;
   employee_name?: string;
   employee_code?: string;
   claim_type: ClaimType;
@@ -106,11 +113,13 @@ const CLAIM_TYPE_LABELS: Record<ClaimType, string> = {
 
 function statusBadge(status: ClaimStatus) {
   const map: Record<ClaimStatus, { label: string; className: string }> = {
-    draft:     { label: "Draft",     className: "bg-slate-100 text-slate-700 border-slate-200" },
-    submitted: { label: "Submitted", className: "bg-blue-100 text-blue-800 border-blue-200" },
-    approved:  { label: "Approved",  className: "bg-green-100 text-green-800 border-green-200" },
-    rejected:  { label: "Rejected",  className: "bg-red-100 text-red-800 border-red-200" },
-    processed: { label: "Processed", className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
+    draft:                { label: "Draft",               className: "bg-slate-100 text-slate-700 border-slate-200" },
+    submitted:            { label: "Pending Manager",     className: "bg-blue-100 text-blue-800 border-blue-200" },
+    manager_approved:     { label: "Pending Branch Head", className: "bg-amber-100 text-amber-800 border-amber-200" },
+    branch_head_approved: { label: "Ready for GRN",       className: "bg-green-100 text-green-800 border-green-200" },
+    approved:             { label: "Approved",            className: "bg-green-100 text-green-800 border-green-200" },
+    rejected:             { label: "Rejected",            className: "bg-red-100 text-red-800 border-red-200" },
+    processed:            { label: "Processed",           className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
   };
   const { label, className } = map[status] ?? { label: status, className: "" };
   return <Badge variant="outline" className={`text-xs ${className}`}>{label}</Badge>;
@@ -477,12 +486,21 @@ export default function ReimbursementManagement() {
     ["admin", "hr", "payroll_head", "finance", "super_admin"].includes(r)
   );
   const isProcessor = roleKeys.some((r) => ["payroll_head", "super_admin"].includes(r));
+  const isManager = roleKeys.some((r) =>
+    ["manager", "process_manager", "ops_manager", "branch_head", "super_admin"].includes(r)
+  );
+  const isBranchHead = roleKeys.some((r) => ["branch_head", "super_admin"].includes(r));
+  const canConvertToGrn = roleKeys.some((r) =>
+    ["branch_admin", "imprest_manager", "finance_head", "super_admin"].includes(r)
+  );
 
   // ------ Dialogs ------
   const [newClaimOpen, setNewClaimOpen] = useState(false);
   const [approveTarget, setApproveTarget] = useState<ReimbursementClaim | null>(null);
   const [rejectTargetId, setRejectTargetId] = useState<string>("");
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [managerRejectId, setManagerRejectId] = useState<string>("");
+  const [branchHeadRejectId, setBranchHeadRejectId] = useState<string>("");
 
   // ------ Filters & pagination ------
   const [queueMonthFilter, setQueueMonthFilter] = useState("");
@@ -525,6 +543,48 @@ export default function ReimbursementManagement() {
   const allClaims = allData?.data ?? [];
 
   const submittedClaims = allClaims.filter((c) => c.status === "submitted");
+
+  // ---------------------------------------------------------------------------
+  // Manager Queue query (team's submitted claims)
+  // ---------------------------------------------------------------------------
+  const {
+    data: managerQueueData,
+    isLoading: managerLoading,
+    refetch: refetchManager,
+  } = useQuery<MyClaimsResponse>({
+    queryKey: ["manager-reimbursement-queue"],
+    queryFn: () => hrmsApi.get<MyClaimsResponse>("/api/payroll/reimbursements/manager-queue"),
+    enabled: isManager,
+  });
+  const managerQueue = managerQueueData?.data ?? [];
+
+  // ---------------------------------------------------------------------------
+  // Branch Head Queue query (manager_approved claims)
+  // ---------------------------------------------------------------------------
+  const {
+    data: branchHeadQueueData,
+    isLoading: branchHeadLoading,
+    refetch: refetchBranchHead,
+  } = useQuery<MyClaimsResponse>({
+    queryKey: ["branch-head-reimbursement-queue"],
+    queryFn: () => hrmsApi.get<MyClaimsResponse>("/api/payroll/reimbursements/branch-head-queue"),
+    enabled: isBranchHead,
+  });
+  const branchHeadQueue = branchHeadQueueData?.data ?? [];
+
+  // ---------------------------------------------------------------------------
+  // Conversion Queue query (branch_head_approved claims ready for GRN)
+  // ---------------------------------------------------------------------------
+  const {
+    data: conversionQueueData,
+    isLoading: conversionLoading,
+    refetch: refetchConversion,
+  } = useQuery<MyClaimsResponse>({
+    queryKey: ["conversion-reimbursement-queue"],
+    queryFn: () => hrmsApi.get<MyClaimsResponse>("/api/payroll/reimbursements/conversion-queue"),
+    enabled: canConvertToGrn,
+  });
+  const conversionQueue = conversionQueueData?.data ?? [];
 
   const processedClaims = useMemo(() => {
     return allClaims.filter((c) => {
@@ -578,6 +638,71 @@ export default function ReimbursementManagement() {
   });
 
   // ---------------------------------------------------------------------------
+  // Manager approve/reject
+  // ---------------------------------------------------------------------------
+  const managerApproveMutation = useMutation<unknown, Error, { id: string; note?: string }>({
+    mutationFn: ({ id, note }) => hrmsApi.patch(`/api/payroll/reimbursements/${id}/manager-approve`, { note }),
+    onSuccess: () => {
+      toast({ title: "Claim approved — forwarded to Branch Head" });
+      void queryClient.invalidateQueries({ queryKey: ["manager-reimbursement-queue"] });
+    },
+    onError: (err) => {
+      toast({ title: "Approval failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const managerRejectMutation = useMutation<unknown, Error, { id: string; reason: string }>({
+    mutationFn: ({ id, reason }) => hrmsApi.patch(`/api/payroll/reimbursements/${id}/manager-reject`, { reason }),
+    onSuccess: () => {
+      toast({ title: "Claim rejected" });
+      void queryClient.invalidateQueries({ queryKey: ["manager-reimbursement-queue"] });
+    },
+    onError: (err) => {
+      toast({ title: "Rejection failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // ---------------------------------------------------------------------------
+  // Branch Head approve/reject
+  // ---------------------------------------------------------------------------
+  const branchHeadApproveMutation = useMutation<unknown, Error, { id: string; note?: string }>({
+    mutationFn: ({ id, note }) => hrmsApi.patch(`/api/payroll/reimbursements/${id}/branch-head-approve`, { note }),
+    onSuccess: () => {
+      toast({ title: "Claim approved — ready for GRN conversion" });
+      void queryClient.invalidateQueries({ queryKey: ["branch-head-reimbursement-queue"] });
+      void queryClient.invalidateQueries({ queryKey: ["conversion-reimbursement-queue"] });
+    },
+    onError: (err) => {
+      toast({ title: "Approval failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const branchHeadRejectMutation = useMutation<unknown, Error, { id: string; reason: string }>({
+    mutationFn: ({ id, reason }) => hrmsApi.patch(`/api/payroll/reimbursements/${id}/branch-head-reject`, { reason }),
+    onSuccess: () => {
+      toast({ title: "Claim rejected" });
+      void queryClient.invalidateQueries({ queryKey: ["branch-head-reimbursement-queue"] });
+    },
+    onError: (err) => {
+      toast({ title: "Rejection failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // ---------------------------------------------------------------------------
+  // Convert to Imprest GRN
+  // ---------------------------------------------------------------------------
+  const convertToGrnMutation = useMutation<{ success: boolean; grn_id: string; grn_number: string }, Error, string>({
+    mutationFn: (id) => hrmsApi.post(`/api/payroll/reimbursements/${id}/convert-to-grn`, {}),
+    onSuccess: (res) => {
+      toast({ title: `Converted to GRN ${res.grn_number}`, description: "GRN is pending Finance Head approval" });
+      void queryClient.invalidateQueries({ queryKey: ["conversion-reimbursement-queue"] });
+    },
+    onError: (err) => {
+      toast({ title: "Conversion failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  // ---------------------------------------------------------------------------
   // Loading guard
   // ---------------------------------------------------------------------------
   if (roleLoading) {
@@ -614,6 +739,9 @@ export default function ReimbursementManagement() {
         <Tabs defaultValue="my">
           <TabsList>
             <TabsTrigger value="my">My Claims</TabsTrigger>
+            {isManager && <TabsTrigger value="team">Team</TabsTrigger>}
+            {isBranchHead && <TabsTrigger value="branch-head">Branch Head</TabsTrigger>}
+            {canConvertToGrn && <TabsTrigger value="grn-ready">Ready for GRN</TabsTrigger>}
             {isApprover && <TabsTrigger value="queue">Approval Queue</TabsTrigger>}
             {isApprover && <TabsTrigger value="processed">Processed</TabsTrigger>}
           </TabsList>
@@ -704,6 +832,241 @@ export default function ReimbursementManagement() {
               </Table>
             </div>
           </TabsContent>
+
+          {/* ---------------------------------------------------------------- */}
+          {/* Team Tab (Manager approval queue)                                */}
+          {/* ---------------------------------------------------------------- */}
+          {isManager && (
+            <TabsContent value="team" className="mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm text-slate-500">{managerQueue.length} claims from your team pending approval</span>
+                <Button variant="outline" size="sm" onClick={() => void refetchManager()} disabled={managerLoading}>
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                  Refresh
+                </Button>
+              </div>
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Employee</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Month</TableHead>
+                      <TableHead>Claimed</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Submitted At</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {managerLoading && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="py-8 text-center text-slate-400">Loading…</TableCell>
+                      </TableRow>
+                    )}
+                    {!managerLoading && managerQueue.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="py-8 text-center text-slate-400">No team claims pending your approval.</TableCell>
+                      </TableRow>
+                    )}
+                    {managerQueue.map((claim) => (
+                      <TableRow key={claim.id}>
+                        <TableCell>
+                          <div className="font-medium text-sm">{claim.employee_name ?? "—"}</div>
+                          <div className="text-xs text-slate-500">{claim.employee_code}</div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs">{CLAIM_TYPE_LABELS[claim.claim_type]}</Badge>
+                        </TableCell>
+                        <TableCell className="text-sm">{claim.claim_month}</TableCell>
+                        <TableCell className="text-sm font-medium">{formatINR(claim.amount_claimed)}</TableCell>
+                        <TableCell className="text-sm text-slate-500 max-w-xs truncate">{claim.description ?? "—"}</TableCell>
+                        <TableCell className="text-xs text-slate-500">{formatDt(claim.submitted_at)}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-xs text-green-700 border-green-300 hover:bg-green-50"
+                              disabled={managerApproveMutation.isPending}
+                              onClick={() => managerApproveMutation.mutate({ id: claim.id })}
+                            >
+                              <UserCheck className="h-3.5 w-3.5 mr-1" />
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-xs text-red-700 border-red-300 hover:bg-red-50"
+                              onClick={() => setManagerRejectId(claim.id)}
+                            >
+                              <XCircle className="h-3.5 w-3.5 mr-1" />
+                              Reject
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </TabsContent>
+          )}
+
+          {/* ---------------------------------------------------------------- */}
+          {/* Branch Head Tab                                                  */}
+          {/* ---------------------------------------------------------------- */}
+          {isBranchHead && (
+            <TabsContent value="branch-head" className="mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm text-slate-500">{branchHeadQueue.length} claims pending Branch Head approval</span>
+                <Button variant="outline" size="sm" onClick={() => void refetchBranchHead()} disabled={branchHeadLoading}>
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                  Refresh
+                </Button>
+              </div>
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Employee</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Month</TableHead>
+                      <TableHead>Claimed</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Manager Approved</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {branchHeadLoading && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="py-8 text-center text-slate-400">Loading…</TableCell>
+                      </TableRow>
+                    )}
+                    {!branchHeadLoading && branchHeadQueue.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="py-8 text-center text-slate-400">No claims pending Branch Head approval.</TableCell>
+                      </TableRow>
+                    )}
+                    {branchHeadQueue.map((claim) => (
+                      <TableRow key={claim.id}>
+                        <TableCell>
+                          <div className="font-medium text-sm">{claim.employee_name ?? "—"}</div>
+                          <div className="text-xs text-slate-500">{claim.employee_code}</div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs">{CLAIM_TYPE_LABELS[claim.claim_type]}</Badge>
+                        </TableCell>
+                        <TableCell className="text-sm">{claim.claim_month}</TableCell>
+                        <TableCell className="text-sm font-medium">{formatINR(claim.amount_claimed)}</TableCell>
+                        <TableCell className="text-sm text-slate-500 max-w-xs truncate">{claim.description ?? "—"}</TableCell>
+                        <TableCell className="text-xs text-slate-500">{formatDt(claim.manager_reviewed_at)}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-xs text-green-700 border-green-300 hover:bg-green-50"
+                              disabled={branchHeadApproveMutation.isPending}
+                              onClick={() => branchHeadApproveMutation.mutate({ id: claim.id })}
+                            >
+                              <UserCheck className="h-3.5 w-3.5 mr-1" />
+                              Approve
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-xs text-red-700 border-red-300 hover:bg-red-50"
+                              onClick={() => setBranchHeadRejectId(claim.id)}
+                            >
+                              <XCircle className="h-3.5 w-3.5 mr-1" />
+                              Reject
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </TabsContent>
+          )}
+
+          {/* ---------------------------------------------------------------- */}
+          {/* Ready for GRN Tab                                                */}
+          {/* ---------------------------------------------------------------- */}
+          {canConvertToGrn && (
+            <TabsContent value="grn-ready" className="mt-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-sm text-slate-500">{conversionQueue.length} claims ready for GRN conversion</span>
+                <Button variant="outline" size="sm" onClick={() => void refetchConversion()} disabled={conversionLoading}>
+                  <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                  Refresh
+                </Button>
+              </div>
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Employee</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Month</TableHead>
+                      <TableHead>Claimed</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Branch Head Approved</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {conversionLoading && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="py-8 text-center text-slate-400">Loading…</TableCell>
+                      </TableRow>
+                    )}
+                    {!conversionLoading && conversionQueue.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="py-8 text-center text-slate-400">No claims ready for GRN conversion.</TableCell>
+                      </TableRow>
+                    )}
+                    {conversionQueue.map((claim) => (
+                      <TableRow key={claim.id}>
+                        <TableCell>
+                          <div className="font-medium text-sm">{claim.employee_name ?? "—"}</div>
+                          <div className="text-xs text-slate-500">{claim.employee_code}</div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs">{CLAIM_TYPE_LABELS[claim.claim_type]}</Badge>
+                        </TableCell>
+                        <TableCell className="text-sm">{claim.claim_month}</TableCell>
+                        <TableCell className="text-sm font-medium">{formatINR(claim.amount_claimed)}</TableCell>
+                        <TableCell className="text-sm text-slate-500 max-w-xs truncate">{claim.description ?? "—"}</TableCell>
+                        <TableCell className="text-xs text-slate-500">{formatDt(claim.branch_head_reviewed_at)}</TableCell>
+                        <TableCell className="text-right">
+                          {claim.converted_to_grn_id ? (
+                            <Badge variant="outline" className="text-xs bg-emerald-50 text-emerald-700 border-emerald-200">
+                              <FileText className="h-3 w-3 mr-1" />
+                              GRN Created
+                            </Badge>
+                          ) : (
+                            <Button
+                              size="sm"
+                              className="h-7 px-3 text-xs"
+                              disabled={convertToGrnMutation.isPending}
+                              onClick={() => convertToGrnMutation.mutate(claim.id)}
+                            >
+                              <Send className="h-3.5 w-3.5 mr-1" />
+                              {convertToGrnMutation.isPending ? "Converting…" : "Convert to GRN"}
+                            </Button>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </TabsContent>
+          )}
 
           {/* ---------------------------------------------------------------- */}
           {/* Approval Queue Tab                                               */}
@@ -927,6 +1290,78 @@ export default function ReimbursementManagement() {
         onClose={() => { setRejectOpen(false); setRejectTargetId(""); }}
         onDone={() => void refetchAll()}
       />
+
+      {/* Manager Reject Dialog */}
+      <Dialog open={!!managerRejectId} onOpenChange={(v) => { if (!v) setManagerRejectId(""); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-red-700">Reject Claim</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const form = e.currentTarget;
+              const reason = (form.elements.namedItem("reason") as HTMLTextAreaElement).value.trim();
+              if (reason && managerRejectId) {
+                managerRejectMutation.mutate({ id: managerRejectId, reason });
+                setManagerRejectId("");
+              }
+            }}
+          >
+            <div className="space-y-3 py-2">
+              <Textarea
+                name="reason"
+                placeholder="Enter reason for rejection…"
+                rows={4}
+                className="resize-none"
+                required
+              />
+            </div>
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="outline" onClick={() => setManagerRejectId("")}>Cancel</Button>
+              <Button type="submit" variant="destructive" disabled={managerRejectMutation.isPending}>
+                {managerRejectMutation.isPending ? "Rejecting…" : "Confirm Reject"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Branch Head Reject Dialog */}
+      <Dialog open={!!branchHeadRejectId} onOpenChange={(v) => { if (!v) setBranchHeadRejectId(""); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-red-700">Reject Claim</DialogTitle>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const form = e.currentTarget;
+              const reason = (form.elements.namedItem("reason") as HTMLTextAreaElement).value.trim();
+              if (reason && branchHeadRejectId) {
+                branchHeadRejectMutation.mutate({ id: branchHeadRejectId, reason });
+                setBranchHeadRejectId("");
+              }
+            }}
+          >
+            <div className="space-y-3 py-2">
+              <Textarea
+                name="reason"
+                placeholder="Enter reason for rejection…"
+                rows={4}
+                className="resize-none"
+                required
+              />
+            </div>
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="outline" onClick={() => setBranchHeadRejectId("")}>Cancel</Button>
+              <Button type="submit" variant="destructive" disabled={branchHeadRejectMutation.isPending}>
+                {branchHeadRejectMutation.isPending ? "Rejecting…" : "Confirm Reject"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

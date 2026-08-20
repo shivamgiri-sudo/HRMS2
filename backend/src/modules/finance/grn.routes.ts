@@ -12,6 +12,7 @@ import {
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { listFinanceApprovalEvents, recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 import { budgetCoverageRouter } from "../process-pnl/budget-coverage.routes.js";
 import { financeExpenseMasterService } from "../process-pnl/finance-expense-master.service.js";
 import {
@@ -359,6 +360,79 @@ function grNExpenseMasterRoutes(router: Router) {
         });
       }
     }
+  );
+
+  // ── finance_config: vendor_expense_mapping_enforced toggle ──────────────────
+
+  router.get(
+    "/config/vendor-expense-mapping-enforced",
+    requireRole(...EXPENSE_MASTER_READ_ROLES),
+    async (_req: AuthenticatedRequest, res) => {
+      try {
+        const enforced = await vendorExpenseMappingService.isEnforced();
+        res.json({ success: true, enforced });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to read enforcement config",
+        });
+      }
+    },
+  );
+
+  router.patch(
+    "/config/vendor-expense-mapping-enforced",
+    requireWriteAccess,
+    requireRole(...EXPENSE_MASTER_WRITE_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const enforced = req.body?.enforced === true ? "1" : "0";
+        await db.execute(
+          `UPDATE finance_config SET config_value = ?, updated_at = NOW()
+            WHERE config_key = 'vendor_expense_mapping_enforced'`,
+          [enforced],
+        );
+        await logSensitiveAction({
+          actor_user_id: req.authUser.id,
+          action_type: "vendor_expense_mapping_enforced_toggled",
+          module_key: "finance",
+          metadata: { enforced: enforced === "1" },
+        });
+        res.json({ success: true, enforced: enforced === "1" });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to update enforcement config",
+        });
+      }
+    },
+  );
+
+  // ── Bulk vendor mapping summary (mapped vs unmapped counts) ─────────────────
+
+  router.get(
+    "/vendors/mapping-summary",
+    requireRole(...EXPENSE_MASTER_READ_ROLES),
+    async (req: AuthenticatedRequest, res) => {
+      try {
+        const unmappedOnly = String(req.query.unmappedOnly ?? "0") === "1";
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT v.id, v.vendor_code, v.vendor_name, v.vendor_type, v.is_active,
+                  COUNT(m.id) AS mapping_count
+             FROM vendor_master v
+             LEFT JOIN vendor_expense_mapping m ON m.vendor_id = v.id AND m.active_status = 1
+            GROUP BY v.id
+           ${unmappedOnly ? "HAVING mapping_count = 0" : ""}
+            ORDER BY mapping_count ASC, v.vendor_name ASC`,
+        );
+        res.json({ success: true, data: rows });
+      } catch (error: unknown) {
+        res.status(400).json({
+          success: false,
+          error: error instanceof Error ? error.message : "Unable to load vendor mapping summary",
+        });
+      }
+    },
   );
 
   /**

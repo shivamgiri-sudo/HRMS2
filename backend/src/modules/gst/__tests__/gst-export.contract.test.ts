@@ -151,3 +151,52 @@ describe("export route guards", () => {
     expect(app).toContain('app.use("/api/gst", gstExportRouter);');
   });
 });
+
+describe("automation worker", () => {
+  const WORKER = "src/workers/gst-export-auto.worker.ts";
+
+  it("never regenerates a batch that was validated or exported", () => {
+    const src = read(WORKER);
+    // 'exported' is the artefact a return was prepared from; replacing it destroys the
+    // reproducibility the whole design exists for. 'validated' is clean and waiting.
+    expect(src).toContain('if (current && String(current.status) !== "draft")');
+  });
+
+  it("generates once per REGISTRATION, not once per branch", () => {
+    const src = read(WORKER);
+    // Four branches share the UP GSTIN; one batch per branch would mean each superseding the last.
+    expect(src).toContain("SELECT DISTINCT gstin");
+    expect(src).toContain("COALESCE(active_status, 1) = 1");
+  });
+
+  it("skips a branch whose GSTIN fails its check digit rather than filing against it", () => {
+    const src = read(WORKER);
+    expect(src).toContain("if (!isValidGstin(gstin))");
+  });
+
+  it("runs daily and is idempotent rather than once a month", () => {
+    const src = read(WORKER);
+    // A monthly tick has one chance; a restart that hour silently skips the month.
+    expect(src).toContain("const INTERVAL_MS = 24 * 60 * 60 * 1000;");
+    expect(src).toContain("REGENERATION_WINDOW_DAYS");
+  });
+
+  it("keeps one failing registration from stopping the others", () => {
+    const src = read(WORKER);
+    expect(src).toContain("generation failed for this registration");
+  });
+
+  it("passes a null actor so automated batches stay distinguishable from human ones", () => {
+    const svc = read(SERVICE);
+    expect(svc).toContain("actorUserId: string | null");
+    expect(svc).toContain("if (actorUserId) await logSensitiveAction({");
+  });
+
+  it("is registered in all-workers.ts, which owns the production workers process", () => {
+    const all = read("src/workers/all-workers.ts");
+    // A server.ts-only registration silently never runs under WORKERS_PROCESS=external.
+    expect(all).toContain('name: "gst-export-auto"');
+    expect(all).toContain("startGstExportAutoWorker();");
+    expect(all).toContain("stopGstExportAutoWorker();");
+  });
+});

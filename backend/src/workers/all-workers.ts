@@ -16,6 +16,7 @@ import { startPayrollRecalcDrainerWorker, stopPayrollRecalcDrainerWorker } from 
 // NOTE: the LMS due-date reminder scheduler is PARKED, not deleted — see the WORKERS
 // array below for what is missing and how to restore it.
 import { startDbBillFinanceSyncWorker, stopDbBillFinanceSyncWorker } from "./db-bill-finance-sync.worker.js";
+import { startGstExportAutoWorker, stopGstExportAutoWorker } from "./gst-export-auto.worker.js";
 import { startAprVicidialSyncWorker, stopAprVicidialSyncWorker } from "./apr-vicidial-sync.worker.js";
 import { startEsignComplianceWorker, stopEsignComplianceWorker } from "./esign-compliance.worker.js";
 import { startEsignReconciliationWorker, stopEsignReconciliationWorker } from "./esign-reconciliation.worker.js";
@@ -154,6 +155,16 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     // appeared.
     name: "db-bill-finance-sync",
     start: () => { startDbBillFinanceSyncWorker(); return Promise.resolve(); },
+  },
+  {
+    // Builds the outward GST batch and its exception worklist for every registration before
+    // anyone asks, so the month's unfilable rows surface while there is still time to fix the
+    // underlying invoice rather than on the due date. Registered here only, matching
+    // db-bill-finance-sync above: this file owns the production workers process, and a
+    // server.ts-only registration is exactly what silently never runs under
+    // WORKERS_PROCESS=external.
+    name: "gst-export-auto",
+    start: () => { startGstExportAutoWorker(); return Promise.resolve(); },
   },
   {
     name: "payroll-nightly-recalc",
@@ -400,6 +411,7 @@ function shutdown(): void {
   stopPayrollNightlyRecalcWorker();
   stopPayrollRecalcDrainerWorker();
   stopDbBillFinanceSyncWorker();
+  stopGstExportAutoWorker();
   stopPayrollPrepReminderWorker();
   stopPayrollReadinessRefreshWorker();
   stopAprVicidialSyncWorker();

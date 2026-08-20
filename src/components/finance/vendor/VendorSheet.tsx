@@ -50,6 +50,7 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSaved: () => void;
+  initialTab?: "identity" | "address" | "tax" | "commercial" | "mapping" | "applicability";
 }
 
 type FieldDef = { key: keyof Vendor; label: string; span?: number; placeholder?: string };
@@ -73,7 +74,7 @@ const ADDRESS_FIELDS: FieldDef[] = [
   { key: "pin_code", label: "PIN code" },
 ];
 
-export function VendorSheet({ vendor, mode, open, onOpenChange, onSaved }: Props) {
+export function VendorSheet({ vendor, mode, open, onOpenChange, onSaved, initialTab }: Props) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -143,7 +144,7 @@ export function VendorSheet({ vendor, mode, open, onOpenChange, onSaved }: Props
           )}
         </SheetHeader>
 
-        <Tabs defaultValue="identity" className="flex flex-1 flex-col overflow-hidden">
+        <Tabs defaultValue={initialTab ?? "identity"} className="flex flex-1 flex-col overflow-hidden">
           <TabsList className="mx-4 mt-3 grid w-auto grid-cols-6">
             <TabsTrigger value="identity" className="text-xs">Identity</TabsTrigger>
             <TabsTrigger value="address" className="text-xs">Address</TabsTrigger>
