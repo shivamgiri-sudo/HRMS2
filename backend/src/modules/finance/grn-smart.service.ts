@@ -1257,14 +1257,20 @@ export const grnSmartService = {
           ? Math.round((cell.amounts.grossAmount / declaredTotal) * 100 * 1_000_000) / 1_000_000
           : 0;
         await connection.execute(
+          // is_unbudgeted is written per row, not left to its DEFAULT 0. Migration 1218 added this
+          // column for exactly this case and nothing had ever populated it, so an unbudgeted split
+          // would have been indistinguishable from a budgeted one the moment a budget line was
+          // linked during approval — the NULL budget_line_id that identifies it is overwritten by
+          // that very step. Nothing reads the column yet; this stops it being another half-built
+          // signal that reads 0 for every row forever.
           `INSERT INTO grn_cost_allocation
            (id, grn_request_id, sequence_no, budget_id, budget_line_id, invoice_component_id,
             branch_id, process_id, cost_centre_id, cost_class, allocation_percentage,
             quantity, unit, unit_rate, tax_treatment, gst_rate, gst_type,
             recoverable_tax_pct, amount_without_tax, tax_amount, cgst_amount,
             sgst_amount, igst_amount, amount_with_tax, recoverable_tax_amount,
-            pnl_cost_amount, lifecycle_status, remarks, created_by)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            pnl_cost_amount, lifecycle_status, remarks, is_unbudgeted, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             randomUUID(), grnId, sequenceNo, cell.line.budget_id, cell.line.id,
             componentIds[cell.componentIndex], grn.branch_id, cell.line.process_id ?? null,
@@ -1276,7 +1282,7 @@ export const grnSmartService = {
             cell.amounts.taxAmount, cell.amounts.cgstAmount, cell.amounts.sgstAmount,
             cell.amounts.igstAmount, cell.amounts.grossAmount,
             cell.amounts.recoverableTaxAmount, cell.amounts.pnlCostAmount,
-            "draft", cell.remarks, actorUserId,
+            "draft", cell.remarks, isUnbudgeted ? 1 : 0, actorUserId,
           ]
         );
       }
