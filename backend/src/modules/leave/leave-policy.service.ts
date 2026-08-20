@@ -361,6 +361,29 @@ async function getCombinedCLMLBalance(
 }
 
 // ---------------------------------------------------------------------------
+// getExceptionApproverRole
+// ---------------------------------------------------------------------------
+// Single source of truth for "who must sign off on an escalated
+// (pending_branch_head-tier) request", read from leave_policy_config so a
+// future policy change takes effect without a code change. Previously
+// duplicated in leave.secure.routes.ts (the authorization check) with no
+// second caller; now also used by leave.service.ts's submit-time
+// notification so the two never disagree about who the escalation goes to.
+async function getExceptionApproverRole(leaveTypeId: string | null): Promise<string> {
+  if (!leaveTypeId) return "branch_head";
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT exception_approver_role FROM leave_policy_config WHERE leave_type_id = ? LIMIT 1`,
+      [leaveTypeId]
+    );
+    const role = (rows[0] as any)?.exception_approver_role;
+    return typeof role === "string" && role.trim() ? role.trim() : "branch_head";
+  } catch {
+    return "branch_head";
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Named export
 // ---------------------------------------------------------------------------
 export const leavePolicyService = {
@@ -372,4 +395,5 @@ export const leavePolicyService = {
   prorateMonthlyCredit,
   prorateAnnualCredit,
   getCombinedCLMLBalance,
+  getExceptionApproverRole,
 };

@@ -3,7 +3,8 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEffectiveConfig } from "../customization/customization-engine.js";
 import { sendSMS } from "../communication/sms.helper.js";
-import { notifyLeaveSubmitted, notifyLeaveDecision } from "./leave.notifications.js";
+import { notifyLeaveSubmitted, notifyLeaveDecision, notifyLeavePendingBranchHead } from "./leave.notifications.js";
+import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 import { leavePolicyService } from "./leave-policy.service.js";
 import { captureAttendanceSnapshot, readAttendanceSnapshots } from "../../shared/attendanceSnapshot.js";
 import { applyRestore, planLeaveRestore, rederiveDates, type DateRestorePlan } from "../../shared/attendanceRestore.js";
@@ -248,6 +249,7 @@ export const leaveService = {
 
     // ── EL policy enforcement ─────────────────────────────────────────────
     let initialStatus = 'pending';
+    let elOccurrenceCount: number | null = null;
     if (leaveCode === 'EL') {
       // Single-application cap: max 12 days
       const singleGo = leavePolicyService.checkELSingleGoCap(chargeableCount);
@@ -276,6 +278,7 @@ export const leaveService = {
       );
       if (occurrences.isException) {
         initialStatus = 'pending_branch_head';
+        elOccurrenceCount = occurrences.count;
       }
     }
 
@@ -344,46 +347,72 @@ export const leaveService = {
       },
     }).catch(() => {});
 
-    // Notify reporting manager — they are Stage 1 approver
+    // Notify the actual authorized approver for this request's status. For an
+    // ordinary request that's the reporting manager (Stage 1). For an
+    // escalated request (pending_branch_head) the reporting manager is NOT
+    // authorized to act on it (see canReviewLeave in leave.secure.routes.ts) —
+    // sending them an "[ACTION REQUIRED]" alert they cannot act on is actively
+    // misleading, so this notifies the configured exception-approver role
+    // instead. Previously every request notified the reporting manager
+    // unconditionally regardless of status, so an escalated request generated
+    // no alert to anyone who could actually approve it. (2026-08-21 audit)
     try {
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT e.employee_code,
                 CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
                 e.reporting_manager_id,
-                e.manager_id
+                e.manager_id,
+                e.branch_id
          FROM employees e WHERE e.id = ? LIMIT 1`,
         [input.employeeId]
       );
       const emp = (empRows[0] as any);
-      const managerEmpId = emp?.reporting_manager_id ?? emp?.manager_id ?? null;
+      const [ltRows] = await db.execute<RowDataPacket[]>(
+        `SELECT leave_name FROM leave_type_master WHERE id = ? LIMIT 1`,
+        [input.leaveTypeId]
+      );
+      const leaveType = (ltRows[0] as any)?.leave_name ?? 'Leave';
+      const { inboxService } = await import('../inbox/inbox.service.js');
 
-      if (managerEmpId) {
-        const [mgRows] = await db.execute<RowDataPacket[]>(
-          `SELECT user_id FROM employees WHERE id = ? AND user_id IS NOT NULL LIMIT 1`,
-          [managerEmpId]
-        );
-        const managerUserId = (mgRows[0] as any)?.user_id ?? null;
-        if (managerUserId) {
-          const [ltRows] = await db.execute<RowDataPacket[]>(
-            `SELECT leave_name FROM leave_type_master WHERE id = ? LIMIT 1`,
-            [input.leaveTypeId]
-          );
-          const leaveType = (ltRows[0] as any)?.leave_name ?? 'Leave';
-          const { inboxService } = await import('../inbox/inbox.service.js');
+      if (initialStatus === 'pending_branch_head') {
+        const approverRole = await leavePolicyService.getExceptionApproverRole(input.leaveTypeId);
+        const approverUserIds = await resolveRoleHolderUserIds(approverRole, emp?.branch_id ?? null);
+        for (const approverUserId of approverUserIds) {
           await inboxService.createItem({
-            user_id: managerUserId,
+            user_id: approverUserId,
             type: 'leave_request',
-            title: `[ACTION REQUIRED] Leave Request: ${emp?.full_name ?? input.employeeId}`,
-            description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${chargeableCount} day${chargeableCount === 1 ? '' : 's'})${input.reason ? `. Reason: ${input.reason}` : '.'}`,
-            // The leave request, not the employee. Keyed on the employee this
-            // collapsed every request a person raised onto one alert, so a
-            // second application never reached the manager and approving one
-            // could not tell the inbox which alert to close.
+            title: `[ACTION REQUIRED] Escalated Leave Request: ${emp?.full_name ?? input.employeeId}`,
+            description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${chargeableCount} day${chargeableCount === 1 ? '' : 's'}) — this is EL occurrence #${(elOccurrenceCount ?? 0)} this year and requires ${approverRole.replace(/_/g, ' ')} approval.${input.reason ? ` Reason: ${input.reason}` : ''}`,
             entity_type: 'leave',
             entity_id: id,
             action_url: `/leave/requests`,
             priority: 'high',
           });
+        }
+      } else {
+        const managerEmpId = emp?.reporting_manager_id ?? emp?.manager_id ?? null;
+        if (managerEmpId) {
+          const [mgRows] = await db.execute<RowDataPacket[]>(
+            `SELECT user_id FROM employees WHERE id = ? AND user_id IS NOT NULL LIMIT 1`,
+            [managerEmpId]
+          );
+          const managerUserId = (mgRows[0] as any)?.user_id ?? null;
+          if (managerUserId) {
+            await inboxService.createItem({
+              user_id: managerUserId,
+              type: 'leave_request',
+              title: `[ACTION REQUIRED] Leave Request: ${emp?.full_name ?? input.employeeId}`,
+              description: `${emp?.employee_code ?? ''} applied for ${leaveType} from ${input.fromDate} to ${input.toDate} (${chargeableCount} day${chargeableCount === 1 ? '' : 's'})${input.reason ? `. Reason: ${input.reason}` : '.'}`,
+              // The leave request, not the employee. Keyed on the employee this
+              // collapsed every request a person raised onto one alert, so a
+              // second application never reached the manager and approving one
+              // could not tell the inbox which alert to close.
+              entity_type: 'leave',
+              entity_id: id,
+              action_url: `/leave/requests`,
+              priority: 'high',
+            });
+          }
         }
       }
     } catch {
@@ -391,8 +420,13 @@ export const leaveService = {
     }
 
     // Email to the approver (fire-and-forget), alongside the inbox item and the SMS
-    // below. Ships in shadow until leave_submitted is switched live.
-    setImmediate(() => { void notifyLeaveSubmitted(id); });
+    // below. Ships in shadow until leave_submitted/leave_pending_branch_head is
+    // switched live.
+    if (initialStatus === 'pending_branch_head') {
+      setImmediate(() => { void notifyLeavePendingBranchHead(id, elOccurrenceCount ?? undefined); });
+    } else {
+      setImmediate(() => { void notifyLeaveSubmitted(id); });
+    }
 
     // SMS — leave request submitted (fire-and-forget)
     try {
@@ -928,6 +962,43 @@ export const leaveService = {
         // currently gets no automated notification via any channel, only what's visible in the
         // HRMS UI itself.
         console.warn(`[leave] rejection SMS not attempted for request ${id} — no registered DLT template for a rejection`);
+      }
+
+      // In-app decision notice for the employee themselves. Previously the only
+      // recipient of any leave-decision notice was the approver's inbox item
+      // (and that's just resolved on decision, not a message to the employee) —
+      // combined with SMS being skipped for rejections (above) and email being
+      // platform-wide dormant, a rejected employee had literally zero
+      // notification of the outcome through any channel, only what they'd see
+      // by manually reopening the leave page. portal_notification is a plain
+      // read/unread FYI row (unlike work_inbox_item, which stays "pending
+      // action" until someone resolves it — wrong shape for a decision notice
+      // nobody needs to act on). (2026-08-21 audit)
+      const [userRow] = await db.execute<RowDataPacket[]>(
+        `SELECT user_id FROM employees WHERE id = ? AND user_id IS NOT NULL LIMIT 1`,
+        [updated.employee_id]
+      );
+      const employeeUserId = (userRow[0] as any)?.user_id ?? null;
+      if (employeeUserId) {
+        const decisionLabel =
+          input.status === 'approved' || input.status === 'branch_head_approved' ? 'approved' :
+          input.status === 'rejected' || input.status === 'branch_head_rejected' ? 'rejected' :
+          input.status === 'cancelled' ? 'cancelled' : null;
+        if (decisionLabel) {
+          await db.execute(
+            `INSERT INTO portal_notification (
+               id, user_id, user_type, title, message, notification_type,
+               reference_id, priority, read_status
+             ) VALUES (UUID(), ?, 'employee', ?, ?, 'leave_decision', ?, ?, 0)`,
+            [
+              employeeUserId,
+              decisionLabel === 'approved' ? 'Leave Request Approved' : decisionLabel === 'rejected' ? 'Leave Request Rejected' : 'Leave Request Cancelled',
+              `Your leave request for ${updated.from_date} to ${updated.to_date} was ${decisionLabel}${input.remarks ? `. Remarks: ${input.remarks}` : '.'}`,
+              id,
+              decisionLabel === 'rejected' ? 'high' : 'medium',
+            ]
+          ).catch(() => {});
+        }
       }
     } catch { /* non-fatal */ }
 

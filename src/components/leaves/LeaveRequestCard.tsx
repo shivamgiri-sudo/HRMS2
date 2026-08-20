@@ -88,6 +88,11 @@ export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: Le
                 >
                   {request.type}
                 </Badge>
+                {request.status === "pending_branch_head" && (
+                  <Badge variant="secondary" className="bg-orange-500/10 text-orange-600 border-orange-500/20">
+                    Escalated — Branch Head
+                  </Badge>
+                )}
               </div>
               <p className="text-sm text-muted-foreground">{request.employee.department}</p>
               <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
@@ -122,7 +127,7 @@ export function LeaveRequestCard({ request, onApprove, onReject, onDiscard }: Le
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {request.status === "pending" && (onApprove || onReject) ? (
+            {(request.status === "pending" || request.status === "pending_branch_head") && (onApprove || onReject) ? (
               <>
                 {onApprove && (
                   <Button

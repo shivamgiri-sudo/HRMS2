@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useGeoCapture } from "@/hooks/useGeoCapture";
-import { eachDayOfInterval, isWeekend, parseISO, isSameDay } from "date-fns";
+import { eachDayOfInterval, parseISO, isSameDay } from "date-fns";
 import { normalizeDate } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -61,9 +61,12 @@ export function useSubmitLeaveRequest() {
         // Non-fatal — proceed without holiday exclusion
       }
 
-      // Calculate business days count (excluding weekends and public holidays)
+      // Chargeable-day estimate for the notification email only. Week-off is
+      // roster-driven, not fixed to Saturday/Sunday, so this excludes company
+      // holidays only — the backend's classifyLeaveDays() is authoritative on
+      // submit and may store a different total_days than this estimate.
       const daysCount = eachDayOfInterval({ start: startDate, end: endDate })
-        .filter((d) => !isWeekend(d) && !holidayDates.some((hd) => isSameDay(d, hd))).length;
+        .filter((d) => !holidayDates.some((hd) => isSameDay(d, hd))).length;
 
       const formatLocalDate = (d: Date) => {
         const y = d.getFullYear();
