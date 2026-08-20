@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 969,
-  "columnCount": 13768,
+  "tableCount": 973,
+  "columnCount": 13861,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -2606,7 +2606,8 @@
       "close_date",
       "pincode",
       "gstin",
-      "gst_state_code"
+      "gst_state_code",
+      "company_name"
     ],
     "branch_notification_recipient": [
       "id",
@@ -6162,7 +6163,20 @@
       "payroll_run_id",
       "processed_at",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "branch_id",
+      "manager_reviewed_by",
+      "manager_reviewed_at",
+      "manager_review_note",
+      "branch_head_reviewed_by",
+      "branch_head_reviewed_at",
+      "branch_head_review_note",
+      "converted_to_grn_id",
+      "converted_at",
+      "converted_by",
+      "attachment_file_path",
+      "attachment_original_name",
+      "attachment_mime"
     ],
     "employee_roster_preference": [
       "id",
@@ -8045,7 +8059,8 @@
       "recognition_start_period",
       "recognition_end_period",
       "period_allocation_mode",
-      "bill_source_id"
+      "bill_source_id",
+      "source_reimbursement_id"
     ],
     "grn_validation_override": [
       "id",
@@ -15708,6 +15723,92 @@
       "donor_value",
       "active_status",
       "backed_up_at"
+    ],
+    "gst_export_batch": [
+      "id",
+      "export_type",
+      "company_gstin",
+      "gst_state_code",
+      "period_month",
+      "financial_year",
+      "status",
+      "total_rows",
+      "valid_rows",
+      "exception_rows",
+      "total_taxable_value",
+      "total_igst",
+      "total_cgst",
+      "total_sgst",
+      "total_cess",
+      "total_invoice_value",
+      "generated_by",
+      "generated_at",
+      "downloaded_by",
+      "downloaded_at",
+      "superseded_by_id",
+      "notes",
+      "created_at",
+      "updated_at"
+    ],
+    "gst_export_row": [
+      "id",
+      "batch_id",
+      "sequence_no",
+      "source_type",
+      "source_id",
+      "bill_no",
+      "invoice_date",
+      "financial_year",
+      "month_label",
+      "company_name",
+      "company_gstin",
+      "branch_name",
+      "branch_state_code",
+      "client_name",
+      "client_gstin",
+      "client_state_code",
+      "place_of_supply",
+      "process_code",
+      "po_no",
+      "grn_no",
+      "hsn_sac_code",
+      "supply_type",
+      "gst_type",
+      "gst_rate",
+      "reverse_charge",
+      "taxable_value",
+      "igst_amount",
+      "cgst_amount",
+      "sgst_amount",
+      "cess_amount",
+      "other_charges",
+      "round_off_amount",
+      "invoice_value",
+      "tds_amount",
+      "other_deduction",
+      "payment_received",
+      "received_on",
+      "cheque_no",
+      "tally_head",
+      "tally_bill_no",
+      "validation_status",
+      "validation_errors",
+      "remarks",
+      "created_at"
+    ],
+    "bill_revenue_target_snapshot": [
+      "source_id",
+      "process_name",
+      "target_month",
+      "target_revenue",
+      "synced_at"
+    ],
+    "bill_revenue_actual_snapshot": [
+      "source_id",
+      "process_name",
+      "revenue_date",
+      "actual_revenue",
+      "synced_at"
     ]
   }
 }

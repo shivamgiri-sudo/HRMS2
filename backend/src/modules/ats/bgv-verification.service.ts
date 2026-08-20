@@ -231,50 +231,148 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
   return checkId;
 }
 
-// Score weights matching frontend (NativeBGVReport.tsx line 143)
-const SCORE_WEIGHTS: Record<string, number> = {
-  aadhaar: 25, aadhaar_offline: 25,
+// Normalize check_type aliases so they don't double-count the same verification category.
+function normalizeCheckType(checkType: string): string {
+  if (checkType === "aadhaar_offline") return "aadhaar";
+  if (checkType === "address_doc") return "address";
+  if (checkType === "education_doc") return "education";
+  if (checkType === "court") return "criminal"; // same category
+  if (checkType === "experience") return "employment"; // same category
+  return checkType;
+}
+
+// Weights per canonical check category (denominator is dynamic per candidate).
+const CHECK_WEIGHTS: Record<string, number> = {
+  aadhaar: 25,
   pan: 20,
   bank: 15,
   education: 10,
-  employment: 10, experience: 10,
-  address: 10, address_doc: 10,
-  criminal: 10, court: 10,
+  address: 10,
+  employment: 10,
+  criminal: 10,
 };
 
 /**
- * Compute and persist BGV score based on check statuses.
- * Call this after any check status change.
+ * Determine which checks are applicable for this candidate based on their
+ * designation, department, and whether they are a fresher.
+ *
+ * Rules:
+ * - Base (everyone): aadhaar(25) + pan(20) + bank(15) + education(10) + address(10) = 80
+ * - employment (+10): only when candidate is NOT a fresher
+ * - criminal (+10): only for Finance/Accounts/Compliance/Sales & Marketing depts
+ *                   OR Manager-and-above designations
+ *
+ * DigiLocker note: handled in computeAndSaveScore — if digilocker is verified
+ * it covers both aadhaar and pan without requiring separate manual checks.
+ */
+async function getApplicableChecks(candidateId: string): Promise<{
+  includeEmployment: boolean;
+  includeCriminal: boolean;
+  denominator: number;
+}> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       exp.working_experience,
+       exp.experience_year,
+       dept.dept_name AS department_name,
+       desig.designation_name,
+       desig.bgv_requirements
+     FROM ats_candidate c
+     LEFT JOIN ats_employment_offer o
+            ON o.candidate_id = c.id AND o.status != 'cancelled'
+     LEFT JOIN department_master dept  ON dept.id  = o.department_id
+     LEFT JOIN designation_master desig ON desig.id = o.designation_id
+     LEFT JOIN candidate_onboarding_experience exp ON exp.candidate_id = c.id
+     WHERE c.id = ?
+     ORDER BY o.submitted_at DESC, o.created_at DESC
+     LIMIT 1`,
+    [candidateId]
+  );
+
+  const row = (rows as RowDataPacket[])[0];
+
+  // Fresher: no experience record, explicitly 'fresher', years = 0, or null working_experience
+  const isFresher = !row
+    || !row.working_experience
+    || String(row.working_experience).toLowerCase() === "fresher"
+    || String(row.working_experience).toLowerCase() === "no"
+    || String(row.working_experience) === "0"
+    || (row.experience_year !== null && Number(row.experience_year) === 0);
+
+  // Criminal check: designation_master.bgv_requirements.criminal OR dept/designation keywords
+  let includeCriminal = false;
+  if (row) {
+    const bgvReq = row.bgv_requirements
+      ? (typeof row.bgv_requirements === "string" ? JSON.parse(row.bgv_requirements) : row.bgv_requirements)
+      : null;
+    if (bgvReq?.criminal === true) includeCriminal = true;
+
+    const dept = String(row.department_name ?? "").toLowerCase();
+    if (/finance|accounts?|accountant|compliance|sales|marketing/.test(dept)) includeCriminal = true;
+
+    const desig = String(row.designation_name ?? "").toLowerCase();
+    if (/manager|head|director|vp|vice.?president|ceo|coo|cfo|chief/.test(desig)) includeCriminal = true;
+  }
+
+  const includeEmployment = !isFresher;
+  const denominator = 80 + (includeEmployment ? 10 : 0) + (includeCriminal ? 10 : 0);
+
+  return { includeEmployment, includeCriminal, denominator };
+}
+
+/**
+ * Compute and persist BGV score as a percentage (0–100).
+ *
+ * Denominator is dynamic: only checks applicable to this candidate's
+ * profile/designation are counted. DigiLocker verified = covers both
+ * aadhaar and pan so manual checks for those are not additionally required.
  */
 export async function computeAndSaveScore(candidateId: string): Promise<number> {
-  const [checks] = await db.execute<RowDataPacket[]>(
+  const { includeEmployment, includeCriminal, denominator } = await getApplicableChecks(candidateId);
+
+  const [rawChecks] = await db.execute<RowDataPacket[]>(
     `SELECT check_type, status FROM candidate_bgv_check WHERE candidate_id = ?`,
     [candidateId]
   );
 
-  let score = 0;
-  const seenTypes = new Set<string>();
-  for (const check of checks as RowDataPacket[]) {
-    const checkType = String(check.check_type);
-    // Normalize to avoid double-counting (e.g., aadhaar and aadhaar_offline)
-    const normalizedType = checkType.replace(/_offline$/, '').replace(/^address_doc$/, 'address');
-    if (seenTypes.has(normalizedType)) continue;
-
-    if (check.status === "verified" || check.status === "waived") {
-      score += SCORE_WEIGHTS[checkType] ?? 0;
-      seenTypes.add(normalizedType);
-    }
+  // Build best-status map per normalized check type (precedence: verified > waived > manual_review > rest)
+  const statusPrecedence: Record<string, number> = { verified: 4, waived: 3, manual_review: 2, partial: 1 };
+  const bestStatus = new Map<string, string>();
+  for (const check of rawChecks as RowDataPacket[]) {
+    const norm = normalizeCheckType(String(check.check_type));
+    const incoming = statusPrecedence[String(check.status)] ?? 0;
+    const existing = statusPrecedence[bestStatus.get(norm) ?? ""] ?? -1;
+    if (incoming > existing) bestStatus.set(norm, String(check.status));
   }
 
-  // Update the report table (upsert)
+  const isClear = (type: string) => {
+    const s = bestStatus.get(type);
+    return s === "verified" || s === "waived";
+  };
+
+  // DigiLocker verified covers both aadhaar and pan
+  const digilockerClear = isClear("digilocker");
+
+  let earned = 0;
+  if (digilockerClear || isClear("aadhaar")) earned += CHECK_WEIGHTS.aadhaar;   // 25
+  if (digilockerClear || isClear("pan"))     earned += CHECK_WEIGHTS.pan;        // 20
+  if (isClear("bank"))                       earned += CHECK_WEIGHTS.bank;       // 15
+  if (isClear("education"))                  earned += CHECK_WEIGHTS.education;  // 10
+  if (isClear("address"))                    earned += CHECK_WEIGHTS.address;    // 10
+  if (includeEmployment && isClear("employment")) earned += CHECK_WEIGHTS.employment; // +10
+  if (includeCriminal   && isClear("criminal"))   earned += CHECK_WEIGHTS.criminal;   // +10
+
+  // Always store as percentage so the UI/PDF can display score/100 correctly.
+  const scorePct = denominator > 0 ? Math.round((earned / denominator) * 100) : 0;
+
   await db.execute(
     `INSERT INTO candidate_bgv_report (candidate_id, bgv_score, updated_at)
      VALUES (?, ?, NOW())
      ON DUPLICATE KEY UPDATE bgv_score = VALUES(bgv_score), updated_at = NOW()`,
-    [candidateId, score]
+    [candidateId, scorePct]
   );
 
-  return score;
+  return scorePct;
 }
 
 export async function saveBgvConsentByToken(token: string, input: { consentText?: string; purposes?: unknown }, meta?: { ip?: string; userAgent?: string }) {
@@ -1208,6 +1306,7 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
     education:  "education_status",
     education_doc: "education_status",
     employment: "employment_status",
+    experience: "employment_status", // alias — same verification category
     address:    "address_status",
     address_doc: "address_status",
     digilocker: "digilocker_status",
@@ -1215,8 +1314,11 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
 
   // Report columns use ENUM('not_run','passed','failed','partial') — map check
   // statuses to those values only. 'discrepancy' is not a valid ENUM value.
+  // waived = partial (HR explicitly decided the check is not required — it is a
+  // positive disposition but not a full-pass, so partial is the honest display).
   const statusMap: Record<string, string> = {
     verified:      "passed",
+    waived:        "partial",
     mismatch:      "failed",
     failed:        "failed",
     manual_review: "partial",
