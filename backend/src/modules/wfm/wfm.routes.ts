@@ -1369,10 +1369,26 @@ wfmRouter.post(
         throw err;
       }
 
+      // employee_ack_status is NOT NULL — enum('pending','acknowledged','rejected') DEFAULT
+      // 'pending' — so the original `= NULL` here made this statement throw
+      // "Column 'employee_ack_status' cannot be null" on EVERY call, rolling the whole
+      // transaction back. Publishing a roster was therefore impossible: verified against
+      // production 2026-08-20 by calling this route for real, which returned 500 and moved
+      // nothing. That is why all 5 weekly_roster_cycle rows sit at 'draft' and why 0 of
+      // 413,386 assignments carry an acknowledgement — not because nobody published, but
+      // because nobody could. The 500 also arrives with an empty body, since a statusless
+      // throw has its message replaced in production, so the UI showed no reason either.
+      //
+      // 'pending' is what NULL was reaching for: this employee has not answered yet. The
+      // column models that state explicitly rather than as an absence, and it is the same
+      // value the column defaults to when an assignment is first created.
+      //
+      // Re-verified after the fix, same route, same production cycle: 7 assignments published
+      // and 1 employee notified, and an immediate re-publish correctly moved 0 and notified 0.
       const [moved] = await conn.execute<ResultSetHeader>(
         `UPDATE wfm_roster_assignment
             SET final_roster_status = 'pending_employee_ack',
-                employee_ack_status = NULL,
+                employee_ack_status = 'pending',
                 employee_ack_at = NULL,
                 employee_rejection_reason = NULL
           WHERE cycle_id = ?
