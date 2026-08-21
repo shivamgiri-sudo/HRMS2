@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useCeoOverview, type CeoBranchRow, type CeoFocus, type CeoOpportunity } from "@/hooks/useCeoOverview";
 import { FilterMultiSelect } from "./FilterMultiSelect";
+import { PnlDrillDownDrawer, type PnlDrillDescriptor } from "./PnlDrillDownDrawer";
 
 /**
  * The CEO view of the P&L.
@@ -89,6 +90,11 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
 
   const { data, isLoading, error } = useCeoOverview(period, { branchIds, processIds, costCentreIds });
   const narrowed = branchIds.length > 0 || processIds.length > 0 || costCentreIds.length > 0;
+
+  const [drill, setDrill] = useState<{ descriptor: PnlDrillDescriptor; summaryCellValue: number } | null>(null);
+  const openDrill = (metric: "revenue" | "people" | "indirect", branchId: string, branchName: string, value: number) => {
+    setDrill({ descriptor: { metric, period, branchId, branchLabel: branchName }, summaryCellValue: value });
+  };
 
   /** Company-average margin, used as the comparison baseline. Excludes the rows that would skew
    *  it: cost centres, closed branches, and any branch flagged as missing a cost line. */
@@ -315,6 +321,10 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
                   compare={compare}
                   avgMargin={avgMargin}
                   onSelect={onBranchChange}
+                  onDrill={(metric, branchId) => {
+                    const value = metric === "revenue" ? b.revenue : metric === "people" ? b.peopleCost : b.indirectCost;
+                    openDrill(metric, branchId, b.branchName, value);
+                  }}
                 />
               ))}
             </tbody>
@@ -432,6 +442,13 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
         Invoiced revenue and GRN spend from the db_bill mirror; people cost from the payroll run for
         this month, not a recomputed snapshot. Revenue per head is monthly, per paid employee.
       </p>
+
+      <PnlDrillDownDrawer
+        open={Boolean(drill)}
+        onClose={() => setDrill(null)}
+        descriptor={drill?.descriptor ?? null}
+        summaryCellValue={drill?.summaryCellValue ?? 0}
+      />
     </div>
   );
 }
@@ -480,13 +497,30 @@ function Kpi({ label, value, detail }: { label: string; value: string; detail: s
 }
 
 function BranchRow({
-  row, compare, avgMargin, onSelect,
+  row, compare, avgMargin, onSelect, onDrill,
 }: {
   row: CeoBranchRow;
   compare: "avg" | "budget";
   avgMargin: number | null;
   onSelect?: (branchId: string) => void;
+  /** Opens the drill-down drawer for one metric cell. undefined (e.g. a cost-centre row with
+   *  no real branchId) simply leaves that cell non-interactive. */
+  onDrill?: (metric: "revenue" | "people" | "indirect", branchId: string) => void;
 }) {
+  const drillable = Boolean(onDrill && row.branchId && !row.isCostCentre);
+  const drillCell = (metric: "revenue" | "people" | "indirect", content: React.ReactNode) => (
+    <td
+      className={`px-3 py-2.5 text-right tabular-nums ${drillable ? "cursor-pointer hover:bg-blue-50 hover:underline dark:hover:bg-blue-950/30" : ""}`}
+      onClick={(e) => {
+        if (!drillable || !row.branchId) return;
+        e.stopPropagation();
+        onDrill!(metric, row.branchId);
+      }}
+      title={drillable ? "Click for underlying detail" : undefined}
+    >
+      {content}
+    </td>
+  );
   const flagged = Boolean(row.flag);
   let footnote: JSX.Element | null = null;
   if (compare === "budget" && row.budget > 0) {
@@ -528,10 +562,10 @@ function BranchRow({
           </span>
         )}
       </td>
-      <td className="px-3 py-2.5 text-right tabular-nums">{lakh(row.revenue)}</td>
-      <td className="px-3 py-2.5 text-right tabular-nums">{lakh(row.peopleCost)}</td>
+      {drillCell("revenue", lakh(row.revenue))}
+      {drillCell("people", lakh(row.peopleCost))}
       <td className="px-3 py-2.5 text-right tabular-nums">{row.staffPaid.toLocaleString("en-IN")}</td>
-      <td className="px-3 py-2.5 text-right tabular-nums">{lakh(row.indirectCost)}</td>
+      {drillCell("indirect", lakh(row.indirectCost))}
       <td className={`px-3 py-2.5 text-right tabular-nums ${row.operatingProfit < 0 ? "text-rose-700 dark:text-rose-400" : ""}`}>
         {lakh(row.operatingProfit)}
       </td>
