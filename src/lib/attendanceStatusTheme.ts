@@ -129,6 +129,20 @@ export function themeFor(state: AttendanceCellState): CellTheme {
   return ATTENDANCE_CELL_THEME[state] ?? ATTENDANCE_CELL_THEME.missing;
 }
 
+/**
+ * Some `status_change_reason` values are a human's words ("Sick, called in") and some are
+ * a machine's ("COSEC historical review: historical_odd_punch_span; punches=31;
+ * source_span_minutes=511; applied_minutes=511") — the reconciliation engine writes to
+ * the same column a manager's override reason does. Rendering the second kind in italic
+ * quotes, as if someone said it, is what made the hover tooltip unreadable: a raw
+ * key=value audit dump sitting next to a plain-English sentence with no visual distinction.
+ * A cheap heuristic (semicolon-separated key=value pairs) is enough to tell them apart —
+ * exact classification isn't the point, just not presenting a log line as a quote.
+ */
+export function isSystemNote(note: string): boolean {
+  return /;\s*[a-z_]+\s*=/i.test(note) || /^[a-z_]+:\s/.test(note);
+}
+
 /** Legend order — reading order for a manager, not alphabetical. */
 export const LEGEND_ORDER: AttendanceCellState[] = [
   "present",

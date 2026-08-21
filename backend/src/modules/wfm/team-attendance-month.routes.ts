@@ -364,6 +364,7 @@ teamAttendanceMonthRouter.post(
     let flagged = 0;
     let skippedOutOfScope = 0;
     let skippedNoAccount = 0;
+    let failed = 0;
 
     for (const item of items) {
       const emp = allowed.get(String(item.employeeId ?? ""));
@@ -376,24 +377,35 @@ teamAttendanceMonthRouter.post(
       // did not land and can follow up another way.
       if (!emp.auth_user_id) { skippedNoAccount++; continue; }
 
-      await inboxService.createItem({
+      // work_inbox_item.entity_id is CHAR(36) — sized for a bare UUID. `${emp.id}:${date}`
+      // is ~47 characters, so every call here threw ER_DATA_TOO_LONG and was swallowed by
+      // the .catch() below, while flagged++ still ran unconditionally: the manager was told
+      // "notified in their inbox" and the employee received nothing, silently, since this
+      // action existed. (found 2026-08-22 verifying this page end-to-end)
+      //
+      // The date doesn't need to live in entity_id anyway — createItem's own dedup key is
+      // (user_id, type, entity_type, entity_id, action_url), and action_url already carries
+      // the date. entity_id is just the employee, which fits.
+      const created = await inboxService.createItem({
         user_id: String(emp.auth_user_id),
         type: "attendance_flagged_by_manager",
         title: `Attendance query for ${date}`,
         description: `${note} — raised by your reporting manager. Open your attendance and raise a regularization if this day is wrong.`,
         entity_type: "attendance_daily_record",
-        entity_id: `${emp.id}:${date}`.slice(0, 64),
+        entity_id: emp.id,
         action_url: `/attendance?date=${encodeURIComponent(date)}`,
         priority: "high",
-      }, 24 * 60).catch(() => undefined);
-      flagged++;
+      }, 24 * 60).catch(() => null);
+
+      if (created) flagged++; else failed++;
     }
 
     return res.json({
-      success: true,
+      success: failed === 0,
       flagged,
       skipped_out_of_scope: skippedOutOfScope,
       skipped_no_account: skippedNoAccount,
+      failed,
     });
   }),
 );

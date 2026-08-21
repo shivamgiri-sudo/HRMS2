@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { resolveCellState, themeFor } from "@/lib/attendanceStatusTheme";
+import { resolveCellState, themeFor, isSystemNote } from "@/lib/attendanceStatusTheme";
 import type { TeamMonthDay, TeamMonthEmployee } from "@/hooks/useTeamAttendanceMonth";
 import { RaiseCorrectionDialog } from "./RaiseCorrectionDialog";
 import { RaiseLeaveOnBehalfDialog } from "./RaiseLeaveOnBehalfDialog";
@@ -56,7 +56,11 @@ export function DayDetailSheet({
       });
       toast({
         title: res?.flagged ? "Flagged to employee" : "Could not flag",
-        description: res?.flagged ? "They've been notified in their inbox." : (res?.skipped_no_account ? "They have no login account." : "Outside your team."),
+        description: res?.flagged
+          ? "They've been notified in their inbox."
+          : res?.skipped_no_account ? "They have no login account."
+          : res?.skipped_out_of_scope ? "Outside your team."
+          : "The notification could not be delivered — try again.",
         variant: res?.flagged ? undefined : "destructive",
       });
       setFlagNote(""); setShowFlagBox(false);
@@ -110,7 +114,21 @@ export function DayDetailSheet({
                     APR and biometric disagreed — the status above is what payroll uses.
                   </div>
                 )}
-                {day.note && <div className="col-span-2 text-slate-500 italic">"{day.note}"</div>}
+                {day.note && (
+                  isSystemNote(day.note) ? (
+                    // A reconciliation/audit string, not a person's words — shown as what
+                    // it is (a system log line) rather than in quotes, which used to read
+                    // as if someone had typed "COSEC historical review: punches=31; ..."
+                    <div className="col-span-2">
+                      <dt className="text-xs text-slate-500">System note</dt>
+                      <dd className="break-all rounded bg-slate-100 px-2 py-1 font-mono text-[11px] text-slate-500">
+                        {day.note}
+                      </dd>
+                    </div>
+                  ) : (
+                    <div className="col-span-2 text-slate-500 italic">"{day.note}"</div>
+                  )
+                )}
               </dl>
             )}
 
