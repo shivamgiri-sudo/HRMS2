@@ -533,6 +533,23 @@ export async function finalizeKitEsign(params: {
     documents: items.length, artefactRetrieved: Boolean(signedBytes), placementOk,
   });
 
+  // Fire-and-forget: kit completion must never depend on letter issuance
+  // succeeding. issueAppointmentLetter() has its own eligibility gate (BGV,
+  // salary, branch address, name/DOJ, etc.) — a blocker there just means
+  // "not yet", to be issued manually later from the existing HR screen, not
+  // a failure of the kit sign-off itself.
+  import("../letters/appointmentLetterIssue.service.js")
+    .then(({ issueAppointmentLetter }) =>
+      issueAppointmentLetter({ employeeId: String(kit.employee_id), actorUserId: "system" }))
+    .catch((e: unknown) => {
+      const code = (e as { code?: string })?.code;
+      if (code === "already_issued") return; // benign — someone already issued it manually
+      console.warn(
+        "[joining-kit] auto appointment-letter issue skipped/failed:",
+        e instanceof Error ? e.message : e,
+      );
+    });
+
   return {
     kitId: params.kitId,
     documentsClosed: items.length,
