@@ -220,13 +220,60 @@ export interface CreditNoteResult {
   creditStatus: CreditNoteStatus;
 }
 
+/** Summary aggregates for the page header's stat cards — GET /api/client-billing/summary.
+ *  Computed in SQL across the whole table, not summed from a fetched (paginated) page. */
+export interface ClientBillingSummary {
+  invoices: Record<InvoiceStatus, { count: number; total: number }>;
+  creditNotes: Record<CreditNoteStatus, { count: number; total: number }>;
+  thisMonthBilled: { count: number; total: number };
+  pendingApprovalCount: number;
+}
+
+/** Shared filter shape for both list endpoints and their CSV export siblings — the same
+ *  params work on all four, so a filter that works on screen also works in the export. */
+export interface ClientBillingListFilters {
+  status?: string;
+  fromDate?: string; // YYYY-MM-DD
+  toDate?: string; // YYYY-MM-DD
+  costCentreId?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+function buildQueryString(filters: ClientBillingListFilters): string {
+  const params = new URLSearchParams();
+  if (filters.status) params.set("status", filters.status);
+  if (filters.fromDate) params.set("fromDate", filters.fromDate);
+  if (filters.toDate) params.set("toDate", filters.toDate);
+  if (filters.costCentreId) params.set("costCentreId", filters.costCentreId);
+  if (filters.search) params.set("search", filters.search);
+  if (filters.page) params.set("page", String(filters.page));
+  if (filters.limit) params.set("limit", String(filters.limit));
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+/** Paginated list response shape — every list endpoint below returns this shape. */
+export interface PaginatedResult<T> {
+  success: boolean;
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 // ── Wrapper functions ──────────────────────────────────────────────────────────────────
 
-/** GET /api/client-billing/proformas — returns every client_invoice row regardless of
- *  status; callers filter client-side by `invoice_status` for the Proformas vs Invoices
- *  tab, since the backend route itself takes no status query param. */
-export function listProformas(): Promise<{ success: boolean; data: InvoiceRow[] }> {
-  return hrmsApi.get("/api/client-billing/proformas");
+export function getSummary(): Promise<{ success: boolean; data: ClientBillingSummary }> {
+  return hrmsApi.get("/api/client-billing/summary");
+}
+
+/** GET /api/client-billing/proformas — server-side filtered + paginated (2026-08-21).
+ *  `filters.status` narrows to a single `invoice_status`; omit it (or pass "_all") for the
+ *  Proformas/Invoices tabs' own client-side status split over one broader fetch. */
+export function listProformas(filters: ClientBillingListFilters = {}): Promise<PaginatedResult<InvoiceRow>> {
+  return hrmsApi.get(`/api/client-billing/proformas${buildQueryString(filters)}`);
 }
 
 export function getProforma(id: string): Promise<{ success: boolean; data: InvoiceDetail }> {
@@ -249,8 +296,9 @@ export function getAuditLog(id: string): Promise<{ success: boolean; data: Audit
   return hrmsApi.get(`/api/client-billing/invoices/${id}/audit-log`);
 }
 
-export function listCreditNotes(): Promise<{ success: boolean; data: CreditNoteRow[] }> {
-  return hrmsApi.get("/api/client-billing/credit-notes");
+/** GET /api/client-billing/credit-notes — server-side filtered + paginated (2026-08-21). */
+export function listCreditNotes(filters: ClientBillingListFilters = {}): Promise<PaginatedResult<CreditNoteRow>> {
+  return hrmsApi.get(`/api/client-billing/credit-notes${buildQueryString(filters)}`);
 }
 
 export function getCreditNote(id: string): Promise<{ success: boolean; data: CreditNoteDetail }> {
@@ -292,6 +340,49 @@ export async function downloadInvoicePdf(
       ? `/api/client-billing/invoices/${id}/pdf`
       : `/api/client-billing/credit-notes/${id}/pdf`;
   const blob = await hrmsApi.getBlob(`${path}?letterhead=${letterhead ? "true" : "false"}`);
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Fetches a proforma/invoice/credit-note PDF as a blob URL for INLINE preview (an
+ * `<iframe>`/`<embed>` in a dialog) rather than triggering a download — same underlying
+ * route and `letterhead` toggle as `downloadInvoicePdf`, just returning the object URL
+ * instead of clicking a synthetic anchor. Caller is responsible for calling
+ * `URL.revokeObjectURL` when the preview closes (see `ClientBillingWorkspacePage.tsx`'s
+ * preview dialog `onOpenChange`).
+ */
+export async function previewInvoicePdfUrl(
+  kind: "proforma" | "invoice" | "credit-note",
+  id: string,
+  letterhead = true
+): Promise<string> {
+  const path = kind === "proforma"
+    ? `/api/client-billing/proformas/${id}/pdf`
+    : kind === "invoice"
+      ? `/api/client-billing/invoices/${id}/pdf`
+      : `/api/client-billing/credit-notes/${id}/pdf`;
+  const blob = await hrmsApi.getBlob(`${path}?letterhead=${letterhead ? "true" : "false"}`);
+  return URL.createObjectURL(blob);
+}
+
+/**
+ * Downloads a filtered CSV export of proformas/invoices or credit notes — same filter
+ * shape as the list endpoints (`buildQueryString`), so what's exported always matches
+ * what's on screen. GET /api/client-billing/{proformas,credit-notes}/export.
+ */
+export async function exportClientBillingCsv(
+  kind: "proformas" | "credit-notes",
+  filters: ClientBillingListFilters,
+  filename: string
+): Promise<void> {
+  const blob = await hrmsApi.getBlob(`/api/client-billing/${kind}/export${buildQueryString(filters)}`);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
