@@ -110,6 +110,9 @@ import type {
   HandoverPack,
 } from "./job-requisition.types.js";
 import { emailService } from "../communication/email.service.js";
+import { templateService } from "../communication/template.service.js";
+import { env } from "../../config/env.js";
+import { getConfiguredRecipients } from "../it-provisioning/notification-recipients.service.js";
 
 function generateRequisitionCode(): string {
   const now = new Date();
@@ -582,6 +585,8 @@ export const jobRequisitionService = {
       `${existing.designation_name} at ${existing.branch_name} — ${existing.requested_headcount} headcount — submitted by ${actorName ?? "recruiter"}`,
       `/recruitment/job-requisition`
     ).catch((e: unknown) => console.warn("[JR notify]", e));
+
+    this.notifyRequisitionRaised(existing).catch((e: unknown) => console.warn("[JR notifyRequisitionRaised]", e));
 
     const [rows] = await db.execute<RowDataPacket[]>(
       "SELECT * FROM job_requisition WHERE id = ? LIMIT 1",
@@ -1119,6 +1124,51 @@ export const jobRequisitionService = {
         })
       )
     );
+  },
+
+  /**
+   * "Request Raised" email — TO the branch's configured HR Head + Branch
+   * Head, CC the branch's configured HR personnel. Ships disabled behind
+   * JOB_REQUISITION_RAISED_EMAIL_ENABLED (default false) and, independently,
+   * only fires when branch_notification_recipient actually has a "to" row
+   * configured for JOB_REQUISITION_RAISED on this branch — deliberately no
+   * fallback to an inferred branch_head/hr_contact lookup, since that data is
+   * documented as unreliable (branch_head_assignments holds only 3 seed
+   * rows). Nothing configured for a branch means nothing sends, on purpose.
+   */
+  async notifyRequisitionRaised(requisition: JobRequisition): Promise<void> {
+    if (!env.JOB_REQUISITION_RAISED_EMAIL_ENABLED) return;
+    if (!emailService.isConfigured()) return;
+    if (!requisition.branch_id) return;
+
+    const recipients = await getConfiguredRecipients(requisition.branch_id, "JOB_REQUISITION_RAISED");
+    if (!recipients) return;
+
+    try {
+      const rendered = await templateService.renderTemplate({
+        template_name: "job_requisition_raised",
+        channel: "email",
+        data: {
+          requisitionCode: requisition.requisition_code,
+          designationName: requisition.designation_name,
+          branchName: requisition.branch_name,
+          processName: requisition.process_name ?? "—",
+          requestedHeadcount: requisition.requested_headcount,
+          priority: requisition.priority,
+          actionUrl: `${process.env.FRONTEND_URL ?? ""}/recruitment/job-requisition`,
+        },
+      });
+
+      await emailService.send({
+        to: recipients.to.map((r) => r.email).join(", "),
+        ...(recipients.cc.length ? { cc: recipients.cc.join(", ") } : {}),
+        subject: rendered.subject ?? `Requisition Raised: ${requisition.requisition_code}`,
+        html: rendered.html,
+        text: rendered.text,
+      });
+    } catch (e: unknown) {
+      console.warn("[JobRequisition notifyRequisitionRaised] email send failed:", e instanceof Error ? e.message : e);
+    }
   },
 
   async logApprovalAction(

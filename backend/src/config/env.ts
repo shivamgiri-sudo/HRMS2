@@ -128,6 +128,12 @@ const envSchema = z.object({
   LEGACY_MSSQL_ENCRYPT:    z.string().default("false"),
   LEGACY_MSSQL_TRUST_CERT: z.string().default("true"),
 
+  // Ships disabled: flip only once branch_notification_recipient has at least
+  // one JOB_REQUISITION_RAISED "to" row configured for the branches that
+  // matter (via /settings/provisioning-recipients) — the sender itself never
+  // falls back to an inferred recipient, so with nothing configured this
+  // flag being true still sends nothing.
+  JOB_REQUISITION_RAISED_EMAIL_ENABLED: z.string().default("false"),
   LEGACY_SYNC_ENABLED: z.string().default("false"),
   LEGACY_SYNC_INTERVAL_MS: z.coerce.number().default(60000),
   LEGACY_SYNC_BATCH_SIZE: z.coerce.number().default(1000),
@@ -380,6 +386,7 @@ export const env = {
   ...parsed.data,
   LMS_DB_USER: parsed.data.LMS_DB_USER || parsed.data.DB_USER,
   LMS_DB_PASSWORD: parsed.data.LMS_DB_PASSWORD || parsed.data.DB_PASSWORD,
+  JOB_REQUISITION_RAISED_EMAIL_ENABLED: parsed.data.JOB_REQUISITION_RAISED_EMAIL_ENABLED === 'true',
   LEGACY_SYNC_ENABLED: parsed.data.LEGACY_SYNC_ENABLED === 'true',
   LEGACY_SYNC_PARALLEL_DOMAINS: parsed.data.LEGACY_SYNC_PARALLEL_DOMAINS !== 'false',
   ENABLE_SCHEDULERS: parsed.data.ENABLE_SCHEDULERS === 'true',

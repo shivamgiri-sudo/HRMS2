@@ -45,6 +45,7 @@ export const CONFIGURABLE_EVENTS = [
   { code: "ADMIN_BIOMETRIC_ID_CARD", label: "Admin — biometric enrolment and ID card", fallbackRole: "admin" },
   { code: "WFM_PROCESS_ALIGNMENT", label: "WFM — process and roster alignment", fallbackRole: "wfm" },
   { code: "APPOINTMENT_LETTER_ESIGN", label: "HR — appointment letter issue and eSign", fallbackRole: "hr" },
+  { code: "JOB_REQUISITION_RAISED", label: "Recruitment — requisition raised for approval", fallbackRole: "branch_head" },
 ] as const;
 
 export type ConfigurableEventCode = (typeof CONFIGURABLE_EVENTS)[number]["code"];
