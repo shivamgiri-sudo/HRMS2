@@ -183,10 +183,15 @@ export default function NativeExitPass() {
                       {tab === "pending_admin" && p.status === "pending_admin_approval" && (
                         <ActionBtn icon={CheckCircle2} label="Decide" onClick={() => setDecisionTarget({ pass: p, stage: "admin" })} />
                       )}
-                      {p.status === "approved" && (
-                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-400">
-                          <Printer className="h-3.5 w-3.5" /> Print (next phase)
-                        </span>
+                      {(p.status === "approved" || p.status === "exit_verified") && (
+                        <a
+                          href={`/it-admin/exit-pass/${p.id}/print`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 hover:text-rose-700"
+                        >
+                          <Printer className="h-3.5 w-3.5" /> Print
+                        </a>
                       )}
                     </td>
                   </tr>

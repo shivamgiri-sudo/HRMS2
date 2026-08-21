@@ -168,6 +168,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/rta-board": "RTA_BOARD",
   "/salary-increment": "SALARY_INCREMENT",
   "/security-center": "SECURITY_CENTER",
+  "/security/exit-pass-verify": "ASSET_EXIT_PASS_VERIFY",
   "/settings/access-control": "ACCESS_CONTROL",
   "/settings/email-templates/bulk-import": "EMAIL_TEMPLATE_BULK_IMPORT",
   "/super-admin/dashboard": "SUPER_ADMIN_DASHBOARD",

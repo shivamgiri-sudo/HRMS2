@@ -4,14 +4,17 @@ import { db } from '../../db/mysql.js';
 import { getUserRoleKeys } from '../../shared/roleResolver.js';
 
 /**
- * Asset & Material Exit Pass — Phase 1 service.
+ * Asset & Material Exit Pass service — Phase 1 (create -> approve) and
+ * Phase 2 (security guard exit verification).
  *
- * Covers: create (draft) -> submit -> Branch Head approve/reject/return ->
+ * Phase 1: create (draft) -> submit -> Branch Head approve/reject/return ->
  * Admin approve/reject -> pass number assigned on admin approval.
+ * Phase 2: an 'approved' pass can be exit-verified by security, recording
+ * that the item actually left. Status only ever reaches 'exit_verified'.
  *
- * Deliberately NOT here (later phases): security guard exit/return
- * verification, QR validation, overdue tracking, exports, notifications,
- * loss/damage recovery. `status` never advances past 'approved' in this file.
+ * Deliberately NOT here (later phases): return verification, live QR token
+ * validation, overdue tracking, exports, notifications, loss/damage
+ * recovery.
  *
  * Every write path always: (a) checks segregation of duties — an approver can
  * never decide their own request (spec §18), (b) writes exit_pass_audit_logs,
@@ -29,6 +32,11 @@ export class ExitPassError extends Error {
 }
 
 const UNRESTRICTED_ROLES = ['super_admin', 'admin', 'it_head'];
+// No dedicated 'security' role_key exists live (checked mas_hrms.user_roles
+// 2026-08-21). Reusing the role keys Visitor Management already grants to
+// physical-security staff (navConfig.tsx) rather than inventing a new one
+// nothing would ever be assigned.
+const SECURITY_ROLES = ['security_head', 'visitor_security', 'branch_admin'];
 
 export interface RequestingEmployee {
   employeeId: string;
@@ -356,6 +364,21 @@ export async function getExitPass(passId: string, actor: RequestingEmployee, act
   const pass = await getPassRow(passId);
   await assertCanView(pass.branch_id, pass.requestor_employee_id, actor, actorRoles);
 
+  // Letterhead fields for the printable pass: falls back to city/state when
+  // address is unset — verified live 2026-08-21 that only 4 of 45 branch_master
+  // rows carry a street address, so this fallback is the normal case, not the
+  // exception.
+  const [branchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT bm.branch_name, bm.branch_code, bm.city, bm.state, bm.address,
+            req.full_name AS requestor_name
+     FROM exit_pass_requests epr
+     JOIN branch_master bm ON bm.id = epr.branch_id
+     JOIN employees req ON req.id = epr.requestor_employee_id
+     WHERE epr.id = ? LIMIT 1`,
+    [passId],
+  );
+  const letterhead = branchRows[0] ?? null;
+
   const [items] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM exit_pass_items WHERE exit_pass_id = ? ORDER BY created_at ASC`,
     [passId],
@@ -367,7 +390,69 @@ export async function getExitPass(passId: string, actor: RequestingEmployee, act
      WHERE ea.exit_pass_id = ? ORDER BY ea.decided_at ASC`,
     [passId],
   );
-  return { ...pass, items, approvals };
+  return { ...pass, items, approvals, letterhead };
+}
+
+// ─── Phase 2: security guard exit verification ─────────────────────────────
+
+/** Guard's "enter pass number" lookup. Deliberately returns only what a gate check needs. */
+export async function findPassForVerification(passNumber: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT epr.id, epr.pass_number, epr.status, epr.movement_type, epr.priority,
+            epr.branch_id, bm.branch_name, req.full_name AS requestor_name,
+            epr.carrier_name, epr.carrier_type, epr.planned_exit_at,
+            epr.exit_verified_at, epr.exit_gate
+     FROM exit_pass_requests epr
+     JOIN branch_master bm ON bm.id = epr.branch_id
+     JOIN employees req ON req.id = epr.requestor_employee_id
+     WHERE epr.pass_number = ? LIMIT 1`,
+    [passNumber],
+  );
+  const pass = rows[0];
+  if (!pass) throw new ExitPassError(404, 'No pass found with that number.');
+
+  const [items] = await db.execute<RowDataPacket[]>(
+    `SELECT category, item_name, asset_id, quantity FROM exit_pass_items WHERE exit_pass_id = ? ORDER BY created_at ASC`,
+    [pass.id],
+  );
+
+  const verdict =
+    pass.status === 'approved' ? 'valid' :
+    pass.status === 'exit_verified' ? 'already_used' :
+    ['branch_head_rejected', 'admin_rejected', 'cancelled', 'void'].includes(String(pass.status)) ? 'invalid' :
+    'not_ready';
+
+  return { ...pass, items, verdict };
+}
+
+export async function verifyExit(
+  passNumber: string,
+  actor: RequestingEmployee,
+  actorRoles: string[],
+  input: { gate: string; method: 'qr' | 'manual'; remarks?: string | null },
+): Promise<void> {
+  const isAllowed = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r) || SECURITY_ROLES.includes(r));
+  if (!isAllowed) {
+    throw new ExitPassError(403, 'Only Security or Admin roles can verify an exit.');
+  }
+  if (!input.gate?.trim()) {
+    throw new ExitPassError(400, 'gate is required.');
+  }
+
+  const [rows] = await db.execute<PassRow[]>(`SELECT * FROM exit_pass_requests WHERE pass_number = ? LIMIT 1`, [passNumber]);
+  const pass = rows[0];
+  if (!pass) throw new ExitPassError(404, 'No pass found with that number.');
+  if (pass.status !== 'approved') {
+    throw new ExitPassError(409, `Pass is '${pass.status}', not approved — cannot verify exit.`);
+  }
+
+  await db.execute(
+    `UPDATE exit_pass_requests
+     SET status = 'exit_verified', exit_verified_by = ?, exit_verified_at = NOW(), exit_gate = ?, exit_verification_method = ?
+     WHERE id = ?`,
+    [actor.employeeId, input.gate, input.method, pass.id],
+  );
+  await writeAudit(db, pass.id, actor.employeeId, 'exit_verified', pass.status, 'exit_verified', input.remarks ?? `Gate: ${input.gate}, method: ${input.method}`);
 }
 
 export interface ListFilters {

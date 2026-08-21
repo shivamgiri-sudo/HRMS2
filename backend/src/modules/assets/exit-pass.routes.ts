@@ -10,6 +10,8 @@ import {
   listExitPasses,
   listPendingBranchHead,
   listPendingAdmin,
+  findPassForVerification,
+  verifyExit,
   resolveRequestingEmployee,
   getActorRoles,
   ExitPassError,
@@ -33,12 +35,15 @@ function fail(res: Response, error: unknown): Response {
 }
 
 // Phase 1: raise -> Branch Head approve -> Admin approve -> print.
+// Phase 2: security exit verification (verify/lookup below).
 // Roles here are a superset of ASSET_EXIT_PASS's role_page_access grants
-// (migration 1538) — a role missing from either list opens a page/link that
-// 403s on every call, the exact bug branch-head-approval.routes.ts calls out.
+// (migration 1538) plus the security roles Visitor Management already uses
+// (no dedicated 'security' role_key exists live) — a role missing from either
+// list opens a page/link that 403s on every call, the exact bug
+// branch-head-approval.routes.ts calls out.
 exitPassRouter.use(requireAuth);
 exitPassRouter.use(
-  requireRole('super_admin', 'admin', 'it_head', 'it', 'branch_admin', 'branch_head', 'employee'),
+  requireRole('super_admin', 'admin', 'it_head', 'it', 'branch_admin', 'branch_head', 'employee', 'security_head', 'visitor_security'),
 );
 
 exitPassRouter.post('/', h(async (req, res) => {
@@ -83,6 +88,33 @@ exitPassRouter.get('/pending/admin', h(async (req, res) => {
     const roles = await getActorRoles(req.authUser!.id);
     const data = await listPendingAdmin(requester, roles);
     return res.json({ success: true, data });
+  } catch (error) {
+    return fail(res, error);
+  }
+}));
+
+// Phase 2 — security exit verification. Registered before the generic
+// GET '/:id' below: Express matches routes in order, and '/:id' would
+// otherwise swallow '/verify/GP-...' with id literally equal to "verify".
+exitPassRouter.get('/verify/:passNumber', h(async (req, res) => {
+  try {
+    const data = await findPassForVerification(req.params.passNumber);
+    return res.json({ success: true, data });
+  } catch (error) {
+    return fail(res, error);
+  }
+}));
+
+exitPassRouter.post('/verify/:passNumber/exit', h(async (req, res) => {
+  try {
+    const requester = await resolveRequestingEmployee(req.authUser!.id);
+    const roles = await getActorRoles(req.authUser!.id);
+    const { gate, method, remarks } = req.body as { gate: string; method: 'qr' | 'manual'; remarks?: string };
+    if (!['qr', 'manual'].includes(method)) {
+      return res.status(400).json({ success: false, message: 'method must be qr or manual' });
+    }
+    await verifyExit(req.params.passNumber, requester, roles, { gate, method, remarks: remarks ?? null });
+    return res.json({ success: true });
   } catch (error) {
     return fail(res, error);
   }
