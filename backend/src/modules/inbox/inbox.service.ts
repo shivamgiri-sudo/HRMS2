@@ -206,6 +206,109 @@ export const inboxService = {
   },
 };
 
+export interface BulkFailure {
+  id: string;
+  reason: "not_found" | "already_actioned" | "wrong_source" | "access_denied";
+}
+
+export async function bulkActioned(
+  userId: string,
+  ids: string[],
+  source: "inbox" | "tat" | "work_item",
+  remarks?: string,
+): Promise<{ actioned: number; failed: BulkFailure[] }> {
+  if (!ids.length) return { actioned: 0, failed: [] };
+  if (ids.length > 500) {
+    return { actioned: 0, failed: ids.map((id) => ({ id, reason: "wrong_source" as const })) };
+  }
+
+  const failed: BulkFailure[] = [];
+  let actioned = 0;
+
+  if (source === "inbox") {
+    const placeholders = ids.map(() => "?").join(",");
+    const [owned] = await db.execute<RowDataPacket[]>(
+      `SELECT id, is_actioned FROM work_inbox_item WHERE id IN (${placeholders}) AND user_id = ?`,
+      [...ids, userId],
+    );
+    const ownedMap = new Map<string, boolean>(
+      (owned as RowDataPacket[]).map((r) => [String(r.id), Boolean(r.is_actioned)]),
+    );
+    for (const id of ids) {
+      if (!ownedMap.has(id)) { failed.push({ id, reason: "access_denied" }); continue; }
+      if (ownedMap.get(id))  { failed.push({ id, reason: "already_actioned" }); continue; }
+    }
+    const actionable = ids.filter((id) => ownedMap.has(id) && !ownedMap.get(id));
+    if (actionable.length) {
+      const ph = actionable.map(() => "?").join(",");
+      await db.execute(
+        `UPDATE work_inbox_item SET is_actioned = 1, is_read = 1 WHERE id IN (${ph}) AND user_id = ?`,
+        [...actionable, userId],
+      );
+      actioned = actionable.length;
+    }
+    return { actioned, failed };
+  }
+
+  if (source === "tat") {
+    for (const id of ids) {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          "SELECT id, status FROM task_tat_instance WHERE id = ? AND (assigned_to = ? OR owner_user_id = ?)",
+          [id, userId, userId],
+        );
+        const row = (rows as RowDataPacket[])[0];
+        if (!row) { failed.push({ id, reason: "access_denied" }); continue; }
+        if (["completed", "cancelled"].includes(String(row.status ?? ""))) {
+          failed.push({ id, reason: "already_actioned" }); continue;
+        }
+        await db.execute(
+          "INSERT INTO tat_task_completions (task_id, completed_by, remarks, completed_at) VALUES (?, ?, ?, NOW())",
+          [id, userId, remarks ?? null],
+        );
+        await db.execute(
+          "UPDATE task_tat_instance SET status = 'completed' WHERE id = ?",
+          [id],
+        );
+        actioned++;
+      } catch {
+        failed.push({ id, reason: "not_found" });
+      }
+    }
+    return { actioned, failed };
+  }
+
+  if (source === "work_item") {
+    for (const id of ids) {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          "SELECT id, status FROM work_item WHERE id = ? AND (assigned_to_user_id = ? OR created_by = ?)",
+          [id, userId, userId],
+        );
+        const row = (rows as RowDataPacket[])[0];
+        if (!row) { failed.push({ id, reason: "access_denied" }); continue; }
+        if (["completed", "cancelled"].includes(String(row.status ?? ""))) {
+          failed.push({ id, reason: "already_actioned" }); continue;
+        }
+        await db.execute(
+          "UPDATE work_item SET status = 'completed', completed_at = NOW() WHERE id = ?",
+          [id],
+        );
+        await db.execute(
+          "INSERT INTO work_item_audit_log (work_item_id, action, remarks, performed_by, performed_at) VALUES (?, 'bulk_completed', ?, ?, NOW())",
+          [id, remarks ?? "Bulk acknowledged", userId],
+        );
+        actioned++;
+      } catch {
+        failed.push({ id, reason: "not_found" });
+      }
+    }
+    return { actioned, failed };
+  }
+
+  return { actioned: 0, failed: ids.map((id) => ({ id, reason: "wrong_source" as const })) };
+}
+
 // ── Platform-wide pending task queue ─────────────────────────────────────────
 
 export interface PendingTask {

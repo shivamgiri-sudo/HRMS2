@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, Bell, BellOff, CheckCheck, CheckCircle2,
-  Clock, Loader, RefreshCcw, X, ChevronRight, BarChart2,
-  Zap, Shield, Wand2, ShieldAlert,
+  Clock, Loader, RefreshCcw, X, ChevronRight,
+  Zap, Wand2, ShieldAlert, History, ChevronDown,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -16,21 +17,10 @@ import { useHasRole } from "@/hooks/useUserRole";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-/**
- * "breached" means a real TAT deadline was missed. "aged" means the item carries no
- * deadline and is simply old. The CEO UAT saw 23 items all reading "TAT breached"
- * when none of them had a TAT at all — see calcRisk in inbox.service.ts.
- */
 type Risk = "breached" | "aged" | "due_soon" | "on_track";
 
 interface PendingTask {
   id: string;
-  /**
-   * "derived" (LEAVE_APPROVAL_PENDING / FF_CLEARANCE_PENDING / BGV_PENDING) is computed live
-   * from its real source table, not read from a work_item/work_inbox_item row — there is
-   * nothing to mark complete generically. These render without an "Act & Close" button;
-   * action_url is always populated and is the only next step.
-   */
   source: "tat" | "inbox" | "work_item" | "derived";
   module: string;
   title: string;
@@ -56,8 +46,94 @@ interface PendingSummary {
   due_soon: number;
   on_track: number;
   by_module: Record<string, number>;
-  /** True when a source query hit its row cap — there is more than what's shown. */
   truncated?: boolean;
+}
+
+export interface GroupedItem {
+  kind: "group";
+  groupKey: string;
+  module: string;
+  source: "inbox" | "tat" | "work_item";
+  branch_name: string | null;
+  items: PendingTask[];
+  worstRisk: Risk;
+  highestPriority: string;
+}
+
+/**
+ * Collapse repeated same-module/source/branch items into GroupedItems.
+ *
+ * An item is eligible for grouping when:
+ *   - At least 2 other items share the same module + source + branch_name
+ *   - source is not "derived" (derived items require real workflow navigation)
+ *   - No item in the candidate group has priority "urgent"
+ *
+ * Items that don't reach a group of 3+ stay as individual PendingTask rows.
+ * The returned array preserves the original sort order — groups appear at the
+ * position of their first member.
+ */
+export function groupItems(items: PendingTask[]): (PendingTask | GroupedItem)[] {
+  const RISK_ORDER: Record<Risk, number> = { breached: 0, due_soon: 1, aged: 2, on_track: 3 };
+  const PRIO_ORDER: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+
+  const buckets = new Map<string, PendingTask[]>();
+
+  for (const item of items) {
+    if (item.source === "derived") continue;
+    if (item.priority === "urgent") continue;
+    const key = `${item.module}::${item.source}::${item.branch_name ?? "__none__"}`;
+    const bucket = buckets.get(key) ?? [];
+    bucket.push(item);
+    buckets.set(key, bucket);
+  }
+
+  const groupKeys = new Set<string>();
+  buckets.forEach((members, key) => {
+    if (members.length >= 3) groupKeys.add(key);
+  });
+
+  if (!groupKeys.size) return items;
+
+  const absorbed = new Set<string>();
+  const groupByKey = new Map<string, GroupedItem>();
+
+  buckets.forEach((members, key) => {
+    if (!groupKeys.has(key)) return;
+    const worstRisk = members.reduce<Risk>((worst, m) =>
+      RISK_ORDER[m.risk] < RISK_ORDER[worst] ? m.risk : worst, "on_track");
+    const highestPriority = members.reduce<string>((best, m) =>
+      (PRIO_ORDER[m.priority] ?? 9) < (PRIO_ORDER[best] ?? 9) ? m.priority : best, "low");
+    const first = members[0];
+    groupByKey.set(key, {
+      kind: "group",
+      groupKey: key,
+      module: first.module,
+      source: first.source as "inbox" | "tat" | "work_item",
+      branch_name: first.branch_name ?? null,
+      items: members,
+      worstRisk,
+      highestPriority,
+    });
+    members.forEach((m) => absorbed.add(`${m.source}-${m.id}`));
+  });
+
+  const result: (PendingTask | GroupedItem)[] = [];
+  const groupEmitted = new Set<string>();
+
+  for (const item of items) {
+    const itemKey = `${item.source}-${item.id}`;
+    if (!absorbed.has(itemKey)) {
+      result.push(item);
+      continue;
+    }
+    const key = `${item.module}::${item.source}::${item.branch_name ?? "__none__"}`;
+    if (!groupEmitted.has(key)) {
+      result.push(groupByKey.get(key)!);
+      groupEmitted.add(key);
+    }
+  }
+
+  return result;
 }
 
 interface TimelineEvent {
@@ -69,8 +145,6 @@ interface TimelineEvent {
   source_table: string;
 }
 
-/** Matches backend/src/modules/ai/mira-fix-draft.service.ts's FixDraft shape exactly —
- * the route returns it as-is, no transformation. */
 interface FixDraft {
   id: string;
   workItemId: string;
@@ -93,20 +167,7 @@ type FixDraftGenerationOutcome =
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * Display names for work-item types.
- *
- * Any key missing here falls through to the raw database value, which is how the
- * CEO UAT saw "attendance_missing_punch" rendered as a user-facing Module label.
- * The map covered thirteen types that barely occur while omitting the ones that
- * dominate the table — of 65k live rows, `alerts` (43,964) and
- * `attendance_missing_punch` (13,635) alone are 88%, and neither had a label.
- *
- * Keys below are the actual `work_inbox_item.type` values present in mas_hrms,
- * verified 31-Jul-2026, rather than a guess at what the schema might emit.
- */
 const MODULE_LABELS: Record<string, string> = {
-  // Highest-volume types, all previously unlabelled.
   alerts: "Alerts",
   attendance_missing_punch: "Attendance",
   attendance_validation: "Attendance",
@@ -121,7 +182,6 @@ const MODULE_LABELS: Record<string, string> = {
   visitor_approval_needed: "Visitors",
   announcements: "Announcements",
   leave_request: "Leave",
-  // Pre-existing entries, retained.
   leave_approval: "Leave",
   regularization: "Attendance",
   exit_clearance: "Exit",
@@ -137,11 +197,6 @@ const MODULE_LABELS: Record<string, string> = {
   workflow_request: "Workflow",
 };
 
-/**
- * Last-resort label for a type with no entry above. Turns `some_raw_key` into
- * "Some Raw Key" so a missing mapping degrades to something readable instead of
- * exposing a database identifier to the user.
- */
 export function humaniseModuleKey(key: string): string {
   return key
     .split("_")
@@ -150,12 +205,11 @@ export function humaniseModuleKey(key: string): string {
     .join(" ");
 }
 
-const RISK_STYLES: Record<Risk, { badge: string; ring: string; bar: string }> = {
-  breached:  { badge: "bg-red-100 text-red-700 border-red-200",    ring: "ring-2 ring-red-300",    bar: "bg-red-500" },
-  due_soon:  { badge: "bg-amber-100 text-amber-700 border-amber-200", ring: "ring-2 ring-amber-300", bar: "bg-amber-500" },
-  // Slate, not red: an old item with no promised deadline is not an SLA failure.
-  aged:      { badge: "bg-slate-100 text-slate-600 border-slate-200", ring: "", bar: "bg-slate-400" },
-  on_track:  { badge: "bg-emerald-50 text-emerald-700 border-emerald-200", ring: "", bar: "bg-emerald-500" },
+const RISK_STYLES: Record<Risk, { badge: string; ring: string; bar: string; row: string }> = {
+  breached:  { badge: "bg-red-100 text-red-700 border-red-200",    ring: "ring-2 ring-red-300",    bar: "bg-red-500",     row: "border-l-2 border-l-red-400" },
+  due_soon:  { badge: "bg-amber-100 text-amber-700 border-amber-200", ring: "ring-2 ring-amber-300", bar: "bg-amber-500",  row: "border-l-2 border-l-amber-400" },
+  aged:      { badge: "bg-slate-100 text-slate-600 border-slate-200", ring: "", bar: "bg-slate-400",   row: "border-l-2 border-l-slate-300" },
+  on_track:  { badge: "bg-emerald-50 text-emerald-700 border-emerald-200", ring: "", bar: "bg-emerald-500", row: "border-l-2 border-l-emerald-400" },
 };
 
 const PRIORITY_STYLES: Record<string, string> = {
@@ -192,13 +246,13 @@ function KpiStrip({ summary, loading }: { summary: PendingSummary | null; loadin
     { label: "On Track",      value: summary?.on_track ?? 0, icon: CheckCircle2, gradient: "from-emerald-500 to-teal-600" },
   ];
   return (
-    <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
       {tiles.map((t) => (
-        <div key={t.label} className={`relative overflow-hidden rounded-2xl bg-gradient-to-br ${t.gradient} p-5 text-white shadow-lg`}>
-          <div className="absolute -right-4 -top-4 h-20 w-20 rounded-full bg-white/10" />
-          <t.icon className="mb-2 h-5 w-5 opacity-80" />
-          <p className="text-3xl font-black">{loading ? "—" : t.value}</p>
-          <p className="mt-0.5 text-xs font-semibold opacity-80">{t.label}</p>
+        <div key={t.label} className={`relative overflow-hidden rounded-xl bg-gradient-to-br ${t.gradient} px-4 py-3 text-white shadow`}>
+          <div className="absolute -right-3 -top-3 h-14 w-14 rounded-full bg-white/10" />
+          <t.icon className="mb-1 h-4 w-4 opacity-80" />
+          <p className="text-2xl font-black">{loading ? "—" : t.value}</p>
+          <p className="text-[11px] font-semibold opacity-80">{t.label}</p>
         </div>
       ))}
     </div>
@@ -240,23 +294,20 @@ function outcomeMessage(outcome: FixDraftGenerationOutcome): { text: string; ton
     case "no_diagnosis":
       return { text: "No AI diagnosis exists yet for this item — nothing to draft a fix from.", tone: "warn" };
     case "not_eligible":
-      return { text: `Not eligible for an automatic fix draft (${outcome.reason}). A human needs to handle this one directly.`, tone: "warn" };
+      return { text: `Not eligible for an automatic fix draft (${outcome.reason}).`, tone: "warn" };
     case "ai_unavailable":
-      return { text: "No AI provider is currently configured — can't generate a draft right now.", tone: "error" };
+      return { text: "No AI provider is currently configured.", tone: "error" };
     case "model_declined":
       return { text: `The AI declined to propose a fix: ${outcome.reason}`, tone: "warn" };
     case "ai_error":
       return { text: `Draft generation failed: ${outcome.message}`, tone: "error" };
     case "drafted":
       return outcome.draft.status === "rejected"
-        ? { text: `A diff was generated but rejected by the safety guard: ${outcome.draft.rejectedReason ?? "see details below"}`, tone: "warn" }
+        ? { text: `A diff was generated but rejected: ${outcome.draft.rejectedReason ?? "see details below"}`, tone: "warn" }
         : { text: "A new fix draft is ready for review below.", tone: "info" };
   }
 }
 
-/** Only reachable for Mira complaints (entity_type='mira_feedback') and only to
- * super_admin — see backend/src/modules/inbox/inbox.routes.ts, which enforces the same
- * gate server-side regardless of what this component chooses to render. */
 function FixDraftPanel({ workItemId }: { workItemId: string }) {
   const [drafts, setDrafts] = useState<FixDraft[]>([]);
   const [loading, setLoading] = useState(true);
@@ -311,7 +362,7 @@ function FixDraftPanel({ workItemId }: { workItemId: string }) {
       {loading ? (
         <div className="flex justify-center py-6"><Loader className="h-5 w-5 animate-spin text-slate-400" /></div>
       ) : !drafts.length ? (
-        <p className="py-4 text-center text-xs text-slate-400">No fix drafts yet. This is a candidate AI-authored diff, always reviewed here before anything can deploy — nothing here applies itself.</p>
+        <p className="py-4 text-center text-xs text-slate-400">No fix drafts yet.</p>
       ) : (
         <div className="space-y-2">
           {drafts.map((d) => {
@@ -348,9 +399,6 @@ function FixDraftPanel({ workItemId }: { workItemId: string }) {
                     <pre className="mt-2 max-h-64 overflow-auto rounded-lg bg-slate-950 p-3 text-[11px] leading-relaxed text-slate-100">
                       {d.diffText}
                     </pre>
-                    <p className="mt-2 text-[10px] text-slate-400">
-                      Review only — nothing here can apply, push, or deploy this diff yet.
-                    </p>
                   </>
                 )}
               </div>
@@ -377,21 +425,11 @@ function ActionSheet({
   const [acting, setActing] = useState(false);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [tlLoading, setTlLoading] = useState(false);
-  // See backend/src/modules/inbox/inbox.routes.ts — the fix-draft routes are super_admin
-  // only server-side; this only controls whether the panel renders, not access to it.
   const canReviewFixDrafts = useHasRole("super_admin");
 
   useEffect(() => {
     if (!task?.entity_type || !task?.entity_id) return;
     setTlLoading(true);
-    // work_item-sourced tasks (Mira complaints, registry-driven approvals, ...) mostly don't
-    // self-reference — entity_id is the business entity (employee/candidate/...), not the
-    // work_item's own id — so a completion/escalation/reassignment recorded against this
-    // item is otherwise unreachable from entity_type/entity_id alone. task.id IS the
-    // work_item's own id (see getMyPending's workItemRows), passed through so the backend's
-    // generic workItemId branch can find it. See getTimeline (inbox.service.ts) for the
-    // dedup that keeps this from double-showing rows the mira_feedback/incentive-specific
-    // lookups already cover.
     const workItemParam = task.source === "work_item" ? `?workItemId=${encodeURIComponent(task.id)}` : "";
     hrmsApi
       .get<{ success: boolean; events: TimelineEvent[] }>(
@@ -443,7 +481,6 @@ function ActionSheet({
         </SheetHeader>
 
         <div className="space-y-5 px-6 py-5">
-          {/* Meta */}
           <div className="grid grid-cols-2 gap-3 text-sm">
             {task.requested_by_name && (
               <div className="rounded-xl bg-slate-50 p-3">
@@ -490,7 +527,6 @@ function ActionSheet({
             <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700">{task.description}</div>
           )}
 
-          {/* Timeline */}
           {(task.entity_type && task.entity_id) && (
             <div>
               <p className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">Timeline</p>
@@ -498,15 +534,10 @@ function ActionSheet({
             </div>
           )}
 
-          {/* AI Fix Draft — Mira complaints only, super_admin only (see canReviewFixDrafts). */}
           {task.entity_type === "mira_feedback" && task.entity_id && canReviewFixDrafts && (
             <FixDraftPanel workItemId={task.entity_id} />
           )}
 
-          {/* Remarks + action — "derived" tasks (leave/exit-clearance/BGV computed live from
-              their own table, not a work_item row) have nothing here to mark complete; only
-              the linked page can actually action them. Faking a completion control would mark
-              nothing anywhere while looking like it worked. */}
           {task.source !== "derived" && (
             <div>
               <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-400">Remarks (optional)</p>
@@ -546,50 +577,162 @@ function ActionSheet({
   );
 }
 
-// ── Task Card ─────────────────────────────────────────────────────────────────
+// ── Task Row (compact table row) ──────────────────────────────────────────────
 
-function TaskCard({ task, onOpen }: { task: PendingTask; onOpen: () => void }) {
+function TaskRow({
+  task,
+  onOpen,
+  onQuickAct,
+  acting,
+}: {
+  task: PendingTask;
+  onOpen: () => void;
+  onQuickAct: () => void;
+  acting: boolean;
+}) {
   const rs = RISK_STYLES[task.risk];
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className={`group w-full rounded-2xl border-0 bg-white p-4 text-left shadow-md transition-all duration-200 hover:shadow-xl hover:-translate-y-0.5 ${rs.ring}`}
-    >
-      {/* Risk bar */}
-      <div className={`mb-3 h-0.5 w-full rounded-full ${rs.bar} opacity-60`} />
+  const riskLabel =
+    task.risk === "due_soon" ? "Due Soon"
+    : task.risk === "on_track" ? "On Track"
+    : task.risk.charAt(0).toUpperCase() + task.risk.slice(1);
 
-      <div className="flex flex-wrap items-center gap-1.5 mb-2">
-        <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${rs.badge}`}>
-          {task.risk.replace("_", " ")}
+  return (
+    <tr className={`group border-b border-slate-100 last:border-0 hover:bg-slate-50/80 transition-colors ${rs.row}`}>
+      {/* Risk */}
+      <td className="py-2.5 pl-3 pr-2 whitespace-nowrap w-24">
+        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${rs.badge}`}>
+          {riskLabel}
         </span>
+      </td>
+      {/* Module */}
+      <td className="py-2.5 px-2 whitespace-nowrap w-28 hidden sm:table-cell">
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+          {MODULE_LABELS[task.module] ?? humaniseModuleKey(task.module)}
+        </span>
+      </td>
+      {/* Title + person */}
+      <td className="py-2.5 px-2 min-w-0 max-w-xs">
+        <p className="text-sm font-semibold text-slate-900 leading-snug truncate">{task.title}</p>
+        {(task.employee_name || task.requested_by_name) && (
+          <p className="text-xs text-slate-400 mt-0.5 truncate">
+            {task.employee_name ?? `by ${task.requested_by_name}`}
+            {task.branch_name ? ` · ${task.branch_name}` : ""}
+          </p>
+        )}
+      </td>
+      {/* Priority */}
+      <td className="py-2.5 px-2 whitespace-nowrap w-20 hidden md:table-cell">
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${PRIORITY_STYLES[task.priority] ?? PRIORITY_STYLES.normal}`}>
           {task.priority}
         </span>
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+      </td>
+      {/* Age / Deadline */}
+      <td className="py-2.5 px-2 whitespace-nowrap w-32 hidden lg:table-cell">
+        <p className="text-xs text-slate-500">{timeAgo(task.created_at)}</p>
+        {task.tat_deadline && (
+          <p className={`text-xs ${task.risk === "breached" ? "text-red-500 font-semibold" : "text-slate-400"}`}>
+            due {fmtDeadline(task.tat_deadline)}
+          </p>
+        )}
+      </td>
+      {/* Actions */}
+      <td className="py-2.5 pl-2 pr-3 whitespace-nowrap">
+        <div className="flex items-center gap-1.5 justify-end">
+          {task.action_url && (
+            <a
+              href={task.action_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+            >
+              Open
+            </a>
+          )}
+          <button
+            onClick={onOpen}
+            className="rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+          >
+            Details
+          </button>
+          {task.source !== "derived" && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onQuickAct(); }}
+              disabled={acting}
+              className="inline-flex items-center gap-1 rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700 transition-colors disabled:opacity-50"
+            >
+              {acting ? <Loader className="h-3 w-3 animate-spin" /> : <CheckCheck className="h-3 w-3" />}
+              Act
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// ── Acted row (recently acted this session) ───────────────────────────────────
+
+function ActedRow({ task, actedAt }: { task: PendingTask; actedAt: string }) {
+  return (
+    <tr className="border-b border-slate-100 last:border-0 opacity-60">
+      <td className="py-2 pl-3 pr-2 whitespace-nowrap w-24">
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+          <CheckCheck className="h-3 w-3" /> Acted
+        </span>
+      </td>
+      <td className="py-2 px-2 whitespace-nowrap w-28 hidden sm:table-cell">
+        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
           {MODULE_LABELS[task.module] ?? humaniseModuleKey(task.module)}
         </span>
-      </div>
-
-      <p className="font-bold text-slate-950 leading-snug line-clamp-2">{task.title}</p>
-
-      {(task.employee_name || task.requested_by_name) && (
-        <p className="mt-1 text-xs text-slate-500 truncate">
-          {task.employee_name ?? `Raised by ${task.requested_by_name}`}
-          {task.branch_name ? ` · ${task.branch_name}` : ""}
-        </p>
-      )}
-
-      <div className="mt-2 flex items-center gap-3 text-[10px] text-slate-400">
-        <span>{timeAgo(task.created_at)}</span>
-        {task.aging_hours > 0 && <span>{task.aging_hours}h old</span>}
-        {task.tat_deadline && (
-          <span className={task.risk === "breached" ? "text-red-500 font-bold" : ""}>
-            due {fmtDeadline(task.tat_deadline)}
-          </span>
+      </td>
+      <td className="py-2 px-2 min-w-0 max-w-xs">
+        <p className="text-sm font-medium text-slate-500 leading-snug truncate line-through">{task.title}</p>
+        {(task.employee_name || task.requested_by_name) && (
+          <p className="text-xs text-slate-400 mt-0.5 truncate">
+            {task.employee_name ?? `by ${task.requested_by_name}`}
+            {task.branch_name ? ` · ${task.branch_name}` : ""}
+          </p>
         )}
-      </div>
-    </button>
+      </td>
+      <td className="py-2 px-2 whitespace-nowrap w-20 hidden md:table-cell">
+        <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${PRIORITY_STYLES[task.priority] ?? PRIORITY_STYLES.normal}`}>
+          {task.priority}
+        </span>
+      </td>
+      <td className="py-2 px-2 whitespace-nowrap w-32 hidden lg:table-cell">
+        <p className="text-xs text-slate-400">{timeAgo(actedAt)}</p>
+      </td>
+      <td className="py-2 pl-2 pr-3 whitespace-nowrap">
+        {task.action_url && (
+          <a
+            href={task.action_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-500 hover:bg-slate-100 transition-colors"
+          >
+            Open
+          </a>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+// ── Table chrome ─────────────────────────────────────────────────────────────
+
+function TableHead() {
+  return (
+    <thead>
+      <tr className="border-b border-slate-200 bg-slate-50">
+        <th className="py-2 pl-3 pr-2 text-left text-[10px] font-black uppercase tracking-widest text-slate-400 w-24">Risk</th>
+        <th className="py-2 px-2 text-left text-[10px] font-black uppercase tracking-widest text-slate-400 w-28 hidden sm:table-cell">Module</th>
+        <th className="py-2 px-2 text-left text-[10px] font-black uppercase tracking-widest text-slate-400">Task</th>
+        <th className="py-2 px-2 text-left text-[10px] font-black uppercase tracking-widest text-slate-400 w-20 hidden md:table-cell">Priority</th>
+        <th className="py-2 px-2 text-left text-[10px] font-black uppercase tracking-widest text-slate-400 w-32 hidden lg:table-cell">Age</th>
+        <th className="py-2 pl-2 pr-3 text-right text-[10px] font-black uppercase tracking-widest text-slate-400">Actions</th>
+      </tr>
+    </thead>
   );
 }
 
@@ -607,6 +750,13 @@ export default function NativeWorkInbox() {
   const [search, setSearch]       = useState("");
   const [selected, setSelected]   = useState<PendingTask | null>(null);
 
+  // Track items acted this session (for the "Recently Acted" section)
+  const [actedItems, setActedItems] = useState<(PendingTask & { acted_at: string })[]>([]);
+  const [showActed, setShowActed] = useState(false);
+  // Per-row acting spinner state
+  const [actingIds, setActingIds] = useState<Set<string>>(new Set());
+
+  const queryClient = useQueryClient();
   const canRunTriage = useHasRole("super_admin");
   const [triageRunning, setTriageRunning] = useState(false);
   const [triageMsg, setTriageMsg]         = useState<string | null>(null);
@@ -641,7 +791,6 @@ export default function NativeWorkInbox() {
         const parts = Object.entries(outcomes).map(([k, v]) => `${v} ${k}`).join(", ");
         setTriageMsg(`Triaged ${processed} complaint(s): ${parts}.`);
       }
-      // Reload inbox so newly-triaged work_items are visible with updated timeline
       void load();
     } catch (err) {
       setTriageMsg(err instanceof Error ? err.message : "Triage run failed.");
@@ -652,15 +801,9 @@ export default function NativeWorkInbox() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // Derive module tabs from live data
   const moduleCounts = summary?.by_module ?? {};
   const moduleList = Object.entries(moduleCounts).sort((a, b) => b[1] - a[1]);
 
-  // Search runs over whatever /my-pending already fetched (up to ~700 rows across the three
-  // sources' caps), not a server-side full-text query against the underlying tables — those
-  // hold tens of thousands of rows per source and a real search would need its own scoped
-  // endpoint. This finds anything currently on screen; it can't find an item that got cut by
-  // the LIMIT before it ever reached the browser — that's what the truncation banner is for.
   const searchTerm = search.trim().toLowerCase();
   const filtered = items.filter((item) => {
     if (activeModule !== "all" && item.module !== activeModule) return false;
@@ -678,63 +821,72 @@ export default function NativeWorkInbox() {
   const completeTask = async (id: string, remarks: string) => {
     const task = items.find((i) => i.id === id);
     if (!task) return;
-    if (task.source === "tat") {
-      await hrmsApi.post(`/api/governance/tat/tasks/${id}/complete`, { remarks: remarks || undefined });
-    } else if (task.source === "work_item") {
-      // work_item rows (role-assigned approvals, Mira complaints, etc.) live in a
-      // different table than work_inbox_item — PATCH /api/inbox/:id/actioned updates
-      // work_inbox_item and silently affects 0 rows for these, so the item reappeared on
-      // every reload with no error anywhere. Found live 2026-08-13: 6 pending work_item
-      // rows, the oldest 15 days stale, none completable through this button until now.
-      await hrmsApi.post(`/api/work-inbox/${id}/complete`, { remarks: remarks || undefined });
-    } else if (task.source === "derived") {
-      // Defense in depth: the ActionSheet hides "Act & Close" for derived tasks (see
-      // PendingTask.source doc comment), so this shouldn't be reachable — but if it ever is,
-      // fail loudly rather than PATCHing a synthetic id ("leave:<uuid>") against
-      // work_inbox_item, which would silently do nothing while looking like it worked.
-      throw new Error("This item has no generic completion action — use its Open link instead.");
-    } else {
-      await hrmsApi.patch(`/api/inbox/${id}/actioned`, {});
+
+    setActingIds((prev) => new Set(prev).add(id));
+    try {
+      if (task.source === "tat") {
+        await hrmsApi.post(`/api/governance/tat/tasks/${id}/complete`, { remarks: remarks || undefined });
+      } else if (task.source === "work_item") {
+        await hrmsApi.post(`/api/work-inbox/${id}/complete`, { remarks: remarks || undefined });
+      } else if (task.source === "derived") {
+        throw new Error("This item has no generic completion action — use its Open link instead.");
+      } else {
+        await hrmsApi.patch(`/api/inbox/${id}/actioned`, {});
+      }
+
+      // Remove from pending list immediately
+      setItems((prev) => prev.filter((i) => i.id !== id));
+
+      // Record as acted this session so it shows in "Recently Acted"
+      setActedItems((prev) => [{ ...task, acted_at: new Date().toISOString() }, ...prev]);
+
+      // Update summary counts
+      setSummary((prev) =>
+        prev
+          ? {
+              ...prev,
+              total: Math.max(0, prev.total - 1),
+              [task.risk]: Math.max(0, prev[task.risk] - 1),
+              by_module: {
+                ...prev.by_module,
+                [task.module]: Math.max(0, (prev.by_module[task.module] ?? 1) - 1),
+              },
+            }
+          : prev,
+      );
+
+      // Immediately drop from notification bell — don't wait 60 s for next poll
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["notifications-unread-count"] });
+    } finally {
+      setActingIds((prev) => {
+        const s = new Set(prev);
+        s.delete(id);
+        return s;
+      });
     }
-    setItems((prev) => prev.filter((i) => i.id !== id));
-    setSummary((prev) =>
-      prev
-        ? {
-            ...prev,
-            total: Math.max(0, prev.total - 1),
-            // No cast: Risk is exactly the four numeric keys of PendingSummary, so this
-            // indexes directly. The blanket Record<string, number> was also untrue - by_module
-            // is an object, not a number.
-            [task.risk]: Math.max(0, prev[task.risk] - 1),
-            by_module: {
-              ...prev.by_module,
-              [task.module]: Math.max(0, (prev.by_module[task.module] ?? 1) - 1),
-            },
-          }
-        : prev,
-    );
   };
 
   return (
     <DashboardLayout>
-      <main className="space-y-6 p-6 lg:p-8">
+      <main className="space-y-5 p-5 lg:p-7">
         {/* Header */}
-        <div className="relative overflow-hidden rounded-[2rem] bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 p-8 text-white shadow-2xl">
-          <div className="absolute -right-12 -top-12 h-64 w-64 rounded-full bg-white/5 blur-3xl" />
-          <div className="relative flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-blue-950 to-indigo-950 px-7 py-6 text-white shadow-xl">
+          <div className="absolute -right-10 -top-10 h-48 w-48 rounded-full bg-white/5 blur-3xl" />
+          <div className="relative flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
+              <div className="mb-1.5 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-semibold backdrop-blur-sm">
                 <Zap className="h-3 w-3" /> All Modules
               </div>
               <div className="flex items-center gap-3">
-                <h1 className="text-4xl font-black tracking-tight">Work Inbox</h1>
+                <h1 className="text-3xl font-black tracking-tight">Work Inbox</h1>
                 {(summary?.total ?? 0) > 0 && (
-                  <span className="flex h-8 w-8 items-center justify-center rounded-full bg-red-500 text-sm font-black text-white shadow-lg animate-pulse">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-red-500 text-xs font-black text-white shadow-lg animate-pulse">
                     {summary!.total}
                   </span>
                 )}
               </div>
-              <p className="mt-1 text-blue-200 text-sm">Your pending tasks across all platform modules</p>
+              <p className="mt-0.5 text-blue-200 text-sm">Your pending tasks across all platform modules</p>
             </div>
             <div className="flex flex-col items-end gap-2">
               <div className="flex gap-2">
@@ -742,19 +894,18 @@ export default function NativeWorkInbox() {
                   <button
                     onClick={() => void runTriage()}
                     disabled={triageRunning}
-                    className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600/80 px-4 py-2.5 text-sm font-bold text-white backdrop-blur-sm hover:bg-indigo-600 transition-all disabled:opacity-50"
-                    title="Run Mira triage on all pending complaints"
+                    className="inline-flex items-center gap-2 rounded-xl bg-indigo-600/80 px-3.5 py-2 text-xs font-bold text-white backdrop-blur-sm hover:bg-indigo-600 transition-all disabled:opacity-50"
                   >
-                    <Wand2 className={`h-4 w-4 ${triageRunning ? "animate-spin" : ""}`} />
+                    <Wand2 className={`h-3.5 w-3.5 ${triageRunning ? "animate-spin" : ""}`} />
                     {triageRunning ? "Triaging…" : "Run Triage"}
                   </button>
                 )}
                 <button
                   onClick={() => void load()}
                   disabled={loading}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-white/10 px-4 py-2.5 text-sm font-bold text-white backdrop-blur-sm hover:bg-white/20 transition-all disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-3.5 py-2 text-xs font-bold text-white backdrop-blur-sm hover:bg-white/20 transition-all disabled:opacity-50"
                 >
-                  <RefreshCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+                  <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
                   Refresh
                 </button>
               </div>
@@ -769,96 +920,92 @@ export default function NativeWorkInbox() {
         <KpiStrip summary={summary} loading={loading} />
 
         {error && (
-          <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-800">
+          <div className="flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3.5 text-sm font-bold text-amber-800">
             <AlertTriangle className="h-4 w-4 flex-shrink-0" />
             {error}
           </div>
         )}
 
         {summary?.truncated && (
-          <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-600">
+          <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-sm font-semibold text-slate-600">
             <AlertTriangle className="h-4 w-4 flex-shrink-0 text-slate-400" />
-            Showing the first batch of results — one or more categories has more pending items
-            than fit here. Use the module or risk filters to narrow down; the oldest/lowest
-            priority items in an over-full category may not be listed above.
+            Showing the first batch of results — use filters to narrow down further.
           </div>
         )}
 
         {/* Filters */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm space-y-4">
-          {/* Search */}
-          <div>
-            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Search</p>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search title, description, employee or requester…"
-              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none"
-            />
-          </div>
-          {/* Module tabs */}
-          <div>
-            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Module</p>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setActiveModule("all")}
-                className={`rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all ${activeModule === "all" ? "bg-slate-950 text-white shadow" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
-              >
-                All <span className="ml-1 opacity-60">{summary?.total ?? 0}</span>
-              </button>
-              {moduleList.map(([mod, count]) => (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-3">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search title, description, employee or requester…"
+            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-slate-400 focus:bg-white focus:outline-none"
+          />
+          <div className="flex flex-wrap gap-4">
+            {/* Module */}
+            <div>
+              <p className="mb-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400">Module</p>
+              <div className="flex flex-wrap gap-1.5">
                 <button
-                  key={mod}
-                  onClick={() => setActiveModule(mod)}
-                  className={`rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all ${activeModule === mod ? "bg-blue-600 text-white shadow" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
+                  onClick={() => setActiveModule("all")}
+                  className={`rounded-lg px-3 py-1 text-xs font-bold transition-all ${activeModule === "all" ? "bg-slate-950 text-white shadow" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
                 >
-                  {MODULE_LABELS[mod] ?? humaniseModuleKey(mod)} <span className="ml-1 opacity-60">{count}</span>
+                  All <span className="ml-1 opacity-60">{summary?.total ?? 0}</span>
                 </button>
-              ))}
-            </div>
-          </div>
-          {/* Risk filter */}
-          <div>
-            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Risk</p>
-            <div className="flex flex-wrap gap-2">
-              {(["all", "breached", "due_soon", "aged", "on_track"] as const).map((r) => {
-                const active = riskFilter === r;
-                const styles: Record<string, string> = {
-                  all:      active ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600",
-                  breached: active ? "bg-red-600 text-white" : "bg-red-50 text-red-700",
-                  due_soon: active ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700",
-                  aged:     active ? "bg-slate-600 text-white" : "bg-slate-100 text-slate-600",
-                  on_track: active ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700",
-                };
-                return (
+                {moduleList.map(([mod, count]) => (
                   <button
-                    key={r}
-                    onClick={() => setRiskFilter(r)}
-                    className={`rounded-xl px-3.5 py-1.5 text-xs font-bold capitalize transition-all hover:opacity-90 ${styles[r]}`}
+                    key={mod}
+                    onClick={() => setActiveModule(mod)}
+                    className={`rounded-lg px-3 py-1 text-xs font-bold transition-all ${activeModule === mod ? "bg-blue-600 text-white shadow" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`}
                   >
-                    {r.replace("_", " ")}
-                    {r !== "all" && summary && (
-                      <span className="ml-1 opacity-70">
-                        {(summary as unknown as Record<string, number>)[r] ?? 0}
-                      </span>
-                    )}
+                    {MODULE_LABELS[mod] ?? humaniseModuleKey(mod)} <span className="ml-1 opacity-60">{count}</span>
                   </button>
-                );
-              })}
+                ))}
+              </div>
+            </div>
+            {/* Risk */}
+            <div>
+              <p className="mb-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400">Risk</p>
+              <div className="flex flex-wrap gap-1.5">
+                {(["all", "breached", "due_soon", "aged", "on_track"] as const).map((r) => {
+                  const active = riskFilter === r;
+                  const styles: Record<string, string> = {
+                    all:      active ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600",
+                    breached: active ? "bg-red-600 text-white" : "bg-red-50 text-red-700",
+                    due_soon: active ? "bg-amber-500 text-white" : "bg-amber-50 text-amber-700",
+                    aged:     active ? "bg-slate-600 text-white" : "bg-slate-100 text-slate-600",
+                    on_track: active ? "bg-emerald-600 text-white" : "bg-emerald-50 text-emerald-700",
+                  };
+                  return (
+                    <button
+                      key={r}
+                      onClick={() => setRiskFilter(r)}
+                      className={`rounded-lg px-3 py-1 text-xs font-bold capitalize transition-all hover:opacity-90 ${styles[r]}`}
+                    >
+                      {r.replace("_", " ")}
+                      {r !== "all" && summary && (
+                        <span className="ml-1 opacity-70">
+                          {(summary as unknown as Record<string, number>)[r] ?? 0}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Task grid */}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {/* Pending tasks table */}
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           {loading ? (
-            <div className="col-span-full flex items-center justify-center py-20">
-              <Loader className="h-8 w-8 animate-spin text-slate-400" />
+            <div className="flex items-center justify-center py-16">
+              <Loader className="h-7 w-7 animate-spin text-slate-400" />
             </div>
           ) : filtered.length === 0 ? (
-            <div className="col-span-full flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white py-20 text-slate-400">
-              <BellOff className="mb-3 h-10 w-10 opacity-30" />
+            <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+              <BellOff className="mb-3 h-9 w-9 opacity-30" />
               <p className="font-semibold">
                 {items.length === 0 ? "No pending tasks" : "No matches"}
               </p>
@@ -869,11 +1016,61 @@ export default function NativeWorkInbox() {
               </p>
             </div>
           ) : (
-            filtered.map((task) => (
-              <TaskCard key={`${task.source}-${task.id}`} task={task} onOpen={() => setSelected(task)} />
-            ))
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[600px] border-collapse">
+                <TableHead />
+                <tbody>
+                  {filtered.map((task) => (
+                    <TaskRow
+                      key={`${task.source}-${task.id}`}
+                      task={task}
+                      onOpen={() => setSelected(task)}
+                      onQuickAct={() => void completeTask(task.id, "")}
+                      acting={actingIds.has(task.id)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
+
+        {/* Recently Acted (this session) */}
+        {actedItems.length > 0 && (
+          <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+            <button
+              onClick={() => setShowActed((v) => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 text-left hover:bg-slate-50 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <History className="h-4 w-4 text-emerald-600" />
+                <span className="text-sm font-bold text-slate-700">
+                  Recently Acted
+                </span>
+                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                  {actedItems.length} this session
+                </span>
+              </div>
+              <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${showActed ? "rotate-180" : ""}`} />
+            </button>
+            {showActed && (
+              <div className="border-t border-slate-100 overflow-x-auto">
+                <table className="w-full min-w-[600px] border-collapse">
+                  <TableHead />
+                  <tbody>
+                    {actedItems.map((item) => (
+                      <ActedRow
+                        key={`acted-${item.source}-${item.id}`}
+                        task={item}
+                        actedAt={item.acted_at}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
       <ActionSheet

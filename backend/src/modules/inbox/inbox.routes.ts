@@ -3,7 +3,7 @@ import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { inboxService, getMyPending, getTimeline } from "./inbox.service.js";
+import { inboxService, getMyPending, getTimeline, bulkActioned } from "./inbox.service.js";
 import { generateFixDraftForWorkItem } from "../ai/mira-fix-draft-generate.service.js";
 import { listFixDraftsForWorkItem } from "../ai/mira-fix-draft.service.js";
 import { deployFixDraft } from "../ai/mira-fix-deploy.service.js";
@@ -68,6 +68,34 @@ router.patch("/:id/actioned", h(async (req: AuthenticatedRequest, res: Response)
   const userId = req.authUser!.id;
   await inboxService.markActioned(req.params.id, userId);
   return res.json({ success: true });
+}));
+
+// POST /bulk-actioned — mark a batch of items as actioned in one call
+router.post("/bulk-actioned", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const { ids, source, remarks } = req.body as {
+    ids?: unknown;
+    source?: unknown;
+    remarks?: unknown;
+  };
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ success: false, error: "ids must be a non-empty array" });
+  }
+  if (!["inbox", "tat", "work_item"].includes(String(source ?? ""))) {
+    return res.status(400).json({ success: false, error: "source must be inbox | tat | work_item" });
+  }
+  if (ids.length > 500) {
+    return res.status(400).json({ success: false, error: "Maximum 500 ids per call" });
+  }
+
+  const result = await bulkActioned(
+    userId,
+    ids.map(String),
+    source as "inbox" | "tat" | "work_item",
+    typeof remarks === "string" ? remarks : undefined,
+  );
+  return res.json({ success: true, ...result });
 }));
 
 // PATCH /mark-all-read — mark all unread items as read for caller
