@@ -25,7 +25,8 @@ import {
   MIRA_TAGLINE,
   MiraDataUnavailableError,
 } from './ai-account.service.js';
-import { recordTurn, resolveFollowUp, lastIntentTurn, providerHistory, providerHistorySummaries } from './ai-conversation.service.js';
+import { recordTurn, resolveFollowUp, lastIntentTurn, providerHistory, providerHistorySummaries, getPendingAction, detectConfirmation } from './ai-conversation.service.js';
+import { draftLeaveRequest, confirmLeaveAction, cancelLeaveAction, isLeaveActionRequest, miraActionsEnabled } from './mira-leave-action.service.js';
 import {
   answerCompanyQuestion,
   companyKnowledgeMissResponse,
@@ -38,6 +39,7 @@ import {
 import { answerHowToQuestion } from './ai-howto.service.js';
 import { detectFeedbackIntent, describeFeedbackForHistory, logFeedback } from './ai-feedback.service.js';
 import { runTriagePass } from './mira-triage-scheduler.js';
+import { buildDailyBriefForEmployee } from '../management/daily-brief/daily-brief-dispatch.service.js';
 import { listComplaints, getComplaintDetail, retriageComplaint, getComplaintStats } from './mira-complaints.service.js';
 import { ruleBasedProvider } from './providers/ruleBased.provider.js';
 
@@ -60,6 +62,29 @@ function getRoleKeys(req: AuthenticatedRequest): string[] {
 
 function canAccessAnyBusinessAction(roleKeys: string[]): boolean {
   return roleKeys.some((role) => ['super_admin', 'admin'].includes(role));
+}
+
+/**
+ * Build a full AiGenerateResponse for an answer produced locally (never sent to an
+ * external provider), matching the shape ai-account.service.ts's own response()
+ * helper produces — kept here rather than exported from that module since this is
+ * specific to the action-taking flow, not a self-account read.
+ */
+function miraLocalResponse(answer: string, opts: { pendingAction?: import('./ai-provider.types.js').AiPendingAction; actions?: import('./ai-provider.types.js').AiAction[] } = {}) {
+  return {
+    answer,
+    provider: 'mira-secure-local',
+    model: 'hrms-action-v1',
+    latencyMs: 1,
+    safetyBlocked: false,
+    fallbackUsed: false,
+    generatedAt: new Date().toISOString(),
+    sourceContexts: ['mira_action:leave_request'],
+    dataConfidence: { overall: 1 },
+    insights: [],
+    actions: opts.actions ?? [],
+    pendingAction: opts.pendingAction,
+  };
 }
 
 // All routes require authentication
@@ -96,12 +121,25 @@ aiInsightsRouter.get('/providers/active', h(async (_req, res) => {
   return res.json(apiSuccess(config || { providerKey: 'rule-based', providerName: 'Rule-Based Provider' }));
 }));
 
+function timeOfDayGreetingIST(): string {
+  const hour = Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hour12: false, timeZone: 'Asia/Kolkata' }).format(new Date()));
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
 /**
  * GET /api/ai/session - Server-authoritative assistant identity and prompts.
+ *
+ * `?greet=1` additionally computes a time-aware greeting and a critical-updates
+ * preview — the frontend passes this only right after a fresh sign-in (see
+ * AuthContext.tsx), not on every mount, so this heavier path (it calls the same
+ * daily-brief builder GET /api/management/daily-brief/preview already uses) only
+ * runs once per login rather than on every chat-panel open.
  */
 aiInsightsRouter.get('/session', h(async (req, res) => {
   const roleKeys = getRoleKeys(req);
-  return res.json(apiSuccess({
+  const base = {
     assistant: {
       name: MIRA_NAME,
       tagline: MIRA_TAGLINE,
@@ -117,10 +155,45 @@ aiInsightsRouter.get('/session', h(async (req, res) => {
       voiceInput: true,
       spokenReplies: true,
       crossEmployeePersonalData: false,
-      executesActions: false,
+      executesActions: miraActionsEnabled(),
       externalPersonalDataSharing: false,
     },
-  }));
+  };
+
+  if (req.query.greet !== '1') {
+    return res.json(apiSuccess(base));
+  }
+
+  const employee = await getEmployeeForUser(req.authUser!.id);
+  if (!employee?.id) {
+    return res.json(apiSuccess({ ...base, greeting: `${timeOfDayGreetingIST()}!`, hasCriticalUpdates: false, updatesPreview: [] }));
+  }
+
+  const { db: mysqlDb } = await import('../../db/mysql.js');
+  const [nameRows] = await mysqlDb.execute<import('mysql2').RowDataPacket[]>(
+    'SELECT full_name FROM employees WHERE id = ? LIMIT 1', [employee.id],
+  );
+  const firstName = String(nameRows[0]?.full_name ?? '').trim().split(/\s+/)[0] || undefined;
+  const greetingPrefix = `${timeOfDayGreetingIST()}${firstName ? `, ${firstName}` : ''}`;
+
+  try {
+    const result = await buildDailyBriefForEmployee(employee.id);
+    // Executive-family recipients get a rollup brief (`mode: 'executive_rollup'`) with
+    // no per-signal `attention` array — see daily-brief-aggregator.service.ts's
+    // buildExecutiveDailyBrief vs buildManagerDailyBrief. Only the latter has one.
+    const attention = result.ok && !('mode' in result.brief && result.brief.mode === 'executive_rollup')
+      ? (result.brief as { attention?: Array<{ key: string; label: string }> }).attention ?? []
+      : [];
+    const updatesPreview = attention.slice(0, 5).map((signal) => ({ key: signal.key, label: signal.label }));
+    const greeting = updatesPreview.length
+      ? `${greetingPrefix} — there ${updatesPreview.length === 1 ? 'is' : 'are'} ${updatesPreview.length} update${updatesPreview.length === 1 ? '' : 's'} for you today. Want me to walk you through them?`
+      : `${greetingPrefix}! No critical updates for you right now.`;
+    return res.json(apiSuccess({ ...base, greeting, hasCriticalUpdates: updatesPreview.length > 0, updatesPreview }));
+  } catch (error) {
+    // The greeting is a nicety, not core chat function — never fail /session over it.
+    console.error('[Mira] failed to build greeting updates', error instanceof Error ? error.message : error);
+    return res.json(apiSuccess({ ...base, greeting: `${greetingPrefix}!`, hasCriticalUpdates: false, updatesPreview: [] }));
+  }
 }));
 
 /**
@@ -436,6 +509,46 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
       externalSafe: false,
       intent: `feedback:${feedback.category}`,
       redactedSummary: describeFeedbackForHistory(feedback.category),
+    });
+  }
+
+  // A confirm/cancel reply only means something when a draft is actually waiting —
+  // checked before everything else below so "yes" can never be reinterpreted as a
+  // new self-account/how-to/company-knowledge question.
+  if (miraActionsEnabled() && getPendingAction(userId)) {
+    const decision = detectConfirmation(safeQuestion);
+    if (decision === 'confirm') {
+      const result = await confirmLeaveAction(userId);
+      const miraResponse = miraLocalResponse(result.message, result.leaveRequestId ? { actions: [{ key: 'leaves', label: 'Open leave dashboard', url: '/leaves', priority: 'low' }] } : {});
+      return respond(miraResponse, { externalSafe: false, intent: 'leave_action_confirm', redactedSummary: 'The user confirmed a drafted leave request; Mira submitted it via the normal leave workflow.' });
+    }
+    if (decision === 'cancel') {
+      const result = await cancelLeaveAction(userId);
+      return respond(miraLocalResponse(result.message), { externalSafe: false, intent: 'leave_action_cancel', redactedSummary: 'The user cancelled a drafted leave request.' });
+    }
+    // A pending draft exists but this message wasn't a yes/no — fall through to the
+    // normal pipeline below; a genuinely new question is still answered normally,
+    // and the stale draft simply expires on its own TTL if never confirmed.
+  }
+
+  // "raise leave for 23rd August" is an action request, not a read-only balance
+  // question — checked before self-account so ai-account.service.ts's existing
+  // 'leave' intent (balances) never swallows it and answers the wrong thing.
+  if (miraActionsEnabled() && isLeaveActionRequest(safeQuestion)) {
+    const draft = await draftLeaveRequest(safeQuestion, userId);
+    if (draft.summary) {
+      const pendingAction: import('./ai-provider.types.js').AiPendingAction = {
+        type: 'leave_request', summary: draft.summary, confirmLabel: 'Yes, submit it', cancelLabel: 'No, cancel',
+      };
+      return respond(miraLocalResponse(draft.summary, { pendingAction }), {
+        externalSafe: false, intent: 'leave_action_draft',
+        redactedSummary: 'The user asked Mira to raise a leave request; Mira drafted it and is awaiting confirmation before submitting.',
+      });
+    }
+    const answer = draft.clarifyingQuestion ?? draft.error ?? 'I could not understand that leave request.';
+    return respond(miraLocalResponse(answer), {
+      externalSafe: false, intent: 'leave_action_draft',
+      redactedSummary: 'The user asked Mira to raise a leave request; Mira could not complete the draft without more information.',
     });
   }
 

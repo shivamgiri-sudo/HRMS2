@@ -29,6 +29,7 @@ export type AccountIntent =
   | 'leave_status'
   | 'holidays'
   | 'attendance'
+  | 'yesterday_records'
   | 'roster'
   | 'documents'
   | 'pending_actions'
@@ -62,6 +63,7 @@ const INTENT_HISTORY_LABEL: Partial<Record<AccountIntent, string>> = {
   leave_status: 'the status of a leave request',
   holidays: 'upcoming company holidays',
   attendance: 'their attendance',
+  yesterday_records: "yesterday's records",
   roster: 'their shift or roster',
   documents: 'their documents',
   pending_actions: 'their pending actions',
@@ -113,6 +115,12 @@ const INTENTS: Array<{ intent: AccountIntent; patterns: RegExp[] }> = [
   { intent: 'leave_status', patterns: [/\b(?:status|update)\s+of\s+my\s+leave\b/i, /\bmy\s+leave\s+(?:request\s+)?status\b/i, /\b(?:is|has)\s+my\s+leave\s+(?:request\s+)?(?:been\s+)?(?:approved|rejected|pending)\b/i, /\bwhen\s+will\s+my\s+leave\s+(?:be\s+)?approved\b/i, /\bwhy\s+(?:was|is)\s+my\s+leave\s+(?:rejected|still\s+pending)\b/i] },
   { intent: 'leave', patterns: [/\bleave balance\b/i, /\bleaves? (?:left|remaining)\b/i, /\bcasual leave\b/i, /\bsick leave\b/i, /\bprivilege leave\b/i, /\bannual leave\b/i, /\bmy leaves?\b/i, /meri leave/i, /kitni chhutti/i, /chhutti (?:baki|remaining)/i] },
   { intent: 'attendance', patterns: [/\battendance\b/i, /\bpunch(?:ed|ing)?\b/i, /\bclock(?:ed)?[ -]?in\b/i, /\babsent\b/i, /\bpresent days?\b/i, /\blate marks?\b/i, /\blwp\b/i, /\bworking hours?\b/i, /how many days (?:was i|did i) (?:present|attend)/i, /meri attendance/i, /mera punch/i, /kitne din (?:present|attend)/i, /aaj (?:ka )?punch/i, /aaj present/i, /kal (?:ka )?attendance/i] },
+  // Deliberately generic — "yesterday's complete records/report/summary", not
+  // "yesterday's attendance" (that stays inside 'attendance' above, checked first,
+  // via attendanceScope()'s own yesterday branch). None of these patterns contain
+  // "attendance" or "leave", so an explicit ask for either is never swallowed here;
+  // this only catches the broader "show me everything for yesterday" phrasing.
+  { intent: 'yesterday_records', patterns: [/\byesterday'?s?\s+(?:complete\s+|full\s+)?(?:records?|report|summary|details?)\b/i, /\b(?:complete|full)\s+(?:record|report|summary)\s+(?:for|of)\s+yesterday\b/i, /\bwhat happened yesterday\b/i, /\bshow me yesterday'?s?\b/i, /\bkal ka (?:pura )?record\b/i] },
   // Checked before 'roster' (below): its own /\bholiday\b/i alias is a
   // bare substring match, so it would otherwise swallow these more
   // specific "give me the holiday calendar" phrasings too. Anything NOT
@@ -524,6 +532,48 @@ async function teamSignals(userId: string, roleKeys: string[]): Promise<{ member
   };
 }
 
+/** The caller's own attendance + any leave covering exactly yesterday's date. */
+async function yesterdaySelfRecord(employeeId: string): Promise<{ attendanceRow: RowDataPacket; leaveRows: RowDataPacket[] }> {
+  const [attendanceResult, leaveRows] = await Promise.all([
+    attendance(employeeId, 'yesterday'),
+    rows('yesterday_leave', `SELECT lr.status, lt.leave_name
+      FROM leave_request lr
+      LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
+      WHERE lr.employee_id = ?
+        AND lr.from_date <= DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+        AND lr.to_date >= DATE_SUB(CURDATE(), INTERVAL 1 DAY)`, [employeeId]),
+  ]);
+  return { attendanceRow: attendanceResult.row, leaveRows };
+}
+
+/**
+ * Team-wide yesterday attendance for the members a manager's assignment scope
+ * grants them — same scope enforcement as teamSignals() above (resolveDashboardScope
+ * + buildScopeWhereEmployees), so this can never widen beyond what the WFM/KPI
+ * dashboards already let this caller see. Returns null for a SELF_ONLY caller so the
+ * handler falls back to yesterdaySelfRecord() above.
+ */
+async function yesterdayTeamRecords(userId: string, roleKeys: string[]): Promise<{ members: RowDataPacket[]; total: number; orgWide: boolean } | null> {
+  const scope = await resolveDashboardScope(userId, roleKeys[0] ?? 'employee');
+  if (scope.level === 'SELF_ONLY') return null;
+
+  const where = buildScopeWhereEmployees(scope, 'e');
+  if (where.sql === '1=0') return { members: [], total: 0, orgWide: false };
+
+  const found = await rows('yesterday_team', `SELECT e.id AS employee_id, e.full_name, a.attendance_status,
+      a.late_mark, a.lwp_value, COUNT(*) OVER () AS scope_total
+    FROM employees e
+    LEFT JOIN attendance_daily_record a ON a.employee_id = e.id AND a.record_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+    WHERE e.active_status = 1 AND ${where.sql}
+    LIMIT 500`, where.params);
+
+  return {
+    orgWide: scope.level === 'ORG_ALL',
+    total: Number(found[0]?.scope_total ?? found.length),
+    members: found,
+  };
+}
+
 async function roster(employeeId: string): Promise<RowDataPacket[]> {
   return rows('roster', `SELECT DATE_FORMAT(rda.roster_date, '%Y-%m-%d') AS roster_date,
       st.shift_name, st.start_time, st.end_time, rda.is_week_off, rda.is_holiday, rda.acknowledgement_status
@@ -832,6 +882,32 @@ ${body}`, startedAt, coachInsights,
       `• Attendance percentage: ${percentage}%`, startedAt,
       [{ key: 'attendance-percent', label: `${percentage}% attendance`, value: percentage, severity: percentage < 85 ? 'high' : percentage < 95 ? 'medium' : 'low' }],
       [action('Open attendance', '/attendance')]);
+  }
+
+  if (intent === 'yesterday_records') {
+    const team = await cached(userId, 'yesterday_team', () => yesterdayTeamRecords(userId, roleKeys)).catch(() => null);
+    if (team) {
+      const present = team.members.filter((row) => row.attendance_status === 'present').length;
+      const absent = team.members.filter((row) => row.attendance_status === 'absent').length;
+      const onLeave = team.members.filter((row) => row.attendance_status === 'leave_approved').length;
+      const lines = team.members.slice(0, 15).map((row) =>
+        `• ${t(row.full_name)}: ${t(row.attendance_status, 'no record')}${n(row.late_mark) ? ' (late)' : ''}`);
+      return handled(intent,
+        `Yesterday's records for ${team.orgWide ? 'the organisation' : 'your team'} (${team.total} people):\n\n` +
+        `• Present: ${present}\n• Absent: ${absent}\n• On approved leave: ${onLeave}\n\n${lines.join('\n')}` +
+        `${team.members.length > 15 ? `\n…and ${team.members.length - 15} more` : ''}`,
+        startedAt, [{ key: 'yesterday-present', label: `${present} present`, count: present, severity: 'low' }],
+        [action('Open attendance', '/attendance')]);
+    }
+    const self = await cached(userId, 'yesterday_self', () => yesterdaySelfRecord(employeeId));
+    const a = self.attendanceRow;
+    const leaveNote = self.leaveRows.length
+      ? `\n• Leave: ${self.leaveRows.map((row) => `${t(row.leave_name)} (${t(row.status)})`).join(', ')}`
+      : '';
+    return handled(intent,
+      `Your records for yesterday:\n\n• Status: ${t(a.latest_status)}\n• First punch: ${t(a.first_clock_in)}\n` +
+      `• Last punch: ${t(a.last_clock_out)}\n• Late mark: ${n(a.late_marks) ? 'Yes' : 'No'}${leaveNote}`,
+      startedAt, [], [action('Open attendance', '/attendance')]);
   }
 
   if (intent === 'roster') {

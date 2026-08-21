@@ -33,14 +33,40 @@ export interface ConversationTurn {
   at: number;
 }
 
+/**
+ * A drafted-but-unconfirmed write action, held server-side only. The frontend never
+ * sends this back verbatim on confirm — it sends the user's yes/no, and the confirm
+ * route reads the actual payload from here. That's deliberate: a client-supplied
+ * action payload on the confirm call would let a tampered request submit something
+ * the user never actually saw drafted.
+ */
+export interface PendingLeaveAction {
+  type: 'leave_request';
+  payload: {
+    employeeId: string;
+    leaveTypeId: string;
+    leaveTypeName: string;
+    fromDate: string;
+    toDate: string;
+    totalDays: number;
+    reason: string | null;
+  };
+  createdAt: number;
+}
+
 interface Thread {
   turns: ConversationTurn[];
   lastTouched: number;
+  pendingAction?: PendingLeaveAction;
 }
 
 const MAX_TURNS = 6;
 const TTL_MS = 30 * 60_000;
 const MAX_THREADS = 5_000;
+/** A drafted action goes stale much faster than ordinary chat memory — the user
+ * either confirms in the next couple of turns or the draft no longer reflects
+ * what they'd want (dates, balance, an in-between edit to the leave form itself). */
+const PENDING_ACTION_TTL_MS = 10 * 60_000;
 /** Long answers are trimmed before they are replayed; the prompt is not a transcript. */
 const MAX_REPLAYED_ANSWER = 400;
 
@@ -92,6 +118,58 @@ export function lastIntentTurn(userId: string): ConversationTurn | null {
   for (let i = turns.length - 1; i >= 0; i -= 1) {
     if (turns[i].intent && turns[i].intent !== 'unknown') return turns[i];
   }
+  return null;
+}
+
+/** Stash a drafted action for this user, replacing any earlier undrafted one. */
+export function setPendingAction(userId: string, action: PendingLeaveAction): void {
+  if (!userId) return;
+  const now = Date.now();
+  sweep(now);
+  const thread = threads.get(userId) ?? { turns: [], lastTouched: now };
+  thread.pendingAction = action;
+  thread.lastTouched = now;
+  threads.delete(userId);
+  threads.set(userId, thread);
+}
+
+/** The user's pending action, if one exists and hasn't gone stale. */
+export function getPendingAction(userId: string): PendingLeaveAction | null {
+  const thread = threads.get(userId);
+  if (!thread?.pendingAction) return null;
+  if (Date.now() - thread.pendingAction.createdAt > PENDING_ACTION_TTL_MS) {
+    thread.pendingAction = undefined;
+    return null;
+  }
+  return thread.pendingAction;
+}
+
+/** Discard the pending action after it's confirmed, cancelled, or rejected. */
+export function clearPendingAction(userId: string): void {
+  const thread = threads.get(userId);
+  if (thread) thread.pendingAction = undefined;
+}
+
+/**
+ * Does this message read as a yes/confirm or a no/cancel to a pending draft?
+ * Narrow on purpose, same reasoning as isFollowUp: a message that stands on its
+ * own (asks a new question, names a different topic) must not be swallowed as
+ * confirmation just because it happens to start differently than expected.
+ */
+const CONFIRM_PATTERNS = [
+  /^(?:yes|yep|yeah|confirm|confirmed|go ahead|submit|do it|ok(?:ay)?|sure|proceed)\b/i,
+  /^(?:haan|theek hai|kar do|bhej do)\b/i,
+];
+const CANCEL_PATTERNS = [
+  /^(?:no|nope|cancel|don'?t|stop|wait|hold on|never ?mind|abort)\b/i,
+  /^(?:nahi|ruko|mat karo)\b/i,
+];
+
+export function detectConfirmation(question: string): 'confirm' | 'cancel' | null {
+  const text = String(question ?? '').trim();
+  if (!text || text.length > 40) return null;
+  if (CONFIRM_PATTERNS.some((pattern) => pattern.test(text))) return 'confirm';
+  if (CANCEL_PATTERNS.some((pattern) => pattern.test(text))) return 'cancel';
   return null;
 }
 

@@ -389,6 +389,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       queryClient.clear();
       setUser({ id: authUser.id, email: authUser.email });
       scheduleRefresh();
+      // 2FA-gated accounts aren't fully signed in yet — greet only once
+      // verifyTwoFactorCode() actually completes the login below.
+      if (!requiresTwoFactor) void primeMiraGreeting();
       return { error: null };
     } catch (err) {
       return { error: err instanceof Error ? err : new Error('Network error') };
@@ -435,6 +438,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setTwoFactorVerified(false);
       clearAuthState();
       setIsSigningOut(false);
+    }
+  };
+
+  /**
+   * Fire-and-forget: fetch Mira's time-aware greeting + critical-updates preview and
+   * stash it for whichever Mira chat surface (AmbientStrip/CommandPalette/
+   * PeopleOSCopilot) mounts next to show as her opening message.
+   *
+   * Called only from the two "just became fully authenticated" points below — signIn()
+   * success when 2FA isn't required, and verifyTwoFactorCode() success — never from the
+   * mount-time session-restore effect, so a page refresh doesn't re-trigger it. A
+   * sessionStorage guard additionally caps this to once per browser tab session: a
+   * user signing out and back in within the same tab won't be re-greeted mid-session,
+   * but a fresh tab/window always gets one.
+   */
+  const primeMiraGreeting = async () => {
+    try {
+      if (sessionStorage.getItem('mira_greeted_session')) return;
+      sessionStorage.setItem('mira_greeted_session', 'true');
+      const token = localStorage.getItem('hrms_access_token');
+      if (!token) return;
+      const { ok, payload } = await fetchJson('/api/ai/session?greet=1', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (ok && payload?.data) {
+        sessionStorage.setItem('mira_greeting', JSON.stringify(payload.data));
+      }
+    } catch {
+      // The greeting is a nicety — never let it block or disrupt sign-in.
     }
   };
 
@@ -509,6 +541,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setTwoFactorRequired(true);
       setTwoFactorVerified(true);
       scheduleRefresh();
+      void primeMiraGreeting();
       return { error: null };
     } catch (err) {
       return { error: err instanceof Error ? err : new Error('Network error') };

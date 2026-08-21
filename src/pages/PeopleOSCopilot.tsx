@@ -34,6 +34,7 @@ interface AIResponse {
   dataConfidence?: Record<string, number>;
   insights?: Array<{ key: string; label: string; count?: number; severity?: Severity; value?: string | number }>;
   actions?: Array<{ key: string; label: string; url: string; priority?: Severity }>;
+  pendingAction?: { type: string; summary: string; confirmLabel: string; cancelLabel: string };
 }
 
 interface Message {
@@ -109,6 +110,38 @@ export default function PeopleOSCopilot() {
   useEffect(() => {
     if (briefingLoaded || messages.length > 0) return;
     setBriefingLoaded(true);
+
+    // A greeting primed right after sign-in (AuthContext.tsx's primeMiraGreeting)
+    // takes priority over the generic account briefing — it's both a warmer opening
+    // and already carries the critical-updates preview, so there is no need to also
+    // fetch /api/ai/briefing on top of it. Consumed once: removed from storage so a
+    // "New chat" click later in the same tab falls back to the plain briefing.
+    const storedGreeting = sessionStorage.getItem('mira_greeting');
+    if (storedGreeting) {
+      sessionStorage.removeItem('mira_greeting');
+      try {
+        const data = JSON.parse(storedGreeting) as {
+          greeting?: string;
+          updatesPreview?: Array<{ key: string; label: string }>;
+        };
+        if (data.greeting) {
+          setMessages([{
+            id: `${Date.now()}-greeting`,
+            role: 'assistant',
+            content: data.greeting,
+            timestamp: new Date(),
+            response: {
+              answer: data.greeting,
+              insights: (data.updatesPreview ?? []).map((update) => ({ key: update.key, label: update.label, severity: 'medium' as Severity })),
+            },
+          }]);
+          return;
+        }
+      } catch {
+        // Malformed/stale value — fall through to the normal briefing fetch below.
+      }
+    }
+
     void hrmsApi.get<{ success: boolean; data: AIResponse }>('/api/ai/briefing')
       .then((response) => setMessages([{ id: `${Date.now()}-briefing`, role: 'assistant', content: response.data.answer, timestamp: new Date(), response: response.data }]))
       .catch(() => undefined);
@@ -345,7 +378,9 @@ export default function PeopleOSCopilot() {
             </div>
 
             <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
-              Mira provides information and recommendations. It does not approve, edit, delete, or execute HR actions.
+              {session?.capabilities.executesActions
+                ? 'Mira can draft, and with your explicit confirmation submit, a leave request on your behalf. She still cannot approve leave, edit records, or take any action without asking you first.'
+                : 'Mira provides information and recommendations. It does not approve, edit, delete, or execute HR actions.'}
             </div>
           </aside>
 
@@ -392,6 +427,31 @@ export default function PeopleOSCopilot() {
                                   {insight.label}{insight.count !== undefined ? ` (${insight.count})` : ''}
                                 </span>
                               ))}
+                            </div>
+                          )}
+
+                          {/* Only the most recent message may still have an unresolved draft —
+                              once the user confirms/cancels, a new assistant message without
+                              pendingAction becomes the last one, so an older draft's buttons
+                              stop rendering rather than staying clickable after resolution. */}
+                          {message.response?.pendingAction && message.id === messages[messages.length - 1]?.id && (
+                            <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-200/70 pt-3">
+                              <button
+                                type="button"
+                                onClick={() => void sendMessage(message.response!.pendingAction!.confirmLabel)}
+                                disabled={loading}
+                                className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {message.response.pendingAction.confirmLabel}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void sendMessage(message.response!.pendingAction!.cancelLabel)}
+                                disabled={loading}
+                                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {message.response.pendingAction.cancelLabel}
+                              </button>
                             </div>
                           )}
 

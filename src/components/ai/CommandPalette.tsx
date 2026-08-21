@@ -27,6 +27,7 @@ interface AIResponse {
   model?: string;
   insights?: Array<{ key: string; label: string; severity?: AISeverity; count?: number; value?: string | number }>;
   actions?: Array<{ key: string; label: string; url: string; priority?: AISeverity }>;
+  pendingAction?: { type: string; summary: string; confirmLabel: string; cancelLabel: string };
 }
 
 interface ChatMessage {
@@ -109,6 +110,34 @@ export function CommandPalette({
   useEffect(() => {
     if (!open || briefingLoaded || messages.length > 0) return;
     setBriefingLoaded(true);
+
+    // Same greeting priority as PeopleOSCopilot.tsx: a greeting primed right after
+    // sign-in wins over the generic account briefing and is consumed once.
+    const storedGreeting = sessionStorage.getItem('mira_greeting');
+    if (storedGreeting) {
+      sessionStorage.removeItem('mira_greeting');
+      try {
+        const data = JSON.parse(storedGreeting) as {
+          greeting?: string;
+          updatesPreview?: Array<{ key: string; label: string }>;
+        };
+        if (data.greeting) {
+          setMessages([{
+            id: `${Date.now()}-greeting`,
+            role: 'assistant',
+            content: data.greeting,
+            response: {
+              answer: data.greeting,
+              insights: (data.updatesPreview ?? []).map((update) => ({ key: update.key, label: update.label, severity: 'medium' as AISeverity })),
+            },
+          }]);
+          return;
+        }
+      } catch {
+        // Malformed/stale value — fall through to the normal briefing fetch below.
+      }
+    }
+
     void hrmsApi.get<{ success: boolean; data: AIResponse }>('/api/ai/briefing')
       .then((response) => setMessages([{ id: `${Date.now()}-briefing`, role: 'assistant', content: response.data.answer, response: response.data }]))
       .catch(() => undefined);
@@ -324,6 +353,29 @@ export function CommandPalette({
                               {insight.label}{insight.count !== undefined ? ` (${insight.count})` : ''}
                             </span>
                           ))}
+                        </div>
+                      )}
+
+                      {/* Only the most recent message may still have an unresolved draft —
+                          see PeopleOSCopilot.tsx's identical guard for why. */}
+                      {message.response?.pendingAction && message.id === messages[messages.length - 1]?.id && (
+                        <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                          <button
+                            type="button"
+                            onClick={() => void sendMessage(message.response!.pendingAction!.confirmLabel)}
+                            disabled={loading}
+                            className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {message.response.pendingAction.confirmLabel}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void sendMessage(message.response!.pendingAction!.cancelLabel)}
+                            disabled={loading}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {message.response.pendingAction.cancelLabel}
+                          </button>
                         </div>
                       )}
 

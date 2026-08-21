@@ -72,6 +72,24 @@ export interface AiGenerateResponse {
   dataConfidence?: Record<string, number>;
   insights?: AiInsight[];
   actions?: AiAction[];
+  /**
+   * A drafted, not-yet-executed action awaiting the user's explicit yes/no in
+   * chat (e.g. a leave request Mira has parsed but not submitted). Deliberately
+   * separate from `actions` above, which are same-origin navigation links only
+   * (see safeInternalUrl in PeopleOSCopilot.tsx/CommandPalette.tsx) — a
+   * pendingAction is never auto-followed by the client; it only renders a
+   * confirm/cancel prompt that calls back into a dedicated action route.
+   */
+  pendingAction?: AiPendingAction;
+}
+
+export interface AiPendingAction {
+  /** What kind of action this is; the frontend and the confirm/cancel routes both switch on this. */
+  type: 'leave_request';
+  /** Human-readable summary of exactly what will happen on confirm — shown verbatim in chat. */
+  summary: string;
+  confirmLabel: string;
+  cancelLabel: string;
 }
 
 export interface AiInsight {
