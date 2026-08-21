@@ -13,6 +13,7 @@ import {
   findPassForVerification,
   verifyExit,
   verifyReturn,
+  searchEmployeesForCarrier,
   resolveRequestingEmployee,
   getActorRoles,
   ExitPassError,
@@ -97,6 +98,19 @@ exitPassRouter.get('/pending/admin', h(async (req, res) => {
 // Phase 2 — security exit verification. Registered before the generic
 // GET '/:id' below: Express matches routes in order, and '/:id' would
 // otherwise swallow '/verify/GP-...' with id literally equal to "verify".
+exitPassRouter.get('/employees/search', h(async (req, res) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    if (q.trim().length < 2) {
+      return res.json({ success: true, data: [] });
+    }
+    const data = await searchEmployeesForCarrier(q);
+    return res.json({ success: true, data });
+  } catch (error) {
+    return fail(res, error);
+  }
+}));
+
 exitPassRouter.get('/verify/:passNumber', h(async (req, res) => {
   try {
     const data = await findPassForVerification(req.params.passNumber);

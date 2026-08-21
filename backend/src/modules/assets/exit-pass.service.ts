@@ -607,3 +607,27 @@ export async function listPendingAdmin(actor: RequestingEmployee, actorRoles: st
 export async function getActorRoles(authUserId: string): Promise<string[]> {
   return getUserRoleKeys(authUserId);
 }
+
+// ─── Form autofill helpers ──────────────────────────────────────────────────
+
+/**
+ * Carrier-picker search for the raise-pass form. Deliberately its own endpoint
+ * rather than reusing /api/employees/hr-hub — that route is gated to
+ * super_admin/admin/hr/payroll_head/payroll_admin/wfm, which excludes most of
+ * this module's own users (it, branch_admin, branch_head, employee), so it
+ * would 403 for exactly the people raising most requests. Scoped to the same
+ * role set already on this router instead of loosening hr-hub's RBAC.
+ */
+export async function searchEmployeesForCarrier(q: string): Promise<RowDataPacket[]> {
+  const term = `%${q.trim()}%`;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, employee_code, full_name, mobile, branch_id
+     FROM employees
+     WHERE active_status = 1
+       AND (full_name LIKE ? OR employee_code LIKE ?)
+     ORDER BY full_name ASC
+     LIMIT 20`,
+    [term, term],
+  );
+  return rows;
+}

@@ -52,6 +52,61 @@ const MOVEMENT_TYPES: Array<{ value: ExitPass["movement_type"]; label: string }>
 ];
 const PRIORITIES = ["normal", "urgent", "emergency"] as const;
 const DESTINATION_TYPES = ["Vendor", "Another MAS Branch", "Employee Residence", "Client Location", "Repair Centre", "Other"];
+const CARRIER_TYPES: Array<{ value: string; label: string }> = [
+  { value: "employee", label: "Employee" },
+  { value: "vendor", label: "Vendor" },
+  { value: "courier", label: "Courier" },
+  { value: "driver", label: "Driver" },
+  { value: "other", label: "Other" },
+];
+
+// Category and reason lists mirror spec §11/§8 — IT vs Admin material and movement reasons.
+const CATEGORIES: Record<"IT" | "ADMIN", string[]> = {
+  IT: [
+    "Laptop", "Desktop", "Monitor", "CPU", "Keyboard", "Mouse", "Headset", "Switch", "Router",
+    "Firewall", "Server Equipment", "Hard Disk", "SSD", "RAM", "Printer", "UPS", "CCTV Equipment",
+    "Access-Control Hardware", "Mobile Device", "Charger / Adapter", "Network Equipment", "Other IT Material",
+  ],
+  ADMIN: [
+    "Furniture", "Electrical Equipment", "AC Components", "Office Equipment", "Stationery (Bulk)",
+    "Repairable Equipment", "Scrap Material", "Facility Equipment", "Vendor Material", "Documents / Files",
+    "Other Administrative Material",
+  ],
+};
+
+const REASONS: Record<"IT" | "ADMIN", Array<{ code: string; label: string }>> = {
+  IT: [
+    { code: "repair", label: "Repair" },
+    { code: "warranty_replacement", label: "Warranty Replacement" },
+    { code: "vendor_service", label: "Vendor Service" },
+    { code: "wfh_assignment", label: "Employee WFH Assignment" },
+    { code: "client_requirement", label: "Client Requirement" },
+    { code: "branch_transfer", label: "Branch Transfer" },
+    { code: "replacement", label: "Replacement" },
+    { code: "testing", label: "Testing" },
+    { code: "disposal", label: "Disposal" },
+    { code: "scrap", label: "Scrap" },
+    { code: "temp_installation", label: "Temporary Installation" },
+    { code: "permanent_transfer", label: "Permanent Transfer" },
+    { code: "other", label: "Other" },
+  ],
+  ADMIN: [
+    { code: "repair", label: "Repair" },
+    { code: "vendor_service", label: "Vendor Service" },
+    { code: "branch_transfer", label: "Branch Transfer" },
+    { code: "office_setup", label: "Office Setup" },
+    { code: "event", label: "Event" },
+    { code: "scrap", label: "Scrap" },
+    { code: "disposal", label: "Disposal" },
+    { code: "maintenance", label: "Maintenance" },
+    { code: "temp_movement", label: "Temporary Movement" },
+    { code: "permanent_movement", label: "Permanent Movement" },
+    { code: "other", label: "Other" },
+  ],
+};
+
+type BranchOption = { id: string; branch_name: string; address?: string | null; city?: string | null; state?: string | null };
+type EmployeeHit = { id: string; employee_code: string; full_name: string; mobile?: string | null };
 
 const INPUT_CLS = "w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500";
 
@@ -253,8 +308,10 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
   const [department, setDepartment] = useState<(typeof DEPARTMENTS)[number]>("IT");
   const [movementType, setMovementType] = useState<ExitPass["movement_type"]>("returnable");
   const [priority, setPriority] = useState<(typeof PRIORITIES)[number]>("normal");
+  const [purposeCode, setPurposeCode] = useState(REASONS.IT[0].code);
   const [purposeDetails, setPurposeDetails] = useState("");
   const [destinationType, setDestinationType] = useState(DESTINATION_TYPES[0]);
+  const [destinationBranchId, setDestinationBranchId] = useState("");
   const [destinationName, setDestinationName] = useState("");
   const [destinationAddress, setDestinationAddress] = useState("");
   const [plannedExitAt, setPlannedExitAt] = useState("");
@@ -262,6 +319,45 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
   const [items, setItems] = useState<ExitPassItem[]>([{ ...EMPTY_ITEM }]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Autofill sources ------------------------------------------------------
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  useEffect(() => {
+    hrmsApi.get<{ data: BranchOption[] }>("/api/org/branches")
+      .then((res) => setBranches(res?.data ?? []))
+      .catch(() => setBranches([]));
+  }, []);
+
+  const [carrierType, setCarrierType] = useState("employee");
+  const [carrierEmployeeId, setCarrierEmployeeId] = useState("");
+  const [carrierName, setCarrierName] = useState("");
+  const [carrierMobile, setCarrierMobile] = useState("");
+  const [carrierCompany, setCarrierCompany] = useState("");
+  const [vehicleNumber, setVehicleNumber] = useState("");
+  const [empSearch, setEmpSearch] = useState("");
+  const [empResults, setEmpResults] = useState<EmployeeHit[]>([]);
+  const [empSearching, setEmpSearching] = useState(false);
+
+  useEffect(() => {
+    if (carrierType !== "employee" || empSearch.trim().length < 2) { setEmpResults([]); return; }
+    const t = setTimeout(async () => {
+      setEmpSearching(true);
+      try {
+        const res = await hrmsApi.get<{ data: EmployeeHit[] }>(`/api/exit-passes/employees/search?q=${encodeURIComponent(empSearch)}`);
+        setEmpResults(res?.data ?? []);
+      } catch { setEmpResults([]); }
+      finally { setEmpSearching(false); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [empSearch, carrierType]);
+
+  const pickCarrierEmployee = (hit: EmployeeHit) => {
+    setCarrierEmployeeId(hit.id);
+    setCarrierName(hit.full_name);
+    setCarrierMobile(hit.mobile ?? "");
+    setEmpSearch(`${hit.full_name} (${hit.employee_code})`);
+    setEmpResults([]);
+  };
 
   const updateItem = (idx: number, patch: Partial<ExitPassItem>) => {
     setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
@@ -279,11 +375,17 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
         request_department: department,
         movement_type: movementType,
         priority,
-        purpose_code: department === "IT" ? "wfh_assignment" : "office_setup",
+        purpose_code: purposeCode,
         purpose_details: purposeDetails,
         destination_type: destinationType,
         destination_name: destinationName || null,
         destination_address: destinationAddress || null,
+        carrier_type: carrierType,
+        carrier_employee_id: carrierType === "employee" ? (carrierEmployeeId || null) : null,
+        carrier_name: carrierName || null,
+        carrier_mobile: carrierMobile || null,
+        carrier_company: carrierType !== "employee" ? (carrierCompany || null) : null,
+        vehicle_number: vehicleNumber || null,
         planned_exit_at: plannedExitAt,
         expected_return_at: movementType === "returnable" ? (expectedReturnAt || null) : null,
         items,
@@ -296,6 +398,9 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
       setSubmitting(false);
     }
   };
+
+  const reasons = REASONS[department];
+  const categories = CATEGORIES[department];
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
@@ -310,13 +415,26 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
 
           <div className="grid grid-cols-2 gap-4">
             <Field label="Request Type">
-              <select value={department} onChange={(e) => setDepartment(e.target.value as typeof department)} className={INPUT_CLS}>
+              <select
+                value={department}
+                onChange={(e) => {
+                  const d = e.target.value as typeof department;
+                  setDepartment(d);
+                  setPurposeCode(REASONS[d][0].code);
+                }}
+                className={INPUT_CLS}
+              >
                 {DEPARTMENTS.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
             </Field>
             <Field label="Priority">
               <select value={priority} onChange={(e) => setPriority(e.target.value as typeof priority)} className={INPUT_CLS}>
                 {PRIORITIES.map((p) => <option key={p} value={p}>{p[0].toUpperCase() + p.slice(1)}</option>)}
+              </select>
+            </Field>
+            <Field label="Reason">
+              <select value={purposeCode} onChange={(e) => setPurposeCode(e.target.value)} className={INPUT_CLS}>
+                {reasons.map((r) => <option key={r.code} value={r.code}>{r.label}</option>)}
               </select>
             </Field>
             <Field label="Movement Type">
@@ -333,13 +451,40 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
               </Field>
             )}
             <Field label="Destination Type">
-              <select value={destinationType} onChange={(e) => setDestinationType(e.target.value)} className={INPUT_CLS}>
+              <select
+                value={destinationType}
+                onChange={(e) => {
+                  setDestinationType(e.target.value);
+                  setDestinationBranchId("");
+                  setDestinationName("");
+                  setDestinationAddress("");
+                }}
+                className={INPUT_CLS}
+              >
                 {DESTINATION_TYPES.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
             </Field>
-            <Field label="Destination Name">
-              <input value={destinationName} onChange={(e) => setDestinationName(e.target.value)} className={INPUT_CLS} placeholder="e.g. Dell Service Centre" />
-            </Field>
+            {destinationType === "Another MAS Branch" ? (
+              <Field label="Destination Branch">
+                <select
+                  value={destinationBranchId}
+                  onChange={(e) => {
+                    const b = branches.find((x) => x.id === e.target.value);
+                    setDestinationBranchId(e.target.value);
+                    setDestinationName(b?.branch_name ?? "");
+                    setDestinationAddress(b?.address || [b?.city, b?.state].filter(Boolean).join(", "));
+                  }}
+                  className={INPUT_CLS}
+                >
+                  <option value="">Select branch...</option>
+                  {branches.map((b) => <option key={b.id} value={b.id}>{b.branch_name}</option>)}
+                </select>
+              </Field>
+            ) : (
+              <Field label="Destination Name">
+                <input value={destinationName} onChange={(e) => setDestinationName(e.target.value)} className={INPUT_CLS} placeholder="e.g. Dell Service Centre" />
+              </Field>
+            )}
             <Field label="Destination Address">
               <input value={destinationAddress} onChange={(e) => setDestinationAddress(e.target.value)} className={INPUT_CLS} />
             </Field>
@@ -348,6 +493,64 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
           <Field label="Purpose of Movement">
             <textarea value={purposeDetails} onChange={(e) => setPurposeDetails(e.target.value)} rows={2} className={INPUT_CLS} />
           </Field>
+
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Carried By">
+              <select
+                value={carrierType}
+                onChange={(e) => { setCarrierType(e.target.value); setCarrierEmployeeId(""); setCarrierName(""); setCarrierMobile(""); setEmpSearch(""); }}
+                className={INPUT_CLS}
+              >
+                {CARRIER_TYPES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </Field>
+            <Field label="Vehicle Number (optional)">
+              <input value={vehicleNumber} onChange={(e) => setVehicleNumber(e.target.value)} className={INPUT_CLS} placeholder="e.g. UP16 AB 1234" />
+            </Field>
+
+            {carrierType === "employee" ? (
+              <div className="col-span-2 relative">
+                <Field label="Employee (search by name or code)">
+                  <input
+                    value={empSearch}
+                    onChange={(e) => { setEmpSearch(e.target.value); setCarrierEmployeeId(""); }}
+                    className={INPUT_CLS}
+                    placeholder="Start typing a name or employee code..."
+                  />
+                </Field>
+                {empSearching && <div className="absolute right-3 top-9 text-xs text-slate-400">Searching...</div>}
+                {empResults.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                    {empResults.map((hit) => (
+                      <button
+                        key={hit.id}
+                        type="button"
+                        onClick={() => pickCarrierEmployee(hit)}
+                        className="block w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                      >
+                        {hit.full_name} <span className="text-slate-400">({hit.employee_code})</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {carrierEmployeeId && carrierMobile && (
+                  <div className="mt-1 text-xs text-slate-400">Mobile auto-filled: {carrierMobile}</div>
+                )}
+              </div>
+            ) : (
+              <>
+                <Field label="Carrier Name">
+                  <input value={carrierName} onChange={(e) => setCarrierName(e.target.value)} className={INPUT_CLS} />
+                </Field>
+                <Field label="Company">
+                  <input value={carrierCompany} onChange={(e) => setCarrierCompany(e.target.value)} className={INPUT_CLS} />
+                </Field>
+                <Field label="Mobile">
+                  <input value={carrierMobile} onChange={(e) => setCarrierMobile(e.target.value)} className={INPUT_CLS} />
+                </Field>
+              </>
+            )}
+          </div>
 
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -362,7 +565,10 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
             <div className="space-y-2">
               {items.map((item, idx) => (
                 <div key={idx} className="grid grid-cols-12 gap-2 items-center">
-                  <input className={`${INPUT_CLS} col-span-2`} placeholder="Category" value={item.category} onChange={(e) => updateItem(idx, { category: e.target.value })} />
+                  <select className={`${INPUT_CLS} col-span-2`} value={item.category} onChange={(e) => updateItem(idx, { category: e.target.value })}>
+                    <option value="">Category...</option>
+                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
                   <input className={`${INPUT_CLS} col-span-3`} placeholder="Item name" value={item.item_name} onChange={(e) => updateItem(idx, { item_name: e.target.value })} />
                   <input className={`${INPUT_CLS} col-span-2`} placeholder="Asset ID" value={item.asset_id ?? ""} onChange={(e) => updateItem(idx, { asset_id: e.target.value })} />
                   <input className={`${INPUT_CLS} col-span-2`} placeholder="Serial No." value={item.serial_number ?? ""} onChange={(e) => updateItem(idx, { serial_number: e.target.value })} />
