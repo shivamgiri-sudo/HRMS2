@@ -2,6 +2,7 @@ import type { RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 
 import { refuse } from "./finance-error.js";
+import { budgetClosureService } from "./budget-closure.service.js";
 function roundMoney(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
@@ -84,6 +85,12 @@ export const budgetConsumptionService = {
   ) {
     const quantity = roundQuantity(quantityInput);
     const line = await lockActiveBudgetLine(connection, lineId);
+    // A closed head/sub-head refuses NEW spend only — reserve() is the entry point for a fresh
+    // GRN. release()/consume()/reverseConsumption() below correct or complete a GRN reserved
+    // before closure and must keep working regardless of the head's current closure state.
+    await budgetClosureService.assertSubheadOpen(
+      connection, String(line.budget_id), String(line.head), line.sub_head ? String(line.sub_head) : null
+    );
     const amount = consumptionBasis(line, roundMoney(amountInput), netAmountInput);
     validatePositive(amount, quantity);
     const available = availability(line);

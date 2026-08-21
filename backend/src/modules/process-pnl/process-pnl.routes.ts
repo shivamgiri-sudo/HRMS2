@@ -18,6 +18,7 @@ import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService, getCompanyBudgetConsolidation } from "./branch-budget.service.js";
 import { getCeoOverview, getYtdSummary, type CeoFilters } from "./ceo-overview.service.js";
 import { budgetTopupService } from "./budget-topup.service.js";
+import { budgetClosureService } from "./budget-closure.service.js";
 import { budgetCostCentreUtilizationService } from "./budget-cost-centre-utilization.service.js";
 import { branchBudgetAllocationService } from "./branch-budget-allocation.service.js";
 import { meterService } from "./meter.service.js";
@@ -667,6 +668,138 @@ router.post(
       user.id,
       effectiveRole,
       req.body?.remarks ? String(req.body.remarks) : undefined
+    );
+    res.json({ success: true, data });
+  })
+);
+
+// Finance Head direct budget increase (owner decision, 2026-08-21): bypasses the 2-stage
+// branch_head -> finance_head top-up request/review chain above. finance_head + super_admin
+// only — deliberately excludes branch_admin/branch_head/accounts_head, unlike TOPUP_REVIEW_ROLES.
+// No :budgetId segment — directApply() derives the budget from the line itself, same as
+// getLineBranch() does for the branch, so the caller never needs to know it up front.
+router.post(
+  "/pnl/budget-lines/:lineId/direct-topup",
+  requireWriteAccess,
+  requireRole("finance_head", "super_admin"),
+  h(async (req, res) => {
+    const user = actor(req);
+    const lineBranchId = await budgetTopupService.getLineBranch(req.params.lineId);
+    await assertFinanceRecordBranch({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      recordBranchId: lineBranchId,
+    });
+    const data = await budgetTopupService.directApply(
+      {
+        budgetLineId: req.params.lineId,
+        additionalQuantity: Number(req.body?.additionalQuantity ?? 0),
+        reason: String(req.body?.reason ?? ""),
+      },
+      user.id,
+      user.role
+    );
+    res.status(201).json({ success: true, data });
+  })
+);
+
+// Monthly business-case close/reopen per (budget, head, sub-head) — owner requirement,
+// 2026-08-21. See budget-closure.service.ts's header comment for the full design.
+const CLOSURE_READ_ROLES = ["super_admin", "admin", "branch_admin", "branch_head", "finance_head", "accounts_head"] as const;
+const CLOSURE_CLOSE_ROLES = ["super_admin", "branch_admin", "finance_head"] as const;
+const CLOSURE_REOPEN_REQUEST_ROLES = ["super_admin", "admin", "branch_admin", "finance_head"] as const;
+const CLOSURE_REVIEW_ROLES = ["super_admin", "finance_head"] as const;
+
+router.get(
+  "/pnl/budgets/:budgetId/subhead-closure",
+  requireRole(...CLOSURE_READ_ROLES),
+  h(async (req, res) => {
+    await scopedBudget(req, req.params.budgetId);
+    const data = await budgetClosureService.getStatus(req.params.budgetId);
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/budgets/:budgetId/subhead-closure/close",
+  requireWriteAccess,
+  requireRole(...CLOSURE_CLOSE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    await scopedBudget(req, req.params.budgetId);
+    await budgetClosureService.close(
+      req.params.budgetId,
+      String(req.body?.head ?? ""),
+      req.body?.subHead ? String(req.body.subHead) : null,
+      req.body?.reason ? String(req.body.reason) : null,
+      user.id,
+      user.role
+    );
+    res.json({ success: true });
+  })
+);
+
+router.post(
+  "/pnl/budgets/:budgetId/subhead-closure/bulk-close",
+  requireWriteAccess,
+  requireRole(...CLOSURE_CLOSE_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    await scopedBudget(req, req.params.budgetId);
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    if (!items.length) throw Object.assign(new Error("At least one head/sub-head is required"), { statusCode: 400 });
+    const data = await budgetClosureService.bulkClose(
+      req.params.budgetId,
+      items.map((item: any) => ({ head: String(item.head ?? ""), subHead: item.subHead ? String(item.subHead) : null })),
+      req.body?.reason ? String(req.body.reason) : null,
+      user.id,
+      user.role
+    );
+    res.json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/budgets/:budgetId/subhead-closure/reopen-request",
+  requireWriteAccess,
+  requireRole(...CLOSURE_REOPEN_REQUEST_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    await scopedBudget(req, req.params.budgetId);
+    const data = await budgetClosureService.requestReopen(
+      req.params.budgetId,
+      String(req.body?.head ?? ""),
+      req.body?.subHead ? String(req.body.subHead) : null,
+      String(req.body?.reason ?? ""),
+      user.id,
+      user.role
+    );
+    res.status(201).json({ success: true, data });
+  })
+);
+
+router.post(
+  "/pnl/budget-closure-reopen-requests/:id/review",
+  requireWriteAccess,
+  requireRole(...CLOSURE_REVIEW_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const requestBranchId = await budgetClosureService.getReopenRequestBranch(req.params.id);
+    await assertFinanceRecordBranch({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      recordBranchId: requestBranchId,
+    });
+    const decision = String(req.body?.decision ?? "") as "approve" | "reject";
+    if (!["approve", "reject"].includes(decision)) throw Object.assign(new Error("Invalid decision"), { statusCode: 400 });
+    const data = await budgetClosureService.reviewReopen(
+      req.params.id,
+      decision,
+      user.id,
+      user.role,
+      req.body?.reviewNotes ? String(req.body.reviewNotes) : undefined
     );
     res.json({ success: true, data });
   })

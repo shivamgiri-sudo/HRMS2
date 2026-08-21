@@ -69,15 +69,16 @@ describe("budget approval inbox selects columns that actually exist", () => {
     mockDb.execute.mockImplementation(async () => [[], []]);
     await branchBudgetService.listPendingForReviewer("finance_head", "u", ["finance_head"]);
     expect(mockDb.execute.mock.calls[0][1]).toContain("branch_head_approved");
-
-    vi.clearAllMocks();
-    mockDb.execute.mockImplementation(async () => [[], []]);
-    await branchBudgetService.listPendingForReviewer("accounts_head", "u", ["accounts_head"]);
-    expect(mockDb.execute.mock.calls[0][1]).toContain("finance_head_approved");
   });
 
   it("returns an empty queue for a role that reviews nothing, without querying", async () => {
     const result = await branchBudgetService.listPendingForReviewer("employee", "u", ["employee"]);
+    expect(result).toEqual([]);
+    expect(mockDb.execute).not.toHaveBeenCalled();
+  });
+
+  it("returns an empty queue for accounts_head, without querying — the Accounts Head stage was removed from this workflow (owner decision, 2026-08-21)", async () => {
+    const result = await branchBudgetService.listPendingForReviewer("accounts_head", "u", ["accounts_head"]);
     expect(result).toEqual([]);
     expect(mockDb.execute).not.toHaveBeenCalled();
   });

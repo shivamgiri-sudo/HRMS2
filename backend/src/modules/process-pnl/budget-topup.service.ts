@@ -3,6 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import type { PoolConnection } from "mysql2/promise";
 import { db } from "../../db/mysql.js";
 import {
+  auditInTransaction,
   calculateBudgetLine,
   type BudgetGstType,
   type BudgetTaxTreatment,
@@ -352,11 +353,13 @@ export const budgetTopupService = {
       // with no period anywhere on the row.
       `SELECT t.*,
               l.head, l.sub_head, l.item_name, l.unit_rate,
-              h.budget_number, h.branch_id, h.period_code, bm.branch_name
+              h.budget_number, h.branch_id, h.period_code, bm.branch_name,
+              NULLIF(TRIM(CONCAT_WS(' ', rq.first_name, rq.last_name)), '') AS requested_by_name
          FROM finance_budget_topup_request t
          JOIN finance_budget_line l ON l.id = t.budget_line_id
          JOIN finance_budget_header h ON h.id = t.budget_id
          LEFT JOIN branch_master bm ON bm.id = h.branch_id
+         LEFT JOIN employees rq ON rq.user_id = t.requested_by
          ${where}
         ORDER BY t.created_at DESC
         LIMIT 200`,
@@ -559,7 +562,142 @@ export const budgetTopupService = {
       connection.release();
     }
   },
+
+  /**
+   * Finance Head (and Super Admin) may increase an active budget line directly, bypassing the
+   * 2-stage branch_head -> finance_head request/review chain above (owner decision, 2026-08-21).
+   * Route-level requireRole("finance_head","super_admin") is the actual authority boundary; this
+   * function does not re-check the actor's role, only that the line/period are in a state that
+   * can legally be increased — same discipline create()/review() already follow.
+   *
+   * Reuses applyTopupToLine() (the money-math every top-up already goes through) under the same
+   * row lock GRN consumption uses, inside one transaction. Rather than a bespoke "direct" code
+   * path, this INSERTs a finance_budget_topup_request row that is ALREADY at status='applied'
+   * (both review columns pre-filled to the acting Finance Head, is_direct=1) — so a direct
+   * increase shows up for free in the existing top-up history/queue UI, list()/get(), and the
+   * finance_budget_approval_log / finance_approval_event audit trail, with no new UI needed for
+   * history and no risk of a second, disagreeing ledger of "who increased what, when."
+   */
+  async directApply(
+    input: { budgetLineId: string; additionalQuantity: number; reason: string },
+    actorId: string,
+    actorRole: string
+  ) {
+    const additionalQuantity = roundQuantity(input.additionalQuantity);
+    if (!Number.isFinite(additionalQuantity) || additionalQuantity <= 0) {
+      throw refuse(400, "TOPUP_QUANTITY_INVALID", "Additional quantity must be greater than zero");
+    }
+    if (!input.reason?.trim()) {
+      throw refuse(400, "TOPUP_REASON_REQUIRED", "A reason is required for a direct budget increase");
+    }
+
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [lineRows] = await connection.execute<RowDataPacket[]>(
+        `SELECT l.id, l.budget_id, l.unit_rate, h.status AS budget_status, h.period_code
+           FROM finance_budget_line l
+           JOIN finance_budget_header h ON h.id = l.budget_id
+          WHERE l.id = ?
+          FOR UPDATE`,
+        [input.budgetLineId]
+      );
+      const line = lineRows[0];
+      if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
+      if (String(line.budget_status) !== "active") {
+        throw refuse(
+          409,
+          "BUDGET_NOT_ACTIVE",
+          `A direct increase can only be applied to an active budget line (this budget is '${line.budget_status}')`
+        );
+      }
+      const unitRate = Number(line.unit_rate);
+      if (!(unitRate > 0)) {
+        throw refuse(
+          409,
+          "TOPUP_LINE_HAS_NO_UNIT_RATE",
+          "This budget line has no unit rate, so an increase cannot be sized in units"
+        );
+      }
+      if (await isPeriodLocked(String(line.period_code), connection)) {
+        throw refuse(
+          409,
+          "FINANCE_PERIOD_LOCKED",
+          `${line.period_code} is locked for P&L close, so its budget cannot be increased.`
+        );
+      }
+
+      // Same row lock GRN reserve()/consume() and the review() finance_head branch above use —
+      // a direct increase and a GRN (or another top-up) cannot race against the same line.
+      await lockActiveBudgetLine(connection, String(line.id));
+      await applyTopupToLine(connection, String(line.id), additionalQuantity);
+
+      const requestedAmount = roundMoney(additionalQuantity * unitRate);
+      const requestId = randomUUID();
+      await connection.execute(
+        `INSERT INTO finance_budget_topup_request
+           (id, budget_line_id, budget_id, requested_by, requested_amount, requested_quantity,
+            reason, is_direct, status,
+            branch_head_reviewed_by, branch_head_reviewed_at, branch_head_review_note,
+            finance_head_reviewed_by, finance_head_reviewed_at, finance_head_review_note,
+            applied_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 'applied', ?, NOW(), ?, ?, NOW(), ?, NOW())`,
+        [
+          requestId, line.id, line.budget_id, actorId, requestedAmount, additionalQuantity,
+          input.reason.trim(),
+          actorId, "Direct increase — Finance Head",
+          actorId, "Direct increase — Finance Head",
+        ]
+      );
+
+      await auditInTransaction(
+        connection,
+        String(line.budget_id),
+        "DIRECT_TOPUP",
+        "active",
+        "active",
+        actorId,
+        actorRole,
+        `${input.reason.trim()} — line ${line.id}, +${additionalQuantity} units (+${money2(requestedAmount)})`
+      );
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "budget_topup",
+          entityId: requestId,
+          action: "direct_apply",
+          fromStatus: null,
+          toStatus: "applied",
+          decision: "approve",
+          actorUserId: actorId,
+          actorRole,
+          remarks: input.reason.trim(),
+          details: {
+            budgetLineId: String(line.id),
+            periodCode: String(line.period_code),
+            requestedAmount,
+            appliedQuantity: additionalQuantity,
+            isDirect: true,
+          },
+        },
+        connection
+      );
+
+      await connection.commit();
+      return this.get(requestId);
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+  },
 };
+
+/** Local formatter for the audit-log remark only — this file has no reason to import the
+ *  frontend's Intl.NumberFormat currency helper for one log line. */
+function money2(value: number) {
+  return `₹${Number(value).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+}
 
 
 /**

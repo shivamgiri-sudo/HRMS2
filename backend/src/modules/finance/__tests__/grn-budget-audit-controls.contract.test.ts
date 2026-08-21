@@ -229,7 +229,7 @@ describe("P0P1-4: GRN approval maker-checker checks actor ID, not only role", ()
   });
 });
 
-describe("P0P1-4: Budget approval maker-checker checks actor ID at all three stages", () => {
+describe("P0P1-4: Budget approval maker-checker checks actor ID at both stages", () => {
   it("branch-budget.service.ts review() SELECT includes actor columns", () => {
     const svc = read("src/modules/process-pnl/branch-budget.service.ts");
     const reviewFn = svc.slice(svc.indexOf("async review("));
@@ -249,6 +249,11 @@ describe("P0P1-4: Budget approval maker-checker checks actor ID at all three sta
    * The one deliberate behaviour change is the exemption: finance_head and super_admin may now
    * approve their own work (owner decision — Finance Head approves at all levels). That exemption
    * is asserted explicitly here so it cannot be widened silently.
+   *
+   * Updated 2026-08-21: the Accounts Head stage was removed from this workflow (owner decision),
+   * collapsing the chain to 2 stages (Branch Head, then Finance Head as the terminal approver).
+   * fhApprovedBy is gone — with only 2 stages there is no third stage left for a Finance Head's
+   * own prior approval to matter to.
    */
   it("branch-budget.service.ts review() enforces actor-identity maker-checker at every stage", () => {
     const svc = read("src/modules/process-pnl/branch-budget.service.ts");
@@ -259,14 +264,12 @@ describe("P0P1-4: Budget approval maker-checker checks actor ID at all three sta
     expect(reviewFn).toContain("Maker-checker violation");
     expect(reviewFn).toContain("prior.id === actorId");
 
-    // All three prior-actor identities are still considered.
+    // Both prior-actor identities are still considered.
     expect(reviewFn).toContain("submittedBy");
     expect(reviewFn).toContain("bhApprovedBy");
-    expect(reviewFn).toContain("fhApprovedBy");
 
-    // Earlier approvers are only relevant at the later stages, and the stage decides.
-    expect(reviewFn).toContain('stage.key === "finance_head" || stage.key === "accounts_head"');
-    expect(reviewFn).toContain('stage.key === "accounts_head"');
+    // The Branch Head approver is only relevant at the later (Finance Head) stage.
+    expect(reviewFn).toContain('stage.key === "finance_head"');
 
     // Exemption is exactly finance_head + super_admin — no wider.
     expect(reviewFn).toContain("!MAKER_CHECKER_EXEMPT_ROLES.has(role)");

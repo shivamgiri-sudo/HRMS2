@@ -23,6 +23,11 @@ export interface BudgetCoverageItem {
   budget_line_count: number;
   gross_budget_amount: number;
   pnl_budget_amount: number;
+  /** Already returned by GET .../coverage (budget-coverage.service.ts), just never typed or
+   *  rendered until the Coverage tab table added a Reviewed by/At column. */
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  reviewed_by_name: string | null;
 }
 
 export interface BudgetCoverageResponse {

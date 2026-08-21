@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 974,
-  "columnCount": 13878,
+  "tableCount": 976,
+  "columnCount": 13903,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -7033,6 +7033,22 @@
       "remarks",
       "created_at"
     ],
+    "finance_budget_closure_reopen_request": [
+      "id",
+      "closure_id",
+      "budget_id",
+      "head",
+      "sub_head",
+      "reason",
+      "status",
+      "requested_by",
+      "requested_at",
+      "reviewed_by",
+      "reviewed_at",
+      "review_notes",
+      "created_at",
+      "updated_at"
+    ],
     "finance_budget_header": [
       "id",
       "budget_number",
@@ -7209,6 +7225,18 @@
       "source_created_at",
       "synced_at"
     ],
+    "finance_budget_subhead_closure": [
+      "id",
+      "budget_id",
+      "head",
+      "sub_head",
+      "status",
+      "closed_by",
+      "closed_at",
+      "closed_reason",
+      "created_at",
+      "updated_at"
+    ],
     "finance_budget_subhead_status": [
       "id",
       "budget_id",
@@ -7228,6 +7256,7 @@
       "requested_amount",
       "requested_quantity",
       "reason",
+      "is_direct",
       "status",
       "branch_head_reviewed_by",
       "branch_head_reviewed_at",

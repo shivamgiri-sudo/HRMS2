@@ -77,6 +77,7 @@ import { orgRouter } from "./modules/org/org.routes.js";
 import { eventsRouter } from "./modules/org/events.routes.js";
 import { orgSettingsRouter } from "./modules/org/org_settings.routes.js";
 import { bulkUploadRouter } from "./modules/bulk-upload/bulk-upload.routes.js";
+import { bulkApprovalRouter } from "./modules/bulk-upload/bulk-approval.routes.js";
 import { workflowRouter } from "./modules/workflow/workflow.routes.js";
 import { lifecycleRouter } from "./modules/lifecycle/lifecycle.routes.js";
 import { assetsRouter } from "./modules/assets/assets.routes.js";
@@ -223,6 +224,7 @@ import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
 import { gstExportRouter } from "./modules/gst/gst-export.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
+import { vendorApprovalRouter } from "./modules/finance/vendor-approval.routes.js";
 import { imprestRouter } from "./modules/finance/imprest.routes.js";
 import { salaryVoucherRouter } from "./modules/finance/salary-voucher.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
@@ -460,6 +462,10 @@ app.use("/api", clientRouter);
 app.use("/api/onboarding/data", onboardingDataRouter);
 app.use("/api/onboarding/penny-drop", pennyDropRouter);
 app.use("/api/onboarding/name-validation", nameValidationRouter);
+// Mounted BEFORE bulkUploadRouter so its more specific /approvals/* paths are not
+// shadowed by a looser pattern there — the router-shadowing failure mode that has
+// silently disabled guards elsewhere in this codebase.
+app.use("/api/bulk-upload", bulkApprovalRouter);
 app.use("/api/bulk-upload", bulkUploadRouter);
 app.use("/api/admin/email-templates", emailTemplatesRouter);
 app.use("/api/workflow", workflowRouter);
@@ -516,6 +522,10 @@ app.use("/api/finance", vendorPaymentRouter);
 // same literal-segment shadowing that swallowed vendor-payments/aging.
 app.use("/api/gst", gstExportRouter);
 app.use("/api/finance", grnRouter);
+// vendor-approval.routes.ts's paths are all literal ("/vendor-approval/raise", "/vendor-approval/
+// requests", etc.) — none of grnRouter's ":id"-shaped segments can shadow them, so bare
+// /api/finance is safe here (unlike imprest below).
+app.use("/api/finance", vendorApprovalRouter);
 // Mounted at its own /imprest prefix rather than bare /api/finance, so no imprest path can
 // ever be shadowed by grnRouter's "/grns/:id"-shaped routes above it.
 app.use("/api/finance/imprest", imprestRouter);

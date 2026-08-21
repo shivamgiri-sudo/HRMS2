@@ -3,9 +3,12 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 
 /**
- * Branch-budget review authority, after the 2026-08-19 owner decision that Finance Head approves
- * branch budgets at every level and that maker-checker does not apply to Finance Head or
- * Super Admin.
+ * Branch-budget review authority, after:
+ *  - the 2026-08-19 owner decision that Finance Head approves branch budgets at every level and
+ *    that maker-checker does not apply to Finance Head or Super Admin;
+ *  - the 2026-08-21 owner decision that removed the Accounts Head stage entirely. Account Head
+ *    approval is not required to activate a branch budget — the chain is now 2 stages
+ *    (Branch Head, then Finance Head as the terminal approver straight to 'active').
  *
  * Written against the source rather than by driving review(), which needs a live connection and a
  * FOR UPDATE transaction — the same approach budget-governance-controls.contract.test.ts already
@@ -34,8 +37,8 @@ describe("branch budget review — stage authority", () => {
     expect(body).not.toMatch(/const expectedStatus\s*=/);
   });
 
-  it("lets Finance Head act at all three stages, and Super Admin too", () => {
-    for (const stage of ["submitted", "branch_head_approved", "finance_head_approved"]) {
+  it("lets Finance Head act at both stages, and Super Admin too", () => {
+    for (const stage of ["submitted", "branch_head_approved"]) {
       const block = svc.slice(svc.indexOf(`  ${stage}: {`));
       const roles = block.slice(0, block.indexOf("},"));
       expect(roles, `${stage} must admit finance_head`).toContain('"finance_head"');
@@ -46,15 +49,19 @@ describe("branch budget review — stage authority", () => {
   it("keeps each stage owner able to act on their own stage", () => {
     const submitted = svc.slice(svc.indexOf("  submitted: {"));
     expect(submitted.slice(0, submitted.indexOf("},"))).toContain('"branch_head"');
-    const fha = svc.slice(svc.indexOf("  finance_head_approved: {"));
-    expect(fha.slice(0, fha.indexOf("},"))).toContain('"accounts_head"');
+    const bha = svc.slice(svc.indexOf("  branch_head_approved: {"));
+    expect(bha.slice(0, bha.indexOf("},"))).toContain('"finance_head"');
   });
 
-  it("does NOT widen the middle stage to branch_head or accounts_head", () => {
+  it("has exactly two stages, with the Accounts Head stage removed", () => {
+    const stagesBlock = svc.slice(svc.indexOf("const REVIEW_STAGES ="), svc.indexOf("} as const;", svc.indexOf("const REVIEW_STAGES =")));
+    expect(stagesBlock).toContain("submitted:");
+    expect(stagesBlock).toContain("branch_head_approved:");
+    expect(stagesBlock).not.toContain("finance_head_approved:");
+    expect(stagesBlock).not.toContain('"accounts_head"');
+    // The terminal stage advances straight to active — no third resting status.
     const bha = svc.slice(svc.indexOf("  branch_head_approved: {"));
-    const roles = bha.slice(0, bha.indexOf("},"));
-    expect(roles).not.toContain('"branch_head"');
-    expect(roles).not.toContain('"accounts_head"');
+    expect(bha.slice(0, bha.indexOf("},"))).toContain('next: "active"');
   });
 
   it("stamps the stage's own column and advances to the stage's own next status", () => {
@@ -83,10 +90,9 @@ describe("branch budget review — stage authority", () => {
     const body = reviewBody();
     expect(body).toContain("BUDGET_MAKER_CHECKER");
     expect(body).toContain("priorActors");
-    // submitter is checked at every stage; earlier approvers only at later stages
+    // submitter is checked at every stage; the Branch Head approver only at the later stage
     expect(body).toContain("submitted this budget");
     expect(body).toContain("performed the Branch Head approval");
-    expect(body).toContain("performed the Finance Head approval");
   });
 
   it("keeps the optimistic status lock on the row it actually read", () => {

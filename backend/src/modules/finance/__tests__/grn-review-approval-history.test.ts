@@ -167,10 +167,17 @@ describe("GRN review roles match the stages that exist", () => {
   it("the GRN chain really is two stages", () => {
     // If a third stage is ever added, this test should fail and be reconsidered — not the
     // role list quietly widened to match a stage that does not exist.
-    const grnBranch = resolver.slice(resolver.indexOf(': input.currentStatus === "submitted"'));
-    expect(grnBranch.slice(0, 260)).toContain('"branch_head"');
-    expect(grnBranch.slice(0, 260)).toContain('"finance_head"');
-    expect(grnBranch.slice(0, 260)).not.toContain('"accounts_head"');
+    //
+    // Updated 2026-08-21: the budget header workflow's Accounts Head stage was removed (owner
+    // decision), so resolveFinanceStageRole's budget and grn branches collapsed into ONE shared
+    // 2-stage ternary — there is no longer a separate "grn branch" to slice out.
+    const expectedRoleBlock = resolver.slice(
+      resolver.indexOf("const expectedRole ="),
+      resolver.indexOf(";", resolver.indexOf("const expectedRole =")) + 1
+    );
+    expect(expectedRoleBlock).toContain('"branch_head"');
+    expect(expectedRoleBlock).toContain('"finance_head"');
+    expect(expectedRoleBlock).not.toContain('"accounts_head"');
   });
 
   it("neither review role list grants a stage the resolver cannot return", () => {

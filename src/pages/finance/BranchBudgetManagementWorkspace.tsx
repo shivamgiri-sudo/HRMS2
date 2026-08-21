@@ -55,6 +55,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -88,6 +89,8 @@ import {
   useBudgetCoverage,
 } from "@/hooks/useBudgetCoverage";
 import { useAuth } from "@/contexts/AuthContext";
+import { BudgetGrnDrillDownDialog, type GrnDrillDownContext } from "@/components/finance/budget/BudgetGrnDrillDownDialog";
+import { ExportButton } from "@/components/ats/command-center/shared/ExportButton";
 import {
   type DeleteExpenseMasterResult,
   type FinanceExpenseHead,
@@ -100,7 +103,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { GST_RATES } from "@/lib/gst";
 import { BranchBudgetMatrixPanel } from "@/components/finance/pnl/BranchBudgetMatrixPanel";
-import { BudgetTopupPanel } from "@/components/finance/budget/BudgetTopupPanel";
+import { BudgetTopupPanel, type BudgetTopupRequest } from "@/components/finance/budget/BudgetTopupPanel";
 import { BudgetApprovalInbox } from "@/components/finance/budget/BudgetApprovalInbox";
 import { BranchBudgetImportDialog } from "@/components/finance/pnl/BranchBudgetImportDialog";
 import {
@@ -138,7 +141,7 @@ const ALLOCATION_DRIVERS = [
   ["direct_tagging", "Direct tagging"],
 ] as const;
 
-type WorkspaceTab = "plan" | "coverage" | "rollup" | "matrix" | "meters" | "readiness" | "approval" | "topups" | "master" | "variance" | "year" | "inbox";
+type WorkspaceTab = "plan" | "coverage" | "matrix" | "meters" | "readiness" | "approval" | "topups" | "master" | "variance" | "cost-centre" | "year" | "inbox";
 type CoverageDraft = Record<string, { status: BudgetPlanningStatus | ""; reason: string }>;
 type BudgetCapabilities = {
   roles: string[];
@@ -150,7 +153,33 @@ type BudgetCapabilities = {
   canEditExpenseMaster: boolean;
   canReviewBranchStage: boolean;
   canReviewFinanceStage: boolean;
-  canReviewAccountsStage: boolean;
+  /** Finance Head (or super_admin) may increase an active budget line's amount directly,
+   *  bypassing the 2-stage top-up request/review flow. Owner decision, 2026-08-21. */
+  canDirectTopup: boolean;
+  /** Monthly business-case close/reopen (owner decision, 2026-08-21). Branch Admin + Finance
+   *  Head may close a head/sub-head directly; deliberately excludes branch_head. */
+  canCloseBusinessCase: boolean;
+  /** Approving a reopen request — Finance Head (+ super_admin) only. */
+  canReviewReopen: boolean;
+};
+
+/** One row of GET /pnl/budgets/:id/subhead-closure. */
+type SubheadClosureRow = {
+  head: string;
+  subHead: string | null;
+  closureId: string | null;
+  status: "open" | "closed";
+  closedBy: string | null;
+  closedByName: string | null;
+  closedAt: string | null;
+  closedReason: string | null;
+  pendingReopen: {
+    id: string;
+    reason: string;
+    requestedBy: string | null;
+    requestedByName: string | null;
+    requestedAt: string | null;
+  } | null;
 };
 
 /** One row of GET /pnl/budgets/:id/cost-centre-utilization. Mirrors BudgetCostCentreRow in
@@ -272,6 +301,15 @@ function money(value: number) {
     currency: "INR",
     maximumFractionDigits: 2,
   }).format(Number(value || 0));
+}
+
+/** Single source of truth for "X% consumed", used everywhere a budgeted/consumed pair is shown
+ *  (Variance, Cost Centre, Grid Matrix tabs). Previously duplicated inline five times with
+ *  identical logic — verified correct (matches the backend's own available_gross_amount =
+ *  gross - reserved - consumed reconciliation), extracted here to prevent future drift rather
+ *  than to fix a bug. */
+function consumedPct(consumed: number, budgeted: number) {
+  return budgeted > 0 ? Math.round((consumed / budgeted) * 100) : 0;
 }
 
 function statusLabel(value: string) {
@@ -437,7 +475,6 @@ const PIPELINE_STAGES = [
   { key: "draft",                 label: "Draft" },
   { key: "submitted",             label: "Branch Head" },
   { key: "branch_head_approved",  label: "Finance Head" },
-  { key: "finance_head_approved", label: "Accounts Head" },
   { key: "active",                label: "Active" },
 ] as const;
 
@@ -464,83 +501,6 @@ function ApprovalPipeline({ status }: { status: string }) {
   );
 }
 
-function CoverageDecision({
-  item,
-  draft,
-  editable,
-  onChange,
-  onAddLine,
-}: {
-  item: BudgetCoverageItem;
-  draft: { status: BudgetPlanningStatus | ""; reason: string };
-  editable: boolean;
-  onChange: (value: { status: BudgetPlanningStatus | ""; reason: string }) => void;
-  onAddLine: () => void;
-}) {
-  const lineConflict = draft.status !== "planned" && item.budget_line_count > 0;
-  const plannedWithoutLine = draft.status === "planned" && item.budget_line_count <= 0;
-  return (
-    <div className="grid gap-4 p-4 xl:grid-cols-[1.25fr_0.9fr_1fr_auto]">
-      <div>
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="text-sm font-semibold text-slate-950">{item.sub_head_name}</p>
-          <Badge variant="outline">{item.default_unit}</Badge>
-          <Badge variant="outline">{item.budget_line_count} line(s)</Badge>
-        </div>
-        <p className="mt-2 text-[11px] text-slate-500">
-          {item.default_tax_treatment.replaceAll("_", " ")} · {item.default_gst_rate}% · {item.default_allocation_driver?.replaceAll("_", " ") ?? "No default allocation"}
-        </p>
-        <p className="mt-1 text-xs font-semibold text-slate-700">{money(item.gross_budget_amount)}</p>
-      </div>
-      <div className="grid grid-cols-3 gap-1">
-        {(["planned", "not_planned", "not_applicable"] as BudgetPlanningStatus[]).map((status) => (
-          <button
-            type="button"
-            key={status}
-            disabled={!editable}
-            onClick={() => onChange({ status, reason: status === "planned" ? "" : draft.reason })}
-            className={`min-h-[44px] rounded-xl border px-2 py-2 text-xs font-semibold transition ${
-              draft.status === status
-                ? status === "planned"
-                  ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                  : status === "not_planned"
-                    ? "border-amber-300 bg-amber-50 text-amber-700"
-                    : "border-slate-300 bg-slate-100 text-slate-700"
-                : "border-slate-200 bg-white text-slate-500"
-            }`}
-          >
-            {status === "planned" ? "Planned" : status === "not_planned" ? "Not Planned" : "N/A"}
-          </button>
-        ))}
-      </div>
-      <div>
-        {draft.status === "planned" ? (
-          <div className={`rounded-xl border p-3 text-xs ${plannedWithoutLine ? "border-rose-200 bg-rose-50 text-rose-800" : "border-emerald-200 bg-emerald-50 text-emerald-800"}`}>
-            {plannedWithoutLine ? "A detailed budget line is mandatory." : "Detailed line is linked."}
-          </div>
-        ) : (
-          <>
-            <Input
-              disabled={!editable}
-              value={draft.reason}
-              onChange={(event) => onChange({ ...draft, reason: event.target.value })}
-              placeholder="Mandatory reason"
-            />
-            {lineConflict && <p className="mt-1 text-[10px] text-rose-600">Remove linked lines before excluding this Sub-head.</p>}
-          </>
-        )}
-      </div>
-      <div className="flex items-center justify-end">
-        {plannedWithoutLine && editable && (
-          <Button size="sm" variant="outline" onClick={onAddLine}>
-            <Plus className="mr-1 h-3.5 w-3.5" />Add line
-          </Button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 export default function BranchBudgetManagementWorkspace() {
   // A blocked GRN's "Request a budget increase" action deep-links here with
   // ?tab=topups&topupLine=<id>&branchId=<id>&period=<yyyy-mm>, pre-selecting everything
@@ -559,7 +519,6 @@ export default function BranchBudgetManagementWorkspace() {
   const [coverageDraft, setCoverageDraft] = useState<CoverageDraft>({});
   const [coverageSearch, setCoverageSearch] = useState("");
   const [bulkNaReason, setBulkNaReason] = useState("");
-  const [expandedHeads, setExpandedHeads] = useState<Set<string>>(new Set());
   const [reviewRemarks, setReviewRemarks] = useState("");
   /** Reviewer's per head/sub-head correction notes, keyed by correctionKey(line). */
   const [correctionNotes, setCorrectionNotes] = useState<Record<string, string>>({});
@@ -610,7 +569,7 @@ export default function BranchBudgetManagementWorkspace() {
     if (!capabilities || didSetInitialTab.current) return;
     // Only override if the URL didn't request a specific tab (those already override to "plan" or "topups")
     const requestedTab = new URLSearchParams(window.location.search).get("tab");
-    if (!requestedTab && !capabilities.canCreate && (capabilities.canReviewBranchStage || capabilities.canReviewFinanceStage || capabilities.canReviewAccountsStage)) {
+    if (!requestedTab && !capabilities.canCreate && (capabilities.canReviewBranchStage || capabilities.canReviewFinanceStage)) {
       setTab("approval");
     }
     didSetInitialTab.current = true;
@@ -844,6 +803,107 @@ export default function BranchBudgetManagementWorkspace() {
     enabled: Boolean(detailId),
   });
   const utilizationByCostCentre = costCentreUtilizationQuery.data ?? [];
+
+  /** Monthly business-case close/reopen status per (head, sub-head) for the open budget — item 11
+   *  (owner requirement, 2026-08-21). One row per head/sub-head the budget has a line under;
+   *  a head/sub-head with no row reads as 'open' (nothing has to be closed to be spendable). */
+  const closureStatusQuery = useQuery({
+    queryKey: ["budget-subhead-closure", detailId],
+    queryFn: async () => {
+      if (!detailId) return [];
+      const response = await hrmsApi.get<{ success: boolean; data: SubheadClosureRow[] }>(
+        `/api/finance/pnl/budgets/${detailId}/subhead-closure`
+      );
+      return response.data ?? [];
+    },
+    enabled: Boolean(detailId),
+  });
+  const closureByKey = useMemo(() => {
+    const map = new Map<string, SubheadClosureRow>();
+    for (const row of closureStatusQuery.data ?? []) {
+      map.set(`${row.head}|${row.subHead ?? ""}`, row);
+    }
+    return map;
+  }, [closureStatusQuery.data]);
+  const invalidateClosure = () => {
+    void qc.invalidateQueries({ queryKey: ["budget-subhead-closure", detailId] });
+  };
+  const [selectedForClose, setSelectedForClose] = useState<Set<string>>(new Set());
+  const [reopenTarget, setReopenTarget] = useState<{ head: string; subHead: string | null } | null>(null);
+  const [reopenReason, setReopenReason] = useState("");
+
+  const closeMutation = useMutation({
+    mutationFn: async ({ head, subHead }: { head: string; subHead: string | null }) =>
+      hrmsApi.post(`/api/finance/pnl/budgets/${detailId}/subhead-closure/close`, { head, subHead, reason: null }),
+    onSuccess: () => { toast.success("Closed"); invalidateClosure(); },
+    onError: (error: Error) => toast.error(error.message || "Failed to close"),
+  });
+
+  const bulkCloseMutation = useMutation({
+    mutationFn: async (items: { head: string; subHead: string | null }[]) =>
+      hrmsApi.post(`/api/finance/pnl/budgets/${detailId}/subhead-closure/bulk-close`, { items, reason: null }),
+    onSuccess: (_data, items) => {
+      toast.success(`Closed ${items.length} head/sub-head(s)`);
+      setSelectedForClose(new Set());
+      invalidateClosure();
+    },
+    onError: (error: Error) => toast.error(error.message || "Failed to close the selected rows"),
+  });
+
+  const requestReopenMutation = useMutation({
+    mutationFn: async () => {
+      if (!reopenTarget) throw new Error("Nothing selected");
+      if (!reopenReason.trim()) throw new Error("A reason is required");
+      return hrmsApi.post(`/api/finance/pnl/budgets/${detailId}/subhead-closure/reopen-request`, {
+        head: reopenTarget.head, subHead: reopenTarget.subHead, reason: reopenReason.trim(),
+      });
+    },
+    onSuccess: () => {
+      toast.success("Reopen requested — Finance Head has been notified");
+      setReopenTarget(null);
+      setReopenReason("");
+      invalidateClosure();
+    },
+    onError: (error: Error) => toast.error(error.message || "Failed to request reopen"),
+  });
+
+  const reviewReopenMutation = useMutation({
+    mutationFn: async ({ id, decision }: { id: string; decision: "approve" | "reject" }) =>
+      hrmsApi.post(`/api/finance/pnl/budget-closure-reopen-requests/${id}/review`, {
+        decision, reviewNotes: decision === "reject" ? "Rejected from Variance tab" : undefined,
+      }),
+    onSuccess: (_data, variables) => {
+      toast.success(variables.decision === "approve" ? "Reopened" : "Reopen request rejected");
+      invalidateClosure();
+    },
+    onError: (error: Error) => toast.error(error.message || "Review failed"),
+  });
+
+  /** Every top-up request for this branch+period, for the Variance tab's "Top-up status" column.
+   *  Reuses the exact endpoint/response shape BudgetTopupPanel already queries — no new route. */
+  const varianceTopupsQuery = useQuery({
+    queryKey: ["budget-topups-for-variance", branchId, period],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (branchId) params.set("branchId", branchId);
+      if (period) params.set("period", period);
+      const response = await hrmsApi.get<{ success: boolean; data: BudgetTopupRequest[] }>(
+        `/api/finance/pnl/budget-topups?${params}`
+      );
+      return response.data ?? [];
+    },
+    enabled: Boolean(branchId && period),
+  });
+  const topupsByLineId = useMemo(() => {
+    const map = new Map<string, BudgetTopupRequest[]>();
+    for (const request of varianceTopupsQuery.data ?? []) {
+      const list = map.get(request.budget_line_id) ?? [];
+      list.push(request);
+      map.set(request.budget_line_id, list);
+    }
+    return map;
+  }, [varianceTopupsQuery.data]);
+
   const ccTotals = useMemo(() => {
     return utilizationByCostCentre.reduce(
       (acc, cc) => ({
@@ -856,6 +916,21 @@ export default function BranchBudgetManagementWorkspace() {
       { lineCount: 0, budgeted: 0, reserved: 0, consumed: 0, available: 0 }
     );
   }, [utilizationByCostCentre]);
+  /** Footer totals for the Variance tab — that table had no totals row at all (unlike Cost
+   *  Centre's ccTotals above), so Branch/Finance Head had no at-a-glance branch-level figure
+   *  without adding every line up by hand. */
+  const varianceTotals = useMemo(() => {
+    const lines = detailQuery.data?.lines ?? [];
+    return lines.reduce(
+      (acc, line) => ({
+        budgeted: acc.budgeted + Number(line.gross_amount ?? 0),
+        reserved: acc.reserved + Number(line.reserved_amount ?? 0),
+        consumed: acc.consumed + Number(line.consumed_amount ?? 0),
+        available: acc.available + Number(line.available_gross_amount ?? 0),
+      }),
+      { budgeted: 0, reserved: 0, consumed: 0, available: 0 }
+    );
+  }, [detailQuery.data?.lines]);
   /** Which cost centres are drilled open into their head / sub-head detail. */
   const [expandedCostCentres, setExpandedCostCentres] = useState<Set<string>>(new Set());
   const toggleCostCentre = (key: string) =>
@@ -865,6 +940,36 @@ export default function BranchBudgetManagementWorkspace() {
       else next.add(key);
       return next;
     });
+
+  /** Variance-tab drill-down: which (head, sub-head) rows are expanded into their cost-centre
+   *  breakdown, and which GRN detail dialog (if any) is open. Both items 4 & 8 — the same
+   *  costCentreUtilizationQuery data (already loaded regardless of active tab) is pivoted
+   *  client-side rather than fetched again, and the same dialog is reused from both tabs. */
+  const [expandedVarianceRows, setExpandedVarianceRows] = useState<Set<string>>(new Set());
+  const toggleVarianceRow = (key: string) =>
+    setExpandedVarianceRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  const [grnDrillDown, setGrnDrillDown] = useState<GrnDrillDownContext | null>(null);
+  /** Every cost centre carrying spend against this exact (head, sub-head) pair, pivoted
+   *  client-side from utilizationByCostCentre — that query already returns each cost centre's
+   *  heads array, so "which cost centres for this head/subhead" needs no new endpoint. */
+  function costCentresForHeadSubHead(head: string, subHead: string | null) {
+    return utilizationByCostCentre
+      .map((cc) => ({ cc, h: cc.heads.find((entry) => entry.head === head && (entry.subHead ?? null) === subHead) }))
+      .filter((entry): entry is { cc: CostCentreUtilizationRow; h: CostCentreUtilizationHead } => Boolean(entry.h))
+      .map(({ cc, h }) => ({
+        costCentreId: cc.costCentreId,
+        costCentreName: cc.costCentreName,
+        budgeted: h.budgeted,
+        reserved: h.reserved,
+        consumed: h.consumed,
+        available: h.available,
+      }));
+  }
 
   // Tax amendment queue — pending and recent amendments for the active/selected budget.
   const taxAmendmentsQuery = useQuery({
@@ -1006,7 +1111,6 @@ export default function BranchBudgetManagementWorkspace() {
         ])
       )
     );
-    setExpandedHeads((current) => current.size ? current : new Set(items.map((item) => item.expense_head_id)));
   }, [coverageQuery.data]);
 
   useEffect(() => {
@@ -1066,9 +1170,7 @@ export default function BranchBudgetManagementWorkspace() {
       ? Boolean(capabilities?.canReviewBranchStage)
       : builderStatus === "branch_head_approved"
         ? Boolean(capabilities?.canReviewFinanceStage)
-        : builderStatus === "finance_head_approved"
-          ? Boolean(capabilities?.canReviewAccountsStage)
-          : false
+        : false
   );
   /** Monthly drivers and coverage stay with the branch admin who owns the plan; a reviewer's
    *  in-place edit is scoped to the budget lines themselves. */
@@ -1105,14 +1207,58 @@ export default function BranchBudgetManagementWorkspace() {
   const filteredCoverage = coverageItems.filter((item) =>
     `${item.head_name} ${item.sub_head_name}`.toLowerCase().includes(coverageSearch.toLowerCase())
   );
-  const coverageGroups = Array.from(
-    filteredCoverage.reduce((map, item) => {
-      const group = map.get(item.expense_head_id) ?? { id: item.expense_head_id, name: item.head_name, items: [] as BudgetCoverageItem[] };
-      group.items.push(item);
-      map.set(item.expense_head_id, group);
-      return map;
-    }, new Map<string, { id: string; name: string; items: BudgetCoverageItem[] }>()).values()
-  );
+
+  /** Export button data for the currently active tab — flattens whatever that tab already has
+   *  loaded into rows ExportButton can hand to xlsx/csv/json. Ships for the four tabs users asked
+   *  for first (plan/variance, coverage, cost-centre); the remaining tabs render a disabled
+   *  button (ExportButton disables itself on an empty array) rather than exporting nothing. */
+  const exportRows = useMemo(() => {
+    if (tab === "plan" || tab === "variance") {
+      return (detailQuery.data?.lines ?? []).map((line) => ({
+        Head: line.head,
+        "Sub-head": line.sub_head ?? "",
+        Item: line.item_name,
+        Budgeted: Number(line.gross_amount ?? 0),
+        Reserved: Number(line.reserved_amount ?? 0),
+        Consumed: Number(line.consumed_amount ?? 0),
+        Available: Number(line.available_gross_amount ?? 0),
+      }));
+    }
+    if (tab === "cost-centre") {
+      return utilizationByCostCentre.flatMap((cc) =>
+        cc.heads.length
+          ? cc.heads.map((h) => ({
+              "Cost Centre": cc.costCentreName,
+              Head: h.head,
+              "Sub-head": h.subHead ?? "",
+              Budgeted: h.budgeted,
+              Reserved: h.reserved,
+              Consumed: h.consumed,
+              Available: h.available,
+            }))
+          : [{
+              "Cost Centre": cc.costCentreName,
+              Head: "",
+              "Sub-head": "",
+              Budgeted: cc.budgeted,
+              Reserved: cc.reserved,
+              Consumed: cc.consumed,
+              Available: cc.available,
+            }]
+      );
+    }
+    if (tab === "coverage") {
+      return filteredCoverage.map((item) => ({
+        Head: item.head_name,
+        "Sub-head": item.sub_head_name,
+        Status: item.planning_status ?? "",
+        Reason: item.reason ?? "",
+        "Budget lines": item.budget_line_count,
+        "Gross amount": item.gross_budget_amount,
+      }));
+    }
+    return [];
+  }, [tab, detailQuery.data?.lines, utilizationByCostCentre, filteredCoverage]);
 
   /** Keep the last 50 states so Undo can step back without holding the whole session. */
   function pushUndo() {
@@ -1345,7 +1491,6 @@ export default function BranchBudgetManagementWorkspace() {
       });
       return next;
     });
-    setExpandedHeads((current) => new Set([...current, ...pendingCoverage.eligible.map((item) => item.expense_head_id)]));
     toast.success(
       `${pendingCoverage.eligible.length} Sub-head(s) marked "N/A" — review below, then click Save decisions.` +
         (pendingCoverage.blocked.length
@@ -1562,7 +1707,6 @@ export default function BranchBudgetManagementWorkspace() {
   function canReview(budget: { status: string }) {
     if (budget.status === "submitted") return Boolean(capabilities?.canReviewBranchStage);
     if (budget.status === "branch_head_approved") return Boolean(capabilities?.canReviewFinanceStage);
-    if (budget.status === "finance_head_approved") return Boolean(capabilities?.canReviewAccountsStage);
     return false;
   }
 
@@ -1601,6 +1745,10 @@ export default function BranchBudgetManagementWorkspace() {
                   </>
                 )}
                 <Button asChild size="sm" variant="outline"><Link to="/finance/grn">Open Smart GRN</Link></Button>
+                <ExportButton
+                  data={exportRows}
+                  filename={`branch-budget-${tab}-${branchId || "branch"}-${period || "period"}`}
+                />
               </div>
             </div>
             <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -1616,7 +1764,6 @@ export default function BranchBudgetManagementWorkspace() {
             <TabsList className="h-auto w-full flex-wrap justify-start rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
               <TabsTrigger value="plan"><Layers3 className="mr-2 h-4 w-4" />Plan Builder</TabsTrigger>
               <TabsTrigger value="coverage"><ClipboardCheck className="mr-2 h-4 w-4" />Head/Sub-head Coverage</TabsTrigger>
-              <TabsTrigger value="rollup"><Layers3 className="mr-2 h-4 w-4" />Cost-Centre Rollup</TabsTrigger>
               <TabsTrigger value="matrix"><Grid3x3 className="mr-2 h-4 w-4" />Grid Matrix</TabsTrigger>
               <TabsTrigger value="meters"><Gauge className="mr-2 h-4 w-4" />Meters</TabsTrigger>
               <TabsTrigger value="readiness"><AlertTriangle className="mr-2 h-4 w-4" />Exceptions & Readiness</TabsTrigger>
@@ -1626,7 +1773,7 @@ export default function BranchBudgetManagementWorkspace() {
               <TabsTrigger value="cost-centre"><Building2 className="mr-2 h-4 w-4" />Cost Centre</TabsTrigger>
               <TabsTrigger value="year"><Calendar className="mr-2 h-4 w-4" />Year</TabsTrigger>
               <TabsTrigger value="master"><Settings2 className="mr-2 h-4 w-4" />Expense Master</TabsTrigger>
-              {(capabilities?.canReviewBranchStage || capabilities?.canReviewFinanceStage || capabilities?.canReviewAccountsStage) && (
+              {(capabilities?.canReviewBranchStage || capabilities?.canReviewFinanceStage) && (
                 <TabsTrigger value="inbox"><Inbox className="mr-2 h-4 w-4" />My Approval Inbox</TabsTrigger>
               )}
             </TabsList>
@@ -2072,56 +2219,126 @@ export default function BranchBudgetManagementWorkspace() {
             <TabsContent value="coverage" className="space-y-5">
               {!detailId ? <div className="rounded-3xl border border-blue-200 bg-blue-50 p-10 text-center"><ClipboardCheck className="mx-auto h-10 w-10 text-blue-700" /><p className="mt-3 font-bold text-blue-950">Save the budget draft first</p><Button className="mt-4" onClick={() => setTab("plan")}>Open Plan Builder</Button></div> : coverageQuery.isLoading ? <div className="flex justify-center rounded-3xl border border-slate-200 bg-white py-20"><Loader2 className="h-7 w-7 animate-spin" /></div> : <>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6"><Metric label="Completion" value={`${coverageQuery.data?.summary.completionPct ?? 0}%`} tone={coverageQuery.data?.summary.readyToSubmit ? "emerald" : "amber"} /><Metric label="All Sub-heads" value={String(coverageQuery.data?.summary.total ?? 0)} /><Metric label="Planned" value={String(coverageQuery.data?.summary.planned ?? 0)} tone="emerald" /><Metric label="Not planned" value={String(coverageQuery.data?.summary.notPlanned ?? 0)} tone="amber" /><Metric label="Not applicable" value={String(coverageQuery.data?.summary.notApplicable ?? 0)} /><Metric label="Planned, no line" value={String(coverageQuery.data?.summary.incomplete ?? 0)} tone={(coverageQuery.data?.summary.incomplete ?? 0) ? "amber" : "emerald"} /></div>
-                <Card className="rounded-3xl border-slate-200 shadow-sm"><CardHeader className="border-b border-slate-100"><div className="flex flex-wrap items-center justify-between gap-3"><div><CardTitle>Complete Expense Catalogue</CardTitle><p className="mt-1 text-xs text-slate-500">Budget only the Sub-heads this branch spends on. Anything you leave alone is simply not budgeted — no decision or reason needed to submit.</p></div><div className="flex gap-2"><div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input className="pl-9" value={coverageSearch} onChange={(event) => setCoverageSearch(event.target.value)} /></div>{capabilities?.canCreate && <Button onClick={() => void saveCoverageDecisions()} disabled={saveCoverage.isPending}><Save className="mr-2 h-4 w-4" />Save decisions</Button>}</div></div>{capabilities?.canCreate && pendingCoverage.eligible.length > 0 && <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-3"><Input className="max-w-xs" value={bulkNaReason} onChange={(event) => setBulkNaReason(event.target.value)} placeholder="Reason for marking remaining N/A" /><Button variant="outline" size="sm" disabled={!canEdit} onClick={markRemainingNotApplicable}><XCircle className="mr-2 h-4 w-4" />Mark remaining {pendingCoverage.eligible.length} as N/A</Button>{pendingCoverage.blocked.length > 0 && <span className="text-[11px] text-slate-500">{pendingCoverage.blocked.length} more already have budget lines, so they cannot be marked N/A.</span>}</div>}</CardHeader><CardContent className="space-y-3 p-4">{coverageGroups.map((group) => { const expanded = expandedHeads.has(group.id); /* Amber flags a stale "planned" marker with no line behind it. Nothing here blocks submission — leaving Sub-heads undecided is a valid budget, and the original check (every Sub-head must have a decision) would have shown amber on almost every Head forever. */ const complete = !group.items.some((item) => isStalePlannedMarker({ ...item, planning_status: coverageDraft[item.expense_sub_head_id]?.status || item.planning_status })); return <div key={group.id} className="overflow-hidden rounded-2xl border border-slate-200"><button type="button" className="flex w-full items-center gap-3 bg-slate-50 px-4 py-3 text-left" onClick={() => setExpandedHeads((current) => { const next = new Set(current); if (next.has(group.id)) next.delete(group.id); else next.add(group.id); return next; })}><span className={`flex h-8 w-8 items-center justify-center rounded-full ${complete ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{complete ? <CheckCircle2 className="h-4 w-4" /> : <AlertCircle className="h-4 w-4" />}</span><div className="flex-1"><p className="text-sm font-bold">{group.name}</p><p className="text-[10px] text-slate-500">{group.items.length} Sub-head(s)</p></div>{expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>{expanded && <div className="divide-y divide-slate-100">{group.items.map((item) => <CoverageDecision key={item.expense_sub_head_id} item={item} draft={coverageDraft[item.expense_sub_head_id] ?? { status: "", reason: "" }} editable={canEdit} onChange={(value) => setCoverageDraft((current) => ({ ...current, [item.expense_sub_head_id]: value }))} onAddLine={() => addFromCoverage(item)} />)}</div>}</div>; })}</CardContent></Card>
+                <Card className="rounded-3xl border-slate-200 shadow-sm">
+                  <CardHeader className="border-b border-slate-100">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <CardTitle>Complete Expense Catalogue</CardTitle>
+                        <p className="mt-1 text-xs text-slate-500">Budget only the Sub-heads this branch spends on. Anything you leave alone is simply not budgeted — no decision or reason needed to submit.</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <div className="relative"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input className="pl-9" value={coverageSearch} onChange={(event) => setCoverageSearch(event.target.value)} placeholder="Search head or sub-head" /></div>
+                        {capabilities?.canCreate && <Button onClick={() => void saveCoverageDecisions()} disabled={saveCoverage.isPending}><Save className="mr-2 h-4 w-4" />Save decisions</Button>}
+                      </div>
+                    </div>
+                    {capabilities?.canCreate && pendingCoverage.eligible.length > 0 && (
+                      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-3">
+                        <Input className="max-w-xs" value={bulkNaReason} onChange={(event) => setBulkNaReason(event.target.value)} placeholder="Reason for marking remaining N/A" />
+                        <Button variant="outline" size="sm" disabled={!canEdit} onClick={markRemainingNotApplicable}><XCircle className="mr-2 h-4 w-4" />Mark remaining {pendingCoverage.eligible.length} as N/A</Button>
+                        {pendingCoverage.blocked.length > 0 && <span className="text-[11px] text-slate-500">{pendingCoverage.blocked.length} more already have budget lines, so they cannot be marked N/A.</span>}
+                      </div>
+                    )}
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[1000px] text-xs">
+                        <thead>
+                          <tr className="border-b bg-slate-50 text-left text-slate-500">
+                            <th className="h-9 px-3 font-medium">Head</th>
+                            <th className="h-9 px-3 font-medium">Sub-head</th>
+                            <th className="h-9 px-3 font-medium">Status</th>
+                            <th className="h-9 px-3 font-medium">Reason</th>
+                            <th className="h-9 px-3 text-right font-medium">Budget lines</th>
+                            <th className="h-9 px-3 text-right font-medium">Gross amount</th>
+                            <th className="h-9 px-3 font-medium">Reviewed by / At</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {filteredCoverage.map((item) => {
+                            const draft = coverageDraft[item.expense_sub_head_id] ?? { status: "", reason: "" };
+                            const status = draft.status || item.planning_status || "";
+                            const lineConflict = status !== "planned" && item.budget_line_count > 0;
+                            const plannedWithoutLine = status === "planned" && item.budget_line_count <= 0;
+                            const stale = isStalePlannedMarker({ ...item, planning_status: status || item.planning_status });
+                            return (
+                              <tr key={item.expense_sub_head_id} className={stale ? "bg-amber-50/50" : undefined}>
+                                <td className="px-3 py-2 font-medium text-slate-800">{item.head_name}</td>
+                                <td className="px-3 py-2 text-slate-700">
+                                  {item.sub_head_name}
+                                  <span className="ml-1.5 text-[10px] text-slate-400">({item.default_unit})</span>
+                                </td>
+                                <td className="px-3 py-2">
+                                  <div className="grid w-[220px] grid-cols-3 gap-1">
+                                    {(["planned", "not_planned", "not_applicable"] as BudgetPlanningStatus[]).map((s) => (
+                                      <button
+                                        type="button"
+                                        key={s}
+                                        disabled={!canEdit}
+                                        onClick={() => setCoverageDraft((current) => ({ ...current, [item.expense_sub_head_id]: { status: s, reason: s === "planned" ? "" : draft.reason } }))}
+                                        className={`min-h-[30px] rounded-lg border px-1.5 py-1 text-[10.5px] font-semibold transition ${
+                                          status === s
+                                            ? s === "planned"
+                                              ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                                              : s === "not_planned"
+                                                ? "border-amber-300 bg-amber-50 text-amber-700"
+                                                : "border-slate-300 bg-slate-100 text-slate-700"
+                                            : "border-slate-200 bg-white text-slate-500"
+                                        }`}
+                                      >
+                                        {s === "planned" ? "Planned" : s === "not_planned" ? "Not Planned" : "N/A"}
+                                      </button>
+                                    ))}
+                                  </div>
+                                  {plannedWithoutLine && (
+                                    <p className={`mt-1 text-[10px] ${canEdit ? "text-rose-600" : "text-slate-500"}`}>
+                                      A detailed budget line is mandatory.
+                                      {canEdit && <button type="button" className="ml-1 font-semibold underline" onClick={() => addFromCoverage(item)}>Add line</button>}
+                                    </p>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2">
+                                  {status !== "planned" ? (
+                                    <>
+                                      <Input
+                                        className="h-8 w-[200px] text-xs"
+                                        disabled={!canEdit}
+                                        value={draft.reason}
+                                        onChange={(event) => setCoverageDraft((current) => ({ ...current, [item.expense_sub_head_id]: { status: status as BudgetPlanningStatus | "", reason: event.target.value } }))}
+                                        placeholder="Mandatory reason"
+                                      />
+                                      {lineConflict && <p className="mt-1 text-[10px] text-rose-600">Remove linked lines before excluding this Sub-head.</p>}
+                                    </>
+                                  ) : (
+                                    <span className="text-slate-400">—</span>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2 text-right tabular-nums text-slate-600">{item.budget_line_count}</td>
+                                <td className="px-3 py-2 text-right tabular-nums text-slate-700">{money(item.gross_budget_amount)}</td>
+                                <td className="px-3 py-2 text-slate-500">
+                                  {item.reviewed_by_name ? (
+                                    <>
+                                      {item.reviewed_by_name}
+                                      {item.reviewed_at && <span className="block text-[10px] text-slate-400">{new Date(item.reviewed_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>}
+                                    </>
+                                  ) : "—"}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {!filteredCoverage.length && (
+                            <tr><td colSpan={7} className="py-8 text-center text-slate-500">No head/sub-head matches this search.</td></tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </Card>
               </>}
             </TabsContent>
 
-            <TabsContent value="rollup" className="space-y-5">
-              {!detailId ? (
-                <div className="rounded-3xl border border-blue-200 bg-blue-50 p-10 text-center"><Layers3 className="mx-auto h-10 w-10 text-blue-700" /><p className="mt-3 font-bold text-blue-950">Save the budget draft first</p><Button className="mt-4" onClick={() => setTab("plan")}>Open Plan Builder</Button></div>
-              ) : detailQuery.isLoading ? (
-                <div className="flex justify-center rounded-3xl border border-slate-200 bg-white py-20"><Loader2 className="h-7 w-7 animate-spin" /></div>
-              ) : !detailQuery.data?.costCentreConsolidation.length ? (
-                <div className="rounded-3xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">No "Direct to cost centre" lines yet — cost-centre-first items planned separately per cost centre will roll up here automatically once added.</div>
-              ) : (
-                <Card className="rounded-3xl border-slate-200 shadow-sm">
-                  <CardHeader className="border-b border-slate-100"><CardTitle>Cost-centre-first consolidation</CardTitle><p className="mt-1 text-xs text-slate-500">Items planned independently per cost centre (Attribution scope = "Direct to cost centre"), rolled up to a branch total. Branch fields here are derived, not editable — edit the underlying lines in Plan Builder.</p></CardHeader>
-                  <CardContent className="space-y-3 p-4">
-                    {detailQuery.data.costCentreConsolidation.map((group, index) => (
-                      <div key={`${group.head}-${group.subHead}-${group.itemName}-${index}`} className="overflow-hidden rounded-2xl border border-slate-200">
-                        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 px-4 py-3">
-                          <div>
-                            <p className="text-sm font-bold">{group.itemName}</p>
-                            <p className="text-xs text-slate-500">{group.head}{group.subHead ? ` / ${group.subHead}` : ""} · {group.costCentreCount} cost centre(s)</p>
-                          </div>
-                          <div className="flex items-center gap-4">
-                            {!group.unitConsistent && <Badge variant="destructive" className="text-[10px]">Mixed units — verify before relying on Branch unit</Badge>}
-                            <Metric label={`Branch unit (${group.unit})`} value={String(group.branchUnit)} />
-                            <Metric label="Branch amount" value={money(group.branchGrossAmount)} tone="emerald" />
-                            <Metric label="Branch P&L cost" value={money(group.branchPnlCostAmount)} tone="amber" />
-                          </div>
-                        </div>
-                        <div className="overflow-x-auto">
-                          <table className="w-full min-w-[520px] text-sm">
-                            <thead><tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wide text-slate-500"><th className="px-4 py-2">Cost centre</th><th className="px-4 py-2">Unit</th><th className="px-4 py-2">With tax</th><th className="px-4 py-2">P&L cost</th></tr></thead>
-                            <tbody>
-                              {group.lines.map((ccLine) => (
-                                <tr key={ccLine.costCentreId} className="border-b border-slate-100 last:border-0">
-                                  <td className="px-4 py-2">{ccLine.costCentreName ?? ccLine.costCentreId}</td>
-                                  <td className="px-4 py-2">{ccLine.quantity}</td>
-                                  <td className="px-4 py-2">{money(ccLine.grossAmount)}</td>
-                                  <td className="px-4 py-2">{money(ccLine.pnlCostAmount)}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              )}
-            </TabsContent>
+            {/* Cost-Centre Rollup tab removed (owner decision, 2026-08-21). The backend
+                costCentreConsolidation field and buildCostCentreConsolidation() are left in
+                place, dormant — no other tab reads them, so this removal is fully isolated. */}
 
             <TabsContent value="matrix" className="space-y-5">
               {!detailId ? (
@@ -2521,6 +2738,7 @@ export default function BranchBudgetManagementWorkspace() {
                   canCreate={Boolean(capabilities?.canCreate || capabilities?.canReviewBranchStage)}
                   canReviewBranchStage={Boolean(capabilities?.canReviewBranchStage)}
                   canReviewFinanceStage={Boolean(capabilities?.canReviewFinanceStage)}
+                  canDirectTopup={Boolean(capabilities?.canDirectTopup)}
                   currentUserId={user?.id ?? null}
                   presetLineId={topupPresetLineId || null}
                   onConsumedPreset={() => setTopupPresetLineId("")}
@@ -2540,19 +2758,43 @@ export default function BranchBudgetManagementWorkspace() {
                   {!detailQuery.data?.lines?.length ? (
                     <p className="py-8 text-center text-slate-500">Select a branch and period to view variance data.</p>
                   ) : (
+                    <div className="space-y-2">
+                    {capabilities?.canCloseBusinessCase && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-2.5">
+                        <p className="text-[11px] text-slate-500">
+                          Business case must be closed, head/sub-head by head/sub-head, by the 7th of next month.
+                          Select rows below and close in bulk, or close one at a time.
+                        </p>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={!selectedForClose.size || bulkCloseMutation.isPending}
+                          onClick={() => {
+                            const items = [...selectedForClose].map((key) => {
+                              const [head, subHead] = key.split("|");
+                              return { head, subHead: subHead || null };
+                            });
+                            bulkCloseMutation.mutate(items);
+                          }}
+                        >
+                          Close selected ({selectedForClose.size})
+                        </Button>
+                      </div>
+                    )}
                     <div className="overflow-x-auto rounded-xl border border-slate-200">
-                      <table className="w-full min-w-[900px] text-xs">
+                      <table className="w-full min-w-[1050px] text-xs">
                         <thead>
                           <tr className="border-b bg-slate-50">
                             <th className="h-8 px-3 text-left font-medium text-slate-500">Head</th>
                             <th className="h-8 px-3 text-left font-medium text-slate-500">Sub-head</th>
-                            <th className="h-8 px-3 text-left font-medium text-slate-500">Item</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Budgeted</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Reserved</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Available</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500">Consumed %</th>
                             <th className="h-8 px-3 text-right font-medium text-slate-500" title="Positive = under budget (favourable). Negative = overspent.">Variance (Budget − Actual)</th>
+                            <th className="h-8 px-3 text-left font-medium text-slate-500">Top-up status</th>
+                            <th className="h-8 px-3 text-left font-medium text-slate-500">Business case</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y">
@@ -2561,30 +2803,216 @@ export default function BranchBudgetManagementWorkspace() {
                             const budgeted = Number(line.gross_amount ?? 0);
                             const reserved = Number(line.reserved_amount ?? 0);
                             const available = Number(line.available_gross_amount ?? 0);
-                            const consumedPct = budgeted > 0 ? Math.round((consumed / budgeted) * 100) : 0;
+                            const pctConsumed = consumedPct(consumed, budgeted);
                             const variance = budgeted - consumed; // positive = under budget (favourable)
+                            const subHead = line.sub_head ?? null;
+                            const rowKey = `${line.head}|${subHead ?? ""}`;
+                            const isOpen = expandedVarianceRows.has(rowKey);
+                            const ccBreakdown = isOpen ? costCentresForHeadSubHead(line.head, subHead) : [];
                             return (
-                              <tr key={line.id} className="hover:bg-slate-50/70">
-                                <td className="px-3 py-2 font-medium text-slate-800">{line.head}</td>
-                                <td className="px-3 py-2 text-slate-600">{line.sub_head ?? "—"}</td>
-                                <td className="px-3 py-2 text-slate-700">{line.item_name}</td>
-                                <td className="px-3 py-2 text-right tabular-nums">{money(budgeted)}</td>
-                                <td className="px-3 py-2 text-right tabular-nums text-amber-700">{money(reserved)}</td>
-                                <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{money(consumed)}</td>
-                                <td className={`px-3 py-2 text-right tabular-nums ${available < 0 ? "font-semibold text-rose-600" : "text-slate-700"}`}>{money(available)}</td>
-                                <td className="px-3 py-2 text-right">
-                                  <Badge variant="outline" className={consumedPct >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : consumedPct >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
-                                    {consumedPct}%
-                                  </Badge>
-                                </td>
-                                <td className={`px-3 py-2 text-right tabular-nums font-medium ${variance < 0 ? "text-rose-600" : "text-emerald-600"}`}>
-                                  {variance > 0 ? "+" : ""}{money(variance)}
-                                </td>
-                              </tr>
+                              <Fragment key={line.id}>
+                                <tr
+                                  className="cursor-pointer hover:bg-slate-50/70"
+                                  onClick={() => toggleVarianceRow(rowKey)}
+                                  tabIndex={0}
+                                  role="button"
+                                  aria-expanded={isOpen}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      event.preventDefault();
+                                      toggleVarianceRow(rowKey);
+                                    }
+                                  }}
+                                >
+                                  <td className="px-3 py-2 font-medium text-slate-800">
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                                      {line.head}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-2 text-slate-600">{subHead ?? "—"}</td>
+                                  <td className="px-3 py-2 text-right tabular-nums">{money(budgeted)}</td>
+                                  <td className="px-3 py-2 text-right tabular-nums text-amber-700">{money(reserved)}</td>
+                                  <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{money(consumed)}</td>
+                                  <td className={`px-3 py-2 text-right tabular-nums ${available < 0 ? "font-semibold text-rose-600" : "text-slate-700"}`}>{money(available)}</td>
+                                  <td className="px-3 py-2 text-right">
+                                    <Badge variant="outline" className={pctConsumed >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : pctConsumed >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
+                                      {pctConsumed}%
+                                    </Badge>
+                                  </td>
+                                  <td className={`px-3 py-2 text-right tabular-nums font-medium ${variance < 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                                    {variance > 0 ? "+" : ""}{money(variance)}
+                                  </td>
+                                  <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
+                                    {(() => {
+                                      const requests = topupsByLineId.get(line.id) ?? [];
+                                      const pending = requests.find((r) => r.is_pending);
+                                      if (!pending) return <span className="text-slate-400">—</span>;
+                                      return (
+                                        <HoverCard openDelay={150}>
+                                          <HoverCardTrigger asChild>
+                                            <Badge variant="outline" className="cursor-default border-amber-300 bg-amber-50 text-amber-700">
+                                              Pending
+                                            </Badge>
+                                          </HoverCardTrigger>
+                                          <HoverCardContent className="w-72 text-xs">
+                                            <p className="font-semibold text-slate-800">Top-up request pending</p>
+                                            <dl className="mt-2 space-y-1 text-slate-600">
+                                              <div className="flex justify-between"><dt>Currently approved</dt><dd className="font-medium">{money(budgeted)}</dd></div>
+                                              <div className="flex justify-between"><dt>Requested by</dt><dd className="font-medium">{pending.requested_by_name ?? "—"}</dd></div>
+                                              <div className="flex justify-between"><dt>Pending with</dt><dd className="font-medium">{pending.pending_with}</dd></div>
+                                              <div className="flex justify-between"><dt>Requested amount</dt><dd className="font-medium">{money(pending.requested_amount)}</dd></div>
+                                            </dl>
+                                          </HoverCardContent>
+                                        </HoverCard>
+                                      );
+                                    })()}
+                                  </td>
+                                  <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
+                                    {(() => {
+                                      const closure = closureByKey.get(rowKey);
+                                      const status = closure?.status ?? "open";
+                                      if (status === "open") {
+                                        return capabilities?.canCloseBusinessCase ? (
+                                          <label className="flex items-center gap-1.5 text-slate-600">
+                                            <input
+                                              type="checkbox"
+                                              checked={selectedForClose.has(rowKey)}
+                                              onChange={() => setSelectedForClose((prev) => {
+                                                const next = new Set(prev);
+                                                if (next.has(rowKey)) next.delete(rowKey); else next.add(rowKey);
+                                                return next;
+                                              })}
+                                            />
+                                            <button
+                                              type="button"
+                                              className="text-[11px] font-semibold text-slate-600 underline"
+                                              disabled={closeMutation.isPending}
+                                              onClick={() => closeMutation.mutate({ head: line.head, subHead })}
+                                            >
+                                              Close
+                                            </button>
+                                          </label>
+                                        ) : <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">Open</Badge>;
+                                      }
+                                      // status === "closed"
+                                      if (closure?.pendingReopen) {
+                                        const pr = closure.pendingReopen;
+                                        if (capabilities?.canReviewReopen) {
+                                          return (
+                                            <HoverCard openDelay={150}>
+                                              <HoverCardTrigger asChild>
+                                                <div className="flex items-center gap-1.5">
+                                                  <Badge variant="outline" className="cursor-default border-blue-300 bg-blue-50 text-blue-700">Reopen pending</Badge>
+                                                  <button type="button" className="text-emerald-700" title="Approve reopen" onClick={() => reviewReopenMutation.mutate({ id: pr.id, decision: "approve" })}>
+                                                    <CheckCircle2 className="h-3.5 w-3.5" />
+                                                  </button>
+                                                  <button type="button" className="text-rose-600" title="Reject reopen" onClick={() => reviewReopenMutation.mutate({ id: pr.id, decision: "reject" })}>
+                                                    <XCircle className="h-3.5 w-3.5" />
+                                                  </button>
+                                                </div>
+                                              </HoverCardTrigger>
+                                              <HoverCardContent className="w-72 text-xs">
+                                                <p className="font-semibold text-slate-800">Reopen requested</p>
+                                                <dl className="mt-2 space-y-1 text-slate-600">
+                                                  <div className="flex justify-between"><dt>Requested by</dt><dd className="font-medium">{pr.requestedByName ?? "—"}</dd></div>
+                                                  <div className="flex justify-between"><dt>Reason</dt><dd className="max-w-[10rem] text-right font-medium">{pr.reason}</dd></div>
+                                                </dl>
+                                              </HoverCardContent>
+                                            </HoverCard>
+                                          );
+                                        }
+                                        return (
+                                          <HoverCard openDelay={150}>
+                                            <HoverCardTrigger asChild>
+                                              <Badge variant="outline" className="cursor-default border-blue-300 bg-blue-50 text-blue-700">Reopen pending</Badge>
+                                            </HoverCardTrigger>
+                                            <HoverCardContent className="w-72 text-xs">
+                                              Pending with Finance Head — requested by {pr.requestedByName ?? "—"}.
+                                            </HoverCardContent>
+                                          </HoverCard>
+                                        );
+                                      }
+                                      return (
+                                        <div className="flex items-center gap-1.5">
+                                          <Badge variant="outline" className="border-slate-300 bg-slate-100 text-slate-700">Closed</Badge>
+                                          {(capabilities?.canCreate || capabilities?.canCloseBusinessCase) && (
+                                            <button
+                                              type="button"
+                                              className="text-[11px] font-semibold text-blue-700 underline"
+                                              onClick={() => setReopenTarget({ head: line.head, subHead })}
+                                            >
+                                              Reopen
+                                            </button>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
+                                  </td>
+                                </tr>
+                                {isOpen && ccBreakdown.map((cc) => (
+                                  <tr
+                                    key={`${rowKey}:${cc.costCentreId ?? "__unattributed__"}`}
+                                    className="cursor-pointer bg-slate-50/60 hover:bg-slate-100"
+                                    onClick={() => setGrnDrillDown({ costCentreId: cc.costCentreId, costCentreName: cc.costCentreName, head: line.head, subHead })}
+                                    title="View GRNs raised against this head/sub-head at this cost centre"
+                                  >
+                                    <td className="py-1.5 pl-10 pr-3 text-slate-600">{cc.costCentreName}</td>
+                                    <td />
+                                    <td className="px-3 py-1.5 text-right tabular-nums text-slate-600">{money(cc.budgeted)}</td>
+                                    <td className="px-3 py-1.5 text-right tabular-nums text-amber-700">{money(cc.reserved)}</td>
+                                    <td className="px-3 py-1.5 text-right tabular-nums text-emerald-700">{money(cc.consumed)}</td>
+                                    <td className={`px-3 py-1.5 text-right tabular-nums ${cc.available < 0 ? "font-semibold text-rose-600" : "text-slate-600"}`}>{money(cc.available)}</td>
+                                    <td className="px-3 py-1.5 text-right text-slate-500">{consumedPct(cc.consumed, cc.budgeted)}%</td>
+                                    <td className="px-3 py-1.5 text-right text-slate-400">View GRNs →</td>
+                                    <td />
+                                    <td />
+                                  </tr>
+                                ))}
+                                {isOpen && !ccBreakdown.length && (
+                                  <tr className="bg-slate-50/60">
+                                    <td colSpan={10} className="py-2 pl-10 pr-3 text-slate-500">
+                                      No cost-centre attribution for this head/sub-head yet.
+                                    </td>
+                                  </tr>
+                                )}
+                              </Fragment>
                             );
                           })}
                         </tbody>
+                        <tfoot className="border-t-2 border-slate-300 bg-slate-100 font-semibold">
+                          <tr>
+                            <td className="px-3 py-2 text-slate-800" colSpan={2}>Total</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{money(varianceTotals.budgeted)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-amber-700">{money(varianceTotals.reserved)}</td>
+                            <td className="px-3 py-2 text-right tabular-nums text-emerald-700">{money(varianceTotals.consumed)}</td>
+                            <td className={`px-3 py-2 text-right tabular-nums ${varianceTotals.available < 0 ? "text-rose-600" : "text-slate-700"}`}>{money(varianceTotals.available)}</td>
+                            <td className="px-3 py-2 text-right">
+                              {(() => {
+                                const totalPct = consumedPct(varianceTotals.consumed, varianceTotals.budgeted);
+                                return (
+                                  <Badge variant="outline" className={totalPct >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : totalPct >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
+                                    {totalPct}%
+                                  </Badge>
+                                );
+                              })()}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {(() => {
+                                const totalVariance = varianceTotals.budgeted - varianceTotals.consumed;
+                                return (
+                                  <span className={totalVariance < 0 ? "text-rose-600" : "text-emerald-600"}>
+                                    {totalVariance > 0 ? "+" : ""}{money(totalVariance)}
+                                  </span>
+                                );
+                              })()}
+                            </td>
+                            <td />
+                            <td />
+                          </tr>
+                        </tfoot>
                       </table>
+                    </div>
                     </div>
                   )}
                 </CardContent>
@@ -2634,7 +3062,7 @@ export default function BranchBudgetManagementWorkspace() {
                         <tbody className="divide-y">
                           {utilizationByCostCentre.map((cc) => {
                             const rowKey = cc.costCentreId ?? "__unattributed__";
-                            const utilPct = cc.budgeted > 0 ? Math.round((cc.consumed / cc.budgeted) * 100) : 0;
+                            const utilPct = consumedPct(cc.consumed, cc.budgeted);
                             const variance = cc.budgeted - cc.consumed;
                             const isOpen = expandedCostCentres.has(rowKey);
                             return (
@@ -2687,10 +3115,15 @@ export default function BranchBudgetManagementWorkspace() {
                                   </td>
                                 </tr>
                                 {isOpen && cc.heads.map((h) => {
-                                  const headPct = h.budgeted > 0 ? Math.round((h.consumed / h.budgeted) * 100) : 0;
+                                  const headPct = consumedPct(h.consumed, h.budgeted);
                                   const headVariance = h.budgeted - h.consumed;
                                   return (
-                                    <tr key={`${rowKey}:${h.head}:${h.subHead ?? ""}`} className="bg-slate-50/60">
+                                    <tr
+                                      key={`${rowKey}:${h.head}:${h.subHead ?? ""}`}
+                                      className="cursor-pointer bg-slate-50/60 hover:bg-slate-100"
+                                      onClick={() => setGrnDrillDown({ costCentreId: cc.costCentreId, costCentreName: cc.costCentreName, head: h.head, subHead: h.subHead ?? null })}
+                                      title="View GRNs raised against this head/sub-head at this cost centre"
+                                    >
                                       <td className="py-1.5 pl-10 pr-3 text-slate-600">
                                         {h.head}
                                         {h.subHead && <span className="text-slate-400"> · {h.subHead}</span>}
@@ -2732,7 +3165,7 @@ export default function BranchBudgetManagementWorkspace() {
                             <td className="px-3 py-2 text-right tabular-nums text-slate-700">{money(ccTotals.available)}</td>
                             <td className="px-3 py-2 text-right">
                               {(() => {
-                                const totalPct = ccTotals.budgeted > 0 ? Math.round((ccTotals.consumed / ccTotals.budgeted) * 100) : 0;
+                                const totalPct = consumedPct(ccTotals.consumed, ccTotals.budgeted);
                                 return (
                                   <Badge variant="outline" className={totalPct >= 100 ? "border-rose-200 bg-rose-50 text-rose-700" : totalPct >= 80 ? "border-amber-200 bg-amber-50 text-amber-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
                                     {totalPct}%
@@ -2981,6 +3414,46 @@ export default function BranchBudgetManagementWorkspace() {
         </DialogContent>
       </Dialog>
 
+      {/* GRN drill-down — Variance tab (expand head/sub-head → pick cost centre) and Cost Centre
+          tab (click a head/sub-head row directly) both open this same read-only dialog. */}
+      <BudgetGrnDrillDownDialog
+        context={grnDrillDown}
+        onOpenChange={(open) => { if (!open) setGrnDrillDown(null); }}
+        branchId={branchId}
+        period={period}
+      />
+
+      {/* Request a reopen — Branch Admin (or Finance Head) on a closed head/sub-head. Goes to
+          Finance Head for approval; if the approved budget left is not enough once reopened, the
+          normal "Request increase" top-up flow on the Top-up Requests tab applies unchanged. */}
+      <Dialog open={Boolean(reopenTarget)} onOpenChange={(open) => { if (!open) { setReopenTarget(null); setReopenReason(""); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Request reopen — {reopenTarget?.head}{reopenTarget?.subHead ? ` / ${reopenTarget.subHead}` : ""}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              This goes to Finance Head for approval. If the approved budget left there is not
+              enough once reopened, use "Request increase" on the Top-up Requests tab.
+            </div>
+            <div>
+              <Label className="text-xs">Reason *</Label>
+              <Textarea
+                autoFocus
+                className="mt-1 min-h-[80px]"
+                value={reopenReason}
+                onChange={(event) => setReopenReason(event.target.value)}
+                placeholder="e.g. Invoice for this month arrived after close"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => { setReopenTarget(null); setReopenReason(""); }}>Cancel</Button>
+            <Button disabled={requestReopenMutation.isPending} onClick={() => requestReopenMutation.mutate()}>
+              Submit for Finance Head approval
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Tax-treatment amendment dialog — two-step maker-checker flow.
           Step 1 (this): requestor opens preflight, fills form, submits amendment request.
           Step 2: a different Finance Head / Super Admin approves or rejects in the Approval tab. */}
@@ -3217,7 +3690,7 @@ function UtilizationBreakdown({
           </thead>
           <tbody className="divide-y">
             {rows.map((row) => {
-              const utilizedPct = row.planned > 0 ? Math.round((row.consumed / row.planned) * 100) : 0;
+              const utilizedPct = consumedPct(row.consumed, row.planned);
               return (
                 <tr key={`${row.head}|${row.subHead ?? ""}`} className="hover:bg-slate-50/70">
                   <td className="px-3 py-2 font-medium text-slate-800">{row.head}</td>

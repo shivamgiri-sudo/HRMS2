@@ -53,6 +53,7 @@ async function getCoverage(budgetId: string) {
             s.default_allocation_driver, s.pnl_treatment,
             s.display_order AS sub_head_display_order,
             c.planning_status, c.reason, c.reviewed_by, c.reviewed_at,
+            NULLIF(TRIM(CONCAT_WS(' ', rb.first_name, rb.last_name)), '') AS reviewed_by_name,
             COUNT(l.id) AS budget_line_count,
             COALESCE(SUM(l.gross_amount),0) AS gross_budget_amount,
             COALESCE(SUM(l.pnl_cost_amount),0) AS pnl_budget_amount
@@ -61,6 +62,7 @@ async function getCoverage(budgetId: string) {
          ON s.head_id = h.id AND s.active_status = 1
        LEFT JOIN finance_budget_subhead_status c
          ON c.budget_id = ? AND c.expense_sub_head_id = s.id
+       LEFT JOIN employees rb ON rb.user_id = c.reviewed_by
        LEFT JOIN finance_budget_line l
          ON l.budget_id = ?
         AND l.head = h.head_name
@@ -71,7 +73,7 @@ async function getCoverage(budgetId: string) {
                s.default_tax_treatment, s.default_gst_rate, s.default_gst_type,
                s.default_recoverable_tax_pct, s.default_allocation_driver,
                s.pnl_treatment, s.display_order, c.planning_status, c.reason,
-               c.reviewed_by, c.reviewed_at
+               c.reviewed_by, c.reviewed_at, rb.first_name, rb.last_name
       ORDER BY h.display_order, h.head_name, s.display_order, s.sub_head_name`,
     [budgetId, budgetId]
   );
@@ -80,6 +82,7 @@ async function getCoverage(budgetId: string) {
     ...row,
     planning_status: row.planning_status ?? null,
     reason: (row.reason as string | null) ?? null,
+    reviewed_by_name: (row.reviewed_by_name as string | null) ?? null,
     budget_line_count: Number(row.budget_line_count ?? 0),
     gross_budget_amount: Number(row.gross_budget_amount ?? 0),
     pnl_budget_amount: Number(row.pnl_budget_amount ?? 0),

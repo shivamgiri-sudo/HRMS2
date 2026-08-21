@@ -61,6 +61,7 @@ import { startTatEscalationWorker, stopTatEscalationWorker } from "./tat-escalat
 import { startReportSubscriptionWorker, stopReportSubscriptionWorker } from "./report-subscription.worker.js";
 import { registerNotificationDeliverer } from "../modules/communication/notification.deliverer.js";
 import { startPayrollPrepReminderWorker, stopPayrollPrepReminderWorker } from "./payroll-prep-reminder.worker.js";
+import { startBudgetClosureReminderWorker, stopBudgetClosureReminderWorker } from "./budget-closure-reminder.worker.js";
 import { startPayrollReadinessRefreshWorker, stopPayrollReadinessRefreshWorker } from "./payroll-readiness-refresh.worker.js";
 import { startAutoRosterSchedulerWorker, stopAutoRosterSchedulerWorker } from "./auto-roster-scheduler.worker.js";
 import { startUatJobRunner, stopUatJobRunner } from "../modules/uat-pipeline/uat-job-runner.js";
@@ -321,6 +322,13 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: startPayrollPrepReminderWorker,
   },
   {
+    // Owner requirement 2026-08-21: monthly business-case close/reopen, reminder only (no
+    // auto-close, no submission block) — fires on the 7th of the month for the previous
+    // month's still-open head/sub-heads. See budget-closure-reminder.worker.ts.
+    name: "budget-closure-reminder",
+    start: startBudgetClosureReminderWorker,
+  },
+  {
     name: "payroll-readiness-refresh",
     start: startPayrollReadinessRefreshWorker,
   },
@@ -413,6 +421,7 @@ function shutdown(): void {
   stopDbBillFinanceSyncWorker();
   stopGstExportAutoWorker();
   stopPayrollPrepReminderWorker();
+  stopBudgetClosureReminderWorker();
   stopPayrollReadinessRefreshWorker();
   stopAprVicidialSyncWorker();
   stopITProvisioningLockScheduler();

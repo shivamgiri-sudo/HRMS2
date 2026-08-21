@@ -40,10 +40,18 @@ export type BudgetStatus =
  * super_admin could not review at all (it mapped to null and 403d despite sitting in
  * BUDGET_REVIEW_ROLES).
  *
- * finance_head appears at every stage by owner decision (2026-08-19) — Finance Head approves
- * branch budgets at all levels. Approving an earlier stage still stamps THAT stage's column, so
- * the chain is completed step by step and every stage keeps its own audit row; no stage is
- * skipped and no approval is back-dated.
+ * Owner decision (2026-08-21): the Accounts Head stage was removed from this workflow —
+ * Account Head approval is not required to create/activate a branch budget. The chain is now
+ * 2 stages: Branch Head, then Finance Head (terminal — approving finance_head_approved moves the
+ * budget straight to 'active'). accounts_head remains a valid role for other, unrelated finance
+ * workflows (GRN reversal, budget transfer/virement, P&L signoff) — only this header approval
+ * stage was removed. See migration 1523_branch_budget_drop_accounts_head_stage.sql, which
+ * auto-advanced the one budget that was stuck at finance_head_approved under the old 3-stage rule.
+ *
+ * finance_head appears at every remaining stage by owner decision (2026-08-19) — Finance Head
+ * approves branch budgets at all levels. Approving an earlier stage still stamps THAT stage's
+ * column, so the chain is completed step by step and every stage keeps its own audit row; no
+ * stage is skipped and no approval is back-dated.
  */
 const REVIEW_STAGES = {
   submitted: {
@@ -56,16 +64,9 @@ const REVIEW_STAGES = {
   branch_head_approved: {
     key: "finance_head" as const,
     label: "Finance Head",
-    next: "finance_head_approved" as BudgetStatus,
+    next: "active" as BudgetStatus,
     column: "finance_head_approved",
     roles: new Set(["finance_head", "super_admin"]),
-  },
-  finance_head_approved: {
-    key: "accounts_head" as const,
-    label: "Accounts Head",
-    next: "active" as BudgetStatus,
-    column: "accounts_head_approved",
-    roles: new Set(["accounts_head", "finance_head", "super_admin"]),
   },
 } as const;
 
@@ -410,7 +411,9 @@ async function audit(
   );
 }
 
-async function auditInTransaction(
+/** Exported so budget-topup.service.ts can log a Finance Head direct top-up (item 9) into the
+ *  same approval-log audit trail as every other budget action, instead of duplicating the INSERT. */
+export async function auditInTransaction(
   connection: PoolConnection,
   budgetId: string,
   action: string,
@@ -1310,9 +1313,7 @@ export const branchBudgetService = {
       ? "submitted"
       : role === "finance_head"
         ? "branch_head_approved"
-        : role === "accounts_head"
-          ? "finance_head_approved"
-          : null;
+        : null;
     if (!expectedStatus) {
       throw refuse(403, "BUDGET_NO_REVISE_ROLE", `Role ${actorRole} cannot revise branch budgets`);
     }
@@ -2062,16 +2063,13 @@ export const branchBudgetService = {
       if (decision === "approve" && !MAKER_CHECKER_EXEMPT_ROLES.has(role)) {
         const submittedBy = rows[0].submitted_by ? String(rows[0].submitted_by) : null;
         const bhApprovedBy = rows[0].branch_head_approved_by ? String(rows[0].branch_head_approved_by) : null;
-        const fhApprovedBy = rows[0].finance_head_approved_by ? String(rows[0].finance_head_approved_by) : null;
         // Every actor who already touched this budget at or before the current stage. A reviewer
         // may not be any of them. Built from the stage rather than the role so the rule cannot
         // drift apart from the stage table above.
         const priorActors: { id: string | null; label: string }[] = [
           { id: submittedBy, label: "submitted this budget" },
-          ...(stage.key === "finance_head" || stage.key === "accounts_head"
+          ...(stage.key === "finance_head"
             ? [{ id: bhApprovedBy, label: "performed the Branch Head approval" }] : []),
-          ...(stage.key === "accounts_head"
-            ? [{ id: fhApprovedBy, label: "performed the Finance Head approval" }] : []),
         ];
         for (const prior of priorActors) {
           if (prior.id && prior.id === actorId) {

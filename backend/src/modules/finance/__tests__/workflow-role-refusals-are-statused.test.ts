@@ -75,10 +75,15 @@ describe("what still passes", () => {
     })).toBe("finance_head");
   });
 
-  it("keeps the budget chain's third stage", () => {
-    expect(resolveFinanceStageRole({
-      primaryRole: "accounts_head", userRoles: ["accounts_head"],
-      currentStatus: "finance_head_approved", workflow: "budget",
-    })).toBe("accounts_head");
+  it("refuses accounts_head on a budget at finance_head_approved — that stage was removed (owner decision, 2026-08-21)", () => {
+    const error = statusOf(() =>
+      resolveFinanceStageRole({
+        primaryRole: "accounts_head", userRoles: ["accounts_head"],
+        currentStatus: "finance_head_approved", workflow: "budget",
+      }),
+    );
+    expect(error).not.toBeNull();
+    expect(error!.statusCode).toBe(409);
+    expect(error!.code).toBe("WORKFLOW_NO_STAGE_FOR_STATUS");
   });
 });

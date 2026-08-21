@@ -110,7 +110,13 @@ describe("mandatory branch-budget Head/Sub-head coverage", () => {
     expect(routes).toContain("canManageExpenseMaster");
     expect(routes).toContain("canReviewBranchStage");
     expect(routes).toContain("canReviewFinanceStage");
-    expect(routes).toContain("canReviewAccountsStage");
+    // Accounts Head stage removed from the branch-budget workflow (owner decision, 2026-08-21) —
+    // canReviewAccountsStage no longer exists; canDirectTopup (Finance Head only) replaces it here.
+    expect(routes).not.toContain("canReviewAccountsStage");
+    expect(routes).toContain("canDirectTopup");
+    // Monthly business-case close/reopen (owner decision, 2026-08-21).
+    expect(routes).toContain("canCloseBusinessCase");
+    expect(routes).toContain("canReviewReopen");
   });
 
   it("renders the complete catalogue and role-aware budget workspace", () => {

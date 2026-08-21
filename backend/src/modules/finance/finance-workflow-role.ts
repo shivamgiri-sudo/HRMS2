@@ -22,19 +22,15 @@ export function resolveFinanceStageRole(input: {
   workflow: "budget" | "grn";
 }): FinanceStageRole {
   const roles = normalizedRoles(input.primaryRole, input.userRoles ?? []);
-  const expectedRole = input.workflow === "budget"
-    ? input.currentStatus === "submitted"
-      ? "branch_head"
-      : input.currentStatus === "branch_head_approved"
-        ? "finance_head"
-        : input.currentStatus === "finance_head_approved"
-          ? "accounts_head"
-          : null
-    : input.currentStatus === "submitted"
-      ? "branch_head"
-      : input.currentStatus === "branch_head_approved"
-        ? "finance_head"
-        : null;
+  // Both workflows are the same 2-stage shape today: the Accounts Head stage was removed from
+  // the budget header workflow (owner decision, 2026-08-21) — REVIEW_STAGES in
+  // branch-budget.service.ts no longer has a 'finance_head_approved' resting stage, Finance Head
+  // approval goes straight to 'active'. Kept as one shared ternary rather than two identical ones.
+  const expectedRole = input.currentStatus === "submitted"
+    ? "branch_head"
+    : input.currentStatus === "branch_head_approved"
+      ? "finance_head"
+      : null;
 
   /*
    * Both refusals carry a status. Without one, errorHandler.ts treats them as unexpected 500s
@@ -95,7 +91,10 @@ export type PendingWith = {
  */
 export function resolvePendingWith(
   currentStatus: string,
-  workflow: "budget" | "grn" | "topup" = "topup",
+  // Unused now that budget and top-up both resolve 'finance_head_approved' the same way
+  // (terminal/legacy, not a pending stage) — kept in the signature so every existing call site
+  // that passes workflow does not need to change, and in case the workflows diverge again later.
+  _workflow: "budget" | "grn" | "topup" = "topup",
 ): PendingWith {
   const status = String(currentStatus ?? "").toLowerCase();
 
@@ -111,13 +110,13 @@ export function resolvePendingWith(
   if (status === "branch_head_approved") {
     return { role: "finance_head", label: STAGE_LABELS.finance_head, isPending: true };
   }
-  // Declared on the budget chain and on the top-up enum, though the top-up service never
-  // writes it — Finance Head approval goes straight to 'applied'. Handled so a legacy row
-  // carrying it still renders something true.
+  // Declared on both the budget status enum and the top-up status enum, though neither service
+  // ever writes it any more — Finance Head approval goes straight to 'active' (budget) or
+  // 'applied' (top-up). Handled the same way for both workflows so a legacy row (e.g. one
+  // migrated by 1523_branch_budget_drop_accounts_head_stage.sql) still renders something true
+  // instead of "Unknown".
   if (status === "finance_head_approved") {
-    return workflow === "budget"
-      ? { role: "accounts_head", label: STAGE_LABELS.accounts_head, isPending: true }
-      : { role: null, label: "Completed", isPending: false };
+    return { role: null, label: "Completed", isPending: false };
   }
 
   // An unrecognised status is reported as unknown rather than guessed at. Silently showing

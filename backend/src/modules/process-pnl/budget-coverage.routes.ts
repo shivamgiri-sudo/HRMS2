@@ -101,11 +101,25 @@ budgetCoverageRouter.get(
           // only; Finance Head keeps the ability to add new ones via canManageExpenseMaster.
           canEditExpenseMaster: isSuperAdmin,
           // Finance Head reviews at EVERY stage (owner decision, 2026-08-19), so it appears in
-          // all three. Must stay in step with REVIEW_STAGES in branch-budget.service.ts, which is
-          // the enforcing side — these three flags only decide whether the UI offers the buttons.
+          // both. Must stay in step with REVIEW_STAGES in branch-budget.service.ts, which is
+          // the enforcing side — these flags only decide whether the UI offers the buttons.
+          // The Accounts Head review stage was removed from this workflow (owner decision,
+          // 2026-08-21) — that flag no longer exists here; accounts_head remains a valid role
+          // for other, unrelated finance workflows (GRN reversal, budget transfer, P&L signoff).
           canReviewBranchStage: isSuperAdmin || roles.some(r => ["branch_head", "finance_head"].includes(r)),
           canReviewFinanceStage: isSuperAdmin || roles.includes("finance_head"),
-          canReviewAccountsStage: isSuperAdmin || roles.some(r => ["accounts_head", "finance_head"].includes(r)),
+          // Finance Head direct budget top-up (owner decision, 2026-08-21): finance_head +
+          // super_admin only, deliberately excluding branch_admin/branch_head/accounts_head.
+          canDirectTopup: isSuperAdmin || roles.includes("finance_head"),
+          // Monthly business-case close (owner decision, 2026-08-21): Branch Admin and Finance
+          // Head only, per the owner's own wording — deliberately excludes branch_head, unlike
+          // canReviewBranchStage above.
+          canCloseBusinessCase: isSuperAdmin || roles.some(r => ["branch_admin", "finance_head"].includes(r)),
+          // Reopening a closed head/sub-head needs Finance Head approval — same actors as
+          // canReviewFinanceStage, kept as its own flag since the two questions ("can I approve a
+          // budget stage" vs "can I approve a reopen request") are conceptually separate even
+          // though the role set is identical today.
+          canReviewReopen: isSuperAdmin || roles.includes("finance_head"),
         },
       });
     } catch (error) {

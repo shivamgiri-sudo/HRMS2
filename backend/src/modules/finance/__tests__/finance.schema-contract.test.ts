@@ -303,11 +303,13 @@ describe("finance database and API contract", () => {
       currentStatus: "branch_head_approved",
       workflow: "budget",
     })).toBe("finance_head");
-    expect(resolveFinanceStageRole({
+    // The Accounts Head stage was removed from the budget workflow (owner decision, 2026-08-21):
+    // a budget can no longer rest at finance_head_approved, so that status has no stage owner.
+    expect(() => resolveFinanceStageRole({
       primaryRole: "super_admin",
       userRoles: [],
       currentStatus: "finance_head_approved",
       workflow: "budget",
-    })).toBe("accounts_head");
+    })).toThrow(/No approval role is valid/i);
   });
 });

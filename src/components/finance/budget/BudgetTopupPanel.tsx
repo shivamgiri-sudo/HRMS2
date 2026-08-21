@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { toast } from "sonner";
 
-type BudgetTopupRequest = {
+export type BudgetTopupRequest = {
   id: string;
   budget_line_id: string;
   status: "submitted" | "branch_head_approved" | "finance_head_approved" | "rejected" | "applied";
@@ -37,6 +37,13 @@ type BudgetTopupRequest = {
   rejection_reason: string | null;
   created_at: string;
   requested_by: string | null;
+  /** Joined in budget-topup.service.ts list() — who actually raised this request, for display. */
+  requested_by_name: string | null;
+  /** Added by decorateTopup() server-side — who the request is waiting on, derived from status,
+   *  never stored. Used by the Variance tab's "Top-up status" column. */
+  pending_with_role: string | null;
+  pending_with: string;
+  is_pending: boolean;
 };
 
 /** A row from GET /pnl/budget-lines/available. The headroom column is `available_gross_amount`
@@ -73,6 +80,7 @@ export function BudgetTopupPanel({
   canCreate,
   canReviewBranchStage,
   canReviewFinanceStage,
+  canDirectTopup,
   presetLineId,
   onConsumedPreset,
   currentUserId,
@@ -87,6 +95,11 @@ export function BudgetTopupPanel({
    *  canReview() for budgets in BranchBudgetManagementWorkspace. */
   canReviewBranchStage: boolean;
   canReviewFinanceStage: boolean;
+  /** Finance Head (+ super_admin) only — lets them increase a line's amount immediately,
+   *  bypassing the branch_head -> finance_head request/review chain below (owner decision,
+   *  2026-08-21). Sourced from capabilities.canDirectTopup, same shape as every other
+   *  capability flag in this module. */
+  canDirectTopup?: boolean;
   presetLineId?: string | null;
   onConsumedPreset?: () => void;
   /** Current user's ID — used to disable the Approve button when the viewer is the submitter
@@ -99,6 +112,10 @@ export function BudgetTopupPanel({
   const [requestedAmount, setRequestedAmount] = useState("");
   const [reason, setReason] = useState("");
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
+  const [directOpen, setDirectOpen] = useState(false);
+  const [directLineId, setDirectLineId] = useState("");
+  const [directAmount, setDirectAmount] = useState("");
+  const [directReason, setDirectReason] = useState("");
 
   const listQuery = useQuery({
     // period is part of the key AND the request. It was omitted from both, so the panel showed
@@ -128,7 +145,7 @@ export function BudgetTopupPanel({
       );
       return response.data ?? [];
     },
-    enabled: createOpen && Boolean(branchId),
+    enabled: (createOpen || directOpen) && Boolean(branchId),
   });
   const lines = linesQuery.data ?? [];
 
@@ -172,6 +189,42 @@ export function BudgetTopupPanel({
       queryClient.invalidateQueries({ queryKey: ["budget-topups"] });
     },
     onError: (error: Error) => toast.error(error.message || "Failed to submit top-up request"),
+  });
+
+  const directApplyMutation = useMutation({
+    mutationFn: async () => {
+      if (!directLineId) throw new Error("Pick a budget line");
+      const amount = Number(directAmount);
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid amount");
+      const line = lines.find((l) => l.id === directLineId);
+      if (!line) {
+        throw new Error("Select a budget line from the list.");
+      }
+      if (!(line.unit_rate > 0)) {
+        throw new Error("This budget line has no unit rate, so an increase cannot be sized in units.");
+      }
+      if (!directReason.trim()) throw new Error("A reason is required");
+      const additionalQuantity = amount / line.unit_rate;
+      return hrmsApi.post(`/api/finance/pnl/budget-lines/${directLineId}/direct-topup`, {
+        additionalQuantity,
+        reason: directReason.trim(),
+      });
+    },
+    onSuccess: () => {
+      toast.success("Budget increased immediately — no further approval needed");
+      setDirectOpen(false);
+      setDirectLineId("");
+      setDirectAmount("");
+      setDirectReason("");
+      // Same invalidation set as a completed review — a direct increase moves gross_amount
+      // exactly the way an approved top-up does, so every cached headroom figure is now stale.
+      queryClient.invalidateQueries({ queryKey: ["budget-topups"] });
+      queryClient.invalidateQueries({ queryKey: ["branch-budget-detail"] });
+      queryClient.invalidateQueries({ queryKey: ["branch-budgets"] });
+      queryClient.invalidateQueries({ queryKey: ["budget-lines-available-for-topup"] });
+      queryClient.invalidateQueries({ queryKey: ["available-budget-lines"] });
+    },
+    onError: (error: Error) => toast.error(error.message || "Failed to apply the direct increase"),
   });
 
   const reviewMutation = useMutation({
@@ -221,11 +274,18 @@ export function BudgetTopupPanel({
             looking at. Named here, and again on every row, because the queue is also reachable
             deep-linked from a blocked GRN with a period the reviewer did not choose. */}
         <CardTitle>Budget top-up requests{period ? ` — ${period}` : ""}</CardTitle>
-        {canCreate && (
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
-            <PlusCircle className="mr-1 h-3.5 w-3.5" />Request increase
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {canCreate && (
+            <Button size="sm" onClick={() => setCreateOpen(true)}>
+              <PlusCircle className="mr-1 h-3.5 w-3.5" />Request increase
+            </Button>
+          )}
+          {canDirectTopup && (
+            <Button size="sm" variant="outline" onClick={() => setDirectOpen(true)}>
+              <PlusCircle className="mr-1 h-3.5 w-3.5" />Direct increase (Finance Head)
+            </Button>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {!requests.length && (
@@ -328,7 +388,7 @@ export function BudgetTopupPanel({
               {!linesQuery.isLoading && !lines.length && (
                 <p className="mt-1.5 text-xs text-amber-700">
                   No budget line with remaining headroom for {period}. Either this branch's budget for
-                  this period has not completed Branch Head, Finance Head and Accounts Head approval,
+                  this period has not completed Branch Head and Finance Head approval,
                   or it is approved and every line is already fully committed. The Approval &amp;
                   Utilization tab shows which of the two it is.
                 </p>
@@ -358,6 +418,61 @@ export function BudgetTopupPanel({
             <Button variant="ghost" onClick={() => setCreateOpen(false)}>Cancel</Button>
             <Button disabled={createMutation.isPending} onClick={() => createMutation.mutate()}>
               Submit for branch_head review
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Finance Head direct increase — applies immediately, no branch_head/finance_head review
+          chain. Same line picker/amount/reason shape as the request dialog above, deliberately
+          kept separate (not a shared dialog) so the two very different consequences — "raises a
+          request" vs. "changes the budget right now" — are never one accidental click apart. */}
+      <Dialog open={directOpen} onOpenChange={setDirectOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Direct budget increase — Finance Head</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              This applies immediately — the <strong>{period || "selected"}</strong> budget line's
+              approved amount changes as soon as you submit. No branch_head or finance_head review
+              follows; it appears in the queue above as already applied.
+            </div>
+            <div>
+              <Label className="text-xs">Budget line *</Label>
+              <Select value={directLineId} onValueChange={setDirectLineId} disabled={!linesQuery.isLoading && !lines.length}>
+                <SelectTrigger className="mt-1 h-9"><SelectValue placeholder="Select a budget line" /></SelectTrigger>
+                <SelectContent>
+                  {lines.map((line) => (
+                    <SelectItem key={line.id} value={line.id}>
+                      {line.head}{line.sub_head ? ` · ${line.sub_head}` : ""} — {line.item_name} (available {money(line.available_gross_amount)})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs">Additional amount *</Label>
+              <Input
+                type="number"
+                inputMode="decimal"
+                className="mt-1 h-9"
+                value={directAmount}
+                onChange={(event) => setDirectAmount(event.target.value)}
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Reason *</Label>
+              <Textarea
+                className="mt-1 min-h-[72px]"
+                value={directReason}
+                onChange={(event) => setDirectReason(event.target.value)}
+                placeholder="Why this head/sub-head's approved budget is being increased directly"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDirectOpen(false)}>Cancel</Button>
+            <Button disabled={directApplyMutation.isPending} onClick={() => directApplyMutation.mutate()}>
+              Apply immediately
             </Button>
           </DialogFooter>
         </DialogContent>

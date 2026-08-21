@@ -53,11 +53,16 @@ describe("resolvePendingWith — the cases that could mislead", () => {
     expect(resolvePendingWith("finance_head_approved", "topup").isPending).toBe(false);
   });
 
-  it("still routes a budget at finance_head_approved to the Accounts Head", () => {
-    // The budget chain genuinely has that third stage, unlike top-ups.
+  it("treats a dead finance_head_approved budget as completed too, not stuck on Accounts Head", () => {
+    // The Accounts Head stage was removed from the budget header workflow (owner decision,
+    // 2026-08-21) — Finance Head approval now goes straight to 'active', same shape as top-up's
+    // straight-to-'applied'. A legacy row (e.g. one migrated by
+    // 1523_branch_budget_drop_accounts_head_stage.sql) must not appear to be waiting on Accounts
+    // Head, a stage that can no longer act on anything.
     const p = resolvePendingWith("finance_head_approved", "budget");
-    expect(p.role).toBe("accounts_head");
-    expect(p.isPending).toBe(true);
+    expect(p.role).toBeNull();
+    expect(p.label).toBe("Completed");
+    expect(p.isPending).toBe(false);
   });
 
   it("says Unknown for an unrecognised status rather than guessing", () => {
