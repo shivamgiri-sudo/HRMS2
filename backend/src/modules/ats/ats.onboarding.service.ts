@@ -596,6 +596,36 @@ async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId:
   ).catch(() => undefined);
 }
 
+/**
+ * Syncs the candidate's onboarding "Process Name" to the process linked to
+ * the offer's cost centre — only when that link actually resolves. Never
+ * overwrites an existing applied_for_process with NULL.
+ *
+ * This is a safe no-op today: per listPendingApprovals' own note above,
+ * cost_centre_master.process_id is NULL on almost every row in production,
+ * so most calls will find nothing to sync until that column is backfilled
+ * (a separate, Finance-owned data task). Once it is, offers saved against a
+ * linked cost centre will keep the candidate's onboarding Process Name in
+ * step with HR's actual cost-centre selection instead of the stale value
+ * captured at registration.
+ */
+async function syncCandidateProcessFromCostCentre(
+  candidateId: string,
+  costCentreId: string | null,
+): Promise<void> {
+  if (!costCentreId) return;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT process_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
+    [costCentreId],
+  ).catch(() => [[] as RowDataPacket[]] as [RowDataPacket[], unknown]);
+  const processId = (rows as RowDataPacket[])[0]?.process_id;
+  if (!processId) return; // not linked — leave applied_for_process untouched
+  await db.execute(
+    `UPDATE ats_candidate SET applied_for_process = ?, updated_at = NOW() WHERE id = ?`,
+    [String(processId), candidateId],
+  ).catch((e) => console.warn('[syncCandidateProcessFromCostCentre] update failed:', e));
+}
+
 export async function saveOffer(
   requestId: string,
   offerData: Record<string, unknown>,
@@ -732,6 +762,8 @@ export async function saveOffer(
       });
     }
   }
+
+  await syncCandidateProcessFromCostCentre(String(req.candidate_id), (offerData.cost_centre as string | undefined) ?? null);
 
   return { offerId, components };
 }
