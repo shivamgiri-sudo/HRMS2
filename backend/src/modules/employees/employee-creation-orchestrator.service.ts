@@ -1284,6 +1284,19 @@ async function createRelatedEmployeeRecords(
     );
   }
 
+  // Payroll Head mandatory salary/journey review gate (migration 1541). One row per
+  // employee, starting pending_review the moment they're created — payrollCalculate
+  // .service.ts excludes any employee with a non-approved row here from every payroll
+  // run until a payroll_head user reviews and approves them. INSERT IGNORE on the
+  // unique employee_id key mirrors the idempotency pattern used throughout this
+  // function, so a retried transaction can't create a second row or reset an
+  // already-reviewed employee back to pending.
+  await conn.execute(
+    `INSERT IGNORE INTO employee_payroll_head_review (id, employee_id, candidate_id, status)
+     VALUES (UUID(), ?, ?, 'pending_review')`,
+    [employeeId, candidateId]
+  );
+
   // Emergency contact carried over from Onboarding (candidate_onboarding_profile), so the ID
   // card and every other reader of employee_emergency_contact show what the candidate actually
   // gave instead of "Contact HR" until someone re-enters it post-hire. `name` and `mobile` are

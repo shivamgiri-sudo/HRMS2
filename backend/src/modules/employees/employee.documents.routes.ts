@@ -138,7 +138,10 @@ router.post("/:employeeId", requireRole("admin", "hr"), h(async (req: Authentica
 }));
 
 // PATCH /api/employee-docs/:employeeId/:docId/verify — verify or reject a document
-router.patch("/:employeeId/:docId/verify", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+// payroll_head added per the Payroll Head salary/journey review gate (migration
+// 1541) — full write access on the review screen, reusing this endpoint rather
+// than duplicating verify logic.
+router.patch("/:employeeId/:docId/verify", requireRole("admin", "hr", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { action, remarks } = req.body as { action: "verified" | "rejected"; remarks?: string };
   if (!action || !["verified", "rejected"].includes(action)) {
     return res.status(400).json({ success: false, message: "action must be 'verified' or 'rejected'" });

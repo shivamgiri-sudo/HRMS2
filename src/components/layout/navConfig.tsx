@@ -350,6 +350,7 @@ export const navGroups: NavGroup[] = [
           { label: "Disbursal Management",   href: "/payroll/disbursal",                icon: ic(Send),         pageCode: "PAYROLL_DISBURSAL", roles: ["super_admin","payroll_head","finance"],                description: "Salary disbursal tracking" },
           { label: "Bank Payment Readiness", href: "/payroll/bank-readiness",          icon: ic(ShieldCheck), pageCode: "PAYROLL_BANK_READINESS", roles: ["super_admin","admin","payroll_head","payroll","payroll_admin","payroll_branch","finance","finance_head","hr","branch_head","branch_admin"], description: "Who can and cannot be paid, and why" },
           { label: "Recalculation Queue",    href: "/payroll/recalculation-queue",      icon: ic(Settings2),    roles: ["admin","super_admin","payroll_head","payroll_branch"],                                description: "Payroll recalc queue" },
+          { label: "Salary Review Queue",    href: "/payroll/salary-review",            icon: ic(ShieldCheck),  pageCode: "PAYROLL_HEAD_SALARY_REVIEW_QUEUE", roles: ["super_admin","payroll_head","admin"], description: "Mandatory salary/BGV/document/bank review before payroll eligibility" },
         ],
       },
       {

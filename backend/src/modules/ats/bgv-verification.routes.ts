@@ -62,7 +62,11 @@ const bgvSensitiveLimiter = rateLimit({ windowMs: 60 * 1000, max: 15, standardHe
 
 async function requireBgvCandidateScope(req: AuthenticatedRequest, candidateId: string): Promise<void> {
   const candidate = await atsService.getCandidate(candidateId);
-  const allowed = await hasScopedAccess(req.authUser!.id, ["admin", "hr", "recruiter"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
+  // payroll_head added alongside the route-level requireRole() grants below, for
+  // the Payroll Head salary/journey review gate (migration 1541) — without it here
+  // too, a payroll_head user would pass the outer role gate and still 403 on every
+  // call, a grant that looks real but silently does nothing.
+  const allowed = await hasScopedAccess(req.authUser!.id, ["admin", "hr", "recruiter", "payroll_head"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
   const recruiterProfile = await resolveRecruiterForActor(req.authUser!.id);
   const candidateRecord = candidate as unknown as Record<string, unknown>;
   const assignedRecruiterIds = [

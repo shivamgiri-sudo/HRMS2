@@ -59,6 +59,9 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     // not be the same population that approves work evaluated under them.
     "UAT_TRIAGE_CONSOLE",
     "UAT_RELEASE_BOARD",
+    // Payroll Head mandatory salary/journey review gate (migration 1541).
+    "PAYROLL_HEAD_SALARY_REVIEW_QUEUE",
+    "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",
   ],
   hr: [
     "JOB_REQUISITION",
@@ -226,6 +229,10 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     // POST /send-token/:candidateId and GET /requests routes) needs this page grant too, or
     // WorkforcePageGate blocks the Onboarding Requests page before the backend fix matters.
     "ATS_ONBOARDING_REQUESTS",
+    // Payroll Head mandatory salary/journey review gate (migration 1541) — new
+    // screens, deliberate additions here, not observed-live entries.
+    "PAYROLL_HEAD_SALARY_REVIEW_QUEUE",
+    "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",
   ],
   payroll_hr: [
     "PAYROLL_HR_DASHBOARD",

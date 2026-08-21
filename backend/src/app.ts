@@ -212,6 +212,7 @@ import { jclrRouter } from "./modules/ats/jclr.routes.js";
 import { joiningControlRoomRouter } from "./modules/ats/joining-control-room.routes.js";
 import { secureDocumentsRouter } from "./modules/ats/secure-documents.routes.js";
 import { salaryComponentAssignmentRouter } from "./modules/ats/salary-component-assignment.routes.js";
+import { payrollHeadReviewRouter } from "./modules/payroll-head-review/payroll-head-review.routes.js";
 import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.js";
 import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
 import { branchHeadApprovalRouter } from "./modules/ats/branch-head-approval.routes.js";
@@ -643,6 +644,7 @@ app.use("/api/ats/joining-control-room", joiningControlRoomRouter);
 // The router shipped in 03ee489e but was never mounted — every endpoint 404'd.
 app.use("/api/ats", secureDocumentsRouter);
 app.use("/api/ats/salary-components", salaryComponentAssignmentRouter);
+app.use("/api/payroll-head-review", payrollHeadReviewRouter);
 app.use("/api/ats/employee-code", employeeCodeGateRouter);
 app.use("/api/ats/payroll-hr", payrollHRRouter);
 app.use("/api/ats/branch-head-approval", branchHeadApprovalRouter);

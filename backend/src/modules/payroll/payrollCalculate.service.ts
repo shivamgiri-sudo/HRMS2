@@ -708,6 +708,26 @@ export async function calculatePayrollRunScoped(
     empParams.push(...scopedEmployeeIds);
   }
 
+  // Payroll Head mandatory salary/journey review gate (migration 1541). Additive
+  // only: an employee with NO row in employee_payroll_head_review — every employee
+  // created before this gate existed, forever — is unaffected, because NOT EXISTS
+  // is vacuously true for them. Only an employee WITH a row whose status is not
+  // 'approved' is excluded. No ? params added, so empParams ordering is untouched.
+  // Kill switch: payroll_config_flags('payroll_head_review_gate_enabled') lets this
+  // be disabled instantly, without a redeploy, if anything goes wrong.
+  const [reviewGateFlagRows] = await db.execute<RowDataPacket[]>(
+    `SELECT config_value FROM payroll_config_flags
+      WHERE branch_id IS NULL AND process_id IS NULL
+        AND config_key = 'payroll_head_review_gate_enabled' LIMIT 1`
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const reviewGateEnabled = !reviewGateFlagRows.length || reviewGateFlagRows[0].config_value !== 'false';
+  if (reviewGateEnabled) {
+    empConds.push(
+      `NOT EXISTS (SELECT 1 FROM employee_payroll_head_review r
+                    WHERE r.employee_id = e.id AND r.status <> 'approved')`
+    );
+  }
+
   // Salary is resolved as of the run month, not as of today.
   //
   // The join below was "ON esa.employee_id = e.id" filtered by "esa.active_status = 1" —
