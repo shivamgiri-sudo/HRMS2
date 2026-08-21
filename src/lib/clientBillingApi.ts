@@ -34,6 +34,11 @@ export type AuditAction = "created" | "edited" | "approved" | "rejected";
 export interface InvoiceRow {
   id: string;
   cost_centre_id: string;
+  /** Resolved via a join in GET /proformas (2026-08-21) — billing_client_name falling back
+   *  to company_name, same rule the PDF uses. Undefined on responses from routes that don't
+   *  join it (e.g. the single-invoice detail GET). */
+  cost_centre_display_name?: string | null;
+  cost_centre_code?: string | null;
   invoice_status: InvoiceStatus;
   category: string;
   finance_year: string;
@@ -88,6 +93,9 @@ export interface CreditNoteRow {
   id: string;
   invoice_id: string;
   cost_centre_id: string;
+  /** Resolved via a join in GET /credit-notes (2026-08-21) — see InvoiceRow's equivalent. */
+  cost_centre_display_name?: string | null;
+  against_invoice_number?: string | null;
   category: string;
   finance_year: string;
   month_label: string;
@@ -258,19 +266,32 @@ export function approveCreditNote(id: string): Promise<{ success: boolean; data:
 }
 
 /**
- * Downloads a proforma/invoice PDF and triggers a browser save, performing the side effect
- * directly rather than returning a Blob for the caller to handle — matching this codebase's
- * existing convention for authenticated file downloads (see `VendorPaymentDispatchPage.tsx`'s
- * `downloadAuthenticated`). Both `/proformas/:id/pdf` and `/invoices/:id/pdf` resolve to the
- * same underlying route (`clientBillingPdfService.generateInvoicePdf`) — `kind` only selects
- * which URL segment is used, since a proforma and its approved invoice are the same
- * `client_invoice` row across its lifecycle.
+ * Downloads a proforma/invoice/credit-note PDF and triggers a browser save, performing the
+ * side effect directly rather than returning a Blob for the caller to handle — matching this
+ * codebase's existing convention for authenticated file downloads (see
+ * `VendorPaymentDispatchPage.tsx`'s `downloadAuthenticated`). Both `/proformas/:id/pdf` and
+ * `/invoices/:id/pdf` resolve to the same underlying route
+ * (`clientBillingPdfService.generateInvoicePdf`) — `kind` only selects which URL segment is
+ * used, since a proforma and its approved invoice are the same `client_invoice` row across
+ * its lifecycle.
+ *
+ * `letterhead` (default true) selects between the two formats the backend renders: with MAS
+ * Callnet's logo/CIN/branch-address header and corporate-address/certification-badge footer
+ * (for emailing to a client), or without both blocks (for printing onto pre-printed
+ * letterhead stationery) — same invoice content either way.
  */
-export async function downloadInvoicePdf(kind: "proforma" | "invoice", id: string, filename: string): Promise<void> {
+export async function downloadInvoicePdf(
+  kind: "proforma" | "invoice" | "credit-note",
+  id: string,
+  filename: string,
+  letterhead = true
+): Promise<void> {
   const path = kind === "proforma"
     ? `/api/client-billing/proformas/${id}/pdf`
-    : `/api/client-billing/invoices/${id}/pdf`;
-  const blob = await hrmsApi.getBlob(path);
+    : kind === "invoice"
+      ? `/api/client-billing/invoices/${id}/pdf`
+      : `/api/client-billing/credit-notes/${id}/pdf`;
+  const blob = await hrmsApi.getBlob(`${path}?letterhead=${letterhead ? "true" : "false"}`);
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

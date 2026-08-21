@@ -50,8 +50,16 @@ router.get(
   "/proformas",
   requireRole(...ALLOWED_ROLES),
   h(async (_req: AuthenticatedRequest, res: Response) => {
+    // Resolves cost_centre_id -> a display name via one join, so the list/table doesn't
+    // have to show a raw UUID (2026-08-21 fix). ci.* keeps every existing field name
+    // intact for the frontend's current InvoiceRow shape; the two extra columns are
+    // additive.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM client_invoice ORDER BY created_at DESC`
+      `SELECT ci.*, COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name) AS cost_centre_display_name,
+              cc.cost_centre_code AS cost_centre_code
+       FROM client_invoice ci
+       LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
+       ORDER BY ci.created_at DESC`
     );
     res.json({ success: true, data: rows });
   })
@@ -80,7 +88,8 @@ router.get(
   "/proformas/:id/pdf",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const pdf = await clientBillingPdfService.generateInvoicePdf(req.params.id);
+    const withLetterhead = req.query.letterhead !== "false";
+    const pdf = await clientBillingPdfService.generateInvoicePdf(req.params.id, withLetterhead);
     res.setHeader("Content-Type", "application/pdf");
     res.send(pdf);
   })
@@ -133,7 +142,8 @@ router.get(
   "/invoices/:id/pdf",
   requireRole(...ALLOWED_ROLES),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    const pdf = await clientBillingPdfService.generateInvoicePdf(req.params.id);
+    const withLetterhead = req.query.letterhead !== "false";
+    const pdf = await clientBillingPdfService.generateInvoicePdf(req.params.id, withLetterhead);
     res.setHeader("Content-Type", "application/pdf");
     res.send(pdf);
   })
@@ -175,7 +185,16 @@ router.get(
   "/credit-notes",
   requireRole(...ALLOWED_ROLES),
   h(async (_req: AuthenticatedRequest, res: Response) => {
-    const [rows] = await db.execute<RowDataPacket[]>(`SELECT * FROM client_credit_note ORDER BY created_at DESC`);
+    // Same display-name join as /proformas, plus the referenced invoice's own printable
+    // number so the table can show "against 09-100/26-27" instead of a raw invoice UUID.
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ccn.*, COALESCE(NULLIF(cc.billing_client_name, ''), cc.company_name) AS cost_centre_display_name,
+              COALESCE(ci.bill_no, ci.proforma_no) AS against_invoice_number
+       FROM client_credit_note ccn
+       LEFT JOIN cost_centre_master cc ON cc.id = ccn.cost_centre_id
+       LEFT JOIN client_invoice ci ON ci.id = ccn.invoice_id
+       ORDER BY ccn.created_at DESC`
+    );
     res.json({ success: true, data: rows });
   })
 );
@@ -189,6 +208,17 @@ router.get(
     if (!creditNote) return res.status(404).json({ error: "Credit note not found" });
     const [lineRows] = await db.execute<RowDataPacket[]>(`SELECT * FROM client_credit_note_line WHERE credit_note_id = ?`, [req.params.id]);
     res.json({ success: true, data: { ...creditNote, lines: lineRows } });
+  })
+);
+
+router.get(
+  "/credit-notes/:id/pdf",
+  requireRole(...ALLOWED_ROLES),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const withLetterhead = req.query.letterhead !== "false";
+    const pdf = await clientBillingPdfService.generateCreditNotePdf(req.params.id, withLetterhead);
+    res.setHeader("Content-Type", "application/pdf");
+    res.send(pdf);
   })
 );
 

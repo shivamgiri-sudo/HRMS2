@@ -85,11 +85,9 @@ async function mintBillNumber(stateCode: string, companyName: string, financeYea
  * both carry "18-08/26-27"). CN-<state_code>-<NN>/<FYshort>, scoped per (state_code,
  * company_name, finance_year) — same scoping and zero-pad rule as mintBillNumber.
  *
- * `conn` is optional, same reasoning as mintBillNumber above. NOTE: `createCreditNote`
- * (client-billing-credit-note.service.ts) actually has this exact violation today — it holds
- * its own `conn` in an open transaction and calls this without passing it — but that file is
- * another concurrent session's active work area and is deliberately left untouched here; its
- * call site still needs the same one-line fix (pass `conn`) as a follow-up.
+ * `conn` is optional, same reasoning as mintBillNumber above. FIXED 2026-08-21:
+ * `createCreditNote` (client-billing-credit-note.service.ts) now passes its own open-transaction
+ * `conn` through here, closing the pool-starvation hazard this docstring used to flag.
  */
 async function mintCreditNoteNumber(stateCode: string, companyName: string, financeYear: string, conn?: Executor): Promise<string> {
   const scopeKey = `${stateCode}|${companyName}|${financeYear}`;

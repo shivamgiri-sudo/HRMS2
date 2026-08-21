@@ -19,6 +19,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -48,6 +51,39 @@ const PROFORMA_STATUS_FILTERS: Array<{ value: InvoiceStatus | "_all"; label: str
   { value: "approved", label: "Approved" },
   { value: "rejected", label: "Rejected" },
 ];
+
+/** Split download button: with-letterhead (branded, for emailing to the client) or without
+ *  (for printing onto pre-printed letterhead stationery) — same invoice content either way,
+ *  see clientBillingApi.ts's downloadInvoicePdf. Hoisted out of the page component so it
+ *  isn't redefined (and remounted) on every render. */
+function DownloadPdfButton({
+  kind, id, docNumber, downloadingId, onDownload,
+}: {
+  kind: "proforma" | "invoice" | "credit-note";
+  id: string;
+  docNumber: string;
+  downloadingId: string | null;
+  onDownload: (kind: "proforma" | "invoice" | "credit-note", id: string, docNumber: string, letterhead: boolean) => unknown;
+}) {
+  const isDownloading = downloadingId === id;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button size="icon" variant="ghost" className="h-7 w-7" title="Download PDF" disabled={isDownloading}>
+          {isDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={() => { void onDownload(kind, id, docNumber, true); }}>
+          With letterhead
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => { void onDownload(kind, id, docNumber, false); }}>
+          Without letterhead (for printed stationery)
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 export default function ClientBillingWorkspacePage() {
   const { toast } = useToast();
@@ -114,10 +150,16 @@ export default function ClientBillingWorkspacePage() {
 
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
-  async function handleDownload(kind: "proforma" | "invoice", row: InvoiceRow) {
-    setDownloadingId(row.id);
+  async function handleDownload(
+    kind: "proforma" | "invoice" | "credit-note",
+    id: string,
+    docNumber: string,
+    letterhead: boolean
+  ) {
+    setDownloadingId(id);
     try {
-      await downloadInvoicePdf(kind, row.id, `${row.bill_no || row.proforma_no || row.id}.pdf`);
+      const suffix = letterhead ? "" : "-plain";
+      await downloadInvoicePdf(kind, id, `${docNumber || id}${suffix}.pdf`, letterhead);
     } catch (error) {
       toast({
         title: "Download failed",
@@ -220,7 +262,9 @@ export default function ClientBillingWorkspacePage() {
                               {row.proforma_no ?? "—"}
                             </button>
                           </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{row.cost_centre_id}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {row.cost_centre_display_name || row.cost_centre_code || row.cost_centre_id}
+                          </TableCell>
                           <TableCell>{row.category}</TableCell>
                           <TableCell>{row.month_label} · {row.finance_year}</TableCell>
                           <TableCell>{row.gst_type}</TableCell>
@@ -228,16 +272,7 @@ export default function ClientBillingWorkspacePage() {
                           <TableCell><InvoiceStatusBadge status={row.invoice_status} /></TableCell>
                           <TableCell>
                             <div className="flex items-center justify-end gap-1">
-                              <Button
-                                size="icon" variant="ghost" className="h-7 w-7"
-                                title="Download PDF"
-                                disabled={downloadingId === row.id}
-                                onClick={() => void handleDownload("proforma", row)}
-                              >
-                                {downloadingId === row.id
-                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  : <Download className="h-3.5 w-3.5" />}
-                              </Button>
+                              <DownloadPdfButton kind="proforma" id={row.id} docNumber={row.proforma_no ?? row.id} downloadingId={downloadingId} onDownload={handleDownload} />
                               {row.invoice_status === "proforma" && (
                                 <>
                                   <Button
@@ -307,7 +342,9 @@ export default function ClientBillingWorkspacePage() {
                               {row.bill_no ?? "—"}
                             </button>
                           </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{row.cost_centre_id}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {row.cost_centre_display_name || row.cost_centre_code || row.cost_centre_id}
+                          </TableCell>
                           <TableCell>{row.category}</TableCell>
                           <TableCell>{row.month_label} · {row.finance_year}</TableCell>
                           <TableCell>{row.gst_type}</TableCell>
@@ -315,16 +352,7 @@ export default function ClientBillingWorkspacePage() {
                           <TableCell><InvoiceStatusBadge status={row.invoice_status} /></TableCell>
                           <TableCell>
                             <div className="flex items-center justify-end gap-1">
-                              <Button
-                                size="icon" variant="ghost" className="h-7 w-7"
-                                title="Download PDF"
-                                disabled={downloadingId === row.id}
-                                onClick={() => void handleDownload("invoice", row)}
-                              >
-                                {downloadingId === row.id
-                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  : <Download className="h-3.5 w-3.5" />}
-                              </Button>
+                              <DownloadPdfButton kind="invoice" id={row.id} docNumber={row.bill_no ?? row.id} downloadingId={downloadingId} onDownload={handleDownload} />
                               <Button
                                 size="icon" variant="ghost" className="h-7 w-7"
                                 title="Audit log"
@@ -395,7 +423,9 @@ export default function ClientBillingWorkspacePage() {
                               {row.credit_no ?? "—"}
                             </button>
                           </TableCell>
-                          <TableCell className="text-xs text-muted-foreground">{row.invoice_id}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">
+                            {row.against_invoice_number || row.invoice_id}
+                          </TableCell>
                           <TableCell>{row.category}</TableCell>
                           <TableCell>{row.month_label} · {row.finance_year}</TableCell>
                           <TableCell>{row.gst_type}</TableCell>
@@ -403,6 +433,7 @@ export default function ClientBillingWorkspacePage() {
                           <TableCell><CreditStatusBadge status={row.credit_status} /></TableCell>
                           <TableCell>
                             <div className="flex items-center justify-end gap-1">
+                              <DownloadPdfButton kind="credit-note" id={row.id} docNumber={row.credit_no ?? row.id} downloadingId={downloadingId} onDownload={handleDownload} />
                               {row.credit_status === "draft" && (
                                 <Button
                                   size="icon" variant="ghost" className="h-7 w-7 text-emerald-600 hover:text-emerald-700"

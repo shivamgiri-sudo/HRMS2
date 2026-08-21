@@ -108,7 +108,7 @@ async function createCreditNote(input: CreateCreditNoteInput): Promise<CreditNot
     const grandTotal = round2(totalAmount + igst + cgst + sgst);
 
     const creditNo = await clientBillingNumberingService.mintCreditNoteNumber(
-      costCentre.stateCode, costCentre.companyName, input.financeYear
+      costCentre.stateCode, costCentre.companyName, input.financeYear, conn
     );
 
     await conn.execute(
