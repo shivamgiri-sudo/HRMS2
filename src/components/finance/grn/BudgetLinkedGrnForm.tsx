@@ -1607,7 +1607,13 @@ export function BudgetLinkedGrnForm({
     });
   }
 
-  function resetForm() {
+  /**
+   * `navigateAway` defaults true, matching the manual "Start a new GRN" button's prior behaviour
+   * (always ran onEditComplete). persistMutation's onSuccess passes it explicitly: false after a
+   * fresh-create submit (stay on Create with a blank form), true after an edit-and-resubmit
+   * (return to Queue, same as onEditComplete already does for that flow).
+   */
+  function resetForm({ navigateAway = true }: { navigateAway?: boolean } = {}) {
     setForm(EMPTY_FORM);
     setAllocations([newAllocation()]);
     setCostCentreSplits([]);
@@ -1618,7 +1624,7 @@ export function BudgetLinkedGrnForm({
     setSplitMode(false);
     setShowErrors(false);
     setPrefilledForEdit(true);
-    onEditComplete?.();
+    if (navigateAway) onEditComplete?.();
   }
 
   function applyExtractedFields(fields: Record<string, any>) {
@@ -1918,6 +1924,13 @@ export function BudgetLinkedGrnForm({
       void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
       void queryClient.invalidateQueries({ queryKey: ["available-budget-lines"] });
       void queryClient.invalidateQueries({ queryKey: ["smart-grn-workspace", result.id] });
+      // Was showing the just-submitted GRN until the user manually clicked "Start a new GRN" —
+      // reset automatically instead. A fresh create (no editGrnId) clears to a blank Create GRN
+      // form and stays put; an edit-and-resubmit (editGrnId set, reached via History/Queue's Edit
+      // button) still hands back to onEditComplete's Queue redirect, same as it always intended.
+      if (submit) {
+        resetForm({ navigateAway: Boolean(editGrnId) });
+      }
     },
     onError: (error: Error) => {
       const overBudget = /exceeds (the )?available budget/i.test(error.message);
@@ -2010,7 +2023,7 @@ export function BudgetLinkedGrnForm({
   const actionButtons = (
     <div className="flex gap-2">
       <GrnIconButton
-        onClick={resetForm}
+        onClick={() => resetForm()}
         aria-label={created ? "Start a new GRN" : "Clear form"}
         title={created ? "Start a new GRN" : "Clear form"}
       >
