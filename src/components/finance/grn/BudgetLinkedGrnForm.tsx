@@ -1631,6 +1631,13 @@ export function BudgetLinkedGrnForm({
       placeOfSupply: String(fields.placeOfSupply ?? current.placeOfSupply ?? ""),
       irn: String(fields.irn ?? current.irn ?? ""),
       irnAckNo: String(fields.irnAckNo ?? current.irnAckNo ?? ""),
+      // Was missing entirely: the whole point of this panel is "check these against the document
+      // before applying", but the one figure DOCUMENT_AMOUNT_MATCH actually checks (grossAmount)
+      // never made it into the form, so clicking Apply could never clear that blocker.
+      amount:
+        fields.grossAmount != null && Number(fields.grossAmount) > 0
+          ? Number(fields.grossAmount)
+          : current.amount,
     }));
     setExtractedFields(fields);
   }
@@ -1963,6 +1970,12 @@ export function BudgetLinkedGrnForm({
   const confirmExtractionMutation = useMutation({
     mutationFn: async () => {
       if (!created || !effectiveExtractedFields) throw new Error("No extracted fields are available");
+      // extraction/confirm alone never writes amount/amount_with_tax (it only persists invoice
+      // metadata — see grn-smart.service.ts confirmExtraction). Save the current form first, same
+      // path the Save button uses, so a manually-corrected Amount (or one just pulled in by Apply)
+      // is actually persisted and DOCUMENT_AMOUNT_MATCH revalidates against the real total instead
+      // of silently comparing against whatever was last saved.
+      await persistMutation.mutateAsync(false);
       return hrmsApi.post(`/api/finance/grns/${created.id}/extraction/confirm`, {
         fields: effectiveExtractedFields,
       });

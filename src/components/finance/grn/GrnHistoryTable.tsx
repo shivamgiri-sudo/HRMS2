@@ -1,7 +1,10 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Clock, Pencil, RefreshCw } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Clock, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useAuth } from "@/contexts/AuthContext";
+import { useHasRole } from "@/hooks/useUserRole";
+import { useToast } from "@/hooks/use-toast";
 import { StatusStamp } from "@/components/finance/grn/StatusStamp";
 import {
   dateTimeLabel,
@@ -41,6 +44,7 @@ type GrnHistoryRow = {
   amount_with_tax?: number | null;
   status: string;
   created_at?: string | null;
+  created_by?: string | null;
   created_by_name?: string | null;
   submitted_at?: string | null;
   branch_head_reviewed_at?: string | null;
@@ -94,6 +98,10 @@ const GRN_TYPE_TABS = [
 ] as const;
 
 export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void } = {}) {
+  const { user } = useAuth();
+  const isSuperAdmin = useHasRole("super_admin");
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [status, setStatus] = useState<(typeof STATUS_TABS)[number][0]>("_all");
   const [grnType, setGrnType] = useState<(typeof GRN_TYPE_TABS)[number][0]>("_all");
   const [search, setSearch] = useState("");
@@ -130,6 +138,30 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
   });
   const rows = listQuery.data ?? [];
   const activeFilterCount = [billDateFrom, billDateTo, vendorId].filter(Boolean).length;
+
+  // Draft-only, creator-only (or super_admin) — see backend deleteDraftGrn for why this is a
+  // real hard delete rather than the cancel-to-'cancelled' path used everywhere else.
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => hrmsApi.delete(`/api/finance/grns/${id}`),
+    onSuccess: () => {
+      toast({ title: "Draft deleted" });
+      void queryClient.invalidateQueries({ queryKey: ["grn-history"] });
+    },
+    onError: (error: Error) =>
+      toast({ title: "Delete failed", description: error.message, variant: "destructive" }),
+  });
+
+  function canDelete(row: GrnHistoryRow) {
+    if (row.status !== "draft") return false;
+    if (isSuperAdmin) return true;
+    return Boolean(user?.id) && String(row.created_by ?? "") === String(user?.id);
+  }
+
+  function handleDelete(row: GrnHistoryRow) {
+    if (window.confirm(`Permanently delete draft ${row.grn_number}? This cannot be undone.`)) {
+      deleteMutation.mutate(row.id);
+    }
+  }
 
   return (
     <GrnCard>
@@ -235,7 +267,7 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
               <GrnTh sticky={false}>Raised</GrnTh>
               <GrnTh sticky={false}>Branch Head</GrnTh>
               <GrnTh sticky={false}>Finance Head</GrnTh>
-              {onEdit && <GrnTh sticky={false} />}
+              {(onEdit || rows.some(canDelete)) && <GrnTh sticky={false} />}
             </tr>
           </thead>
           <tbody>
@@ -295,17 +327,29 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
                     reachable={Boolean(row.branch_head_reviewed_at) && row.status !== "rejected"}
                   />
                 </GrnTd>
-                {onEdit && (
+                {(onEdit || rows.some(canDelete)) && (
                   <GrnTd>
-                    {row.status === "draft" && (
-                      <GrnIconButton
-                        title="Edit this GRN"
-                        aria-label="Edit this GRN"
-                        onClick={() => onEdit(row.id)}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </GrnIconButton>
-                    )}
+                    <div className="flex items-center gap-1">
+                      {onEdit && row.status === "draft" && (
+                        <GrnIconButton
+                          title="Edit this GRN"
+                          aria-label="Edit this GRN"
+                          onClick={() => onEdit(row.id)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </GrnIconButton>
+                      )}
+                      {canDelete(row) && (
+                        <GrnIconButton
+                          title="Delete this draft"
+                          aria-label="Delete this draft"
+                          disabled={deleteMutation.isPending}
+                          onClick={() => handleDelete(row)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-grn-crit" />
+                        </GrnIconButton>
+                      )}
+                    </div>
                   </GrnTd>
                 )}
               </tr>

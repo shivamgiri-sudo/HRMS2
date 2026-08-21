@@ -1026,6 +1026,80 @@ export const grnService = {
     return { success: true };
   },
 
+  /**
+   * Permanently removes a draft GRN — the creator's undo button, distinct from cancelGrn above
+   * (which only ever flips status to 'cancelled' and is meant for GRNs already in flight).
+   *
+   * Restricted to status='draft': budget is never reserved at draft (reserve() only runs from
+   * submitForApproval, see budgetConsumptionService.reserve call site), so there is nothing to
+   * release — a hard delete here cannot desync the budget ledger the way deleting a submitted
+   * GRN could.
+   *
+   * Restricted to the creator or a super_admin: unlike cancelGrn, this is destructive and
+   * unrecoverable, so it is deliberately narrower than GRN_WRITE_ROLES branch-level access.
+   *
+   * Every child table cascades on grn_request_id EXCEPT grn_invoice_component (1074_grn_invoice_
+   * gst_components.sql never added ON DELETE CASCADE), so that one is cleared explicitly first.
+   * finance_approval_event and audit_action_log/sensitive_action_log rows are left in place on
+   * purpose — entity_id there is deliberately un-keyed (1089_finance_approval_event.sql) so a
+   * deleted GRN's audit trail still reads, just against an id that no longer resolves.
+   */
+  async deleteDraftGrn(grnId: string, actorUserId: string, actorRole: string) {
+    const connection = await db.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [rows] = await connection.execute<RowDataPacket[]>(
+        `SELECT id, status, created_by, grn_number, branch_id FROM grn_request WHERE id = ? FOR UPDATE`,
+        [grnId]
+      );
+      const grn = rows[0] as any;
+      if (!grn) throw new Error("GRN not found");
+      if (grn.status !== "draft") {
+        throw new Error(`Only a draft GRN can be deleted (current status '${grn.status}')`);
+      }
+      const isOwner = String(grn.created_by ?? "") === String(actorUserId);
+      if (!isOwner && actorRole !== "super_admin") {
+        throw Object.assign(
+          new Error("Only the GRN's creator or a Super Admin may delete a draft"),
+          { statusCode: 403 }
+        );
+      }
+
+      await connection.execute(`DELETE FROM grn_invoice_component WHERE grn_request_id = ?`, [grnId]);
+
+      await recordFinanceApprovalEvent(
+        {
+          entityType: "grn",
+          entityId: grnId,
+          action: "delete_draft",
+          fromStatus: "draft",
+          toStatus: "deleted",
+          actorUserId,
+          actorRole,
+          details: { grnNumber: String(grn.grn_number ?? ""), branchId: String(grn.branch_id ?? "") },
+        },
+        connection
+      );
+
+      const [result] = await connection.execute<ResultSetHeader>(
+        `DELETE FROM grn_request WHERE id = ? AND status = 'draft'`,
+        [grnId]
+      );
+      if (result.affectedRows !== 1) {
+        throw new Error("GRN status changed before deletion; refresh and try again");
+      }
+      await connection.commit();
+    } catch (error) {
+      await connection.rollback();
+      throw error;
+    } finally {
+      connection.release();
+    }
+
+    await writeGrnAudit("DELETE_DRAFT", grnId, actorUserId, actorRole, {});
+    return { success: true };
+  },
+
   /** Corrects a Finance-Head-approved GRN that should not have consumed budget — releases the
    *  consumed_amount/consumed_quantity back onto the budget line and moves the GRN to a
    *  terminal 'consumption_reversed' status. Symmetric to the release() already used when a

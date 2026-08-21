@@ -859,6 +859,25 @@ grnRouter.get(
   }
 );
 
+// Hard delete — creator-only (or super_admin), draft-only. See deleteDraftGrn's own comment for
+// why this is safe where cancelGrn (status -> 'cancelled') is the right tool everywhere else.
+grnRouter.delete(
+  "/grns/:id",
+  requireWriteAccess,
+  requireRole(...GRN_WRITE_ROLES),
+  authorizeGrnBranch,
+  async (req: ScopedGrnRequest, res) => {
+    try {
+      const user = actor(req);
+      const result = await grnService.deleteDraftGrn(req.params.id, user.id, user.role);
+      res.json(result);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "Failed to delete GRN";
+      res.status(errorStatus(error, 400)).json({ error: message });
+    }
+  }
+);
+
 grnRouter.post(
   "/grns",
   requireWriteAccess,
