@@ -1177,11 +1177,45 @@ export interface DeclaredSchema {
 
 /** Strip comments and string literals so DDL keywords inside them are not mistaken for statements. */
 function stripNoise(sql: string): string {
-  return sql
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/--[^\n]*/g, " ")
-    .replace(/#[^\n]*/g, " ")
-    .replace(/'(?:[^'\\]|\\.|'')*'/g, "''");
+  // Block comments are safe to strip first; they cannot appear inside '' string literals in MySQL.
+  const noBlock = sql.replace(/\/\*[\s\S]*?\*\//g, " ");
+
+  // Single-pass: process string literals BEFORE line-comment markers (-- / #).
+  // Stripping -- comments with a regex first causes a closing ' that follows a -- inside a string
+  // literal to be consumed by the comment regex, leaving the string unclosed and causing later
+  // ALTER TABLE text to leak through into the DDL-keyword search.
+  let result = "";
+  let i = 0;
+  while (i < noBlock.length) {
+    if (noBlock[i] === "'") {
+      i++; // consume opening quote
+      while (i < noBlock.length) {
+        if (noBlock[i] === "\\") {
+          i += 2; // backslash escape — skip both chars
+        } else if (noBlock[i] === "'") {
+          i++;
+          if (noBlock[i] === "'") {
+            i++; // '' doubled apostrophe = escaped quote — stay inside the literal
+          } else {
+            break; // single ' = closing delimiter
+          }
+        } else {
+          i++;
+        }
+      }
+      result += "''"; // replace entire literal with a harmless placeholder
+    } else if (noBlock[i] === "-" && noBlock[i + 1] === "-") {
+      // Line comment — only reached when outside a string literal
+      while (i < noBlock.length && noBlock[i] !== "\n") i++;
+    } else if (noBlock[i] === "#") {
+      // Hash comment — only reached when outside a string literal
+      while (i < noBlock.length && noBlock[i] !== "\n") i++;
+    } else {
+      result += noBlock[i];
+      i++;
+    }
+  }
+  return result;
 }
 
 export function parseDeclaredSchema(rawSql: string): DeclaredSchema {
