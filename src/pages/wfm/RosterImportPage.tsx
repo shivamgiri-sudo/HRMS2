@@ -50,6 +50,11 @@ interface Process {
   process_name: string;
 }
 
+interface Branch {
+  id: string;
+  branch_name: string;
+}
+
 interface ImportBatch {
   id: number;
   status: string;
@@ -64,6 +69,8 @@ interface ImportBatch {
   date_range_end: string | null;
   created_at: string;
   committed_at: string | null;
+  process_id?: string | null;
+  branch_id?: string | null;
 }
 
 interface ImportRow {
@@ -88,18 +95,56 @@ interface MissingEmployee {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function isNightShift(raw: string): boolean {
-  if (!raw) return false;
-  // 12h pattern: "7pm-4am", "07:00pm-04:00am"
-  if (/\d+(?::\d+)?\s*pm\s*[-–]\s*\d+(?::\d+)?\s*am/i.test(raw)) return true;
-  // 24h pattern: "22:00 - 06:00" (end <= start)
-  const m = raw.match(/(\d{1,2}):(\d{2})\s*[-–]\s*(\d{1,2}):(\d{2})/);
-  if (m) {
-    const start = parseInt(m[1]) * 60 + parseInt(m[2]);
-    const end = parseInt(m[3]) * 60 + parseInt(m[4]);
-    return end <= start;
-  }
-  return false;
+/**
+ * Parses one clock-time token — 24h ("22:00", "6") or 12h with meridiem ("7pm", "07:00pm",
+ * "12:00am") — into minutes since midnight. Returns null if it isn't a time at all.
+ */
+function parseTimeToken(token: string): number | null {
+  const m = token.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = m[2] ? parseInt(m[2], 10) : 0;
+  const meridiem = m[3]?.toLowerCase();
+  if (meridiem === "am") { if (h === 12) h = 0; }
+  else if (meridiem === "pm") { if (h !== 12) h += 12; }
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
+
+/**
+ * Splits a shift cell into its two clock times, in minutes since midnight.
+ *
+ * Previously this only recognized the literal textual shape "<pm-time> - <am-time>" for 12h
+ * cells, so any night shift NOT written that exact way was silently missed: "12:00am - 08:00am"
+ * (both sides "am") and "11:30pm - 11:45pm" (both sides "pm") never matched at all, and the old
+ * 24h regex required a colon on both sides, missing bare-hour cells like "22 - 6". Parsing each
+ * side as its own token — 12h or 24h, independently — closes all of those at once.
+ */
+function parseShiftRange(raw: string): { start: number; end: number } | null {
+  if (!raw) return null;
+  const m = raw.match(/(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*[-–—]\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
+  if (!m) return null;
+  const start = parseTimeToken(m[1]);
+  const end = parseTimeToken(m[2]);
+  if (start === null || end === null) return null;
+  return { start, end };
+}
+
+/**
+ * A shift counts as "night" if it crosses midnight (end clock-time <= start clock-time — e.g.
+ * "22:00 - 06:00", "07:00pm-04:00am"), OR if it starts inside the late-evening/pre-dawn window
+ * even when it doesn't wrap (e.g. "12:00am - 08:00am" starts at midnight and ends the same
+ * calendar day, so end > start, but it's still unambiguously a night/graveyard shift; likewise
+ * "22:00 - 23:30"). The wrap check alone systematically misses every shift that starts at or
+ * after midnight and stays within the same AM block — exactly the gap reported 2026-08-21.
+ * Window bounds (22:00 / 05:00) are deliberately narrow to avoid relabeling an early "morning"
+ * shift (e.g. a 05:30 or 06:00 start) as night.
+ */
+export function isNightShift(raw: string): boolean {
+  const r = parseShiftRange(raw);
+  if (!r) return false;
+  if (r.end <= r.start) return true;
+  return r.start >= 22 * 60 || r.start < 5 * 60;
 }
 
 function cellBg(row: ImportRow): string {
@@ -245,6 +290,20 @@ export default function RosterImportPage() {
   const [dragOver, setDragOver] = useState(false);
   const [editingRow, setEditingRow] = useState<ImportRow | null>(null);
   const [showMissing, setShowMissing] = useState(false);
+  const [gridSearch, setGridSearch] = useState("");
+  const [issuesOnly, setIssuesOnly] = useState(false);
+
+  /**
+   * Upload scope. "process" is the original single-process flow. "branch" covers a whole
+   * branch in one upload — every process's employees in one sheet — for a WFM lead who
+   * builds the roster branch-wide rather than process-by-process. Employee matching was
+   * already global (by employee_code, not process), so this only changes what the batch
+   * is filed under and what the missing-employees check compares against (migration 1536).
+   * A cycle-linked upload (Roster Builder deep link) is always process-scoped, since a
+   * cycle itself belongs to one process — the toggle is hidden in that case.
+   */
+  const [uploadScope, setUploadScope] = useState<"process" | "branch">("process");
+  const [branchId, setBranchId] = useState("");
 
   // Processes list
   const { data: procData } = useQuery({
@@ -252,6 +311,14 @@ export default function RosterImportPage() {
     queryFn: () => hrmsApi.get<{ data: Process[] }>("/api/processes?limit=200"),
   });
   const processes: Process[] = procData?.data ?? [];
+
+  // Branches list — only fetched once the user actually picks branch scope
+  const { data: branchData } = useQuery({
+    queryKey: ["wfm-roster-import-branches"],
+    queryFn: () => hrmsApi.get<{ branches: Branch[] }>("/api/wfm/roster-imports/branches"),
+    enabled: uploadScope === "branch",
+  });
+  const branches: Branch[] = branchData?.branches ?? [];
 
   // Current batch
   const { data: batchData, isLoading: batchLoading } = useQuery({
@@ -301,10 +368,16 @@ export default function RosterImportPage() {
   // Upload mutation
   const uploadMutation = useMutation({
     mutationFn: async ({ file, sheet }: { file: File; sheet?: string }) => {
-      if (!processId) throw new Error("Select a process first");
+      const branchMode = uploadScope === "branch" && !cycleId;
+      if (branchMode && !branchId) throw new Error("Select a branch first");
+      if (!branchMode && !processId) throw new Error("Select a process first");
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("processId", processId);
+      if (branchMode) {
+        fd.append("branchId", branchId);
+      } else {
+        fd.append("processId", processId);
+      }
       fd.append("importMode", importMode);
       // Only sent when the page was opened from Roster Builder's bulk-upload link. createImportBatch
       // takes cycleId as optional, so omitting it keeps the standalone upload behaving as before.
@@ -376,14 +449,39 @@ export default function RosterImportPage() {
     [allRows]
   );
 
+  // Search + issues-only filter on the pivoted grid. Matters most for a whole-branch upload —
+  // a branch can carry hundreds of employees across every process, and scrolling all of them to
+  // find the handful with an ERROR is exactly the friction a correction workflow should remove.
+  const visibleEmployees = useMemo(() => {
+    const q = gridSearch.trim().toLowerCase();
+    return employees.filter((emp) => {
+      if (q && !emp.name.toLowerCase().includes(q) && !emp.id.toLowerCase().includes(q)) {
+        return false;
+      }
+      if (issuesOnly) {
+        const hasIssue = Array.from(emp.dates.values()).some(
+          (r) => r.validation_state === "ERROR" || r.validation_state === "WARNING"
+        );
+        if (!hasIssue) return false;
+      }
+      return true;
+    });
+  }, [employees, gridSearch, issuesOnly]);
+
+  const branchMode = uploadScope === "branch" && !cycleId;
+  const scopeReady = branchMode ? !!branchId : !!processId;
+
   const handleFile = useCallback(
     (file: File) => {
-      if (!processId) { alert("Please select a process first"); return; }
+      if (!scopeReady) {
+        alert(branchMode ? "Please select a branch first" : "Please select a process first");
+        return;
+      }
       setSheetChoices([]);
       setPendingFile(file);
       uploadMutation.mutate({ file });
     },
-    [processId, uploadMutation]
+    [scopeReady, branchMode, uploadMutation]
   );
 
   const canCommit =
@@ -425,21 +523,62 @@ export default function RosterImportPage() {
 
         {/* Config row */}
         <div className="flex flex-wrap gap-4 items-end">
-          <div className="flex-1 min-w-[220px]">
-            <label className="block text-xs font-semibold text-slate-500 mb-1">PROCESS</label>
-            <Select value={processId} onValueChange={setProcessId} disabled={!!batchId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select process…" />
-              </SelectTrigger>
-              <SelectContent>
-                {processes.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.process_name}
-                  </SelectItem>
+          {!cycleId && (
+            <div>
+              <label className="block text-xs font-semibold text-slate-500 mb-1">UPLOAD FOR</label>
+              <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5">
+                {(["process", "branch"] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    disabled={!!batchId}
+                    onClick={() => setUploadScope(s)}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
+                      uploadScope === s ? "bg-slate-800 text-white" : "text-slate-500 hover:bg-slate-100"
+                    } ${batchId ? "opacity-60 cursor-not-allowed" : ""}`}
+                  >
+                    {s === "process" ? "One Process" : "Whole Branch"}
+                  </button>
                 ))}
-              </SelectContent>
-            </Select>
-          </div>
+              </div>
+            </div>
+          )}
+          {branchMode ? (
+            <div className="flex-1 min-w-[220px]">
+              <label className="block text-xs font-semibold text-slate-500 mb-1">BRANCH</label>
+              <Select value={branchId} onValueChange={setBranchId} disabled={!!batchId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select branch…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {branches.map((b) => (
+                    <SelectItem key={b.id} value={b.id}>
+                      {b.branch_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-slate-400 mt-1">
+                One sheet, every process mixed together — each row is filed by the employee's own code.
+              </p>
+            </div>
+          ) : (
+            <div className="flex-1 min-w-[220px]">
+              <label className="block text-xs font-semibold text-slate-500 mb-1">PROCESS</label>
+              <Select value={processId} onValueChange={setProcessId} disabled={!!batchId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select process…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {processes.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.process_name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-semibold text-slate-500 mb-1">IMPORT MODE</label>
             <Select
@@ -468,7 +607,7 @@ export default function RosterImportPage() {
           <div
             className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-colors ${
               dragOver ? "border-blue-500 bg-blue-50" : "border-slate-300 hover:border-blue-400 hover:bg-slate-50"
-            } ${!processId ? "opacity-50 pointer-events-none" : ""}`}
+            } ${!scopeReady ? "opacity-50 pointer-events-none" : ""}`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={(e) => {
@@ -477,7 +616,7 @@ export default function RosterImportPage() {
               const f = e.dataTransfer.files[0];
               if (f) handleFile(f);
             }}
-            onClick={() => processId && fileInputRef.current?.click()}
+            onClick={() => scopeReady && fileInputRef.current?.click()}
           >
             <input
               ref={fileInputRef}
@@ -669,13 +808,43 @@ export default function RosterImportPage() {
         )}
 
         {employees.length > 0 && (
+          <div className="flex flex-wrap items-center gap-3">
+            <Input
+              value={gridSearch}
+              onChange={(e) => setGridSearch(e.target.value)}
+              placeholder="Search employee name or code…"
+              className="max-w-xs h-8 text-sm"
+            />
+            <button
+              onClick={() => setIssuesOnly((v) => !v)}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                issuesOnly
+                  ? "bg-red-600 text-white border-red-600"
+                  : "bg-white text-slate-500 border-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              Errors & warnings only
+            </button>
+            <span className="text-xs text-slate-400">
+              Showing {visibleEmployees.length} of {employees.length} employees
+            </span>
+          </div>
+        )}
+
+        {employees.length > 0 && visibleEmployees.length === 0 && (
+          <div className="text-center py-10 text-slate-400 border rounded-xl bg-white">
+            No employees match {issuesOnly ? "the current filter" : "your search"}.
+          </div>
+        )}
+
+        {visibleEmployees.length > 0 && (
           <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
             <div className="overflow-x-auto max-h-[70vh] overflow-y-auto">
               <table className="text-xs border-collapse min-w-full">
                 <thead className="sticky top-0 z-20">
                   <tr className="bg-slate-50 border-b">
                     <th className="sticky left-0 z-30 bg-slate-50 px-3 py-2 text-left font-semibold text-slate-600 min-w-[170px] border-r">
-                      Employee ({employees.length})
+                      Employee ({visibleEmployees.length})
                     </th>
                     {sortedDates.map((d) => {
                       const { label, sub, isWeekend } = fmtDateHeader(d);
@@ -697,7 +866,7 @@ export default function RosterImportPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {employees.map((emp) => {
+                  {visibleEmployees.map((emp) => {
                     const errCnt = Array.from(emp.dates.values()).filter(
                       (r) => r.validation_state === "ERROR"
                     ).length;
@@ -792,7 +961,7 @@ export default function RosterImportPage() {
                     {missingEmployees.length} Employee{missingEmployees.length !== 1 ? "s" : ""} Not in Roster
                   </p>
                   <p className="text-xs text-slate-400">
-                    Active process employees whose code wasn't found in this file
+                    Active {batch?.branch_id && !batch?.process_id ? "branch" : "process"} employees whose code wasn't found in this file
                   </p>
                 </div>
               </div>

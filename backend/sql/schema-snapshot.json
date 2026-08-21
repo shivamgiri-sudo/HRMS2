@@ -15394,6 +15394,7 @@
     "wfm_roster_import_batch": [
       "id",
       "process_id",
+      "branch_id",
       "cycle_id",
       "import_mode",
       "file_name",

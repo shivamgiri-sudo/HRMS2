@@ -40,8 +40,9 @@ rosterImportRouter.post(
         return;
       }
 
-      const { processId, importMode, cycleId, sheetName } = req.body as {
+      const { processId, branchId, importMode, cycleId, sheetName } = req.body as {
         processId?: string;
+        branchId?: string;
         importMode?: string;
         cycleId?: string;
         sheetName?: string;
@@ -49,13 +50,15 @@ rosterImportRouter.post(
 
       // processId is deliberately NOT required: the file identifies people by employee code and
       // each employee carries their own process. It is still accepted, for the Roster Builder
-      // deep link which already knows the process.
+      // deep link which already knows the process. branchId is the whole-branch alternative —
+      // one upload covering every process in a branch (migration 1536).
 
       const mode = (importMode === 'UPDATE' ? 'UPDATE' : 'NEW') as 'NEW' | 'UPDATE';
       const createdBy = (req as any).user?.id ?? 'system';
 
       const result = await createImportBatch({
         processId,
+        branchId,
         cycleId,
         sheetName,
         importMode: mode,
@@ -88,6 +91,27 @@ rosterImportRouter.post(
       // reason. `detail` is kept for programmatic callers; the message now carries the cause.
       const cause = err?.message ? String(err.message) : 'unknown error';
       res.status(500).json({ error: `Import failed: ${cause}`, detail: cause });
+    }
+  }
+);
+
+// ── GET /api/wfm/roster-imports/branches ─────────────────────────────────
+// Lightweight branch list for the upload page's "whole branch" scope picker.
+// /api/access/branches already does this but is gated admin/hr only — a plain
+// 'wfm' role (WFM_ROLES) can't reach it, and that's exactly who uploads rosters.
+rosterImportRouter.get(
+  '/branches',
+  requireRole(...WFM_ROLES),
+  async (_req, res) => {
+    try {
+      const { db } = await import('../../db/mysql.js');
+      const [rows] = await db.execute(
+        `SELECT id, branch_name FROM branch_master WHERE active_status = 1 ORDER BY branch_name`
+      );
+      res.json({ branches: rows });
+    } catch (err: any) {
+      console.error('[roster-import] GET branches error:', err);
+      res.status(500).json({ error: 'Failed to load branches' });
     }
   }
 );
