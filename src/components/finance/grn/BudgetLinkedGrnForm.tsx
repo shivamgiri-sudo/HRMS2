@@ -985,6 +985,22 @@ export function BudgetLinkedGrnForm({
     return vendorCostCentreGroups.length > 0 && vendorCostCentreGroups.every((g) => g.lines.length === 0);
   }, [isVendor, form.head, form.subHead, vendorCostCentreGroups]);
 
+  /** Imprest equivalent of isUnbudgetedExpense above: the raiser picked a Head/Sub-head/cost
+   *  centre combination that genuinely has no approved budget line — headOptions/subHeadOptions
+   *  offer the full expense master, not just budgeted combinations, so this is reachable. */
+  const isImprestUnbudgeted =
+    !isVendor
+    && Boolean(form.head)
+    && Boolean(form.subHead)
+    && Boolean(form.costCentreKey)
+    && matchingLines.length === 0;
+
+  /** Unifies the two "no approved budget line, and that is allowed" cases this form supports:
+   *  an unbudgeted vendor GRN (e2c8db0d) and an unbudgeted single-line Imprest GRN. Split-mode
+   *  Imprest stays out of scope — its picker only ever offers existing budget lines, so there is
+   *  nothing meaningful to pick when none exist for this combination. */
+  const isUnbudgetedFlow = (isVendor && isUnbudgetedExpense) || (!isVendor && !splitMode && isImprestUnbudgeted);
+
   // Clear a stale vendor Head/Sub-head the same way the single-line cascade already does above.
   // Guard: skip when options are empty — budget lines and expense master are still loading and
   // running the clear now would wipe a prefilled edit value before data arrives.
@@ -1300,16 +1316,12 @@ export function BudgetLinkedGrnForm({
         }
         // headOptions/subHeadOptions now include every expense master head/sub-head, not just
         // ones with an existing budget line (see headOptions above), so a raiser can select a
-        // combination with no matching BudgetLine at all. Unlike the vendor cascade — which has
-        // a genuinely separate "unbudgeted" submission path that sends the cost-centre id
-        // directly and lets Finance Head link a budget line during approval — Imprest's create
-        // payload hard-requires resolvedLine.id (see the submit handler below). Without this
-        // guard that resolves to null and throws on save instead of failing with a message.
-        if (form.head && form.subHead && !needsItemChoice && !resolvedLine) {
-          next.budgetLineId =
-            "No approved budget line for this Head/Sub-head in this cost centre and period. "
-            + "Ask Branch/Finance Head to add one, or pick a different combination.";
-        }
+        // combination with no matching BudgetLine at all. That used to be a hard block here.
+        // It no longer is: single-line mode with no matching line is the Imprest "unbudgeted"
+        // flow (isImprestUnbudgeted / isUnbudgetedFlow above), mirroring the vendor cascade's own
+        // unbudgeted path — the create payload sends costCentreId directly and Finance Head links
+        // a budget line during approval. The amber notice under Sub-head (below, in the JSX)
+        // carries the message that used to live in this error instead.
       }
 
       // Budget capacity — checked client-side so the raiser is not bounced by the
@@ -1386,9 +1398,10 @@ export function BudgetLinkedGrnForm({
      *
      * An unbudgeted GRN is legitimately complete without a budget line, so it gets its own label
      * rather than a tick that would misstate what happens next — Finance Head links the budget
-     * during approval, and nothing is resolved until they do.
+     * during approval, and nothing is resolved until they do. Applies to both the vendor and the
+     * Imprest unbudgeted flow — isUnbudgetedFlow covers either.
      */
-    isVendor && isUnbudgetedExpense
+    isUnbudgetedFlow
       ? { label: "Budget linked by Finance Head at approval", done: true }
       : {
           label: "Budget resolved",
@@ -1589,13 +1602,16 @@ export function BudgetLinkedGrnForm({
        * the raiser nothing they could act on.
        */
       if (!isVendor && !splitMode) {
-        if (!resolvedLine) {
+        // No resolved line is no longer always an error: isImprestUnbudgeted covers the case
+        // where none genuinely exists for this Head/Sub-head/cost centre, same as the vendor
+        // cascade's own unbudgeted path.
+        if (!resolvedLine && !isImprestUnbudgeted) {
           throw new Error(
             "Pick the exact budget line first — the Head/Sub-head you chose matches more than one "
               + "line, or none for this period. The Budget section shows which."
           );
         }
-        if (!singleLine) {
+        if (resolvedLine && !singleLine) {
           throw new Error(
             form.amount > 0
               ? "This budget line has no usable rate, so the amount cannot be turned into a quantity."
@@ -1610,9 +1626,11 @@ export function BudgetLinkedGrnForm({
           : [
               {
                 key: "single",
-                budgetLineId: resolvedLine!.id,
-                quantity: singleLine!.quantity,
-                unitRate: Number(resolvedLine!.unit_rate),
+                budgetLineId: resolvedLine?.id ?? "",
+                // Unbudgeted: no budget line to read a rate off, so the raw amount IS the row —
+                // unit_rate 1, the same convention the vendor unbudgeted synthetic line uses.
+                quantity: resolvedLine ? singleLine!.quantity : Number(form.amount),
+                unitRate: resolvedLine ? Number(resolvedLine.unit_rate) : 1,
                 remarks: "",
               },
             ];
@@ -1656,7 +1674,7 @@ export function BudgetLinkedGrnForm({
        * rolled, a budget unapproved between load and save — lands here, and a named error is the
        * difference between the raiser fixing their selection and filing a bug about a TypeError.
        */
-      if (!firstLine && !(isVendor && isUnbudgetedExpense)) {
+      if (!firstLine && !isUnbudgetedFlow) {
         throw new Error(
           "The selected budget line is no longer available. Reload the page and pick the Head/Sub-head again."
         );
@@ -1673,16 +1691,22 @@ export function BudgetLinkedGrnForm({
             companyCode: form.companyCode || undefined,
             budgetLineId: firstLine?.id,
             processId: firstLine?.process_id ?? undefined,
-            // Unbudgeted: no line to read a cost centre off, so the first INCLUDED split's own
-            // cost centre is sent instead. The server validates it is active and belongs to this
-            // branch, exactly as getLineForGrn() would have validated the line.
-            costCentreId: firstLine?.cost_centre_id ?? (isUnbudgetedExpense ? unbudgetedCostCentreId : undefined),
+            // Unbudgeted: no line to read a cost centre off. Vendor sends the first INCLUDED
+            // split's own cost centre; Imprest (single-line only) sends the one cost centre the
+            // raiser picked directly. The server validates it is active and belongs to the
+            // branch either way, exactly as getLineForGrn() would have validated a real line.
+            // Gated on isUnbudgetedFlow, not just "firstLine.cost_centre_id is empty" — a
+            // budgeted branch-level line can legitimately carry a null cost_centre_id too (see
+            // the cost-centre share caution below), and that existing case must keep sending
+            // undefined exactly as it always has.
+            costCentreId: firstLine?.cost_centre_id
+              ?? (isUnbudgetedFlow ? (isVendor ? unbudgetedCostCentreId : form.costCentreKey) : undefined),
             // Tells the server to take the unbudgeted create path, and carries the Head/Sub-head
-            // that a budget line would otherwise have supplied — saveInvoiceComponents() reads
-            // both back off the header to build its synthetic lines for the split rows.
-            isUnbudgeted: isVendor && isUnbudgetedExpense ? true : undefined,
-            head: isVendor && isUnbudgetedExpense ? form.head : undefined,
-            subHead: isVendor && isUnbudgetedExpense ? form.subHead : undefined,
+            // that a budget line would otherwise have supplied — saveInvoiceComponents() /
+            // saveAllocations() read both back off the header to build synthetic lines.
+            isUnbudgeted: isUnbudgetedFlow ? true : undefined,
+            head: isUnbudgetedFlow ? form.head : undefined,
+            subHead: isUnbudgetedFlow ? form.subHead : undefined,
             vendorId: isVendor ? form.vendorId : undefined,
             // Vendor: a trivial placeholder — the follow-up invoice-components call below fully
             // overwrites every meaningful header column with the real N-cost-centre x M-component
@@ -1764,7 +1788,10 @@ export function BudgetLinkedGrnForm({
               ? monthSplit.customPercentages
               : undefined,
           allocations: rows.map((item) => ({
-            budgetLineId: item.budgetLineId,
+            budgetLineId: item.budgetLineId || undefined,
+            // Unbudgeted single-line row: no budget line id, so the cost centre the raiser
+            // picked travels instead — saveAllocations() reads it back to build a synthetic line.
+            costCentreId: !item.budgetLineId ? form.costCentreKey : undefined,
             quantity: Number(item.quantity),
             unitRate: Number(item.unitRate),
             remarks: item.remarks || undefined,
@@ -2751,15 +2778,15 @@ export function BudgetLinkedGrnForm({
                   })()}
 
                   {/* Selected head/sub-head has no matching budget line for this cost centre +
-                      period — headOptions/subHeadOptions now include the full expense master, so
-                      this combination was selectable but, unlike the vendor cascade, Imprest has
-                      no "unbudgeted, link during approval" submission path yet. Surfaced here
-                      (same spot as the resolved-line summary above) rather than only in the
-                      top error banner, and blocks submit via the matching errors.budgetLineId. */}
-                  {form.head && form.subHead && !needsItemChoice && !resolvedLine && (
+                      period — headOptions/subHeadOptions include the full expense master, so this
+                      combination is selectable. No longer a blocking error: this GRN takes the
+                      same "unbudgeted, link during approval" path the vendor cascade already has
+                      (isUnbudgetedFlow), so the note is informational only. */}
+                  {isImprestUnbudgeted && (
                     <p className="text-[10px] text-amber-600">
-                      No approved budget line for this Head/Sub-head in this cost centre and period —
-                      ask Branch/Finance Head to add one, or pick a different combination.
+                      No approved budget exists for "{form.head} → {form.subHead}" in this cost
+                      centre and period. This GRN will be flagged as unbudgeted and require
+                      Finance Head approval before payment.
                     </p>
                   )}
                 </>
