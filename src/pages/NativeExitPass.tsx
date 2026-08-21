@@ -40,6 +40,7 @@ type ExitPass = {
   submitted_at?: string;
   created_at: string;
   items?: ExitPassItem[];
+  is_overdue?: boolean | number;
 };
 
 const EMPTY_ITEM: ExitPassItem = { category: "", item_name: "", quantity: 1, unit: "Nos" };
@@ -57,7 +58,7 @@ const INPUT_CLS = "w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm
 // --- Page ----------------------------------------------------------------
 
 export default function NativeExitPass() {
-  const [tab, setTab] = useState<"mine" | "pending_bh" | "pending_admin">("mine");
+  const [tab, setTab] = useState<"mine" | "pending_bh" | "pending_admin" | "outside">("mine");
   const [passes, setPasses] = useState<ExitPass[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -71,7 +72,8 @@ export default function NativeExitPass() {
       const path =
         tab === "mine" ? "/api/exit-passes" :
         tab === "pending_bh" ? "/api/exit-passes/pending/branch-head" :
-        "/api/exit-passes/pending/admin";
+        tab === "pending_admin" ? "/api/exit-passes/pending/admin" :
+        "/api/exit-passes?status=outside_premises";
       const res = await hrmsApi.get<{ success: boolean; data: ExitPass[]; message?: string }>(path);
       if (!res?.success) throw new Error(res?.message ?? "Failed to load");
       setPasses(res.data ?? []);
@@ -117,6 +119,7 @@ export default function NativeExitPass() {
             ["mine", "My Requests"],
             ["pending_bh", "Pending Branch Head"],
             ["pending_admin", "Pending Admin"],
+            ["outside", "Outside Premises"],
           ] as const).map(([key, label]) => (
             <button
               key={key}
@@ -142,7 +145,9 @@ export default function NativeExitPass() {
           <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-slate-200 rounded-2xl">
             <h3 className="text-base font-bold text-slate-700">No exit passes here yet</h3>
             <p className="mt-1 text-sm text-slate-500">
-              {tab === "mine" ? "Raise one with the button above." : "Nothing is waiting on your decision right now."}
+              {tab === "mine" ? "Raise one with the button above." :
+                tab === "outside" ? "Nothing is currently checked out." :
+                "Nothing is waiting on your decision right now."}
             </p>
           </div>
         ) : (
@@ -169,7 +174,14 @@ export default function NativeExitPass() {
                     <td className="px-4 py-2.5 text-slate-600">{p.request_department}</td>
                     <td className="px-4 py-2.5 text-slate-600">{p.movement_type === "returnable" ? "Returnable" : "Non-Returnable"}</td>
                     <td className="px-4 py-2.5 text-slate-600">{p.planned_exit_at ? new Date(p.planned_exit_at).toLocaleDateString() : "-"}</td>
-                    <td className="px-4 py-2.5"><StatusBadge status={normalizeStatus(p.status)} /></td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center gap-1.5">
+                        <StatusBadge status={normalizeStatus(p.status)} />
+                        {!!p.is_overdue && (
+                          <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-rose-600 text-white">Overdue</span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-4 py-2.5 text-right space-x-2">
                       {tab === "mine" && p.status === "draft" && (
                         <ActionBtn icon={Send} label="Submit" onClick={async () => {

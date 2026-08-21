@@ -183,6 +183,7 @@ interface PassRow extends RowDataPacket {
   requestor_employee_id: string;
   branch_id: string;
   status: string;
+  movement_type: 'returnable' | 'non_returnable';
   branch_head_employee_id: string | null;
   admin_employee_id: string | null;
 }
@@ -400,7 +401,7 @@ export async function findPassForVerification(passNumber: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT epr.id, epr.pass_number, epr.status, epr.movement_type, epr.priority,
             epr.branch_id, bm.branch_name, req.full_name AS requestor_name,
-            epr.carrier_name, epr.carrier_type, epr.planned_exit_at,
+            epr.carrier_name, epr.carrier_type, epr.planned_exit_at, epr.expected_return_at,
             epr.exit_verified_at, epr.exit_gate
      FROM exit_pass_requests epr
      JOIN branch_master bm ON bm.id = epr.branch_id
@@ -412,17 +413,25 @@ export async function findPassForVerification(passNumber: string) {
   if (!pass) throw new ExitPassError(404, 'No pass found with that number.');
 
   const [items] = await db.execute<RowDataPacket[]>(
-    `SELECT category, item_name, asset_id, quantity FROM exit_pass_items WHERE exit_pass_id = ? ORDER BY created_at ASC`,
+    `SELECT id, category, item_name, asset_id, quantity FROM exit_pass_items WHERE exit_pass_id = ? ORDER BY created_at ASC`,
     [pass.id],
   );
 
+  // 'outside_premises' (Phase 3): a returnable pass that has exited and is
+  // due back. Overdue is derived here, not stored — a pass doesn't need a
+  // background job to "become" overdue.
+  const isOverdue = pass.status === 'outside_premises'
+    && !!pass.expected_return_at
+    && new Date(String(pass.expected_return_at)).getTime() < Date.now();
+
   const verdict =
     pass.status === 'approved' ? 'valid' :
-    pass.status === 'exit_verified' ? 'already_used' :
+    pass.status === 'outside_premises' ? 'valid_return' :
+    pass.status === 'closed' || pass.status === 'exit_verified' ? 'already_used' :
     ['branch_head_rejected', 'admin_rejected', 'cancelled', 'void'].includes(String(pass.status)) ? 'invalid' :
     'not_ready';
 
-  return { ...pass, items, verdict };
+  return { ...pass, items, verdict, is_overdue: isOverdue };
 }
 
 export async function verifyExit(
@@ -446,13 +455,72 @@ export async function verifyExit(
     throw new ExitPassError(409, `Pass is '${pass.status}', not approved — cannot verify exit.`);
   }
 
+  // Non-returnable material has nothing to bring back — it closes the moment
+  // it leaves. Returnable moves to outside_premises for Phase 3's return flow.
+  const nextStatus = pass.movement_type === 'non_returnable' ? 'closed' : 'outside_premises';
+
   await db.execute(
     `UPDATE exit_pass_requests
-     SET status = 'exit_verified', exit_verified_by = ?, exit_verified_at = NOW(), exit_gate = ?, exit_verification_method = ?
+     SET status = ?, exit_verified_by = ?, exit_verified_at = NOW(), exit_gate = ?, exit_verification_method = ?
      WHERE id = ?`,
-    [actor.employeeId, input.gate, input.method, pass.id],
+    [nextStatus, actor.employeeId, input.gate, input.method, pass.id],
   );
-  await writeAudit(db, pass.id, actor.employeeId, 'exit_verified', pass.status, 'exit_verified', input.remarks ?? `Gate: ${input.gate}, method: ${input.method}`);
+  await writeAudit(db, pass.id, actor.employeeId, 'exit_verified', pass.status, nextStatus, input.remarks ?? `Gate: ${input.gate}, method: ${input.method}`);
+}
+
+// ─── Phase 3: return verification ──────────────────────────────────────────
+
+export interface ReturnItemInput {
+  id: string;
+  condition_in: string;
+  has_damage: boolean;
+  missing: boolean;
+}
+
+export async function verifyReturn(
+  passNumber: string,
+  actor: RequestingEmployee,
+  actorRoles: string[],
+  input: { items: ReturnItemInput[]; remarks?: string | null },
+): Promise<void> {
+  const isAllowed = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r) || SECURITY_ROLES.includes(r) || r === 'it');
+  if (!isAllowed) {
+    throw new ExitPassError(403, 'Only Security, IT, or Admin roles can verify a return.');
+  }
+
+  const [rows] = await db.execute<PassRow[]>(`SELECT * FROM exit_pass_requests WHERE pass_number = ? LIMIT 1`, [passNumber]);
+  const pass = rows[0];
+  if (!pass) throw new ExitPassError(404, 'No pass found with that number.');
+  if (pass.status !== 'outside_premises') {
+    throw new ExitPassError(409, `Pass is '${pass.status}', not outside premises — cannot verify return.`);
+  }
+  if (!input.items?.length) {
+    throw new ExitPassError(400, 'At least one item condition is required.');
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+    for (const item of input.items) {
+      await conn.execute(
+        `UPDATE exit_pass_items SET condition_in = ?, has_damage = ?, missing = ? WHERE id = ? AND exit_pass_id = ?`,
+        [item.condition_in, item.has_damage ? 1 : 0, item.missing ? 1 : 0, item.id, pass.id],
+      );
+    }
+    await conn.execute(
+      `UPDATE exit_pass_requests
+       SET status = 'closed', return_verified_by = ?, return_verified_at = NOW(), return_remarks = ?
+       WHERE id = ?`,
+      [actor.employeeId, input.remarks ?? null, pass.id],
+    );
+    await writeAudit(conn, pass.id, actor.employeeId, 'return_verified', pass.status, 'closed', input.remarks);
+    await conn.commit();
+  } catch (error) {
+    await conn.rollback();
+    throw error;
+  } finally {
+    conn.release();
+  }
 }
 
 export interface ListFilters {
@@ -477,7 +545,8 @@ export async function listExitPasses(actor: RequestingEmployee, actorRoles: stri
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT epr.*, req.full_name AS requestor_name, bm.branch_name
+    `SELECT epr.*, req.full_name AS requestor_name, bm.branch_name,
+            (epr.status = 'outside_premises' AND epr.expected_return_at IS NOT NULL AND epr.expected_return_at < NOW()) AS is_overdue
      FROM exit_pass_requests epr
      JOIN employees req ON req.id = epr.requestor_employee_id
      JOIN branch_master bm ON bm.id = epr.branch_id

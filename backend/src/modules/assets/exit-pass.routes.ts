@@ -12,6 +12,7 @@ import {
   listPendingAdmin,
   findPassForVerification,
   verifyExit,
+  verifyReturn,
   resolveRequestingEmployee,
   getActorRoles,
   ExitPassError,
@@ -114,6 +115,24 @@ exitPassRouter.post('/verify/:passNumber/exit', h(async (req, res) => {
       return res.status(400).json({ success: false, message: 'method must be qr or manual' });
     }
     await verifyExit(req.params.passNumber, requester, roles, { gate, method, remarks: remarks ?? null });
+    return res.json({ success: true });
+  } catch (error) {
+    return fail(res, error);
+  }
+}));
+
+exitPassRouter.post('/verify/:passNumber/return', h(async (req, res) => {
+  try {
+    const requester = await resolveRequestingEmployee(req.authUser!.id);
+    const roles = await getActorRoles(req.authUser!.id);
+    const { items, remarks } = req.body as {
+      items: Array<{ id: string; condition_in: string; has_damage: boolean; missing: boolean }>;
+      remarks?: string;
+    };
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ success: false, message: 'items is required' });
+    }
+    await verifyReturn(req.params.passNumber, requester, roles, { items, remarks: remarks ?? null });
     return res.json({ success: true });
   } catch (error) {
     return fail(res, error);
