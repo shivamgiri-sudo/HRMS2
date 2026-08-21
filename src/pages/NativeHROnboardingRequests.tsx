@@ -627,12 +627,19 @@ export default function NativeHROnboardingRequests() {
       .catch(() => setAllCostCentres([]));
   }, []);
 
-  // ── Salary packages — load all once
+  // ── Salary packages — refiltered whenever the picked band/cost-centre changes,
+  // so the dropdown only offers packages actually assigned under that band
+  // (salary_package_master is keyed by branch + cost centre + band).
   useEffect(() => {
-    hrmsApi.get<unknown>('/api/payroll-masters/packages')
+    const cc = costCentres.find((c: any) => c.id === offer.cost_centre);
+    const params = new URLSearchParams();
+    if (selected?.branch_name) params.set('branch', selected.branch_name);
+    if (offer.salary_band) params.set('band', offer.salary_band);
+    if (cc?.cost_centre_code) params.set('costCentre', cc.cost_centre_code);
+    hrmsApi.get<unknown>(`/api/payroll-masters/packages?${params.toString()}`)
       .then((r: any) => setPackages(r?.data ?? []))
       .catch(() => setPackages([]));
-  }, []);
+  }, [offer.salary_band, offer.cost_centre, selected?.branch_name, costCentres]);
 
   // ── Filtered list
   const filtered = useMemo(() => {

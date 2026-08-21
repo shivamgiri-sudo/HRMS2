@@ -66,8 +66,8 @@ payrollMastersRouter.delete('/bands/:id', requireRole('admin'), h(async (req, re
 
 // ── PACKAGES ──────────────────────────────────────────────────────────────────
 payrollMastersRouter.get('/packages', h(async (req, res) => {
-  const { grade_id, slab_id, location_id } = req.query as Record<string, string>;
-  const data = await svc.listPackages({ grade_id, slab_id, location_id });
+  const { band, branch, costCentre } = req.query as Record<string, string>;
+  const data = await svc.listPackages({ band, branch, costCentre });
   res.json({ success: true, data });
 }));
 

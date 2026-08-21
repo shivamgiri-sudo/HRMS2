@@ -127,13 +127,20 @@ function calcGrossAndCtc(data: {
 }
 
 export async function listPackages(filters: {
-  grade_id?: string; slab_id?: string; location_id?: string;
+  band?: string; branch?: string; costCentre?: string;
 } = {}) {
   let sql = `
     SELECT spm.*
     FROM salary_package_master spm
     WHERE 1=1`;
   const params: unknown[] = [];
+  // salary_package_master's own table comment: "Lookup: branch + CC + band →
+  // available packages" — these are the three columns it's actually keyed by
+  // (band_code/branch_name/cost_centre_code), not the grade_id/slab_id/
+  // location_id this function used to accept and silently ignore.
+  if (filters.band) { sql += ' AND spm.band_code = ?'; params.push(filters.band); }
+  if (filters.branch) { sql += ' AND spm.branch_name = ?'; params.push(filters.branch); }
+  if (filters.costCentre) { sql += ' AND spm.cost_centre_code = ?'; params.push(filters.costCentre); }
   sql += ' ORDER BY spm.created_at DESC';
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return rows;
