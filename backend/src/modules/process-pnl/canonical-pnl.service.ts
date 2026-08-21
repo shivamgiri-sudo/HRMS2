@@ -63,7 +63,13 @@ function normalizePeriod(value?: string) {
 // roles — a wrong-but-cached number for up to 60s is a different risk than a
 // slow-but-fresh one, and whether that's acceptable should be a stated
 // decision, not an implicit one made when fixing an unrelated perf issue.
-async function getCachedAllocationSummary(filters: Partial<PnlQueryFilters>) {
+// Exported so bpo-pnl.routes.ts's /pnl/bpo/summary (Process Matrix) can share this exact cache
+// instead of calling bpoPnlAllocationOverlayService.getSummary() directly and uncached — before
+// this, the two front doors (this cached path, serving /pnl/summary and /pnl/period-close, vs
+// the uncached one) could disagree for up to 60s even though both compute from the identical
+// underlying rows. Return shape is unchanged (ReturnType<typeof bpoPnlAllocationOverlayService.
+// getSummary>), so this is a pure caching change, not a response-shape change.
+export async function getCachedAllocationSummary(filters: Partial<PnlQueryFilters>) {
   const key = `pnl-allocation-summary:v1:${filters.period ?? ""}:${filters.branchId ?? ""}:${filters.processId ?? ""}:${filters.clientId ?? ""}:${filters.search ?? ""}`;
   return pnlSummaryCache.getOrSet(
     key,

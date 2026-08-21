@@ -8,6 +8,7 @@ import { resolveFinanceBranchScopeSet } from "../finance/finance-access-scope.js
 import { bpoPnlAllocationOverlayService } from "./bpo-pnl-allocation-overlay.service.js";
 import { bpoPnlConfigurationService } from "./bpo-pnl.configuration.service.js";
 import { isPeriodLocked } from "./finance-period-lock.js";
+import { getCachedAllocationSummary } from "./canonical-pnl.service.js";
 
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) =>
@@ -60,8 +61,14 @@ async function scopedFilters(req: AuthenticatedRequest) {
 // work, not bundled into this phase.
 router.get("/summary", h(async (req, res) => {
   const scoped = await scopedFilters(req);
+  // Shares the exact 60s cache /pnl/summary and /pnl/period-close already read through
+  // (getCachedAllocationSummary, canonical-pnl.service.ts) — previously called
+  // bpoPnlAllocationOverlayService.getSummary() directly and uncached, so this endpoint
+  // (Process Matrix) and those two could show different operating-profit figures for up to
+  // 60s after the same underlying data changed, even though all three compute from the
+  // identical rows. See hrms2-pnl-page-architecture-audit memory.
   const [data, periodLocked] = await Promise.all([
-    bpoPnlAllocationOverlayService.getSummary(scoped),
+    getCachedAllocationSummary(scoped),
     isPeriodLocked(scoped.period),
   ]);
   res.json({ success: true, data, isPeriodLocked: periodLocked });
