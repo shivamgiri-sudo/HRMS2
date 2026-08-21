@@ -973,6 +973,13 @@ export function BudgetLinkedGrnForm({
       return {
         costCentreKey: cc.id,
         costCentreName: cc.costCentreName || cc.costCentreCode || "Unknown",
+        // Shown alongside the cost centre so the raiser can tell near-identical cost centres
+        // apart while picking — the same "which process does this serve" hint already used
+        // in offer creation. Only ever a display hint: costCentreKey is still all that's saved.
+        // Resolved server-side from the process of the employees actually posted to the cost
+        // centre (not cost_centre_master.process_id, which is NULL on every row) — covers ~90%
+        // of active cost centres; the rest render with no process shown, not a guess.
+        processName: cc.processName ?? null,
         lines: allLines,
       };
     });
@@ -3486,7 +3493,7 @@ function CostCentreSplitEditor({
   onDirectCostCentreChange,
   isUnbudgeted,
 }: {
-  groups: Array<{ costCentreKey: string; costCentreName: string; lines: BudgetLine[] }>;
+  groups: Array<{ costCentreKey: string; costCentreName: string; processName?: string | null; lines: BudgetLine[] }>;
   rows: CostCentreSplitDraft[];
   total: number;
   error?: string;
@@ -3541,9 +3548,10 @@ function CostCentreSplitEditor({
                   // a budget line" error after Apply. Label it up front instead.
                   const available = group.lines.reduce((sum, l) => sum + Number(l.available_gross_amount || 0), 0);
                   const suffix = group.lines.length > 0 ? ` — ${money(available)} available` : " — no budget line";
+                  const processHint = group.processName ? ` (${group.processName})` : "";
                   return (
                     <option key={group.costCentreKey} value={group.costCentreKey}>
-                      {group.costCentreName}{suffix}
+                      {group.costCentreName}{processHint}{suffix}
                     </option>
                   );
                 })}
@@ -3580,6 +3588,7 @@ function CostCentreSplitEditor({
                     <span className="font-grn-mono text-[12px] font-bold text-grn-ink-soft">
                       {group?.costCentreName ?? "Cost centre"}
                     </span>
+                    {group?.processName && <GrnCellSub>{group.processName}</GrnCellSub>}
                     {line && (
                       <GrnCellSub className={!hasOwnBudget ? "text-grn-warn" : undefined}>
                         {hasOwnBudget
@@ -3669,7 +3678,10 @@ function CostCentreSplitEditor({
                     />
                   </GrnTd>
                   <GrnTd className="font-grn-mono text-grn-ink-soft">{index + 1}</GrnTd>
-                  <GrnTd className="font-semibold">{group?.costCentreName ?? "—"}</GrnTd>
+                  <GrnTd className="font-semibold">
+                    {group?.costCentreName ?? "—"}
+                    {group?.processName && <GrnCellSub>{group.processName}</GrnCellSub>}
+                  </GrnTd>
                   <GrnTd className="min-w-[200px]">
                     {group && group.lines.length > 1 ? (
                       <SearchableSelect
