@@ -46,6 +46,14 @@ function cellLabel(r: RowDataPacket): string {
   if (r.start_time && r.end_time) {
     return `${String(r.start_time).slice(0, 5)}-${String(r.end_time).slice(0, 5)}`;
   }
+  // Fallback for a row with no shift_template_id (e.g. roster-import's spreadsheet-commit path,
+  // fixed 2026-08-22, which parses a shift time straight from the cell and has no shift template to
+  // link to) — the assignment's own shift_start_time/shift_end_time columns, instead of falling all
+  // the way through to printing the bare word "SHIFT". Same columns roster.service.ts::assignEmployee
+  // already writes for the manual-assign/CSV-upload path.
+  if (r.own_start_time && r.own_end_time) {
+    return `${String(r.own_start_time).slice(0, 5)}-${String(r.own_end_time).slice(0, 5)}`;
+  }
   if (r.shift_name) return String(r.shift_name);
   if (type && type !== 'UNASSIGNED') return type;
   return '—';
@@ -88,6 +96,8 @@ export async function getRosterView(
             cc.cost_centre_name AS cost_centre,
             DATE_FORMAT(ra.roster_date, '%Y-%m-%d') AS roster_date,
             ra.assignment_type,
+            ra.shift_start_time  AS own_start_time,
+            ra.shift_end_time    AS own_end_time,
             st.shift_name,
             st.start_time,
             st.end_time

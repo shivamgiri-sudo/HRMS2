@@ -1,12 +1,20 @@
 /**
  * Task 6: Roster Import Commit Tests
  * All DB calls are mocked — no live database required.
+ *
+ * Rewritten 2026-08-22 alongside commitImportBatch itself: the function no longer runs the whole
+ * batch in one transaction on one connection — it now goes through withEmployeeRosterLock per
+ * employee (same guard roster.service.ts::assignEmployee uses), plus checkEmployeeDateNotLocked and
+ * the minimum-rest guard, none of which existed here before. Those three guards have their own
+ * dedicated test suites (rest-policy*.test.ts, the lock-guard contract tests) — this file mocks them
+ * at the function boundary rather than re-deriving their internals, same pattern
+ * roster-builder-assign.test.ts already uses for the same guards.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Hoist shared state ───────────────────────────────────────────────────────
-const { mockExecute, mockGetConnection, state } = vi.hoisted(() => {
+const { mockExecute, mockConn, state } = vi.hoisted(() => {
   const state = {
     batch: null as any,
     importRows: [] as any[],
@@ -15,98 +23,91 @@ const { mockExecute, mockGetConnection, state } = vi.hoisted(() => {
     errorCount: 0,
     warnCount: 0,
     committed: false,
-    rolledBack: false,
+    approvedLeaveRows: [] as any[],
+    nightTemplateRows: [] as any[],
+    lockBlocked: false,
+    restActive: false,
+    restBlocked: false, // when restActive: does validateMinimumRest report INSUFFICIENT_REST?
+    restWarnMode: true, // applyRestDecision allows-through when the resolved policy is 'warn'
+    unresolvableCodes: new Set<string>(), // codes the employee-lookup query pretends not to find
   };
 
   const mockConnExecute = vi.fn(async (sql: string, params?: any[]) => {
     const s = (sql as string).trim().toUpperCase();
-
-    // night-shift template lookup (leave guard needs to know which templates cross midnight)
-    if (s.startsWith('SELECT ID FROM WFM_SHIFT_TEMPLATE')) {
-      return [[]];
-    }
-
-    // Employee code -> id resolution (commitImportBatch maps the spreadsheet CODE to employees.id).
-    if (s.startsWith('SELECT ID, EMPLOYEE_CODE FROM EMPLOYEES')) {
-      return [(params ?? []).map((code) => ({ id: `uuid-${code}`, employee_code: code }))];
-    }
-
     if (s.startsWith('INSERT IGNORE INTO WFM_ROSTER_ASSIGNMENT')) {
       state.assignmentInserts.push({ sql, params, mode: 'IGNORE' });
-      // Simulate successful insert (affectedRows 1 = new row)
       return [{ affectedRows: 1, insertId: state.assignmentInserts.length }];
     }
-
     if (s.startsWith('INSERT INTO WFM_ROSTER_ASSIGNMENT')) {
       state.assignmentInserts.push({ sql, params, mode: 'UPSERT' });
-      // affectedRows=1 means new row, 2 means updated
       return [{ affectedRows: 1, insertId: state.assignmentInserts.length }];
     }
+    return [[]];
+  });
+  const mockConn = { execute: mockConnExecute };
 
+  const mockExecute = vi.fn(async (sql: string, params?: any[]) => {
+    const s = (sql as string).trim().toUpperCase();
+
+    if (s.startsWith('SELECT ID FROM WFM_SHIFT_TEMPLATE')) {
+      return [state.nightTemplateRows];
+    }
+    if (s.startsWith('SELECT ID, EMPLOYEE_CODE, PROCESS_ID, BRANCH_ID FROM EMPLOYEES')) {
+      return [(params ?? [])
+        .filter((code) => !state.unresolvableCodes.has(code))
+        .map((code) => ({ id: `uuid-${code}`, employee_code: code, process_id: null, branch_id: null }))];
+    }
+    if (s.startsWith('SELECT * FROM WFM_ROSTER_IMPORT_BATCH')) {
+      return state.batch ? [[state.batch]] : [[]];
+    }
+    if (s.includes('COUNT(*) AS CNT') && s.includes("VALIDATION_STATE = 'ERROR'")) {
+      return [[{ cnt: state.errorCount }]];
+    }
+    if (s.includes('COUNT(*) AS CNT') && s.includes("VALIDATION_STATE = 'WARNING'")) {
+      return [[{ cnt: state.warnCount }]];
+    }
+    if (s.startsWith('SELECT * FROM WFM_ROSTER_IMPORT_ROW')) {
+      return [state.importRows];
+    }
+    if (s.startsWith('SELECT EMPLOYEE_ID, FROM_DATE, TO_DATE, TOTAL_DAYS')) {
+      return [state.approvedLeaveRows]; // loadApprovedLeave — real function, mocked DB underneath
+    }
     if (s.startsWith('UPDATE WFM_ROSTER_IMPORT_BATCH')) {
       state.batchUpdates.push({ sql, params });
       state.committed = true;
       return [{ affectedRows: 1 }];
     }
-
     return [[]];
   });
 
-  const mockConn = {
-    execute: mockConnExecute,
-    beginTransaction: vi.fn(async () => {}),
-    commit: vi.fn(async () => {}),
-    rollback: vi.fn(async () => { state.rolledBack = true; }),
-    release: vi.fn(),
-  };
-
-  const mockGetConnection = vi.fn(async () => mockConn);
-
-  const mockExecute = vi.fn(async (sql: string, params?: any[]) => {
-    const s = (sql as string).trim().toUpperCase();
-
-    // night-shift template lookup (leave guard needs to know which templates cross midnight)
-    if (s.startsWith('SELECT ID FROM WFM_SHIFT_TEMPLATE')) {
-      return [[]];
-    }
-
-    // Employee code -> id resolution (commitImportBatch maps the spreadsheet CODE to employees.id).
-    if (s.startsWith('SELECT ID, EMPLOYEE_CODE FROM EMPLOYEES')) {
-      return [(params ?? []).map((code) => ({ id: `uuid-${code}`, employee_code: code }))];
-    }
-
-    // Fetch batch
-    if (s.startsWith('SELECT * FROM WFM_ROSTER_IMPORT_BATCH')) {
-      if (!state.batch) return [[]];
-      return [[state.batch]];
-    }
-
-    // Error count
-    if (s.includes('COUNT(*) AS CNT') && s.includes("VALIDATION_STATE = 'ERROR'")) {
-      return [[{ cnt: state.errorCount }]];
-    }
-
-    // Warning count
-    if (s.includes('COUNT(*) AS CNT') && s.includes("VALIDATION_STATE = 'WARNING'")) {
-      return [[{ cnt: state.warnCount }]];
-    }
-
-    // Import rows
-    if (s.startsWith('SELECT * FROM WFM_ROSTER_IMPORT_ROW')) {
-      return [state.importRows];
-    }
-
-    return [[]];
-  });
-
-  return { mockExecute, mockGetConnection, state };
+  return { mockExecute, mockConn, state };
 });
 
 vi.mock('../../../db/mysql.js', () => ({
-  db: {
-    execute: mockExecute,
-    getConnection: mockGetConnection,
-  },
+  db: { execute: mockExecute },
+}));
+
+// withEmployeeRosterLock just runs fn against the shared mockConn, bypassing the real MySQL named
+// lock — that lock's own correctness is rest-policy.test.ts's job, not this file's.
+vi.mock('../rest-policy.service.js', () => ({
+  withEmployeeRosterLock: vi.fn(async (_employeeId: string, fn: (conn: any) => Promise<any>) => fn(mockConn)),
+  isRestPolicyFeatureActive: vi.fn(async () => state.restActive),
+  validateMinimumRest: vi.fn(async () =>
+    state.restBlocked
+      ? { ok: false, reason: 'INSUFFICIENT_REST', policy: { enforcementMode: state.restWarnMode ? 'warn' : 'block' }, actualRestMinutes: 30, requiredRestMinutes: 660 }
+      : { ok: true, requiredRestMinutes: 660 }
+  ),
+  applyRestDecision: vi.fn(async (result: any) => {
+    if (result.ok) return { allowed: true, warned: false };
+    if (result.policy?.enforcementMode === 'warn') return { allowed: true, warned: true };
+    return { allowed: false, warned: false };
+  }),
+}));
+
+vi.mock('../../roster/roster-lock-guard.js', () => ({
+  checkEmployeeDateNotLocked: vi.fn(async () =>
+    state.lockBlocked ? { blocked: true, error: 'locked for payroll' } : { blocked: false }
+  ),
 }));
 
 // Import service AFTER mock registration
@@ -135,6 +136,7 @@ function makeImportRow(overrides: Partial<{
   roster_date: string;
   normalized_type: string;
   validation_state: string;
+  raw_value: string;
 }> = {}) {
   return {
     id: 1,
@@ -142,6 +144,7 @@ function makeImportRow(overrides: Partial<{
     roster_date: '2026-08-01',
     normalized_type: 'WO',
     validation_state: 'VALID',
+    raw_value: 'WO',
     ...overrides,
   };
 }
@@ -157,9 +160,15 @@ describe('commitImportBatch', () => {
     state.errorCount = 0;
     state.warnCount = 0;
     state.committed = false;
-    state.rolledBack = false;
+    state.approvedLeaveRows = [];
+    state.nightTemplateRows = [];
+    state.lockBlocked = false;
+    state.restActive = false;
+    state.restBlocked = false;
+    state.restWarnMode = true;
+    state.unresolvableCodes = new Set();
     mockExecute.mockClear();
-    mockGetConnection.mockClear();
+    mockConn.execute.mockClear();
   });
 
   it('throws when batch not found', async () => {
@@ -214,6 +223,18 @@ describe('commitImportBatch', () => {
     ).rejects.toThrow('Uploader cannot approve their own import (maker-checker policy)');
   });
 
+  it('super_admin CAN approve their own import — maker-checker exemption', async () => {
+    state.batch = makeBatch({ created_by: 'same-user' });
+    state.errorCount = 0;
+    state.warnCount = 0;
+    state.importRows = [makeImportRow({ validation_state: 'VALID' })];
+
+    const result = await commitImportBatch(1, 'same-user', { committerIsSuperAdmin: true });
+
+    expect(result.assignmentsCreated).toBe(1);
+    expect(state.committed).toBe(true);
+  });
+
   it('creates assignments for valid rows in NEW mode', async () => {
     state.batch = makeBatch({ import_mode: 'NEW' });
     state.errorCount = 0;
@@ -228,8 +249,6 @@ describe('commitImportBatch', () => {
     expect(result.assignmentsCreated).toBe(2);
     expect(result.skipped).toBe(0);
     expect(state.committed).toBe(true);
-
-    // Verify INSERT IGNORE was used for NEW mode
     expect(state.assignmentInserts.every((r) => r.mode === 'IGNORE')).toBe(true);
   });
 
@@ -269,15 +288,7 @@ describe('commitImportBatch', () => {
     state.errorCount = 0;
     state.warnCount = 0;
     state.importRows = [makeImportRow({ validation_state: 'VALID' })];
-
-    // Override connection execute to simulate an existing row (affectedRows=0)
-    const conn = await mockGetConnection();
-    // let the guard's two lookups through in order: employee code -> id, then night templates
-    (conn.execute as ReturnType<typeof vi.fn>).mockImplementationOnce(async (_sql: string, params?: any[]) => [
-      (params ?? []).map((code: any) => ({ id: `uuid-${code}`, employee_code: code })),
-    ]);
-    (conn.execute as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => [[]]);
-    (conn.execute as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => [{ affectedRows: 0 }]);
+    mockConn.execute.mockImplementationOnce(async () => [{ affectedRows: 0 }]);
 
     const result = await commitImportBatch(1, 'approver-1', {});
 
@@ -285,24 +296,115 @@ describe('commitImportBatch', () => {
     expect(result.assignmentsCreated).toBe(0);
   });
 
-  it('rolls back transaction on error during assignment insert', async () => {
+  it('counts unmatched employees separately from skipped, and still commits the rest of the batch', async () => {
+    state.batch = makeBatch({ import_mode: 'NEW' });
+    state.errorCount = 0;
+    state.warnCount = 0;
+    state.unresolvableCodes = new Set(['GHOST']);
+    state.importRows = [
+      makeImportRow({ employee_id_raw: 'GHOST', roster_date: '2026-08-01', validation_state: 'VALID' }),
+      makeImportRow({ id: 2, employee_id_raw: 'EMP001', roster_date: '2026-08-01', validation_state: 'VALID' }),
+    ];
+
+    const result = await commitImportBatch(1, 'approver-1', {});
+
+    expect(result.unmatchedEmployees).toBe(1);
+    expect(result.assignmentsCreated).toBe(1);
+    expect(state.committed).toBe(true);
+  });
+
+  it('blocks a row whose roster date is already locked for payroll, and still commits the rest', async () => {
+    state.batch = makeBatch({ import_mode: 'NEW' });
+    state.errorCount = 0;
+    state.warnCount = 0;
+    state.lockBlocked = true;
+    state.importRows = [makeImportRow({ validation_state: 'VALID' })];
+
+    const result = await commitImportBatch(1, 'approver-1', {});
+
+    expect(result.blockedByLock).toBe(1);
+    expect(result.assignmentsCreated).toBe(0);
+    expect(state.assignmentInserts.length).toBe(0);
+    expect(state.committed).toBe(true); // one locked row doesn't stop the batch reaching COMMITTED
+  });
+
+  it('parses a SHIFT row\'s raw value and persists shift_start_time/shift_end_time', async () => {
+    state.batch = makeBatch({ import_mode: 'NEW' });
+    state.errorCount = 0;
+    state.warnCount = 0;
+    state.importRows = [
+      makeImportRow({ normalized_type: 'SHIFT', raw_value: '10:00 - 19:00', validation_state: 'VALID' }),
+    ];
+
+    await commitImportBatch(1, 'approver-1', {});
+
+    expect(state.assignmentInserts.length).toBe(1);
+    const params = state.assignmentInserts[0].params;
+    // params order: employeeId, rosterDate, normalizedType, shiftStartTime, shiftEndTime, batchId
+    expect(params).toContain('10:00');
+    expect(params).toContain('19:00');
+  });
+
+  it('WARN-mode rest policy: an insufficient-rest SHIFT row still commits (with the warning recorded downstream)', async () => {
+    state.batch = makeBatch({ import_mode: 'NEW' });
+    state.errorCount = 0;
+    state.warnCount = 0;
+    state.restActive = true;
+    state.restBlocked = true;
+    state.restWarnMode = true;
+    state.importRows = [
+      makeImportRow({ normalized_type: 'SHIFT', raw_value: '10:00 - 19:00', validation_state: 'VALID' }),
+    ];
+
+    const result = await commitImportBatch(1, 'approver-1', {});
+
+    expect(result.blockedByRest).toBe(0);
+    expect(result.assignmentsCreated).toBe(1);
+  });
+
+  it('BLOCK-mode rest policy: an insufficient-rest SHIFT row is refused, rest of batch still commits', async () => {
+    state.batch = makeBatch({ import_mode: 'NEW' });
+    state.errorCount = 0;
+    state.warnCount = 0;
+    state.restActive = true;
+    state.restBlocked = true;
+    state.restWarnMode = false;
+    state.importRows = [
+      makeImportRow({ employee_id_raw: 'EMP001', normalized_type: 'SHIFT', raw_value: '10:00 - 19:00', validation_state: 'VALID' }),
+      makeImportRow({ id: 2, employee_id_raw: 'EMP002', roster_date: '2026-08-01', normalized_type: 'WO', validation_state: 'VALID' }),
+    ];
+
+    const result = await commitImportBatch(1, 'approver-1', {});
+
+    expect(result.blockedByRest).toBe(1);
+    expect(result.assignmentsCreated).toBe(1); // the WO row for EMP002 still went through
+    expect(state.committed).toBe(true);
+  });
+
+  it('an unexpected DB error during a row write still surfaces (not silently swallowed) — no big transaction to roll back into anymore', async () => {
     state.batch = makeBatch({ import_mode: 'NEW' });
     state.errorCount = 0;
     state.warnCount = 0;
     state.importRows = [makeImportRow({ validation_state: 'VALID' })];
-
-    const conn = await mockGetConnection();
-    // let the guard's two lookups through in order: employee code -> id, then night templates
-    (conn.execute as ReturnType<typeof vi.fn>).mockImplementationOnce(async (_sql: string, params?: any[]) => [
-      (params ?? []).map((code: any) => ({ id: `uuid-${code}`, employee_code: code })),
-    ]);
-    (conn.execute as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => [[]]);
-    (conn.execute as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('DB failure'));
+    mockConn.execute.mockRejectedValueOnce(new Error('DB failure'));
 
     await expect(
       commitImportBatch(1, 'approver-1', {})
     ).rejects.toThrow('DB failure');
+  });
 
-    expect(state.rolledBack).toBe(true);
+  it('a non-SHIFT row (WEEK_OFF) never triggers the rest-policy check even when the feature is active', async () => {
+    state.batch = makeBatch({ import_mode: 'NEW' });
+    state.errorCount = 0;
+    state.warnCount = 0;
+    state.restActive = true;
+    state.restBlocked = true; // would block if it were ever checked
+    state.restWarnMode = false;
+    state.importRows = [makeImportRow({ normalized_type: 'WEEK_OFF', raw_value: 'WO', validation_state: 'VALID' })];
+
+    const result = await commitImportBatch(1, 'approver-1', {});
+
+    expect(result.blockedByRest).toBe(0);
+    expect(result.assignmentsCreated).toBe(1);
   });
 });

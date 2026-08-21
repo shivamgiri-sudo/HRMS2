@@ -10,6 +10,9 @@ import { db } from '../../db/mysql.js';
 import { analyzeHeaders } from './header-alias.service.js';
 import { normalizeAssignment, NormalizerConfig } from './assignment-normalizer.service.js';
 import { sqlLimitOffset } from '../../db/pagination.js';
+import { withEmployeeRosterLock, validateMinimumRest, applyRestDecision, isRestPolicyFeatureActive } from './rest-policy.service.js';
+import { checkEmployeeDateNotLocked } from '../roster/roster-lock-guard.js';
+import { parseShiftString } from './shift-parser.service.js';
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -595,6 +598,14 @@ export interface CommitResult {
   unmatchedEmployees: number;
   /** Rows refused because the employee has approved leave that day. Never silently written. */
   blockedByLeave: number;
+  /** Rows refused: shift too close to a neighboring shift for the minimum-rest policy to allow
+   *  (BLOCK mode), or no rest policy resolves for the employee's scope at all. Bulk import has no
+   *  UI to supply an emergency-override reason/approver, so unlike manual assignment this can
+   *  never be overridden — it is always a hard skip. In the live WARN-mode policy (2026-08-16
+   *  owner ruling) INSUFFICIENT_REST rows still commit, with a warning recorded instead. */
+  blockedByRest: number;
+  /** Rows refused because that employee/date's attendance is already locked for payroll. */
+  blockedByLock: number;
 }
 
 // ── commitImportBatch ─────────────────────────────────────────────────────────
@@ -602,7 +613,7 @@ export interface CommitResult {
 export async function commitImportBatch(
   batchId: number,
   committedBy: string,
-  options: { overrideWarnings?: boolean; cycleId?: string | null }
+  options: { overrideWarnings?: boolean; cycleId?: string | null; committerIsSuperAdmin?: boolean }
 ): Promise<CommitResult> {
   // Step 1: Fetch batch
   const [batchRows] = await db.execute<RowDataPacket[]>(
@@ -641,8 +652,11 @@ export async function commitImportBatch(
     throw new Error('Batch has warnings — pass overrideWarnings: true to proceed');
   }
 
-  // Step 5: Maker-checker
-  if (batch.created_by === committedBy) {
+  // Step 5: Maker-checker. Owner ruling 2026-08-22: the rule protects against a plain WFM/team
+  // leader uploader waving their own roster through unreviewed — it was never meant to stop a
+  // super_admin, who has no separate WFM-head "checker" above them in this flow and is trusted to
+  // upload and approve in one step.
+  if (batch.created_by === committedBy && !options.committerIsSuperAdmin) {
     throw new Error('Uploader cannot approve their own import (maker-checker policy)');
   }
 
@@ -656,28 +670,50 @@ export async function commitImportBatch(
   );
   const rows = importRows as RowDataPacket[];
 
-  // Step 7: Begin transaction and insert/update assignments
-  const conn = await (db as any).getConnection();
-  await conn.beginTransaction();
+  // Step 7: Insert/update assignments
+  //
+  // Not one big transaction on one connection anymore (2026-08-22 fix). This was the only one of
+  // four real roster-write engines with no employee lock, no minimum-rest check and no
+  // payroll/date-lock check at all — a spreadsheet could silently overwrite a locked, rest-violating
+  // roster date that every other write path (manual assign, auto-roster generation, bulk upload,
+  // shift swap) refuses to touch. Bringing it in line means going through withEmployeeRosterLock,
+  // same as roster.service.ts::assignEmployee — and that function opens its own dedicated connection
+  // per employee, which cannot be nested inside one already-open cross-employee transaction. So this
+  // now matches the established pattern used everywhere else a batch of roster writes happens
+  // (roster.service.ts::bulkAssign, the CSV-upload path): one lock scope per employee, each row's
+  // write auto-commits on its own, failures are tallied rather than rolling back rows that already
+  // succeeded. A single bad row no longer takes the rest of a 4,000-row file down with it.
 
   let assignmentsCreated = 0;
   let assignmentsUpdated = 0;
   let skipped = 0;
   let unmatchedEmployees = 0;
+  let blockedByLeave = 0;
+  let blockedByRest = 0;
+  let blockedByLock = 0;
 
   // employee_id_raw holds the spreadsheet's employee CODE ('MAS56168'); wfm_roster_assignment
   // .employee_id is a char(36) UUID with a foreign key to employees.id. The code was being
   // inserted straight into that column, so the FK rejected every row — and because the statement
   // is INSERT IGNORE, the rejection was swallowed and simply counted as "skipped". A commit of
   // 4,186 rows reported created 0 / skipped 4,179 and wrote nothing. Verified live 2026-08-20.
+  // Also carries process_id/branch_id now, so the rest-policy check below can resolve scope
+  // without a per-employee query once inside the lock.
   const codes = [...new Set(rows.map((r) => String(r.employee_id_raw ?? '')).filter(Boolean))];
   const codeToId = new Map<string, string>();
+  const codeToScope = new Map<string, { processId: string | null; branchId: string | null }>();
   if (codes.length) {
-    const [empRows] = await conn.execute(
-      `SELECT id, employee_code FROM employees WHERE employee_code IN (${codes.map(() => '?').join(',')})`,
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, employee_code, process_id, branch_id FROM employees WHERE employee_code IN (${codes.map(() => '?').join(',')})`,
       codes
     );
-    for (const e of empRows as RowDataPacket[]) codeToId.set(String(e.employee_code), String(e.id));
+    for (const e of empRows as RowDataPacket[]) {
+      codeToId.set(String(e.employee_code), String(e.id));
+      codeToScope.set(String(e.employee_code), {
+        processId: e.process_id ? String(e.process_id) : null,
+        branchId: e.branch_id ? String(e.branch_id) : null,
+      });
+    }
   }
 
   // Approved leave is a hard block (owner ruling 2026-08-21): a spreadsheet must not overwrite it.
@@ -691,109 +727,177 @@ export async function commitImportBatch(
     : new Map();
   const nightTemplates = new Set<string>();
   {
-    const [nightRows] = await conn.execute(
+    const [nightRows] = await db.execute<RowDataPacket[]>(
       `SELECT id FROM wfm_shift_template WHERE end_time IS NOT NULL AND start_time IS NOT NULL AND end_time <= start_time`
     );
     for (const t of nightRows as RowDataPacket[]) nightTemplates.add(String(t.id));
   }
-  let blockedByLeave = 0;
+  const restFeatureActive = await isRestPolicyFeatureActive();
 
-  try {
-    for (const row of rows) {
-      const importMode = batch.import_mode as 'NEW' | 'UPDATE';
-      const employeeId = codeToId.get(String(row.employee_id_raw ?? ''));
-      if (!employeeId) {
-        // Counted separately from "skipped": a code with no matching employee is a data problem
-        // the uploader can act on, not a duplicate row.
-        unmatchedEmployees++;
-        continue;
-      }
+  const importMode = batch.import_mode as 'NEW' | 'UPDATE';
 
-      const leaveVerdict = checkLeaveConflict(leaveMap, employeeId, String(row.roster_date).slice(0, 10), {
-        isNightShift: nightTemplates.has(String(row.shift_template_id ?? '')),
-        assignmentType: row.normalized_type,
-      });
-      if (leaveVerdict.blocked) {
-        // Counted and reported, never written. The rest of the file still imports — one protected
-        // day must not cost the planner the whole upload.
-        blockedByLeave++;
-        continue;
-      }
-
-      if (importMode === 'NEW') {
-        // INSERT IGNORE — skip if already exists
-        const [result] = options.cycleId
-          ? await conn.execute(
-              `INSERT IGNORE INTO wfm_roster_assignment
-                 (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, cycle_id, created_at)
-               VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, ?, NOW())`,
-              [employeeId, row.roster_date, row.normalized_type, batchId, options.cycleId]
-            )
-          : await conn.execute(
-              `INSERT IGNORE INTO wfm_roster_assignment
-                 (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, created_at)
-               VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, NOW())`,
-              [employeeId, row.roster_date, row.normalized_type, batchId]
-            );
-        if ((result as ResultSetHeader).affectedRows > 0) {
-          assignmentsCreated++;
-        } else {
-          skipped++;
-        }
-      } else {
-        // UPDATE mode — ON DUPLICATE KEY UPDATE
-        const [result] = options.cycleId
-          ? await conn.execute(
-              `INSERT INTO wfm_roster_assignment
-                 (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, cycle_id, created_at)
-               VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, ?, NOW())
-               ON DUPLICATE KEY UPDATE
-                 assignment_type = VALUES(assignment_type),
-                 lifecycle_state = 'DRAFT',
-                 import_batch_id = VALUES(import_batch_id),
-                 cycle_id = VALUES(cycle_id)`,
-              [employeeId, row.roster_date, row.normalized_type, batchId, options.cycleId]
-            )
-          : await conn.execute(
-              `INSERT INTO wfm_roster_assignment
-                 (id, employee_id, roster_date, assignment_type, lifecycle_state, import_batch_id, created_at)
-               VALUES (UUID(), ?, ?, ?, 'DRAFT', ?, NOW())
-               ON DUPLICATE KEY UPDATE
-                 assignment_type = VALUES(assignment_type),
-                 lifecycle_state = 'DRAFT',
-                 import_batch_id = VALUES(import_batch_id)`,
-              [employeeId, row.roster_date, row.normalized_type, batchId]
-            );
-        const header = result as ResultSetHeader;
-        if (header.affectedRows === 1) {
-          assignmentsCreated++;
-        } else if (header.affectedRows === 2) {
-          // MySQL returns 2 for ON DUPLICATE KEY UPDATE that changed a row
-          assignmentsUpdated++;
-        } else {
-          // affectedRows === 0 means ON DUPLICATE KEY UPDATE but no change
-          assignmentsUpdated++;
-        }
-      }
+  // Group by employee so the lock is acquired once per employee, not once per row — a real file is
+  // one employee across up to a whole month of dates, and a per-row GET_LOCK/RELEASE_LOCK round trip
+  // each would be needlessly slow for no extra safety.
+  const rowsByCode = new Map<string, RowDataPacket[]>();
+  for (const row of rows) {
+    const code = String(row.employee_id_raw ?? '');
+    if (!code) continue;
+    if (!rowsByCode.has(code)) rowsByCode.set(code, []);
+    rowsByCode.get(code)!.push(row);
+  }
+  for (const code of [...new Set(rows.map((r) => String(r.employee_id_raw ?? '')).filter(Boolean))]) {
+    if (!codeToId.has(code)) {
+      // Counted separately from "skipped": a code with no matching employee is a data problem
+      // the uploader can act on, not a duplicate row.
+      unmatchedEmployees += (rowsByCode.get(code) ?? []).length;
     }
-
-    // Update batch status
-    await conn.execute(
-      `UPDATE wfm_roster_import_batch
-       SET status = 'COMMITTED', committed_by = ?, committed_at = NOW()
-       WHERE id = ?`,
-      [committedBy, batchId]
-    );
-
-    await conn.commit();
-  } catch (err) {
-    await conn.rollback();
-    throw err;
-  } finally {
-    conn.release();
   }
 
-  return { assignmentsCreated, assignmentsUpdated, skipped, unmatchedEmployees, blockedByLeave };
+  for (const [code, employeeRows] of rowsByCode) {
+    const employeeId = codeToId.get(code);
+    if (!employeeId) continue; // already tallied into unmatchedEmployees above
+
+    const scope = codeToScope.get(code) ?? { processId: null, branchId: null };
+
+    await withEmployeeRosterLock(employeeId, async (conn) => {
+      for (const row of employeeRows) {
+        const rosterDate = String(row.roster_date).slice(0, 10);
+
+        const lockCheck = await checkEmployeeDateNotLocked(conn, employeeId, rosterDate);
+        if (lockCheck.blocked) {
+          blockedByLock++;
+          continue;
+        }
+
+        // Only a SHIFT row has a time to validate rest against, persist, or judge night-shift-ness
+        // from — everything else (WEEK_OFF/LEAVE/ABSENT/HOLIDAY/TRAINING/UNASSIGNED) has no
+        // shift_start_time/end_time. Parsed fresh from raw_value rather than trusting a stored
+        // parse: the preview step never persisted shiftParseResult, only normalized_type, so this
+        // is the first point it exists. Parsed BEFORE the leave check (moved 2026-08-22, was after)
+        // specifically so the leave check's isNightShift can use it — the previous isNightShift read
+        // row.shift_template_id, a column that does not exist on wfm_roster_import_row (the real
+        // column, resolved_shift_id, is never written by anything in this file either), so night-shift
+        // leave protection silently degraded to day-only for every imported row.
+        let shiftStartTime: string | null = null;
+        let shiftEndTime: string | null = null;
+        let isNightShift = false;
+        if (row.normalized_type === 'SHIFT') {
+          const parsed = parseShiftString(String(row.raw_value ?? ''));
+          if (parsed.success && parsed.parsed?.startTime && parsed.parsed?.endTime) {
+            shiftStartTime = parsed.parsed.startTime;
+            shiftEndTime = parsed.parsed.endTime;
+            isNightShift = parsed.parsed.isOvernight;
+          }
+        }
+
+        const leaveVerdict = checkLeaveConflict(leaveMap, employeeId, rosterDate, {
+          isNightShift,
+          assignmentType: row.normalized_type,
+        });
+        if (leaveVerdict.blocked) {
+          // Counted and reported, never written. The rest of the file still imports — one protected
+          // day must not cost the planner the whole upload.
+          blockedByLeave++;
+          continue;
+        }
+
+        if (shiftStartTime && shiftEndTime && restFeatureActive) {
+          const restCheck = await validateMinimumRest(
+            { employeeId, processId: scope.processId, branchId: scope.branchId, forDate: rosterDate },
+            { startTime: shiftStartTime, endTime: shiftEndTime },
+            null,
+            conn
+          );
+          if (!restCheck.ok) {
+            // No emergency-override path here — bulk import has no UI to collect a reason +
+            // approver for one cell in a 4,000-row file, unlike manual assignment. In the live
+            // WARN-mode policy this still commits (applyRestDecision records a warning and
+            // allows it through); only BLOCK mode or a genuinely unresolved policy refuses the
+            // row outright.
+            const decision = await applyRestDecision(restCheck, { employeeId, rosterDate }, conn);
+            if (!decision.allowed) {
+              blockedByRest++;
+              continue;
+            }
+          }
+        }
+
+        if (importMode === 'NEW') {
+          // INSERT IGNORE — skip if already exists
+          const [result] = options.cycleId
+            ? await conn.execute(
+                `INSERT IGNORE INTO wfm_roster_assignment
+                   (id, employee_id, roster_date, assignment_type, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, cycle_id, created_at)
+                 VALUES (UUID(), ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW())`,
+                [employeeId, rosterDate, row.normalized_type, shiftStartTime, shiftEndTime, batchId, options.cycleId]
+              )
+            : await conn.execute(
+                `INSERT IGNORE INTO wfm_roster_assignment
+                   (id, employee_id, roster_date, assignment_type, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, created_at)
+                 VALUES (UUID(), ?, ?, ?, ?, ?, 'DRAFT', ?, NOW())`,
+                [employeeId, rosterDate, row.normalized_type, shiftStartTime, shiftEndTime, batchId]
+              );
+          if ((result as unknown as ResultSetHeader).affectedRows > 0) {
+            assignmentsCreated++;
+          } else {
+            skipped++;
+          }
+        } else {
+          // UPDATE mode — ON DUPLICATE KEY UPDATE
+          const [result] = options.cycleId
+            ? await conn.execute(
+                `INSERT INTO wfm_roster_assignment
+                   (id, employee_id, roster_date, assignment_type, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, cycle_id, created_at)
+                 VALUES (UUID(), ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW())
+                 ON DUPLICATE KEY UPDATE
+                   assignment_type = VALUES(assignment_type),
+                   shift_start_time = VALUES(shift_start_time),
+                   shift_end_time = VALUES(shift_end_time),
+                   lifecycle_state = 'DRAFT',
+                   import_batch_id = VALUES(import_batch_id),
+                   cycle_id = VALUES(cycle_id)`,
+                [employeeId, rosterDate, row.normalized_type, shiftStartTime, shiftEndTime, batchId, options.cycleId]
+              )
+            : await conn.execute(
+                `INSERT INTO wfm_roster_assignment
+                   (id, employee_id, roster_date, assignment_type, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, created_at)
+                 VALUES (UUID(), ?, ?, ?, ?, ?, 'DRAFT', ?, NOW())
+                 ON DUPLICATE KEY UPDATE
+                   assignment_type = VALUES(assignment_type),
+                   shift_start_time = VALUES(shift_start_time),
+                   shift_end_time = VALUES(shift_end_time),
+                   lifecycle_state = 'DRAFT',
+                   import_batch_id = VALUES(import_batch_id)`,
+                [employeeId, rosterDate, row.normalized_type, shiftStartTime, shiftEndTime, batchId]
+              );
+          const header = result as unknown as ResultSetHeader;
+          if (header.affectedRows === 1) {
+            assignmentsCreated++;
+          } else if (header.affectedRows === 2) {
+            // MySQL returns 2 for ON DUPLICATE KEY UPDATE that changed a row
+            assignmentsUpdated++;
+          } else {
+            // affectedRows === 0 means ON DUPLICATE KEY UPDATE but no change
+            assignmentsUpdated++;
+          }
+        }
+      }
+    });
+  }
+
+  // Update batch status. Deliberately after every employee's lock scope has released, on the plain
+  // pool — matches "partial success is still success" for the tallies above (unmatchedEmployees,
+  // blockedByLeave, blockedByRest, blockedByLock never block the rest of the file, so they don't
+  // block the batch reaching COMMITTED either).
+  await db.execute(
+    `UPDATE wfm_roster_import_batch
+     SET status = 'COMMITTED', committed_by = ?, committed_at = NOW()
+     WHERE id = ?`,
+    [committedBy, batchId]
+  );
+
+  return { assignmentsCreated, assignmentsUpdated, skipped, unmatchedEmployees, blockedByLeave, blockedByRest, blockedByLock };
 }
 
 // ── getImportRows ─────────────────────────────────────────────────────────────
