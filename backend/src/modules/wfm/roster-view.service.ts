@@ -149,3 +149,67 @@ export async function getRosterView(
 
   return { rows: [...byEmployee.values()], dates: [...dates].sort(), total };
 }
+
+// ── getRosterStatusSummary ──────────────────────────────────────────────────
+//
+// "Has the roster actually been published, and has anyone acknowledged it" — the question the
+// audit found had no answer anywhere in the product (413,386 assignments, 100% still 'generated',
+// zero ROSTER_ACK_PENDING items had ever been created). Scoped and filterable the same way the
+// rest of this file is (branch/process via employees, never the assignment's own branch_name/
+// process_name text columns — see the file header comment on why those are unreliable).
+
+export interface RosterStatusSummaryFilters {
+  fromDate: string;
+  toDate: string;
+  branchId?: string;
+  processId?: string;
+}
+
+export interface RosterStatusSummary {
+  totalAssignments: number;
+  /** final_roster_status breakdown — 'generated' means never published. */
+  byPublishStage: Array<{ status: string; count: number }>;
+  /** employee_ack_status breakdown — meaningful only once a row has left 'generated'. */
+  byAckStatus: Array<{ status: string; count: number }>;
+  publishedCount: number;
+  unpublishedCount: number;
+}
+
+export async function getRosterStatusSummary(
+  filters: RosterStatusSummaryFilters
+): Promise<RosterStatusSummary> {
+  const where = ['ra.roster_date BETWEEN ? AND ?'];
+  const params: unknown[] = [filters.fromDate, filters.toDate];
+  if (filters.branchId) { where.push('e.branch_id = ?'); params.push(filters.branchId); }
+  if (filters.processId) { where.push('e.process_id = ?'); params.push(filters.processId); }
+  const whereSql = where.join(' AND ');
+
+  const [publishRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(ra.final_roster_status, 'generated') AS status, COUNT(*) AS cnt
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON e.id = ra.employee_id
+      WHERE ${whereSql}
+      GROUP BY status`,
+    params
+  );
+  const [ackRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(ra.employee_ack_status, 'pending') AS status, COUNT(*) AS cnt
+       FROM wfm_roster_assignment ra
+       JOIN employees e ON e.id = ra.employee_id
+      WHERE ${whereSql}
+      GROUP BY status`,
+    params
+  );
+
+  const byPublishStage = (publishRows as RowDataPacket[]).map((r) => ({
+    status: String(r.status), count: Number(r.cnt),
+  }));
+  const byAckStatus = (ackRows as RowDataPacket[]).map((r) => ({
+    status: String(r.status), count: Number(r.cnt),
+  }));
+  const totalAssignments = byPublishStage.reduce((sum, r) => sum + r.count, 0);
+  const unpublishedCount = byPublishStage.find((r) => r.status === 'generated')?.count ?? 0;
+  const publishedCount = totalAssignments - unpublishedCount;
+
+  return { totalAssignments, byPublishStage, byAckStatus, publishedCount, unpublishedCount };
+}

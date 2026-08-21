@@ -315,3 +315,27 @@ rosterImportRouter.get('/view/table', requireRole(...WFM_ROLES), async (req, res
     res.status(500).json({ error: `Roster view failed: ${err?.message ?? 'unknown error'}` });
   }
 });
+
+// ── GET /api/wfm/roster-imports/status-summary ────────────────────────────
+// "Has the roster actually been published, and has anyone acknowledged it" — for a branch/process/
+// date-range scope. See roster-view.service.ts::getRosterStatusSummary for why this exists.
+rosterImportRouter.get('/status-summary', requireRole(...WFM_ROLES), async (req, res) => {
+  try {
+    const { getRosterStatusSummary } = await import('./roster-view.service.js');
+    const q = req.query as Record<string, string | undefined>;
+    if (!q.fromDate || !q.toDate) {
+      res.status(400).json({ error: 'fromDate and toDate are required (YYYY-MM-DD)' });
+      return;
+    }
+    const result = await getRosterStatusSummary({
+      fromDate: q.fromDate,
+      toDate: q.toDate,
+      branchId: q.branchId || undefined,
+      processId: q.processId || undefined,
+    });
+    res.json(result);
+  } catch (err: any) {
+    console.error('[roster-status-summary] error:', err);
+    res.status(500).json({ error: `Roster status summary failed: ${err?.message ?? 'unknown error'}` });
+  }
+});
