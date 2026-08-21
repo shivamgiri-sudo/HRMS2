@@ -6,14 +6,11 @@ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { annualBudgetSummaryService } from "./annual-budget-summary.service.js";
 
 /**
- * Self-contained router, deliberately NOT yet mounted in app.ts. Another concurrent session
- * has uncommitted, in-progress changes to app.ts and process-pnl.routes.ts as of 2026-08-21
- * (confirmed via `git status`) — editing either right now risks either losing their work or
- * sweeping their uncommitted lines into this session's commit (the exact failure mode
- * CLAUDE.md's Concurrent Agent Rule warns about). Mount with, in app.ts, once that file is
- * clean again:
- *   import { annualBudgetSummaryRouter } from "./modules/process-pnl/annual-budget-summary.routes.js";
- *   app.use("/api/finance/annual-budget-summary", annualBudgetSummaryRouter);
+ * Mounted in app.ts at /api/finance/annual-budget-summary. Its page_catalog/role_page_access
+ * grant (migration 1537) existed on disk since 2026-08-21 but was never added to
+ * runPendingMigrations.ts's manifest, so the page stayed unreachable end-to-end until both
+ * were fixed 2026-08-22 alongside the frontend route/nav wiring — see
+ * [[hrms2-grn-cost-allocation-budget-blind-spot]].
  */
 const router = Router();
 const h = (fn: (req: AuthenticatedRequest, res: Response) => Promise<unknown>) =>
@@ -25,6 +22,18 @@ router.use(requireAuth);
 // rollup is more exposure than any single-branch screen, per the open question flagged in
 // docs/superpowers/specs/2026-08-21-annual-budget-summary-and-historical-pnl.md §7.
 const ALLOWED_ROLES = ["super_admin", "admin", "finance_head", "accounts_head"];
+
+// Backs the page's branch-filter picker (AnnualBudgetSummaryPage.tsx). Must stay ABOVE the
+// "/" handler's implicit catch of everything under this mount, and is its own route (not a
+// query flag on "/") so the picker can populate before a financialYear has been chosen.
+router.get(
+  "/branches",
+  requireRole(...ALLOWED_ROLES),
+  h(async (_req, res) => {
+    const data = await annualBudgetSummaryService.getAnnualBudgetSummaryBranches();
+    res.json({ success: true, data });
+  })
+);
 
 router.get(
   "/",

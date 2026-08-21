@@ -196,4 +196,21 @@ export async function getAnnualBudgetSummary(
   return { financialYear, periods, branches, grandTotal };
 }
 
-export const annualBudgetSummaryService = { getAnnualBudgetSummary };
+/** Branch options for the page's filter picker — same name-deduped canonical id every other
+ *  function here resolves to (MIN(id) per distinct upper/trimmed branch_name), so a branchId
+ *  picked from this list always matches a row getAnnualBudgetSummary() actually returns. */
+export async function getAnnualBudgetSummaryBranches(): Promise<{ id: string; branchName: string }[]> {
+  // Same MIN(id)-per-normalized-name canonicalization as getCompanyBudgetConsolidation's own
+  // canonicalRows query, joined back to branch_master by that id (not by the GROUP BY
+  // expression itself) so branch_name is read from a real row, not an ambiguous aggregate —
+  // avoids ER_WRONG_FIELD_WITH_GROUP under ONLY_FULL_GROUP_BY.
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT bm.id, bm.branch_name
+       FROM (SELECT MIN(id) AS id FROM branch_master GROUP BY UPPER(TRIM(branch_name))) canon
+       JOIN branch_master bm ON bm.id = canon.id
+      ORDER BY bm.branch_name`
+  );
+  return rows.map((r) => ({ id: String(r.id), branchName: String(r.branch_name) }));
+}
+
+export const annualBudgetSummaryService = { getAnnualBudgetSummary, getAnnualBudgetSummaryBranches };

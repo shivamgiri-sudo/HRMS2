@@ -55,6 +55,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/finance/billability": "FINANCE_BILLABILITY_SEAT_COST",
   "/finance/salary-voucher": "FINANCE_SALARY_VOUCHER",
   "/finance/branch-budget": "FINANCE_BRANCH_BUDGET",
+  "/finance/annual-budget-summary": "FINANCE_ANNUAL_BUDGET_SUMMARY",
   // Granted in production and mounted with these exact gate codes, but unmapped here, so
   // nothing verified the page they point at exists and the module launcher had to fall back
   // to page_catalog.page_path. Each pairing is taken from the route's own Gate.

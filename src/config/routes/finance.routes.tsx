@@ -12,6 +12,7 @@ const NativeProcurementPage        = lazy(() => import("@/pages/NativeProcuremen
 const NativeVendorPaymentTracking  = lazy(() => import("@/pages/NativeVendorPaymentTracking"));
 const NativeGRNManagement          = lazy(() => import("@/pages/NativeGRNManagement"));
 const BranchBudgetManagementPage   = lazy(() => import("@/pages/finance/BranchBudgetManagementPage"));
+const AnnualBudgetSummaryPage      = lazy(() => import("@/pages/finance/AnnualBudgetSummaryPage"));
 const BudgetConsolidationPage      = lazy(() => import("@/pages/finance/BudgetConsolidationPage"));
 const SalaryVoucherPage      = lazy(() => import("@/pages/finance/SalaryVoucherPage"));
 const ProcessPnlPage               = lazy(() => import("@/pages/finance/ProcessPnlPage"));
@@ -62,6 +63,10 @@ export const financeRouteElements = (
           voucher renders a whole branch payroll, so this stays narrower than the GRN set. */}
       <Route path="/finance/salary-voucher"          element={<ProtectedRoute roles={['super_admin','finance_head','payroll_hr']}><Gate pageCode="FINANCE_SALARY_VOUCHER"><SalaryVoucherPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/branch-budget"           element={<ProtectedRoute roles={['super_admin','admin','branch_admin','branch_head','finance','finance_head','accounts_head']}><Gate pageCode="FINANCE_BRANCH_BUDGET"><BranchBudgetManagementPage /></Gate></ProtectedRoute>} />
+      {/* Roles must match ALLOWED_ROLES in annual-budget-summary.routes.ts exactly — an
+          all-branches rollup is more exposure than the single-branch screen above, so it is
+          deliberately narrower (no branch_admin/branch_head/finance). See migration 1537. */}
+      <Route path="/finance/annual-budget-summary"   element={<ProtectedRoute roles={['super_admin','admin','finance_head','accounts_head']}><Gate pageCode="FINANCE_ANNUAL_BUDGET_SUMMARY"><AnnualBudgetSummaryPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/budget-consolidation"    element={<ProtectedRoute roles={budgetConsolidationRoles}><Gate pageCode="FINANCE_BUDGET_CONSOLIDATION"><BudgetConsolidationPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/cost-centres"            element={<ProtectedRoute roles={costCentreRoles}><Gate pageCode="FINANCE_COST_CENTRES"><CostCentreManagementPage /></Gate></ProtectedRoute>} />
       {/* Roles match ALLOWED_ROLES in client-billing.routes.ts and the grant in migration
