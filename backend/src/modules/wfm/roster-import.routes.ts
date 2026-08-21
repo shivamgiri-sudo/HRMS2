@@ -54,7 +54,7 @@ rosterImportRouter.post(
       // one upload covering every process in a branch (migration 1536).
 
       const mode = (importMode === 'UPDATE' ? 'UPDATE' : 'NEW') as 'NEW' | 'UPDATE';
-      const createdBy = (req as any).user?.id ?? 'system';
+      const createdBy = (req as any).authUser?.id ?? 'system';
 
       const result = await createImportBatch({
         processId,
@@ -185,7 +185,7 @@ rosterImportRouter.post(
         res.status(400).json({ success: false, error: 'Invalid batchId' });
         return;
       }
-      const committedBy = (req as any).user?.id;
+      const committedBy = (req as any).authUser?.id;
       const { overrideWarnings, cycleId } = req.body;
       const result = await commitImportBatch(batchId, committedBy, { overrideWarnings, cycleId });
       res.json({ success: true, ...result });
