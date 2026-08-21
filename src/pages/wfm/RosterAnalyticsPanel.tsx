@@ -445,24 +445,32 @@ interface LateRow {
   employee_name: string;
   branch_name: string;
   process_name: string;
-  late_by_minutes: number;
+  /** Already grace-adjusted (net_late_minutes = late_minutes - grace_minutes) — the field the
+   * report actually returns. There is no late_by_minutes on this report; an earlier version of
+   * this file guessed that name and silently rendered 0 for every row's minutes-late figure. */
+  net_late_minutes: number;
   late_status: string;
 }
+
+const LATE_ROW_LIMIT = 5000;
 
 function LatenessSection({ filters }: { filters: Filters }) {
   const q = useQuery({
     queryKey: ["late-arrival-summary", filters.from, filters.to, filters.branchId, filters.processId],
     queryFn: async () => {
-      const params: Record<string, string> = { from: filters.from, to: filters.to, limit: "5000", offset: "0" };
+      const params: Record<string, string> = { from: filters.from, to: filters.to, limit: String(LATE_ROW_LIMIT), offset: "0" };
       if (filters.branchId) params.branchId = filters.branchId;
       if (filters.processId) params.processId = filters.processId;
       const qs = new URLSearchParams(params);
-      const res = await hrmsApi.get<{ data: LateRow[] }>(`/api/reports/suite/late-arrival-summary?${qs}`, 60_000);
-      return res.data ?? [];
+      const res = await hrmsApi.get<{ data: LateRow[]; meta?: { totalCount?: number } }>(`/api/reports/suite/late-arrival-summary?${qs}`, 60_000);
+      return { rows: res.data ?? [], totalCount: res.meta?.totalCount ?? (res.data ?? []).length };
     },
     retry: false,
     staleTime: 5 * 60_000,
   });
+  const rows = q.data?.rows ?? [];
+  const totalCount = q.data?.totalCount ?? 0;
+  const isTruncated = totalCount > rows.length;
 
   // Habitual = repeated, not a single number this codebase computes anywhere today — this is the
   // exact aggregation gap the audit found (per-event report exists, no group-by-employee view of
@@ -471,28 +479,33 @@ function LatenessSection({ filters }: { filters: Filters }) {
   const HABITUAL_THRESHOLD = 3;
   const byEmployee = useMemo(() => {
     const map = new Map<string, { code: string; name: string; branch: string; process: string; count: number; totalMinutes: number }>();
-    for (const r of q.data ?? []) {
+    for (const r of rows) {
       const key = r.employee_code;
       const acc = map.get(key) ?? { code: r.employee_code, name: r.employee_name, branch: r.branch_name, process: r.process_name, count: 0, totalMinutes: 0 };
       acc.count += 1;
-      acc.totalMinutes += Number(r.late_by_minutes ?? 0);
+      acc.totalMinutes += Number(r.net_late_minutes ?? 0);
       map.set(key, acc);
     }
     return [...map.values()].sort((a, b) => b.count - a.count);
-  }, [q.data]);
+  }, [rows]);
 
   const habitual = byEmployee.filter((e) => e.count >= HABITUAL_THRESHOLD);
-  const totalLateEvents = q.data?.length ?? 0;
+  const totalLateEvents = rows.length;
 
   if (q.isLoading) return <ChartSkeleton height={280} />;
 
   return (
     <div className="space-y-4">
+      {isTruncated && (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+          {num(totalCount)} late-arrival events matched this range, but only the first {num(LATE_ROW_LIMIT)} were fetched — narrow the date range or filters for a complete habitual-latecomer count.
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatTile label="Late arrivals in range" value={num(totalLateEvents)} icon={<CalendarClock className="h-4 w-4" />} />
+        <StatTile label="Late arrivals in range" value={num(totalLateEvents)} denominator={isTruncated ? `of ${num(totalCount)} total — capped` : undefined} icon={<CalendarClock className="h-4 w-4" />} />
         <StatTile label="Distinct employees late ≥1×" value={num(byEmployee.length)} />
         <StatTile label={`Habitual (≥${HABITUAL_THRESHOLD} times)`} value={num(habitual.length)} intent={habitual.length > 0 ? "critical" : "good"} />
-        <StatTile label="Avg late minutes / event" value={totalLateEvents > 0 ? Math.round((q.data ?? []).reduce((a, r) => a + Number(r.late_by_minutes ?? 0), 0) / totalLateEvents) : "—"} />
+        <StatTile label="Avg late minutes / event" value={totalLateEvents > 0 ? Math.round(rows.reduce((a, r) => a + Number(r.net_late_minutes ?? 0), 0) / totalLateEvents) : "—"} />
       </div>
 
       <ChartCard title={`Habitual latecomers (${HABITUAL_THRESHOLD}+ late arrivals in range)`} subtitle="Sorted by frequency. Grace-period minutes already excluded on the source data — this counts genuine late_mark=1 days.">
