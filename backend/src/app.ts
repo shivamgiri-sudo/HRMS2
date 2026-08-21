@@ -81,6 +81,7 @@ import { bulkApprovalRouter } from "./modules/bulk-upload/bulk-approval.routes.j
 import { workflowRouter } from "./modules/workflow/workflow.routes.js";
 import { lifecycleRouter } from "./modules/lifecycle/lifecycle.routes.js";
 import { assetsRouter } from "./modules/assets/assets.routes.js";
+import { exitPassRouter } from "./modules/assets/exit-pass.routes.js";
 import { filesRouter } from "./modules/files/files.routes.js";
 import { employeeDocsRouter } from "./modules/employees/employee.documents.routes.js";
 import { helpdeskRouter } from "./modules/helpdesk/helpdesk.routes.js";
@@ -472,6 +473,7 @@ app.use("/api/admin/email-templates", emailTemplatesRouter);
 app.use("/api/workflow", workflowRouter);
 app.use("/api/lifecycle", lifecycleRouter);
 app.use("/api/assets-mgmt", assetsRouter);
+app.use("/api/exit-passes", exitPassRouter);
 app.use("/api/employee-docs", employeeDocsRouter);
 app.use("/api/hr", hrDocumentTemplatesRouter);
 app.use("/api/company-seal", companySealRouter);

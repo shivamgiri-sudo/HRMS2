@@ -508,6 +508,7 @@ export const navGroups: NavGroup[] = [
           { label: "Visitor Security", href: "/visitor-management/security", icon: ic(ShieldCheck), roles: ["super_admin","admin","security_head","visitor_security","visitor_reception","branch_head","branch_hr","hr_branch"], description: "Visitor security operations" },
           { label: "Assets",           href: "/assets",             icon: ic(Package), roles: ["admin","hr","super_admin","manager","branch_head"], description: "Assets" },
           { label: "Assets Manager",   href: "/assets-manager",     icon: ic(Package),   pageCode: "ASSETS_MANAGER",        description: "Asset management" },
+          { label: "Exit Pass",        href: "/it-admin/exit-pass", icon: ic(Package),   pageCode: "ASSET_EXIT_PASS",       description: "Asset & Material Exit Gate Pass" },
           { label: "Mobility",         href: "/mobility",           icon: ic(Users),     pageCode: "MOBILITY",              description: "Mobility" },
           { label: "ERP",              href: "/erp",                icon: ic(Server),    pageCode: "ERP",                   description: "ERP" },
           { label: "Portal Data Mgr",  href: "/portal-data-manager",icon: ic(Server),    pageCode: "PORTAL_DATA_MANAGER",   description: "Portal data" },

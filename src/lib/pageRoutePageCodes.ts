@@ -80,6 +80,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/hr/attendance-lookup": "ATTENDANCE_LOOKUP",
   "/hr/dashboard": "HR_DASHBOARD",
   "/integration-hub": "INTEGRATION_HUB",
+  "/it-admin/exit-pass": "ASSET_EXIT_PASS",
   "/it-provisioning": "IT_PROVISIONING_TRACKER",
   "/kpi-config": "KPI_CONFIG",
   "/kpi-master": "KPI_MASTER",

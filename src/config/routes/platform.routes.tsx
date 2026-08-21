@@ -17,6 +17,7 @@ const NativeConfigurationCenter     = lazy(() => import("@/pages/NativeConfigura
 const Settings                      = lazy(() => import("@/pages/Settings"));
 const Profile                       = lazy(() => import("@/pages/Profile"));
 const NativeAssetsManager           = lazy(() => import("@/pages/NativeAssetsManager"));
+const NativeExitPass                = lazy(() => import("@/pages/NativeExitPass"));
 const NativeHelpdesk                = lazy(() => import("@/pages/NativeHelpdesk"));
 const NativeUatFeedback             = lazy(() => import("@/pages/NativeUatFeedback"));
 const NativeUatTriageConsole        = lazy(() => import("@/pages/NativeUatTriageConsole"));
@@ -123,6 +124,7 @@ export const platformRouteElements = (
 
       {/* Assets / documents */}
       <Route path="/assets-manager"       element={<ProtectedRoute><Gate pageCode="ASSETS_MANAGER"><NativeAssetsManager /></Gate></ProtectedRoute>} />
+      <Route path="/it-admin/exit-pass"   element={<ProtectedRoute><Gate pageCode="ASSET_EXIT_PASS"><NativeExitPass /></Gate></ProtectedRoute>} />
       <Route path="/document-verification" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_MANAGEMENT"><NativeDocumentVerification /></Gate></ProtectedRoute>} />
       <Route path="/statutory-change-approvals" element={<ProtectedRoute roles={['super_admin','admin','hr']}><NativeStatutoryApprovals /></ProtectedRoute>} />
 
