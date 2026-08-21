@@ -96,29 +96,29 @@ describe("GRN form capabilities survive restructuring", () => {
     // the stored file — no file, no hash, no duplicate detection.
     expect(src).toMatch(/FormData/);
   });
-  it("keeps the sections in the I-Spark order", () => {
-    // Requirement 3: the raiser keys the invoice header, attaches the document, lets extraction
-    // fill what it can, then classifies and reconciles.
+  it("keeps the sections in the legacy-skin order", () => {
+    // Requirement 3: the raiser keys the invoice header, classifies and splits the spend,
+    // attaches the document, lets extraction fill what it can, then checks.
     //
-    // Marker names updated 2026-08-14 for the dense-grid layout refactor (b59d3e1e). That
-    // change RENAMED three section anchors without moving them; every section still exists and
-    // the sequence below is unchanged, verified line-by-line against the refactored file:
-    //   "── Details ──"                   -> "── Details — Dense grid layout ──"
-    //   title="Proof"                     -> "── Proof section (inline within card) ──"
-    //   title="Where this spend belongs"  -> "── Budget Allocation section ──"
-    // The remaining four markers were untouched by that refactor.
+    // Reordered 2026-08-21 for the raiser's explicit requested sequence (legacy-skin re-do +
+    // density pass): Save/Submit moved to the true end of the form, past Attachments and the
+    // cost-centre split table, which means Budget Allocation now precedes Attachments instead
+    // of following it. "Amount" and "Readiness" stopped being their own titled cards in the
+    // same pass — Amount is now an inline DenseField label inside the Details grid, and
+    // Readiness moved out of the form entirely into the horizontal status strip beside the
+    // Vendor/Imprest toggle — so neither is a meaningful in-form ordering marker any more.
+    //   "── Proof section (inline within card) ──" -> '<DenseSection title="Attachments" variant="panel" />'
+    //   "── Budget Allocation section ──"           -> "── Budget Allocation section (Vendor only now"
+    //   title="Amount" / title="Readiness"          -> dropped (no longer distinct sections)
     //
-    // Only the strings changed here. Every ordering assertion below is exactly as it was —
-    // this test still fails if a section is dropped or resequenced, which is the whole point
-    // of it.
+    // Every ordering assertion below still fails if a section is dropped or resequenced —
+    // it just now reflects the order the raiser actually asked for.
     const order = [
       "── Details — Dense grid layout ──",
-      "── Proof section (inline within card) ──",
-      "── Budget Allocation section ──",
-      'title="Amount"',
+      "── Budget Allocation section (Vendor only now",
+      '<DenseSection title="Attachments" variant="panel" />',
       'title="Read from the invoice"',
       'title="Checks"',
-      'title="Readiness"',
     ];
     const positions = order.map((marker) => {
       const at = src.indexOf(marker);
@@ -132,17 +132,17 @@ describe("GRN form capabilities survive restructuring", () => {
 
   it("keeps the upload ahead of the extraction that reads it", () => {
     // The section order looks cosmetic and is not. Gemini extraction fills the fields ABOVE the
-    // upload, so moving Proof to the end — which a naive reading of "documents last" would do —
-    // leaves auto-fill with nothing to fill.
+    // upload, so moving Attachments to the end — which a naive reading of "documents last" would
+    // do — leaves auto-fill with nothing to fill.
     //
     // Both positions are asserted present before they are compared. Previously this read
     // `indexOf(A) < indexOf(B)` directly, which passes when A is ABSENT — indexOf returns -1,
-    // and -1 is less than any real index. That is exactly what happened when the dense-grid
-    // refactor renamed the Proof anchor: this test kept passing while the marker it names had
-    // ceased to exist, so it went silently blind to the very reordering it exists to catch.
-    const proofAt = src.indexOf("── Proof section (inline within card) ──");
+    // and -1 is less than any real index. That is exactly what happened when an earlier refactor
+    // renamed the Proof anchor: this test kept passing while the marker it names had ceased to
+    // exist, so it went silently blind to the very reordering it exists to catch.
+    const proofAt = src.indexOf('<DenseSection title="Attachments" variant="panel" />');
     const extractionAt = src.indexOf('title="Read from the invoice"');
-    expect(proofAt, "the Proof/upload section must be present").toBeGreaterThan(-1);
+    expect(proofAt, "the Attachments/upload section must be present").toBeGreaterThan(-1);
     expect(extractionAt, "the extraction section must be present").toBeGreaterThan(-1);
     expect(proofAt).toBeLessThan(extractionAt);
   });

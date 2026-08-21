@@ -746,22 +746,40 @@ export const grnSmartService = {
         throw new Error("Allocations can only be changed while the GRN is a draft");
       }
 
-      // An UNBUDGETED Imprest GRN (raised via the same "no approved budget line" path the
-      // vendor cascade already has — createUnbudgetedDraft/e2c8db0d) has no budget line to pick
-      // per row. Read off the GRN's own stored flag rather than trust the request body, since
-      // is_unbudgeted was already fixed at creation and every row of THIS GRN must agree with it
-      // — a GRN is never a mix of budgeted and unbudgeted allocations.
-      const isUnbudgeted = Number(grn.is_unbudgeted) === 1;
+      // An UNBUDGETED row (raised via the same "no approved budget line" path the vendor
+      // cascade already has — createUnbudgetedDraft/e2c8db0d) has no budget line to pick.
+      // Resolved per allocation row now (whichever ones omit budgetLineId), not gated by the
+      // GRN's own stored is_unbudgeted flag — a GRN can mix budgeted and unbudgeted cost
+      // centres in one save. Pre-resolve every budgeted row's real line first, so an
+      // unbudgeted row's synthetic line (below) can borrow its head/sub-head/gst_type from
+      // whichever budgeted row sits alongside it, rather than the GRN header's own head/
+      // sub_head columns (only ever populated at create time for a WHOLLY unbudgeted GRN).
+      const resolvedLines: Array<any | null> = [];
+      for (let index = 0; index < input.allocations.length; index += 1) {
+        const allocation = input.allocations[index];
+        if (!allocation?.budgetLineId) {
+          resolvedLines.push(null);
+          continue;
+        }
+        const line = await lockBudgetLine(connection, allocation.budgetLineId, String(grn.branch_id));
+        if (consumptionPeriodOf(grn) !== String(line.period_code)) {
+          throw new Error(`Allocation ${index + 1}: budget period ${line.period_code} does not match the accounting month`);
+        }
+        if (await isPeriodLocked(line.period_code)) {
+          throw new Error(
+            `Allocation ${index + 1}: ${line.period_code} is locked for P&L close. Raise this against the current open period.`
+          );
+        }
+        resolvedLines.push(line);
+      }
+      const referenceLine = resolvedLines.find(Boolean) ?? null;
 
       const prepared: any[] = [];
       const groupedUsage = new Map<string, { amount: number; quantity: number; line: any }>();
       for (let index = 0; index < input.allocations.length; index += 1) {
         const allocation = input.allocations[index];
 
-        if (isUnbudgeted) {
-          if (allocation?.budgetLineId) {
-            throw new Error(`Allocation ${index + 1}: this GRN was raised unbudgeted and cannot select a budget line`);
-          }
+        if (!allocation?.budgetLineId) {
           if (!allocation?.costCentreId) {
             throw new Error(`Allocation ${index + 1}: cost centre is required for an unbudgeted allocation`);
           }
@@ -788,15 +806,17 @@ export const grnSmartService = {
             throw new Error(`Allocation ${index + 1}: unit rate is invalid`);
           }
           // Synthetic line, the same convention saveComponentAllocations() already uses for an
-          // unbudgeted vendor split: unit "amount", head/sub_head off the GRN header (set at
-          // create time by createUnbudgetedDraft), no tax treatment since there is no line to
+          // unbudgeted vendor split: unit "amount", no tax treatment since there is no line to
           // carry one — an Imprest allocation has no invoice-component GST breakdown to apply.
+          // head/sub_head/gst_type borrow from referenceLine (a budgeted row in this same save,
+          // if any) rather than the GRN header, which is only populated at create time for a
+          // WHOLLY unbudgeted GRN and can be stale/blank for one that started out mixed.
           const line: any = {
             id: null,
             budget_id: null,
-            head: String(grn.head || "Unbudgeted"),
-            sub_head: String(grn.sub_head || ""),
-            item_name: String(grn.head || "Unbudgeted Expense"),
+            head: referenceLine ? String(referenceLine.head) : String(grn.head || "Unbudgeted"),
+            sub_head: referenceLine ? String(referenceLine.sub_head || "") : String(grn.sub_head || ""),
+            item_name: referenceLine ? String(referenceLine.head) : String(grn.head || "Unbudgeted Expense"),
             cost_centre_id: cc.id,
             cost_centre_name: cc.cost_centre_name,
             process_id: null,
@@ -804,7 +824,7 @@ export const grnSmartService = {
             unit_rate: unitRate,
             tax_treatment: "exclusive",
             gst_rate: 0,
-            gst_type: "cgst_sgst",
+            gst_type: referenceLine ? String(referenceLine.gst_type) : "cgst_sgst",
             recoverable_tax_pct: 100,
             justification: "Unbudgeted expense",
           };
@@ -827,16 +847,8 @@ export const grnSmartService = {
           continue;
         }
 
-        if (!allocation?.budgetLineId) throw new Error(`Allocation ${index + 1}: budget line is required`);
-        const line = await lockBudgetLine(connection, allocation.budgetLineId, String(grn.branch_id));
-        if (consumptionPeriodOf(grn) !== String(line.period_code)) {
-          throw new Error(`Allocation ${index + 1}: budget period ${line.period_code} does not match the accounting month`);
-        }
-        if (await isPeriodLocked(line.period_code)) {
-          throw new Error(
-            `Allocation ${index + 1}: ${line.period_code} is locked for P&L close. Raise this against the current open period.`
-          );
-        }
+        // Already locked and period-checked in the pre-pass above.
+        const line = resolvedLines[index]!;
         const quantity = Number(allocation.quantity);
         if (!Number.isFinite(quantity) || quantity <= 0) {
           throw new Error(`Allocation ${index + 1}: quantity must be greater than zero`);
@@ -967,7 +979,8 @@ export const grnSmartService = {
                 invoice_number = ?, irn = ?, irn_ack_no = ?,
                 service_period_start = ?, service_period_end = ?,
                 purchase_reference = ?, vendor_gstin = ?, place_of_supply = ?,
-                other_charges = ?, round_off_amount = ?
+                other_charges = ?, round_off_amount = ?,
+                is_unbudgeted = ?
           WHERE id = ?`,
         [
           prepared.length > 1 ? "split" : "single", first.budget_id, first.id,
@@ -990,6 +1003,11 @@ export const grnSmartService = {
           String(input.vendorGstin ?? "").trim().toUpperCase() || null,
           String(input.placeOfSupply ?? "").trim() || null,
           roundMoney(Number(input.otherCharges ?? 0)), roundMoney(Number(input.roundOffAmount ?? 0)),
+          // Derived from the rows just written, not the flag stored at create time — a GRN
+          // created as an ordinary budgeted draft can still end up with an unbudgeted cost
+          // centre once split, and that has to route through the same stricter approval an
+          // originally-unbudgeted GRN does.
+          prepared.some((item) => item.isUnbudgeted) ? 1 : 0,
           grnId,
         ]
       );
@@ -1063,14 +1081,17 @@ export const grnSmartService = {
         throw new Error("Invoice-component GRNs are only supported for vendor GRNs");
       }
 
-      // UNBUDGETED EXPENSES: When no budget line exists for the selected HEAD/SUB-HEAD,
-      // the frontend sends isUnbudgeted=true and costCentreId instead of budgetLineId.
-      // These GRNs are flagged and route through stricter approval.
-      const isUnbudgeted = Boolean(input.isUnbudgeted);
+      // UNBUDGETED EXPENSES: a split row with no budgetLineId but a costCentreId is unbudgeted
+      // for that cost centre only — resolved independently per row, not gated by a single
+      // whole-GRN flag, so one Head/Sub-head that is budgeted at some cost centres and not
+      // others can still be raised (and saved) as one GRN. isUnbudgeted below is DERIVED after
+      // resolution (true if any row came back unbudgeted) rather than dictating it up front —
+      // input.isUnbudgeted is accepted but no longer authoritative, kept only so an old client
+      // sending it does not break.
 
       // Resolve every cost-centre split row against its approved budget line — same lock,
-      // period-match, and period-lock checks saveAllocations() already applies per row.
-      // For unbudgeted expenses, we use costCentreId directly instead of budgetLineId.
+      // period-match, and period-lock checks saveAllocations() already applies per row. A row
+      // with no budgetLineId falls back to costCentreId directly.
       const resolvedSplits: any[] = [];
       let percentageSum = 0;
       for (let index = 0; index < splits.length; index += 1) {
@@ -1080,9 +1101,9 @@ export const grnSmartService = {
           throw new Error(`Cost centre ${index + 1}: split percentage must be greater than zero`);
         }
 
-        if (isUnbudgeted) {
-          // Unbudgeted expense: use costCentreId directly, no budget line validation
-          if (!split?.costCentreId) throw new Error(`Cost centre ${index + 1}: cost centre ID is required for unbudgeted expenses`);
+        if (!split?.budgetLineId) {
+          // No budget line for this row: fall back to the cost centre the raiser picked directly.
+          if (!split?.costCentreId) throw new Error(`Cost centre ${index + 1}: select a budget line, or a cost centre for an unbudgeted allocation`);
           // Verify cost centre exists and belongs to the branch
           const [ccRows] = await connection.execute<RowDataPacket[]>(
             `SELECT id, cost_centre_code, cost_centre_name, branch_id
@@ -1096,7 +1117,7 @@ export const grnSmartService = {
           }
           percentageSum += percentage;
           resolvedSplits.push({
-            line: null, // No budget line for unbudgeted expenses
+            line: null, // No budget line for this row — filled in with a synthetic one below
             costCentreId: split.costCentreId,
             costCentreCode: cc.cost_centre_code,
             percentage,
@@ -1104,8 +1125,6 @@ export const grnSmartService = {
             isUnbudgeted: true,
           });
         } else {
-          // Budgeted expense: normal budget line validation
-          if (!split?.budgetLineId) throw new Error(`Cost centre ${index + 1}: budget line is required`);
           const line = await lockBudgetLine(connection, split.budgetLineId, String(grn.branch_id));
           if (consumptionPeriodOf(grn) !== String(line.period_code)) {
             throw new Error(`Cost centre ${index + 1}: budget period ${line.period_code} does not match the accounting month`);
@@ -1116,9 +1135,10 @@ export const grnSmartService = {
             );
           }
           percentageSum += percentage;
-          resolvedSplits.push({ line, percentage, remarks: split.remarks?.trim() || null });
+          resolvedSplits.push({ line, percentage, remarks: split.remarks?.trim() || null, isUnbudgeted: false });
         }
       }
+      const isUnbudgeted = resolvedSplits.some((item) => item.isUnbudgeted);
       if (Math.abs(percentageSum - 100) > 0.5) {
         throw new Error(`Cost-centre split percentages must total 100% (currently ${roundMoney(percentageSum)}%)`);
       }
@@ -1126,46 +1146,50 @@ export const grnSmartService = {
       // exactly like the defensive correction saveAllocations() applies after insert below.
       resolvedSplits[resolvedSplits.length - 1].percentage += 100 - percentageSum;
 
-      // One Head/Sub-head classification per GRN — the split only decides how much of that
-      // one spend belongs to which cost centre, not a mix of different expense categories.
-      // For unbudgeted expenses, head/sub-head comes from the GRN itself (set during creation).
-      if (!isUnbudgeted) {
-        const distinctHeads = new Set(resolvedSplits.map((item) => String(item.line.head)));
-        const distinctSubHeads = new Set(resolvedSplits.map((item) => String(item.line.sub_head || "")));
-        if (distinctHeads.size > 1 || distinctSubHeads.size > 1) {
-          throw new Error("All cost-centre splits must share the same expense head and sub-head");
-        }
+      // Synthetic "line" for an unbudgeted row — filled in per row (not gated by a whole-GRN
+      // flag), so a mixed GRN keeps every unbudgeted row's head/sub-head matching whichever
+      // real budget line(s) sit alongside it, rather than the GRN header's own head/sub_head
+      // columns (those are only populated at create time for a WHOLLY unbudgeted GRN — see
+      // createUnbudgetedDraft / isUnbudgetedFlow on the frontend, e2c8db0d — so they can be
+      // stale/blank here for a GRN that started out mixed).
+      const referenceLine = resolvedSplits.find((item) => !item.isUnbudgeted)?.line;
+      const fallbackHead = referenceLine ? String(referenceLine.head) : String(grn.head || "Unbudgeted");
+      const fallbackSubHead = referenceLine ? (referenceLine.sub_head ?? null) : (grn.sub_head || null);
+      for (const split of resolvedSplits) {
+        if (!split.isUnbudgeted) continue;
+        split.line = {
+          id: null,
+          budget_id: null,
+          head: fallbackHead,
+          sub_head: fallbackSubHead,
+          item_name: fallbackHead,
+          cost_centre_id: split.costCentreId,
+          cost_centre_name: split.costCentreCode,
+          process_id: null,
+          unit: "amount",
+          unit_rate: 1, // For unbudgeted, we use 1:1 mapping
+          quantity: declaredTotal, // Full amount as "available"
+          tax_treatment: "exclusive",
+          gst_rate: 0,
+          gst_type: referenceLine ? String(referenceLine.gst_type) : "cgst_sgst",
+          recoverable_tax_pct: 100,
+          justification: "Unbudgeted expense",
+          // No budget capacity constraints for unbudgeted
+          gross_amount: declaredTotal * 1000, // Effectively unlimited
+          reserved_amount: 0,
+          consumed_amount: 0,
+          reserved_quantity: 0,
+          consumed_quantity: 0,
+        };
       }
 
-      // For unbudgeted expenses, create synthetic "line" objects so downstream code works unchanged
-      if (isUnbudgeted) {
-        for (const split of resolvedSplits) {
-          // Create synthetic line from GRN head/sub_head and cost centre
-          split.line = {
-            id: null,
-            budget_id: null,
-            head: String(grn.head || "Unbudgeted"),
-            sub_head: String(grn.sub_head || null),
-            item_name: String(grn.head || "Unbudgeted Expense"),
-            cost_centre_id: split.costCentreId,
-            cost_centre_name: split.costCentreCode,
-            process_id: null,
-            unit: "amount",
-            unit_rate: 1, // For unbudgeted, we use 1:1 mapping
-            quantity: declaredTotal, // Full amount as "available"
-            tax_treatment: "exclusive",
-            gst_rate: 0,
-            gst_type: "cgst_sgst", // Default, will be overridden by component
-            recoverable_tax_pct: 100,
-            justification: "Unbudgeted expense",
-            // No budget capacity constraints for unbudgeted
-            gross_amount: declaredTotal * 1000, // Effectively unlimited
-            reserved_amount: 0,
-            consumed_amount: 0,
-            reserved_quantity: 0,
-            consumed_quantity: 0,
-          };
-        }
+      // One Head/Sub-head classification per GRN — the split only decides how much of that one
+      // spend belongs to which cost centre, not a mix of different expense categories. Runs
+      // after the synthetic-line fill above so every row (budgeted or not) has a real .line.
+      const distinctHeads = new Set(resolvedSplits.map((item) => String(item.line.head)));
+      const distinctSubHeads = new Set(resolvedSplits.map((item) => String(item.line.sub_head || "")));
+      if (distinctHeads.size > 1 || distinctSubHeads.size > 1) {
+        throw new Error("All cost-centre splits must share the same expense head and sub-head");
       }
 
       // Invoice GST rates are ground truth. Budget line tax_treatment is a planning-time
@@ -1277,6 +1301,7 @@ export const grnSmartService = {
             unitRate,
             amounts,
             remarks: [split.remarks, component.remarks?.trim() || null].filter(Boolean).join(" — ") || null,
+            isUnbudgeted: Boolean(split.isUnbudgeted),
           });
         }
       }
@@ -1378,7 +1403,7 @@ export const grnSmartService = {
             cell.amounts.taxAmount, cell.amounts.cgstAmount, cell.amounts.sgstAmount,
             cell.amounts.igstAmount, cell.amounts.grossAmount,
             cell.amounts.recoverableTaxAmount, cell.amounts.pnlCostAmount,
-            "draft", cell.remarks, isUnbudgeted ? 1 : 0, actorUserId,
+            "draft", cell.remarks, cell.isUnbudgeted ? 1 : 0, actorUserId,
           ]
         );
       }

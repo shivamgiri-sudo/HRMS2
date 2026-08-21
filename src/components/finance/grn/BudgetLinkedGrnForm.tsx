@@ -54,7 +54,7 @@ import {
   DenseSection,
   DenseSummaryStrip,
   DenseFileUpload,
-} from "@/components/finance/grn/grn-ui";
+} from "@/components/finance/grn/legacy-grn-ui";
 import {
   BRANCH_SHARING_METHODS,
   calculateBudgetLine,
@@ -978,12 +978,15 @@ export function BudgetLinkedGrnForm({
     });
   }, [vendorMatchingLines, activeCostCentres, form.head, form.subHead]);
 
-  /** True when no budget exists for the selected HEAD/SUB-HEAD — expense is unbudgeted */
+  /** True when no budget exists for the selected HEAD/SUB-HEAD — expense is unbudgeted.
+   *  Was isVendor-only; Imprest now drives the same cost-centre-split UI (vendorCostCentreGroups
+   *  was already grnType-agnostic — it never referenced isVendor internally), so this check
+   *  applies identically to both once Imprest reuses that flow instead of its own cascade. */
   const isUnbudgetedExpense = useMemo(() => {
-    if (!isVendor || !form.head || !form.subHead) return false;
+    if (!form.head || !form.subHead) return false;
     // Check if ANY cost centre has a budget line for this HEAD/SUB-HEAD
     return vendorCostCentreGroups.length > 0 && vendorCostCentreGroups.every((g) => g.lines.length === 0);
-  }, [isVendor, form.head, form.subHead, vendorCostCentreGroups]);
+  }, [form.head, form.subHead, vendorCostCentreGroups]);
 
   /** Imprest equivalent of isUnbudgetedExpense above: the raiser picked a Head/Sub-head/cost
    *  centre combination that genuinely has no approved budget line — headOptions/subHeadOptions
@@ -999,7 +1002,7 @@ export function BudgetLinkedGrnForm({
    *  an unbudgeted vendor GRN (e2c8db0d) and an unbudgeted single-line Imprest GRN. Split-mode
    *  Imprest stays out of scope — its picker only ever offers existing budget lines, so there is
    *  nothing meaningful to pick when none exist for this combination. */
-  const isUnbudgetedFlow = (isVendor && isUnbudgetedExpense) || (!isVendor && !splitMode && isImprestUnbudgeted);
+  const isUnbudgetedFlow = isUnbudgetedExpense || (!isVendor && !splitMode && isImprestUnbudgeted);
 
   // Clear a stale vendor Head/Sub-head the same way the single-line cascade already does above.
   // Guard: skip when options are empty — budget lines and expense master are still loading and
@@ -1027,7 +1030,6 @@ export function BudgetLinkedGrnForm({
   // When budget lines are branch-common (no specific cost centre), all active cost centres are shown
   // and the user can split to any of them.
   useEffect(() => {
-    if (!isVendor) return;
     setCostCentreSplits((current) => {
       if (!vendorCostCentreGroups.length) return current.length ? [] : current;
       // Only count cost centres WITH budget lines for the equal split
@@ -1051,7 +1053,7 @@ export function BudgetLinkedGrnForm({
         };
       });
     });
-  }, [vendorCostCentreGroups, isVendor]);
+  }, [vendorCostCentreGroups]);
 
   const costCentreSplitTotal = useMemo(
     () => Math.round(costCentreSplits.reduce((sum, row) => sum + Number(row.percentage || 0), 0) * 1_000_000) / 1_000_000,
@@ -1135,10 +1137,10 @@ export function BudgetLinkedGrnForm({
         return;
       }
       setCostCentreSplits((current) =>
-        current.map((row) => ({
-          ...row,
-          percentage: row.costCentreKey === directCostCentreKey ? 100 : 0,
-        }))
+        current.map((row) => {
+          const isChosen = row.costCentreKey === directCostCentreKey;
+          return { ...row, percentage: isChosen ? 100 : 0, included: isChosen };
+        })
       );
       return;
     }
@@ -1220,14 +1222,57 @@ export function BudgetLinkedGrnForm({
     [calculatedAllocations]
   );
 
+  /** Real money totals across the cost-centre split rows — each included row's share of
+   *  form.amount run through computeLine() against its OWN resolved budget line (the same helper
+   *  splitTotals/singleLine already use, just applied per split row instead of per single line or
+   *  per old-style allocation). Both Vendor and Imprest now drive costCentreSplits instead of the
+   *  single-cost-centre cascade (resolvedLine/singleLine), so this is what actually reflects what
+   *  the raiser entered — resolvedLine/singleLine stay permanently null under this flow, which is
+   *  exactly why the Cost sidebar was stuck at ₹0.00 before this. */
+  const costCentreSplitMoneyTotals = useMemo(() => {
+    const amount = Number(form.amount || 0);
+    return costCentreSplits
+      .filter((row) => row.included)
+      .reduce(
+        (sum, row) => {
+          const group = vendorCostCentreGroups.find((g) => g.costCentreKey === row.costCentreKey);
+          const line = group?.lines.find((item) => item.id === row.budgetLineId);
+          const shareGross = amount * (Number(row.percentage) / 100);
+          const perUnit = line ? computeLine(line, 1) : null;
+          const basis = perUnit ? (isVendor ? Number(perUnit.base) : Number(perUnit.gross)) : 0;
+          if (!line || !(shareGross > 0) || !(basis > 0)) {
+            // Unbudgeted, or no line resolved yet: nothing to decompose into tax, but the share
+            // still counts toward the total the raiser is committing.
+            sum.gross += shareGross;
+            sum.base += shareGross;
+            sum.pnl += shareGross;
+            return sum;
+          }
+          const calc = computeLine(line, shareGross / basis);
+          sum.base += Number(calc.base);
+          sum.tax += Number(calc.tax);
+          sum.gross += Number(calc.gross);
+          sum.pnl += Number(calc.pnlCost);
+          return sum;
+        },
+        { base: 0, tax: 0, gross: 0, pnl: 0 }
+      );
+  }, [costCentreSplits, vendorCostCentreGroups, form.amount, isVendor]);
+
   const totals = splitMode
     ? splitTotals
-    : {
-        base: Number(singleLine?.totals.base ?? 0),
-        tax: Number(singleLine?.totals.tax ?? 0),
-        gross: Number(singleLine?.totals.gross ?? 0),
-        pnl: Number(singleLine?.totals.pnlCost ?? 0),
-      };
+    : isVendor
+      // Vendor: Taxable/GST/Total mirror componentsPreview — the actual invoiceComponents rows
+      // that get submitted and are reconciled against form.amount elsewhere — so the summary
+      // matches what saves. P&L has no equivalent in componentsPreview (no recoverable-tax
+      // awareness there), so it borrows the resolved-budget-line-based figure instead.
+      ? {
+          base: componentsPreview.rawTotalBase,
+          tax: componentsPreview.rawTotalTax,
+          gross: componentsPreview.rawTotalGross,
+          pnl: costCentreSplitMoneyTotals.pnl,
+        }
+      : costCentreSplitMoneyTotals;
 
   const splitDifference =
     Math.round((splitTotals.gross - Number(form.amount || 0)) * 100) / 100;
@@ -1306,34 +1351,41 @@ export function BudgetLinkedGrnForm({
         }
       }
     } else {
-      // Imprest keeps the exact single-line / split-mode behaviour, untouched.
+      // Imprest: Head/Sub-head → cost-centre split, same shape as the vendor flow above (cost-
+      // centre-split support was added to Imprest). The old single-cost-centre cascade
+      // (form.costCentreKey / resolvedLine / singleLine / needsItemChoice) is retained for the
+      // legacy splitMode allocations UI below, which the "Split" toggle used to open — that
+      // toggle no longer exists in the UI, so splitMode is permanently false, but the code stays.
       if (!splitMode) {
-        if (!form.costCentreKey) next.costCentreKey = "Select a cost centre.";
         if (!form.head) next.head = "Select an expense head.";
         if (!form.subHead) next.subHead = "Select a sub-head.";
-        if (needsItemChoice && !form.budgetLineId) {
-          next.budgetLineId = "More than one budget line matches — pick the item.";
-        }
-        // headOptions/subHeadOptions now include every expense master head/sub-head, not just
-        // ones with an existing budget line (see headOptions above), so a raiser can select a
-        // combination with no matching BudgetLine at all. That used to be a hard block here.
-        // It no longer is: single-line mode with no matching line is the Imprest "unbudgeted"
-        // flow (isImprestUnbudgeted / isUnbudgetedFlow above), mirroring the vendor cascade's own
-        // unbudgeted path — the create payload sends costCentreId directly and Finance Head links
-        // a budget line during approval. The amber notice under Sub-head (below, in the JSX)
-        // carries the message that used to live in this error instead.
-      }
-
-      // Budget capacity — checked client-side so the raiser is not bounced by the
-      // server after filling everything.
-      if (!splitMode && resolvedLine && singleLine) {
-        if (singleLine.quantity > Number(resolvedLine.available_quantity) + 0.0001) {
-          next.amount = `Only ${decimal(Number(resolvedLine.available_quantity))} ${resolvedLine.unit} remain approved on this budget line.`;
-        } else if (
-          Number(singleLine.totals.gross) >
-          Number(resolvedLine.available_gross_amount) + 0.01
-        ) {
-          next.amount = `Exceeds the approved budget balance of ${money(Number(resolvedLine.available_gross_amount))}.`;
+        if (form.head && form.subHead) {
+          if (!costCentreSplits.length) {
+            next.costCentreSplit = "No approved budget line matches this Head/Sub-head yet.";
+          } else if (Math.abs(costCentreSplitTotal - 100) > 0.5) {
+            next.costCentreSplit = `Cost-centre split percentages must total 100% (currently ${decimal(costCentreSplitTotal, 2)}%).`;
+          }
+          // Client-side budget cap per cost-centre split — mirrors the vendor check above.
+          if (!next.costCentreSplit && costCentreSplits.length > 0 && Number(form.amount) > 0) {
+            const overBudgetMessages: string[] = [];
+            for (const split of costCentreSplits) {
+              if (!split.included) continue;
+              const group = vendorCostCentreGroups.find((g) => g.costCentreKey === split.costCentreKey);
+              const line = group?.lines.find((l) => l.id === split.budgetLineId);
+              if (line) {
+                const splitGross = Number(form.amount) * (split.percentage / 100);
+                const available = Number(line.available_gross_amount);
+                if (splitGross > available + 0.01) {
+                  overBudgetMessages.push(
+                    `"${group!.costCentreName}": ${money(splitGross)} requested but only ${money(available)} available.`
+                  );
+                }
+              }
+            }
+            if (overBudgetMessages.length > 0) {
+              next.costCentreSplit = `Budget exceeded: ${overBudgetMessages.join(" ")} Reduce the amounts or ask Finance to revise the budget.`;
+            }
+          }
         }
       }
 
@@ -1405,10 +1457,12 @@ export function BudgetLinkedGrnForm({
       ? { label: "Budget linked by Finance Head at approval", done: true }
       : {
           label: "Budget resolved",
-          done: isVendor
+          // Vendor and Imprest (non-splitMode) both drive costCentreSplits now; only the dead
+          // legacy splitMode allocations UI still reads off `allocations`.
+          done: !splitMode
             ? costCentreSplits.some((row) => row.included)
               && costCentreSplits.every((row) => !row.included || Boolean(row.budgetLineId))
-            : Boolean(splitMode ? allocations[0]?.budgetLineId : resolvedLine),
+            : Boolean(allocations[0]?.budgetLineId),
         },
     {
       label: "Server validations clear",
@@ -1585,60 +1639,50 @@ export function BudgetLinkedGrnForm({
       }
 
       // Vendor: unified flow, one Head/Sub-head split by percentage across cost centres, plus
-      // GST-slab components — resolvedLine/singleLine belong to the OLD cost-centre cascade and
-      // are never populated for a vendor GRN (vendor never sets form.costCentreKey), so this must
-      // not be evaluated for isVendor. Imprest: exact existing single-line / split-mode behaviour.
-      /*
-       * The `!` on resolvedLine/singleLine was the last raw TypeError left in this function,
-       * and it fires EARLIER than the named guard further down — `rows` is built first, so the
-       * guard added for `firstLine` could never reach this.
-       *
-       * Both are `null`, not undefined, whenever the cascade has not settled: resolvedLine is
-       * null until exactly one budget line matches (or one is picked), and singleLine is null
-       * whenever there is no resolved line or no positive amount. Neither is an impossible
-       * state — it is the ordinary state of a half-filled form, which is exactly when someone
-       * presses Save draft. The readiness strip already says "Budget resolved" is outstanding;
-       * the save then died with "Cannot read properties of undefined (reading 'id')" and told
-       * the raiser nothing they could act on.
-       */
+      // GST-slab components. Imprest (non-splitMode): same costCentreSplits-driven flow now,
+      // just posted through the older /allocations endpoint (quantity × unitRate, no percentage
+      // field server-side) since saveComponentAllocations() is hard-gated to grn_type='vendor'.
+      // resolvedLine/singleLine belong to the OLD single-cost-centre cascade and are never
+      // populated under this flow for either GRN type — the legacy splitMode allocations UI is
+      // the only remaining reader of them, and it is no longer reachable from the UI.
       if (!isVendor && !splitMode) {
-        // No resolved line is no longer always an error: isImprestUnbudgeted covers the case
-        // where none genuinely exists for this Head/Sub-head/cost centre, same as the vendor
-        // cascade's own unbudgeted path.
-        if (!resolvedLine && !isImprestUnbudgeted) {
-          throw new Error(
-            "Pick the exact budget line first — the Head/Sub-head you chose matches more than one "
-              + "line, or none for this period. The Budget section shows which."
-          );
-        }
-        if (resolvedLine && !singleLine) {
-          throw new Error(
-            form.amount > 0
-              ? "This budget line has no usable rate, so the amount cannot be turned into a quantity."
-              : "Enter the invoice amount before saving — the quantity is derived from it."
-          );
+        // An included row with no budgetLineId is not an error — the backend now resolves it
+        // as an unbudgeted allocation against that row's own cost centre (mixed budgeted +
+        // unbudgeted cost centres on one GRN are supported), same as the vendor flow below.
+        if (!costCentreSplits.some((row) => row.included)) {
+          throw new Error("Include at least one cost centre before saving.");
         }
       }
-      const rows: AllocationDraft[] = isVendor
+      const rows: Array<AllocationDraft & { costCentreKey?: string }> = isVendor
         ? []
         : splitMode
           ? allocations
-          : [
-              {
-                key: "single",
-                budgetLineId: resolvedLine?.id ?? "",
-                // Unbudgeted: no budget line to read a rate off, so the raw amount IS the row —
+          : costCentreSplits
+              .filter((row) => row.included)
+              .map((row) => {
+                const group = vendorCostCentreGroups.find((g) => g.costCentreKey === row.costCentreKey);
+                const line = group?.lines.find((item) => item.id === row.budgetLineId);
+                const shareGross = Number(form.amount) * (Number(row.percentage) / 100);
+                // Unbudgeted: no budget line to read a rate off, so the raw share IS the row —
                 // unit_rate 1, the same convention the vendor unbudgeted synthetic line uses.
-                quantity: resolvedLine ? singleLine!.quantity : Number(form.amount),
-                unitRate: resolvedLine ? Number(resolvedLine.unit_rate) : 1,
-                remarks: "",
-              },
-            ];
-      // The two indexed reads below assume a row exists. Neither is guaranteed: a vendor GRN
-      // with every cost centre unticked leaves costCentreSplits[0] undefined, and split mode
+                const perUnitGross = line ? Number(computeLine(line, 1).gross) : 0;
+                const quantity = line && perUnitGross > 0
+                  ? Number((shareGross / perUnitGross).toFixed(4))
+                  : Number(shareGross.toFixed(2));
+                return {
+                  key: row.key,
+                  budgetLineId: row.budgetLineId || "",
+                  costCentreKey: row.costCentreKey,
+                  quantity,
+                  unitRate: line ? Number(line.unit_rate) : 1,
+                  remarks: "",
+                };
+              });
+      // The two indexed reads below assume a row exists. Neither is guaranteed: a vendor/imprest
+      // GRN with every cost centre unticked leaves costCentreSplits[0] undefined, and split mode
       // with no rows leaves rows[0] undefined. Both then threw a TypeError from inside a
       // .find() predicate, which surfaced as the same anonymous "GRN could not be saved".
-      if (isVendor && !isUnbudgetedExpense && !costCentreSplits.length) {
+      if (!isUnbudgetedExpense && !splitMode && !costCentreSplits.length) {
         throw new Error("Include at least one cost centre before saving.");
       }
       if (!isVendor && splitMode && !rows.length) {
@@ -1661,13 +1705,16 @@ export function BudgetLinkedGrnForm({
       // The cost centre an unbudgeted header is attributed to: the first split the raiser
       // actually included, matching the first row saveInvoiceComponents() will write.
       const unbudgetedCostCentreId = costCentreSplits.find((row) => row.included)?.costCentreKey;
-      const firstLine = isVendor
-        ? (isUnbudgetedExpense
-            ? undefined
-            : budgetLines.find((line) => line?.id === costCentreSplits[0]?.budgetLineId))
-        : splitMode
-          ? budgetLines.find((line) => line?.id === rows[0]?.budgetLineId)
-          : resolvedLine ?? undefined;
+      // The header's own "representative" budget line — used only for a few summary columns
+      // (process_id, financial year…), never to gate the save. A GRN can now mix budgeted and
+      // unbudgeted cost centres, so this picks the first INCLUDED row that actually has a
+      // budget line, not literally row [0] — an unbudgeted row happening to sit first must not
+      // make an otherwise-budgeted GRN look like it has no line at all.
+      const firstLine = splitMode
+        ? budgetLines.find((line) => line?.id === rows[0]?.budgetLineId)
+        : isUnbudgetedExpense
+          ? undefined
+          : budgetLines.find((line) => line?.id === costCentreSplits.find((row) => row.included && row.budgetLineId)?.budgetLineId);
       /*
        * Every path that is not the unbudgeted one still REQUIRES a line, and the non-null
        * assertions above were hiding that. A stale budgetLines cache — a line deleted, a period
@@ -1691,16 +1738,15 @@ export function BudgetLinkedGrnForm({
             companyCode: form.companyCode || undefined,
             budgetLineId: firstLine?.id,
             processId: firstLine?.process_id ?? undefined,
-            // Unbudgeted: no line to read a cost centre off. Vendor sends the first INCLUDED
-            // split's own cost centre; Imprest (single-line only) sends the one cost centre the
-            // raiser picked directly. The server validates it is active and belongs to the
-            // branch either way, exactly as getLineForGrn() would have validated a real line.
-            // Gated on isUnbudgetedFlow, not just "firstLine.cost_centre_id is empty" — a
-            // budgeted branch-level line can legitimately carry a null cost_centre_id too (see
-            // the cost-centre share caution below), and that existing case must keep sending
-            // undefined exactly as it always has.
+            // Unbudgeted: no line to read a cost centre off, so the first INCLUDED split's own
+            // cost centre travels instead — Vendor and Imprest both drive costCentreSplits now.
+            // The server validates it is active and belongs to the branch either way, exactly as
+            // getLineForGrn() would have validated a real line. Gated on isUnbudgetedFlow, not
+            // just "firstLine.cost_centre_id is empty" — a budgeted branch-level line can
+            // legitimately carry a null cost_centre_id too (see the cost-centre share caution
+            // below), and that existing case must keep sending undefined exactly as it always has.
             costCentreId: firstLine?.cost_centre_id
-              ?? (isUnbudgetedFlow ? (isVendor ? unbudgetedCostCentreId : form.costCentreKey) : undefined),
+              ?? (isUnbudgetedFlow ? unbudgetedCostCentreId : undefined),
             // Tells the server to take the unbudgeted create path, and carries the Head/Sub-head
             // that a budget line would otherwise have supplied — saveInvoiceComponents() /
             // saveAllocations() read both back off the header to build synthetic lines.
@@ -1762,14 +1808,19 @@ export function BudgetLinkedGrnForm({
               remarks: item.remarks || undefined,
               hsnSacCode: item.hsnSacCode?.trim() || undefined,
             })),
+          // Every included row travels now, budgeted or not — the server resolves each one
+          // independently (budgetLineId if present, else costCentreId as an unbudgeted
+          // allocation against that row's own cost centre), so a GRN can mix budgeted and
+          // unbudgeted cost centres under one Head/Sub-head instead of being all-or-nothing.
           costCentreSplits: costCentreSplits
-            .filter((row) => row.included && (row.budgetLineId || isUnbudgetedExpense)) // Include unbudgeted rows
+            .filter((row) => row.included)
             .map((row) => ({
-              budgetLineId: row.budgetLineId || undefined, // undefined for unbudgeted
-              costCentreId: row.costCentreKey, // Always send cost centre for unbudgeted allocation
+              budgetLineId: row.budgetLineId || undefined, // undefined for an unbudgeted row
+              costCentreId: row.costCentreKey, // always sent — the server needs it either way
               percentage: Number(row.percentage),
             })),
-          isUnbudgeted: isUnbudgetedExpense || undefined, // Flag for stricter approval workflow
+          // Legacy flag, kept for an older client; the server now derives this per row instead.
+          isUnbudgeted: isUnbudgetedExpense || undefined,
           lateInvoiceReason: form.lateInvoiceReason.trim() || undefined,
           gstEnabled: form.gstEnabled,
           vendorStateCode: form.vendorStateCode || undefined,
@@ -1777,10 +1828,11 @@ export function BudgetLinkedGrnForm({
         });
       } else {
         await hrmsApi.put(`/api/finance/grns/${current.id}/allocations`, {
-          // Only declared in split mode. In single-line mode the amount drives the
-          // quantity, so the server's computed gross IS the invoice total and a
-          // declared figure could only ever contradict it.
-          declaredInvoiceTotal: splitMode ? Number(form.amount) : undefined,
+          // Declared whenever there is more than one row to reconcile against — split mode's
+          // manual allocations, and now the cost-centre-split flow's per-CC rows too. A true
+          // single-line GRN (one row, one cost centre) still omits it: the amount drives the
+          // quantity there, so the server's computed gross IS the invoice total already.
+          declaredInvoiceTotal: splitMode || rows.length > 1 ? Number(form.amount) : undefined,
           recognitionStartPeriod: monthSplit.startPeriod || undefined,
           recognitionEndPeriod: monthSplit.endPeriod || undefined,
           recognitionCustomPercentages:
@@ -1789,9 +1841,11 @@ export function BudgetLinkedGrnForm({
               : undefined,
           allocations: rows.map((item) => ({
             budgetLineId: item.budgetLineId || undefined,
-            // Unbudgeted single-line row: no budget line id, so the cost centre the raiser
-            // picked travels instead — saveAllocations() reads it back to build a synthetic line.
-            costCentreId: !item.budgetLineId ? form.costCentreKey : undefined,
+            // Unbudgeted row: no budget line id, so the cost centre the raiser picked travels
+            // instead — saveAllocations() reads it back to build a synthetic line. Cost-centre-
+            // split rows carry their own costCentreKey; the legacy splitMode allocations UI never
+            // set one (it never had its own cost-centre picker either) so falls back to undefined.
+            costCentreId: !item.budgetLineId ? item.costCentreKey : undefined,
             quantity: Number(item.quantity),
             unitRate: Number(item.unitRate),
             remarks: item.remarks || undefined,
@@ -1989,18 +2043,12 @@ export function BudgetLinkedGrnForm({
 
   return (
     <div>
-      {/* Sticky on every size, and now the only action bar — the fixed bottom bar this used to
-       *  share the job with collided with the layout's own fixed bottom nav (both z-30, the nav
-       *  later in the DOM), so on a phone it was already losing.
-       *  top offset, not top-0: the page scrolls in #main-content-area, whose first 64px are the
-       *  layout's sticky TopBar at z-30. At top-0 this parks underneath it. */}
-      <div className="sticky top-[var(--topbar-height)] z-20 mb-4">
-        <div className="rounded-[12px] border border-grn-line bg-grn-card px-4 py-2.5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            {totalStrip}
-            {actionButtons}
-          </div>
-        </div>
+      {/* Legacy layout: Save/Reset live at the bottom of the panel, not pinned while scrolling —
+       *  actionButtons is rendered there instead (see the end of the main GrnCard below). Status
+       *  (draft/GRN #, running total, readiness%) stays visible up top since that's still useful
+       *  context while filling the form; it's just no longer sticky. */}
+      <div className="mb-4 rounded-[4px] border border-[#c7d2e0] bg-white px-4 py-2.5">
+        {totalStrip}
       </div>
 
       {editGrnId && workspace?.grn?.rejection_reason && !workspace.grn.submitted_at && (
@@ -2022,18 +2070,86 @@ export function BudgetLinkedGrnForm({
         </div>
       )}
 
-      {/* ── Mode ── spans both columns; it decides what the whole form asks for, so it does not
-          belong inside the left one. */}
-      <GrnSegmented
-        label="GRN type"
-        value={form.grnType}
-        disabled={locked}
-        onChange={(value) => setForm((current) => ({ ...current, grnType: value }))}
-        options={[
-          { value: "vendor" as GrnType, label: <><IndianRupee className="h-4 w-4" /> Vendor GRN</> },
-          { value: "imprest" as GrnType, label: <><UploadCloud className="h-4 w-4" /> Imprest</> },
-        ]}
-      />
+      {/* ── Mode + status strip ── same row: the mode toggle never used the row's full width, so
+          Readiness and Approval path — previously buried at the very bottom of the page in a
+          "side rail" that (this container has no grid/flex columns) actually just stacked below
+          everything else — move up here instead, laid out horizontally. Same `checklist` array,
+          same step-state computation as before; only where/how they render changed. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        <GrnSegmented
+          label="GRN type"
+          value={form.grnType}
+          disabled={locked}
+          onChange={(value) => setForm((current) => ({ ...current, grnType: value }))}
+          options={[
+            { value: "vendor" as GrnType, label: <><IndianRupee className="h-4 w-4" /> Vendor GRN</> },
+            { value: "imprest" as GrnType, label: <><UploadCloud className="h-4 w-4" /> Imprest</> },
+          ]}
+        />
+
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          {/* Readiness — compact horizontal checklist instead of a stacked list + progress bar */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
+              Readiness {readiness}%
+            </span>
+            <div className="flex flex-wrap items-center gap-1">
+              {checklist.map((item) => (
+                <span
+                  key={item.label}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-semibold",
+                    item.done ? "bg-grn-ok-bg text-grn-ok" : "bg-grn-line-soft text-grn-ink-soft"
+                  )}
+                >
+                  {item.done ? <CheckCircle2 className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
+                  {item.label}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="hidden h-4 w-px bg-grn-line sm:block" />
+
+          {/* Approval path — same 4-step state logic as before, laid out left-to-right */}
+          <div className="flex flex-wrap items-center gap-1">
+            {[
+              { label: "Branch Admin submits", note: submitted ? undefined : "This form" },
+              { label: "Branch Head reviews", note: submitted && !liveStatus ? "Awaiting action" : undefined },
+              { label: "Finance Head reviews" },
+              { label: isVendor ? "Accounts Head → payment" : "Imprest closure" },
+            ].map((step, index, steps) => {
+              const grnDone = liveStatus === "approved" || liveStatus === "paid" || liveStatus === "partially_paid" || liveStatus === "pending_accounts_payment";
+              const branchDone = grnDone || liveStatus === "branch_head_approved" || liveStatus === "finance_head_approved";
+              const financeDone = grnDone || liveStatus === "finance_head_approved";
+              const stepState =
+                index === 0 ? (submitted ? "done" : "current") :
+                index === 1 ? (branchDone ? "done" : submitted ? "current" : "upcoming") :
+                index === 2 ? (financeDone ? "done" : branchDone ? "current" : "upcoming") :
+                grnDone ? "done" : financeDone ? "current" : "upcoming";
+              return (
+                <div key={step.label} className="flex items-center gap-1" title={step.note}>
+                  <span
+                    className={`flex h-[19px] w-[19px] shrink-0 items-center justify-center rounded-full border-[1.5px] text-[9.5px] font-bold ${
+                      stepState === "done"
+                        ? "border-grn-ok bg-grn-ok text-white"
+                        : stepState === "current"
+                          ? "border-grn-brand bg-grn-brand text-white"
+                          : "border-grn-line bg-grn-card text-grn-ink-soft"
+                    }`}
+                  >
+                    {stepState === "done" ? "✓" : index + 1}
+                  </span>
+                  <span className={`text-[10.5px] font-semibold whitespace-nowrap ${stepState === "upcoming" ? "text-grn-ink-soft" : "text-grn-ink"}`}>
+                    {step.label}
+                  </span>
+                  {index < steps.length - 1 && <span className="mx-1.5 h-px w-3 bg-grn-line" />}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
 
       {/* Compact layout: reduced spacing, full-width form (side rail moved to sticky footer) */}
       <div className="mt-3">
@@ -2055,243 +2171,243 @@ export function BudgetLinkedGrnForm({
           {/* ── Details — Dense grid layout ── */}
           <GrnCard>
             <div className="p-4 space-y-1">
-              <DenseSection title={isVendor ? "Invoice Details" : "Receipt Details"} />
-
-              {/* Row 1: Amount / Branch / Company - always 3 columns */}
-              <DenseFieldGroup cols={3}>
-                <DenseField label={isVendor ? "Amount (incl. GST)" : "Amount"} required={isVendor} error={isVendor ? err("amount") : undefined}>
-                  {isVendor ? (
-                    <Input
-                      id="grn-amount"
-                      type="number"
-                      inputMode="decimal"
-                      min="0.01"
-                      step="0.01"
-                      className={cn(inputClass, "h-8 w-full text-right font-semibold tabular-nums")}
-                      value={form.amount || ""}
-                      placeholder="0.00"
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, amount: Number(event.target.value) }))
-                      }
-                    />
-                  ) : (
-                    // Imprest's actual editable amount input lives in the Amount card further
-                    // down this form (shares id="grn-amount" there). This used to be a static,
-                    // unbound "See Amount section below" string — always blank-looking regardless
-                    // of what the raiser had entered. Mirror it as a live read-only total instead,
-                    // same value/format the sticky footer total strip already shows.
-                    <div className="h-8 flex items-center text-[12px] font-semibold tabular-nums text-grn-ink">
-                      {form.amount ? money(totals.gross) : <span className="font-normal text-grn-ink-soft">See Amount section below</span>}
-                    </div>
-                  )}
-                </DenseField>
-                <DenseField label="Branch" required error={err("branchId")}>
-                  <SearchableSelect
-                    id="grn-branch"
-                    aria-label="Branch"
-                    disabled={locked}
-                    className="h-8"
-                    options={branches.map((branch) => ({
-                      value: branch.id,
-                      label: branchLabel(branch),
-                      hint: branch.branch_code ?? undefined,
-                    }))}
-                    value={form.branchId}
-                    onChange={(value) => {
-                      setForm((current) => ({
-                        ...current,
-                        branchId: value,
-                        costCentreKey: "",
-                        head: "",
-                        subHead: "",
-                        budgetLineId: "",
-                      }));
-                      setAllocations([newAllocation()]);
-                      setInvoiceComponents([newInvoiceComponent()]);
-                    }}
-                    placeholder="Select branch"
-                    searchPlaceholder="Type a branch name…"
-                  />
-                </DenseField>
-                <DenseField label="Company">
-                  {companies.length > 1 ? (
-                    <SearchableSelect
-                      id="grn-company"
-                      aria-label="Legal entity"
-                      disabled={locked}
-                      className="h-8"
-                      options={companies.map((c) => ({ value: c.company_code, label: c.company_name }))}
-                      value={form.companyCode}
-                      onChange={(value) => setForm((current) => ({ ...current, companyCode: value }))}
-                      placeholder="Select company"
-                      searchPlaceholder="Type company name…"
-                    />
-                  ) : (
-                    <div className="h-8 flex items-center text-[12px] text-grn-ink">{companies[0]?.company_name || "MAS"}</div>
-                  )}
-                </DenseField>
-              </DenseFieldGroup>
-
-              {/* Row 2: Date / Invoice # / Due Date - always 3 columns */}
-              <DenseFieldGroup cols={3}>
-                <DenseField
-                  label={isVendor ? "Invoice date" : "Receipt date"}
-                  required
-                  error={err("billDate")}
-                  hint={effectivePeriod ? `FY ${financialYearFromPeriod(effectivePeriod)}` : undefined}
-                >
-                  <Input
-                    id="grn-bill-date"
-                    type="date"
-                    className={cn(inputClass, "h-8 w-full")}
-                    disabled={locked}
-                    value={form.billDate}
-                    onChange={(event) => {
-                      const billDate = event.target.value;
-                      setForm((current) => ({
-                        ...current,
-                        billDate,
-                        accountingPeriod: "",
-                        costCentreKey: "",
-                        head: "",
-                        subHead: "",
-                        budgetLineId: "",
-                        lateInvoiceReason: "",
-                        dueDate:
-                          current.dueDate || !billDate
-                            ? current.dueDate
-                            : addDays(billDate, current.paymentTermsDays),
-                      }));
-                      setAllocations([newAllocation()]);
-                      setInvoiceComponents([newInvoiceComponent()]);
-                    }}
-                  />
-                </DenseField>
-                <DenseField label="Invoice #" required={isVendor} error={isVendor ? err("invoiceNumber") : undefined}>
-                  {isVendor ? (
-                    <Input
-                      id="grn-invoice-no"
-                      className={cn(inputClass, "h-8 w-full")}
-                      value={form.invoiceNumber}
-                      placeholder="As printed"
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, invoiceNumber: event.target.value }))
-                      }
-                    />
-                  ) : (
-                    <div className="h-8 flex items-center text-[12px] text-grn-ink-soft">N/A for imprest</div>
-                  )}
-                </DenseField>
-                <DenseField
-                  label="Due date"
-                  error={isVendor ? err("dueDate") : undefined}
-                  hint={isVendor && dueDateGap !== null && dueDateGap >= 0 ? `${dueDateGap}d from invoice` : undefined}
-                >
-                  {isVendor ? (
-                    <Input
-                      id="grn-due-date"
-                      type="date"
-                      className={cn(inputClass, "h-8 w-full")}
-                      min={form.billDate || undefined}
-                      value={form.dueDate}
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, dueDate: event.target.value }))
-                      }
-                    />
-                  ) : (
-                    <div className="h-8 flex items-center text-[12px] text-grn-ink-soft">N/A for imprest</div>
-                  )}
-                </DenseField>
-              </DenseFieldGroup>
-
-              {/* Late invoice warning (non-finance raisers, >30 days old) */}
-              {isVendor && !isFinanceLead && form.billDate && (() => {
-                const today = new Date(); today.setHours(0, 0, 0, 0);
-                const billD = new Date(form.billDate); billD.setHours(0, 0, 0, 0);
-                const daysOld = Math.floor((today.getTime() - billD.getTime()) / 86400000);
-                if (daysOld <= 30) return null;
-                return (
-                  <div className="rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2">
-                    <div className="flex items-start gap-2 text-[11px] text-amber-800">
-                      <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
-                      <span>Invoice is <strong>{daysOld} days old</strong>. Reason required.</span>
-                    </div>
-                    <textarea
-                      className="mt-1.5 w-full rounded-[6px] border border-amber-300 bg-white px-2 py-1.5 text-xs text-grn-ink placeholder:text-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
-                      placeholder="e.g. Invoice received late from vendor"
-                      rows={2}
-                      value={form.lateInvoiceReason}
-                      onChange={(e) => setForm((cur) => ({ ...cur, lateInvoiceReason: e.target.value }))}
-                    />
-                    {!form.lateInvoiceReason.trim() && (
-                      <p className="mt-1 text-[10px] text-amber-700">Required before saving</p>
-                    )}
-                  </div>
-                );
-              })()}
-
-              {/* Accounting period override (Finance Head / Accounts Head only).
-                  Was isVendor-only — Imprest raisers/approvers got no period visibility or
-                  override at all, so the backend silently derived the period from billDate
-                  with nothing shown. period/effectivePeriod/canOverridePeriod are already
-                  grnType-agnostic (derived from form.billDate/form.accountingPeriod), so this
-                  is a pure gating fix, not new logic. */}
-              {canOverridePeriod && period && (
-                <DenseFieldGroup cols={2}>
-                  <DenseField
-                    label="Accounting period"
-                    hint={form.accountingPeriod && form.accountingPeriod !== period
-                      ? `Booking into ${form.accountingPeriod} (invoice month: ${period})`
-                      : "Leave as-is for invoice date month"
-                    }
-                  >
-                    <MonthYearPicker
-                      className="w-full"
-                      disabled={locked && !canOverridePeriod}
-                      value={effectivePeriod}
-                      onChange={(value) =>
-                        setForm((current) => ({
-                          ...current,
-                          accountingPeriod: value === period ? "" : value,
-                        }))
-                      }
-                      selectClassName="h-8 rounded-[8px] border border-grn-line bg-white px-2 text-[12px] text-grn-ink focus:outline-none focus:ring-2 focus:ring-grn-brand/15"
-                    />
-                  </DenseField>
-                </DenseFieldGroup>
-              )}
-
-              {/* Period-end cut-off warning */}
-              {canOverridePeriod && form.accountingPeriod && form.accountingPeriod !== period && (
-                <div className="flex items-start gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-                  <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
-                  <span>Period-end cut-off: booking into <strong>{form.accountingPeriod}</strong> instead of {period}.</span>
-                </div>
-              )}
-
-              {/* Accounting period read-only for non-elevated roles */}
-              {!canOverridePeriod && effectivePeriod && (
-                <div className="flex items-center gap-2 text-[12px] text-grn-ink">
-                  <span className="text-grn-ink-soft">Period:</span>
-                  <span className="font-bold">{effectivePeriod}</span>
-                  <span className="text-grn-ink-soft">(FY {financialYearFromPeriod(effectivePeriod)})</span>
-                </div>
-              )}
-
-              {/* Month split panel */}
-              <MonthSplitPanel
-                value={monthSplit}
-                onChange={setMonthSplit}
-                amount={Number(form.amount) || 0}
-                accountingPeriod={period}
-                disabled={locked}
-                // Both mirror assertMayOverrideRecognition / RECOGNITION_OVERRIDE_ROLES, which
-                // excludes branch_admin — not the wider period-override list.
-                canCustomSplit={isFinanceLead}
-                canCrossFy={isFinanceLead}
+              <DenseSection
+                title={isVendor ? "Vendor GRN Entry" : "Imprest GRN Entry"}
+                variant="panel"
               />
 
-              {/* Row 3: Vendor, GSTIN, GST toggle (vendor only) */}
+              {/* Imprest gets its own explicit sequence per the raiser's request: Company/Branch/
+                  Receipt date, then Amount/Remarks, then Accounting period + Recognise-across-
+                  months, then Head/Sub-head — genuinely different shape from Vendor's, not worth
+                  fighting shared JSX over. Every field/handler below is identical to Vendor's or
+                  Imprest's own pre-existing versions, just relocated. */}
+              {!isVendor && (
+                <>
+                  <DenseFieldGroup cols={3}>
+                    <DenseField label="Company">
+                      {companies.length > 1 ? (
+                        <SearchableSelect
+                          id="grn-company"
+                          aria-label="Legal entity"
+                          disabled={locked}
+                          className="h-8"
+                          options={companies.map((c) => ({ value: c.company_code, label: c.company_name }))}
+                          value={form.companyCode}
+                          onChange={(value) => setForm((current) => ({ ...current, companyCode: value }))}
+                          placeholder="Select company"
+                          searchPlaceholder="Type company name…"
+                        />
+                      ) : (
+                        <div className="h-8 flex items-center text-[12px] text-grn-ink">{companies[0]?.company_name || "MAS"}</div>
+                      )}
+                    </DenseField>
+                    <DenseField label="Branch" required error={err("branchId")}>
+                      <SearchableSelect
+                        id="grn-branch"
+                        aria-label="Branch"
+                        disabled={locked}
+                        className="h-8"
+                        options={branches.map((branch) => ({
+                          value: branch.id,
+                          label: branchLabel(branch),
+                          hint: branch.branch_code ?? undefined,
+                        }))}
+                        value={form.branchId}
+                        onChange={(value) => {
+                          setForm((current) => ({
+                            ...current,
+                            branchId: value,
+                            costCentreKey: "",
+                            head: "",
+                            subHead: "",
+                            budgetLineId: "",
+                          }));
+                          setAllocations([newAllocation()]);
+                          setInvoiceComponents([newInvoiceComponent()]);
+                        }}
+                        placeholder="Select branch"
+                        searchPlaceholder="Type a branch name…"
+                      />
+                    </DenseField>
+                    <DenseField
+                      label="Receipt date"
+                      required
+                      error={err("billDate")}
+                      hint={effectivePeriod ? `FY ${financialYearFromPeriod(effectivePeriod)}` : undefined}
+                    >
+                      <Input
+                        id="grn-bill-date"
+                        type="date"
+                        className={cn(inputClass, "h-8 w-full")}
+                        disabled={locked}
+                        value={form.billDate}
+                        onChange={(event) => {
+                          const billDate = event.target.value;
+                          setForm((current) => ({
+                            ...current,
+                            billDate,
+                            accountingPeriod: "",
+                            costCentreKey: "",
+                            head: "",
+                            subHead: "",
+                            budgetLineId: "",
+                            lateInvoiceReason: "",
+                          }));
+                          setAllocations([newAllocation()]);
+                          setInvoiceComponents([newInvoiceComponent()]);
+                        }}
+                      />
+                    </DenseField>
+                  </DenseFieldGroup>
+
+                  {/* Accounting period + Recognise-across-months sit right after the date field,
+                      not after Amount, and side by side in one row rather than stacked. */}
+                  <DenseFieldGroup cols={2}>
+                    <div>
+                      {canOverridePeriod && period ? (
+                        <DenseField
+                          label="Accounting period"
+                          hint={
+                            (form.accountingPeriod && form.accountingPeriod !== period
+                              ? `Booking into ${form.accountingPeriod} (invoice month: ${period})`
+                              : "Leave as-is for invoice date month")
+                            + (effectivePeriod ? ` · FY ${financialYearFromPeriod(effectivePeriod)}` : "")
+                          }
+                        >
+                          <MonthYearPicker
+                            className="w-full"
+                            disabled={locked && !canOverridePeriod}
+                            value={effectivePeriod}
+                            onChange={(value) =>
+                              setForm((current) => ({
+                                ...current,
+                                accountingPeriod: value === period ? "" : value,
+                              }))
+                            }
+                            selectClassName="h-8 rounded-[8px] border border-grn-line bg-white px-2 text-[12px] text-grn-ink focus:outline-none focus:ring-2 focus:ring-grn-brand/15"
+                          />
+                        </DenseField>
+                      ) : (
+                        !canOverridePeriod && effectivePeriod && (
+                          <div className="flex h-8 items-center gap-2 text-[12px] text-grn-ink">
+                            <span className="text-grn-ink-soft">Period:</span>
+                            <span className="font-bold">{effectivePeriod}</span>
+                            <span className="text-grn-ink-soft">(FY {financialYearFromPeriod(effectivePeriod)})</span>
+                          </div>
+                        )
+                      )}
+                    </div>
+                    <MonthSplitPanel
+                      value={monthSplit}
+                      onChange={setMonthSplit}
+                      amount={Number(form.amount) || 0}
+                      accountingPeriod={period}
+                      disabled={locked}
+                      canCustomSplit={isFinanceLead}
+                      canCrossFy={isFinanceLead}
+                    />
+                  </DenseFieldGroup>
+                  {canOverridePeriod && form.accountingPeriod && form.accountingPeriod !== period && (
+                    <div className="flex items-start gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                      <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
+                      <span>Period-end cut-off: booking into <strong>{form.accountingPeriod}</strong> instead of {period}.</span>
+                    </div>
+                  )}
+
+                  <DenseFieldGroup cols={2}>
+                    <DenseField
+                      label={splitMode ? "Invoice total (incl. GST)" : "Amount"}
+                      required
+                      error={err("amount")}
+                      hint={roundingNote}
+                    >
+                      <Input
+                        id="grn-amount"
+                        type="number"
+                        inputMode="decimal"
+                        min="0.01"
+                        step="0.01"
+                        className={cn(inputClass, "h-8 w-full text-right font-semibold tabular-nums")}
+                        value={form.amount || ""}
+                        placeholder="0.00"
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, amount: Number(event.target.value) }))
+                        }
+                      />
+                    </DenseField>
+                    <DenseField label="Remark" required error={err("remarks")}>
+                      <Input
+                        id="grn-remarks"
+                        className={cn(inputClass, "h-8 w-full")}
+                        value={form.remarks}
+                        placeholder="What was bought or paid for, and why."
+                        onChange={(event) =>
+                          setForm((current) => ({ ...current, remarks: event.target.value }))
+                        }
+                      />
+                    </DenseField>
+                  </DenseFieldGroup>
+                  <div className="flex items-center gap-3 text-[11px] text-grn-ink-soft">
+                    <span>Taxable: <b className="text-grn-ink">{money(totals.base)}</b></span>
+                    <span>GST: <b className="text-grn-ink">{money(totals.tax)}</b></span>
+                    <span className="font-bold text-grn-ink">Total: {money(totals.gross)}</span>
+                  </div>
+
+                  <DenseSection
+                    title="Budget Allocation"
+                    action={<GrnBudgetImportButton branchId={form.branchId} period={effectivePeriod} disabled={locked} />}
+                  />
+                  {!form.branchId || !effectivePeriod ? (
+                    <div className="py-2 text-[11px] text-grn-warn">
+                      Select branch and date first to load budgets.
+                    </div>
+                  ) : linesLoading ? (
+                    <div className="flex items-center gap-2 py-3 text-[11px] text-grn-ink-soft">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading budgets…
+                    </div>
+                  ) : (
+                    <>
+                      <DenseFieldGroup cols={2}>
+                        <DenseField label="Head" required error={err("head")}>
+                          <SearchableSelect
+                            id="grn-head"
+                            aria-label="Expense head"
+                            options={vendorHeadOptions}
+                            value={form.head}
+                            onChange={(value) => setForm((current) => ({ ...current, head: value, subHead: "" }))}
+                            placeholder="Select head"
+                            searchPlaceholder="Type a head…"
+                          />
+                        </DenseField>
+                        <DenseField label="Sub-head" required error={err("subHead")}>
+                          <SearchableSelect
+                            id="grn-subhead"
+                            aria-label="Expense sub-head"
+                            disabled={!form.head}
+                            options={vendorSubHeadOptions}
+                            value={form.subHead}
+                            onChange={(value) => setForm((current) => ({ ...current, subHead: value }))}
+                            placeholder={form.head ? "Select sub-head" : "Select head first"}
+                            searchPlaceholder="Type a sub-head…"
+                          />
+                        </DenseField>
+                      </DenseFieldGroup>
+                      {form.head && !vendorHeadOptions.find((o) => o.value === form.head)?.hasBudget && (
+                        <p className="text-[10px] text-amber-600">
+                          No approved budget for this head — Finance Head must link during approval.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+
+              {/* Row: Vendor, GSTIN, GST toggle (vendor only). Place of supply, Contract
+                  reference and the IRN (e-invoice/Ack no./date) fields that used to sit here
+                  were removed per the legacy-flow resequencing — they weren't part of the old
+                  HRMS Vendor GRN form and had no logic hanging off them beyond the four
+                  now-unused form fields (placeOfSupply, purchaseReference, irn, irnAckNo),
+                  which stay wired through the submit payload untouched. */}
               {isVendor && (
                 <>
                   <DenseFieldGroup cols={3}>
@@ -2373,7 +2489,7 @@ export function BudgetLinkedGrnForm({
                     </DenseField>
                   </DenseFieldGroup>
 
-                  {/* Row 4: GST states - all fields always enabled */}
+                  {/* Vendor / Billing state, tax type */}
                   <DenseFieldGroup cols={3}>
                     <DenseField label="Vendor State">
                       <GrnSelect
@@ -2420,73 +2536,401 @@ export function BudgetLinkedGrnForm({
                       </div>
                     </DenseField>
                   </DenseFieldGroup>
+                </>
+              )}
 
-                  {/* Row 5: Place of supply, Contract ref, Remarks preview */}
-                  <DenseFieldGroup cols={3}>
-                    <DenseField label="Place of supply">
-                      <Input
-                        id="grn-place"
-                        className={cn(inputClass, "h-8 w-full")}
-                        value={form.placeOfSupply}
-                        placeholder="State or country"
-                        onChange={(event) =>
-                          setForm((current) => ({ ...current, placeOfSupply: event.target.value }))
-                        }
-                      />
-                    </DenseField>
-                    <DenseField label="Contract reference">
-                      <Input
-                        id="grn-contract-ref"
-                        className={cn(inputClass, "h-8 w-full")}
-                        value={form.purchaseReference}
-                        placeholder="Contract/agreement ref"
-                        onChange={(event) =>
-                          setForm((current) => ({ ...current, purchaseReference: event.target.value }))
-                        }
-                      />
-                    </DenseField>
-                    <DenseField label="Period">
-                      <div className="h-8 flex items-center text-[12px] font-semibold text-grn-ink">
-                        {effectivePeriod || "Select date first"}
-                      </div>
-                    </DenseField>
-                  </DenseFieldGroup>
+              {/* ── Budget Allocation section (Vendor only now — Imprest has its own copy of
+                  this, using the same vendorHeadOptions/vendorSubHeadOptions, positioned earlier
+                  per the raiser's requested Imprest sequence). Head/Sub-head first, then the
+                  cost-centre split editor below decides which cost centre(s) carry how much.
+                  Imprest's old cost-centre-first cascade (headOptions/subHeadOptions/matchingLines/
+                  costCentreOptions, and the "Split" toggle into SplitAllocationEditor) stays
+                  defined above, untouched and simply unused by this JSX — nothing deleted, just
+                  no longer the path a raiser is put through. */}
+              {isVendor && (
+                <>
+                  <DenseSection
+                    title="Budget Allocation"
+                    action={<GrnBudgetImportButton branchId={form.branchId} period={effectivePeriod} disabled={locked} />}
+                  />
 
-                  {/* IRN fields (Finance only) - 3 columns */}
-                  {isFinanceLead && (
-                    <DenseFieldGroup cols={3}>
-                      <DenseField label="IRN (e-invoice)" hint="From GSTN portal">
-                        <Input
-                          id="grn-irn"
-                          className={cn(inputClass, "h-8 w-full font-mono")}
-                          value={form.irn}
-                          placeholder="64-char IRN"
-                          onChange={(event) =>
-                            setForm((current) => ({ ...current, irn: event.target.value.trim() }))
-                          }
-                        />
-                      </DenseField>
-                      <DenseField label="IRN Ack. No.">
-                        <Input
-                          id="grn-irn-ack"
-                          className={cn(inputClass, "h-8 w-full font-mono")}
-                          value={form.irnAckNo}
-                          placeholder="Ack number"
-                          onChange={(event) =>
-                            setForm((current) => ({ ...current, irnAckNo: event.target.value.trim() }))
-                          }
-                        />
-                      </DenseField>
-                      <DenseField label="IRN Date">
-                        <div className="h-8 flex items-center text-[12px] text-grn-ink-soft">Auto from portal</div>
-                      </DenseField>
-                    </DenseFieldGroup>
+                  {!form.branchId || !effectivePeriod ? (
+                    <div className="py-2 text-[11px] text-grn-warn">
+                      Select branch and date first to load budgets.
+                    </div>
+                  ) : linesLoading ? (
+                    <div className="flex items-center gap-2 py-3 text-[11px] text-grn-ink-soft">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading budgets…
+                    </div>
+                  ) : (
+                    <>
+                      <DenseFieldGroup cols={2}>
+                        <DenseField label="Head" required error={err("head")}>
+                          <SearchableSelect
+                            id="grn-head"
+                            aria-label="Expense head"
+                            options={vendorHeadOptions}
+                            value={form.head}
+                            onChange={(value) => setForm((current) => ({ ...current, head: value, subHead: "" }))}
+                            placeholder="Select head"
+                            searchPlaceholder="Type a head…"
+                          />
+                        </DenseField>
+                        <DenseField label="Sub-head" required error={err("subHead")}>
+                          <SearchableSelect
+                            id="grn-subhead"
+                            aria-label="Expense sub-head"
+                            disabled={!form.head}
+                            options={vendorSubHeadOptions}
+                            value={form.subHead}
+                            onChange={(value) => setForm((current) => ({ ...current, subHead: value }))}
+                            placeholder={form.head ? "Select sub-head" : "Select head first"}
+                            searchPlaceholder="Type a sub-head…"
+                          />
+                        </DenseField>
+                      </DenseFieldGroup>
+                      {form.head && !vendorHeadOptions.find((o) => o.value === form.head)?.hasBudget && (
+                        <p className="text-[10px] text-amber-600">
+                          No approved budget for this head — Finance Head must link during approval.
+                        </p>
+                      )}
+                    </>
                   )}
                 </>
               )}
 
-              {/* ── Proof section (inline within card) ── */}
-              <DenseSection title="Attachments" />
+              {/* Row: Date / Invoice # / Due Date — Vendor only; Imprest's Receipt date lives in
+                  its own Company/Branch/Receipt-date row earlier in the sequence. */}
+              {isVendor && (
+              <DenseFieldGroup cols={3}>
+                <DenseField
+                  label="Invoice date"
+                  required
+                  error={err("billDate")}
+                  hint={effectivePeriod ? `FY ${financialYearFromPeriod(effectivePeriod)}` : undefined}
+                >
+                  <Input
+                    id="grn-bill-date"
+                    type="date"
+                    className={cn(inputClass, "h-8 w-full")}
+                    disabled={locked}
+                    value={form.billDate}
+                    onChange={(event) => {
+                      const billDate = event.target.value;
+                      setForm((current) => ({
+                        ...current,
+                        billDate,
+                        accountingPeriod: "",
+                        costCentreKey: "",
+                        head: "",
+                        subHead: "",
+                        budgetLineId: "",
+                        lateInvoiceReason: "",
+                        dueDate:
+                          current.dueDate || !billDate
+                            ? current.dueDate
+                            : addDays(billDate, current.paymentTermsDays),
+                      }));
+                      setAllocations([newAllocation()]);
+                      setInvoiceComponents([newInvoiceComponent()]);
+                    }}
+                  />
+                </DenseField>
+                {isVendor && (
+                  <DenseField label="Invoice #" required error={err("invoiceNumber")}>
+                    <Input
+                      id="grn-invoice-no"
+                      className={cn(inputClass, "h-8 w-full")}
+                      value={form.invoiceNumber}
+                      placeholder="As printed"
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, invoiceNumber: event.target.value }))
+                      }
+                    />
+                  </DenseField>
+                )}
+                {isVendor && (
+                  <DenseField
+                    label="Due date"
+                    error={err("dueDate")}
+                    hint={dueDateGap !== null && dueDateGap >= 0 ? `${dueDateGap}d from invoice` : undefined}
+                  >
+                    <Input
+                      id="grn-due-date"
+                      type="date"
+                      className={cn(inputClass, "h-8 w-full")}
+                      min={form.billDate || undefined}
+                      value={form.dueDate}
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, dueDate: event.target.value }))
+                      }
+                    />
+                  </DenseField>
+                )}
+              </DenseFieldGroup>
+              )}
+
+              {/* Late invoice warning (non-finance raisers, >30 days old) */}
+              {isVendor && !isFinanceLead && form.billDate && (() => {
+                const today = new Date(); today.setHours(0, 0, 0, 0);
+                const billD = new Date(form.billDate); billD.setHours(0, 0, 0, 0);
+                const daysOld = Math.floor((today.getTime() - billD.getTime()) / 86400000);
+                if (daysOld <= 30) return null;
+                return (
+                  <div className="rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2">
+                    <div className="flex items-start gap-2 text-[11px] text-amber-800">
+                      <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
+                      <span>Invoice is <strong>{daysOld} days old</strong>. Reason required.</span>
+                    </div>
+                    <textarea
+                      className="mt-1.5 w-full rounded-[6px] border border-amber-300 bg-white px-2 py-1.5 text-xs text-grn-ink placeholder:text-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                      placeholder="e.g. Invoice received late from vendor"
+                      rows={2}
+                      value={form.lateInvoiceReason}
+                      onChange={(e) => setForm((cur) => ({ ...cur, lateInvoiceReason: e.target.value }))}
+                    />
+                    {!form.lateInvoiceReason.trim() && (
+                      <p className="mt-1 text-[10px] text-amber-700">Required before saving</p>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Accounting period + Recognise-across-months — right after the Invoice date, not
+                  after Amount, and side by side in one row rather than stacked, to use the row's
+                  width instead of leaving half of it blank. */}
+              {isVendor && (
+                <DenseFieldGroup cols={2}>
+                  <div>
+                    {canOverridePeriod && period ? (
+                      <DenseField
+                        label="Accounting period"
+                        hint={
+                          (form.accountingPeriod && form.accountingPeriod !== period
+                            ? `Booking into ${form.accountingPeriod} (invoice month: ${period})`
+                            : "Leave as-is for invoice date month")
+                          + (effectivePeriod ? ` · FY ${financialYearFromPeriod(effectivePeriod)}` : "")
+                        }
+                      >
+                        <MonthYearPicker
+                          className="w-full"
+                          disabled={locked && !canOverridePeriod}
+                          value={effectivePeriod}
+                          onChange={(value) =>
+                            setForm((current) => ({
+                              ...current,
+                              accountingPeriod: value === period ? "" : value,
+                            }))
+                          }
+                          selectClassName="h-8 rounded-[8px] border border-grn-line bg-white px-2 text-[12px] text-grn-ink focus:outline-none focus:ring-2 focus:ring-grn-brand/15"
+                        />
+                      </DenseField>
+                    ) : (
+                      !canOverridePeriod && effectivePeriod && (
+                        <div className="flex h-8 items-center gap-2 text-[12px] text-grn-ink">
+                          <span className="text-grn-ink-soft">Period:</span>
+                          <span className="font-bold">{effectivePeriod}</span>
+                          <span className="text-grn-ink-soft">(FY {financialYearFromPeriod(effectivePeriod)})</span>
+                        </div>
+                      )
+                    )}
+                  </div>
+                  <MonthSplitPanel
+                    value={monthSplit}
+                    onChange={setMonthSplit}
+                    amount={Number(form.amount) || 0}
+                    accountingPeriod={period}
+                    disabled={locked}
+                    canCustomSplit={isFinanceLead}
+                    canCrossFy={isFinanceLead}
+                  />
+                </DenseFieldGroup>
+              )}
+              {isVendor && canOverridePeriod && form.accountingPeriod && form.accountingPeriod !== period && (
+                <div className="flex items-start gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                  <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
+                  <span>Period-end cut-off: booking into <strong>{form.accountingPeriod}</strong> instead of {period}.</span>
+                </div>
+              )}
+
+              {/* Amount — Vendor only. Imprest's Amount+Remark now lives in its own row earlier
+                  in the sequence (merged there per the raiser's requested Imprest layout), so
+                  there is no imprest branch here any more — rendering both would duplicate it. */}
+              {isVendor && (
+                <DenseFieldGroup cols={2}>
+                  <DenseField label="Amount (incl. GST)" required error={err("amount")}>
+                    <Input
+                      id="grn-amount"
+                      type="number"
+                      inputMode="decimal"
+                      min="0.01"
+                      step="0.01"
+                      className={cn(inputClass, "h-8 w-full text-right font-semibold tabular-nums")}
+                      value={form.amount || ""}
+                      placeholder="0.00"
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, amount: Number(event.target.value) }))
+                      }
+                    />
+                  </DenseField>
+                  {/* Same form.remarks state InvoiceComponentsEditor's GST-slab split reads/
+                      writes below — surfaced here too so vendor Amount gets a Description field
+                      right beside it, matching the legacy "Total Bill Amount | Description" row
+                      instead of only appearing at the very end of the split editor. */}
+                  <DenseField label="Description" required error={err("remarks")}>
+                    <Input
+                      id="grn-description"
+                      className={cn(inputClass, "h-8 w-full")}
+                      value={form.remarks}
+                      placeholder="What was bought or paid for, and why."
+                      onChange={(event) =>
+                        setForm((current) => ({ ...current, remarks: event.target.value }))
+                      }
+                    />
+                  </DenseField>
+                </DenseFieldGroup>
+              )}
+
+              {/* Branch / Company — Vendor only now; Imprest has its own Company/Branch/Receipt-
+                  date row earlier in the sequence. */}
+              {isVendor && (
+              <DenseFieldGroup cols={2}>
+                <DenseField label="Branch" required error={err("branchId")}>
+                  <SearchableSelect
+                    id="grn-branch"
+                    aria-label="Branch"
+                    disabled={locked}
+                    className="h-8"
+                    options={branches.map((branch) => ({
+                      value: branch.id,
+                      label: branchLabel(branch),
+                      hint: branch.branch_code ?? undefined,
+                    }))}
+                    value={form.branchId}
+                    onChange={(value) => {
+                      setForm((current) => ({
+                        ...current,
+                        branchId: value,
+                        costCentreKey: "",
+                        head: "",
+                        subHead: "",
+                        budgetLineId: "",
+                      }));
+                      setAllocations([newAllocation()]);
+                      setInvoiceComponents([newInvoiceComponent()]);
+                    }}
+                    placeholder="Select branch"
+                    searchPlaceholder="Type a branch name…"
+                  />
+                </DenseField>
+                <DenseField label="Company">
+                  {companies.length > 1 ? (
+                    <SearchableSelect
+                      id="grn-company"
+                      aria-label="Legal entity"
+                      disabled={locked}
+                      className="h-8"
+                      options={companies.map((c) => ({ value: c.company_code, label: c.company_name }))}
+                      value={form.companyCode}
+                      onChange={(value) => setForm((current) => ({ ...current, companyCode: value }))}
+                      placeholder="Select company"
+                      searchPlaceholder="Type company name…"
+                    />
+                  ) : (
+                    <div className="h-8 flex items-center text-[12px] text-grn-ink">{companies[0]?.company_name || "MAS"}</div>
+                  )}
+                </DenseField>
+              </DenseFieldGroup>
+              )}
+            </div>
+          </GrnCard>
+
+          {/* Vendor GRNs: cost-centre split, then invoice GST components, in that order — the
+              unified flow. Each is its own card for the same reason SplitAllocationEditor already
+              is: its own toolbar and its own reconciliation footer. */}
+          {/* Unbudgeted expense warning */}
+          {isUnbudgetedExpense && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
+              <div className="flex items-start gap-2">
+                <svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div>
+                  <p className="font-medium">Unbudgeted Expense</p>
+                  <p className="text-sm text-amber-700">
+                    No budget exists for "{form.head} → {form.subHead}" in this period.
+                    This GRN will be flagged as unbudgeted and require Finance Head approval.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading && vendorCostCentreGroups.length > 0 && (
+            <CostCentreSplitEditor
+              groups={vendorCostCentreGroups}
+              rows={costCentreSplits}
+              total={costCentreSplitTotal}
+              error={err("costCentreSplit")}
+              onUpdate={updateCostCentreSplit}
+              onSplitEvenly={splitCostCentresEvenly}
+              splitMethod={costCentreSplitMethod}
+              onSplitMethodChange={setCostCentreSplitMethod}
+              onApplySplit={applyCostCentreSplitMethod}
+              splitReadiness={costCentreSplitReadiness}
+              directCostCentreKey={directCostCentreKey}
+              onDirectCostCentreChange={setDirectCostCentreKey}
+              isUnbudgeted={isUnbudgetedExpense}
+            />
+          )}
+
+          {/* Show InvoiceComponentsEditor when cost centre splits exist — the split section now
+              uses ALL active cost centres (Branch Budget pattern), so it always appears when there
+              are matching budget lines. */}
+          {isVendor && Boolean(form.branchId) && Boolean(effectivePeriod) && costCentreSplits.length > 0 && (
+            <InvoiceComponentsEditor
+              components={invoiceComponents}
+              preview={componentsPreview}
+              declaredTotal={Number(form.amount || 0)}
+              error={err("components")}
+              remarks={form.remarks}
+              remarksError={err("remarks")}
+              isFinanceLead={isFinanceLead}
+              onUpdate={updateInvoiceComponent}
+              onAdd={addInvoiceComponent}
+              onRemove={removeInvoiceComponent}
+              canRemove={invoiceComponents.length > 1}
+              onRemarksChange={(value) => setForm((current) => ({ ...current, remarks: value }))}
+            />
+          )}
+
+          {/* Its own card, not a block nested inside the one above: it has its own toolbar and
+              its own reconciliation footer, which a section body has nowhere to put. */}
+          {!isVendor && splitMode && Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading && budgetLines.length > 0 && (
+            <SplitAllocationEditor
+              budgetLines={budgetLines}
+              rows={calculatedAllocations}
+              totals={splitTotals}
+              difference={splitDifference}
+              invoiceGross={Number(form.amount || 0)}
+              error={err("split")}
+              onUpdate={updateAllocation}
+              onAdd={addAllocation}
+              onRemove={removeAllocation}
+              onAutoBalance={autoBalanceLastRow}
+              canRemove={allocations.length > 1}
+              autoSplitMethod={autoSplitMethod}
+              onAutoSplitMethodChange={setAutoSplitMethod}
+              onAutoSplit={applyAutoSplit}
+              autoSplitReadiness={autoSplitReadiness}
+            />
+          )}
+
+          {/* ── Attachments (GRN File) — relocated here, after the split/Details Entry
+                 section, to mirror where the legacy HRMS form places the file upload. ── */}
+          <GrnCard>
+            <div className="p-4 space-y-1">
+              <DenseSection title="Attachments" variant="panel" />
               {/* `relative` is load-bearing, not decoration. Tailwind's `sr-only` makes the file
                   input below `position: absolute`, and with no positioned ancestor its containing
                   block was the INITIAL one -- the viewport -- not #main-content-area. So the input
@@ -2594,335 +3038,13 @@ export function BudgetLinkedGrnForm({
                   </Button>
                 )}
               </div>
-
-              {/* ── Budget Allocation section ── */}
-              <DenseSection
-                title="Budget Allocation"
-                action={
-                  <div className="flex items-center gap-1.5">
-                    <GrnBudgetImportButton branchId={form.branchId} period={effectivePeriod} disabled={locked} />
-                    {!isVendor && (
-                      <Button size="sm" onClick={() => setSplitMode((value) => !value)}>
-                        <Split className="h-3 w-3" />
-                        {splitMode ? "Single line" : "Split"}
-                      </Button>
-                    )}
-                  </div>
-                }
-              />
-
-              {!form.branchId || !effectivePeriod ? (
-                <div className="py-2 text-[11px] text-grn-warn">
-                  Select branch and date first to load budgets.
-                </div>
-              ) : linesLoading ? (
-                <div className="flex items-center gap-2 py-3 text-[11px] text-grn-ink-soft">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading budgets…
-                </div>
-              ) : isVendor ? (
-                <>
-                  <DenseFieldGroup cols={2}>
-                    <DenseField label="Head" required error={err("head")}>
-                      <SearchableSelect
-                        id="grn-head"
-                        aria-label="Expense head"
-                        options={vendorHeadOptions}
-                        value={form.head}
-                        onChange={(value) => setForm((current) => ({ ...current, head: value, subHead: "" }))}
-                        placeholder="Select head"
-                        searchPlaceholder="Type a head…"
-                      />
-                    </DenseField>
-                    <DenseField label="Sub-head" required error={err("subHead")}>
-                      <SearchableSelect
-                        id="grn-subhead"
-                        aria-label="Expense sub-head"
-                        disabled={!form.head}
-                        options={vendorSubHeadOptions}
-                        value={form.subHead}
-                        onChange={(value) => setForm((current) => ({ ...current, subHead: value }))}
-                        placeholder={form.head ? "Select sub-head" : "Select head first"}
-                        searchPlaceholder="Type a sub-head…"
-                      />
-                    </DenseField>
-                  </DenseFieldGroup>
-                  {form.head && !vendorHeadOptions.find((o) => o.value === form.head)?.hasBudget && (
-                    <p className="text-[10px] text-amber-600">
-                      No approved budget for this head — Finance Head must link during approval.
-                    </p>
-                  )}
-                </>
-              ) : splitMode ? (
-                <div className="py-2 text-[11px] text-grn-ink-soft">
-                  Budget lines are chosen per row in the split editor below.
-                </div>
-              ) : (
-                <>
-                  <DenseFieldGroup cols={3}>
-                    <DenseField label="Cost centre" required error={err("costCentreKey")}>
-                      <SearchableSelect
-                        id="grn-cc"
-                        aria-label="Cost centre"
-                        options={costCentreOptions}
-                        value={form.costCentreKey}
-                        onChange={(value) =>
-                          setForm((current) => ({
-                            ...current,
-                            costCentreKey: value,
-                            head: "",
-                            subHead: "",
-                            budgetLineId: "",
-                          }))
-                        }
-                        placeholder="Select cost centre"
-                        searchPlaceholder="Type a cost centre…"
-                      />
-                    </DenseField>
-                    <DenseField label="Head" required error={err("head")}>
-                      <SearchableSelect
-                        id="grn-head"
-                        aria-label="Expense head"
-                        disabled={!form.costCentreKey}
-                        options={headOptions}
-                        value={form.head}
-                        onChange={(value) =>
-                          setForm((current) => ({
-                            ...current,
-                            head: value,
-                            subHead: "",
-                            budgetLineId: "",
-                          }))
-                        }
-                        placeholder={form.costCentreKey ? "Select head" : "Select CC first"}
-                        searchPlaceholder="Type a head…"
-                      />
-                    </DenseField>
-                    <DenseField label="Sub-head" required error={err("subHead")}>
-                      <SearchableSelect
-                        id="grn-subhead"
-                        aria-label="Expense sub-head"
-                        disabled={!form.head}
-                        options={subHeadOptions}
-                        value={form.subHead}
-                        onChange={(value) =>
-                          setForm((current) => ({ ...current, subHead: value, budgetLineId: "" }))
-                        }
-                        placeholder={form.head ? "Select sub-head" : "Select head first"}
-                        searchPlaceholder="Type a sub-head…"
-                      />
-                    </DenseField>
-                  </DenseFieldGroup>
-
-                  {/* Item picker when trio is ambiguous */}
-                  {needsItemChoice && (
-                    <DenseFieldGroup cols={2}>
-                      <DenseField label="Item" required error={err("budgetLineId")} hint={`${matchingLines.length} lines match`}>
-                        <SearchableSelect
-                          id="grn-item"
-                          aria-label="Budget item"
-                          options={matchingLines.map((line) => ({
-                            value: line.id,
-                            label: line.item_name,
-                            hint: `${money(Number(line.available_gross_amount))} left`,
-                            keywords: line.budget_number,
-                          }))}
-                          value={form.budgetLineId}
-                          onChange={(value) =>
-                            setForm((current) => ({ ...current, budgetLineId: value }))
-                          }
-                          placeholder="Select item"
-                          searchPlaceholder="Type item name…"
-                        />
-                      </DenseField>
-                    </DenseFieldGroup>
-                  )}
-
-                  {/* Resolved budget line summary - inline */}
-                  {resolvedLine && (
-                    <div className="flex items-center gap-2 text-[11px] text-grn-ink-soft">
-                      <span className="font-mono">{resolvedLine.budget_number}</span>
-                      <span>·</span>
-                      <span className="font-semibold text-grn-ok">{money(Number(resolvedLine.available_gross_amount))} available</span>
-                      <span>·</span>
-                      <span>{decimal(Number(resolvedLine.available_quantity))} {resolvedLine.unit} left</span>
-                    </div>
-                  )}
-
-                  {/* Cost-centre share caution.
-                      A branch-level budget line is offered to EVERY cost centre and the engine
-                      only checks the line's own balance, so a cost centre can consume far more
-                      than the share it was budgeted. That overspend is currently only visible
-                      after the fact on the utilization tab. This warns at raise time and
-                      deliberately does NOT block: the line-level gate is still the hard control. */}
-                  {(() => {
-                    if (!resolvedLine) return null;
-                    const allocated = Number(resolvedLine.cost_centre_allocated_amount ?? NaN);
-                    if (!Number.isFinite(allocated) || allocated <= 0) return null;
-                    const committed = Number(resolvedLine.cost_centre_committed_amount ?? 0);
-                    const thisAmount = Number(form.amount || 0);
-                    const shareLeft = allocated - committed;
-                    if (!Number.isFinite(thisAmount) || thisAmount <= shareLeft) return null;
-                    return (
-                      <div className="flex items-start gap-2 rounded-[8px] border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-                        <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0 text-amber-600" />
-                        <span>
-                          This cost centre was budgeted{" "}
-                          <span className="font-semibold">{money(allocated)}</span> of this
-                          branch-level line{committed > 0 ? <> and has already committed <span className="font-semibold">{money(committed)}</span></> : null},
-                          leaving <span className="font-semibold">{money(shareLeft)}</span>. This GRN is{" "}
-                          <span className="font-semibold">{money(thisAmount)}</span>. The line as a whole still has
-                          budget, so this is allowed — but the excess is funded from other cost centres&rsquo; shares.
-                        </span>
-                      </div>
-                    );
-                  })()}
-
-                  {/* Selected head/sub-head has no matching budget line for this cost centre +
-                      period — headOptions/subHeadOptions include the full expense master, so this
-                      combination is selectable. No longer a blocking error: this GRN takes the
-                      same "unbudgeted, link during approval" path the vendor cascade already has
-                      (isUnbudgetedFlow), so the note is informational only. */}
-                  {isImprestUnbudgeted && (
-                    <p className="text-[10px] text-amber-600">
-                      No approved budget exists for "{form.head} → {form.subHead}" in this cost
-                      centre and period. This GRN will be flagged as unbudgeted and require
-                      Finance Head approval before payment.
-                    </p>
-                  )}
-                </>
-              )}
             </div>
           </GrnCard>
 
-          {/* Vendor GRNs: cost-centre split, then invoice GST components, in that order — the
-              unified flow. Each is its own card for the same reason SplitAllocationEditor already
-              is: its own toolbar and its own reconciliation footer. */}
-          {/* Unbudgeted expense warning */}
-          {isVendor && isUnbudgetedExpense && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
-              <div className="flex items-start gap-2">
-                <svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                <div>
-                  <p className="font-medium">Unbudgeted Expense</p>
-                  <p className="text-sm text-amber-700">
-                    No budget exists for "{form.head} → {form.subHead}" in this period.
-                    This GRN will be flagged as unbudgeted and require Finance Head approval.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {isVendor && Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading && vendorCostCentreGroups.length > 0 && (
-            <CostCentreSplitEditor
-              groups={vendorCostCentreGroups}
-              rows={costCentreSplits}
-              total={costCentreSplitTotal}
-              error={err("costCentreSplit")}
-              onUpdate={updateCostCentreSplit}
-              onSplitEvenly={splitCostCentresEvenly}
-              splitMethod={costCentreSplitMethod}
-              onSplitMethodChange={setCostCentreSplitMethod}
-              onApplySplit={applyCostCentreSplitMethod}
-              splitReadiness={costCentreSplitReadiness}
-              directCostCentreKey={directCostCentreKey}
-              onDirectCostCentreChange={setDirectCostCentreKey}
-              isUnbudgeted={isUnbudgetedExpense}
-            />
-          )}
-
-          {/* Show InvoiceComponentsEditor when cost centre splits exist — the split section now
-              uses ALL active cost centres (Branch Budget pattern), so it always appears when there
-              are matching budget lines. */}
-          {isVendor && Boolean(form.branchId) && Boolean(effectivePeriod) && costCentreSplits.length > 0 && (
-            <InvoiceComponentsEditor
-              components={invoiceComponents}
-              preview={componentsPreview}
-              declaredTotal={Number(form.amount || 0)}
-              error={err("components")}
-              remarks={form.remarks}
-              remarksError={err("remarks")}
-              isFinanceLead={isFinanceLead}
-              onUpdate={updateInvoiceComponent}
-              onAdd={addInvoiceComponent}
-              onRemove={removeInvoiceComponent}
-              canRemove={invoiceComponents.length > 1}
-              onRemarksChange={(value) => setForm((current) => ({ ...current, remarks: value }))}
-            />
-          )}
-
-          {/* Its own card, not a block nested inside the one above: it has its own toolbar and
-              its own reconciliation footer, which a section body has nowhere to put. */}
-          {!isVendor && splitMode && Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading && budgetLines.length > 0 && (
-            <SplitAllocationEditor
-              budgetLines={budgetLines}
-              rows={calculatedAllocations}
-              totals={splitTotals}
-              difference={splitDifference}
-              invoiceGross={Number(form.amount || 0)}
-              error={err("split")}
-              onUpdate={updateAllocation}
-              onAdd={addAllocation}
-              onRemove={removeAllocation}
-              onAutoBalance={autoBalanceLastRow}
-              canRemove={allocations.length > 1}
-              autoSplitMethod={autoSplitMethod}
-              onAutoSplitMethodChange={setAutoSplitMethod}
-              onAutoSplit={applyAutoSplit}
-              autoSplitReadiness={autoSplitReadiness}
-            />
-          )}
-
-          {/* ── Amount (imprest only — vendor's amount lives in Invoice details, its GST
-                 breakdown and remarks live at the end of InvoiceComponentsEditor) ── */}
-          {!isVendor && (
-            <GrnCard>
-              <div className="p-4 space-y-2">
-                <DenseSection title="Amount" />
-                <DenseFieldGroup cols={2}>
-                  <DenseField
-                    label={splitMode ? "Invoice total (incl. GST)" : "Amount"}
-                    required
-                    error={err("amount")}
-                    hint={roundingNote}
-                  >
-                    <Input
-                      id="grn-amount"
-                      type="number"
-                      inputMode="decimal"
-                      min="0.01"
-                      step="0.01"
-                      className={cn(inputClass, "h-8 text-right font-semibold tabular-nums")}
-                      value={form.amount || ""}
-                      placeholder="0.00"
-                      onChange={(event) =>
-                        setForm((current) => ({ ...current, amount: Number(event.target.value) }))
-                      }
-                    />
-                  </DenseField>
-                  <div className="flex items-end gap-3 text-[11px]">
-                    <span className="text-grn-ink-soft">Taxable: <b className="text-grn-ink">{money(totals.base)}</b></span>
-                    <span className="text-grn-ink-soft">GST: <b className="text-grn-ink">{money(totals.tax)}</b></span>
-                    <span className="font-bold text-grn-ink">Total: {money(totals.gross)}</span>
-                  </div>
-                </DenseFieldGroup>
-
-                <DenseField label="Remark" required error={err("remarks")}>
-                  <Textarea
-                    id="grn-remarks"
-                    className="min-h-16 text-[12px]"
-                    value={form.remarks}
-                    placeholder="What was bought or paid for, and why."
-                    onChange={(event) =>
-                      setForm((current) => ({ ...current, remarks: event.target.value }))
-                    }
-                  />
-                </DenseField>
-              </div>
-            </GrnCard>
-          )}
+          {/* Save / Reset — the true end of the fill-out flow (title → fields → split →
+              Attachments), not mid-page. Having it right after Branch/Company meant finishing
+              Attachments or the split table required scrolling back up to submit. */}
+          <div className="flex justify-end gap-2">{actionButtons}</div>
 
           {/* ── Extraction ── */}
           {effectiveExtractedFields && (
@@ -3028,43 +3150,12 @@ export function BudgetLinkedGrnForm({
             </FormSection>
           )}
 
-          {/* Summary for screens without the side rail. Must track the rail's own breakpoint or
-              both render at once. */}
-          <div className="min-[900px]:hidden">
-            <FormSection title="Readiness">
-              <ul>
-                {checklist.map((item) => (
-                  <ReadyRow
-                    key={item.label}
-                    label={item.label}
-                    done={item.done}
-                    className="border-b border-grn-line-soft px-4 py-2.5 last:border-b-0"
-                  />
-                ))}
-              </ul>
-            </FormSection>
-          </div>
         </div>
 
-        {/* Side rail — a card in its own grid column now, not a bordered panel bolted to the
-            right edge of a full-height flex row. */}
+        {/* Side rail now carries only Cost — Readiness and Approval path moved to the top strip
+            next to the mode toggle. */}
         <aside className="hidden rounded-[12px] border border-grn-line bg-grn-card p-4 min-[900px]:block">
           <h3 className="text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
-            Readiness — {readiness}%
-          </h3>
-          <div className="mb-3 mt-2 h-1.5 w-full overflow-hidden rounded-full bg-grn-line-soft">
-            <div
-              className="h-full rounded-full bg-grn-ok transition-[width]"
-              style={{ width: `${Math.max(4, readiness)}%` }}
-            />
-          </div>
-          <ul className="space-y-1">
-            {checklist.map((item) => (
-              <ReadyRow key={item.label} label={item.label} done={item.done} className="py-1" />
-            ))}
-          </ul>
-
-          <h3 className="mt-[18px] text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
             Cost
           </h3>
           <dl className="mt-2.5 space-y-1 rounded-[10px] border border-grn-line bg-grn-paper p-3 text-[12px]">
@@ -3085,52 +3176,6 @@ export function BudgetLinkedGrnForm({
               <dd className="font-grn-mono">{money(totals.pnl)}</dd>
             </div>
           </dl>
-
-          <h3 className="mt-[18px] text-[10.5px] font-bold uppercase tracking-[0.06em] text-grn-ink-soft">
-            Approval path
-          </h3>
-          <ol className="mt-3">
-            {[
-              { label: "Branch Admin submits", note: submitted ? undefined : "This form" },
-              { label: "Branch Head reviews", note: submitted && !liveStatus ? "Awaiting action" : undefined },
-              { label: "Finance Head reviews" },
-              { label: isVendor ? "Accounts Head → payment" : "Imprest closure" },
-            ].map((step, index) => {
-              // Map live GRN status to step states so the widget reflects real approval progress.
-              const grnDone = liveStatus === "approved" || liveStatus === "paid" || liveStatus === "partially_paid" || liveStatus === "pending_accounts_payment";
-              const branchDone = grnDone || liveStatus === "branch_head_approved" || liveStatus === "finance_head_approved";
-              const financeDone = grnDone || liveStatus === "finance_head_approved";
-              const stepState =
-                index === 0 ? (submitted ? "done" : "current") :
-                index === 1 ? (branchDone ? "done" : submitted ? "current" : "upcoming") :
-                index === 2 ? (financeDone ? "done" : branchDone ? "current" : "upcoming") :
-                grnDone ? "done" : financeDone ? "current" : "upcoming";
-              return (
-                <li key={step.label} className="relative flex gap-2.5 pb-5 last:pb-0">
-                  {index < 3 && (
-                    <span
-                      className={`absolute left-[11px] top-6 h-full w-[1.5px] ${stepState === "done" ? "bg-grn-ok-line" : "bg-grn-line"}`}
-                    />
-                  )}
-                  <span
-                    className={`z-10 flex h-[23px] w-[23px] shrink-0 items-center justify-center rounded-full border-[1.5px] text-[10px] font-bold ${
-                      stepState === "done"
-                        ? "border-grn-ok bg-grn-ok text-white"
-                        : stepState === "current"
-                          ? "border-grn-brand bg-grn-brand text-white"
-                          : "border-grn-line bg-grn-card text-grn-ink-soft"
-                    }`}
-                  >
-                    {stepState === "done" ? "✓" : index + 1}
-                  </span>
-                  <div className="pt-px">
-                    <p className={`text-[12px] font-semibold ${stepState === "upcoming" ? "text-grn-ink-soft" : "text-grn-ink"}`}>{step.label}</p>
-                    {step.note && <p className="mt-px text-[10.5px] text-grn-ink-soft">{step.note}</p>}
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
         </aside>
       </div>
     </div>
@@ -3489,11 +3534,19 @@ function CostCentreSplitEditor({
                 className="h-9 min-w-[200px] text-[12px]"
               >
                 <option value="">Select cost centre</option>
-                {groups.map((group) => (
-                  <option key={group.costCentreKey} value={group.costCentreKey}>
-                    {group.costCentreName}
-                  </option>
-                ))}
+                {groups.map((group) => {
+                  // Direct sends 100% of the spend to whichever cost centre is picked here, so a
+                  // raiser choosing "by name" alone has no way to tell a budgeted CC from one with
+                  // no approved line for this Head/Sub-head — they'd only find out from the "Select
+                  // a budget line" error after Apply. Label it up front instead.
+                  const available = group.lines.reduce((sum, l) => sum + Number(l.available_gross_amount || 0), 0);
+                  const suffix = group.lines.length > 0 ? ` — ${money(available)} available` : " — no budget line";
+                  return (
+                    <option key={group.costCentreKey} value={group.costCentreKey}>
+                      {group.costCentreName}{suffix}
+                    </option>
+                  );
+                })}
               </GrnSelect>
             )}
             <Button
@@ -3513,6 +3566,7 @@ function CostCentreSplitEditor({
           const group = groups.find((item) => item.costCentreKey === row.costCentreKey);
           const line = group?.lines.find((item) => item.id === row.budgetLineId);
           const nonTaxable = line && ["exempt", "non_gst"].includes(line.tax_treatment);
+          const hasOwnBudget = Boolean(line && line.cost_centre_id === row.costCentreKey);
           return (
             <div key={row.key} className={cn("rounded-[10px] border border-grn-line p-3", !row.included && "opacity-50")}>
               <div className="mb-2 flex items-start justify-between gap-2">
@@ -3527,8 +3581,10 @@ function CostCentreSplitEditor({
                       {group?.costCentreName ?? "Cost centre"}
                     </span>
                     {line && (
-                      <GrnCellSub>
-                        {money(Number(line.available_gross_amount))} available
+                      <GrnCellSub className={!hasOwnBudget ? "text-grn-warn" : undefined}>
+                        {hasOwnBudget
+                          ? `${money(Number(line.available_gross_amount))} available`
+                          : `${money(0)} available (shared line — unbudgeted here)`}
                       </GrnCellSub>
                     )}
                   </div>
@@ -3596,6 +3652,13 @@ function CostCentreSplitEditor({
               const group = groups.find((item) => item.costCentreKey === row.costCentreKey);
               const line = group?.lines.find((item) => item.id === row.budgetLineId);
               const nonTaxable = line && ["exempt", "non_gst"].includes(line.tax_treatment);
+              // A branch-common line (cost_centre_id NULL) is offered to every cost centre, so
+              // several rows can resolve to the SAME line and would otherwise all show its full
+              // balance — reading as if each cost centre independently had that much available,
+              // when they're drawing from one shared pool. Only a line actually scoped to THIS
+              // cost centre counts as its own available budget; a shared fallback shows ₹0 here
+              // (informational only — doesn't block the split, isUnbudgeted already covers that).
+              const hasOwnBudget = Boolean(line && line.cost_centre_id === row.costCentreKey);
               return (
                 <tr key={row.key} className={cn(GRN_TR, !row.included && "opacity-50")}>
                   <GrnTd>
@@ -3653,7 +3716,15 @@ function CostCentreSplitEditor({
                     />
                   </GrnTd>
                   <GrnTd align="right" className="font-grn-mono">
-                    {line ? money(Number(line.available_gross_amount)) : "—"}
+                    {!line ? (
+                      "—"
+                    ) : hasOwnBudget ? (
+                      money(Number(line.available_gross_amount))
+                    ) : (
+                      <span className="text-grn-warn" title="No budget line of its own for this cost centre — it would draw from a shared branch-level line, so this GRN is unbudgeted here.">
+                        {money(0)}
+                      </span>
+                    )}
                   </GrnTd>
                 </tr>
               );
@@ -3924,17 +3995,6 @@ function InvoiceComponentsEditor({
         </dl>
       </div>
 
-      <div className="px-4 py-3">
-        <FieldRow label="Remark" htmlFor="grn-remarks" required error={remarksError}>
-          <Textarea
-            id="grn-remarks"
-            className="min-h-20"
-            value={remarks}
-            placeholder="What was bought or paid for, and why."
-            onChange={(event) => onRemarksChange(event.target.value)}
-          />
-        </FieldRow>
-      </div>
     </GrnCard>
   );
 }

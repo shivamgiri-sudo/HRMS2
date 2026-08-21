@@ -101,6 +101,20 @@ export function SearchableSelect({
     if (!serverFiltered) setLocalSearch("");
   }
 
+  // Matches a native <select>'s typeahead: focus the closed trigger and start typing, no click
+  // first. A single printable character (not Space/Enter/Tab/arrows, no modifier — those already
+  // have their own meaning on a focused button) opens the popover and seeds the query with it;
+  // CommandInput's existing autofocus-on-open (the same mechanism the click-then-type path
+  // already relies on) picks up every keystroke after that with no extra wiring.
+  function handleTriggerKeyDown(event: React.KeyboardEvent<HTMLButtonElement>) {
+    if (disabled || open) return;
+    if (event.key.length !== 1 || event.key === " ") return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    event.preventDefault();
+    setOpen(true);
+    setQuery(event.key);
+  }
+
   const trigger = (
     <Button
       id={id}
@@ -111,6 +125,7 @@ export function SearchableSelect({
       aria-label={ariaLabel}
       disabled={disabled}
       onClick={() => setOpen(true)}
+      onKeyDown={handleTriggerKeyDown}
       // 44px on touch, compact on desktop.
       className={cn(
         "h-11 w-full justify-between font-normal md:h-10",

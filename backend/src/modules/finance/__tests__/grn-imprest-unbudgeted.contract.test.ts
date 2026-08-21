@@ -17,78 +17,100 @@ function readRepo(relativePath: string) {
 
 /**
  * UNBUDGETED Imprest GRNs — extends the vendor-only "no approved budget line" path
- * (e2c8db0d, pinned in grn-unbudgeted-flow.contract.test.ts) to single-line Imprest GRNs.
+ * (e2c8db0d, pinned in grn-unbudgeted-flow.contract.test.ts) to Imprest GRNs, and then again
+ * (this file, second revision) to MIXED GRNs: a single GRN can now carry some cost centres
+ * with a real approved budget line and others with none, resolved independently per row
+ * instead of a single whole-GRN is_unbudgeted flag deciding it for every row.
  *
- * Before this: BudgetLinkedGrnForm.tsx hard-blocked with "No approved budget line for this
- * Head/Sub-head in this cost centre and period" for any Imprest GRN whose Head/Sub-head had
- * no matching budget line anywhere — even though headOptions/subHeadOptions had already been
- * widened to offer the full expense master, so the combination was always selectable. Split
- * mode stays hard-blocked: its picker only ever offers existing budget lines.
- *
- * The backend machinery (createUnbudgetedDraft, loadAllocations, reserve/consume/release/
- * review, the approval-queue banner) was already grnType-agnostic — the only backend gap was
- * grnSmartService.saveAllocations(), the route Imprest actually calls, which hard-required
- * allocation.budgetLineId on every row.
+ * History:
+ *   1. Imprest originally hard-blocked any Head/Sub-head with no matching budget line at all
+ *      — even though headOptions/subHeadOptions already offered the full expense master.
+ *   2. That was fixed by extending the vendor cascade's whole-GRN unbudgeted flag to Imprest's
+ *      single-line cascade (resolvedLine/isImprestUnbudgeted) — but still all-or-nothing.
+ *   3. Imprest was then moved onto the same costCentreSplits architecture Vendor already used
+ *      (percentage-based, per-cost-centre, multiple rows), which made the old single-line
+ *      cascade (resolvedLine/singleLine/form.costCentreKey) permanently unreachable for
+ *      Imprest — every save started throwing "Pick the exact budget line first" because
+ *      nothing populated those fields any more.
+ *   4. This revision: saveAllocations() (the endpoint Imprest actually calls) and
+ *      saveComponentAllocations() (Vendor's) both now resolve budgeted-vs-unbudgeted per row,
+ *      so one GRN can mix cost centres with and without an approved budget line under the same
+ *      Head/Sub-head — the raiser is never blocked, and every unbudgeted row is flagged
+ *      (grn_cost_allocation.is_unbudgeted) for later reporting on what was never budgeted.
  */
 describe("unbudgeted Imprest GRN — raise, save, submit, approve", () => {
-  it("the form allows a single-line Imprest GRN with no matching budget line", () => {
+  it("the form drives Imprest through costCentreSplits, never the old single-line cascade", () => {
     const form = readRepo("src/components/finance/grn/BudgetLinkedGrnForm.tsx");
 
-    expect(form).toContain("const isImprestUnbudgeted =");
+    // isUnbudgetedExpense is the one authoritative "no budget anywhere for this Head/Sub-head"
+    // signal now, shared by both grn types — no isVendor gate on it.
+    expect(form).toContain("if (!form.head || !form.subHead) return false;");
     expect(form).toContain(
-      "const isUnbudgetedFlow = (isVendor && isUnbudgetedExpense) || (!isVendor && !splitMode && isImprestUnbudgeted);"
+      "return vendorCostCentreGroups.length > 0 && vendorCostCentreGroups.every((g) => g.lines.length === 0);"
     );
 
-    // The old hard block ("No approved budget line...") no longer sets a validation error for
-    // single-line mode. Split mode still requires a real budget line per row.
+    // A cost-centre row with no budgetLineId is not a save-blocking error any more — the
+    // backend resolves it per row as an unbudgeted allocation against that row's own cost
+    // centre, mixed freely with rows that do have a budget line.
     expect(form).not.toContain(
-      'if (form.head && form.subHead && !needsItemChoice && !resolvedLine) {\n          next.budgetLineId ='
+      "Select a budget line for every included cost centre — the Budget section shows which."
+    );
+    expect(form).toContain(
+      "// An included row with no budgetLineId is not an error — the backend now resolves it"
     );
 
-    // The submit-handler guard exempts the unbudgeted case instead of always throwing.
-    expect(form).toContain("if (!resolvedLine && !isImprestUnbudgeted) {");
+    // Imprest's rows are built straight off costCentreSplits (the same state Vendor's split
+    // table drives), each row falling back to a synthetic unit_rate 1 / quantity = share
+    // convention when it has no resolved budget line — the same convention the vendor
+    // unbudgeted synthetic line already uses.
+    expect(form).toContain("costCentreSplits\n              .filter((row) => row.included)");
+    expect(form).toContain(
+      "const quantity = line && perUnitGross > 0\n                  ? Number((shareGross / perUnitGross).toFixed(4))\n                  : Number(shareGross.toFixed(2));"
+    );
+    expect(form).toContain("unitRate: line ? Number(line.unit_rate) : 1,");
 
-    // Single-line row building falls back to the raw amount when there is no resolved line —
-    // same unit_rate 1 / quantity = amount convention the vendor synthetic line already uses.
-    expect(form).toContain("quantity: resolvedLine ? singleLine!.quantity : Number(form.amount),");
-    expect(form).toContain("unitRate: resolvedLine ? Number(resolvedLine.unit_rate) : 1,");
-
-    // The allocations PUT sends costCentreId instead of budgetLineId for the unbudgeted row.
-    expect(form).toContain("costCentreId: !item.budgetLineId ? form.costCentreKey : undefined,");
+    // The allocations PUT sends each row's own cost centre for an unbudgeted row — not the
+    // retired single-cost-centre field (form.costCentreKey), which the new UI never sets.
+    expect(form).toContain("costCentreId: !item.budgetLineId ? item.costCentreKey : undefined,");
   });
 
-  it("saveAllocations() accepts an unbudgeted row instead of hard-requiring a budget line", () => {
+  it("saveAllocations() resolves each row independently — no whole-GRN is_unbudgeted gate", () => {
     const service = read("src/modules/finance/grn-smart.service.ts");
 
-    // Read off the GRN's own stored flag, not the request body — is_unbudgeted was already
-    // fixed at creation by createUnbudgetedDraft, and a GRN is never a mix of budgeted and
-    // unbudgeted allocations.
-    expect(service).toContain("const isUnbudgeted = Number(grn.is_unbudgeted) === 1;");
+    // The single flag that used to force every row down the same branch is gone.
+    expect(service).not.toContain("const isUnbudgeted = Number(grn.is_unbudgeted) === 1;");
 
-    // A budgeted allocation is still required for every ordinary GRN.
-    expect(service).toContain("if (!allocation?.budgetLineId) throw new Error(`Allocation ${index + 1}: budget line is required`);");
+    // Budgeted rows are pre-resolved (locked + period-checked) in a first pass, so an
+    // unbudgeted row later in the same save can borrow a real head/sub-head/gst_type off one
+    // of them.
+    expect(service).toContain("const referenceLine = resolvedLines.find(Boolean) ?? null;");
 
-    // An unbudgeted row requires a cost centre instead, validated against the branch exactly
-    // like createUnbudgetedDraft() already validates the header's own cost centre.
+    // A row with no budgetLineId is the per-row unbudgeted branch now, not a header-flag branch.
+    expect(service).toContain("if (!allocation?.budgetLineId) {");
     expect(service).toContain(
-      "if (!allocation?.costCentreId) {\n            throw new Error(`Allocation ${index + 1}: cost centre is required for an unbudgeted allocation`);"
+      "throw new Error(`Allocation ${index + 1}: cost centre is required for an unbudgeted allocation`);"
     );
     expect(service).toContain("cost centre not found or inactive");
     expect(service).toContain("cost centre does not belong to this branch");
 
-    // The synthetic line mirrors saveComponentAllocations()'s vendor-unbudgeted convention:
-    // unit "amount", head/sub_head read back off the GRN header.
+    // The synthetic line borrows head/sub_head/gst_type from a budgeted row in the same save
+    // when one exists, and only falls back to the GRN header's own columns (stale/blank for a
+    // GRN that started out mixed) when every row in this save is unbudgeted.
     expect(service).toContain('unit: "amount"');
-    expect(service).toContain('head: String(grn.head || "Unbudgeted"),');
+    expect(service).toContain(
+      "head: referenceLine ? String(referenceLine.head) : String(grn.head || \"Unbudgeted\"),"
+    );
 
-    // No capacity check and nothing added to groupedUsage for an unbudgeted row — it has no
-    // budget line to hold a running total against.
-    expect(service).toContain("prepared.push({ line, quantity, unitRate, amounts, remarks: allocation.remarks?.trim() || null, isUnbudgeted: true });");
-
-    // is_unbudgeted is written per allocation row, same reason the vendor path already does —
-    // the NULL budget_line_id that identifies it is overwritten if a budget line is later linked.
+    // is_unbudgeted is written per allocation row, unchanged from before — the NULL
+    // budget_line_id that identifies it is overwritten if a budget line is later linked.
     expect(service).toContain("pnl_cost_amount, lifecycle_status, remarks, is_unbudgeted, created_by)");
     expect(service).toContain("item.isUnbudgeted ? 1 : 0, actorUserId,");
+
+    // The GRN header's own is_unbudgeted flag is now derived from the rows just written
+    // (true if ANY row came back unbudgeted), not left untouched from create time — a GRN
+    // created as an ordinary budgeted draft can still end up with an unbudgeted cost centre
+    // once split, and that must route through the same stricter approval.
+    expect(service).toContain("prepared.some((item) => item.isUnbudgeted) ? 1 : 0,");
   });
 
   it("reuses the already-generic backend lifecycle instead of duplicating it", () => {
@@ -100,6 +122,12 @@ describe("unbudgeted Imprest GRN — raise, save, submit, approve", () => {
     // stays vendor-only on purpose (invoice-component shape does not apply to Imprest).
     expect(service).toContain('if (String(grn.grn_type) !== "vendor") {');
     expect(service).toContain('throw new Error("Invoice-component GRNs are only supported for vendor GRNs");');
+
+    // reserve/consume/release already decide per allocation row (hasBudgetLine(allocation)),
+    // not off a GRN-level flag — this is what already made a mixed GRN safe to reserve/consume/
+    // release once the save-side stopped forcing all-or-nothing.
+    expect(service).toContain("function hasBudgetLine(allocation: any)");
+    expect(service).toContain("if (!hasBudgetLine(allocation)) continue;");
 
     const grnService = read("src/modules/finance/grn.service.ts");
     expect(grnService).toContain('if (grnType === "imprest") {');

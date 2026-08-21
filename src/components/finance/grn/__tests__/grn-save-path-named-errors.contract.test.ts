@@ -32,30 +32,32 @@ const SAVE_PATH = (() => {
 })();
 
 describe("the single-line path refuses by name, not by TypeError", () => {
-  it("checks resolvedLine before dereferencing it", () => {
-    const guardIdx = SAVE_PATH.indexOf("if (!resolvedLine)");
-    const useIdx = SAVE_PATH.indexOf("budgetLineId: resolvedLine!.id");
-    expect(guardIdx, "no guard for an unresolved budget line").toBeGreaterThan(-1);
-    expect(useIdx).toBeGreaterThan(-1);
-    // Order is the whole bug: a guard placed after the dereference never runs.
-    expect(guardIdx, "the guard must come BEFORE the dereference").toBeLessThan(useIdx);
-    expect(SAVE_PATH).toContain("Pick the exact budget line first");
+  // 2026-08-21: Imprest moved off the resolvedLine/singleLine single-cost-centre cascade onto
+  // the same costCentreSplits architecture Vendor already used (percentage-based, multiple cost
+  // centres, one Head/Sub-head). `resolvedLine!.id` / `singleLine!.quantity` do not merely have
+  // a guard placed before them now — they are gone from the save path entirely, because nothing
+  // in the reachable UI populates resolvedLine/singleLine any more (the old single-cost-centre
+  // cascade UI was replaced; the fields survive only for the retired, unreachable splitMode
+  // allocations editor). The two "checks X before dereferencing" tests this file used to run are
+  // superseded by this stronger invariant: the dangerous dereference cannot exist to be missed.
+  it("never dereferences resolvedLine or singleLine with a non-null assertion", () => {
+    expect(SAVE_PATH).not.toMatch(/resolvedLine!/);
+    expect(SAVE_PATH).not.toMatch(/singleLine!/);
   });
 
-  it("checks singleLine before reading its quantity", () => {
-    const guardIdx = SAVE_PATH.indexOf("if (!singleLine)");
-    const useIdx = SAVE_PATH.indexOf("quantity: singleLine!.quantity");
-    expect(guardIdx).toBeGreaterThan(-1);
-    expect(guardIdx).toBeLessThan(useIdx);
-    // The two reasons singleLine is null are different problems with different fixes, so the
-    // message distinguishes them rather than saying "something is wrong".
-    expect(SAVE_PATH).toContain("Enter the invoice amount before saving");
-    expect(SAVE_PATH).toContain("no usable rate");
+  it("names the reason when an included cost centre or allocation row is missing one", () => {
+    // The costCentreSplits-driven path (Vendor, and Imprest's non-splitMode flow) refuses by
+    // name when nothing is included; an included row with no budget line is no longer refused
+    // at all — it is resolved server-side as an unbudgeted allocation for that cost centre
+    // (mixed budgeted + unbudgeted rows on one GRN are supported, see
+    // grn-imprest-unbudgeted.contract.test.ts / grn-unbudgeted-flow.contract.test.ts).
+    expect(SAVE_PATH).toContain("Include at least one cost centre before saving.");
   });
 
-  it("only applies the guard on the path that actually dereferences", () => {
-    // A vendor GRN never populates resolvedLine — guarding it unconditionally would refuse
-    // every vendor save with a message about a budget line the form never asked for.
+  it("only applies the costCentreSplits guard on the path that actually uses it", () => {
+    // A vendor GRN and Imprest's (non-splitMode) flow both drive costCentreSplits now — guarding
+    // it unconditionally for splitMode too would refuse the retired allocations editor's own
+    // rows with a message about cost centres it never asked for.
     expect(SAVE_PATH).toContain("if (!isVendor && !splitMode) {");
   });
 });
@@ -74,7 +76,13 @@ describe("indexed reads cannot throw from inside a predicate", () => {
     // reported message from two different places at once — the array element and the index.
     expect(SAVE_PATH).not.toMatch(/find\(\(line\) => line\.id === costCentreSplits\[0\]\.budgetLineId\)/);
     expect(SAVE_PATH).not.toMatch(/find\(\(line\) => line\.id === rows\[0\]\.budgetLineId\)/);
-    expect(SAVE_PATH).toContain("line?.id === costCentreSplits[0]?.budgetLineId");
+    // costCentreSplits[0] specifically was replaced with a search for the first INCLUDED row
+    // that actually has a budget line (2026-08-21, mixed budgeted/unbudgeted rows) — literal
+    // index [0] would wrongly pick an unbudgeted row sitting first and make an otherwise-
+    // budgeted GRN look like it has no line at all. Still fully optional-chained throughout.
+    expect(SAVE_PATH).toContain(
+      "line?.id === costCentreSplits.find((row) => row.included && row.budgetLineId)?.budgetLineId"
+    );
     expect(SAVE_PATH).toContain("line?.id === rows[0]?.budgetLineId");
   });
 });

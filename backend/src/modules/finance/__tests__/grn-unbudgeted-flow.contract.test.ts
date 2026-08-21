@@ -41,11 +41,11 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     expect(form).toContain("attemptedLineIdRef.current = firstLine?.id ?? null;");
 
     // Unbudgeted skips the lookup entirely rather than relying on the optional chain.
-    expect(form).toContain("? (isUnbudgetedExpense\n            ? undefined");
+    expect(form).toContain("isUnbudgetedExpense\n          ? undefined");
 
     // Every other path still REQUIRES a line, and now says so instead of asserting non-null.
-    // isUnbudgetedFlow (added when the same "unbudgeted" path was extended to single-line
-    // Imprest GRNs) subsumes the original `isVendor && isUnbudgetedExpense` condition here.
+    // isUnbudgetedFlow (added when the same "unbudgeted" path was extended to Imprest GRNs)
+    // subsumes the original `isVendor && isUnbudgetedExpense` condition here.
     expect(form).toContain("if (!firstLine && !isUnbudgetedFlow) {");
     expect(form).toContain("The selected budget line is no longer available.");
 
@@ -54,8 +54,12 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     expect(form).toContain("head: isUnbudgetedFlow ? form.head : undefined,");
     expect(form).toContain("subHead: isUnbudgetedFlow ? form.subHead : undefined,");
     expect(form).toContain("unbudgetedCostCentreId");
+    // isUnbudgetedExpense is grn-type-agnostic now (Imprest moved onto the same costCentreSplits
+    // architecture Vendor already used), so it alone covers the vendor case; the Imprest-only
+    // OR clause is legacy (isImprestUnbudgeted requires form.costCentreKey, which the current
+    // Imprest UI never sets) and never fires, but stays for the retired single-line cascade.
     expect(form).toContain(
-      "const isUnbudgetedFlow = (isVendor && isUnbudgetedExpense) || (!isVendor && !splitMode && isImprestUnbudgeted);"
+      "const isUnbudgetedFlow = isUnbudgetedExpense || (!isVendor && !splitMode && isImprestUnbudgeted);"
     );
   });
 
