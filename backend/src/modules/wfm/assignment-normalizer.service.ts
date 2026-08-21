@@ -10,6 +10,7 @@ export type AssignmentType =
   | 'SHIFT'
   | 'WEEK_OFF'
   | 'LEAVE'
+  | 'ABSENT'
   | 'HALF_DAY'
   | 'HOLIDAY'
   | 'TRAINING'
@@ -40,12 +41,21 @@ const KEYWORD_MAP: Record<string, AssignmentType> = {
   OFF: 'WEEK_OFF',
   LEAVE: 'LEAVE',
   L: 'LEAVE',
-  LWP: 'LEAVE', // Leave Without Pay — standard roster shorthand, confirmed 2026-08-21 against a
-  // real WC roster (17 rows). Absence is absence for roster purposes; the unpaid distinction is
-  // a payroll-side concern, not something the roster assignment type needs to carry.
+  // ABSENT, not LEAVE (corrected 2026-08-22, same day as introduced): LEAVE is cross-checked
+  // against an approved leave_request (roster-leave-guard.service.ts / approvedLeaveLookup) and
+  // warns when none exists. LWP/"Left" carry no approval — LWP is literally leave WITHOUT
+  // pay/approval, and "Left" (confirmed 2026-08-21 against three real employee codes: all
+  // active, zero exit records) is an unexplained absence, not a claimed leave. Routing both
+  // through the leave check would raise a false "no approved leave request found" warning on
+  // every row. ABSENT skips that check entirely, which is the correct behaviour for both.
+  LWP: 'ABSENT', // Leave Without Pay — confirmed 2026-08-21/22 against a real WC roster (17 rows).
+  LEFT: 'ABSENT', // confirmed 2026-08-22 — see note above; not an exit signal, just an absence.
   TRAINING: 'TRAINING',
   TRG: 'TRAINING',
   TRAIN: 'TRAINING',
+  'PRACTICE QUEUE': 'TRAINING', // user-confirmed 2026-08-22: new-hire practice/OJT queue status,
+  // seen on a real WC roster's day-one column for a batch of just-onboarded agents.
+
   HOLIDAY: 'HOLIDAY',
   H: 'HOLIDAY',
   'HALF DAY': 'HALF_DAY',
