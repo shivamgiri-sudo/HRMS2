@@ -135,7 +135,7 @@ async function main() {
         continue;
       }
       const sql = readFileSync(filePath, "utf8");
-      const { written } = parseTargetTables(sql);
+      const { created, written } = parseTargetTables(sql);
       const missing = [...written].filter((t) => !existingTables.has(t));
 
       if (missing.length > 0) {
@@ -146,6 +146,15 @@ async function main() {
       } else {
         console.log(`[table-check] ${filename}: PASS (${written.size} target table(s) all present or self-created)`);
       }
+
+      // Pending migrations apply in manifest order in one run, not independently against
+      // today's information_schema snapshot. A later file in the SAME pending batch may
+      // legitimately depend on a table an EARLIER pending file creates — e.g. 1539/1540
+      // ALTER a table that 1538 CREATEs, all three pending together. Without folding each
+      // file's own CREATE TABLEs into the working set before checking the next file, that
+      // ordering was invisible here and every such file failed with a false ER_NO_SUCH_TABLE
+      // warning, blocking deploys for migrations that would in fact apply cleanly in order.
+      for (const table of created) existingTables.add(table);
     }
 
     if (anyFailure) {
