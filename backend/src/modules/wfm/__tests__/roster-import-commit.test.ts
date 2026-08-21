@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Hoist shared state ───────────────────────────────────────────────────────
-const { mockExecute, mockConn, state } = vi.hoisted(() => {
+const { mockExecute, mockConn, mockGetConnection, notifyConn, state } = vi.hoisted(() => {
   const state = {
     batch: null as any,
     importRows: [] as any[],
@@ -30,6 +30,9 @@ const { mockExecute, mockConn, state } = vi.hoisted(() => {
     restBlocked: false, // when restActive: does validateMinimumRest report INSUFFICIENT_REST?
     restWarnMode: true, // applyRestDecision allows-through when the resolved policy is 'warn'
     unresolvableCodes: new Set<string>(), // codes the employee-lookup query pretends not to find
+    batchCycleId: null as string | null, // notifyEmployeesForImportBatch's cycle_id short-circuit
+    notifyMovedCount: 0, // rows the notify UPDATE claims to have moved to pending_employee_ack
+    notifyInsertedCount: 0, // work_inbox_item rows the notify INSERT claims to have created
   };
 
   const mockConnExecute = vi.fn(async (sql: string, params?: any[]) => {
@@ -45,6 +48,30 @@ const { mockExecute, mockConn, state } = vi.hoisted(() => {
     return [[]];
   });
   const mockConn = { execute: mockConnExecute };
+
+  // Separate connection for notifyEmployeesForImportBatch — a real transaction, distinct from the
+  // per-employee-lock mockConn above, matching how the function itself opens its own connection.
+  const notifyConnExecute = vi.fn(async (sql: string) => {
+    const s = (sql as string).trim().toUpperCase();
+    if (s.startsWith('SELECT CYCLE_ID FROM WFM_ROSTER_IMPORT_BATCH')) {
+      return [[{ cycle_id: state.batchCycleId }]];
+    }
+    if (s.startsWith('UPDATE WFM_ROSTER_ASSIGNMENT')) {
+      return [{ affectedRows: state.notifyMovedCount }];
+    }
+    if (s.startsWith('INSERT INTO WORK_INBOX_ITEM')) {
+      return [{ affectedRows: state.notifyInsertedCount }];
+    }
+    return [[]];
+  });
+  const notifyConn = {
+    execute: notifyConnExecute,
+    beginTransaction: vi.fn(async () => {}),
+    commit: vi.fn(async () => {}),
+    rollback: vi.fn(async () => {}),
+    release: vi.fn(),
+  };
+  const mockGetConnection = vi.fn(async () => notifyConn);
 
   const mockExecute = vi.fn(async (sql: string, params?: any[]) => {
     const s = (sql as string).trim().toUpperCase();
@@ -80,11 +107,11 @@ const { mockExecute, mockConn, state } = vi.hoisted(() => {
     return [[]];
   });
 
-  return { mockExecute, mockConn, state };
+  return { mockExecute, mockConn, mockGetConnection, notifyConn, state };
 });
 
 vi.mock('../../../db/mysql.js', () => ({
-  db: { execute: mockExecute },
+  db: { execute: mockExecute, getConnection: mockGetConnection },
 }));
 
 // withEmployeeRosterLock just runs fn against the shared mockConn, bypassing the real MySQL named
@@ -167,8 +194,13 @@ describe('commitImportBatch', () => {
     state.restBlocked = false;
     state.restWarnMode = true;
     state.unresolvableCodes = new Set();
+    state.batchCycleId = null;
+    state.notifyMovedCount = 0;
+    state.notifyInsertedCount = 0;
     mockExecute.mockClear();
     mockConn.execute.mockClear();
+    mockGetConnection.mockClear();
+    notifyConn.execute.mockClear();
   });
 
   it('throws when batch not found', async () => {
@@ -406,5 +438,48 @@ describe('commitImportBatch', () => {
 
     expect(result.blockedByRest).toBe(0);
     expect(result.assignmentsCreated).toBe(1);
+  });
+
+  it('notifies employees after a plain (no-cycle) commit — the gap the owner reported 2026-08-22', async () => {
+    state.batch = makeBatch({ import_mode: 'NEW' });
+    state.errorCount = 0;
+    state.warnCount = 0;
+    state.importRows = [makeImportRow({ validation_state: 'VALID' })];
+    state.batchCycleId = null;
+    state.notifyMovedCount = 1;
+    state.notifyInsertedCount = 1;
+
+    const result = await commitImportBatch(1, 'approver-1', {});
+
+    expect(result.employeesNotified).toBe(1);
+    const insertCall = notifyConn.execute.mock.calls.find(([sql]: [string]) => sql.toUpperCase().includes('WORK_INBOX_ITEM'));
+    expect(insertCall).toBeTruthy();
+    expect(String(insertCall![0])).toContain('ROSTER_ACK_PENDING');
+  });
+
+  it('skips notification for a batch already linked to a weekly_roster_cycle — that flow publishes it instead', async () => {
+    state.batch = makeBatch({ import_mode: 'NEW' });
+    state.errorCount = 0;
+    state.warnCount = 0;
+    state.importRows = [makeImportRow({ validation_state: 'VALID' })];
+    state.batchCycleId = 'cycle-123';
+    state.notifyMovedCount = 5; // would notify if the cycle short-circuit weren't respected
+    state.notifyInsertedCount = 5;
+
+    const result = await commitImportBatch(1, 'approver-1', {});
+
+    expect(result.employeesNotified).toBe(0);
+  });
+
+  it('a commit that moved zero rows still succeeds and reports zero notifications, not an error', async () => {
+    state.batch = makeBatch({ import_mode: 'NEW' });
+    state.errorCount = 0;
+    state.warnCount = 0;
+    state.importRows = [];
+
+    const result = await commitImportBatch(1, 'approver-1', {});
+
+    expect(result.employeesNotified).toBe(0);
+    expect(state.committed).toBe(true);
   });
 });

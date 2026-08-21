@@ -606,6 +606,88 @@ export interface CommitResult {
   blockedByRest: number;
   /** Rows refused because that employee/date's attendance is already locked for payroll. */
   blockedByLock: number;
+  /** Distinct employees who got a "your roster was published" work-inbox item for this batch. */
+  employeesNotified: number;
+}
+
+// ── notifyEmployeesForImportBatch ─────────────────────────────────────────────
+//
+// Same publish/notify mechanism as wfm.routes.ts's POST /roster/publish-to-employees, scoped by
+// import_batch_id instead of cycle_id so a plain spreadsheet commit (no Roster Builder cycleId,
+// cycle_id therefore NULL) reaches employees the same way a cycle-based publish does. Deliberately
+// a separate function, not a call into that route's handler: this only ever touches rows this one
+// batch just wrote (import_batch_id = ?), never re-scans a whole cycle, and it has no cycle-status
+// state machine to respect (a spreadsheet-committed batch has no weekly_roster_cycle row at all
+// unless it was linked to one via cycleId, in which case it already went through the real cycle
+// publish flow instead — see the cycle_id check below).
+async function notifyEmployeesForImportBatch(batchId: number): Promise<number> {
+  const conn = await (db as any).getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // A batch committed WITH a cycleId is Roster Builder's bulk-upload deep link — those rows
+    // already belong to a real weekly_roster_cycle and get published through the cycle flow
+    // (publish-to-employees), which this function must not race or duplicate-notify against.
+    const [batchRows] = await conn.execute(
+      `SELECT cycle_id FROM wfm_roster_import_batch WHERE id = ? LIMIT 1`,
+      [batchId]
+    );
+    if ((batchRows as RowDataPacket[])[0]?.cycle_id) {
+      await conn.commit();
+      return 0;
+    }
+
+    const [movedResult] = await conn.execute(
+      `UPDATE wfm_roster_assignment
+          SET final_roster_status = 'pending_employee_ack',
+              employee_ack_status = 'pending',
+              employee_ack_at = NULL,
+              employee_rejection_reason = NULL
+        WHERE import_batch_id = ?
+          AND final_roster_status = 'generated'`,
+      [batchId]
+    );
+    const moved = movedResult as ResultSetHeader;
+
+    if (moved.affectedRows === 0) {
+      await conn.commit();
+      return 0;
+    }
+
+    const [notifiedResult] = await conn.execute(
+      `INSERT INTO work_inbox_item
+         (id, user_id, type, title, description, entity_type, entity_id, action_url, priority)
+       SELECT UUID(), e.user_id, 'ROSTER_ACK_PENDING',
+              'Acknowledge your roster',
+              'Your roster has been uploaded and published. Please acknowledge or raise a concern.',
+              'wfm_roster_import_batch', ?, '/my-roster', 'normal'
+         FROM (SELECT DISTINCT employee_id FROM wfm_roster_assignment
+                WHERE import_batch_id = ? AND final_roster_status = 'pending_employee_ack') a
+         JOIN employees e ON e.id = a.employee_id
+         JOIN auth_user au ON au.id = e.user_id
+        WHERE NOT EXISTS (
+              SELECT 1 FROM work_inbox_item w
+               WHERE w.user_id = e.user_id
+                 AND w.type = 'ROSTER_ACK_PENDING'
+                 AND w.entity_id = ?
+                 AND w.is_actioned = 0)`,
+      [String(batchId), String(batchId), String(batchId)]
+    );
+    const notified = notifiedResult as ResultSetHeader;
+
+    await conn.commit();
+    return notified.affectedRows;
+  } catch (err) {
+    await conn.rollback();
+    // A notification failure must not undo a roster that already committed successfully — the
+    // assignments are real and correct either way. Logged, not swallowed silently: this is the
+    // exact class of bug ("looked like it ran, didn't") that broke the cycle-based publish route
+    // for weeks before it was caught.
+    console.error('[roster-import] employee notification failed (roster commit itself already succeeded):', err);
+    return 0;
+  } finally {
+    conn.release();
+  }
 }
 
 // ── commitImportBatch ─────────────────────────────────────────────────────────
@@ -897,7 +979,18 @@ export async function commitImportBatch(
     [committedBy, batchId]
   );
 
-  return { assignmentsCreated, assignmentsUpdated, skipped, unmatchedEmployees, blockedByLeave, blockedByRest, blockedByLock };
+  // Owner-reported gap (2026-08-22): a committed spreadsheet roster never told anyone. The
+  // publish/acknowledge pipeline (wfm.routes.ts POST /roster/publish-to-employees) already exists
+  // and works — it just only knows how to publish a weekly_roster_cycle, and a plain spreadsheet
+  // commit (no Roster Builder cycleId) has cycle_id = NULL, so that route can never see these rows.
+  // Same two writes, same 'generated' -> 'pending_employee_ack' transition, same one-work-item-per-
+  // employee ROSTER_ACK_PENDING pattern — scoped by import_batch_id instead of cycle_id, so it
+  // reaches a batch whether or not it came in through a cycle. Deliberately not folded into the
+  // per-employee lock loop above: those locks protect the WRITE (concurrent conflicting
+  // assignments); this is a separate, unconditional notify pass over whatever actually landed.
+  const employeesNotified = await notifyEmployeesForImportBatch(batchId);
+
+  return { assignmentsCreated, assignmentsUpdated, skipped, unmatchedEmployees, blockedByLeave, blockedByRest, blockedByLock, employeesNotified };
 }
 
 // ── getImportRows ─────────────────────────────────────────────────────────────

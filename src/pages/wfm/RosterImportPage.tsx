@@ -400,7 +400,7 @@ export default function RosterImportPage() {
   // Commit mutation
   const commitMutation = useMutation({
     mutationFn: (overrideWarnings = false) =>
-      hrmsApi.post<{ assignmentsCreated: number }>(
+      hrmsApi.post<{ assignmentsCreated: number; employeesNotified: number }>(
         `/api/wfm/roster-imports/${batchId}/commit`,
         { overrideWarnings, cycleId }
       ),
@@ -767,6 +767,13 @@ export default function RosterImportPage() {
                 <span className="font-medium">
                   Committed {batch.committed_at ? new Date(batch.committed_at).toLocaleString() : ""}
                 </span>
+                {typeof commitMutation.data?.employeesNotified === "number" && (
+                  <span className="text-sm text-slate-500 font-normal">
+                    · {commitMutation.data.employeesNotified > 0
+                      ? `${commitMutation.data.employeesNotified} employee${commitMutation.data.employeesNotified !== 1 ? "s" : ""} notified to acknowledge`
+                      : "no new employees to notify (already acknowledged, or this batch is linked to a cycle that publishes separately)"}
+                  </span>
+                )}
               </div>
             )}
 

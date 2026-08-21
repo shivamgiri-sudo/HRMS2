@@ -10,13 +10,24 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { executeMock, mockConn } = vi.hoisted(() => ({
+const { executeMock, mockConn, notifyConn, getConnectionMock } = vi.hoisted(() => ({
   executeMock: vi.fn(),
   mockConn: { execute: vi.fn() },
+  // commitImportBatch's post-commit notify step (notifyEmployeesForImportBatch) opens its own
+  // connection — this cycleId test only cares about the INSERT's params, so the notify path just
+  // needs to not throw; it moves 0 rows (no matching 'generated' assignment in this mock) and exits.
+  notifyConn: {
+    execute: vi.fn(async () => [[]]),
+    beginTransaction: vi.fn(async () => {}),
+    commit: vi.fn(async () => {}),
+    rollback: vi.fn(async () => {}),
+    release: vi.fn(),
+  },
+  getConnectionMock: vi.fn(),
 }));
 
 vi.mock('../../../db/mysql.js', () => ({
-  db: { execute: executeMock },
+  db: { execute: executeMock, getConnection: getConnectionMock },
 }));
 
 vi.mock('../rest-policy.service.js', () => ({
@@ -36,6 +47,8 @@ describe('commitImportBatch — additive cycleId', () => {
   beforeEach(() => {
     executeMock.mockReset();
     mockConn.execute.mockReset();
+    getConnectionMock.mockReset();
+    getConnectionMock.mockResolvedValue(notifyConn);
 
     executeMock.mockImplementation(async (sql: string, params?: any[]) => {
       const s = sql.trim().toUpperCase();
