@@ -195,11 +195,16 @@ async function allocationPolicies(period: string) {
 }
 
 async function newAllocationRows(period: string) {
+  // period_code is COALESCE(grn_cost_allocation.recognition_period, CONVERT(DATE_FORMAT(...)
+  // USING utf8mb4)) inside the view — MySQL resolves that to an indeterminate collation, so a
+  // bare equality throws ER_CANT_AGGREGATE_2COLLATIONS on every call (confirmed live, 2026-08-22).
+  // Fixed at the query layer (no view/DDL change) — same COLLATE-on-comparison idiom used
+  // throughout ceo-overview.service.ts for the same class of bug.
   return safeRows<AllocationViewRow>(
     `SELECT process_id, branch_id, period_code, pnl_bucket,
             pnl_cost_amount, allocation_count, freshness
        FROM vw_process_pnl_grn_allocation
-      WHERE period_code = ?`,
+      WHERE period_code COLLATE utf8mb4_unicode_ci = ?`,
     [period]
   );
 }

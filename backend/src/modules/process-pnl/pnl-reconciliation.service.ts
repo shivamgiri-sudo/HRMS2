@@ -336,7 +336,7 @@ async function readPayroll(period: string): Promise<Map<string, { cost: number; 
 async function sourceFreshness(source: string, table: string, period: string, periodColumn = "period_code"): Promise<PnlSourceFreshness> {
   if (!(await tableExists(table))) return { source, table, rows: 0, latestSyncedAt: null, status: "MISSING" };
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS rows, MAX(synced_at) AS latest_synced_at FROM ${table} WHERE ${periodColumn} = ?`,
+    `SELECT COUNT(*) AS \`rows\`, MAX(synced_at) AS latest_synced_at FROM ${table} WHERE ${periodColumn} = ?`,
     [period],
   );
   const first = rows[0] ?? {};
@@ -355,7 +355,7 @@ async function payrollFreshness(period: string): Promise<PnlSourceFreshness> {
     return { source: "Payroll", table: "salary_prep_line", rows: 0, latestSyncedAt: null, status: "MISSING" };
   }
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(l.id) AS rows, MAX(r.created_at) AS latest_synced_at
+    `SELECT COUNT(l.id) AS \`rows\`, MAX(r.created_at) AS latest_synced_at
        FROM salary_prep_run r
        LEFT JOIN salary_prep_line l ON l.run_id = r.id
       WHERE r.run_month = ?`,
@@ -377,7 +377,7 @@ async function runningSalaryFreshness(period: string): Promise<PnlSourceFreshnes
     return { source: "Running salary", table: "pnl_running_salary_snapshot", rows: 0, latestSyncedAt: null, status: "MISSING" };
   }
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS rows, MAX(computed_at) AS latest_synced_at
+    `SELECT COUNT(*) AS \`rows\`, MAX(computed_at) AS latest_synced_at
        FROM pnl_running_salary_snapshot
       WHERE period_code = ?`,
     [period],
