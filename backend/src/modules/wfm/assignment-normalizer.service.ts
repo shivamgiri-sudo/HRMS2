@@ -40,6 +40,9 @@ const KEYWORD_MAP: Record<string, AssignmentType> = {
   OFF: 'WEEK_OFF',
   LEAVE: 'LEAVE',
   L: 'LEAVE',
+  LWP: 'LEAVE', // Leave Without Pay — standard roster shorthand, confirmed 2026-08-21 against a
+  // real WC roster (17 rows). Absence is absence for roster purposes; the unpaid distinction is
+  // a payroll-side concern, not something the roster assignment type needs to carry.
   TRAINING: 'TRAINING',
   TRG: 'TRAINING',
   TRAIN: 'TRAINING',
