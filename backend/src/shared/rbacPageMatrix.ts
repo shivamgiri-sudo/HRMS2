@@ -590,6 +590,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   ],
   assistant_manager: [
     "MODULE_LAUNCHER",
+    // Added 2026-08-22: see the manager entry below — same gap, same fix. Migration 1544.
+    "TEAM_ATTENDANCE",
   ],
   branch_head: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
@@ -611,6 +613,9 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "JOBS",
     "PAYROLL_ATTENDANCE_CONTROL_TOWER",
     "PAYROLL_BRANCH_READINESS",
+    // Added 2026-08-22: the page (and its API's own requireRole list) was built
+    // for exactly this role, but no role_page_access row ever granted it. Migration 1544.
+    "TEAM_ATTENDANCE",
   ],
   branch_hr: [
     "ATS_BRANCH_HEAD_APPROVAL",
@@ -873,6 +878,10 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   manager: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "OPERATIONS_DASHBOARD",
+    // Added 2026-08-22: the page (and its API's own requireRole list) was built
+    // for exactly this role, but no role_page_access row ever granted it — every
+    // manager hit "Access Denied" on the nav link. See migration 1544.
+    "TEAM_ATTENDANCE",
   ],
   operations_manager: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
@@ -887,6 +896,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   ],
   process_manager: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
+    // Added 2026-08-22: see the manager entry above — same gap, same fix. Migration 1544.
+    "TEAM_ATTENDANCE",
   ],
   qa: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
@@ -903,10 +914,14 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   team_leader: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "MANAGEMENT_DASHBOARD",
+    // Added 2026-08-22: see the manager entry above — same gap, same fix. Migration 1544.
+    "TEAM_ATTENDANCE",
   ],
   tl: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
     "MANAGEMENT_DASHBOARD",
+    // Added 2026-08-22: see the manager entry above — same gap, same fix. Migration 1544.
+    "TEAM_ATTENDANCE",
   ],
   tq_head: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.

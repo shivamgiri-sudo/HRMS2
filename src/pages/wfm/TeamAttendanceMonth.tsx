@@ -1,18 +1,27 @@
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CalendarDays, CheckCheck, Download, Flag, Loader2, Search } from "lucide-react";
+import { AlertTriangle, CalendarClock, CalendarDays, CheckCheck, CheckSquare, Download, Flag, Loader2, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { MonthGrid } from "@/components/attendance/month-grid/MonthGrid";
 import { GridLegend } from "@/components/attendance/month-grid/GridLegend";
+import { DayDetailSheet } from "@/components/attendance/month-grid/DayDetailSheet";
+import { useMyRaisedLeaveRequests } from "@/hooks/useLeaveOnBehalf";
 import {
   currentIstMonth, useTeamAttendanceMonth,
   type TeamMonthDay, type TeamMonthEmployee,
 } from "@/hooks/useTeamAttendanceMonth";
 import { cn } from "@/lib/utils";
+
+const CONSENT_LABEL: Record<string, { label: string; className: string }> = {
+  pending_employee_consent: { label: "Awaiting their consent", className: "bg-amber-100 text-amber-700" },
+  consented: { label: "Submitted", className: "bg-emerald-100 text-emerald-700" },
+  declined: { label: "Declined", className: "bg-rose-100 text-rose-700" },
+};
 
 /**
  * Team Attendance — the closure screen.
@@ -35,8 +44,18 @@ export default function TeamAttendanceMonth() {
   const [lens, setLens] = useState<Lens>("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  // Off by default: a plain click opens the Day Detail panel for that one cell — the
+  // unambiguous, no-surprises interaction. Bulk select is an explicit, opt-in mode so a
+  // click never has to guess whether it means "select" or "open"; and the action bar it
+  // reveals is a fixed part of the header the moment you turn it on, not something that
+  // pops into existence on your first click (see below — that pop-in was the "layout
+  // stretches to the right" report).
+  const [bulkMode, setBulkMode] = useState(false);
+  const [detailTarget, setDetailTarget] = useState<{ emp: TeamMonthEmployee; day: TeamMonthDay } | null>(null);
 
   const { data, isLoading, isError, error, refetch } = useTeamAttendanceMonth(month, { search });
+  const { data: raisedLeave } = useMyRaisedLeaveRequests();
+  const pendingRaisedLeave = (raisedLeave ?? []).filter((r) => r.consent_status === "pending_employee_consent").length;
 
   const employees = data?.employees ?? [];
 
@@ -55,14 +74,18 @@ export default function TeamAttendanceMonth() {
     return [...ids];
   }, [visible]);
 
-  const toggleCell = (emp: TeamMonthEmployee, day: TeamMonthDay) => {
+  const onCellClick = (emp: TeamMonthEmployee, day: TeamMonthDay) => {
     if (!day.applicable) return;
-    const key = `${emp.employeeId}:${day.d}`;
-    setSelected((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
+    if (bulkMode) {
+      const key = `${emp.employeeId}:${day.d}`;
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.has(key) ? next.delete(key) : next.add(key);
+        return next;
+      });
+      return;
+    }
+    setDetailTarget({ emp, day });
   };
 
   async function bulkApprove() {
@@ -116,9 +139,12 @@ export default function TeamAttendanceMonth() {
       const failures: string[] = [];
       for (const [employeeId, dates] of byEmployee) {
         try {
+          // The endpoint reads `sessionDates`, not `dates` — every bulk raise from this
+          // page 400'd with "sessionDates array is required" before this fix, regardless
+          // of what a manager typed into the prompt.
           await hrmsApi.post("/api/wfm/regularizations/batch", {
             employeeId,
-            dates,
+            sessionDates: dates,
             reason: reason.trim(),
             requestedStatus: "present",
           });
@@ -232,9 +258,45 @@ export default function TeamAttendanceMonth() {
             onChange={(e) => setMonth(e.target.value)}
             className="h-8 w-36 text-xs"
           />
+          <Button
+            size="sm"
+            variant={bulkMode ? "default" : "outline"}
+            className="h-8 text-xs"
+            onClick={() => { setBulkMode((v) => !v); setSelected(new Set()); }}
+          >
+            <CheckSquare className="mr-1 h-3.5 w-3.5" />
+            {bulkMode ? "Selecting…" : "Select multiple"}
+          </Button>
           <Button size="sm" variant="outline" className="h-8 text-xs" onClick={exportCsv} disabled={!data}>
             <Download className="mr-1 h-3.5 w-3.5" /> Export
           </Button>
+          {(raisedLeave?.length ?? 0) > 0 && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button size="sm" variant="outline" className="h-8 text-xs">
+                  <CalendarClock className="mr-1 h-3.5 w-3.5" />
+                  Leave raised{pendingRaisedLeave > 0 ? ` (${pendingRaisedLeave} pending)` : ""}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80" align="end">
+                <p className="mb-2 text-xs font-semibold text-slate-600">Leave you've raised on behalf of your team</p>
+                <div className="max-h-72 space-y-1.5 overflow-y-auto">
+                  {(raisedLeave ?? []).map((r) => {
+                    const c = CONSENT_LABEL[r.consent_status] ?? { label: r.consent_status, className: "bg-slate-100 text-slate-600" };
+                    return (
+                      <div key={r.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-2 py-1.5 text-xs">
+                        <div>
+                          <p className="font-medium text-slate-800">{r.employee_name}</p>
+                          <p className="text-slate-400">{r.payload.fromDate} – {r.payload.toDate}</p>
+                        </div>
+                        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold", c.className)}>{c.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
         </div>
       </header>
 
@@ -255,18 +317,7 @@ export default function TeamAttendanceMonth() {
           No record <strong className="text-orange-700">{s?.missing ?? 0}</strong>
         </span>
 
-        <div className="ml-auto flex items-center gap-2">
-          {selected.size > 0 && (
-            <>
-              <Button size="sm" variant="outline" className="h-8 text-xs" onClick={flagSelected} disabled={busy}>
-                <Flag className="mr-1 h-3.5 w-3.5" /> Flag {selected.size}
-              </Button>
-              <Button size="sm" className="h-8 text-xs" onClick={raiseForSelected} disabled={busy}>
-                {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
-                Raise correction for {selected.size}
-              </Button>
-            </>
-          )}
+        <div className="ml-auto">
           <Button
             size="sm" variant="outline" className="h-8 text-xs"
             onClick={bulkApprove}
@@ -278,6 +329,31 @@ export default function TeamAttendanceMonth() {
           </Button>
         </div>
       </div>
+
+      {/* Bulk-select action bar. Rendered — space and all — the instant "Select multiple"
+          is turned on, never as a side effect of a single cell click. That's the fix for
+          "the layout stretches to the right when I click a cell": nothing here used to
+          exist until your first click, so a click looked like it broke the page instead
+          of selecting a day. */}
+      {bulkMode && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+          <span className="text-xs font-medium text-slate-600">
+            {selected.size} day{selected.size === 1 ? "" : "s"} selected
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setSelected(new Set())} disabled={selected.size === 0}>
+              <X className="mr-1 h-3.5 w-3.5" /> Clear
+            </Button>
+            <Button size="sm" variant="outline" className="h-8 text-xs" onClick={flagSelected} disabled={busy || selected.size === 0}>
+              <Flag className="mr-1 h-3.5 w-3.5" /> Flag selected
+            </Button>
+            <Button size="sm" className="h-8 text-xs" onClick={raiseForSelected} disabled={busy || selected.size === 0}>
+              {busy ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+              Raise correction for selected
+            </Button>
+          </div>
+        </div>
+      )}
 
       {data?.salaryDaysUnavailable && (
         <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -301,12 +377,20 @@ export default function TeamAttendanceMonth() {
             month={data!.month}
             days={data!.days}
             employees={visible}
-            selectedKeys={selected}
-            onCellClick={toggleCell}
+            selectedKeys={bulkMode ? selected : undefined}
+            onCellClick={onCellClick}
           />
           <GridLegend />
         </>
       )}
+
+      <DayDetailSheet
+        open={!!detailTarget}
+        onOpenChange={(o) => { if (!o) setDetailTarget(null); }}
+        employee={detailTarget?.emp ?? null}
+        day={detailTarget?.day ?? null}
+        onChanged={() => void queryClient.invalidateQueries({ queryKey: ["team-attendance-month"] })}
+      />
     </div>
   );
 }

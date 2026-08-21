@@ -15,6 +15,7 @@
  * response that only carries rows that exist. A blank cell is exactly what a manager
  * scrolls past.
  */
+import { randomUUID } from "crypto";
 import { Router } from "express";
 import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -23,6 +24,8 @@ import { requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
 import { inboxService } from "../inbox/inbox.service.js";
+import { leaveService } from "../leave/leave.service.js";
+import { leaveRequestSchema } from "../leave/leave.validation.js";
 
 export const teamAttendanceMonthRouter = Router();
 teamAttendanceMonthRouter.use(requireAuth);
@@ -392,5 +395,237 @@ teamAttendanceMonthRouter.post(
       skipped_out_of_scope: skippedOutOfScope,
       skipped_no_account: skippedNoAccount,
     });
+  }),
+);
+
+/**
+ * Raise a leave request on a direct report's behalf — subject to that employee's own
+ * consent before it becomes a real leave_request.
+ *
+ * Deliberately narrower than POST /api/leave/requests's existing on-behalf path
+ * (isLeavePrivileged: super_admin/admin/hr/manager/payroll_head/payroll_admin, no consent
+ * step, no row-scope check beyond the role list). This route is the opposite shape by
+ * design: open to the whole manager chain (tl/team_leader/assistant_manager/manager/
+ * process_manager/branch_head, none of whom could reach the older path at all), but
+ * row-scoped to direct reports only and gated on the employee's consent. The two paths are
+ * intentionally independent — this one does not touch isLeavePrivileged or leave.routes.ts.
+ */
+const RAISE_ON_BEHALF_ROLES = [
+  "manager", "process_manager", "tl", "team_leader", "assistant_manager", "branch_head",
+] as const;
+
+teamAttendanceMonthRouter.post(
+  "/team-month/leave-on-behalf",
+  requireWriteAccess,
+  requireRole(...RAISE_ON_BEHALF_ROLES),
+  h(async (req, res) => {
+    const raiserEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!raiserEmp?.id) {
+      return res.status(403).json({ success: false, message: "No employee record for this user" });
+    }
+
+    const employeeId = String(req.body?.employeeId ?? "");
+    if (!employeeId) {
+      return res.status(400).json({ success: false, message: "employeeId is required" });
+    }
+
+    // Direct reports only — the same scope predicate the grid itself is built on. A
+    // request against anyone else is refused here even if the client never should have
+    // offered the action; the request is not the page.
+    const [scopeRows] = await db.query<RowDataPacket[]>(
+      `SELECT e.id,
+              COALESCE(NULLIF(TRIM(e.full_name),''),
+                       TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
+              e.auth_user_id
+         FROM employees e
+        WHERE e.id = ? AND e.active_status = 1
+          AND (e.reporting_manager_id = ? OR e.manager_id = ?)
+        LIMIT 1`,
+      [employeeId, raiserEmp.id, raiserEmp.id],
+    );
+    const targetEmp = (scopeRows as any[])[0];
+    if (!targetEmp) {
+      return res.status(403).json({ success: false, message: "Not one of your direct reports" });
+    }
+    if (!targetEmp.auth_user_id) {
+      return res.status(422).json({
+        success: false,
+        message: `${targetEmp.employee_name} has no login account, so they cannot be asked to consent to this.`,
+      });
+    }
+
+    // Validate the leave payload with the exact schema the employee's own submission
+    // uses, so a bad on-behalf request fails the same way a bad self-service one would —
+    // not a looser or stricter check invented for this path.
+    const parsed = leaveRequestSchema.safeParse({
+      employeeId,
+      leaveTypeId: req.body?.leaveTypeId,
+      fromDate: req.body?.fromDate,
+      toDate: req.body?.toDate,
+      totalDays: req.body?.totalDays,
+      reason: req.body?.reason ?? null,
+    });
+    if (!parsed.success) {
+      return res.status(400).json({ success: false, message: parsed.error.issues[0]?.message ?? "Invalid request" });
+    }
+
+    const id = randomUUID();
+    const callerRoles = await Promise.all(RAISE_ON_BEHALF_ROLES.map((r) => hasRole(req.authUser!.id, r)));
+    const raisedByRole = RAISE_ON_BEHALF_ROLES[callerRoles.findIndex(Boolean)] ?? "manager";
+
+    await db.execute(
+      `INSERT INTO manager_raised_request
+         (id, request_type, employee_id, raised_by_user_id, raised_by_employee_id, raised_by_role, payload, consent_status)
+       VALUES (?, 'leave', ?, ?, ?, ?, CAST(? AS JSON), 'pending_employee_consent')`,
+      [id, employeeId, req.authUser!.id, raiserEmp.id, raisedByRole, JSON.stringify(parsed.data)],
+    );
+
+    await inboxService.createItem({
+      user_id: String(targetEmp.auth_user_id),
+      type: "leave_raised_by_manager",
+      title: "Leave requested on your behalf",
+      description:
+        `Your reporting manager asked for leave for you (${parsed.data.fromDate} to ${parsed.data.toDate}). ` +
+        `Nothing is submitted yet — open Leave Requests to approve or decline.`,
+      entity_type: "manager_raised_request",
+      entity_id: id,
+      action_url: "/leaves",
+      priority: "high",
+    }).catch(() => undefined);
+
+    return res.status(201).json({ success: true, data: { id, consentStatus: "pending_employee_consent" } });
+  }),
+);
+
+/** GET /team-month/leave-on-behalf/mine — the caller's own pending/decided consent items. */
+teamAttendanceMonthRouter.get(
+  "/team-month/leave-on-behalf/mine",
+  h(async (req, res) => {
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp?.id) return res.json({ success: true, data: [] });
+
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT mrr.id, mrr.request_type, mrr.payload, mrr.consent_status, mrr.created_at,
+              mrr.resulting_request_id,
+              COALESCE(NULLIF(TRIM(m.full_name),''),
+                       TRIM(CONCAT(m.first_name,' ',COALESCE(m.last_name,'')))) AS raised_by_name,
+              lt.leave_name
+         FROM manager_raised_request mrr
+         LEFT JOIN employees m ON m.id = mrr.raised_by_employee_id
+         LEFT JOIN leave_type_master lt ON lt.id = JSON_UNQUOTE(JSON_EXTRACT(mrr.payload, '$.leaveTypeId'))
+        WHERE mrr.employee_id = ?
+        ORDER BY mrr.created_at DESC
+        LIMIT 50`,
+      [callerEmp.id],
+    );
+    return res.json({ success: true, data: rows });
+  }),
+);
+
+/** GET /team-month/leave-on-behalf?scope=team — what the caller themself has raised. */
+teamAttendanceMonthRouter.get(
+  "/team-month/leave-on-behalf",
+  h(async (req, res) => {
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT mrr.id, mrr.employee_id, mrr.payload, mrr.consent_status, mrr.created_at,
+              mrr.resulting_request_id, mrr.decline_reason,
+              COALESCE(NULLIF(TRIM(e.full_name),''),
+                       TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name
+         FROM manager_raised_request mrr
+         JOIN employees e ON e.id = mrr.employee_id
+        WHERE mrr.raised_by_user_id = ?
+        ORDER BY mrr.created_at DESC
+        LIMIT 100`,
+      [req.authUser!.id],
+    );
+    return res.json({ success: true, data: rows });
+  }),
+);
+
+/**
+ * PATCH /team-month/leave-on-behalf/:id/consent — only the named employee may decide.
+ * On approval this is the ONE place that materializes the real leave_request, via the
+ * same leaveService.submitRequest() the self-service form calls — no duplicated balance
+ * or eligibility logic.
+ */
+teamAttendanceMonthRouter.patch(
+  "/team-month/leave-on-behalf/:id/consent",
+  requireWriteAccess,
+  h(async (req, res) => {
+    const decision = String(req.body?.decision ?? "");
+    if (decision !== "approve" && decision !== "decline") {
+      return res.status(400).json({ success: false, message: "decision must be 'approve' or 'decline'" });
+    }
+
+    const callerEmp = await getEmployeeForUser(req.authUser!.id);
+    if (!callerEmp?.id) {
+      return res.status(403).json({ success: false, message: "No employee record for this user" });
+    }
+
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT * FROM manager_raised_request WHERE id = ? LIMIT 1`,
+      [req.params.id],
+    );
+    const row = (rows as any[])[0];
+    if (!row) return res.status(404).json({ success: false, message: "Not found" });
+    if (String(row.employee_id) !== String(callerEmp.id)) {
+      return res.status(403).json({ success: false, message: "This request is not addressed to you" });
+    }
+    if (row.consent_status !== "pending_employee_consent") {
+      return res.status(409).json({ success: false, message: `Already ${row.consent_status}` });
+    }
+
+    if (decision === "decline") {
+      await db.execute(
+        `UPDATE manager_raised_request
+            SET consent_status = 'declined', consent_decided_at = NOW(), decline_reason = ?
+          WHERE id = ?`,
+        [req.body?.reason ? String(req.body.reason).slice(0, 500) : null, row.id],
+      );
+      await inboxService.createItem({
+        user_id: row.raised_by_user_id,
+        type: "leave_on_behalf_declined",
+        title: "Leave request declined",
+        description: "The employee declined the leave you raised on their behalf.",
+        entity_type: "manager_raised_request",
+        entity_id: row.id,
+        action_url: "/wfm/team-attendance",
+        priority: "normal",
+      }).catch(() => undefined);
+      return res.json({ success: true, data: { consentStatus: "declined" } });
+    }
+
+    // Approve — materialize the real leave_request. The employee is the actor of record
+    // (submitRequest's second argument), matching what actually happened: they, not the
+    // manager, are the one who just said yes.
+    const payload = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
+    try {
+      const created = await leaveService.submitRequest(payload, req.authUser!.id);
+      await db.execute(
+        `UPDATE manager_raised_request
+            SET consent_status = 'consented', consent_decided_at = NOW(), resulting_request_id = ?
+          WHERE id = ?`,
+        [(created as any).id, row.id],
+      );
+      await inboxService.createItem({
+        user_id: row.raised_by_user_id,
+        type: "leave_on_behalf_consented",
+        title: "Leave request submitted",
+        description: "The employee approved the leave you raised on their behalf — it is now in the normal approval queue.",
+        entity_type: "leave_request",
+        entity_id: (created as any).id,
+        action_url: "/wfm/team-attendance",
+        priority: "normal",
+      }).catch(() => undefined);
+      return res.json({ success: true, data: { consentStatus: "consented", leaveRequestId: (created as any).id } });
+    } catch (e) {
+      // Balance/eligibility rejected it — the manager_raised_request row stays pending so
+      // nothing is silently lost; the employee sees why and can raise it themself with
+      // different dates if that resolves it.
+      return res.status(422).json({
+        success: false,
+        message: e instanceof Error ? e.message : "Could not submit this leave request",
+      });
+    }
   }),
 );

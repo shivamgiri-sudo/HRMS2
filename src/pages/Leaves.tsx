@@ -32,6 +32,7 @@ import {
   type LeaveRequest,
 } from "@/components/leaves/LeaveRequestCard";
 import { LeaveRequestForm } from "@/components/profile/LeaveRequestForm";
+import { LeaveConsentBanner } from "@/components/leaves/LeaveConsentBanner";
 import { LeaveCalendarView } from "@/components/leaves/LeaveCalendarView";
 import { LeaveTrends } from "@/components/leaves/LeaveTrends";
 import { DateRangeExportDialog } from "@/components/export/DateRangeExportDialog";
@@ -759,6 +760,8 @@ const Leaves = () => {
   return (
     <DashboardLayout>
       <div className="space-y-5">
+        <LeaveConsentBanner />
+
         {/* Hero Header */}
         <section className="relative overflow-hidden rounded-2xl bg-slate-950 text-white shadow-lg">
           <div className="pointer-events-none absolute -right-20 -top-20 h-72 w-72 rounded-full bg-[#1B6AB5]/20 blur-3xl" />
