@@ -31,6 +31,7 @@ import { isPeriodLocked } from "./finance-period-lock.js";
 import { pnlStatementService, type StatementViewBy } from "./pnl-statement.service.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
 import { getPnlFreshness } from "./pnl-freshness.service.js";
+import { getPnlDrilldown, type PnlDrilldownQuery } from "./pnl-drilldown.service.js";
 import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
@@ -1342,6 +1343,37 @@ router.get(
         ? [confinedRequestedBranch]
         : requestedBranchIds;
     const data = await getPnlFreshness(period, { branchIds });
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/drilldown",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const metric = String(req.query.metric ?? "");
+    const period = String(req.query.period ?? "");
+    const requestedBranchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const user = actor(req);
+    // Same branch-scope resolution every other P&L route uses — a branch-confined user cannot
+    // drill into a branch's figures they aren't entitled to see the summary for either.
+    const confinedRequestedBranch = await resolveFinanceBranchScope({
+      userId: user.id, primaryRole: user.role, userRoles: user.roles, requestedBranchId,
+    });
+    const hardBranchScope = await resolveFinanceBranchScope({
+      userId: user.id, primaryRole: user.role, userRoles: user.roles,
+    });
+    const branchId = hardBranchScope ?? confinedRequestedBranch ?? requestedBranchId;
+    if (!branchId) {
+      res.status(400).json({ success: false, error: "branchId is required" });
+      return;
+    }
+    if (!["revenue", "people", "indirect", "budget"].includes(metric)) {
+      res.status(400).json({ success: false, error: "metric must be one of revenue, people, indirect, budget" });
+      return;
+    }
+    const query = { metric, period, branchId } as PnlDrilldownQuery;
+    const data = await getPnlDrilldown(query);
     res.json({ success: true, data });
   })
 );
