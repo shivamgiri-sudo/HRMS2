@@ -556,7 +556,13 @@ export async function listExitPasses(actor: RequestingEmployee, actorRoles: stri
      ${where}
      ORDER BY epr.created_at DESC
      LIMIT ? OFFSET ?`,
-    [...params, filters.limit, filters.offset],
+    // mysql2's execute() (prepared-statement protocol) rejects LIMIT/OFFSET
+    // bound as JS numbers against this server — ER_WRONG_ARGUMENTS /
+    // "Incorrect arguments to mysqld_stmt_execute" (verified live
+    // 2026-08-21). String form works; both are already integers by
+    // construction (route clamps/Number()s them), so this is a safe cast,
+    // not a validation gap.
+    [...params, String(filters.limit), String(filters.offset)],
   );
   return rows;
 }
