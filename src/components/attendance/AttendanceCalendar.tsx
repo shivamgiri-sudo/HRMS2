@@ -191,6 +191,25 @@ function istTodayString(): string {
     timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
   }).format(new Date());
 }
+/**
+ * Whole days between `dateStr` (YYYY-MM-DD) and today in IST. Negative = future.
+ *
+ * The COSEC monthly feed reads NCOSEC's own end-of-day batch aggregate
+ * (Mx_DATDTrn), which the source service documents as populated by an
+ * overnight job — so yesterday's row can legitimately not exist yet when
+ * someone checks in the morning. Without this, a present employee's
+ * unlanded yesterday row painted as a hard "Absent" (reported 2026-08-14).
+ * Same reasoning already shipped once for the ADR/Payroll tab's calendar
+ * (see ADRAttendanceCalendar.tsx's own daysBeforeTodayIST/missingDayStatus)
+ * but was never applied here, where most employees actually look first.
+ */
+function daysBeforeTodayIST(dateStr: string): number {
+  const toUTC = (s: string) => {
+    const [y, m, d] = s.split("-").map(Number);
+    return Date.UTC(y!, (m ?? 1) - 1, d ?? 1);
+  };
+  return Math.round((toUTC(istTodayString()) - toUTC(dateStr)) / 86_400_000);
+}
 function fmtTime(val?: string | null): string {
   if (!val) return "--:--";
   try {
@@ -381,9 +400,15 @@ function DayDetailSheet({
     return null;
   })();
   const derivedStatus = normalizeStatus(adr?.attendance_status);
+  // Same gap as the calendar grid: no ADR row AND no COSEC aggregate at all
+  // (not merely a low-minutes one) means neither feed has landed yet, not a
+  // confirmed absence — recent dates get the neutral status instead.
+  const noDataYet = !adr && agg?.work_minutes == null;
+  const fallbackStatus: DayStatus =
+    noDataYet && date != null && daysBeforeTodayIST(date) <= 1 ? "unreconciled" : derivedStatus;
   const status: DayStatus = (derivedStatus !== "absent" || adr != null)
     ? derivedStatus
-    : (statusFromCosec ?? derivedStatus);
+    : (statusFromCosec ?? fallbackStatus);
 
   const hasAnyData = !!(adr || agg || punches.length > 0);
 
@@ -1307,7 +1332,12 @@ export function AttendanceCalendar({
               // absence. Painting it red is the same silent-failure that made an empty
               // month indistinguishable from a month of genuine absences, so an
               // unbacked day stays the neutral "unreconciled" state.
-              const missingDayStatus: DayStatus = usesProvidedRecords ? "unreconciled" : "absent";
+              //
+              // Same neutral treatment for today/yesterday in self-fetch (COSEC) mode:
+              // that feed's end-of-day batch can still be pending, so a missing row
+              // there is "not landed yet," not a confirmed absence either.
+              const recentUnbacked = !usesProvidedRecords && daysBeforeTodayIST(dateStr) <= 1;
+              const missingDayStatus: DayStatus = usesProvidedRecords || recentUnbacked ? "unreconciled" : "absent";
               const status    = record?.status ?? (isWknd ? "weekend" : isFuture ? "unreconciled" : missingDayStatus);
 
               if (isFuture && !record) {

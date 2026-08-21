@@ -146,6 +146,45 @@ describe("AttendanceCalendar renders the same days as the tabular view", () => {
     expect(statusOf(html, "2026-08-03")).toBeNull();
   });
 
+  it("does not paint yesterday/today as a confirmed absence on the source-routed fetch path", () => {
+    // Reported 2026-08-14: employees present yesterday showed as "Absent" on the
+    // default (COSEC) Attendance tab. Root cause: NCOSEC's own end-of-day batch
+    // populates yesterday's aggregate overnight, so a genuinely present employee
+    // can simply have no row yet when someone checks the next morning — and the
+    // grid painted any past day with no row as a hard "Absent", same failure
+    // shape as the missing_punch/blank-month bugs above, just for a different
+    // window (today/yesterday specifically, not the whole past).
+    const istNow = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date());
+    const y = Number(istNow.find(p => p.type === "year")!.value);
+    const m = Number(istNow.find(p => p.type === "month")!.value); // 1-indexed
+    const d = Number(istNow.find(p => p.type === "day")!.value);
+    const today = `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const yesterdayDate = new Date(Date.UTC(y, m - 1, d - 1));
+    const yesterday = `${yesterdayDate.getUTCFullYear()}-${String(yesterdayDate.getUTCMonth() + 1).padStart(2, "0")}-${String(yesterdayDate.getUTCDate()).padStart(2, "0")}`;
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    const employeeId = "e534b232-6584-11f1-adb1-00155d0ab410";
+    client.setQueryData(["attendance-source", employeeId], {
+      attendance_source: "biometric",
+      source_label: "COSEC",
+    });
+    // Current calendar month, zero-indexed to match the component's `month` prop.
+    client.setQueryData(["attendance-calendar", employeeId, y, m - 1, "biometric"], []);
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <AttendanceCalendar employeeId={employeeId} month={m - 1} year={y} hideNavigator />
+      </QueryClientProvider>,
+    );
+
+    expect(statusOf(html, today)).toBe("unreconciled");
+    // Only assert yesterday when it falls in the same rendered month — on the
+    // 1st, yesterday belongs to a grid this test does not render.
+    if (d > 1) expect(statusOf(html, yesterday)).toBe("unreconciled");
+  });
+
   it("maps ADR rows onto calendar days without shifting the date", () => {
     const days = adrRecordsToAttendanceDays(MAS61502_AUGUST_2026);
 
