@@ -65,6 +65,7 @@ export default function NativeVendorManagement() {
   const [tab, setTab] = useState<'vendors' | 'contracts' | 'mapping'>('vendors');
   const [search, setSearch] = useState('');
   const [filterType, setFilterType] = useState('');
+  const [filterBranchId, setFilterBranchId] = useState('');
   const [mappingUnmappedOnly, setMappingUnmappedOnly] = useState(false);
 
   // Sheet state
@@ -84,15 +85,23 @@ export default function NativeVendorManagement() {
     return () => clearTimeout(timer);
   }, [search]);
 
+  const { data: branchesData } = useQuery({
+    queryKey: ['vendor-mgmt-branches'],
+    queryFn: async () => {
+      const r = await hrmsApi.get<any>('/api/org/branches?limit=200');
+      return ((r as any)?.data?.data ?? (r as any)?.data ?? []) as { id: string; branch_name: string }[];
+    },
+  });
+  const branches = branchesData ?? [];
+
   const { data: vendorsData, isLoading: loadingV, refetch: refV } = useQuery({
-    queryKey: ['erp-vendors', filterType, debouncedSearch],
+    queryKey: ['erp-vendors', filterType, debouncedSearch, filterBranchId],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (filterType) params.set('vendor_type', filterType);
       else params.set('is_active', '1');
       if (debouncedSearch) params.set('q', debouncedSearch);
-      // Capped server-side at 500. A search narrows well before that; an unfiltered list is
-      // paged by the table rather than being unbounded.
+      if (filterBranchId) params.set('branchId', filterBranchId);
       params.set('limit', '200');
       const r = await hrmsApi.get<any>(`/api/erp/vendors?${params.toString()}`);
       return ((r as any)?.data ?? r ?? []) as Vendor[];
@@ -220,6 +229,20 @@ export default function NativeVendorManagement() {
                 <SelectItem value="_all">All types</SelectItem>
                 {Object.entries(VENDOR_TYPE_LABELS).map(([v, l]) => (
                   <SelectItem key={v} value={v}>{l}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={filterBranchId || "_all"}
+              onValueChange={(value) => setFilterBranchId(value === "_all" ? "" : value)}
+            >
+              <SelectTrigger className="h-8 w-40">
+                <SelectValue placeholder="All branches" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="_all">All branches</SelectItem>
+                {branches.map(b => (
+                  <SelectItem key={b.id} value={b.id}>{b.branch_name}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

@@ -117,6 +117,33 @@ export const vendorService = {
     return this.getById(id);
   },
 
+  async generateNextCode(): Promise<string> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT MAX(CAST(SUBSTRING(vendor_code, 2) AS UNSIGNED)) AS max_seq
+         FROM vendor_master
+        WHERE vendor_code REGEXP '^V[0-9]+$'`
+    );
+    const seq = (Number(rows[0]?.max_seq ?? 0) || 0) + 1;
+    return `V${String(seq).padStart(5, "0")}`;
+  },
+
+  async findByName(name: string, excludeId?: string): Promise<{ id: string; vendor_code: string } | null> {
+    const trimmed = name?.trim();
+    if (!trimmed) return null;
+    if (excludeId) {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, vendor_code FROM vendor_master WHERE LOWER(vendor_name) = LOWER(?) AND id <> ? LIMIT 1`,
+        [trimmed, excludeId]
+      );
+      return (rows[0] as { id: string; vendor_code: string } | undefined) ?? null;
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, vendor_code FROM vendor_master WHERE LOWER(vendor_name) = LOWER(?) LIMIT 1`,
+      [trimmed]
+    );
+    return (rows[0] as { id: string; vendor_code: string } | undefined) ?? null;
+  },
+
   async update(id: string, data: Record<string, unknown>) {
     const enriched = withDerivedGstStateCode(data);
 

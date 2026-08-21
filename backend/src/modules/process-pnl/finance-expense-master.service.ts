@@ -177,6 +177,7 @@ export const financeExpenseMasterService = {
               sh.default_recoverable_tax_pct,
               sh.default_allocation_driver,
               sh.pnl_treatment,
+              sh.capex_opex,
               sh.display_order AS sub_head_display_order,
               sh.active_status AS sub_head_active_status
          FROM finance_expense_head_master h
@@ -214,6 +215,7 @@ export const financeExpenseMasterService = {
           ),
           defaultAllocationDriver: row.default_allocation_driver,
           pnlTreatment: row.pnl_treatment,
+          capexOpex: row.capex_opex ?? null,
           displayOrder: Number(row.sub_head_display_order ?? 0),
           activeStatus: Number(row.sub_head_active_status ?? 0) === 1,
         });

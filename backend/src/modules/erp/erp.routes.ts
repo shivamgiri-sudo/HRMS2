@@ -9,6 +9,8 @@ import {
   billingUnitService, billingInvoiceService, expensePolicyService,
 } from "./erp.service.js";
 import { syncVendorsFromDbBill } from "./vendor-sync.service.js";
+import { vendorApprovalService } from "../finance/vendor-approval.service.js";
+import { getUserBranchId } from "../finance/finance-access-scope.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -54,11 +56,44 @@ router.post(
 
 router.post(
   "/vendors",
-  requireRole("admin", "hr", "finance"),
+  requireRole("admin", "hr", "finance", "finance_head", "super_admin", "branch_admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
-    if (!req.body.vendor_code?.trim() || !req.body.vendor_name?.trim()) {
-      return res.status(400).json({ error: "vendor_code and vendor_name are required" });
+    if (!req.body.vendor_name?.trim()) {
+      return res.status(400).json({ error: "vendor_name is required" });
     }
+
+    // Duplicate name check — case-insensitive
+    const existing = await vendorService.findByName(req.body.vendor_name);
+    if (existing) {
+      return res.status(409).json({
+        error: `A vendor with this name already exists (code: ${existing.vendor_code})`,
+        conflict: { vendor_code: existing.vendor_code },
+      });
+    }
+
+    // Auto-generate vendor_code when the caller does not supply one
+    if (!req.body.vendor_code?.trim()) {
+      req.body.vendor_code = await vendorService.generateNextCode();
+    }
+
+    // Branch admin without an elevated finance role → approval workflow
+    const userRoles: string[] = (req as any).userRoles ?? [];
+    const elevatedRoles = new Set(["finance_head", "super_admin", "admin", "hr", "finance"]);
+    const isOnlyBranchAdmin =
+      userRoles.includes("branch_admin") && !userRoles.some(r => elevatedRoles.has(r));
+
+    if (isOnlyBranchAdmin) {
+      const branchId = await getUserBranchId(req.authUser!.id);
+      const request = await vendorApprovalService.raise({
+        requestType: "create",
+        vendorId: null,
+        payload: req.body,
+        raisedBy: req.authUser!.id,
+        branchId: branchId ?? "",
+      });
+      return res.status(202).json({ success: true, approval: true, data: request });
+    }
+
     const data = await vendorService.create(req.body);
     res.status(201).json({ success: true, data });
   })
@@ -76,8 +111,37 @@ router.get(
 
 router.put(
   "/vendors/:id",
-  requireRole("admin", "hr", "finance"),
+  requireRole("admin", "hr", "finance", "finance_head", "super_admin", "branch_admin"),
   h(async (req: AuthenticatedRequest, res: Response) => {
+    // Duplicate name check — skip if name unchanged
+    if (req.body.vendor_name?.trim()) {
+      const existing = await vendorService.findByName(req.body.vendor_name, req.params.id);
+      if (existing) {
+        return res.status(409).json({
+          error: `A vendor with this name already exists (code: ${existing.vendor_code})`,
+          conflict: { vendor_code: existing.vendor_code },
+        });
+      }
+    }
+
+    // Branch admin without elevated role → approval workflow
+    const userRoles: string[] = (req as any).userRoles ?? [];
+    const elevatedRoles = new Set(["finance_head", "super_admin", "admin", "hr", "finance"]);
+    const isOnlyBranchAdmin =
+      userRoles.includes("branch_admin") && !userRoles.some(r => elevatedRoles.has(r));
+
+    if (isOnlyBranchAdmin) {
+      const branchId = await getUserBranchId(req.authUser!.id);
+      const request = await vendorApprovalService.raise({
+        requestType: "update",
+        vendorId: req.params.id,
+        payload: req.body,
+        raisedBy: req.authUser!.id,
+        branchId: branchId ?? "",
+      });
+      return res.status(202).json({ success: true, approval: true, data: request });
+    }
+
     const data = await vendorService.update(req.params.id, req.body);
     if (!data) return res.status(404).json({ error: "Vendor not found" });
     res.json({ success: true, data });

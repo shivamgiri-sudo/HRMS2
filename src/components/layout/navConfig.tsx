@@ -375,6 +375,7 @@ export const navGroups: NavGroup[] = [
           { label: "GRN Management",          href: "/finance/grn",                      icon: ic(ShoppingCart), roles: ["admin","finance","super_admin","finance_head","accounts_head","branch_head","branch_admin"], description: "Goods receipt notes" },
           { label: "Vendor Payments",         href: "/finance/vendor-payment-tracking",  icon: ic(DollarSign),   roles: ["admin","finance","super_admin","finance_head","accounts_head","payroll_head"], description: "Vendor payment tracking" },
           { label: "Vendors", href: "/vendors", icon: ic(Users), roles: ["admin","super_admin","finance","manager"], description: "Vendor master" },
+          { label: "Finance Masters", href: "/finance/masters", icon: ic(Settings2), pageCode: "FINANCE_MASTERS", roles: ["super_admin","finance_head","branch_admin"], description: "Expense heads/sub-heads, vendor approval queue and vendor-to-head mapping" },
           { label: "Procurement", href: "/procurement", icon: ic(ShoppingCart), pageCode: "PROCUREMENT", description: "Procurement requests" },
           // /expenses/* is retired — see the comment in config/routes/finance.routes.tsx.
           // These pointed at a module whose tables have never existed in mas_hrms.

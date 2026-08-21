@@ -14,6 +14,7 @@ import { db } from "../../db/mysql.js";
 import { listFinanceApprovalEvents, recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { budgetCoverageRouter } from "../process-pnl/budget-coverage.routes.js";
+import { vendorApprovalRouter } from "./vendor-approval.routes.js";
 import { financeExpenseMasterService } from "../process-pnl/finance-expense-master.service.js";
 import {
   assertFinanceRecordBranch,
@@ -213,6 +214,9 @@ grNRouterSmartRoutes(grnRouter);
 function grNRouterSmartRoutes(router: Router) {
   router.use("/grns", smartGrnRouter);
 }
+
+// Vendor approval queue — raise/approve/reject vendor creation requests.
+grnRouter.use(vendorApprovalRouter);
 
 // Configurable Head/Sub-Head master used by branch budget, GRN and P&L.
 grNExpenseMasterRoutes(grnRouter);
