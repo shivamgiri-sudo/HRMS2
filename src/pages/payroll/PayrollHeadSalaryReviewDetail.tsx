@@ -66,10 +66,20 @@ export default function PayrollHeadSalaryReviewDetail() {
     hrmsApi.get<{ success: boolean; data: Reason[] }>('/api/payroll-head-review/reasons')
       .then((r: any) => setReasons(r?.data ?? []))
       .catch(() => setReasons([]));
-    hrmsApi.get<{ success: boolean; data: any[] }>('/api/payroll-masters/packages')
+  }, []);
+
+  // Scoped to the employee's own branch — salary_package_master is keyed by
+  // branch + cost centre + band, and an unfiltered fetch here would repeat
+  // the exact bug already fixed on the offer-creation page (every package,
+  // any branch, in one dropdown).
+  const employeeBranch = journey?.employee?.branch_name as string | undefined;
+  useEffect(() => {
+    if (!employeeBranch) { setPackages([]); return; }
+    const params = new URLSearchParams({ branch: employeeBranch });
+    hrmsApi.get<{ success: boolean; data: any[] }>(`/api/payroll-masters/packages?${params}`)
       .then((r: any) => setPackages(r?.data ?? []))
       .catch(() => setPackages([]));
-  }, []);
+  }, [employeeBranch]);
 
   const review = journey?.review;
   const employee = journey?.employee;
@@ -102,6 +112,15 @@ export default function PayrollHeadSalaryReviewDetail() {
 
   const approve = () => runAction(() =>
     hrmsApi.post(`/api/payroll-head-review/${employeeId}/approve`, {})
+  );
+
+  // Deliberately callable by whoever can reach this page — the backend is the
+  // real gate (resubmit is role-restricted to payroll_hr/branch_head/hr/admin
+  // /super_admin, not payroll_head, since the reviewer isn't the fixer). A
+  // payroll_head clicking this sees a clear 403 via the error banner below,
+  // rather than the action being silently unreachable.
+  const resubmit = () => runAction(() =>
+    hrmsApi.post(`/api/payroll-head-review/${employeeId}/resubmit`, {})
   );
 
   const submitReject = () => runAction(async () => {
@@ -158,11 +177,14 @@ export default function PayrollHeadSalaryReviewDetail() {
             </div>
           </CardHeader>
           {status === 'rejected' && review?.rejection_remarks && (
-            <CardContent className="pt-0">
+            <CardContent className="pt-0 space-y-3">
               <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-800">
                 <div className="font-semibold">Rejected — {review.rejection_category} / {review.rejection_reason_code}</div>
                 <div className="mt-1">{review.rejection_remarks}</div>
               </div>
+              <Button disabled={busy} variant="outline" onClick={() => void resubmit()}>
+                Mark Fixed &amp; Resubmit for Review
+              </Button>
             </CardContent>
           )}
         </Card>

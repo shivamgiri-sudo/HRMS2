@@ -55,10 +55,11 @@ export async function getQueue(filters: { status?: string; q?: string }) {
     `SELECT r.id AS review_id, r.employee_id, r.status, r.package_accepted,
             r.rejection_category, r.rejection_reason_code, r.rejection_remarks,
             r.resubmit_count, r.created_at, r.reviewed_at,
-            e.employee_code, e.full_name, e.designation_name, b.branch_name
+            e.employee_code, e.full_name, dm.designation_name, b.branch_name
        FROM employee_payroll_head_review r
        JOIN employees e ON e.id = r.employee_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
+       LEFT JOIN designation_master dm ON dm.id = e.designation_id
       WHERE ${conds.join(" AND ")}
       ORDER BY r.created_at ASC
       LIMIT 500`,
@@ -84,7 +85,10 @@ export async function getEmployeeJourney(employeeId: string) {
     componentRows,
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
-      `SELECT e.*, b.branch_name FROM employees e LEFT JOIN branch_master b ON b.id = e.branch_id WHERE e.id = ? LIMIT 1`,
+      `SELECT e.*, b.branch_name, dm.designation_name FROM employees e
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN designation_master dm ON dm.id = e.designation_id
+        WHERE e.id = ? LIMIT 1`,
       [employeeId]
     ).then(([r]) => r as RowDataPacket[]),
     getEmployeeBgvStatus(employeeId).catch((e: unknown) => ({
@@ -189,7 +193,12 @@ export async function assignPackage(
   if (!pkg) throw httpError("Salary package not found.", 404, "PACKAGE_NOT_FOUND");
   await writeComponentAssignment(employeeId, pkg as RowDataPacket, effectiveDate, actorUserId, review.id);
   await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_ASSIGNED", employeeId, { package_id: packageId });
-  return getEmployeeJourney(employeeId);
+  // Lightweight on purpose: every caller of these mutating actions (including
+  // this repo's own frontend) re-fetches the full journey separately right
+  // after anyway. Returning getEmployeeJourney() here recomputed the
+  // expensive org-wide bank readiness report a second time per click, for a
+  // response nothing actually reads.
+  return { review: await getReviewRow(employeeId) };
 }
 
 export async function createAndAssignPackage(
@@ -206,7 +215,12 @@ export async function createAndAssignPackage(
   const pkg = await createPackage(packageData, actorUserId);
   await writeComponentAssignment(employeeId, pkg as RowDataPacket, effectiveDate, actorUserId, review.id);
   await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_CREATED_AND_ASSIGNED", employeeId, { package_id: (pkg as RowDataPacket).id });
-  return getEmployeeJourney(employeeId);
+  // Lightweight on purpose: every caller of these mutating actions (including
+  // this repo's own frontend) re-fetches the full journey separately right
+  // after anyway. Returning getEmployeeJourney() here recomputed the
+  // expensive org-wide bank readiness report a second time per click, for a
+  // response nothing actually reads.
+  return { review: await getReviewRow(employeeId) };
 }
 
 export async function acceptPackage(employeeId: string, effectiveFrom: string, actorUserId: string) {
@@ -223,7 +237,12 @@ export async function acceptPackage(employeeId: string, effectiveFrom: string, a
     [actorUserId, effectiveFrom, employeeId]
   );
   await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_ACCEPTED", employeeId, { effective_from: effectiveFrom });
-  return getEmployeeJourney(employeeId);
+  // Lightweight on purpose: every caller of these mutating actions (including
+  // this repo's own frontend) re-fetches the full journey separately right
+  // after anyway. Returning getEmployeeJourney() here recomputed the
+  // expensive org-wide bank readiness report a second time per click, for a
+  // response nothing actually reads.
+  return { review: await getReviewRow(employeeId) };
 }
 
 // ── Overall decision ─────────────────────────────────────────────────────────
@@ -243,7 +262,12 @@ export async function approve(employeeId: string, actorUserId: string) {
     [actorUserId, employeeId]
   );
   await audit(actorUserId, "PAYROLL_HEAD_REVIEW_APPROVED", employeeId, {});
-  return getEmployeeJourney(employeeId);
+  // Lightweight on purpose: every caller of these mutating actions (including
+  // this repo's own frontend) re-fetches the full journey separately right
+  // after anyway. Returning getEmployeeJourney() here recomputed the
+  // expensive org-wide bank readiness report a second time per click, for a
+  // response nothing actually reads.
+  return { review: await getReviewRow(employeeId) };
 }
 
 /**
@@ -341,7 +365,12 @@ export async function reject(
         })
       )
   );
-  return getEmployeeJourney(employeeId);
+  // Lightweight on purpose: every caller of these mutating actions (including
+  // this repo's own frontend) re-fetches the full journey separately right
+  // after anyway. Returning getEmployeeJourney() here recomputed the
+  // expensive org-wide bank readiness report a second time per click, for a
+  // response nothing actually reads.
+  return { review: await getReviewRow(employeeId) };
 }
 
 export async function resubmit(employeeId: string, actorUserId: string) {
@@ -357,7 +386,12 @@ export async function resubmit(employeeId: string, actorUserId: string) {
     [employeeId]
   );
   await audit(actorUserId, "PAYROLL_HEAD_REVIEW_RESUBMITTED", employeeId, {});
-  return getEmployeeJourney(employeeId);
+  // Lightweight on purpose: every caller of these mutating actions (including
+  // this repo's own frontend) re-fetches the full journey separately right
+  // after anyway. Returning getEmployeeJourney() here recomputed the
+  // expensive org-wide bank readiness report a second time per click, for a
+  // response nothing actually reads.
+  return { review: await getReviewRow(employeeId) };
 }
 
 export async function listReasons() {
