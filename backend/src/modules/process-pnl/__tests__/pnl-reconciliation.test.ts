@@ -62,7 +62,7 @@ function mockDb(options: { payrollRows?: number } = {}) {
     if (q.includes("FROM finance_budget_header")) {
       return [[{ branch_id: "branch-noida", amount: L(200) }], []];
     }
-    if (q.includes("COUNT(l.id) AS rows")) {
+    if (q.includes("COUNT(l.id) AS `rows`")) {
       return [[{ rows: payrollRows, latest_synced_at: "2026-08-31 10:00:00" }], []];
     }
     if (q.includes("FROM salary_prep_line l") && q.includes("GROUP BY e.cost_centre_id")) {
@@ -70,14 +70,14 @@ function mockDb(options: { payrollRows?: number } = {}) {
         ? [[{ cost_centre_id: "cc-noida-1", staff: 2, amount: L(60) }], []]
         : [[], []];
     }
-    if (q.includes("COUNT(*) AS rows") && q.includes("FROM pnl_running_salary_snapshot")) {
+    if (q.includes("COUNT(*) AS `rows`") && q.includes("FROM pnl_running_salary_snapshot")) {
       return [[{ rows: 2, latest_synced_at: "2026-08-19 12:00:00" }], []];
     }
     if (q.includes("FROM pnl_running_salary_snapshot")) {
       return [[{ cost_centre_id: "cc-noida-1", staff: 2, amount: L(42) }], []];
     }
     if (q.includes("e.cost_centre_id IS NULL")) return [[{ count: 0, amount: 0 }], []];
-    if (q.includes("COUNT(*) AS rows")) return [[{ rows: 3, latest_synced_at: "2026-08-19 09:00:00" }], []];
+    if (q.includes("COUNT(*) AS `rows`")) return [[{ rows: 3, latest_synced_at: "2026-08-19 09:00:00" }], []];
     return [[], []];
   });
 }

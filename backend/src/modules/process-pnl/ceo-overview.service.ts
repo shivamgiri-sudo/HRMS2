@@ -162,6 +162,12 @@ export interface CeoOverview {
   billing: CeoBillingCompleteness;
   /** Closed branches suppressed from `branches` because every money column was zero. */
   closedBranchesHidden: { branchName: string; staffPaid: number }[];
+  /**
+   * Data-quality flags that don't change any figure above but must not be silent. Currently one
+   * possible entry: PAYROLL_IDC_CODE_IN_MAS_HRMS — see idcContaminationCheck(). Empty in the
+   * normal case.
+   */
+  exceptions: { code: string; label: string; count: number; amount: number }[];
 }
 
 const n = (v: unknown): number => {
@@ -334,9 +340,43 @@ async function revenueByBranch(period: string, s: CeoScope): Promise<Map<string,
  * unreadable in the first place: information_schema returns COLUMN_NAME uppercased, so every
  * column probe answered false and every person came back costing nothing.
  */
+/** Set by peopleByBranch() when it finds an IDC-coded employee in mas_hrms payroll — read once
+ *  per getCeoOverview() call via idcContaminationFlag(). Module-level because peopleByBranch()'s
+ *  Map<branchId, ...> return shape has no room for a scalar company-wide flag, and adding an
+ *  IDC-guard call site is cheaper than reshaping every caller of this function's return type. */
+let lastIdcContamination: { count: number; amount: number } | null = null;
+
+/**
+ * Visibility guard, not a filter — see [[hrms2-pnl-page-architecture-audit]] and the OWN_COMPANY_SQL
+ * comment above. `employee_code LIKE 'IDC%'` is a real, existing company signal (the code-sequence
+ * generator reserves that prefix), but filtering peopleByBranch() on it the way revenue/spend filter
+ * on OWN_COMPANY_SQL would risk the same class of regression that comment already documents for the
+ * 368 unmapped-cost-centre employees: a plausible-looking filter that silently drops real MAS wages
+ * if the prefix convention is ever misapplied to a MAS employee. Today mas_hrms holds 0 IDC
+ * employees (confirmed live, 2026-08-22 — see [[hrms2-idc-payroll-in-dbbill]]), so this is a no-op
+ * in practice; its only job is to make it LOUD, not silent, the day that stops being true.
+ */
+async function idcContaminationCheck(period: string): Promise<void> {
+  lastIdcContamination = null;
+  if (!(await tableExists("salary_prep_line"))) return;
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt,
+            SUM(COALESCE(l.gross_salary, 0) + COALESCE(l.pf_employer, 0)
+              + COALESCE(l.esic_employer, 0) + COALESCE(l.gratuity, 0)) AS amt
+       FROM salary_prep_line l
+       JOIN salary_prep_run r ON r.id = l.run_id
+       JOIN employees e ON e.id = l.employee_id
+      WHERE r.run_month = ? AND e.employee_code LIKE 'IDC%'`,
+    [period],
+  );
+  const count = n(rows[0]?.cnt);
+  if (count > 0) lastIdcContamination = { count, amount: n(rows[0]?.amt) };
+}
+
 async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, { cost: number; staff: number }>> {
   const out = new Map<string, { cost: number; staff: number }>();
   if (!(await tableExists("salary_prep_line"))) return out;
+  await idcContaminationCheck(period);
   const where: string[] = ["r.run_month = ?"];
   const params: unknown[] = [period];
   if (s.processIds.length) {
@@ -988,6 +1028,7 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     trend: [], options: { processes: [], costCentres: [], branches: [] }, focus: null,
     billing: { lines: 0, baselineLines: 0, pctOfBaseline: null, incomplete: false, gaps: [] },
     closedBranchesHidden: [],
+    exceptions: [],
   };
   if (!/^\d{4}-\d{2}$/.test(period)) return empty;
 
@@ -1167,6 +1208,14 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
         .filter((b) => b.id)
         .sort((a, b) => a.name.localeCompare(b.name)),
     },
+    exceptions: lastIdcContamination
+      ? [{
+          code: "PAYROLL_IDC_CODE_IN_MAS_HRMS",
+          label: "IDC-coded payroll present in MAS Callnet's own P&L",
+          count: lastIdcContamination.count,
+          amount: lastIdcContamination.amount,
+        }]
+      : [],
   };
 }
 
