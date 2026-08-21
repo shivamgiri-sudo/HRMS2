@@ -22,7 +22,12 @@ import {
 } from "./grn-period-allocation.service.js";
 
 export interface SmartAllocationInput {
-  budgetLineId: string;
+  /** Required for a budgeted allocation. Omit for an unbudgeted row (the GRN itself must carry
+   *  is_unbudgeted = 1) — costCentreId is required instead. */
+  budgetLineId?: string;
+  /** Unbudgeted row only: the cost centre this amount belongs to, since there is no budget line
+   *  to read one off. Ignored when budgetLineId is present. */
+  costCentreId?: string;
   quantity: number;
   unitRate?: number;
   remarks?: string;
@@ -741,10 +746,87 @@ export const grnSmartService = {
         throw new Error("Allocations can only be changed while the GRN is a draft");
       }
 
+      // An UNBUDGETED Imprest GRN (raised via the same "no approved budget line" path the
+      // vendor cascade already has — createUnbudgetedDraft/e2c8db0d) has no budget line to pick
+      // per row. Read off the GRN's own stored flag rather than trust the request body, since
+      // is_unbudgeted was already fixed at creation and every row of THIS GRN must agree with it
+      // — a GRN is never a mix of budgeted and unbudgeted allocations.
+      const isUnbudgeted = Number(grn.is_unbudgeted) === 1;
+
       const prepared: any[] = [];
       const groupedUsage = new Map<string, { amount: number; quantity: number; line: any }>();
       for (let index = 0; index < input.allocations.length; index += 1) {
         const allocation = input.allocations[index];
+
+        if (isUnbudgeted) {
+          if (allocation?.budgetLineId) {
+            throw new Error(`Allocation ${index + 1}: this GRN was raised unbudgeted and cannot select a budget line`);
+          }
+          if (!allocation?.costCentreId) {
+            throw new Error(`Allocation ${index + 1}: cost centre is required for an unbudgeted allocation`);
+          }
+          // Same branch-membership check createUnbudgetedDraft() already applied to the header's
+          // own cost centre — repeated here because a raiser could still pass a different one.
+          const [ccRows] = await connection.execute<RowDataPacket[]>(
+            `SELECT id, cost_centre_code, cost_centre_name, branch_id
+               FROM cost_centre_master
+              WHERE id = ? AND active_status = 1
+              LIMIT 1`,
+            [allocation.costCentreId]
+          );
+          const cc = ccRows[0] as any;
+          if (!cc) throw new Error(`Allocation ${index + 1}: cost centre not found or inactive`);
+          if (String(cc.branch_id) !== String(grn.branch_id)) {
+            throw new Error(`Allocation ${index + 1}: cost centre does not belong to this branch`);
+          }
+          const quantity = Number(allocation.quantity);
+          if (!Number.isFinite(quantity) || quantity <= 0) {
+            throw new Error(`Allocation ${index + 1}: quantity must be greater than zero`);
+          }
+          const unitRate = allocation.unitRate == null ? 1 : Number(allocation.unitRate);
+          if (!Number.isFinite(unitRate) || unitRate < 0) {
+            throw new Error(`Allocation ${index + 1}: unit rate is invalid`);
+          }
+          // Synthetic line, the same convention saveComponentAllocations() already uses for an
+          // unbudgeted vendor split: unit "amount", head/sub_head off the GRN header (set at
+          // create time by createUnbudgetedDraft), no tax treatment since there is no line to
+          // carry one — an Imprest allocation has no invoice-component GST breakdown to apply.
+          const line: any = {
+            id: null,
+            budget_id: null,
+            head: String(grn.head || "Unbudgeted"),
+            sub_head: String(grn.sub_head || ""),
+            item_name: String(grn.head || "Unbudgeted Expense"),
+            cost_centre_id: cc.id,
+            cost_centre_name: cc.cost_centre_name,
+            process_id: null,
+            unit: "amount",
+            unit_rate: unitRate,
+            tax_treatment: "exclusive",
+            gst_rate: 0,
+            gst_type: "cgst_sgst",
+            recoverable_tax_pct: 100,
+            justification: "Unbudgeted expense",
+          };
+          const amounts = calculateBudgetLine({
+            head: line.head,
+            subHead: line.sub_head,
+            itemName: line.item_name,
+            quantity,
+            unit: line.unit,
+            unitRate,
+            taxTreatment: line.tax_treatment as BudgetTaxTreatment,
+            gstRate: line.gst_rate,
+            gstType: line.gst_type as BudgetGstType,
+            recoverableTaxPct: line.recoverable_tax_pct,
+            justification: line.justification,
+          });
+          // No budget capacity to check, and nothing to add to groupedUsage below — an
+          // unbudgeted row has no line to hold a running total against.
+          prepared.push({ line, quantity, unitRate, amounts, remarks: allocation.remarks?.trim() || null, isUnbudgeted: true });
+          continue;
+        }
+
         if (!allocation?.budgetLineId) throw new Error(`Allocation ${index + 1}: budget line is required`);
         const line = await lockBudgetLine(connection, allocation.budgetLineId, String(grn.branch_id));
         if (consumptionPeriodOf(grn) !== String(line.period_code)) {
@@ -822,14 +904,18 @@ export const grnSmartService = {
           ? Math.round((item.amounts.grossAmount / totalGross) * 100 * 1_000_000) / 1_000_000
           : 0;
         await connection.execute(
+          // is_unbudgeted written per row, same reason saveComponentAllocations() already does
+          // this for the vendor path: the NULL budget_line_id that identifies an unbudgeted split
+          // is overwritten the moment Finance Head links a budget line during approval, so the
+          // flag has to survive independently of that column.
           `INSERT INTO grn_cost_allocation
            (id, grn_request_id, sequence_no, budget_id, budget_line_id, branch_id,
             process_id, cost_centre_id, cost_class, allocation_percentage,
             quantity, unit, unit_rate, tax_treatment, gst_rate, gst_type,
             recoverable_tax_pct, amount_without_tax, tax_amount, cgst_amount,
             sgst_amount, igst_amount, amount_with_tax, recoverable_tax_amount,
-            pnl_cost_amount, lifecycle_status, remarks, created_by)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            pnl_cost_amount, lifecycle_status, remarks, is_unbudgeted, created_by)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             randomUUID(), grnId, index + 1, item.line.budget_id, item.line.id,
             grn.branch_id, item.line.process_id ?? null, item.line.cost_centre_id ?? null,
@@ -840,7 +926,7 @@ export const grnSmartService = {
             item.amounts.taxAmount, item.amounts.cgstAmount, item.amounts.sgstAmount,
             item.amounts.igstAmount, item.amounts.grossAmount,
             item.amounts.recoverableTaxAmount, item.amounts.pnlCostAmount,
-            "draft", item.remarks, actorUserId,
+            "draft", item.remarks, item.isUnbudgeted ? 1 : 0, actorUserId,
           ]
         );
       }

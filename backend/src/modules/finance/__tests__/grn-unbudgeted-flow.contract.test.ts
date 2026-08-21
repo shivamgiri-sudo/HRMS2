@@ -44,14 +44,19 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     expect(form).toContain("? (isUnbudgetedExpense\n            ? undefined");
 
     // Every other path still REQUIRES a line, and now says so instead of asserting non-null.
-    expect(form).toContain("if (!firstLine && !(isVendor && isUnbudgetedExpense)) {");
+    // isUnbudgetedFlow (added when the same "unbudgeted" path was extended to single-line
+    // Imprest GRNs) subsumes the original `isVendor && isUnbudgetedExpense` condition here.
+    expect(form).toContain("if (!firstLine && !isUnbudgetedFlow) {");
     expect(form).toContain("The selected budget line is no longer available.");
 
     // The create payload carries what replaces the budget line.
-    expect(form).toContain("isUnbudgeted: isVendor && isUnbudgetedExpense ? true : undefined,");
-    expect(form).toContain("head: isVendor && isUnbudgetedExpense ? form.head : undefined,");
-    expect(form).toContain("subHead: isVendor && isUnbudgetedExpense ? form.subHead : undefined,");
+    expect(form).toContain("isUnbudgeted: isUnbudgetedFlow ? true : undefined,");
+    expect(form).toContain("head: isUnbudgetedFlow ? form.head : undefined,");
+    expect(form).toContain("subHead: isUnbudgetedFlow ? form.subHead : undefined,");
     expect(form).toContain("unbudgetedCostCentreId");
+    expect(form).toContain(
+      "const isUnbudgetedFlow = (isVendor && isUnbudgetedExpense) || (!isVendor && !splitMode && isImprestUnbudgeted);"
+    );
   });
 
   it("break 2: createDraft accepts an unbudgeted GRN and still validates everything else", () => {
