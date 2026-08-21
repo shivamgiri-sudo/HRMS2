@@ -617,7 +617,7 @@ async function syncCandidateProcessFromCostCentre(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT process_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
     [costCentreId],
-  ).catch(() => [[] as RowDataPacket[]] as [RowDataPacket[], unknown]);
+  ).catch(() => [[] as RowDataPacket[], undefined] as unknown as [RowDataPacket[], unknown]);
   const processId = (rows as RowDataPacket[])[0]?.process_id;
   if (!processId) return; // not linked — leave applied_for_process untouched
   await db.execute(
