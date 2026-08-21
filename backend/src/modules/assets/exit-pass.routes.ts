@@ -44,7 +44,7 @@ function fail(res: Response, error: unknown): Response {
 // branch-head-approval.routes.ts calls out.
 exitPassRouter.use(requireAuth);
 exitPassRouter.use(
-  requireRole('super_admin', 'admin', 'it_head', 'it', 'branch_admin', 'branch_head', 'employee', 'security_head', 'visitor_security'),
+  requireRole('super_admin', 'admin', 'it_head', 'it', 'branch_admin', 'branch_head', 'employee', 'security_head', 'visitor_security', 'wfm'),
 );
 
 exitPassRouter.post('/', h(async (req, res) => {

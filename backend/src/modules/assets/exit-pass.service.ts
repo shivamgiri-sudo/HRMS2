@@ -34,9 +34,12 @@ export class ExitPassError extends Error {
 const UNRESTRICTED_ROLES = ['super_admin', 'admin', 'it_head'];
 // No dedicated 'security' role_key exists live (checked mas_hrms.user_roles
 // 2026-08-21). Reusing the role keys Visitor Management already grants to
-// physical-security staff (navConfig.tsx) rather than inventing a new one
-// nothing would ever be assigned.
-const SECURITY_ROLES = ['security_head', 'visitor_security', 'branch_admin'];
+// physical-security staff (navConfig.tsx), plus 'it' and 'wfm' per owner
+// request 2026-08-21 — kept in sync with ASSET_EXIT_PASS_VERIFY's
+// role_page_access grants in 1539, or a role that can open the page would
+// 403 on every action, the exact bug branch-head-approval.routes.ts warns
+// about.
+const SECURITY_ROLES = ['security_head', 'visitor_security', 'branch_admin', 'it', 'wfm'];
 
 export interface RequestingEmployee {
   employeeId: string;
@@ -483,9 +486,9 @@ export async function verifyReturn(
   actorRoles: string[],
   input: { items: ReturnItemInput[]; remarks?: string | null },
 ): Promise<void> {
-  const isAllowed = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r) || SECURITY_ROLES.includes(r) || r === 'it');
+  const isAllowed = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r) || SECURITY_ROLES.includes(r));
   if (!isAllowed) {
-    throw new ExitPassError(403, 'Only Security, IT, or Admin roles can verify a return.');
+    throw new ExitPassError(403, 'Only Security, IT, WFM, or Admin roles can verify a return.');
   }
 
   const [rows] = await db.execute<PassRow[]>(`SELECT * FROM exit_pass_requests WHERE pass_number = ? LIMIT 1`, [passNumber]);

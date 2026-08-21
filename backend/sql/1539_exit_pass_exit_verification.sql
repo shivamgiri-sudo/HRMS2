@@ -47,7 +47,9 @@ VALUES
   (UUID(), 'it_head',         'ASSET_EXIT_PASS_VERIFY', 1, 1, 0, 0, 0, 1),
   (UUID(), 'branch_admin',    'ASSET_EXIT_PASS_VERIFY', 1, 1, 0, 0, 0, 1),
   (UUID(), 'security_head',   'ASSET_EXIT_PASS_VERIFY', 1, 1, 0, 0, 0, 1),
-  (UUID(), 'visitor_security','ASSET_EXIT_PASS_VERIFY', 1, 1, 0, 0, 0, 1)
+  (UUID(), 'visitor_security','ASSET_EXIT_PASS_VERIFY', 1, 1, 0, 0, 0, 1),
+  (UUID(), 'it',              'ASSET_EXIT_PASS_VERIFY', 1, 1, 0, 0, 0, 1),
+  (UUID(), 'wfm',             'ASSET_EXIT_PASS_VERIFY', 1, 1, 0, 0, 0, 1)
 ON DUPLICATE KEY UPDATE
   can_view      = VALUES(can_view),
   can_create    = VALUES(can_create),
