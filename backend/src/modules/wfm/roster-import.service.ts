@@ -9,6 +9,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
 import { analyzeHeaders } from './header-alias.service.js';
 import { normalizeAssignment, NormalizerConfig } from './assignment-normalizer.service.js';
+import { sqlLimitOffset } from '../../db/pagination.js';
 
 // ── Public types ────────────────────────────────────────────────────────────
 
@@ -817,12 +818,17 @@ export async function getImportRows(
   );
   const total = (countRows[0] as any).cnt as number;
 
+  // sqlLimitOffset, not a bound LIMIT ?/OFFSET ? — db.execute() prepares this statement, and on
+  // mas_hrms (MySQL 8.0.42) a bound LIMIT/OFFSET fails every call with "Incorrect arguments to
+  // mysqld_stmt_execute" regardless of the value's type. Same defect class already fixed in
+  // cost-centre-management.service.ts, report-request.service.ts and reimbursements.routes.ts —
+  // see src/db/pagination.ts. page/limit are already validated integers at the route.
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM wfm_roster_import_row
      WHERE batch_id = ?${stateClause}
      ORDER BY \`row_number\` ASC, roster_date ASC
-     LIMIT ? OFFSET ?`,
-    [batchId, ...stateParams, limit, offset]
+     ${sqlLimitOffset(limit, offset, { defaultLimit: 50, maxLimit: 5000 })}`,
+    [batchId, ...stateParams]
   );
 
   return { rows: rows as any[], total };
@@ -935,12 +941,15 @@ export async function getMissingEmployees(
     (importedRows as RowDataPacket[]).map((r) => (r.employee_id_raw as string).toUpperCase())
   );
 
-  // Get all active employees in scope
+  // Get all active employees in scope. `employees` has no `designation` column — it's
+  // designation_id, a FK to designation_master — so this threw ER_BAD_FIELD_ERROR on every call
+  // (verified live 2026-08-21, same phantom-column class as elsewhere in this codebase).
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_code, full_name, designation
-     FROM employees
-     WHERE ${scopeColumn} = ? AND employment_status = 'active'
-     ORDER BY full_name`,
+    `SELECT e.id, e.employee_code, e.full_name, desig.designation_name AS designation
+     FROM employees e
+     LEFT JOIN designation_master desig ON desig.id = e.designation_id
+     WHERE e.${scopeColumn} = ? AND e.employment_status = 'active'
+     ORDER BY e.full_name`,
     [scopeValue]
   );
 
