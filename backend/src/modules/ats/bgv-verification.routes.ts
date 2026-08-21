@@ -62,10 +62,11 @@ const bgvSensitiveLimiter = rateLimit({ windowMs: 60 * 1000, max: 15, standardHe
 
 async function requireBgvCandidateScope(req: AuthenticatedRequest, candidateId: string): Promise<void> {
   const candidate = await atsService.getCandidate(candidateId);
-  // payroll_head added alongside the route-level requireRole() grants below, for
-  // the Payroll Head salary/journey review gate (migration 1541) — without it here
-  // too, a payroll_head user would pass the outer role gate and still 403 on every
-  // call, a grant that looks real but silently does nothing.
+  // payroll_head added alongside the route-level requireRole() grants on
+  // manual-review/waive below, for the Payroll Head salary/journey review gate
+  // (migration 1541/1542) — this inner check alone is not enough: the outer
+  // requireRole() middleware runs first and 403s before this function is ever
+  // reached, so both layers must carry the same role list.
   const allowed = await hasScopedAccess(req.authUser!.id, ["admin", "hr", "recruiter", "payroll_head"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
   const recruiterProfile = await resolveRecruiterForActor(req.authUser!.id);
   const candidateRecord = candidate as unknown as Record<string, unknown>;
@@ -236,7 +237,7 @@ router.post("/candidates/:candidateId/verify/bank", requireAuth, requireRole("ad
   return res.json({ success: true, data: await verifyBankForCandidate(req.params.candidateId, req.body, { actorType: "hr", actorId: req.authUser!.id }) });
 }));
 
-router.post("/candidates/:candidateId/manual-review", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+router.post("/candidates/:candidateId/manual-review", requireAuth, requireRole("admin", "hr", "payroll_head"), h(async (req: AuthenticatedRequest, res) => {
   if (!req.body.remarks) return res.status(400).json({ success: false, message: "remarks required" });
   await requireBgvCandidateScope(req, req.params.candidateId);
   return res.json({ success: true, data: await manualReview(req.params.candidateId, req.body, req.authUser!.id) });
@@ -266,7 +267,7 @@ router.patch("/name-match/:candidateId/override", requireAuth, requireRole("admi
   return res.json({ success: true, data: await overrideNameMatchReview({ candidateId: req.params.candidateId, actorUserId: req.authUser!.id, reason }) });
 }));
 
-router.post("/candidates/:candidateId/waive", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+router.post("/candidates/:candidateId/waive", requireAuth, requireRole("admin", "hr", "payroll_head"), h(async (req: AuthenticatedRequest, res) => {
   if (!req.body.reason) return res.status(400).json({ success: false, message: "reason required" });
   await requireBgvCandidateScope(req, req.params.candidateId);
   return res.json({ success: true, data: await waiveCheck(req.params.candidateId, req.body, req.authUser!.id) });

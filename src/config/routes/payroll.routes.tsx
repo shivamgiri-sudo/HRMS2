@@ -149,7 +149,11 @@ export const payrollRouteElements = (
       <Route path="/payroll/reimbursements"      element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><Gate pageCode="PAYROLL_REIMBURSEMENTS"><ReimbursementManagement /></Gate></ProtectedRoute>} />
       <Route path="/payroll/ho-queues"           element={<ProtectedRoute roles={['super_admin','payroll_head','payroll','finance','hr','admin']}><Gate pageCode="PAYROLL_HO_QUEUES"><NativePayrollHOQueues /></Gate></ProtectedRoute>} />
       <Route path="/payroll/salary-review"            element={<ProtectedRoute roles={['super_admin','payroll_head','admin']}><Gate pageCode="PAYROLL_HEAD_SALARY_REVIEW_QUEUE"><PayrollHeadSalaryReviewQueue /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/salary-review/:employeeId" element={<ProtectedRoute roles={['super_admin','payroll_head','admin']}><Gate pageCode="PAYROLL_HEAD_SALARY_REVIEW_DETAIL"><PayrollHeadSalaryReviewDetail /></Gate></ProtectedRoute>} />
+      {/* payroll_hr/branch_head/hr added per migration 1542: the rejection
+          notification links straight here, and they need to reach it
+          read-only (to see what's wrong and resubmit) even though only
+          payroll_head/admin/super_admin can approve/reject/reopen. */}
+      <Route path="/payroll/salary-review/:employeeId" element={<ProtectedRoute roles={['super_admin','payroll_head','admin','payroll_hr','branch_head','hr']}><Gate pageCode="PAYROLL_HEAD_SALARY_REVIEW_DETAIL"><PayrollHeadSalaryReviewDetail /></Gate></ProtectedRoute>} />
       <Route path="/payroll/cheque-validation"   element={<Navigate to="/payroll/ho-queues" replace />} />
       <Route path="/payroll/epf-compliance"      element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll','hr','manager']}><Gate pageCode="PAYROLL_EPF_COMPLIANCE"><PayrollEpfCompliancePage /></Gate></ProtectedRoute>} />
       <Route path="/payroll/pf-management"       element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll']}><Gate pageCode="PAYROLL_PF_MANAGEMENT"><PfManagement /></Gate></ProtectedRoute>} />

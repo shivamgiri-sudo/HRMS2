@@ -14,21 +14,33 @@ const REVIEWER_ROLES = ["payroll_head", "admin", "super_admin"] as const;
 // underlying document/BGV/bank/salary issue, not for payroll_head to loop back to
 // themselves.
 const FIXER_ROLES = ["payroll_hr", "branch_head", "hr", "admin", "super_admin"] as const;
+// A rejection notifies exactly these people with a link straight to the detail
+// page (see reject() in the service) — they must be able to open it read-only
+// to see what's wrong, even though only REVIEWER_ROLES can approve/reject and
+// only FIXER_ROLES can resubmit. migration 1542 grants the matching
+// page_catalog access; this is the route-level half of that fix.
+const VIEWER_ROLES = ["payroll_head", "payroll_hr", "branch_head", "hr", "admin", "super_admin"] as const;
 
 router.get("/queue", requireAuth, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
   const data = await svc.getQueue({
     status: typeof req.query.status === "string" ? req.query.status : undefined,
     q: typeof req.query.q === "string" ? req.query.q : undefined,
+    branch: typeof req.query.branch === "string" ? req.query.branch : undefined,
   });
   res.json({ success: true, data });
 }));
 
-router.get("/reasons", requireAuth, requireRole(...REVIEWER_ROLES), h(async (_req, res) => {
+router.get("/branches", requireAuth, requireRole(...REVIEWER_ROLES), h(async (_req, res) => {
+  const data = await svc.listQueueBranches();
+  res.json({ success: true, data });
+}));
+
+router.get("/reasons", requireAuth, requireRole(...VIEWER_ROLES), h(async (_req, res) => {
   const data = await svc.listReasons();
   res.json({ success: true, data });
 }));
 
-router.get("/:employeeId", requireAuth, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
+router.get("/:employeeId", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await svc.getEmployeeJourney(req.params.employeeId);
   res.json({ success: true, data });
 }));
@@ -51,12 +63,12 @@ router.post("/:employeeId/package/create-and-assign", requireAuth, requireWriteA
   res.json({ success: true, data });
 }));
 
+// No effective_from in the body — accept() confirms the date already set at
+// assign time, the only date payroll actually reads. Taking a second,
+// independently-entered date here is exactly what caused the two-dates-can-
+// disagree bug fixed in 1542.
 router.post("/:employeeId/package/accept", requireAuth, requireWriteAccess, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
-  const { effective_from } = req.body as Record<string, unknown>;
-  if (!effective_from) {
-    return res.status(400).json({ success: false, message: "effective_from is required." });
-  }
-  const data = await svc.acceptPackage(req.params.employeeId, String(effective_from), req.authUser!.id);
+  const data = await svc.acceptPackage(req.params.employeeId, req.authUser!.id);
   res.json({ success: true, data });
 }));
 
@@ -82,6 +94,17 @@ router.post("/:employeeId/reject", requireAuth, requireWriteAccess, requireRole(
 
 router.post("/:employeeId/resubmit", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES), h(async (req, res) => {
   const data = await svc.resubmit(req.params.employeeId, req.authUser!.id);
+  res.json({ success: true, data });
+}));
+
+// Correction path after approval — see reopen()'s own doc comment for why
+// this never touches an already-run payroll calculation.
+router.post("/:employeeId/reopen", requireAuth, requireWriteAccess, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
+  const { reason } = req.body as Record<string, unknown>;
+  if (!reason) {
+    return res.status(400).json({ success: false, message: "reason is required." });
+  }
+  const data = await svc.reopen(req.params.employeeId, String(reason), req.authUser!.id);
   res.json({ success: true, data });
 }));
 

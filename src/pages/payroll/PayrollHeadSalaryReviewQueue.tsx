@@ -4,7 +4,13 @@
  * Lists every employee waiting on a Payroll Head decision before payroll can
  * build their salary — see payrollCalculate.service.ts's employee_payroll_head_review
  * gate (migration 1541). One central queue, all branches, per the owner decision
- * that scoping this per-branch is out of scope for v1.
+ * that scoping this per-branch is out of scope for v1 — the branch filter below is
+ * a convenience for narrowing a long list, not real per-branch access scoping.
+ *
+ * The aging badge (1542) exists because this gate now sits between "hired" and
+ * "paid": a review nobody looks at blocks that employee's pay indefinitely, and
+ * there is deliberately no automated escalation yet — this is the honest
+ * stopgap that makes an aging queue visible rather than silent.
  */
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -14,7 +20,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, Search, RefreshCw, ShieldCheck, XCircle, Clock, ArrowRight } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Loader2, Search, RefreshCw, ShieldCheck, XCircle, Clock, ArrowRight, AlertTriangle } from 'lucide-react';
 
 interface QueueRow {
   review_id: string;
@@ -24,12 +31,23 @@ interface QueueRow {
   rejection_category: string | null;
   rejection_reason_code: string | null;
   resubmit_count: number;
+  reopen_count: number;
   created_at: string;
   reviewed_at: string | null;
+  pending_hours: number;
   employee_code: string;
   full_name: string;
   designation_name: string | null;
   branch_name: string | null;
+}
+
+/** No SLA-enforcing cron here (yet) — this is the honest fallback: make aging
+ * visible at a glance rather than let a forgotten review sit invisibly. */
+function AgingBadge({ hours, status }: { hours: number; status: string }) {
+  if (status !== 'pending_review') return null;
+  if (hours >= 48) return <Badge className="bg-red-100 text-red-800"><AlertTriangle className="h-3 w-3 mr-1 inline" /> {Math.floor(hours / 24)}d pending</Badge>;
+  if (hours >= 24) return <Badge className="bg-amber-100 text-amber-800">{Math.floor(hours / 24)}d pending</Badge>;
+  return <Badge className="bg-slate-100 text-slate-500">{hours}h pending</Badge>;
 }
 
 const STATUS_META: Record<string, { label: string; className: string; icon: typeof Clock }> = {
@@ -42,6 +60,8 @@ export default function PayrollHeadSalaryReviewQueue() {
   const navigate = useNavigate();
   const [status, setStatus] = useState<'pending_review' | 'approved' | 'rejected'>('pending_review');
   const [q, setQ] = useState('');
+  const [branch, setBranch] = useState('');
+  const [branches, setBranches] = useState<string[]>([]);
   const [rows, setRows] = useState<QueueRow[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -50,6 +70,7 @@ export default function PayrollHeadSalaryReviewQueue() {
     try {
       const params = new URLSearchParams({ status });
       if (q.trim()) params.set('q', q.trim());
+      if (branch) params.set('branch', branch);
       const r = await hrmsApi.get<{ success: boolean; data: QueueRow[] }>(`/api/payroll-head-review/queue?${params}`);
       setRows((r as any)?.data ?? []);
     } catch {
@@ -57,9 +78,15 @@ export default function PayrollHeadSalaryReviewQueue() {
     } finally {
       setLoading(false);
     }
-  }, [status, q]);
+  }, [status, q, branch]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    hrmsApi.get<{ success: boolean; data: string[] }>('/api/payroll-head-review/branches')
+      .then((r: any) => setBranches(r?.data ?? []))
+      .catch(() => setBranches([]));
+  }, []);
 
   return (
     <DashboardLayout>
@@ -102,6 +129,13 @@ export default function PayrollHeadSalaryReviewQueue() {
                   className="pl-8"
                 />
               </div>
+              <Select value={branch || '__all__'} onValueChange={(v) => setBranch(v === '__all__' ? '' : v)}>
+                <SelectTrigger className="w-[200px]"><SelectValue placeholder="All branches" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All branches</SelectItem>
+                  {branches.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
           </CardHeader>
           <CardContent>
@@ -134,11 +168,15 @@ export default function PayrollHeadSalaryReviewQueue() {
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
+                        <AgingBadge hours={row.pending_hours} status={row.status} />
                         {row.status === 'pending_review' && !row.package_accepted && (
                           <Badge className="bg-slate-100 text-slate-600">Package not accepted</Badge>
                         )}
                         {row.resubmit_count > 0 && (
                           <Badge className="bg-blue-100 text-blue-800">Resubmitted ×{row.resubmit_count}</Badge>
+                        )}
+                        {row.reopen_count > 0 && (
+                          <Badge className="bg-purple-100 text-purple-800">Reopened ×{row.reopen_count}</Badge>
                         )}
                         <Badge className={meta.className}>
                           <Icon className="h-3 w-3 mr-1 inline" /> {meta.label}

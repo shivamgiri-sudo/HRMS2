@@ -93,6 +93,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "LABOUR_COMPLIANCE",
     "DPDP_COMPLIANCE",
     "DPDP_WITHDRAWAL_ADMIN",
+    // Payroll Head review-rejection notification links straight here (migration 1542).
+    "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",
   ],
   recruiter: [
     "JOB_REQUISITION",
@@ -245,6 +247,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     // included payroll_hr from the start), but this page grant was found inactive in
     // role_page_access — reactivated in migration 1236, listed here so the applier keeps it.
     "ATS_ONBOARDING_REQUESTS",
+    // Payroll Head review-rejection notification links straight here (migration 1542).
+    "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",
   ],
   finance: [
     "PAYROLL_HR_DASHBOARD",
@@ -477,6 +481,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "OPERATIONS_KPI",
     "AGENT_PERFORMANCE",
     "REPORTS_CENTER",
+    // Payroll Head review-rejection notification links straight here (migration 1542).
+    "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",
   ],
 
   // 5 active users. Declared on /provisioning/admin alongside hr and admin.

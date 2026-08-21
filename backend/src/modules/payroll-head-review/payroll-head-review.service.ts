@@ -9,8 +9,27 @@
  * This module composes existing per-domain services rather than re-querying their
  * tables — the journey view should show exactly what those services already
  * consider true, not a second opinion that can drift from theirs.
+ *
+ * Hardened in migration 1542 after a full end-to-end rethink post-1541:
+ *   - assign/accept no longer take two independent dates. Only assign takes one
+ *     (the date salary_component_assignments.effective_date is written with,
+ *     which is the ONLY date payroll actually reads); accept just confirms it.
+ *   - approve/reject/resubmit/reopen are atomic (UPDATE ... WHERE status = ?,
+ *     checked via affectedRows) instead of check-then-act, so two concurrent
+ *     actions on the same employee can no longer silently race.
+ *   - rejecting for a 'salary' reason resets the package/acceptance state, so
+ *     re-approving after resubmit cannot happen with the same wrong package
+ *     still marked accepted.
+ *   - every transition is written to employee_payroll_head_review_history, not
+ *     just held in the single mutable review row (which only ever remembered
+ *     the latest rejection).
+ *   - rejection notifies the employee too, and falls back to notifying every
+ *     payroll_head-role user (plus flags itself in the response) if the normal
+ *     targets both resolve to nobody — a rejection must never vanish silently.
+ *   - 'approved' is no longer fully terminal: reopen() provides a correction
+ *     path, itself gated and audited.
  */
-import type { RowDataPacket } from "mysql2";
+import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { getEmployeeBgvStatus } from "../employees/employee-bgv.service.js";
 import { buildBankReadinessReport } from "../payroll/bank-payment-readiness.service.js";
@@ -41,9 +60,38 @@ async function audit(actorUserId: string, actionType: string, employeeId: string
   ).catch(() => {});
 }
 
+async function writeHistory(params: {
+  employeeId: string;
+  reviewId: string;
+  action: "approved" | "rejected" | "resubmitted" | "reopened";
+  actorUserId: string;
+  rejectionCategory?: ReasonCategory | null;
+  rejectionReasonCode?: string | null;
+  rejectionRemarks?: string | null;
+  reopenReason?: string | null;
+  notifiedPayrollHrUserId?: string | null;
+  notifiedBranchHeadUserId?: string | null;
+  notifiedEmployee?: boolean;
+}) {
+  await db.execute(
+    `INSERT INTO employee_payroll_head_review_history
+       (id, employee_id, review_id, action, actor_user_id,
+        rejection_category, rejection_reason_code, rejection_remarks, reopen_reason,
+        notified_payroll_hr_user_id, notified_branch_head_user_id, notified_employee)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      params.employeeId, params.reviewId, params.action, params.actorUserId,
+      params.rejectionCategory ?? null, params.rejectionReasonCode ?? null, params.rejectionRemarks ?? null,
+      params.reopenReason ?? null,
+      params.notifiedPayrollHrUserId ?? null, params.notifiedBranchHeadUserId ?? null,
+      params.notifiedEmployee ? 1 : 0,
+    ]
+  ).catch((e) => console.warn("[payroll-head-review] history write failed:", e));
+}
+
 // ── Queue ────────────────────────────────────────────────────────────────────
 
-export async function getQueue(filters: { status?: string; q?: string }) {
+export async function getQueue(filters: { status?: string; q?: string; branch?: string }) {
   const status = filters.status || "pending_review";
   const conds: string[] = ["r.status = ?"];
   const params: unknown[] = [status];
@@ -51,10 +99,15 @@ export async function getQueue(filters: { status?: string; q?: string }) {
     conds.push("(e.full_name LIKE ? OR e.employee_code LIKE ?)");
     params.push(`%${filters.q}%`, `%${filters.q}%`);
   }
+  if (filters.branch) {
+    conds.push("b.branch_name = ?");
+    params.push(filters.branch);
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT r.id AS review_id, r.employee_id, r.status, r.package_accepted,
             r.rejection_category, r.rejection_reason_code, r.rejection_remarks,
-            r.resubmit_count, r.created_at, r.reviewed_at,
+            r.resubmit_count, r.reopen_count, r.created_at, r.reviewed_at,
+            TIMESTAMPDIFF(HOUR, r.created_at, NOW()) AS pending_hours,
             e.employee_code, e.full_name, dm.designation_name, b.branch_name
        FROM employee_payroll_head_review r
        JOIN employees e ON e.id = r.employee_id
@@ -66,6 +119,18 @@ export async function getQueue(filters: { status?: string; q?: string }) {
     params
   );
   return rows;
+}
+
+export async function listQueueBranches() {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT b.branch_name
+       FROM employee_payroll_head_review r
+       JOIN employees e ON e.id = r.employee_id
+       LEFT JOIN branch_master b ON b.id = e.branch_id
+      WHERE b.branch_name IS NOT NULL
+      ORDER BY b.branch_name`
+  );
+  return rows.map((r) => r.branch_name as string);
 }
 
 // ── Single-employee journey aggregation ─────────────────────────────────────
@@ -83,6 +148,7 @@ export async function getEmployeeJourney(employeeId: string) {
     checklistRows,
     salaryAssignmentRows,
     componentRows,
+    history,
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT e.*, b.branch_name, dm.designation_name FROM employees e
@@ -130,6 +196,10 @@ export async function getEmployeeJourney(employeeId: string) {
         ORDER BY effective_date DESC LIMIT 1`,
       [employeeId]
     ).then(([r]) => r as RowDataPacket[]),
+    db.execute<RowDataPacket[]>(
+      `SELECT * FROM employee_payroll_head_review_history WHERE employee_id = ? ORDER BY created_at DESC`,
+      [employeeId]
+    ).then(([r]) => r as RowDataPacket[]).catch(() => []),
   ]);
 
   const employee = employeeRows[0] ?? null;
@@ -147,6 +217,7 @@ export async function getEmployeeJourney(employeeId: string) {
     joining_checklist: checklistRows,
     salary_assignment: salaryAssignmentRows[0] ?? null,
     salary_components: componentRows[0] ?? null,
+    history,
   };
 }
 
@@ -173,11 +244,16 @@ async function writeComponentAssignment(
       actorUserId, approvalReference,
     ]
   );
+  // package_effective_from is set here too, from the SAME date — accept() no
+  // longer takes its own independent date. Before 1542 these were two
+  // separately-entered dates that could disagree; only this one was ever
+  // actually read by payroll, so the other was pure display drift waiting to
+  // happen.
   await db.execute(
     `UPDATE employee_payroll_head_review SET salary_package_id = ?, package_accepted = 0,
-            package_accepted_by = NULL, package_accepted_at = NULL, package_effective_from = NULL
+            package_accepted_by = NULL, package_accepted_at = NULL, package_effective_from = ?
       WHERE employee_id = ?`,
-    [pkg.id, employeeId]
+    [pkg.id, effectiveDate, employeeId]
   );
 }
 
@@ -192,12 +268,7 @@ export async function assignPackage(
   const pkg = await getPackageById(packageId);
   if (!pkg) throw httpError("Salary package not found.", 404, "PACKAGE_NOT_FOUND");
   await writeComponentAssignment(employeeId, pkg as RowDataPacket, effectiveDate, actorUserId, review.id);
-  await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_ASSIGNED", employeeId, { package_id: packageId });
-  // Lightweight on purpose: every caller of these mutating actions (including
-  // this repo's own frontend) re-fetches the full journey separately right
-  // after anyway. Returning getEmployeeJourney() here recomputed the
-  // expensive org-wide bank readiness report a second time per click, for a
-  // response nothing actually reads.
+  await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_ASSIGNED", employeeId, { package_id: packageId, effective_date: effectiveDate });
   return { review: await getReviewRow(employeeId) };
 }
 
@@ -214,60 +285,40 @@ export async function createAndAssignPackage(
   // explicit decision that package assignment stays catalog-only.
   const pkg = await createPackage(packageData, actorUserId);
   await writeComponentAssignment(employeeId, pkg as RowDataPacket, effectiveDate, actorUserId, review.id);
-  await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_CREATED_AND_ASSIGNED", employeeId, { package_id: (pkg as RowDataPacket).id });
-  // Lightweight on purpose: every caller of these mutating actions (including
-  // this repo's own frontend) re-fetches the full journey separately right
-  // after anyway. Returning getEmployeeJourney() here recomputed the
-  // expensive org-wide bank readiness report a second time per click, for a
-  // response nothing actually reads.
+  await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_CREATED_AND_ASSIGNED", employeeId, { package_id: (pkg as RowDataPacket).id, effective_date: effectiveDate });
   return { review: await getReviewRow(employeeId) };
 }
 
-export async function acceptPackage(employeeId: string, effectiveFrom: string, actorUserId: string) {
+export async function acceptPackage(employeeId: string, actorUserId: string) {
   const review = await getReviewRow(employeeId);
   if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
   if (!review.salary_package_id) {
     throw httpError("No salary package assigned yet — nothing to accept.", 400, "NO_PACKAGE");
   }
+  // No date param here on purpose — package_effective_from was already set,
+  // from the same effective_date used at assign, by writeComponentAssignment.
+  // Accepting only confirms it; it cannot introduce a second, disagreeing date.
   await db.execute(
     `UPDATE employee_payroll_head_review
-        SET package_accepted = 1, package_accepted_by = ?, package_accepted_at = NOW(),
-            package_effective_from = ?
-      WHERE employee_id = ?`,
-    [actorUserId, effectiveFrom, employeeId]
-  );
-  await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_ACCEPTED", employeeId, { effective_from: effectiveFrom });
-  // Lightweight on purpose: every caller of these mutating actions (including
-  // this repo's own frontend) re-fetches the full journey separately right
-  // after anyway. Returning getEmployeeJourney() here recomputed the
-  // expensive org-wide bank readiness report a second time per click, for a
-  // response nothing actually reads.
-  return { review: await getReviewRow(employeeId) };
-}
-
-// ── Overall decision ─────────────────────────────────────────────────────────
-
-export async function approve(employeeId: string, actorUserId: string) {
-  const review = await getReviewRow(employeeId);
-  if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
-  if (review.status !== "pending_review") {
-    throw httpError(`Cannot approve a review with status "${review.status}".`, 409, "NOT_PENDING");
-  }
-  if (!review.package_accepted) {
-    throw httpError("Salary package must be accepted before approval.", 409, "PACKAGE_NOT_ACCEPTED");
-  }
-  await db.execute(
-    `UPDATE employee_payroll_head_review SET status = 'approved', reviewed_by = ?, reviewed_at = NOW()
+        SET package_accepted = 1, package_accepted_by = ?, package_accepted_at = NOW()
       WHERE employee_id = ?`,
     [actorUserId, employeeId]
   );
-  await audit(actorUserId, "PAYROLL_HEAD_REVIEW_APPROVED", employeeId, {});
-  // Lightweight on purpose: every caller of these mutating actions (including
-  // this repo's own frontend) re-fetches the full journey separately right
-  // after anyway. Returning getEmployeeJourney() here recomputed the
-  // expensive org-wide bank readiness report a second time per click, for a
-  // response nothing actually reads.
+  await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_ACCEPTED", employeeId, { effective_from: review.package_effective_from });
   return { review: await getReviewRow(employeeId) };
+}
+
+// ── Notification helpers ─────────────────────────────────────────────────────
+
+/** Every active user holding the payroll_head role — the fallback audience when
+ * a rejection's normal targets (offer's Payroll HR / Branch Head) both resolve
+ * to nobody. A rejection must never notify zero people. */
+async function payrollHeadRoleUserIds(): Promise<string[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT ur.user_id FROM user_roles ur
+      WHERE ur.active_status = 1 AND ur.role_key = 'payroll_head'`
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  return rows.map((r) => String(r.user_id));
 }
 
 /**
@@ -309,6 +360,35 @@ async function resolveRejectionNotifyTargets(employeeId: string): Promise<{
   };
 }
 
+// ── Overall decision ─────────────────────────────────────────────────────────
+
+export async function approve(employeeId: string, actorUserId: string) {
+  const review = await getReviewRow(employeeId);
+  if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
+  if (review.status !== "pending_review") {
+    throw httpError(`Cannot approve a review with status "${review.status}".`, 409, "NOT_PENDING");
+  }
+  if (!review.package_accepted) {
+    throw httpError("Salary package must be accepted before approval.", 409, "PACKAGE_NOT_ACCEPTED");
+  }
+  // Atomic: the WHERE clause re-checks status at the moment of the write, not
+  // just at the SELECT above. Two concurrent actions on the same employee
+  // (e.g. one approve, one reject, both reading pending_review a moment
+  // apart) can now only ever have ONE of them actually take effect — the
+  // loser's UPDATE affects 0 rows and gets a clear 409, not a silent overwrite.
+  const [result] = await db.execute<ResultSetHeader>(
+    `UPDATE employee_payroll_head_review SET status = 'approved', reviewed_by = ?, reviewed_at = NOW()
+      WHERE employee_id = ? AND status = 'pending_review'`,
+    [actorUserId, employeeId]
+  );
+  if (result.affectedRows === 0) {
+    throw httpError("This review's status just changed — please refresh and try again.", 409, "CONFLICT");
+  }
+  await audit(actorUserId, "PAYROLL_HEAD_REVIEW_APPROVED", employeeId, {});
+  await writeHistory({ employeeId, reviewId: review.id, action: "approved", actorUserId });
+  return { review: await getReviewRow(employeeId) };
+}
+
 export async function reject(
   employeeId: string,
   category: ReasonCategory,
@@ -332,45 +412,92 @@ export async function reject(
     throw httpError(`"${reasonCode}" is not a valid reason for category "${category}".`, 400, "INVALID_REASON");
   }
 
-  await db.execute(
+  // A 'salary' rejection resets the package/acceptance state — otherwise the
+  // reviewer could resubmit and re-approve with the SAME wrong package still
+  // marked accepted, having fixed nothing. Every other category leaves the
+  // package alone: a documents/BGV/bank issue doesn't mean the salary was wrong.
+  const salaryClause = category === "salary"
+    ? `, salary_package_id = NULL, package_accepted = 0, package_accepted_by = NULL,
+        package_accepted_at = NULL, package_effective_from = NULL`
+    : "";
+  const [result] = await db.execute<ResultSetHeader>(
     `UPDATE employee_payroll_head_review
         SET status = 'rejected', reviewed_by = ?, reviewed_at = NOW(),
             rejection_category = ?, rejection_reason_code = ?, rejection_remarks = ?
-      WHERE employee_id = ?`,
+            ${salaryClause}
+      WHERE employee_id = ? AND status = 'pending_review'`,
     [actorUserId, category, reasonCode, remarks.trim(), employeeId]
   );
+  if (result.affectedRows === 0) {
+    throw httpError("This review's status just changed — please refresh and try again.", 409, "CONFLICT");
+  }
   await audit(actorUserId, "PAYROLL_HEAD_REVIEW_REJECTED", employeeId, { category, reasonCode, remarks });
 
-  const targets = await resolveRejectionNotifyTargets(employeeId);
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT full_name, employee_code FROM employees WHERE id = ? LIMIT 1`, [employeeId]
+    `SELECT full_name, employee_code, user_id FROM employees WHERE id = ? LIMIT 1`, [employeeId]
   );
   const empName = empRows[0]?.full_name ?? "the employee";
-  const title = `Salary review rejected: ${empName}`;
-  const description = `Category: ${category} — ${reasonCode}. ${remarks.trim()}`;
+  const empUserId = empRows[0]?.user_id ? String(empRows[0].user_id) : null;
+
+  let targets = await resolveRejectionNotifyTargets(employeeId);
+  let usedFallback = false;
+  let fallbackUserIds: string[] = [];
+  if (!targets.payrollHrUserId && !targets.branchHeadUserId) {
+    // Never let a rejection notify nobody — fall back to every payroll_head
+    // user, since they're the ones who saw it happen and can chase it up.
+    usedFallback = true;
+    fallbackUserIds = await payrollHeadRoleUserIds();
+  }
+
   const actionUrl = `/payroll/salary-review/${employeeId}`;
-  await Promise.allSettled(
-    [targets.payrollHrUserId, targets.branchHeadUserId]
+  const reviewerDescription = `Category: ${category} — ${reasonCode}. ${remarks.trim()}`;
+  const employeeDescription = `Your salary setup needs attention: ${remarks.trim()}. HR/your manager has been notified.`;
+
+  const notifyResults = await Promise.allSettled([
+    ...[targets.payrollHrUserId, targets.branchHeadUserId, ...fallbackUserIds]
       .filter((id): id is string => !!id)
       .map((userId) =>
         inboxService.createItem({
           user_id: userId,
           type: "payroll_head_review_rejected",
-          title,
-          description,
+          title: `Salary review rejected: ${empName}`,
+          description: usedFallback
+            ? `No offer/approval history found to route this to the right person automatically. ${reviewerDescription}`
+            : reviewerDescription,
           entity_type: "employee",
           entity_id: employeeId,
           action_url: actionUrl,
           priority: "high",
         })
-      )
-  );
-  // Lightweight on purpose: every caller of these mutating actions (including
-  // this repo's own frontend) re-fetches the full journey separately right
-  // after anyway. Returning getEmployeeJourney() here recomputed the
-  // expensive org-wide bank readiness report a second time per click, for a
-  // response nothing actually reads.
-  return { review: await getReviewRow(employeeId) };
+      ),
+    ...(empUserId ? [inboxService.createItem({
+      user_id: empUserId,
+      type: "payroll_head_review_rejected_employee",
+      title: "Your salary setup needs attention",
+      description: employeeDescription,
+      entity_type: "employee",
+      entity_id: employeeId,
+      priority: "normal",
+    })] : []),
+  ]);
+  const anyNotified = notifyResults.some((r) => r.status === "fulfilled");
+
+  await writeHistory({
+    employeeId, reviewId: review.id, action: "rejected", actorUserId,
+    rejectionCategory: category, rejectionReasonCode: reasonCode, rejectionRemarks: remarks.trim(),
+    notifiedPayrollHrUserId: targets.payrollHrUserId,
+    notifiedBranchHeadUserId: targets.branchHeadUserId,
+    notifiedEmployee: !!empUserId,
+  });
+
+  return {
+    review: await getReviewRow(employeeId),
+    notification: {
+      notified: anyNotified,
+      usedFallback,
+      employeeNotified: !!empUserId,
+    },
+  };
 }
 
 export async function resubmit(employeeId: string, actorUserId: string) {
@@ -379,18 +506,49 @@ export async function resubmit(employeeId: string, actorUserId: string) {
   if (review.status !== "rejected") {
     throw httpError(`Cannot resubmit a review with status "${review.status}".`, 409, "NOT_REJECTED");
   }
-  await db.execute(
+  const [result] = await db.execute<ResultSetHeader>(
     `UPDATE employee_payroll_head_review
         SET status = 'pending_review', resubmitted_at = NOW(), resubmit_count = resubmit_count + 1
-      WHERE employee_id = ?`,
+      WHERE employee_id = ? AND status = 'rejected'`,
     [employeeId]
   );
+  if (result.affectedRows === 0) {
+    throw httpError("This review's status just changed — please refresh and try again.", 409, "CONFLICT");
+  }
   await audit(actorUserId, "PAYROLL_HEAD_REVIEW_RESUBMITTED", employeeId, {});
-  // Lightweight on purpose: every caller of these mutating actions (including
-  // this repo's own frontend) re-fetches the full journey separately right
-  // after anyway. Returning getEmployeeJourney() here recomputed the
-  // expensive org-wide bank readiness report a second time per click, for a
-  // response nothing actually reads.
+  await writeHistory({ employeeId, reviewId: review.id, action: "resubmitted", actorUserId });
+  return { review: await getReviewRow(employeeId) };
+}
+
+/**
+ * Correction path for a mistake caught after approval. Deliberately does NOT
+ * touch any already-run payroll calculation or payment — it only re-gates
+ * FUTURE runs by moving the review back to pending_review. A reason is
+ * mandatory and the whole thing is heavily audited (sensitive_action_log +
+ * history), since un-terminal-ing an approval is exactly the kind of action
+ * that needs a clear trail.
+ */
+export async function reopen(employeeId: string, reason: string, actorUserId: string) {
+  const review = await getReviewRow(employeeId);
+  if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
+  if (review.status !== "approved") {
+    throw httpError(`Cannot reopen a review with status "${review.status}".`, 409, "NOT_APPROVED");
+  }
+  if (!reason || !reason.trim()) {
+    throw httpError("A reason is required to reopen an approved review.", 400, "REASON_REQUIRED");
+  }
+  const [result] = await db.execute<ResultSetHeader>(
+    `UPDATE employee_payroll_head_review
+        SET status = 'pending_review', reopened_at = NOW(), reopened_by = ?,
+            reopen_reason = ?, reopen_count = reopen_count + 1
+      WHERE employee_id = ? AND status = 'approved'`,
+    [actorUserId, reason.trim(), employeeId]
+  );
+  if (result.affectedRows === 0) {
+    throw httpError("This review's status just changed — please refresh and try again.", 409, "CONFLICT");
+  }
+  await audit(actorUserId, "PAYROLL_HEAD_REVIEW_REOPENED", employeeId, { reason: reason.trim() });
+  await writeHistory({ employeeId, reviewId: review.id, action: "reopened", actorUserId, reopenReason: reason.trim() });
   return { review: await getReviewRow(employeeId) };
 }
 

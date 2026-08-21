@@ -49,6 +49,7 @@ import { resolveVerifiedDob } from "../ats/ageVerification.service.js";
 import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
 import { registerEmployeeInCosec } from "../integrations/cosec/cosec-registration.service.js";
 import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
+import { inboxService } from "../inbox/inbox.service.js";
 
 export interface EmployeeCreationInput {
   candidateId: string;
@@ -446,6 +447,33 @@ export async function createEmployeeFromCandidate(
     result.success = true;
     result.employeeId = employeeId;
     result.employeeCode = employeeCode;
+
+    // Payroll Head mandatory review gate (migration 1541/1542): nothing told
+    // any payroll_head user a new pending_review row existed except them
+    // proactively checking the queue. Post-commit, fire-and-forget — mirrors
+    // the AML screening block below, and must never be able to affect
+    // whether this hire itself succeeded.
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT ur.user_id FROM user_roles ur WHERE ur.active_status = 1 AND ur.role_key = 'payroll_head'`
+    ).then(async ([rows]) => {
+      const userIds = (rows as RowDataPacket[]).map((r) => String(r.user_id));
+      await Promise.allSettled(
+        userIds.map((userId) =>
+          inboxService.createItem({
+            user_id: userId,
+            type: 'payroll_head_review_pending',
+            title: `Salary review needed: ${candRow?.full_name ?? employeeCode}`,
+            description: `New employee ${employeeCode} is waiting on salary/document/BGV/bank review before payroll can build their salary.`,
+            entity_type: 'employee',
+            entity_id: employeeId,
+            action_url: `/payroll/salary-review/${employeeId}`,
+            priority: 'normal',
+          })
+        )
+      );
+    }).catch((error) => {
+      console.error(`[EmployeeOrchestrator] Could not notify payroll_head of new review for ${employeeCode}:`, (error as Error)?.message);
+    });
 
     // AML screening, once the employee code exists and the hire is committed.
     //

@@ -2,12 +2,26 @@
  * Single-employee salary/journey review — BGV, documents, bank, joining-kit
  * e-sign status, and the salary package itself, all in one place, with the
  * approve/reject/accept-package actions that gate payroll eligibility
- * (employee_payroll_head_review, migration 1541).
+ * (employee_payroll_head_review, migration 1541/1542).
+ *
+ * Hardened in 1542 after a full end-to-end rethink:
+ *   - one effective date (set at assign), not two that could disagree.
+ *   - button visibility follows the actual signed-in role: only reviewers
+ *     (payroll_head/admin/super_admin) see Approve/Reject/Reopen; the
+ *     rejected-state Resubmit banner is visible to everyone who can reach
+ *     this page (view access now includes payroll_hr/branch_head/hr) but
+ *     only actually works for fixer roles — the backend enforces that, this
+ *     just says so plainly instead of pretending anyone can click it.
+ *   - inline Verify/Reject on documents and Verify/Waive on BGV checks,
+ *     reusing the existing endpoints already granted to payroll_head.
+ *   - a Reopen path for an approved review, and a visible history timeline
+ *     instead of only ever showing the latest rejection.
  */
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
+import { useWorkforceAccess } from '@/hooks/useUserRole';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -20,20 +34,27 @@ import {
 } from '@/components/ui/dialog';
 import {
   Loader2, ArrowLeft, CheckCircle2, XCircle, FileText, ShieldCheck, Banknote,
-  IndianRupee, FileSignature, AlertTriangle,
+  IndianRupee, FileSignature, AlertTriangle, RotateCcw, History as HistoryIcon,
 } from 'lucide-react';
 
 const fmt = (v: number | null | undefined) => v == null ? '—' : `₹${Math.round(Number(v)).toLocaleString('en-IN')}`;
+const REVIEWER_ROLES = ['payroll_head', 'admin', 'super_admin'];
+const FIXER_ROLES = ['payroll_hr', 'branch_head', 'hr', 'admin', 'super_admin'];
 
 interface Reason { code: string; category: string; label: string; }
 
 export default function PayrollHeadSalaryReviewDetail() {
   const { employeeId } = useParams<{ employeeId: string }>();
   const navigate = useNavigate();
+  const { roleKeys, hasAnyRole } = useWorkforceAccess();
+  const isReviewer = hasAnyRole(...REVIEWER_ROLES);
+  const isFixer = hasAnyRole(...FIXER_ROLES);
+
   const [journey, setJourney] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const [reasons, setReasons] = useState<Reason[]>([]);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -41,10 +62,12 @@ export default function PayrollHeadSalaryReviewDetail() {
   const [rejectReasonCode, setRejectReasonCode] = useState('');
   const [rejectRemarks, setRejectRemarks] = useState('');
 
+  const [reopenOpen, setReopenOpen] = useState(false);
+  const [reopenReason, setReopenReason] = useState('');
+
   const [packages, setPackages] = useState<any[]>([]);
   const [selectedPackageId, setSelectedPackageId] = useState('');
   const [effectiveDate, setEffectiveDate] = useState('');
-  const [acceptEffectiveFrom, setAcceptEffectiveFrom] = useState('');
 
   const load = useCallback(async () => {
     if (!employeeId) return;
@@ -68,10 +91,6 @@ export default function PayrollHeadSalaryReviewDetail() {
       .catch(() => setReasons([]));
   }, []);
 
-  // Scoped to the employee's own branch — salary_package_master is keyed by
-  // branch + cost centre + band, and an unfiltered fetch here would repeat
-  // the exact bug already fixed on the offer-creation page (every package,
-  // any branch, in one dropdown).
   const employeeBranch = journey?.employee?.branch_name as string | undefined;
   useEffect(() => {
     if (!employeeBranch) { setPackages([]); return; }
@@ -84,12 +103,15 @@ export default function PayrollHeadSalaryReviewDetail() {
   const review = journey?.review;
   const employee = journey?.employee;
   const status = review?.status as string | undefined;
+  const bgvCandidateId = journey?.bgv?.candidateId as string | null | undefined;
 
-  async function runAction(fn: () => Promise<unknown>) {
+  async function runAction(fn: () => Promise<unknown>, successNotice?: string) {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       await fn();
+      if (successNotice) setNotice(successNotice);
       await load();
     } catch (e: any) {
       setError(e?.message ?? 'Action failed.');
@@ -105,31 +127,49 @@ export default function PayrollHeadSalaryReviewDetail() {
   );
 
   const acceptPackage = () => runAction(() =>
-    hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/accept`, {
-      effective_from: acceptEffectiveFrom,
-    })
+    hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/accept`, {})
   );
 
   const approve = () => runAction(() =>
     hrmsApi.post(`/api/payroll-head-review/${employeeId}/approve`, {})
   );
 
-  // Deliberately callable by whoever can reach this page — the backend is the
-  // real gate (resubmit is role-restricted to payroll_hr/branch_head/hr/admin
-  // /super_admin, not payroll_head, since the reviewer isn't the fixer). A
-  // payroll_head clicking this sees a clear 403 via the error banner below,
-  // rather than the action being silently unreachable.
   const resubmit = () => runAction(() =>
     hrmsApi.post(`/api/payroll-head-review/${employeeId}/resubmit`, {})
   );
 
   const submitReject = () => runAction(async () => {
-    await hrmsApi.post(`/api/payroll-head-review/${employeeId}/reject`, {
+    const res: any = await hrmsApi.post(`/api/payroll-head-review/${employeeId}/reject`, {
       category: rejectCategory, reason_code: rejectReasonCode, remarks: rejectRemarks,
     });
     setRejectOpen(false);
     setRejectCategory(''); setRejectReasonCode(''); setRejectRemarks('');
+    if (res?.data?.notification?.usedFallback) {
+      setNotice('No offer/approval history was found to route this to automatically — every payroll_head user was notified instead.');
+    }
   });
+
+  const submitReopen = () => runAction(async () => {
+    await hrmsApi.post(`/api/payroll-head-review/${employeeId}/reopen`, { reason: reopenReason });
+    setReopenOpen(false);
+    setReopenReason('');
+  }, 'Review reopened — salary will not build for this employee again until re-approved.');
+
+  const verifyDocument = (docId: string, action: 'verified' | 'rejected') => runAction(() =>
+    hrmsApi.patch(`/api/employee-docs/${employeeId}/${docId}/verify`, { action })
+  );
+
+  const bgvManualReview = (checkId: string, status: 'verified' | 'mismatch' | 'failed') => runAction(() =>
+    hrmsApi.post(`/api/ats/bgv/candidates/${bgvCandidateId}/manual-review`, {
+      checkId, status, remarks: `Reviewed from Payroll Head salary review screen (${status}).`,
+    })
+  );
+
+  const bgvWaive = (checkId: string) => runAction(() =>
+    hrmsApi.post(`/api/ats/bgv/candidates/${bgvCandidateId}/waive`, {
+      checkId, exceptionType: 'waiver', reason: 'Waived from Payroll Head salary review screen.',
+    })
+  );
 
   if (loading) {
     return (
@@ -157,6 +197,17 @@ export default function PayrollHeadSalaryReviewDetail() {
             <AlertTriangle className="h-4 w-4" /> {error}
           </div>
         )}
+        {notice && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4" /> {notice}
+          </div>
+        )}
+        {!isReviewer && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+            You're viewing this because you were notified about it{isFixer ? " — you can resubmit once it's fixed" : ''}.
+            Only Payroll Head/Admin can approve, reject, or reopen a review.
+          </div>
+        )}
 
         <Card>
           <CardHeader>
@@ -182,9 +233,24 @@ export default function PayrollHeadSalaryReviewDetail() {
                 <div className="font-semibold">Rejected — {review.rejection_category} / {review.rejection_reason_code}</div>
                 <div className="mt-1">{review.rejection_remarks}</div>
               </div>
-              <Button disabled={busy} variant="outline" onClick={() => void resubmit()}>
-                Mark Fixed &amp; Resubmit for Review
+              <div className="flex items-center gap-3">
+                <Button disabled={busy} variant="outline" onClick={() => void resubmit()}>
+                  Mark Fixed &amp; Resubmit for Review
+                </Button>
+                <span className="text-xs text-slate-500">
+                  Only Branch Payroll HR, Branch Head, HR, or Admin can resubmit.
+                </span>
+              </div>
+            </CardContent>
+          )}
+          {status === 'approved' && isReviewer && (
+            <CardContent className="pt-0">
+              <Button disabled={busy} variant="outline" onClick={() => setReopenOpen(true)}>
+                <RotateCcw className="h-4 w-4 mr-2" /> Reopen for Correction
               </Button>
+              <p className="text-xs text-slate-500 mt-1">
+                Only affects future payroll runs — never undoes a run that already used this data.
+              </p>
             </CardContent>
           )}
         </Card>
@@ -199,11 +265,11 @@ export default function PayrollHeadSalaryReviewDetail() {
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div><span className="text-slate-500">Current CTC (offer):</span> {fmt(journey?.salary_assignment?.ctc_annual ? journey.salary_assignment.ctc_annual / 12 : null)}/mo</div>
               <div><span className="text-slate-500">Assigned package:</span> {review?.salary_package_id ? 'Assigned' : 'Not assigned'}</div>
-              <div><span className="text-slate-500">Package accepted:</span> {review?.package_accepted ? `Yes (from ${review.package_effective_from ?? '—'})` : 'No'}</div>
+              <div><span className="text-slate-500">Package accepted:</span> {review?.package_accepted ? `Yes (effective ${review.package_effective_from ?? '—'})` : review?.salary_package_id ? `No — pending acceptance (effective ${review.package_effective_from ?? '—'})` : 'No'}</div>
               <div><span className="text-slate-500">Real component breakdown on file:</span> {journey?.salary_components ? 'Yes' : 'No — falls back to generic template split'}</div>
             </div>
 
-            {status === 'pending_review' && (
+            {status === 'pending_review' && isReviewer && (
               <div className="grid grid-cols-[1fr,auto,auto] gap-2 items-end pt-2 border-t border-slate-100">
                 <div>
                   <Label className="text-xs">Salary Package</Label>
@@ -228,14 +294,10 @@ export default function PayrollHeadSalaryReviewDetail() {
               </div>
             )}
 
-            {status === 'pending_review' && review?.salary_package_id && !review?.package_accepted && (
-              <div className="grid grid-cols-[1fr,auto] gap-2 items-end pt-2 border-t border-slate-100">
-                <div>
-                  <Label className="text-xs">Accept package effective from</Label>
-                  <Input type="date" value={acceptEffectiveFrom} onChange={(e) => setAcceptEffectiveFrom(e.target.value)} />
-                </div>
-                <Button disabled={busy || !acceptEffectiveFrom} onClick={() => void acceptPackage()}>
-                  Accept Package
+            {status === 'pending_review' && isReviewer && review?.salary_package_id && !review?.package_accepted && (
+              <div className="pt-2 border-t border-slate-100">
+                <Button disabled={busy} onClick={() => void acceptPackage()}>
+                  Accept Package (effective {review.package_effective_from})
                 </Button>
               </div>
             )}
@@ -246,11 +308,28 @@ export default function PayrollHeadSalaryReviewDetail() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> BGV Status</CardTitle>
+            <CardDescription>{journey?.bgv?.overall_status ?? journey?.bgv?.status ?? '—'}</CardDescription>
           </CardHeader>
-          <CardContent>
-            <pre className="text-xs bg-slate-50 rounded-lg p-3 overflow-auto max-h-64">
-              {JSON.stringify(journey?.bgv, null, 2)}
-            </pre>
+          <CardContent className="space-y-2">
+            {Array.isArray(journey?.bgv?.checks) && journey.bgv.checks.length > 0 ? (
+              journey.bgv.checks.map((c: any) => (
+                <div key={c.id} className="flex items-center justify-between text-sm py-1.5 border-b border-slate-100 last:border-0">
+                  <div>
+                    <span className="font-medium">{c.check_type}</span>{' '}
+                    <Badge className="ml-1 bg-slate-100 text-slate-600">{c.status}</Badge>
+                  </div>
+                  {isReviewer && c.status !== 'verified' && c.status !== 'waived' && (
+                    <div className="flex gap-1.5">
+                      <Button size="sm" variant="outline" disabled={busy} onClick={() => void bgvManualReview(c.id, 'verified')}>Verify</Button>
+                      <Button size="sm" variant="outline" disabled={busy} onClick={() => void bgvManualReview(c.id, 'failed')}>Mark Failed</Button>
+                      <Button size="sm" variant="outline" disabled={busy} onClick={() => void bgvWaive(c.id)}>Waive</Button>
+                    </div>
+                  )}
+                </div>
+              ))
+            ) : (
+              <div className="text-sm text-slate-400">{journey?.bgv?.message ?? 'No BGV checks on file.'}</div>
+            )}
           </CardContent>
         </Card>
 
@@ -269,6 +348,9 @@ export default function PayrollHeadSalaryReviewDetail() {
                 <div className="col-span-2"><span className="text-slate-500">Reason:</span> {journey.bank.reason_detail}</div>
               </div>
             ) : <div className="text-sm text-slate-400">No bank readiness data available.</div>}
+            <p className="text-xs text-slate-400 mt-2">
+              Bank detail corrections go through the Bank Change Request workflow, not directly here.
+            </p>
           </CardContent>
         </Card>
 
@@ -282,9 +364,17 @@ export default function PayrollHeadSalaryReviewDetail() {
               {(journey?.documents ?? []).map((d: any) => (
                 <div key={d.id} className="flex items-center justify-between text-sm py-1.5 border-b border-slate-100 last:border-0">
                   <span>{d.doc_name || d.doc_type}</span>
-                  <Badge className={d.verified ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}>
-                    {d.verified ? 'Verified' : 'Not verified'}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge className={d.verified ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}>
+                      {d.verified ? 'Verified' : 'Not verified'}
+                    </Badge>
+                    {isReviewer && !d.verified && (
+                      <>
+                        <Button size="sm" variant="outline" disabled={busy} onClick={() => void verifyDocument(d.id, 'verified')}>Verify</Button>
+                        <Button size="sm" variant="outline" disabled={busy} onClick={() => void verifyDocument(d.id, 'rejected')}>Reject</Button>
+                      </>
+                    )}
+                  </div>
                 </div>
               ))}
               {(!journey?.documents || journey.documents.length === 0) && (
@@ -314,8 +404,29 @@ export default function PayrollHeadSalaryReviewDetail() {
           </CardContent>
         </Card>
 
+        {/* History */}
+        {Array.isArray(journey?.history) && journey.history.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2"><HistoryIcon className="h-4 w-4" /> Review History</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {journey.history.map((h: any) => (
+                <div key={h.id} className="text-sm py-1.5 border-b border-slate-100 last:border-0">
+                  <span className="font-medium capitalize">{h.action}</span>
+                  <span className="text-slate-400"> · {new Date(h.created_at).toLocaleString()}</span>
+                  {h.rejection_category && (
+                    <div className="text-slate-600">{h.rejection_category} / {h.rejection_reason_code}: {h.rejection_remarks}</div>
+                  )}
+                  {h.reopen_reason && <div className="text-slate-600">Reason: {h.reopen_reason}</div>}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        )}
+
         {/* Decision */}
-        {status === 'pending_review' && (
+        {status === 'pending_review' && isReviewer && (
           <Card className="border-slate-300">
             <CardHeader>
               <CardTitle className="text-base">Decision</CardTitle>
@@ -359,6 +470,11 @@ export default function PayrollHeadSalaryReviewDetail() {
                   <SelectItem value="other">Other</SelectItem>
                 </SelectContent>
               </Select>
+              {rejectCategory === 'salary' && (
+                <p className="text-xs text-amber-600 mt-1">
+                  A salary-category rejection clears the assigned package — it must be reassigned after resubmission.
+                </p>
+              )}
             </div>
             <div>
               <Label className="text-xs">Reason</Label>
@@ -384,6 +500,34 @@ export default function PayrollHeadSalaryReviewDetail() {
               onClick={() => void submitReject()}
             >
               Submit Rejection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={reopenOpen} onOpenChange={setReopenOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reopen for Correction</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600">
+              This moves the review back to pending — the employee will be excluded from payroll again
+              until re-approved. It does not undo any run that already used the current data.
+            </p>
+            <div>
+              <Label className="text-xs">Reason (required)</Label>
+              <Textarea value={reopenReason} onChange={(e) => setReopenReason(e.target.value)} rows={4} placeholder="What was wrong…" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReopenOpen(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={busy || !reopenReason.trim()}
+              onClick={() => void submitReopen()}
+            >
+              Reopen
             </Button>
           </DialogFooter>
         </DialogContent>
