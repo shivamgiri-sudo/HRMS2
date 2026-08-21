@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
+import { PnlFreshnessBadge } from "@/components/finance/pnl/PnlFreshnessBadge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -47,6 +48,14 @@ const matrixDensities: ProcessPnlDensity[] = ["comfortable", "compact"];
  * Opens on the previous month instead, which is the month a finance review is actually about.
  * The picker is unchanged, so any month is still one click away.
  */
+/** The hard upper bound for the period picker — see pnl-period-guard.ts on the backend, which
+ *  now refuses any period after this one. Distinct from defaultPeriod() below: this IS the
+ *  current month (a legitimate Live-MTD selection), defaultPeriod() opens one month earlier. */
+function currentCalendarPeriod() {
+  const now = new Date();
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
 function defaultPeriod() {
   const now = new Date();
   const previous = new Date(Date.UTC(now.getFullYear(), now.getMonth() - 1, 1));
@@ -277,7 +286,10 @@ export default function ProcessPnlPage() {
           className="flex items-center justify-between border-b px-4 h-12 shrink-0"
           aria-label="Complete commercial truth from mandate and delivery to EBITDA, PBT and PAT"
         >
-          <h1 className="text-sm font-semibold">Process P&amp;L</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-sm font-semibold">Process P&amp;L</h1>
+            <PnlFreshnessBadge period={period} branchId={branchId || undefined} />
+          </div>
           <div className="flex items-center gap-3">
             {summary && (
               <>
@@ -327,6 +339,7 @@ export default function ProcessPnlPage() {
               value={period}
               onChange={(v) => updateFilters({ period: v })}
               className="w-52"
+              maxPeriod={currentCalendarPeriod()}
             />
             <Button size="icon" variant="ghost" className="h-8 w-8" aria-label="Next month" disabled={period >= defaultPeriod()} onClick={() => updateFilters({ period: shiftMonth(period, 1) })}>
               <ChevronRight className="h-4 w-4" />

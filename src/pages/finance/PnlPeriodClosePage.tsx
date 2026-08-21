@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
+import { PnlFreshnessBadge } from "@/components/finance/pnl/PnlFreshnessBadge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { IndirectAllocationPanel } from "@/components/finance/pnl/IndirectAllocationPanel";
@@ -98,7 +99,10 @@ export default function PnlPeriodClosePage() {
       <div className="flex h-full flex-col">
         {/* 48px slim header */}
         <div className="flex items-center justify-between border-b px-4 h-12 shrink-0">
-          <h1 className="text-sm font-semibold">Period Close</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-sm font-semibold">Period Close</h1>
+            <PnlFreshnessBadge period={period} />
+          </div>
           <div className="flex items-center gap-2">
             {/* setSearchParams replaced the whole query string, dropping any other param on the
                 URL whenever the month changed; merged now, matching updateFilters in
@@ -111,6 +115,7 @@ export default function PnlPeriodClosePage() {
                 setSearchParams(next);
               }}
               className="w-52"
+              maxPeriod={currentPeriod()}
             />
             {closeData && (
               <>

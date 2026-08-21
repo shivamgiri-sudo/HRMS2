@@ -29,6 +29,7 @@ export function MonthYearPicker({
   selectClassName,
   disabled = false,
   emptyLabel,
+  maxPeriod,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -51,6 +52,17 @@ export function MonthYearPicker({
    *  selects and emits "" when chosen. Omitted by default, so every existing caller — all of them
    *  form fields with a value that is always set — behaves exactly as before. */
   emptyLabel?: string;
+  /**
+   * "YYYY-MM" — hides every month/year option strictly after it. Every P&L ACTUALS caller
+   * (Process P&L, LOB Management, Period Close) must pass this as the current month: with the
+   * default `yearsForward=2` and no cap, this picker could select up to two years into the
+   * future, and a future period silently reads back as a real zero (every actual/GRN/payroll
+   * table just matches 0 rows — the backend now refuses it outright, per pnl-period-guard.ts,
+   * but the picker offering it at all is a worse UX than not offering it). Omitted by default so
+   * budget-PLANNING callers (Budget Consolidation, Branch Budget) — which legitimately plan
+   * ahead of the money being spent — are unaffected.
+   */
+  maxPeriod?: string;
 }) {
   const hasValue = Boolean(value);
   const [yearPart, monthPart] = value.split("-");
@@ -61,6 +73,11 @@ export function MonthYearPicker({
     { length: yearsBack + yearsForward + 1 },
     (_, index) => currentYear - yearsBack + index
   );
+  const [maxYear, maxMonth] = maxPeriod ? maxPeriod.split("-").map(Number) : [null, null];
+  const yearOptions = maxYear ? years.filter((y) => y <= maxYear) : years;
+  const monthOptions = maxYear && year === maxYear
+    ? MONTH_NAMES.map((name, index) => ({ name, value: index + 1 })).filter((m) => m.value <= (maxMonth ?? 12))
+    : MONTH_NAMES.map((name, index) => ({ name, value: index + 1 }));
   return (
     <div className={`flex gap-1.5 ${className ?? ""}`}>
       <select
@@ -73,8 +90,8 @@ export function MonthYearPicker({
         )}
       >
         {emptyLabel && <option value="">{emptyLabel}</option>}
-        {MONTH_NAMES.map((name, index) => (
-          <option key={name} value={index + 1}>{name}</option>
+        {monthOptions.map(({ name, value }) => (
+          <option key={name} value={value}>{name}</option>
         ))}
       </select>
       <select
@@ -82,12 +99,17 @@ export function MonthYearPicker({
         className={selectClassName ? `${selectClassName} w-24` : "h-9 w-24 rounded-md border border-input bg-background px-2 text-sm"}
         disabled={disabled}
         value={hasValue ? year : ""}
-        onChange={(event) => onChange(
-          event.target.value ? `${event.target.value}-${String(month).padStart(2, "0")}` : ""
-        )}
+        onChange={(event) => {
+          if (!event.target.value) { onChange(""); return; }
+          const nextYear = Number(event.target.value);
+          // Clamp month too — switching from a past year to maxYear while a later month is
+          // selected must not silently produce a still-future period.
+          const nextMonth = maxYear && nextYear === maxYear && month > (maxMonth ?? 12) ? (maxMonth ?? 12) : month;
+          onChange(`${nextYear}-${String(nextMonth).padStart(2, "0")}`);
+        }}
       >
         {emptyLabel && <option value="">{emptyLabel}</option>}
-        {years.map((y) => <option key={y} value={y}>{y}</option>)}
+        {yearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
       </select>
     </div>
   );
