@@ -1,6 +1,7 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
+import { assertNotFuturePeriod } from "./pnl-period-guard.js";
 
 /**
  * The CEO view of the P&L: one figure per branch, and a ranked list of where profit is leaking.
@@ -1031,6 +1032,10 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
     exceptions: [],
   };
   if (!/^\d{4}-\d{2}$/.test(period)) return empty;
+  // A malformed period silently renders nothing (the line above) — a well-formed but FUTURE
+  // period is different: every source table would just match 0 rows and render as a real branch
+  // that traded nothing, indistinguishable from an actual zero. Refuse loudly instead.
+  assertNotFuturePeriod(period);
 
   const [branchRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, branch_name, active_status FROM branch_master`,

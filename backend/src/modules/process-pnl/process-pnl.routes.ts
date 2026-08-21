@@ -30,6 +30,7 @@ import { budgetCoverageService } from "./budget-coverage.service.js";
 import { isPeriodLocked } from "./finance-period-lock.js";
 import { pnlStatementService, type StatementViewBy } from "./pnl-statement.service.js";
 import { getPnlReconciliation } from "./pnl-reconciliation.service.js";
+import { getPnlFreshness } from "./pnl-freshness.service.js";
 import { refreshRunningSalarySnapshot } from "./pnl-running-salary.service.js";
 import { processLobRouter } from "./process-lob.routes.js";
 import { processPnlGovernanceService } from "./process-pnl.governance.service.js";
@@ -1312,6 +1313,35 @@ router.get(
       branchIds,
       includeInactive: String(req.query.includeInactive ?? "false") === "true",
     });
+    res.json({ success: true, data });
+  })
+);
+
+router.get(
+  "/pnl/freshness",
+  requireRole(...PNL_READ_ROLES),
+  h(async (req, res) => {
+    const period = req.query.period ? String(req.query.period) : "";
+    const requestedBranchIds = csv(req.query.branchIds);
+    const user = actor(req);
+    const requestedBranchId = req.query.branchId ? String(req.query.branchId) : undefined;
+    const confinedRequestedBranch = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId,
+    });
+    const hardBranchScope = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+    });
+    const branchIds = hardBranchScope
+      ? [hardBranchScope]
+      : confinedRequestedBranch
+        ? [confinedRequestedBranch]
+        : requestedBranchIds;
+    const data = await getPnlFreshness(period, { branchIds });
     res.json({ success: true, data });
   })
 );
