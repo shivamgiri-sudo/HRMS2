@@ -130,6 +130,12 @@ const KNOWN_IMPORT_RPCS = new Set([
   "import_branch_upload_batch",
   "import_lob_upload_batch",
   "import_designation_upload_batch",
+  // Approval-gated types. These stage rows into their real domain tables in a pending
+  // state; nothing applies until a Branch Head approves via /approvals/batches/:id/approve.
+  "import_attendance_regularization_batch",
+  "import_leave_application_batch",
+  "import_incentive_bulk_batch",
+  "import_deduction_bulk_batch",
 ]);
 
 // POST /batches/:id/import — dispatch import by rpc_name
@@ -176,7 +182,60 @@ router.post("/batches/:id/import", requireRole("admin", "hr", "super_admin", "wf
   }
 }));
 
+/**
+ * The four approval-gated types write leave balances, attendance and payroll
+ * deductions. The generic import guard above admits hr/payroll/admin as well, which is
+ * right for a master-data import and wrong here: the agreed uploaders are Super Admin
+ * and branch WFM only, and widening that silently would put a deduction upload in
+ * reach of roles that were never meant to raise one.
+ */
+async function assertGatedUploader(rpc_name: string, userId: string): Promise<void> {
+  const gated = new Set([
+    "import_attendance_regularization_batch",
+    "import_leave_application_batch",
+    "import_incentive_bulk_batch",
+    "import_deduction_bulk_batch",
+  ]);
+  if (!gated.has(rpc_name)) return;
+  const { hasAnyRole } = await import("../../shared/scopeAccess.js");
+  const { UPLOADER_ROLES } = await import("./bulk-approval.service.js");
+  if (!(await hasAnyRole(userId, ...UPLOADER_ROLES))) {
+    throw Object.assign(
+      new Error("Only a Super Admin or branch WFM can upload leave, regularization, incentive or deduction batches."),
+      { statusCode: 403 },
+    );
+  }
+}
+
 async function dispatchImport(rpc_name: string, id: string, userId: string, res: Response) {
+  await assertGatedUploader(rpc_name, userId);
+
+  if (rpc_name === "import_attendance_regularization_batch") {
+    const { importRegularizationBatch } = await import(
+      "./attendance-regularization-bulk.service.js"
+    );
+    const data = await importRegularizationBatch(id, userId);
+    return res.json({ success: true, requires_approval: true, data });
+  }
+
+  if (rpc_name === "import_leave_application_batch") {
+    const { importLeaveBatch } = await import("./leave-application-bulk.service.js");
+    const data = await importLeaveBatch(id, userId);
+    return res.json({ success: true, requires_approval: true, data });
+  }
+
+  if (rpc_name === "import_incentive_bulk_batch") {
+    const { importIncentiveBatch } = await import("./incentive-bulk.service.js");
+    const data = await importIncentiveBatch(id, userId);
+    return res.json({ success: true, requires_approval: true, data });
+  }
+
+  if (rpc_name === "import_deduction_bulk_batch") {
+    const { importDeductionBatch } = await import("./deduction-bulk.service.js");
+    const data = await importDeductionBatch(id, userId);
+    return res.json({ success: true, requires_approval: true, data });
+  }
+
   if (rpc_name === "import_official_email_update_batch") {
     const { importOfficialEmailBatch } = await import(
       "../it-provisioning/it-provisioning.bulk.service.js"
