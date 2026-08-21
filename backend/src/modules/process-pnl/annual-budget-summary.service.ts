@@ -108,14 +108,25 @@ async function budgetByBranchForPeriod(period: string): Promise<Map<string, numb
 
 /** Actual GRN spend by branch for one accounting_period. Matches the GRN Reports Register's
  *  own inclusion rule (grn-report.service.ts): accounting_period is Finance Month (never
- *  bill_date, see [[hrms2-grn-reports-finance-month]]), rejected/cancelled excluded. */
+ *  bill_date, see [[hrms2-grn-reports-finance-month]]), rejected/cancelled excluded.
+ *
+ * Resolved through the SAME name-collapsed branch id budgetByBranchForPeriod() uses — found
+ * live 2026-08-21: branch_master carries both "HEAD OFFICE" and "Head Office" as separate
+ * rows, and without this, GRN actuals land on one id while budget (already deduped) lands on
+ * the other, so a single real branch shows as two incomplete halves instead of one row.
+ * Same fix, applied on the actual side this time instead of the budget side. */
 async function actualByBranchForPeriod(period: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT branch_id, SUM(amount_with_tax) AS amount
-       FROM grn_request
-      WHERE accounting_period = ? AND status NOT IN ('rejected', 'cancelled')
-      GROUP BY branch_id`,
+    `SELECT bm.id AS branch_id, SUM(g.amount_with_tax) AS amount
+       FROM grn_request g
+       LEFT JOIN branch_master gb ON gb.id = g.branch_id
+       LEFT JOIN (
+             SELECT MIN(id) AS id, UPPER(TRIM(branch_name)) AS nm
+               FROM branch_master GROUP BY UPPER(TRIM(branch_name))
+           ) bm ON bm.nm COLLATE utf8mb4_unicode_ci = UPPER(TRIM(gb.branch_name)) COLLATE utf8mb4_unicode_ci
+      WHERE g.accounting_period = ? AND g.status NOT IN ('rejected', 'cancelled')
+      GROUP BY bm.id`,
     [period]
   );
   for (const r of rows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
@@ -128,12 +139,26 @@ export async function getAnnualBudgetSummary(
 ): Promise<AnnualBudgetSummary> {
   const periods = periodsForFinancialYear(financialYear);
 
-  const [branchRows] = await db.execute<RowDataPacket[]>(
-    branchIds && branchIds.length
-      ? `SELECT id, branch_name FROM branch_master WHERE id IN (${branchIds.map(() => "?").join(",")}) ORDER BY branch_name`
-      : `SELECT id, branch_name FROM branch_master ORDER BY branch_name`,
-    branchIds && branchIds.length ? branchIds : []
+  // One row per DISTINCT branch name, not one per branch_master row — found live 2026-08-21:
+  // 8 names (Head Office x3, Hyderabad/Jaipur/Jaipur IDC/Karnal/Meerut/Mohali x2 each) have
+  // more than one branch_master row. Canonical id = MIN(id) per name, matching the exact
+  // resolution budgetByBranchForPeriod()/actualByBranchForPeriod() already converge to, so a
+  // caller-supplied id for any duplicate sibling still resolves to the same summary row a
+  // caller who picked the "other" duplicate would get.
+  const [canonicalRows] = await db.execute<RowDataPacket[]>(
+    `SELECT canon.id, bm.branch_name, GROUP_CONCAT(sib.id) AS sibling_ids
+       FROM (SELECT MIN(id) AS id, UPPER(TRIM(branch_name)) AS nm FROM branch_master GROUP BY UPPER(TRIM(branch_name))) canon
+       JOIN branch_master bm ON bm.id = canon.id
+       JOIN branch_master sib ON UPPER(TRIM(sib.branch_name)) = canon.nm
+      GROUP BY canon.id, bm.branch_name
+      ORDER BY bm.branch_name`
   );
+  const requestedIds = new Set(branchIds ?? []);
+  const branchRows = branchIds && branchIds.length
+    ? canonicalRows.filter((r) =>
+        String(r.sibling_ids).split(",").some((sib) => requestedIds.has(sib)) || requestedIds.has(String(r.id))
+      )
+    : canonicalRows;
 
   // One pass per period (not per branch x period) — 12 queries each side regardless of how
   // many branches are selected, same shape ceo-overview.service.ts already uses per-period.
