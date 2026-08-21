@@ -119,6 +119,14 @@ export async function createImportBatch(params: {
    * still import, with process simply blank, rather than the upload being blocked.
    */
   processId?: string;
+  /**
+   * Optional alternative to processId. Files everything under a branch instead of a single
+   * process — for a "whole branch, every process" upload where one sheet mixes employees from
+   * several processes. Employee matching itself never used process_id (it's employee_code,
+   * globally unique), so this only changes what the batch is filed under and what
+   * getMissingEmployees checks the roster against. See migration 1536.
+   */
+  branchId?: string;
   cycleId?: string;
   importMode: 'NEW' | 'UPDATE';
   fileBuffer: Buffer;
@@ -133,6 +141,7 @@ export async function createImportBatch(params: {
 }): Promise<{ batchId: number; summary: BatchSummary; sheetName: string }> {
   const { cycleId, importMode, fileBuffer, fileName, createdBy } = params;
   const processId = params.processId ?? null;
+  const branchId = params.branchId ?? null;
   const requestedSheet = params.sheetName?.trim() || null;
 
   // ── Step 1: Parse file, and find the sheet the roster is actually on ─────
@@ -274,9 +283,9 @@ export async function createImportBatch(params: {
   // ── Step 3: Insert batch record (PARSING) ────────────────────────────────
   const [batchInsert] = await db.execute<ResultSetHeader>(
     `INSERT INTO wfm_roster_import_batch
-       (process_id, cycle_id, import_mode, file_name, status, created_by)
-     VALUES (?, ?, ?, ?, 'PARSING', ?)`,
-    [processId, cycleId ?? null, importMode, fileName, createdBy]
+       (process_id, branch_id, cycle_id, import_mode, file_name, status, created_by)
+     VALUES (?, ?, ?, ?, ?, 'PARSING', ?)`,
+    [processId, branchId, cycleId ?? null, importMode, fileName, createdBy]
   );
   const batchId = batchInsert.insertId;
 
@@ -892,19 +901,30 @@ export async function updateImportRow(
 }
 
 // ── getMissingEmployees ───────────────────────────────────────────────────────
-// Returns active employees in the batch's process who do NOT appear
-// in any import row for this batch (i.e. their roster wasn't uploaded).
+// Returns active employees in the batch's scope (process, or whole branch when the batch was
+// uploaded as a branch-wide import — see migration 1536) who do NOT appear in any import row
+// for this batch (i.e. their roster wasn't uploaded).
 export async function getMissingEmployees(
   batchId: number,
 ): Promise<{ employees: any[]; total: number }> {
-  // Get process_id for this batch
+  // Get process_id / branch_id for this batch
   const [batchRows] = await db.execute<RowDataPacket[]>(
-    `SELECT process_id FROM wfm_roster_import_batch WHERE id = ?`, [batchId]
+    `SELECT process_id, branch_id FROM wfm_roster_import_batch WHERE id = ?`, [batchId]
   );
   if ((batchRows as RowDataPacket[]).length === 0) {
     throw Object.assign(new Error('Batch not found'), { statusCode: 404 });
   }
-  const processId = (batchRows as RowDataPacket[])[0].process_id;
+  const { process_id: processId, branch_id: branchId } = (batchRows as RowDataPacket[])[0];
+
+  // A process-scoped batch keeps checking against that one process. A branch-scoped batch
+  // (process_id NULL, branch_id set) checks against every active employee in the branch,
+  // regardless of process — that's the whole point of a whole-branch upload. If neither is
+  // set there is nothing to compare against; return empty rather than matching everyone.
+  const scopeColumn = processId ? 'process_id' : branchId ? 'branch_id' : null;
+  const scopeValue = processId ?? branchId;
+  if (!scopeColumn) {
+    return { employees: [], total: 0 };
+  }
 
   // Get all employee_id_raw values already in this batch
   const [importedRows] = await db.execute<RowDataPacket[]>(
@@ -915,13 +935,13 @@ export async function getMissingEmployees(
     (importedRows as RowDataPacket[]).map((r) => (r.employee_id_raw as string).toUpperCase())
   );
 
-  // Get all active employees in the process
+  // Get all active employees in scope
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_code, full_name, designation
      FROM employees
-     WHERE process_id = ? AND employment_status = 'active'
+     WHERE ${scopeColumn} = ? AND employment_status = 'active'
      ORDER BY full_name`,
-    [processId]
+    [scopeValue]
   );
 
   const missing = (empRows as RowDataPacket[]).filter(
