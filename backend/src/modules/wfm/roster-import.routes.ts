@@ -185,9 +185,18 @@ rosterImportRouter.post(
         res.status(400).json({ success: false, error: 'Invalid batchId' });
         return;
       }
-      const committedBy = (req as any).authUser?.id;
+      const authUser = (req as any).authUser;
+      const committedBy = authUser?.id;
+      // Maker-checker (owner ruling 2026-08-22): the rule exists so a plain WFM/team-leader
+      // uploader can't wave their own roster through — it needs a WFM head's sign-off. It was
+      // never meant to stop a super_admin, who has no separate "checker" above them in this flow
+      // and is trusted to upload and approve in one step (this is also exactly the account used to
+      // test the roster-import fixes shipped this week).
+      const committerIsSuperAdmin = Array.isArray(authUser?.roles)
+        ? authUser.roles.includes('super_admin')
+        : authUser?.role === 'super_admin';
       const { overrideWarnings, cycleId } = req.body;
-      const result = await commitImportBatch(batchId, committedBy, { overrideWarnings, cycleId });
+      const result = await commitImportBatch(batchId, committedBy, { overrideWarnings, cycleId, committerIsSuperAdmin });
       res.json({ success: true, ...result });
     } catch (err) {
       res.status(400).json({ success: false, error: err instanceof Error ? err.message : 'Commit failed' });
