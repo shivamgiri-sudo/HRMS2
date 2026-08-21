@@ -2,6 +2,12 @@
   "db/__tests__/schema-column-refs.test.ts": [
     "leave_requests"
   ],
+  "modules/assets/exit-pass.service.ts": [
+    "exit_pass_approvals",
+    "exit_pass_audit_logs",
+    "exit_pass_items",
+    "exit_pass_requests"
+  ],
   "modules/ats/mock-digilocker.routes.ts": [
     "ats_bgv_check"
   ],
