@@ -11,6 +11,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import { apiError, apiSuccess } from '../../shared/apiResponse.js';
 import { getEmployeeForUser } from '../../shared/accessGuard.js';
 import { aiProviderRegistry } from './ai-provider.registry.js';
+import { generateInsights } from './ai-insights-engine.js';
 import { aiProviderConfigService } from './ai-provider-config.service.js';
 import { aiSafetyService } from './ai-safety.service.js';
 import { aiAuditService } from './ai-audit.service.js';
@@ -25,7 +26,7 @@ import {
   MIRA_TAGLINE,
   MiraDataUnavailableError,
 } from './ai-account.service.js';
-import { recordTurn, resolveFollowUp, lastIntentTurn, providerHistory, providerHistorySummaries, getPendingAction, detectConfirmation } from './ai-conversation.service.js';
+import { recordTurn, resolveFollowUp, lastIntentTurn, providerHistory, providerHistorySummaries, getPendingAction, detectConfirmation, getThread } from './ai-conversation.service.js';
 import { draftLeaveRequest, confirmLeaveAction, cancelLeaveAction, isLeaveActionRequest, miraActionsEnabled } from './mira-leave-action.service.js';
 import {
   answerCompanyQuestion,
@@ -404,10 +405,20 @@ aiInsightsRouter.get('/analytics/prompt-audit', requireRole('super_admin', 'admi
 }));
 
 /**
- * POST /api/ai/insights - Compatibility endpoint for dashboard insight panels.
+ * POST /api/ai/insights - Dashboard insight panels (KPI, attendance, leave,
+ * ATS, exit risk, CEO dashboard, WFM roster, quality/operations).
+ *
+ * Rule-based, not LLM-backed: every insight is derived from the numeric
+ * fields the caller already computed and is displaying on the dashboard, so
+ * it responds instantly, costs nothing, and can never fabricate a claim. See
+ * ai-insights-engine.ts for the per-context_type analyzers.
  */
-aiInsightsRouter.post('/insights', h(async (_req, res) => {
-  return res.json(apiSuccess({ insights: [] }));
+aiInsightsRouter.post('/insights', h(async (req, res) => {
+  const { context_type, data } = req.body ?? {};
+  const contextType = typeof context_type === 'string' && context_type.trim() ? context_type : 'generic';
+  const payload = data && typeof data === 'object' ? data : {};
+  const insights = generateInsights(contextType, payload);
+  return res.json(apiSuccess({ insights }));
 }));
 
 /**
@@ -531,11 +542,7 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
     // and the stale draft simply expires on its own TTL if never confirmed.
   }
 
-  // "raise leave for 23rd August" is an action request, not a read-only balance
-  // question — checked before self-account so ai-account.service.ts's existing
-  // 'leave' intent (balances) never swallows it and answers the wrong thing.
-  if (miraActionsEnabled() && isLeaveActionRequest(safeQuestion)) {
-    const draft = await draftLeaveRequest(safeQuestion, userId);
+  const respondWithDraft = (draft: Awaited<ReturnType<typeof draftLeaveRequest>>) => {
     if (draft.summary) {
       const pendingAction: import('./ai-provider.types.js').AiPendingAction = {
         type: 'leave_request', summary: draft.summary, confirmLabel: 'Yes, submit it', cancelLabel: 'No, cancel',
@@ -550,6 +557,35 @@ async function askHandler(req: AuthenticatedRequest, res: Response, mode: 'json'
       externalSafe: false, intent: 'leave_action_draft',
       redactedSummary: 'The user asked Mira to raise a leave request; Mira could not complete the draft without more information.',
     });
+  };
+
+  // A reply to Mira's own clarifying question ("what date?" → "23rd August") has
+  // no reason to re-mention the word "leave", so isLeaveActionRequest() below
+  // would never match it on its own — without this, the user has to restate the
+  // whole "raise leave for..." request every single turn. Recognised instead by
+  // the conversation still being mid-draft: no pendingAction yet (that's a
+  // completed draft, handled above) but the most recent intent-bearing turn was
+  // itself an unresolved leave_action_draft attempt. Accumulates every trailing
+  // leave_action_draft turn's original text (not just the latest one) so a detail
+  // given two turns ago — a leave type mentioned before the date was asked for —
+  // is not lost by the time the date finally arrives.
+  if (miraActionsEnabled() && !getPendingAction(userId) && lastIntentTurn(userId)?.intent === 'leave_action_draft') {
+    const priorTurns = getThread(userId);
+    const carriedContext: string[] = [];
+    for (let i = priorTurns.length - 1; i >= 0; i -= 1) {
+      if (priorTurns[i].intent !== 'leave_action_draft') break;
+      carriedContext.unshift(priorTurns[i].question);
+    }
+    const draft = await draftLeaveRequest([...carriedContext, safeQuestion].join(' '), userId);
+    return respondWithDraft(draft);
+  }
+
+  // "raise leave for 23rd August" is an action request, not a read-only balance
+  // question — checked before self-account so ai-account.service.ts's existing
+  // 'leave' intent (balances) never swallows it and answers the wrong thing.
+  if (miraActionsEnabled() && isLeaveActionRequest(safeQuestion)) {
+    const draft = await draftLeaveRequest(safeQuestion, userId);
+    return respondWithDraft(draft);
   }
 
   // "and last month?" only means something against the previous turn. Rewrite it
