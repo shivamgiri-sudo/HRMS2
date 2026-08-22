@@ -475,6 +475,33 @@ export async function createEmployeeFromCandidate(
       console.error(`[EmployeeOrchestrator] Could not notify payroll_head of new review for ${employeeCode}:`, (error as Error)?.message);
     });
 
+    // Payroll HR notification: complete salary component assignment in ATS.
+    // Without this step, the employee will have no basic/HRA/gross breakdown
+    // and payroll cannot build their salary line even if the Payroll Head approves.
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT ur.user_id FROM user_roles ur WHERE ur.active_status = 1 AND ur.role_key IN ('payroll_hr','payroll','payroll_admin')`
+    ).then(async ([rows]) => {
+      const userIds = (rows as RowDataPacket[]).map((r) => String(r.user_id));
+      await Promise.allSettled(
+        userIds.map((userId) =>
+          inboxService.createItem({
+            user_id: userId,
+            type: 'payroll_hr_salary_component_pending',
+            title: `Salary components needed: ${candRow?.full_name ?? employeeCode}`,
+            description: `New employee ${employeeCode} joined on ${offer?.date_of_joining ?? 'N/A'}. `
+              + `Complete the salary component assignment (basic / HRA / gross breakdown) in ATS `
+              + `so their salary can be built in this month's payroll run.`,
+            entity_type: 'employee',
+            entity_id: employeeId,
+            action_url: `/ats/candidates/${candidateId}/salary-assignment`,
+            priority: 'high',
+          })
+        )
+      );
+    }).catch((error) => {
+      console.error(`[EmployeeOrchestrator] Could not notify payroll_hr of salary component pending for ${employeeCode}:`, (error as Error)?.message);
+    });
+
     // AML screening, once the employee code exists and the hire is committed.
     //
     // Deliberately here rather than during onboarding: this screens someone who

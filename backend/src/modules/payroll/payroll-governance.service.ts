@@ -916,6 +916,75 @@ export const payrollGovernanceService = {
         "applicability population. Do not resolve this by editing pf_eligible flags to make the figures agree.",
     });
 
+    // ── NEW JOINER: Payroll Head review gate pending ──────────────────────────
+    // Employees created via HRMS whose payroll_head_review row is still
+    // pending_review are silently excluded from every payroll run until a
+    // Payroll Head approves them. Surface this as a warning so it is visible
+    // on the Branch Readiness page before the run is triggered.
+    try {
+      const [phrRows] = await db.execute<RowDataPacket[]>(
+        `SELECT e.employee_code, e.full_name
+           FROM employee_payroll_head_review phr
+           JOIN employees e ON e.id = phr.employee_id
+          WHERE phr.status = 'pending_review'
+            AND ${where.replace(/\be\./g, 'e.')}
+          LIMIT 20`,
+        params,
+      );
+      if ((phrRows as RowDataPacket[]).length > 0) {
+        issues.push({
+          code: "NEW_JOINER_PAYROLL_HEAD_REVIEW_PENDING",
+          severity: "warning",
+          category: "employee_master",
+          count: (phrRows as RowDataPacket[]).length,
+          message: `${(phrRows as RowDataPacket[]).length} new joiner(s) are pending Payroll Head review and will be excluded from this payroll run until approved.`,
+          sample: (phrRows as RowDataPacket[]).slice(0, 5).map((r: any) => ({
+            employee_code: r.employee_code,
+            full_name: r.full_name,
+          })),
+        });
+      }
+    } catch (phrErr) {
+      issues.push({ code: "NEW_JOINER_PAYROLL_HEAD_REVIEW_CHECK_ERROR", severity: "warning", category: "employee_master", count: 0, message: "Could not check payroll head review status for new joiners.", sample: [] });
+    }
+
+    // ── NEW JOINER: No salary structure assigned ──────────────────────────────
+    // Employees with no salary_component_assignments AND no employee_salary_assignment
+    // will either get ₹0 salary or be skipped entirely. Surface as a blocker.
+    try {
+      const [noSalaryRows] = await db.execute<RowDataPacket[]>(
+        `SELECT e.employee_code, e.full_name, e.date_of_joining
+           FROM employees e
+          WHERE ${where}
+            AND NOT EXISTS (
+              SELECT 1 FROM salary_component_assignments sca
+               WHERE sca.employee_id = e.id AND sca.basic > 0
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM employee_salary_assignment esa
+               WHERE esa.employee_id = e.id AND esa.active_status = 1 AND esa.ctc_annual > 0
+            )
+          LIMIT 20`,
+        params,
+      );
+      if ((noSalaryRows as RowDataPacket[]).length > 0) {
+        issues.push({
+          code: "NEW_JOINER_SALARY_STRUCTURE_MISSING",
+          severity: "blocker",
+          category: "employee_master",
+          count: (noSalaryRows as RowDataPacket[]).length,
+          message: `${(noSalaryRows as RowDataPacket[]).length} employee(s) have no salary structure. Payroll HR must complete the salary component assignment in ATS before payroll can be calculated.`,
+          sample: (noSalaryRows as RowDataPacket[]).slice(0, 5).map((r: any) => ({
+            employee_code: r.employee_code,
+            full_name: r.full_name,
+            date_of_joining: r.date_of_joining,
+          })),
+        });
+      }
+    } catch (noSalErr) {
+      issues.push({ code: "NEW_JOINER_SALARY_STRUCTURE_CHECK_ERROR", severity: "warning", category: "employee_master", count: 0, message: "Could not check salary structure for new joiners.", sample: [] });
+    }
+
     const [eligibleCountRows] = await db.execute<RowDataPacket[]>(
       `SELECT COUNT(*) AS count FROM employees e WHERE ${where}`,
       params,
