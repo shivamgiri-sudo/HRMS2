@@ -33,7 +33,10 @@ export const vendorService = {
      * narrows once somebody opts a vendor in.
      */
     if (filters.companyCode || filters.branchId) {
-      const applicability = vendorApplicabilityService.vendorFilterClause("vendor_master", {
+      // Aliased "v", not "vendor_master": the de-dup subquery below aliases the table as v, and
+      // once a table is aliased, MySQL requires every reference inside that query to use the
+      // alias — a bare "vendor_master.id" here would throw "Unknown table 'vendor_master'".
+      const applicability = vendorApplicabilityService.vendorFilterClause("v", {
         companyCode: filters.companyCode,
         branchId: filters.branchId,
       });
@@ -66,8 +69,22 @@ export const vendorService = {
       paging = ` LIMIT ${limit} OFFSET ${offset}`;
     }
 
+    // De-duplicated at the API layer (defense in depth): vendor_master carries
+    // duplicate vendor_name rows from historical db_bill syncs. ROW_NUMBER()
+    // picks one canonical row per normalized name (most recently updated,
+    // then lowest id for determinism), so callers never see raw duplicates
+    // even before the sync-time root cause (a separate ticket) is fixed.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT * FROM vendor_master ${where} ORDER BY vendor_name${paging}`,
+      `SELECT * FROM (
+         SELECT v.*, ROW_NUMBER() OVER (
+           PARTITION BY UPPER(TRIM(v.vendor_name))
+           ORDER BY v.updated_at DESC, v.id ASC
+         ) AS rn
+         FROM vendor_master v
+         ${where}
+       ) ranked
+       WHERE rn = 1
+       ORDER BY vendor_name${paging}`,
       params
     );
     return rows as RowDataPacket[];

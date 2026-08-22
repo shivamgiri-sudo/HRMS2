@@ -2523,7 +2523,14 @@ export function BudgetLinkedGrnForm({
                         aria-label="Vendor"
                         disabled={locked}
                         loading={vendorsLoading}
-                        options={vendors.map((vendor) => ({
+                        options={Array.from(
+                          new Map(
+                            vendors.map((vendor) => [
+                              (vendor.vendor_name ?? vendor.name ?? "").trim().toUpperCase(),
+                              vendor,
+                            ])
+                          ).values()
+                        ).map((vendor) => ({
                           value: vendor.id,
                           label: (vendor.vendor_name ?? vendor.name ?? "").trim(),
                           hint: undefined,
@@ -3996,13 +4003,13 @@ function InvoiceComponentsEditor({
                     ))}
                   </GrnSelect>
                 </div>
+                <div>
+                  <Label className="text-[11px] text-grn-ink-soft">GST Amount</Label>
+                  <div className="flex h-11 items-center justify-end rounded-[8px] border border-grn-line bg-grn-paper px-3 font-grn-mono text-[13px]">
+                    {money(tax)}
+                  </div>
+                </div>
               </div>
-              <Input
-                className="mt-2"
-                value={component.remarks}
-                placeholder="Optional note for this component"
-                onChange={(event) => onUpdate(component.key, { remarks: event.target.value })}
-              />
               <div className="mt-2 flex justify-between rounded-[8px] border border-grn-line bg-grn-paper px-3 py-2 text-[12px]">
                 <span className="text-grn-ink-soft">Incl. GST</span>
                 <b className="font-grn-mono">{money(gross)}</b>
@@ -4020,8 +4027,8 @@ function InvoiceComponentsEditor({
               <GrnTh sticky={false} className="w-8">#</GrnTh>
               <GrnTh sticky={false} align="right" className="w-36">Amount without tax</GrnTh>
               <GrnTh sticky={false} align="right" className="w-24">GST slab</GrnTh>
+              <GrnTh sticky={false} align="right" className="w-32">GST Amount</GrnTh>
               <GrnTh sticky={false} align="right" className="w-32">Incl. GST</GrnTh>
-              <GrnTh sticky={false}>Note</GrnTh>
               <GrnTh sticky={false} className="w-12" />
             </tr>
           </thead>
@@ -4054,14 +4061,8 @@ function InvoiceComponentsEditor({
                       ))}
                     </GrnSelect>
                   </GrnTd>
+                  <GrnTd align="right">{money(tax)}</GrnTd>
                   <GrnTd align="right" className="font-semibold">{money(gross)}</GrnTd>
-                  <GrnTd className="min-w-[160px]">
-                    <Input
-                      value={component.remarks}
-                      placeholder="Optional"
-                      onChange={(event) => onUpdate(component.key, { remarks: event.target.value })}
-                    />
-                  </GrnTd>
                   <GrnTd>
                     <GrnIconButton
                       disabled={!canRemove}

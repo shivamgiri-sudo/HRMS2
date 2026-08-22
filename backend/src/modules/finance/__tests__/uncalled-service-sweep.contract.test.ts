@@ -105,7 +105,10 @@ describe("vendor applicability actually narrows the query", () => {
   const ERP = readFileSync(at("../../erp/erp.service.ts"), "utf8");
 
   it("applies the predicate in the vendor list", () => {
-    expect(ERP).toContain("vendorApplicabilityService.vendorFilterClause(\"vendor_master\"");
+    // Aliased "v", not the bare table name — the vendor list query wraps vendor_master in a
+    // de-duplicating subquery (Group A2) that aliases it as v; every reference inside that
+    // query, including this predicate, must use the alias or MySQL rejects it.
+    expect(ERP).toContain("vendorApplicabilityService.vendorFilterClause(\"v\"");
   });
 
   it("only narrows when a company or branch is asked for", () => {
