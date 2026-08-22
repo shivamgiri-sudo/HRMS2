@@ -158,10 +158,18 @@ export function GrnSearchWorkspace({
     staleTime: 5 * 60 * 1000,
   });
 
+  const [draft, setDraft] = useState<Filters>(EMPTY);
+  const [applied, setApplied] = useState<Filters>(EMPTY);
+
   const processes = useQuery({
-    queryKey: ["org-processes"],
+    // Keyed off the draft branch so picking a branch narrows Process options immediately —
+    // standard dependent-dropdown UX, ahead of "Apply" rather than waiting for it.
+    queryKey: ["org-processes", draft.branchId],
     queryFn: async () => {
-      const r = await hrmsApi.get<any>("/api/org/processes?limit=200");
+      const url = draft.branchId
+        ? `/api/org/processes?limit=200&branch_id=${draft.branchId}`
+        : "/api/org/processes?limit=200";
+      const r = await hrmsApi.get<any>(url);
       return ((r as any)?.data?.data ?? (r as any)?.data ?? []) as Array<{
         id: string; process_name: string;
       }>;
@@ -170,18 +178,18 @@ export function GrnSearchWorkspace({
   });
 
   const costCentres = useQuery({
-    queryKey: ["org-cost-centres"],
+    queryKey: ["org-cost-centres", draft.branchId],
     queryFn: async () => {
-      const r = await hrmsApi.get<any>("/api/org/cost-centres?limit=500&active_status=1");
+      const url = draft.branchId
+        ? `/api/org/cost-centres?limit=500&active_status=1&branch_id=${draft.branchId}`
+        : "/api/org/cost-centres?limit=500&active_status=1";
+      const r = await hrmsApi.get<any>(url);
       return ((r as any)?.data?.data ?? (r as any)?.data ?? []) as Array<{
         id: string; cost_centre_name: string; cost_centre_code: string;
       }>;
     },
     staleTime: 5 * 60 * 1000,
   });
-
-  const [draft, setDraft] = useState<Filters>(EMPTY);
-  const [applied, setApplied] = useState<Filters>(EMPTY);
 
   const activeCount = Object.values(applied).filter(Boolean).length;
 
