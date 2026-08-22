@@ -54,10 +54,6 @@ export async function resolveBranchHeadScope(authUserId: string): Promise<Branch
   const roles = await getUserRoleKeys(authUserId).catch(() => [] as string[]);
   const employeeId = await resolveEmployeeIdForAuthUser(authUserId);
 
-  if (roles.some((r) => UNRESTRICTED_ROLES.includes(r))) {
-    return { unrestricted: true, employeeId, branchNames: [], branchIds: [] };
-  }
-
   const [assignments] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT branch_name FROM branch_head_assignments
       WHERE branch_head_id = ? AND is_active = TRUE`,
@@ -65,13 +61,20 @@ export async function resolveBranchHeadScope(authUserId: string): Promise<Branch
   ).catch(() => [[]] as unknown as [RowDataPacket[]]);
 
   const scopes = await getUserAssignmentScopes(authUserId, ["branch_head"]).catch(() => []);
+  const branchNames = assignments.map((r) => String(r.branch_name)).filter(Boolean);
+  const branchIds = scopes.map((s) => String(s.branch_id ?? "")).filter(Boolean);
 
-  return {
-    unrestricted: false,
-    employeeId,
-    branchNames: assignments.map((r) => String(r.branch_name)).filter(Boolean),
-    branchIds: scopes.map((s) => String(s.branch_id ?? "")).filter(Boolean),
-  };
+  // Grant unrestricted access only when the user has an admin/hr role AND has
+  // no branch_head scope entries. A user who is both `hr` and `branch_head`
+  // (e.g. a branch head who was also given HR access) should be scoped to their
+  // branches, not shown all decisions in the system — which caused 30+ second
+  // DB hangs via the COUNT query in listBranchHeadDecisions.
+  if (branchNames.length === 0 && branchIds.length === 0
+      && roles.some((r) => UNRESTRICTED_ROLES.includes(r))) {
+    return { unrestricted: true, employeeId, branchNames: [], branchIds: [] };
+  }
+
+  return { unrestricted: false, employeeId, branchNames, branchIds };
 }
 
 /**

@@ -562,9 +562,11 @@ export async function listBranchHeadDecisions(
 
   const whereParams = [...pred.params, ...params];
 
-  const [countRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(DISTINCT o.id) AS n ${base}`, whereParams,
-  ).catch(() => [[{ n: 0 }]] as unknown as [RowDataPacket[]]);
+  // COUNT removed: the frontend renders a flat list with no pagination UI and
+  // never reads `total`. Running COUNT(DISTINCT) over the full join without a
+  // LIMIT was the cause of 30+ second hangs on the production DB for unrestricted
+  // callers (hr/admin who see all branches), which caused every browser request
+  // to time out and the Approved/Rejected tabs to show an infinite spinner.
 
   // GROUP BY o.id, not SELECT DISTINCT.
   //
@@ -599,7 +601,7 @@ export async function listBranchHeadDecisions(
 
   return {
     data: rows as unknown as BranchHeadDecisionRow[],
-    total: Number(countRows[0]?.n ?? 0),
+    total: rows.length,
     scopeEmpty: false,
   };
 }
