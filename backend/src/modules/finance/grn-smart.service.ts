@@ -1457,31 +1457,177 @@ export const grnSmartService = {
         };
       }
 
-      // Capacity check, grouped per budget line exactly like saveAllocations() — the round-off
-      // adjustment above is included since it already landed inside a grid cell's amount.
-      const groupedUsage = new Map<string, { amount: number; quantity: number; line: any }>();
-      for (const cell of grid) {
-        const usage = groupedUsage.get(String(cell.line.id)) ?? { amount: 0, quantity: 0, line: cell.line };
-        usage.amount = roundMoney(usage.amount + cell.amounts.grossAmount);
-        usage.quantity = roundQuantity(usage.quantity + cell.quantity);
-        groupedUsage.set(String(cell.line.id), usage);
+      // Group C, step 2b: branch-wide headroom gate (2026-08-22) — the same underlying rule as
+      // step 2a's saveAllocations() (budget-headroom-gate.service.ts), applied here with this
+      // method's different, already-documented tax rule: "Invoice GST rates are ground truth"
+      // (see comment above). Each grid cell's already-computed, invoice-driven base/tax/gross
+      // figures stay FIXED — only which budget line(s) fund them is decided here, and that fixed
+      // money is reapportioned pro-rata across the funding line(s). calculateBudgetLine() is NOT
+      // called again with a funding line's own gst_rate/tax_treatment anywhere below.
+      //
+      // Every split in this GRN already shares one head+sub-head (the distinctHeads/
+      // distinctSubHeads guard above), so the branch-wide coverage lookup is done ONCE for the
+      // whole GRN rather than once per split.
+      const period = consumptionPeriodOf(grn);
+      const sharedHead = String(resolvedSplits[0].line.head);
+      const sharedSubHead = resolvedSplits[0].line.sub_head ?? null;
+      const coverage = await getHeadSubHeadCoverage(String(grn.branch_id), period, sharedHead, sharedSubHead);
+      if (!coverage.headerActive) {
+        throw refuse(
+          409,
+          "NO_BRANCH_BUDGET",
+          `No approved budget exists for this branch for ${period}. A GRN cannot be raised until one is approved.`
+        );
       }
-      for (const usage of groupedUsage.values()) {
-        const availableAmount = roundMoney(
-          Number(usage.line.gross_amount || 0)
-          - Number(usage.line.reserved_amount || 0)
-          - Number(usage.line.consumed_amount || 0)
+      if (!coverage.lines.length) {
+        throw refuse(
+          409,
+          "NO_BUDGET_FOR_HEAD",
+          `${sharedHead}/${sharedSubHead || ""} has no budget anywhere in this branch. Raise a budget addition request before submitting this GRN.`
         );
-        const availableQuantity = roundQuantity(
-          Number(usage.line.quantity || 0)
-          - Number(usage.line.reserved_quantity || 0)
-          - Number(usage.line.consumed_quantity || 0)
+      }
+
+      // Group grid cells by the split they came from. cell.line is the SAME OBJECT reference as
+      // split.line for every cell built from that split (each split — budgeted or synthetic
+      // unbudgeted — gets its own distinct line object), so reference equality safely
+      // distinguishes splits. Done AFTER the round-off fold above, since that fold has already
+      // finalized each cell's real amounts.
+      const cellsBySplitLine = new Map<any, typeof grid>();
+      for (const cell of grid) {
+        const group = cellsBySplitLine.get(cell.line) ?? [];
+        group.push(cell);
+        cellsBySplitLine.set(cell.line, group);
+      }
+
+      // Running totals of what THIS save has already drawn against each real line. Unlike
+      // saveAllocations() (where cross-row sharing of one head/sub-head is only sometimes true),
+      // here it is ALWAYS true — every split shares one head/sub-head by construction — so two
+      // splits in this GRN save WILL contend for the same coverage lines and must be netted
+      // against each other exactly like step 2a's drawnAmountByLineId/drawnQuantityByLineId.
+      const drawnAmountByLineId = new Map<string, number>();
+      const drawnQuantityByLineId = new Map<string, number>();
+      const fundedGrid: any[] = [];
+
+      for (const split of resolvedSplits) {
+        const cellsForSplit = cellsBySplitLine.get(split.line) ?? [];
+        if (!cellsForSplit.length) continue;
+
+        const splitTotalGross = roundMoney(
+          cellsForSplit.reduce((sum, cell) => sum + cell.amounts.grossAmount, 0)
         );
-        if (usage.amount > availableAmount + 0.01) {
-          throw new Error(`${usage.line.item_name} (${usage.line.cost_centre_name || "branch"}): split allocation exceeds available budget by ₹${(usage.amount - availableAmount).toFixed(2)}`);
+        const preferredLineId = split.line.id != null ? String(split.line.id) : null;
+
+        // Net out whatever earlier splits in this same save already drew against each of these
+        // lines before handing them to the allocator — see drawnAmountByLineId's comment above.
+        const netLines = coverage.lines.map((candidate) => {
+          const alreadyDrawn = drawnAmountByLineId.get(String(candidate.id)) ?? 0;
+          return alreadyDrawn > 0
+            ? { ...candidate, available_gross_amount: Math.max(0, Number(candidate.available_gross_amount) - alreadyDrawn) }
+            : candidate;
+        });
+
+        // Branch-wide money split for this split's total. Can throw HEADROOM_EXCEEDED if the
+        // branch aggregate (not just the one line the raiser picked) cannot cover it — let it
+        // propagate.
+        const draws = allocateAcrossLines(preferredLineId, splitTotalGross, netLines);
+
+        const subRowsByCell = new Map<any, any[]>();
+        for (const cell of cellsForSplit) subRowsByCell.set(cell, []);
+
+        for (let drawIndex = 0; drawIndex < draws.length; drawIndex += 1) {
+          const draw = draws[drawIndex];
+          const fundingLine = coverage.lines.find((candidate) => String(candidate.id) === String(draw.lineId));
+          if (!fundingLine) {
+            throw new Error(`Internal error resolving funding line ${draw.lineId}`);
+          }
+          const drawFraction = splitTotalGross > 0 ? draw.amount / splitTotalGross : 0;
+          const fundingUnitRate = Number(fundingLine.unit_rate);
+
+          for (const cell of cellsForSplit) {
+            // Ground truth: the invoice's real GST rate is already baked into cell.amounts (from
+            // the original calculateBudgetLine() call keyed on component.gstRate above) — DO NOT
+            // call calculateBudgetLine() again with the funding line's own gst_rate/tax_treatment.
+            // Only the fixed money is reapportioned pro-rata across funding sources.
+            const scaledAmounts = {
+              baseAmount: roundMoney(cell.amounts.baseAmount * drawFraction),
+              taxAmount: roundMoney(cell.amounts.taxAmount * drawFraction),
+              grossAmount: roundMoney(cell.amounts.grossAmount * drawFraction),
+              cgstAmount: roundMoney(cell.amounts.cgstAmount * drawFraction),
+              sgstAmount: roundMoney(cell.amounts.sgstAmount * drawFraction),
+              igstAmount: roundMoney(cell.amounts.igstAmount * drawFraction),
+              recoverableTaxAmount: roundMoney(cell.amounts.recoverableTaxAmount * drawFraction),
+              pnlCostAmount: roundMoney(cell.amounts.pnlCostAmount * drawFraction),
+            };
+
+            // Quantity is recomputed against the FUNDING line's own unit rate — a genuine
+            // behaviour difference from the pre-split per-cell quantity above (which used the
+            // split's own unit_rate): a sub-row funded by a different line must measure quantity
+            // against that line's own rate.
+            const subQuantity = fundingUnitRate > 0 ? roundQuantity(scaledAmounts.baseAmount / fundingUnitRate) : 0;
+
+            // Quantity headroom is a SEPARATE check from the money split above, netted against
+            // this same save's own earlier draws against this line — a hard stop, not rebalanced
+            // further, exactly like step 2a.
+            const alreadyDrawnQuantity = drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0;
+            const availableQuantity = Number(fundingLine.available_quantity) - alreadyDrawnQuantity;
+            if (subQuantity > availableQuantity + 0.0001) {
+              const shortfall = roundQuantity(subQuantity - availableQuantity);
+              throw Object.assign(
+                refuse(
+                  409,
+                  "HEADROOM_EXCEEDED",
+                  `${fundingLine.item_name}: split allocation exceeds available quantity by ${shortfall} ${fundingLine.unit}`
+                ),
+                { shortfall }
+              );
+            }
+
+            const existingRemarks = cell.remarks;
+            const remarks = drawIndex === 0
+              ? existingRemarks
+              : `${existingRemarks ? existingRemarks + " — " : ""}Auto-allocated from branch aggregate headroom for ${sharedHead}/${sharedSubHead || ""} — original line's own share was insufficient`;
+
+            subRowsByCell.get(cell)!.push({
+              // Funding source (budget_id/id/tax profile) is the FUNDING line's own; cost-centre
+              // attribution is overridden to the ORIGINAL split's own cost centre — the raiser's
+              // attributed cost centre, not whichever budget pool happened to pay for it.
+              line: { ...fundingLine, cost_centre_id: split.line.cost_centre_id, cost_centre_name: split.line.cost_centre_name },
+              component: cell.component,
+              componentIndex: cell.componentIndex,
+              quantity: subQuantity,
+              unitRate: fundingUnitRate,
+              amounts: scaledAmounts,
+              remarks,
+              isUnbudgeted: Boolean(split.isUnbudgeted),
+            });
+
+            drawnQuantityByLineId.set(String(fundingLine.id), alreadyDrawnQuantity + subQuantity);
+          }
+
+          drawnAmountByLineId.set(String(fundingLine.id), (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + draw.amount);
         }
-        if (usage.quantity > availableQuantity + 0.0001) {
-          throw new Error(`${usage.line.item_name} (${usage.line.cost_centre_name || "branch"}): split allocation exceeds available quantity by ${roundQuantity(usage.quantity - availableQuantity)}`);
+
+        // Residual-rounding correction, per original cell: per-draw multiplication rounding can
+        // leave the sub-rows' sum a cent or two off this cell's original (pre-split) amounts.
+        // Fold that residual into the LAST sub-row for the cell — the same "fold into the
+        // biggest/last" convention already used twice elsewhere in this method — so the sub-rows
+        // reproduce the cell's original grossAmount/pnlCostAmount exactly.
+        for (const cell of cellsForSplit) {
+          const subRows = subRowsByCell.get(cell)!;
+          if (!subRows.length) continue;
+          const grossAccum = roundMoney(subRows.reduce((sum, row) => sum + row.amounts.grossAmount, 0));
+          const pnlAccum = roundMoney(subRows.reduce((sum, row) => sum + row.amounts.pnlCostAmount, 0));
+          const grossResidual = roundMoney(cell.amounts.grossAmount - grossAccum);
+          const pnlResidual = roundMoney(cell.amounts.pnlCostAmount - pnlAccum);
+          if (grossResidual !== 0 || pnlResidual !== 0) {
+            const last = subRows[subRows.length - 1];
+            last.amounts = {
+              ...last.amounts,
+              grossAmount: roundMoney(last.amounts.grossAmount + grossResidual),
+              pnlCostAmount: roundMoney(last.amounts.pnlCostAmount + pnlResidual),
+            };
+          }
+          fundedGrid.push(...subRows);
         }
       }
 
@@ -1508,7 +1654,7 @@ export const grnSmartService = {
       }
 
       let sequenceNo = 0;
-      for (const cell of grid) {
+      for (const cell of fundedGrid) {
         sequenceNo += 1;
         const percentage = declaredTotal > 0
           ? Math.round((cell.amounts.grossAmount / declaredTotal) * 100 * 1_000_000) / 1_000_000
@@ -1559,9 +1705,9 @@ export const grnSmartService = {
         );
       }
 
-      const totalGrossFinal = roundMoney(grid.reduce((sum, cell) => sum + cell.amounts.grossAmount, 0));
-      const totalPnlFinal = roundMoney(grid.reduce((sum, cell) => sum + cell.amounts.pnlCostAmount, 0));
-      const totalQuantity = roundQuantity(grid.reduce((sum, cell) => sum + cell.quantity, 0));
+      const totalGrossFinal = roundMoney(fundedGrid.reduce((sum, cell) => sum + cell.amounts.grossAmount, 0));
+      const totalPnlFinal = roundMoney(fundedGrid.reduce((sum, cell) => sum + cell.amounts.pnlCostAmount, 0));
+      const totalQuantity = roundQuantity(fundedGrid.reduce((sum, cell) => sum + cell.quantity, 0));
       const first = resolvedSplits[0].line;
       const distinctProcesses = new Set(resolvedSplits.map((item) => item.line.process_id).filter(Boolean));
       const distinctCostCentres = new Set(resolvedSplits.map((item) => item.line.cost_centre_id).filter(Boolean));

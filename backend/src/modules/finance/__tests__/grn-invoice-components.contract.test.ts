@@ -130,9 +130,21 @@ describe("GRN invoice-GST-components (unified vendor-GRN flow)", () => {
     expect(body).toContain("componentIds[cell.componentIndex]");
   });
 
-  it("the new capacity-exceeded message satisfies the frontend's regex-matched deep-link contract", () => {
-    const service = read("src/modules/finance/grn-smart.service.ts");
-    expect(service).toContain("split allocation exceeds available budget by");
+  it("the capacity-exceeded message satisfies the frontend's regex-matched deep-link contract", async () => {
+    // As of Group C step 2a/2b (2026-08-22), both saveAllocations() and saveComponentAllocations()
+    // reach a money-headroom-exceeded error via allocateAcrossLines() (budget-headroom-gate.service.ts,
+    // branch-wide aggregate check) instead of throwing this message directly — the OLD, now-removed,
+    // single-line "split allocation exceeds available budget by" literal this test used to grep for
+    // no longer exists anywhere in the codebase. Construct the REAL message the current code throws
+    // and verify it still satisfies the frontend's regex, rather than asserting a stale literal.
+    const { allocateAcrossLines } = await import("../../process-pnl/budget-headroom-gate.service.js");
+    let message = "";
+    try {
+      allocateAcrossLines(null, 1000, []);
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain("exceeds available budget");
 
     // The actual contract: BudgetLinkedGrnForm.tsx's onError handler regex-matches this exact
     // phrase to trigger the "Request a budget increase" deep link. Prove the two agree, so a
@@ -142,8 +154,14 @@ describe("GRN invoice-GST-components (unified vendor-GRN flow)", () => {
     expect(regexMatch, "BudgetLinkedGrnForm.tsx's overBudget regex was not found where expected").toBeTruthy();
     // eslint-disable-next-line no-eval -- reconstructing the exact literal already in source, not external input
     const overBudgetRegex = eval(regexMatch![1]) as RegExp;
-    const sampleMessage = "Some Item (Some Cost Centre): split allocation exceeds available budget by ₹123.45";
-    expect(overBudgetRegex.test(sampleMessage)).toBe(true);
+    expect(overBudgetRegex.test(message)).toBe(true);
+
+    // The quantity-exceeded message is a SEPARATE case — still phrased "split allocation exceeds
+    // available quantity by" in grn-smart.service.ts (both saveAllocations() and
+    // saveComponentAllocations()) — which the frontend's budget-only regex does not (and should
+    // not) match; that is not a "request a budget increase" situation.
+    const service = read("src/modules/finance/grn-smart.service.ts");
+    expect(service).toContain("split allocation exceeds available quantity by");
   });
 
   it("getWorkspace always returns invoiceComponents (empty for legacy/imprest GRNs, never undefined)", () => {
