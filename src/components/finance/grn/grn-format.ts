@@ -1,4 +1,5 @@
 import type { StampTone } from "@/components/finance/grn/StatusStamp";
+import { formatDateDDMMYYYY, formatDateTimeDDMMYYYY } from "@/lib/date-format";
 
 /**
  * Shared formatting and status vocabulary for the GRN page.
@@ -57,34 +58,20 @@ export function checkTone(value: string): "ok" | "warn" | "crit" {
   return "crit";
 }
 
-/** Date only. */
+/** Date only, DD-MM-YYYY. Delegates to the shared `@/lib/date-format` helper — kept as its own
+ *  exported name here because every existing caller imports `dateLabel` from this file, not from
+ *  the shared utility directly. */
 export function dateLabel(value: unknown) {
-  if (!value) return "—";
-  const date = new Date(String(value).replace(" ", "T"));
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleDateString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  return formatDateDDMMYYYY(value);
 }
 
 /**
- * Date + time, for the History timeline where the time is the whole point.
+ * Date + time, DD-MM-YYYY HH:MM, for the History timeline where the time is the whole point.
  *
  * Returns null rather than a placeholder on a missing or unparseable value — callers branch on
  * that null to tell "this stage has not happened yet" from "this stage happened at some time".
- * The `replace(" ", "T")` handles MySQL's `YYYY-MM-DD HH:MM:SS`, which Safari refuses to parse.
+ * Delegates to the shared `@/lib/date-format` helper, which preserves this null contract.
  */
 export function dateTimeLabel(value: unknown): string | null {
-  if (!value) return null;
-  const date = new Date(String(value).replace(" ", "T"));
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleString("en-IN", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDateTimeDDMMYYYY(value);
 }

@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
+import { formatDateDDMMYYYY, formatDateTimeDDMMYYYY } from "@/lib/date-format";
 
 /**
  * Finance reports for GRN Management.
@@ -69,11 +70,9 @@ const REPORTS: Array<{ key: ReportKey; label: string; icon: typeof Search; endpo
 const money = (value: unknown) =>
   Number(value ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-const date = (value: unknown) =>
-  value ? new Date(String(value)).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" }) : "—";
+const date = (value: unknown) => formatDateDDMMYYYY(value);
 
-const dateTime = (value: unknown) =>
-  value ? new Date(String(value)).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—";
+const dateTime = (value: unknown) => formatDateTimeDDMMYYYY(value) ?? "—";
 
 /** "2026-08" -> "Aug 2026". The month a finance reader thinks in, not the code. */
 function monthLabel(period: unknown) {

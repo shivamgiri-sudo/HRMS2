@@ -109,6 +109,7 @@ import { BranchBudgetImportDialog } from "@/components/finance/pnl/BranchBudgetI
 import {
   BranchBudgetPlannerGrid, applyCopyForward, budgetLineKey, type PriorBudgetRow,
 } from "@/components/finance/pnl/BranchBudgetPlannerGrid";
+import { formatDateDDMMYYYY } from "@/lib/date-format";
 
 const UNITS = [
   "Nos",
@@ -2322,7 +2323,7 @@ export default function BranchBudgetManagementWorkspace() {
                                   {item.reviewed_by_name ? (
                                     <>
                                       {item.reviewed_by_name}
-                                      {item.reviewed_at && <span className="block text-[10px] text-slate-400">{new Date(item.reviewed_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>}
+                                      {item.reviewed_at && <span className="block text-[10px] text-slate-400">{formatDateDDMMYYYY(item.reviewed_at)}</span>}
                                     </>
                                   ) : "—"}
                                 </td>
@@ -4732,7 +4733,7 @@ export function TaxAmendmentApprovalQueue({
                     {Number(a.pnl_delta) > 0 ? "+" : ""}{money(Number(a.pnl_delta))}
                   </td>
                   <td className="py-2 pr-4 text-slate-500 whitespace-nowrap">
-                    {new Date(a.requested_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}
+                    {formatDateDDMMYYYY(a.requested_at)}
                   </td>
                   <td className="py-2">
                     {a.requested_by === currentUserId ? (

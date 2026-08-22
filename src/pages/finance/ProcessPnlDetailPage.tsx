@@ -11,6 +11,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { PnlExecutiveKpiStrip } from "@/components/finance/pnl/PnlExecutiveKpiStrip";
 import { useBpoProcessPnlDetail } from "@/hooks/useBpoProcessPnlDetail";
 import { useProcessPnlSection } from "@/hooks/useProcessPnlDetail";
+import { formatDateDDMMYYYY } from "@/lib/date-format";
 
 /**
  * The month this page opens on when the URL carries none.
@@ -60,10 +61,12 @@ function percent(value: number | null | undefined) {
 function date(value: string | null | undefined) {
   if (!value) return "Not available";
   // MySQL hands back "YYYY-MM-DD HH:MM:SS", which Safari refuses — new Date() returns Invalid
-  // Date and the raw string was rendered instead. Same normalisation grn-format.ts already does.
+  // Date and the raw string was rendered instead. Same normalisation grn-format.ts already does,
+  // now delegated to the shared @/lib/date-format helper; an unparseable value still falls back
+  // to the raw string here rather than the shared helper's own "—" placeholder.
   const parsed = new Date(String(value).replace(" ", "T"));
   if (Number.isNaN(parsed.getTime())) return String(value);
-  return parsed.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  return formatDateDDMMYYYY(parsed);
 }
 
 function moneyTone(value: number) {
