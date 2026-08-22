@@ -513,6 +513,12 @@ export default function BranchBudgetManagementWorkspace() {
   const [period, setPeriod] = useState(() => searchParams.get("period") || currentPeriod());
   const [branchId, setBranchId] = useState(() => searchParams.get("branchId") || "");
   const [topupPresetLineId, setTopupPresetLineId] = useState(() => searchParams.get("topupLine") || "");
+  // Group D deep-link readiness: mirrors topupPresetLineId's shape for a request against a
+  // brand-new head/sub-head that has no budget line yet. Nothing sends these params today (Group
+  // A, not yet built) — this just makes the panel ready to receive them; verified by hand at
+  // ?tab=topups&newLineHead=...&newLineSubHead=....
+  const [topupPresetNewLineHead, setTopupPresetNewLineHead] = useState(() => searchParams.get("newLineHead") || "");
+  const [topupPresetNewLineSubHead, setTopupPresetNewLineSubHead] = useState(() => searchParams.get("newLineSubHead") || "");
   const [lines, setLines] = useState<BranchBudgetLineInput[]>([blankLine()]);
   const [savedBudgetId, setSavedBudgetId] = useState<string | null>(null);
   const [loadedDetailId, setLoadedDetailId] = useState<string | null>(null);
@@ -2741,7 +2747,14 @@ export default function BranchBudgetManagementWorkspace() {
                   canDirectTopup={Boolean(capabilities?.canDirectTopup)}
                   currentUserId={user?.id ?? null}
                   presetLineId={topupPresetLineId || null}
-                  onConsumedPreset={() => setTopupPresetLineId("")}
+                  presetNewLineHead={topupPresetNewLineHead || null}
+                  presetNewLineSubHead={topupPresetNewLineSubHead || null}
+                  currentBudgetId={currentBudget?.id ?? null}
+                  onConsumedPreset={() => {
+                    setTopupPresetLineId("");
+                    setTopupPresetNewLineHead("");
+                    setTopupPresetNewLineSubHead("");
+                  }}
                 />
               ) : (
                 <div className="py-12 text-center text-slate-500">

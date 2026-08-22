@@ -143,3 +143,54 @@ describe("finance surfaces read the fields their APIs actually return", () => {
     expect(button).toContain('queryKey: ["branch-budget-detail"]');
   });
 });
+
+/**
+ * Group D: cost-centre split editor + new-line mode. The backend (861a9e9db) now requires every
+ * top-up request to carry costCentreSplits and supports isNewLine — these pin the frontend shape
+ * that actually sends it, the same "read the fields the API actually returns/requires" contract
+ * style the rest of this file already uses for this component.
+ */
+describe("Group D — cost-centre splits and new-line mode reach the wire", () => {
+  it("both top-up mutations post costCentreSplits", () => {
+    const panel = read("components/finance/budget/BudgetTopupPanel.tsx");
+    expect(panel).toContain("costCentreSplits");
+    expect(panel).toContain("/api/finance/pnl/budget-lines/${directLineId}/direct-topup");
+  });
+
+  it("the direct-increase dialog never sends isNewLine — out of scope by design", () => {
+    const panel = read("components/finance/budget/BudgetTopupPanel.tsx");
+    // directApplyMutation's body must not carry isNewLine at all; the mode toggle only exists on
+    // the create dialog.
+    const directApplyStart = panel.indexOf("const directApplyMutation = useMutation");
+    const directApplyBody = panel.slice(directApplyStart, panel.indexOf("const reviewMutation"));
+    expect(directApplyBody).not.toContain("isNewLine");
+  });
+
+  it("createMutation branches on createMode and posts isNewLine + budgetId for a new line", () => {
+    const panel = read("components/finance/budget/BudgetTopupPanel.tsx");
+    expect(panel).toContain('createMode === "new"');
+    expect(panel).toContain("isNewLine: true");
+    expect(panel).toContain("budgetId: budgetIdForNewLine");
+  });
+
+  it("budgetIdForNewLine reads budget_id off an available line, falling back to the parent's currentBudgetId", () => {
+    const panel = read("components/finance/budget/BudgetTopupPanel.tsx");
+    expect(panel).toContain("lines[0]?.budget_id ?? currentBudgetId ?? null");
+  });
+
+  it("quantity is never a user-entered field — always amount / unitRate at submit time", () => {
+    const panel = read("components/finance/budget/BudgetTopupPanel.tsx");
+    // TopupSplitRow itself only carries costCentreId + amount, never a quantity field.
+    expect(panel).toContain("type TopupSplitRow = { key: string; costCentreId: string; amount: string }");
+    expect(panel).toContain("Number(row.amount) / unitRate");
+  });
+
+  it("the workspace parses and forwards the new-line deep-link params", () => {
+    const workspace = read("pages/finance/BranchBudgetManagementWorkspace.tsx");
+    expect(workspace).toContain('searchParams.get("newLineHead")');
+    expect(workspace).toContain('searchParams.get("newLineSubHead")');
+    expect(workspace).toContain("presetNewLineHead={topupPresetNewLineHead || null}");
+    expect(workspace).toContain("presetNewLineSubHead={topupPresetNewLineSubHead || null}");
+    expect(workspace).toContain("currentBudgetId={currentBudget?.id ?? null}");
+  });
+});

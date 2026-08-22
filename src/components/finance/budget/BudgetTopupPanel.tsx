@@ -15,6 +15,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { cn } from "@/lib/utils";
+import { useBranchBudgetAllocations, type CostCentreOption } from "@/hooks/useBranchBudget";
 import { toast } from "sonner";
 
 export type BudgetTopupRequest = {
@@ -59,7 +61,65 @@ type AvailableLine = {
   unit_rate: number;
   available_quantity: number;
   available_gross_amount: number;
+  /** Group D: availableLines() selects `l.*`, which already carries this — it was simply never
+   *  declared on this type before there was a reason to read it. Every line returned for a given
+   *  branch+period belongs to the same budget header, so any line in the list can stand in for
+   *  "the current budget's id" when a new-line request needs one. */
+  budget_id?: string;
 };
+
+/** Group D: one row of a top-up's cost-centre split. Quantity is deliberately not a field here —
+ *  it is only ever derived (amount / unitRate) at submit time, in the mutation, the same way this
+ *  file already derives requestedQuantity/additionalQuantity for the line as a whole. */
+export type TopupSplitRow = { key: string; costCentreId: string; amount: string };
+
+function blankSplitRow(): TopupSplitRow {
+  return { key: crypto.randomUUID(), costCentreId: "", amount: "" };
+}
+
+/** A rupee or two of float slop, not exact-to-the-paisa — same tolerance style
+ *  budget-topup.service.ts's own validateCostCentreSplits() applies server-side. */
+export const SPLIT_AMOUNT_TOLERANCE = 1;
+
+/**
+ * Client-side fast-feedback check on a top-up's cost-centre split, mirroring (but not replacing)
+ * budget-topup.service.ts's validateCostCentreSplits(): every row needs a cost centre and a
+ * positive amount, no cost centre may appear twice (mirrors the DB's own
+ * UNIQUE(topup_request_id, cost_centre_id)), and the rows must sum to the request's own top-level
+ * amount. The server remains authoritative — this only saves a round trip on the common mistakes.
+ */
+export function validateTopupSplits(
+  rows: TopupSplitRow[],
+  requestedAmountNumber: number
+): { ok: true; sum: number } | { ok: false; message: string; sum: number } {
+  if (!rows.length) {
+    return { ok: false, message: "Add at least one cost-centre split", sum: 0 };
+  }
+  const seen = new Set<string>();
+  let sum = 0;
+  for (const row of rows) {
+    if (!row.costCentreId) {
+      return { ok: false, message: "Every split row needs a cost centre selected", sum };
+    }
+    if (seen.has(row.costCentreId)) {
+      return { ok: false, message: "This cost centre is already in the split", sum };
+    }
+    seen.add(row.costCentreId);
+    const amount = Number(row.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return { ok: false, message: "Every split row needs a positive amount", sum };
+    }
+    sum += amount;
+  }
+  sum = Math.round((sum + Number.EPSILON) * 100) / 100;
+  if (!Number.isFinite(requestedAmountNumber) || requestedAmountNumber <= 0) {
+    return { ok: false, message: "Enter the requested amount before splitting it", sum };
+  }
+  if (Math.abs(sum - requestedAmountNumber) > SPLIT_AMOUNT_TOLERANCE) {
+    return { ok: false, message: "Split total does not match the requested amount", sum };
+  }
+  return { ok: true, sum };
+}
 
 function money(value: unknown) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value ?? 0));
@@ -67,6 +127,89 @@ function money(value: unknown) {
 
 function statusLabel(status: string) {
   return status.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Group D: the split editor shared by both "Request a budget increase" (new + existing line) and
+ *  "Direct budget increase". A top-up split only ever needs {costCentreId, amount} per row — no
+ *  percentage reconciliation against 100%, no per-cost-centre budget-line matching — unlike
+ *  BudgetLinkedGrnForm's own CostCentreSplitEditor, which this deliberately does not reuse (that
+ *  one is tightly coupled to that file's bespoke GrnCard/GrnSelect primitives and its own
+ *  percentage-based reconciliation; this file uses its own plain shadcn primitives throughout). */
+function CostCentreSplitEditor({
+  rows,
+  onChange,
+  costCentreOptions,
+  costCentresLoading,
+  requestedAmountNumber,
+}: {
+  rows: TopupSplitRow[];
+  onChange: (rows: TopupSplitRow[]) => void;
+  costCentreOptions: CostCentreOption[];
+  costCentresLoading: boolean;
+  requestedAmountNumber: number;
+}) {
+  const validation = validateTopupSplits(rows, requestedAmountNumber);
+  const usedCostCentreIds = new Set(rows.map((row) => row.costCentreId).filter(Boolean));
+
+  const updateRow = (key: string, patch: Partial<TopupSplitRow>) =>
+    onChange(rows.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+  const removeRow = (key: string) => onChange(rows.length > 1 ? rows.filter((row) => row.key !== key) : rows);
+  const addRow = () => onChange([...rows, blankSplitRow()]);
+
+  return (
+    <div className="space-y-2 rounded-lg border border-slate-200 p-3">
+      <Label className="text-xs">Cost-centre split *</Label>
+      <div className="space-y-2">
+        {rows.map((row) => (
+          <div key={row.key} className="flex items-center gap-2">
+            <Select value={row.costCentreId} onValueChange={(value) => updateRow(row.key, { costCentreId: value })}>
+              <SelectTrigger className="h-9 flex-1"><SelectValue placeholder="Select cost centre" /></SelectTrigger>
+              <SelectContent>
+                {costCentreOptions.map((cc) => (
+                  <SelectItem
+                    key={cc.id}
+                    value={cc.id}
+                    disabled={usedCostCentreIds.has(cc.id) && row.costCentreId !== cc.id}
+                  >
+                    {cc.costCentreName}{cc.processName ? ` · ${cc.processName}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Input
+              type="number"
+              inputMode="decimal"
+              className="h-9 w-32"
+              placeholder="Amount"
+              value={row.amount}
+              onChange={(event) => updateRow(row.key, { amount: event.target.value })}
+            />
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-9 w-9 shrink-0"
+              disabled={rows.length === 1}
+              title={rows.length === 1 ? "At least one cost-centre split is required" : "Remove this split"}
+              onClick={() => removeRow(row.key)}
+            >
+              <XCircle className="h-4 w-4 text-slate-400" />
+            </Button>
+          </div>
+        ))}
+      </div>
+      <Button type="button" size="sm" variant="outline" onClick={addRow}>
+        <PlusCircle className="mr-1 h-3.5 w-3.5" />Add cost centre
+      </Button>
+      {!costCentresLoading && !costCentreOptions.length && (
+        <p className="text-xs text-amber-700">No cost centres found for this branch.</p>
+      )}
+      <p className={cn("text-xs font-medium", validation.ok ? "text-emerald-700" : "text-amber-700")}>
+        Split total: {money(validation.sum)} / {money(requestedAmountNumber)} needed
+        {!validation.ok && ` — ${validation.message}`}
+      </p>
+    </div>
+  );
 }
 
 /**
@@ -84,6 +227,9 @@ export function BudgetTopupPanel({
   presetLineId,
   onConsumedPreset,
   currentUserId,
+  presetNewLineHead,
+  presetNewLineSubHead,
+  currentBudgetId,
 }: {
   branchId: string;
   period: string;
@@ -105,17 +251,35 @@ export function BudgetTopupPanel({
   /** Current user's ID — used to disable the Approve button when the viewer is the submitter
    *  (maker-checker enforcement mirrors the backend check in budget-topup.service.ts). */
   currentUserId?: string | null;
+  /** Group D deep-link readiness: mirrors presetLineId's shape for the "no line exists yet"
+   *  case a blocked GRN can also produce (see BranchBudgetManagementWorkspace's ?newLineHead=/
+   *  ?newLineSubHead= params). Nothing sends these yet — Group A, not built — this only makes
+   *  the panel ready to receive them. */
+  presetNewLineHead?: string | null;
+  presetNewLineSubHead?: string | null;
+  /** The branch+period's current budget id, sourced from the parent workspace's own
+   *  useBranchBudgets() query (BranchBudgetManagementWorkspace's `currentBudget`). Needed for a
+   *  new-line request when `lines` is empty — exactly the situation that motivates new-line mode
+   *  in the first place, so there is no AvailableLine row to read budget_id off. */
+  currentBudgetId?: string | null;
 }) {
   const queryClient = useQueryClient();
-  const [createOpen, setCreateOpen] = useState(Boolean(presetLineId));
+  const [createOpen, setCreateOpen] = useState(Boolean(presetLineId || presetNewLineHead));
+  const [createMode, setCreateMode] = useState<"existing" | "new">(presetNewLineHead ? "new" : "existing");
   const [selectedLineId, setSelectedLineId] = useState(presetLineId ?? "");
   const [requestedAmount, setRequestedAmount] = useState("");
   const [reason, setReason] = useState("");
+  const [createSplitRows, setCreateSplitRows] = useState<TopupSplitRow[]>(() => [blankSplitRow()]);
+  const [newLineHead, setNewLineHead] = useState(presetNewLineHead ?? "");
+  const [newLineSubHead, setNewLineSubHead] = useState(presetNewLineSubHead ?? "");
+  const [newLineUnit, setNewLineUnit] = useState("");
+  const [newLineUnitRate, setNewLineUnitRate] = useState("");
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [directOpen, setDirectOpen] = useState(false);
   const [directLineId, setDirectLineId] = useState("");
   const [directAmount, setDirectAmount] = useState("");
   const [directReason, setDirectReason] = useState("");
+  const [directSplitRows, setDirectSplitRows] = useState<TopupSplitRow[]>(() => [blankSplitRow()]);
 
   const listQuery = useQuery({
     // period is part of the key AND the request. It was omitted from both, so the panel showed
@@ -149,11 +313,74 @@ export function BudgetTopupPanel({
   });
   const lines = linesQuery.data ?? [];
 
+  // Group D: cost-centre picker for the split editor, both dialogs. useBranchBudgetAllocations
+  // is the existing, already-fetched-elsewhere query for this — no new endpoint, no duplicate
+  // query key, per the brief.
+  const { costCentresQuery } = useBranchBudgetAllocations(branchId, period);
+  const costCentreOptions = costCentresQuery.data ?? [];
+
+  const requestedAmountNumber = Number(requestedAmount) || 0;
+  const directAmountNumber = Number(directAmount) || 0;
+
+  /** Every line returned for this branch+period shares one budget header (availableLines() scopes
+   *  on branchId/period), so any line's budget_id stands in for "the current budget's id". Falls
+   *  back to the parent workspace's own currentBudgetId when no line exists yet at all — exactly
+   *  the case that motivates new-line mode. */
+  const budgetIdForNewLine = lines[0]?.budget_id ?? currentBudgetId ?? null;
+
+  const resetCreateDialogState = () => {
+    setSelectedLineId("");
+    setRequestedAmount("");
+    setReason("");
+    setCreateMode("existing");
+    setCreateSplitRows([blankSplitRow()]);
+    setNewLineHead("");
+    setNewLineSubHead("");
+    setNewLineUnit("");
+    setNewLineUnitRate("");
+  };
+
   const createMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedLineId) throw new Error("Pick a budget line");
       const amount = Number(requestedAmount);
       if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter a valid amount");
+
+      if (createMode === "new") {
+        if (!newLineHead.trim() || !newLineSubHead.trim() || !newLineUnit.trim()) {
+          throw new Error("Head, sub-head and unit are required to request a new budget line");
+        }
+        const unitRate = Number(newLineUnitRate);
+        if (!(unitRate > 0)) {
+          throw new Error("Enter a positive unit rate");
+        }
+        if (!budgetIdForNewLine) {
+          throw new Error(
+            `No budget was found for this branch in ${period || "the selected period"} — a budget must exist `
+              + "before a new line can be requested against it."
+          );
+        }
+        const splitCheck = validateTopupSplits(createSplitRows, amount);
+        if (!splitCheck.ok) throw new Error(splitCheck.message);
+        const costCentreSplits = createSplitRows.map((row) => ({
+          costCentreId: row.costCentreId,
+          amount: Number(row.amount),
+          quantity: Number(row.amount) / unitRate,
+        }));
+        return hrmsApi.post("/api/finance/pnl/budget-topups", {
+          isNewLine: true,
+          budgetId: budgetIdForNewLine,
+          head: newLineHead.trim(),
+          subHead: newLineSubHead.trim(),
+          unit: newLineUnit.trim(),
+          unitRate,
+          requestedAmount: amount,
+          requestedQuantity: amount / unitRate,
+          reason,
+          costCentreSplits,
+        });
+      }
+
+      if (!selectedLineId) throw new Error("Pick a budget line");
       const line = lines.find((l) => l.id === selectedLineId);
       // A quantity of 0 is not a safe fallback. The applied top-up raises the line's rupee
       // ceiling but not its unit ceiling, and a GRN is blocked by whichever runs out first
@@ -172,19 +399,25 @@ export function BudgetTopupPanel({
         throw new Error("This budget line has no unit rate, so an increase cannot be sized in units.");
       }
       const requestedQuantity = amount / line.unit_rate;
+      const splitCheck = validateTopupSplits(createSplitRows, amount);
+      if (!splitCheck.ok) throw new Error(splitCheck.message);
+      const costCentreSplits = createSplitRows.map((row) => ({
+        costCentreId: row.costCentreId,
+        amount: Number(row.amount),
+        quantity: Number(row.amount) / line.unit_rate,
+      }));
       return hrmsApi.post("/api/finance/pnl/budget-topups", {
         budgetLineId: selectedLineId,
         requestedAmount: amount,
         requestedQuantity,
         reason,
+        costCentreSplits,
       });
     },
     onSuccess: () => {
       toast.success("Top-up request submitted for branch_head review");
       setCreateOpen(false);
-      setSelectedLineId("");
-      setRequestedAmount("");
-      setReason("");
+      resetCreateDialogState();
       onConsumedPreset?.();
       queryClient.invalidateQueries({ queryKey: ["budget-topups"] });
     },
@@ -204,10 +437,18 @@ export function BudgetTopupPanel({
         throw new Error("This budget line has no unit rate, so an increase cannot be sized in units.");
       }
       if (!directReason.trim()) throw new Error("A reason is required");
+      const splitCheck = validateTopupSplits(directSplitRows, amount);
+      if (!splitCheck.ok) throw new Error(splitCheck.message);
       const additionalQuantity = amount / line.unit_rate;
+      const costCentreSplits = directSplitRows.map((row) => ({
+        costCentreId: row.costCentreId,
+        amount: Number(row.amount),
+        quantity: Number(row.amount) / line.unit_rate,
+      }));
       return hrmsApi.post(`/api/finance/pnl/budget-lines/${directLineId}/direct-topup`, {
         additionalQuantity,
         reason: directReason.trim(),
+        costCentreSplits,
       });
     },
     onSuccess: () => {
@@ -216,6 +457,7 @@ export function BudgetTopupPanel({
       setDirectLineId("");
       setDirectAmount("");
       setDirectReason("");
+      setDirectSplitRows([blankSplitRow()]);
       // Same invalidation set as a completed review — a direct increase moves gross_amount
       // exactly the way an approved top-up does, so every cached headroom figure is now stale.
       queryClient.invalidateQueries({ queryKey: ["budget-topups"] });
@@ -356,7 +598,16 @@ export function BudgetTopupPanel({
         ))}
       </CardContent>
 
-      <Dialog open={createOpen} onOpenChange={(open) => { setCreateOpen(open); if (!open) onConsumedPreset?.(); }}>
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => {
+          setCreateOpen(open);
+          if (!open) {
+            resetCreateDialogState();
+            onConsumedPreset?.();
+          }
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Request a budget increase</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -367,33 +618,90 @@ export function BudgetTopupPanel({
               Increasing the <strong>{period || "selected"}</strong> budget. Change the month in the
               strip above the tabs to top up a different period.
             </div>
-            <div>
-              <Label className="text-xs">Budget line *</Label>
-              <Select value={selectedLineId} onValueChange={setSelectedLineId} disabled={!linesQuery.isLoading && !lines.length}>
-                <SelectTrigger className="mt-1 h-9"><SelectValue placeholder="Select a budget line" /></SelectTrigger>
-                <SelectContent>
-                  {lines.map((line) => (
-                    <SelectItem key={line.id} value={line.id}>
-                      {line.head}{line.sub_head ? ` · ${line.sub_head}` : ""} — {line.item_name} (available {money(line.available_gross_amount)})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {/* The old copy asserted one cause ("hasn't reached that stage yet") for what are
-                  two quite different situations, and was simply wrong in the second: a fully
-                  approved budget whose lines are all consumed to zero also returns nothing here,
-                  because availableLines() filters on available_quantity > 0 AND
-                  available_gross_amount > 0. Telling someone their budget is unapproved when it
-                  is approved and exhausted sends them to the wrong person. */}
-              {!linesQuery.isLoading && !lines.length && (
-                <p className="mt-1.5 text-xs text-amber-700">
-                  No budget line with remaining headroom for {period}. Either this branch's budget for
-                  this period has not completed Branch Head and Finance Head approval,
-                  or it is approved and every line is already fully committed. The Approval &amp;
-                  Utilization tab shows which of the two it is.
-                </p>
-              )}
+            {/* Group D: existing-line vs brand-new-head/sub-head. A small segmented toggle rather
+                than GRN's GrnSegmented, which is tied to that file's own bespoke styling — this
+                matches its visual convention (a pill of two mutually-exclusive buttons) using this
+                file's own Button primitive. */}
+            <div className="inline-flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+              <Button
+                type="button"
+                size="sm"
+                variant={createMode === "existing" ? "default" : "ghost"}
+                className="h-7 px-3 text-xs"
+                onClick={() => setCreateMode("existing")}
+              >
+                Existing budget line
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={createMode === "new" ? "default" : "ghost"}
+                className="h-7 px-3 text-xs"
+                onClick={() => setCreateMode("new")}
+              >
+                Request new head/sub-head
+              </Button>
             </div>
+            {createMode === "existing" ? (
+              <div>
+                <Label className="text-xs">Budget line *</Label>
+                <Select value={selectedLineId} onValueChange={setSelectedLineId} disabled={!linesQuery.isLoading && !lines.length}>
+                  <SelectTrigger className="mt-1 h-9"><SelectValue placeholder="Select a budget line" /></SelectTrigger>
+                  <SelectContent>
+                    {lines.map((line) => (
+                      <SelectItem key={line.id} value={line.id}>
+                        {line.head}{line.sub_head ? ` · ${line.sub_head}` : ""} — {line.item_name} (available {money(line.available_gross_amount)})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {/* The old copy asserted one cause ("hasn't reached that stage yet") for what are
+                    two quite different situations, and was simply wrong in the second: a fully
+                    approved budget whose lines are all consumed to zero also returns nothing here,
+                    because availableLines() filters on available_quantity > 0 AND
+                    available_gross_amount > 0. Telling someone their budget is unapproved when it
+                    is approved and exhausted sends them to the wrong person. */}
+                {!linesQuery.isLoading && !lines.length && (
+                  <p className="mt-1.5 text-xs text-amber-700">
+                    No budget line with remaining headroom for {period}. Either this branch's budget for
+                    this period has not completed Branch Head and Finance Head approval,
+                    or it is approved and every line is already fully committed. The Approval &amp;
+                    Utilization tab shows which of the two it is — or use "Request new head/sub-head"
+                    above if this is genuinely a brand-new line.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <Label className="text-xs">Head *</Label>
+                  <Input className="mt-1 h-9" value={newLineHead} onChange={(event) => setNewLineHead(event.target.value)} />
+                </div>
+                <div>
+                  <Label className="text-xs">Sub-head *</Label>
+                  <Input className="mt-1 h-9" value={newLineSubHead} onChange={(event) => setNewLineSubHead(event.target.value)} />
+                </div>
+                <div>
+                  <Label className="text-xs">Unit *</Label>
+                  <Input
+                    className="mt-1 h-9"
+                    placeholder="e.g. Nos, Hours, Amount"
+                    value={newLineUnit}
+                    onChange={(event) => setNewLineUnit(event.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Unit rate *</Label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    className="mt-1 h-9"
+                    value={newLineUnitRate}
+                    onChange={(event) => setNewLineUnitRate(event.target.value)}
+                  />
+                </div>
+              </div>
+            )}
             <div>
               <Label className="text-xs">Additional amount needed *</Label>
               <Input
@@ -404,6 +712,13 @@ export function BudgetTopupPanel({
                 onChange={(event) => setRequestedAmount(event.target.value)}
               />
             </div>
+            <CostCentreSplitEditor
+              rows={createSplitRows}
+              onChange={setCreateSplitRows}
+              costCentreOptions={costCentreOptions}
+              costCentresLoading={costCentresQuery.isLoading}
+              requestedAmountNumber={requestedAmountNumber}
+            />
             <div>
               <Label className="text-xs">Reason *</Label>
               <Textarea
@@ -416,7 +731,10 @@ export function BudgetTopupPanel({
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCreateOpen(false)}>Cancel</Button>
-            <Button disabled={createMutation.isPending} onClick={() => createMutation.mutate()}>
+            <Button
+              disabled={createMutation.isPending || !validateTopupSplits(createSplitRows, requestedAmountNumber).ok}
+              onClick={() => createMutation.mutate()}
+            >
               Submit for branch_head review
             </Button>
           </DialogFooter>
@@ -427,7 +745,13 @@ export function BudgetTopupPanel({
           chain. Same line picker/amount/reason shape as the request dialog above, deliberately
           kept separate (not a shared dialog) so the two very different consequences — "raises a
           request" vs. "changes the budget right now" — are never one accidental click apart. */}
-      <Dialog open={directOpen} onOpenChange={setDirectOpen}>
+      <Dialog
+        open={directOpen}
+        onOpenChange={(open) => {
+          setDirectOpen(open);
+          if (!open) setDirectSplitRows([blankSplitRow()]);
+        }}
+      >
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Direct budget increase — Finance Head</DialogTitle></DialogHeader>
           <div className="space-y-3">
@@ -459,6 +783,13 @@ export function BudgetTopupPanel({
                 onChange={(event) => setDirectAmount(event.target.value)}
               />
             </div>
+            <CostCentreSplitEditor
+              rows={directSplitRows}
+              onChange={setDirectSplitRows}
+              costCentreOptions={costCentreOptions}
+              costCentresLoading={costCentresQuery.isLoading}
+              requestedAmountNumber={directAmountNumber}
+            />
             <div>
               <Label className="text-xs">Reason *</Label>
               <Textarea
@@ -471,7 +802,10 @@ export function BudgetTopupPanel({
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setDirectOpen(false)}>Cancel</Button>
-            <Button disabled={directApplyMutation.isPending} onClick={() => directApplyMutation.mutate()}>
+            <Button
+              disabled={directApplyMutation.isPending || !validateTopupSplits(directSplitRows, directAmountNumber).ok}
+              onClick={() => directApplyMutation.mutate()}
+            >
               Apply immediately
             </Button>
           </DialogFooter>
