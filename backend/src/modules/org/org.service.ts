@@ -861,7 +861,7 @@ export const policyService = {
 
 export const processService = {
   async list(options: ListOptions = {}) {
-    const { q, active_status, page, limit, employeeId } = options;
+    const { q, active_status, page, limit, employeeId, branch_id } = options;
     const whereClauses: string[] = [];
     const params: (string | number)[] = [];
 
@@ -879,6 +879,10 @@ export const processService = {
       whereClauses.push("(pm.process_name LIKE ? OR pm.process_code LIKE ? OR cl.client_name LIKE ? OR bm.branch_name LIKE ?)");
       params.push(`%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`, `%${q.trim()}%`);
     }
+
+    // Branch filter — same axis costCentreService.list() already narrows on. The route layer
+    // has forwarded branch_id here all along; nothing ever applied it.
+    if (branch_id) { whereClauses.push("pm.branch_id = ?"); params.push(branch_id); }
 
     const whereClause = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
