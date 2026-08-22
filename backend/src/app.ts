@@ -233,6 +233,7 @@ import { costCentreManagementRouter } from "./modules/finance/cost-centre-manage
 import { processPnlRouter } from "./modules/process-pnl/process-pnl.routes.js";
 import billabilityRouter from "./modules/process-pnl/billability.routes.js";
 import { annualBudgetSummaryRouter } from "./modules/process-pnl/annual-budget-summary.routes.js";
+import { unlinkedGrnReviewRouter } from "./modules/process-pnl/unlinked-grn-review.routes.js";
 import { onboardingDataRouter } from "./modules/onboarding/onboarding-data.routes.js";
 import { pennyDropRouter } from "./modules/onboarding/penny-drop.routes.js";
 import { nameValidationRouter } from "./modules/onboarding/name-validation.routes.js";
@@ -521,6 +522,7 @@ app.use("/api/ijp", ijpRouter);
 app.use("/api/erp", erpRouter);
 app.use("/api/client-billing", clientBillingRouter);
 app.use("/api/finance/annual-budget-summary", annualBudgetSummaryRouter);
+app.use("/api/finance/unlinked-grn-review", unlinkedGrnReviewRouter);
 app.use("/api/finance", vendorPaymentRouter);
 // Its own /api/gst prefix, not bare /api/finance: every path here is period-and-registration
 // scoped, and mounting it alongside grnRouter's "/grns/:id"-shaped routes would expose it to the

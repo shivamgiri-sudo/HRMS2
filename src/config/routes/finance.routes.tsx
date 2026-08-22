@@ -13,6 +13,7 @@ const NativeVendorPaymentTracking  = lazy(() => import("@/pages/NativeVendorPaym
 const NativeGRNManagement          = lazy(() => import("@/pages/NativeGRNManagement"));
 const BranchBudgetManagementPage   = lazy(() => import("@/pages/finance/BranchBudgetManagementPage"));
 const AnnualBudgetSummaryPage      = lazy(() => import("@/pages/finance/AnnualBudgetSummaryPage"));
+const UnlinkedGrnReviewPage        = lazy(() => import("@/pages/finance/UnlinkedGrnReviewPage"));
 const BudgetConsolidationPage      = lazy(() => import("@/pages/finance/BudgetConsolidationPage"));
 const SalaryVoucherPage      = lazy(() => import("@/pages/finance/SalaryVoucherPage"));
 const ProcessPnlPage               = lazy(() => import("@/pages/finance/ProcessPnlPage"));
@@ -67,6 +68,8 @@ export const financeRouteElements = (
           all-branches rollup is more exposure than the single-branch screen above, so it is
           deliberately narrower (no branch_admin/branch_head/finance). See migration 1537. */}
       <Route path="/finance/annual-budget-summary"   element={<ProtectedRoute roles={['super_admin','admin','finance_head','accounts_head']}><Gate pageCode="FINANCE_ANNUAL_BUDGET_SUMMARY"><AnnualBudgetSummaryPage /></Gate></ProtectedRoute>} />
+      {/* Roles must match ALLOWED_ROLES in unlinked-grn-review.routes.ts exactly. See migration 1548. */}
+      <Route path="/finance/unlinked-grn-review"     element={<ProtectedRoute roles={['super_admin','admin','finance_head','accounts_head']}><Gate pageCode="FINANCE_UNLINKED_GRN_REVIEW"><UnlinkedGrnReviewPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/budget-consolidation"    element={<ProtectedRoute roles={budgetConsolidationRoles}><Gate pageCode="FINANCE_BUDGET_CONSOLIDATION"><BudgetConsolidationPage /></Gate></ProtectedRoute>} />
       <Route path="/finance/cost-centres"            element={<ProtectedRoute roles={costCentreRoles}><Gate pageCode="FINANCE_COST_CENTRES"><CostCentreManagementPage /></Gate></ProtectedRoute>} />
       {/* Roles match ALLOWED_ROLES in client-billing.routes.ts and the grant in migration

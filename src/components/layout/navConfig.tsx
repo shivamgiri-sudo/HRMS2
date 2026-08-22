@@ -367,6 +367,9 @@ export const navGroups: NavGroup[] = [
           // route guard in finance.routes.tsx exactly (migration 1537) — narrower than Branch
           // Budget above since this rolls up every branch at once.
           { label: "Annual Budget Summary",   href: "/finance/annual-budget-summary",    icon: ic(Wallet),       roles: ["admin","super_admin","finance_head","accounts_head"], pageCode: "FINANCE_ANNUAL_BUDGET_SUMMARY", description: "Budget vs. actual by branch, every month of the financial year" },
+          // Roles/pageCode must match ALLOWED_ROLES in unlinked-grn-review.routes.ts and the
+          // route guard in finance.routes.tsx exactly (migration 1548).
+          { label: "Unlinked GRN Review",     href: "/finance/unlinked-grn-review",      icon: ic(Wallet),       roles: ["admin","super_admin","finance_head","accounts_head"], pageCode: "FINANCE_UNLINKED_GRN_REVIEW", description: "Approved GRNs still missing a budget link, and why" },
           { label: "Budget Consolidation",    href: "/finance/budget-consolidation",     icon: ic(Building2),    roles: ["admin","super_admin","ceo","coo","finance_head","accounts_head"], description: "Company-wide budget rollup across all branches" },
           { label: "Cost Centres",            href: "/finance/cost-centres",             icon: ic(Building2),    roles: ["admin","super_admin","finance","finance_head","accounts_head","branch_head","branch_admin"], description: "Cost centre creation and approval workflow" },
           { label: "Billability & Seat Cost", href: "/finance/billability",              icon: ic(Receipt),      roles: ["super_admin","finance","payroll_head","payroll_branch"], pageCode: "FINANCE_BILLABILITY_SEAT_COST", description: "Which roles the client pays for, seat rates, and support cost splits" },
