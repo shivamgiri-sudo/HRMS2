@@ -73,13 +73,15 @@ const COMP_MAP = [
   // summary fields (from salary_prep_line, not components)
   ['GROSS',        'Gross',             'Gross Salary'],
   ['NET',          'NetSalary',         'Net Salary'],
-  ['TOTAL_DED',    'TotalDeduction',    'Total Deduction'],
+  // TOTAL_DED intentionally excluded: db_bill stores TotalDeduction=0 for most rows
+  // (data quality defect in the legacy system). HRMS calculates the correct sum of
+  // individual deductions. Comparing it would produce 2358 false-positive "diffs".
   ['WORKING_DAYS', 'WorkingDays',       'Working Days'],
   ['PRESENT_DAYS', 'EarnedDays',        'Present/Earned Days'],
 ];
 
 // Summary fields come from salary_prep_line directly
-const LINE_FIELDS = new Set(['GROSS','NET','TOTAL_DED','WORKING_DAYS','PRESENT_DAYS']);
+const LINE_FIELDS = new Set(['GROSS','NET','WORKING_DAYS','PRESENT_DAYS']);
 
 function log(m) { process.stdout.write(`[${new Date().toLocaleTimeString('en-IN')}] ${m}\n`); }
 function round2(v) { return Math.round(Number(v) * 100) / 100; }
