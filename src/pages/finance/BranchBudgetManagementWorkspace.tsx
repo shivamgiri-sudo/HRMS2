@@ -1784,26 +1784,23 @@ export default function BranchBudgetManagementWorkspace() {
               )}
             </TabsList>
 
-            {/* Context strip — always visible on every tab */}
-            {(branchId || period) && (
-              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-1.5 text-xs text-slate-500">
-                <span className="font-medium text-slate-700">
-                  {(() => {
-                    const current = branches.find((b) => b.id === branchId);
-                    return current ? branchLabel(current) : (branchId ? "Branch" : "No branch selected");
-                  })()}
-                </span>
-                <span>·</span>
-                {/* The period selector used to exist ONLY inside the Plan Builder tab, while
-                    approval / rollup / matrix / variance / coverage all render period-dependent
-                    data. On those tabs the period was a fixed label the user could not change and,
-                    in most of them, could not even see. Putting the control in the strip that is
-                    already rendered above every tab makes the period adjustable from wherever the
-                    user actually is, without giving each tab its own competing copy. */}
-                <MonthYearPicker value={period} onChange={changePeriod} className="h-7 w-40 text-xs" />
-                {currentBudget && <span>{statusBadge(currentBudget.status)}</span>}
-              </div>
-            )}
+            {/* Context strip — always visible on every tab. Branch and period are the shared
+                navigation state every tab's data depends on, so the branch selector lives here
+                once (moved from the Plan Builder tab's own card) instead of being reachable from
+                only one tab. Unconditional now — it is the selection control itself, not just a
+                display of an already-made choice, so there's nothing to gate it on. */}
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-1.5 text-xs text-slate-500">
+              <div className="w-56 space-y-1"><Label>{branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={branchLocked} onChange={(event) => { const v = event.target.value; if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "branch", value: v }); } else { setBranchId(v); setSavedBudgetId(null); setLoadedDetailId(null); } }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branchLabel(branch)}</option>)}</select></div>
+              <span>·</span>
+              {/* The period selector used to exist ONLY inside the Plan Builder tab, while
+                  approval / rollup / matrix / variance / coverage all render period-dependent
+                  data. On those tabs the period was a fixed label the user could not change and,
+                  in most of them, could not even see. Putting the control in the strip that is
+                  already rendered above every tab makes the period adjustable from wherever the
+                  user actually is, without giving each tab its own competing copy. */}
+              <MonthYearPicker value={period} onChange={changePeriod} className="h-7 w-40 text-xs" />
+              {currentBudget && <span>{statusBadge(currentBudget.status)}</span>}
+            </div>
 
             {/* ACTION REQUIRED banner for pending reviewers */}
             {currentBudget && canReview(currentBudget) && tab !== "approval" && (
@@ -1825,8 +1822,9 @@ export default function BranchBudgetManagementWorkspace() {
               {/* Compacted: three tall stacked blocks became one inline row. This is a context
                   selector, not a form to fill in, so it should not occupy a card's worth of height
                   above the grid that actually does the work. */}
-              <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500">{/* Period moved to the context strip above, which is visible on every tab — see the comment
-                  there. Kept out of this card rather than duplicated, so there is exactly one control. */}<div className="w-56 space-y-1"><Label>{branchLocked ? "Assigned branch" : "Branch *"}</Label><select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm disabled:bg-slate-100" value={branchId} disabled={branchLocked} onChange={(event) => { const v = event.target.value; if (canEdit && dirtyCount > 0) { setPendingNavigation({ type: "branch", value: v }); } else { setBranchId(v); setSavedBudgetId(null); setLoadedDetailId(null); } }}><option value="">Select branch</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branchLabel(branch)}</option>)}</select></div><div className="w-28 space-y-1"><Label>Financial year</Label><div className="flex h-9 items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-600" title="Set by Period — April to March. Not independently editable.">{financialYear(period)}</div></div></CardContent></Card>
+              <Card className="rounded-2xl border-slate-200 shadow-sm"><CardContent className="flex flex-wrap items-end gap-3 p-3 [&_input]:h-9 [&_input]:min-h-0 [&_input]:py-1 [&_select]:h-9 [&_label]:text-xs [&_label]:text-slate-500">{/* Branch and period both moved to the context strip above, which is visible on every tab —
+                  see the comments there. Financial year is derived from period, not an independent
+                  input, so it stays here rather than duplicating it in the strip too. */}<div className="w-28 space-y-1"><Label>Financial year</Label><div className="flex h-9 items-center rounded-md border border-dashed border-slate-300 bg-slate-50 px-3 text-sm font-medium text-slate-600" title="Set by Period — April to March. Not independently editable.">{financialYear(period)}</div></div></CardContent></Card>
               {costCentresTruncated && (
                 <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
                   <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
