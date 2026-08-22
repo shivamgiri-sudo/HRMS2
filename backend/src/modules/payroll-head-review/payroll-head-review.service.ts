@@ -255,6 +255,20 @@ async function writeComponentAssignment(
       WHERE employee_id = ?`,
     [pkg.id, effectiveDate, employeeId]
   );
+
+  // Keep employee_salary_assignment.ctc_annual in sync with the package CTC so
+  // salary slips and CTC reports show the Payroll Head's confirmed figure, not
+  // the original offer CTC. Payroll calculation uses salary_component_assignments
+  // (gross) directly, so this does not affect the payable amount — it only
+  // corrects the display field. Only updates when a row already exists; a missing
+  // ESA row is a creation-orchestrator gap, not something to write here silently.
+  await db.execute(
+    `UPDATE employee_salary_assignment
+        SET ctc_annual = ?, effective_from = ?, updated_at = NOW()
+      WHERE employee_id = ? AND active_status = 1
+      LIMIT 1`,
+    [Number(pkg.package_amount ?? (pkg.ctc ?? 0)), effectiveDate, employeeId]
+  ).catch((e) => console.warn('[payroll-head-review] could not sync ESA ctc_annual:', e));
 }
 
 export async function assignPackage(
