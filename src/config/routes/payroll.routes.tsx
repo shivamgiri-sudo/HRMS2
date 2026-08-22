@@ -58,6 +58,12 @@ const PayrollHeadSalaryReviewDetail = lazy(() => import("@/pages/payroll/Payroll
 const HolidayWork               = lazy(() => import("@/pages/payroll/HolidayWork"));
 const PfManagement              = lazy(() => import("@/pages/payroll/PfManagement"));
 
+// Merged consolidated pages
+const PaymentDisbursalCenter    = lazy(() => import("@/pages/payroll/PaymentDisbursalCenter"));
+const PayrollReadinessDashboard = lazy(() => import("@/pages/payroll/PayrollReadinessDashboard"));
+const SalaryPackageManager      = lazy(() => import("@/pages/payroll/SalaryPackageManager"));
+const StatutoryCenter           = lazy(() => import("@/pages/payroll/StatutoryCenter"));
+
 /**
  * Roles entitled to the org-wide admin Payslip Center. Everyone else — including
  * the CEO — gets their own payslip.
@@ -104,18 +110,19 @@ export const payrollRouteElements = (
       <Route path="/payroll/payslips"       element={<ProtectedRoute><PayslipCenterRoute /></ProtectedRoute>} />
       <Route path="/payroll/tax-declaration" element={<ProtectedRoute><Gate pageCode="TAX_DECLARATION"><NativeTaxDeclaration /></Gate></ProtectedRoute>} />
       <Route path="/payroll/full-final"     element={<ProtectedRoute><Gate pageCode="FULL_FINAL"><NativeFullFinal /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/statutory-config" element={<ProtectedRoute><Gate pageCode="STATUTORY_CONFIG"><NativeStatutoryConfig /></Gate></ProtectedRoute>} />
+      {/* Statutory Center — merged page with tabs for filing + config */}
+      <Route path="/payroll/statutory" element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><Gate pageCode="STATUTORY_CONFIG"><StatutoryCenter /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/statutory-config" element={<Navigate to="/payroll/statutory?tab=config" replace />} />
       <Route path="/payroll/masters"        element={<ProtectedRoute><Gate pageCode="PAYROLL_MASTERS"><NativePayrollMasters /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/salary-packages" element={<ProtectedRoute><Gate pageCode="SALARY_PACKAGES"><NativeSalaryPackages /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/package-admin"  element={<ProtectedRoute roles={['admin','super_admin','payroll']}><Gate pageCode="SALARY_PACKAGE_ADMIN"><NativeSalaryPackageAdmin /></Gate></ProtectedRoute>} />
+      {/* Salary Package Manager — merged page with tabs for packages + admin */}
+      <Route path="/payroll/salary-packages" element={<ProtectedRoute><Gate pageCode="SALARY_PACKAGES"><SalaryPackageManager /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/package-admin"  element={<Navigate to="/payroll/salary-packages?tab=admin" replace />} />
       <Route path="/payroll/incentives"     element={<ProtectedRoute><Gate pageCode="PAYROLL_INCENTIVES"><NativeIncentives /></Gate></ProtectedRoute>} />
       <Route path="/payroll/overtime"       element={<ProtectedRoute roles={['admin','super_admin','wfm','payroll','payroll_head']}><Gate pageCode="PAYROLL_OVERTIME"><PayrollOvertimeManagement /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/disbursal"      element={<ProtectedRoute roles={['super_admin','payroll','payroll_head','finance']}><Gate pageCode="PAYROLL_DISBURSAL"><DisbursalManagement /></Gate></ProtectedRoute>} />
-      {/* Roles mirror READ_ROLES in bank-payment-readiness.routes.ts, and the Gate resolves
-          PAYROLL_BANK_READINESS from role_page_access (seeded by migration 1142). Full account
-          numbers are NOT released by either gate — GET /payment-file separately requires
-          hasOrgWideScope(). */}
-      <Route path="/payroll/bank-readiness" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll','payroll_admin','payroll_branch','finance','finance_head','hr','branch_head','branch_admin']}><Gate pageCode="PAYROLL_BANK_READINESS"><BankPaymentReadiness /></Gate></ProtectedRoute>} />
+      {/* Payment Disbursal Center — merged page with tabs for bank + disbursal */}
+      <Route path="/payroll/payment-center" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll','payroll_admin','payroll_branch','finance','finance_head','hr','branch_head','branch_admin']}><Gate pageCode="PAYROLL_BANK_READINESS"><PaymentDisbursalCenter /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/disbursal"      element={<Navigate to="/payroll/payment-center?tab=disbursal" replace />} />
+      <Route path="/payroll/bank-readiness" element={<Navigate to="/payroll/payment-center?tab=bank" replace />} />
       <Route path="/payroll/config-flags"   element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_CONFIG_FLAGS"><PayrollConfigFlags /></Gate></ProtectedRoute>} />
       <Route path="/payroll/recalculation-queue" element={<ProtectedRoute roles={['super_admin','admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_RECALCULATION_QUEUE"><RecalculationQueue /></Gate></ProtectedRoute>} />
       {/* Double-gated until now: ProtectedRoute resolves this path to
@@ -133,12 +140,14 @@ export const payrollRouteElements = (
       <Route path="/payroll/holiday-work-approvals" element={<Navigate to="/payroll/holiday-work?tab=approvals" replace />} />
       <Route path="/payroll/validation"          element={<ProtectedRoute roles={['super_admin','payroll_head']}><Gate pageCode="PAYROLL_VALIDATION"><PayrollValidationScreen /></Gate></ProtectedRoute>} />
       <Route path="/payroll/noc"                 element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch','payroll','admin']}><Gate pageCode="PAYROLL_NOC"><NocManagement /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/branch-readiness"    element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','admin','hr','finance','payroll']}><Gate pageCode="PAYROLL_BRANCH_READINESS"><BranchPayrollReadiness /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/process-readiness"  element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','admin','hr','finance','payroll','process_manager','wfm']}><Gate pageCode="PAYROLL_PROCESS_READINESS"><ProcessPayrollReadiness /></Gate></ProtectedRoute>} />
+      {/* Payroll Readiness Dashboard — merged page with scope toggle for branch/process */}
+      <Route path="/payroll/readiness" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','admin','hr','finance','payroll','process_manager','wfm']}><Gate pageCode="PAYROLL_BRANCH_READINESS"><PayrollReadinessDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/branch-readiness"   element={<Navigate to="/payroll/readiness?scope=branch" replace />} />
+      <Route path="/payroll/process-readiness"  element={<Navigate to="/payroll/readiness?scope=process" replace />} />
       <Route path="/payroll/salary-verification" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','wfm','process_manager','admin']}><Gate pageCode="PAYROLL_SALARY_VERIFICATION"><ProcessSalaryVerify /></Gate></ProtectedRoute>} />
       <Route path="/payroll/calendar"            element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_CALENDAR"><PayrollCalendar /></Gate></ProtectedRoute>} />
       <Route path="/payroll/cost-summary"        element={<Navigate to="/reports?view=library&report=payroll-cost-summary" replace />} />
-      <Route path="/payroll/statutory-filing"    element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><Gate pageCode="PAYROLL_STATUTORY_FILING"><StatutoryFilingTracker /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/statutory-filing"    element={<Navigate to="/payroll/statutory?tab=filing" replace />} />
       <Route path="/payroll/audit-trail"         element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><Gate pageCode="PAYROLL_AUDIT_TRAIL"><PayrollAuditTrail /></Gate></ProtectedRoute>} />
       <Route path="/payroll/variance"            element={<Navigate to="/reports?view=library&report=payroll-variance" replace />} />
       <Route path="/payroll/bulk-outputs"        element={<ProtectedRoute roles={['super_admin','payroll_head','admin']}><Gate pageCode="PAYROLL_BULK_OUTPUTS"><BulkOutputs /></Gate></ProtectedRoute>} />
