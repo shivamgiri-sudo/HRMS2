@@ -210,12 +210,64 @@ compare('approved reopen top-ups',
  * neither mirrored nor explicitly acknowledged as out of scope. A new finance table appearing in
  * db_bill now breaks the build instead of quietly skewing the P&L.
  */
+// ── Payroll-adjacent snapshot tables ────────────────────────────────────────
+// These are not P&L tables (not revenue/GRN/budget) but are mirrored for
+// salary report reconciliation. They are verified here so a single run covers
+// the full picture.
+console.log('\nPAYROLL-ADJACENT SNAPSHOTS — row count and rupee totals');
+
+// upload_deduction — last 5 salary months (YYYY-MM format)
+const [dedMonthsRaw] = await hrms.query(
+  `SELECT DISTINCT salary_month FROM upload_deduction_snapshot
+    WHERE salary_month IS NOT NULL
+    ORDER BY salary_month DESC LIMIT 5`
+);
+for (const { salary_month } of dedMonthsRaw) {
+  compare(`upload_deduction  ${salary_month}`,
+    await one(bill,
+      `SELECT COUNT(*) row_n,
+              SUM(COALESCE(MobileDeduction,0)+COALESCE(ShortCollection,0)+COALESCE(AssetRecovery,0)+
+                  COALESCE(Insurance,0)+COALESCE(ProfessionalTax,0)+COALESCE(LeaveDeduction,0)+
+                  COALESCE(OthersDeduction,0)) amt
+         FROM upload_deduction
+        WHERE DATE_FORMAT(SalaryMonth,'%Y-%m') = ?`, [salary_month]),
+    await one(hrms,
+      `SELECT COUNT(*) row_n,
+              SUM(COALESCE(mobile_deduction,0)+COALESCE(short_collection,0)+COALESCE(asset_recovery,0)+
+                  COALESCE(insurance,0)+COALESCE(professional_tax,0)+COALESCE(leave_deduction,0)+
+                  COALESCE(others_deduction,0)) amt
+         FROM upload_deduction_snapshot
+        WHERE salary_month = ?`, [salary_month]));
+}
+
+// qual_incentive — last 5 year/month combos
+const [qiMonthsRaw] = await hrms.query(
+  `SELECT DISTINCT sal_year, sal_month FROM qual_incentive_snapshot
+    WHERE sal_year IS NOT NULL AND sal_month IS NOT NULL
+    ORDER BY sal_year DESC, FIELD(sal_month,'Jan','Feb','Mar','Apr','May','Jun',
+      'Jul','Aug','Sep','Oct','Nov','Dec') DESC
+    LIMIT 5`
+);
+for (const { sal_year, sal_month } of qiMonthsRaw) {
+  compare(`qual_incentive   ${sal_year}-${sal_month}`,
+    await one(bill,
+      `SELECT COUNT(*) row_n, SUM(COALESCE(incamt,0)) amt
+         FROM qual_incentive WHERE Salyear = ? AND salmonth = ?`,
+      [sal_year, sal_month]),
+    await one(hrms,
+      `SELECT COUNT(*) row_n, SUM(COALESCE(amount,0)) amt
+         FROM qual_incentive_snapshot WHERE sal_year = ? AND sal_month = ?`,
+      [sal_year, sal_month]));
+}
+
 console.log('\nCOMPLETENESS — is anything financial in db_bill still unmirrored?');
 const MIRRORED_SOURCES = new Set(['tbl_invoice','inv_particulars','expense_master','expense_particular',
   'expense_entry_master','expense_entry_particular','client_master','provision_master','cost_master',
   'tbl_bgt_expenseheadingmaster','tbl_bgt_expensesubheadingmaster','tbl_credit_note',
   'expense_master_reject','expense_reopen_master',
-  'credit_particulars','provision_master_month_deductions']);
+  'credit_particulars','provision_master_month_deductions',
+  // payroll-adjacent — mirrored via sync-incentive-deduction-from-dbbill.mjs
+  'upload_deduction','qual_incentive']);
 // Reviewed 2026-08-06 and deliberately out of scope for the P&L. Each is a real live table;
 // leaving them here is a decision on record, not an oversight.
 const OUT_OF_SCOPE = new Map([

@@ -1222,6 +1222,246 @@ function ApprovalQueueTab() {
   );
 }
 
+// ─── DB Bill Snapshot Tab ─────────────────────────────────────────────────────
+
+interface DeductionSummaryRow {
+  branch_name: string;
+  employee_count: number;
+  mobile_deduction: number;
+  short_collection: number;
+  asset_recovery: number;
+  insurance: number;
+  professional_tax: number;
+  leave_deduction: number;
+  others_deduction: number;
+  total_deduction: number;
+}
+
+interface DeductionTotals {
+  employee_count: number;
+  mobile_deduction: number;
+  short_collection: number;
+  asset_recovery: number;
+  insurance: number;
+  professional_tax: number;
+  leave_deduction: number;
+  others_deduction: number;
+  total_deduction: number;
+}
+
+interface QualIncentiveSummaryRow {
+  branch_name: string;
+  employee_count: number;
+  total_amount: number;
+}
+
+interface QualIncentiveTotals {
+  employee_count: number;
+  total_amount: number;
+}
+
+function fmt(n: unknown): string {
+  const v = Number(n ?? 0);
+  if (v === 0) return "—";
+  return v.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+}
+
+function DbBillSnapshotTab() {
+  const [deductionMonth, setDeductionMonth] = useState<string>("");
+  const [qualYear, setQualYear] = useState<string>("");
+  const [qualMonth, setQualMonth] = useState<string>("");
+
+  const { data: dedMonths } = useQuery<{ data: string[] }>({
+    queryKey: ["deduction-snapshot-months"],
+    queryFn: () => hrmsApi.get("/api/payroll/deduction-snapshot/months").then((r) => r.data),
+  });
+
+  const { data: qualMonths } = useQuery<{ data: { sal_year: string; sal_month: string }[] }>({
+    queryKey: ["qual-incentive-snapshot-months"],
+    queryFn: () => hrmsApi.get("/api/payroll/qual-incentive-snapshot/months").then((r) => r.data),
+  });
+
+  const {
+    data: dedSummary,
+    isLoading: dedLoading,
+  } = useQuery<{ data: DeductionSummaryRow[]; totals: DeductionTotals; salary_month: string }>({
+    queryKey: ["deduction-snapshot-summary", deductionMonth],
+    queryFn: () =>
+      hrmsApi
+        .get("/api/payroll/deduction-snapshot/summary", { params: { salary_month: deductionMonth } })
+        .then((r) => r.data),
+    enabled: !!deductionMonth,
+  });
+
+  const {
+    data: qualSummary,
+    isLoading: qualLoading,
+  } = useQuery<{ data: QualIncentiveSummaryRow[]; totals: QualIncentiveTotals }>({
+    queryKey: ["qual-incentive-snapshot-summary", qualYear, qualMonth],
+    queryFn: () =>
+      hrmsApi
+        .get("/api/payroll/qual-incentive-snapshot/summary", {
+          params: { sal_year: qualYear, sal_month: qualMonth },
+        })
+        .then((r) => r.data),
+    enabled: !!qualYear && !!qualMonth,
+  });
+
+  const dedCols: Array<{ key: keyof DeductionSummaryRow; label: string }> = [
+    { key: "mobile_deduction",  label: "Mobile" },
+    { key: "short_collection",  label: "Short Coll." },
+    { key: "asset_recovery",    label: "Asset Rec." },
+    { key: "insurance",         label: "Insurance" },
+    { key: "professional_tax",  label: "Prof. Tax" },
+    { key: "leave_deduction",   label: "Leave Ded." },
+    { key: "others_deduction",  label: "Others" },
+    { key: "total_deduction",   label: "Total" },
+  ];
+
+  return (
+    <div className="space-y-8">
+      {/* Deductions */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Upload Deductions (db_bill mirror)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Label className="whitespace-nowrap text-sm">Salary Month</Label>
+            <Select value={deductionMonth} onValueChange={setDeductionMonth}>
+              <SelectTrigger className="w-44">
+                <SelectValue placeholder="Select month" />
+              </SelectTrigger>
+              <SelectContent>
+                {(dedMonths?.data ?? []).map((m) => (
+                  <SelectItem key={m} value={m}>{m}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {dedLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+
+          {dedSummary && (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Branch</TableHead>
+                    <TableHead className="text-right">Employees</TableHead>
+                    {dedCols.map((c) => (
+                      <TableHead key={c.key} className="text-right">{c.label}</TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dedSummary.data.map((row) => (
+                    <TableRow key={row.branch_name}>
+                      <TableCell className="font-medium">{row.branch_name || "—"}</TableCell>
+                      <TableCell className="text-right">{row.employee_count}</TableCell>
+                      {dedCols.map((c) => (
+                        <TableCell key={c.key} className="text-right text-xs">
+                          {fmt(row[c.key])}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                  {dedSummary.totals && (
+                    <TableRow className="font-semibold bg-muted/50">
+                      <TableCell>TOTAL</TableCell>
+                      <TableCell className="text-right">{dedSummary.totals.employee_count}</TableCell>
+                      {dedCols.map((c) => (
+                        <TableCell key={c.key} className="text-right text-xs">
+                          {fmt(dedSummary.totals[c.key])}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
+          {!deductionMonth && (
+            <p className="text-sm text-muted-foreground">Select a month to view deduction summary.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Qual Incentives */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Quality Incentives (db_bill mirror)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <Label className="whitespace-nowrap text-sm">Year</Label>
+            <Select value={qualYear} onValueChange={(v) => { setQualYear(v); setQualMonth(""); }}>
+              <SelectTrigger className="w-28">
+                <SelectValue placeholder="Year" />
+              </SelectTrigger>
+              <SelectContent>
+                {[...new Set((qualMonths?.data ?? []).map((m) => m.sal_year))].map((y) => (
+                  <SelectItem key={y} value={y}>{y}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Label className="whitespace-nowrap text-sm">Month</Label>
+            <Select value={qualMonth} onValueChange={setQualMonth} disabled={!qualYear}>
+              <SelectTrigger className="w-28">
+                <SelectValue placeholder="Month" />
+              </SelectTrigger>
+              <SelectContent>
+                {(qualMonths?.data ?? [])
+                  .filter((m) => m.sal_year === qualYear)
+                  .map((m) => (
+                    <SelectItem key={m.sal_month} value={m.sal_month}>{m.sal_month}</SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {qualLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+
+          {qualSummary && (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Branch</TableHead>
+                    <TableHead className="text-right">Employees</TableHead>
+                    <TableHead className="text-right">Total Amount (₹)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {qualSummary.data.map((row) => (
+                    <TableRow key={row.branch_name}>
+                      <TableCell className="font-medium">{row.branch_name || "Unknown"}</TableCell>
+                      <TableCell className="text-right">{row.employee_count}</TableCell>
+                      <TableCell className="text-right">{fmt(row.total_amount)}</TableCell>
+                    </TableRow>
+                  ))}
+                  {qualSummary.totals && (
+                    <TableRow className="font-semibold bg-muted/50">
+                      <TableCell>TOTAL</TableCell>
+                      <TableCell className="text-right">{qualSummary.totals.employee_count}</TableCell>
+                      <TableCell className="text-right">{fmt(qualSummary.totals.total_amount)}</TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+
+          {!(qualYear && qualMonth) && (
+            <p className="text-sm text-muted-foreground">Select a year and month to view quality incentive summary.</p>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 // ─── Page Root ────────────────────────────────────────────────────────────────
 
 export default function NativeIncentives() {
@@ -1240,6 +1480,7 @@ export default function NativeIncentives() {
             <TabsTrigger value="types">Incentive Types</TabsTrigger>
             <TabsTrigger value="upload">Monthly Upload</TabsTrigger>
             <TabsTrigger value="approval">Approval Queue</TabsTrigger>
+            <TabsTrigger value="snapshot">DB Bill Snapshot</TabsTrigger>
           </TabsList>
 
           <TabsContent value="types" className="mt-4">
@@ -1252,6 +1493,10 @@ export default function NativeIncentives() {
 
           <TabsContent value="approval" className="mt-4">
             <ApprovalQueueTab />
+          </TabsContent>
+
+          <TabsContent value="snapshot" className="mt-4">
+            <DbBillSnapshotTab />
           </TabsContent>
         </Tabs>
       </div>
