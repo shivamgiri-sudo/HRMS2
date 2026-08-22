@@ -242,14 +242,28 @@ const REPORTS: Record<string, ReportDef> = {
       const [ew, ev] = empWhere("employee_code", f.employee_code);
       const [dw, dv] = f.from_date ? dateRangeWhere("att_date", f.from_date, f.to_date)
         : monthWhere("att_date", f.month);
+      // Historical snapshot UNION live attendance_daily_record (work_mode=wfh)
+      const [bw2, bv2] = branchWhere("bm.branch_name", f.branch);
+      const [ew2, ev2] = empWhere("e.employee_code", f.employee_code);
+      const dw2 = dw.replace(/att_date/g, "adr.record_date");
       return q(`
         SELECT employee_code, employee_name, branch_name, cost_center,
                att_date, status, old_status
         FROM wfh_attendance_snapshot
         WHERE 1=1 ${bw} ${ew} ${dw}
+        UNION ALL
+        SELECT e.employee_code, e.full_name AS employee_name,
+               bm.branch_name, cc.cost_centre_code AS cost_center,
+               adr.record_date AS att_date,
+               adr.attendance_status AS status, NULL AS old_status
+        FROM attendance_daily_record adr
+        JOIN employees e ON e.id = adr.employee_id
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+        WHERE adr.work_mode = 'wfh' ${bw2} ${ew2} ${dw2}
         ORDER BY branch_name, employee_code, att_date
         LIMIT 50000
-      `, [...bv, ...ev, ...dv]);
+      `, [...bv, ...ev, ...dv, ...bv2, ...ev2, ...dv]);
     },
   },
 
@@ -520,6 +534,11 @@ const REPORTS: Record<string, ReportDef> = {
       const [bw, bv] = branchWhere("branch_name", f.branch);
       const [ew, ev] = empWhere("employee_code", f.employee_code);
       const [mw, mv] = monthWhere("salary_month", f.month);
+      // Historical snapshot UNION live employee_deduction_entries
+      const [ew2, ev2] = empWhere("e.employee_code", f.employee_code);
+      const [mw2, mv2] = monthWhere("ede.run_month", f.month);
+      const bw2 = f.branch ? "AND bm.branch_name = ?" : "";
+      const bv2 = f.branch ? [f.branch] : [];
       return q(`
         SELECT employee_code, employee_name, branch_name, cost_center,
                salary_month, mobile_deduction, short_collection,
@@ -527,9 +546,24 @@ const REPORTS: Record<string, ReportDef> = {
                others_deduction, remarks
         FROM upload_deduction_snapshot
         WHERE 1=1 ${bw} ${ew} ${mw}
+        UNION ALL
+        SELECT e.employee_code, e.full_name AS employee_name,
+               bm.branch_name, cc.cost_centre_code AS cost_center,
+               ede.run_month AS salary_month,
+               0 AS mobile_deduction, 0 AS short_collection,
+               0 AS asset_recovery, 0 AS insurance, 0 AS leave_deduction,
+               SUM(ede.amount) AS others_deduction,
+               GROUP_CONCAT(ede.deduction_type_code SEPARATOR ', ') AS remarks
+        FROM employee_deduction_entries ede
+        JOIN employees e ON e.id = ede.employee_id
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+        WHERE 1=1 ${ew2} ${mw2} ${bw2}
+        GROUP BY e.employee_code, e.full_name, bm.branch_name,
+                 cc.cost_centre_code, ede.run_month
         ORDER BY branch_name, employee_code, salary_month
         LIMIT 50000
-      `, [...bv, ...ev, ...mv]);
+      `, [...bv, ...ev, ...mv, ...ev2, ...mv2, ...bv2]);
     },
   },
 

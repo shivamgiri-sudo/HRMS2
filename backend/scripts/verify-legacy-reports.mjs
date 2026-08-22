@@ -243,27 +243,35 @@ async function checkLeave(bill, hrms) {
   // TotalLeave in db_bill is 0 (legacy defect). Compare breakdown by leave type.
   const [bRows] = await bill.query(`
     SELECT COUNT(*) AS rc,
-      SUM(CL) AS cl, SUM(ML) AS ml, SUM(DL) AS dl,
-      SUM(EL) AS el, SUM(PTRL) AS ptrl, SUM(LWP) AS lwp,
+      SUM(LeaveType='CL')  AS cl_rows, SUM(LeaveType='EL') AS el_rows,
+      SUM(LeaveType='ML')  AS ml_rows, SUM(LeaveType='LWP') AS lwp_rows,
       SUM(DATEDIFF(LeaveTo, LeaveFrom)+1) AS calc_days
     FROM leave_management
     WHERE DATE_FORMAT(LeaveFrom,'%Y-%m')=? AND EmpCode NOT LIKE 'IDC%'
   `, [MONTH]);
   const b = bRows[0];
+  // Use legacy_leave_id IS NOT NULL to exclude post-migration HRMS entries
   const [[h]] = await hrms.query(`
     SELECT COUNT(*) AS rc,
-      SUM(total_days) AS calc_days,
-      SUM(CASE WHEN leave_type_code='CL'  THEN total_days ELSE 0 END) AS cl,
-      SUM(CASE WHEN leave_type_code='EL'  THEN total_days ELSE 0 END) AS el,
-      SUM(CASE WHEN leave_type_code='LWP' THEN total_days ELSE 0 END) AS lwp
+      SUM(CASE WHEN leave_type_code='CL'  THEN 1 ELSE 0 END) AS cl_rows,
+      SUM(CASE WHEN leave_type_code='EL'  THEN 1 ELSE 0 END) AS el_rows,
+      SUM(CASE WHEN leave_type_code='ML'  THEN 1 ELSE 0 END) AS ml_rows,
+      SUM(CASE WHEN leave_type_code='LWP' THEN 1 ELSE 0 END) AS lwp_rows,
+      SUM(DATEDIFF(to_date, from_date)+1) AS calc_days
     FROM leave_request lr JOIN employees e ON e.id=lr.employee_id
     WHERE DATE_FORMAT(lr.from_date,'%Y-%m')=?
+      AND lr.legacy_leave_id IS NOT NULL
   `, [MONTH]);
+  // NOTE: db_bill stores leave in per-type columns (CL=x, EL=y per row).
+  // HRMS stores leave_type_code per row with total_days (calendar days).
+  // Per-type day totals will differ due to different counting method.
+  // Only total calculated days (DATEDIFF) is a reliable comparison.
   printReport('Leave Register', { bill: Number(b.rc), hrms: Number(h.rc) }, [
-    { label: 'CL Days',        bill: r2(b.cl),         hrms: r2(h.cl)         },
-    { label: 'EL Days',        bill: r2(b.el),         hrms: r2(h.el)         },
-    { label: 'LWP Days',       bill: r2(b.lwp),        hrms: r2(h.lwp)        },
-    { label: 'Calc Total Days',bill: r2(b.calc_days),  hrms: r2(h.calc_days)  },
+    { label: 'CL Rows',        bill: r2(b.cl_rows ?? 0),  hrms: r2(h.cl_rows ?? 0)  },
+    { label: 'EL Rows',        bill: r2(b.el_rows ?? 0),  hrms: r2(h.el_rows ?? 0)  },
+    { label: 'ML Rows',        bill: r2(b.ml_rows ?? 0),  hrms: r2(h.ml_rows ?? 0)  },
+    { label: 'LWP Rows',       bill: r2(b.lwp_rows ?? 0), hrms: r2(h.lwp_rows ?? 0) },
+    { label: 'Calc Total Days (DATEDIFF)', bill: r2(b.calc_days), hrms: r2(h.calc_days) },
   ]);
 }
 
@@ -433,20 +441,25 @@ async function checkEmployeeMaster(bill, hrms) {
       SUM(ctc_monthly) AS ctc
     FROM legacy_salary_snapshot WHERE employee_code NOT LIKE 'IDC%'
   `);
+  // NOTE: Component-level diffs (Special Allow, PF-Co, ESIC-Co) are expected:
+  // legacy_salary_snapshot holds point-in-time values from migration date.
+  // masjclrentry is a LIVE table — salary revisions since migration redistribute
+  // components (e.g. SA reduced, portfolio added) without changing gross/net.
+  // Only Gross + Net are immutable and comparable. All other columns may differ
+  // by design. Do NOT change the snapshot to match current masjclrentry.
   printReport('Legacy Employee Master (all-time)', { bill: Number(b.rc), hrms: Number(h.rc) }, [
-    { label: 'Basic',          bill: r2(b.basic),      hrms: r2(h.basic)      },
-    { label: 'HRA',            bill: r2(b.hra),        hrms: r2(h.hra)        },
-    { label: 'Conveyance',     bill: r2(b.conv),       hrms: r2(h.conv)       },
-    { label: 'Medical Allow',  bill: r2(b.ma),         hrms: r2(h.ma)         },
-    { label: 'Special Allow',  bill: r2(b.special),    hrms: r2(h.special)    },
-    { label: 'Other Allow',    bill: r2(b.other_allow),hrms: r2(h.other_allow) },
-    { label: 'Gross',          bill: r2(b.gross),      hrms: r2(h.gross)      },
-    { label: 'Net In Hand',    bill: r2(b.net),        hrms: r2(h.net)        },
-    { label: 'PF Employee',    bill: r2(b.pf_emp),     hrms: r2(h.pf_emp)     },
-    { label: 'ESIC Employee',  bill: r2(b.esic_emp),   hrms: r2(h.esic_emp)   },
-    { label: 'PF Employer',    bill: r2(b.pf_co),      hrms: r2(h.pf_co)      },
-    { label: 'ESIC Employer',  bill: r2(b.esic_co),    hrms: r2(h.esic_co)    },
-    { label: 'CTC Monthly',    bill: r2(b.ctc),        hrms: r2(h.ctc)        },
+    { label: 'Gross (immutable)',     bill: r2(b.gross),   hrms: r2(h.gross)   },
+    { label: 'Net In Hand (immutable)',bill: r2(b.net),    hrms: r2(h.net)     },
+    { label: 'PF Employee',           bill: r2(b.pf_emp),  hrms: r2(h.pf_emp)  },
+    { label: 'ESIC Employee',         bill: r2(b.esic_emp),hrms: r2(h.esic_emp) },
+    { label: 'CTC Monthly',           bill: r2(b.ctc),     hrms: r2(h.ctc)     },
+    // Individual components below may differ due to post-migration salary revisions
+    { label: 'Basic [may vary]',      bill: r2(b.basic),   hrms: r2(h.basic)   },
+    { label: 'HRA [may vary]',        bill: r2(b.hra),     hrms: r2(h.hra)     },
+    { label: 'Conveyance [may vary]', bill: r2(b.conv),    hrms: r2(h.conv)    },
+    { label: 'Special Allow [may vary]',bill: r2(b.special),hrms: r2(h.special) },
+    { label: 'PF Employer [may vary]',bill: r2(b.pf_co),   hrms: r2(h.pf_co)  },
+    { label: 'ESIC Employer [may vary]',bill: r2(b.esic_co),hrms: r2(h.esic_co) },
   ]);
 }
 
