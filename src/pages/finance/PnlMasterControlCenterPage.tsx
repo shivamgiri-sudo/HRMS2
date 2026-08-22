@@ -485,7 +485,7 @@ export default function PnlMasterControlCenterPage() {
   });
 
   const rewardPenaltyEntries = bpo.rewardPenaltyQuery.data ?? [];
-  const costCentreList = useCostCentreList({ status: "active" });
+  const costCentreList = useCostCentreList({ status: "active", branch_id: branchFilter || undefined });
   const costCentres = costCentreList.data?.data ?? [];
   const costCentreName = useMemo(
     () => new Map(costCentres.map((cc: any) => [cc.id, cc.cost_centre_name as string])),
@@ -1304,7 +1304,7 @@ export default function PnlMasterControlCenterPage() {
                   formSlot={
                     <div className="grid gap-4">
                       <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label="Process"><ProcessSelect value={costForm.processId} onChange={(value) => setCostForm((current) => ({ ...current, processId: value || null }))} processes={processes} allowBlank /></Field>
+                        <Field label="Process"><ProcessSelect value={costForm.processId} onChange={(value) => setCostForm((current) => ({ ...current, processId: value || null }))} processes={processes.filter((process) => !costForm.branchId || process.branch_id === costForm.branchId)} allowBlank /></Field>
                         <Field label="Branch"><BranchSelect value={costForm.branchId} onChange={(value) => setCostForm((current) => ({ ...current, branchId: value || null }))} branches={branches} allowBlank /></Field>
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2">
@@ -1413,7 +1413,7 @@ export default function PnlMasterControlCenterPage() {
                         <Field label="Exact scope key"><Input className="rounded-xl" value={classificationForm.scopeKey} onChange={(event) => setClassificationForm((current) => ({ ...current, scopeKey: event.target.value }))} placeholder="Employee ID, designation, department or master code" /></Field>
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label="Process"><ProcessSelect value={classificationForm.processId} onChange={(value) => setClassificationForm((current) => ({ ...current, processId: value || null }))} processes={processes} allowBlank /></Field>
+                        <Field label="Process"><ProcessSelect value={classificationForm.processId} onChange={(value) => setClassificationForm((current) => ({ ...current, processId: value || null }))} processes={processes.filter((process) => !classificationForm.branchId || process.branch_id === classificationForm.branchId)} allowBlank /></Field>
                         <Field label="Branch"><BranchSelect value={classificationForm.branchId} onChange={(value) => setClassificationForm((current) => ({ ...current, branchId: value || null }))} branches={branches} allowBlank /></Field>
                       </div>
                       <div className="grid gap-4 sm:grid-cols-2">
