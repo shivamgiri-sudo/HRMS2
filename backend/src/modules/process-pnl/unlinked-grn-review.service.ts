@@ -105,7 +105,7 @@ export async function getUnlinkedGrnReview(filters: {
 
   // Batch-load everything needed to classify, rather than one query per GRN.
   const [headers] = await db.execute<RowDataPacket[]>(
-    `SELECT id, branch_id, period_code FROM finance_budget_header`
+    `SELECT id, branch_id, period_code FROM finance_budget_header WHERE status = 'active'`
   );
   const headerByKey = new Map<string, { id: string }>();
   for (const h of headers) headerByKey.set(`${h.branch_id}|${h.period_code}`, { id: String(h.id) });

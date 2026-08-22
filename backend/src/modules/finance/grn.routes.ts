@@ -642,6 +642,7 @@ grnRouter.get(
         processId:        req.query.processId        ? String(req.query.processId)        : undefined,
         costCentreId:     req.query.costCentreId      ? String(req.query.costCentreId)     : undefined,
         status:           req.query.status            ? String(req.query.status)            : undefined,
+        excludeDraft:     req.query.excludeDraft === "true" ? true : undefined,
         grnNumber:        req.query.grnNumber         ? String(req.query.grnNumber)         : undefined,
         head:             req.query.head              ? String(req.query.head)              : undefined,
         subHead:          req.query.subHead           ? String(req.query.subHead)           : undefined,

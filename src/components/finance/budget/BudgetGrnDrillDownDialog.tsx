@@ -136,6 +136,7 @@ export function BudgetGrnDrillDownDialog({
       if (context.costCentreId) params.set("costCentreId", context.costCentreId);
       if (context.head) params.set("head", context.head);
       if (context.subHead) params.set("subHead", context.subHead);
+      params.set("excludeDraft", "true");
       params.set("limit", "100");
       const response = await hrmsApi.get<{ data: GrnRow[]; total: number }>(
         `/api/finance/grns?${params.toString()}`

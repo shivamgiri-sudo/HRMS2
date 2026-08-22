@@ -1217,6 +1217,8 @@ export const grnService = {
     multiMonth?: boolean;
     page?: number;
     limit?: number;
+    /** Opt-in only — GRN Search and other existing callers must keep showing drafts by default. */
+    excludeDraft?: boolean;
   }) {
     const conditions: string[] = [];
     const params: unknown[] = [];
@@ -1235,8 +1237,22 @@ export const grnService = {
       params.push(filters.processId);
     }
     if (filters.costCentreId) {
-      conditions.push("g.cost_centre_id = ?");
-      params.push(filters.costCentreId);
+      // A GRN split across more than one cost centre has its own header cost_centre_id set to
+      // NULL by grn-smart.service.ts (saveAllocations/saveComponentAllocations) — the real
+      // per-cost-centre truth lives in grn_cost_allocation, which is what
+      // budget-cost-centre-utilization.service.ts already reads for the "Consumed" figure.
+      // Matching that same lifecycle_status set here keeps the drill-down and the consumed
+      // figure agreeing on what counts.
+      conditions.push(`(
+        g.cost_centre_id = ?
+        OR EXISTS (
+          SELECT 1 FROM grn_cost_allocation gca
+           WHERE gca.grn_request_id = g.id
+             AND gca.cost_centre_id = ?
+             AND gca.lifecycle_status IN ('reserved', 'consumed')
+        )
+      )`);
+      params.push(filters.costCentreId, filters.costCentreId);
     }
     if (filters.costClass) {
       conditions.push("g.cost_class = ?");
@@ -1245,6 +1261,9 @@ export const grnService = {
     if (filters.status) {
       conditions.push("g.status = ?");
       params.push(filters.status);
+    }
+    if (filters.excludeDraft) {
+      conditions.push("g.status <> 'draft'");
     }
     if (filters.financialYear) {
       conditions.push("g.financial_year = ?");
@@ -1415,6 +1434,13 @@ export const grnService = {
     search?: string;
     page?: number;
     limit?: number;
+    /**
+     * Accepted purely so `sharedFilters` (shared with listGrns) type-checks cleanly when both
+     * are spread from the same object in grn.routes.ts. Legacy rows (bill_source_id IS NOT
+     * NULL, migrated from db_bill) have no meaningful "draft" status concept — this is a no-op
+     * here, not an invented draft semantics for legacy data.
+     */
+    excludeDraft?: boolean;
   }) {
     const conditions: string[] = [];
     const params: unknown[] = [];
