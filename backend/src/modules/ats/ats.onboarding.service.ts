@@ -539,6 +539,17 @@ async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId:
   // absent so the branch head's queue keeps flagging it rather than failing here.
   if (!o || o.gross == null || !o.date_of_joining) return;
 
+  // ats_employment_offer.emp_type stores mixed-case values ('OnRoll','OffRoll','OFFROLL').
+  // ats_payroll_hr_validation.employment_type is ENUM('onroll','offrole') — strict mode
+  // throws Data truncated on any case mismatch, and the .catch() above swallows it
+  // silently, leaving no pv row and causing validateSalaryLock to return
+  // "Branch Head approval pending". Normalise here once before either branch.
+  const empType: string = (() => {
+    const raw = String(o.emp_type ?? 'onroll').toLowerCase().replace(/[-_\s]/g, '');
+    if (raw.includes('off')) return 'offrole';
+    return 'onroll';
+  })();
+
   // payroll_hr_id references employees; the caller gives us an auth user id.
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
@@ -566,7 +577,7 @@ async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId:
       // salary_start_date = COALESCE(?, joining_date): "" is not the NULL
       // sentinel, so a blank salary-start date threw ER_TRUNCATED_WRONG_VALUE
       // instead of falling back to the joining date.
-      [o.emp_type ?? 'onroll', o.gross, o.date_of_joining, blankToNull(o.date_of_salary),
+      [empType, o.gross, o.date_of_joining, blankToNull(o.date_of_salary),
        o.department_id ?? null, o.designation_id ?? null, o.cost_centre ?? null,
        o.reporting_manager_id ?? null, o.branch_id ?? null,
        o.basic ?? null, o.hra ?? null, o.conveyance ?? null, o.special_allowance ?? null,
@@ -580,7 +591,7 @@ async function deriveSalaryValidationFromOffer(candidateId: string, actorUserId:
           gross_salary, basic_salary, hra, conveyance, special_allowance,
           joining_date, salary_start_date, validation_status, validated_at)
        VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'validated', NOW())`,
-      [candidateId, o.branch_id ?? null, payrollHrId, o.emp_type ?? 'onroll',
+      [candidateId, o.branch_id ?? null, payrollHrId, empType,
        o.department_id ?? null, o.designation_id ?? null, o.cost_centre ?? null,
        o.reporting_manager_id ?? null,
        o.gross, o.basic ?? null, o.hra ?? null, o.conveyance ?? null, o.special_allowance ?? null,
