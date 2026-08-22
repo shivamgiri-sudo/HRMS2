@@ -5,6 +5,7 @@ import { env } from '../../config/env.js';
 import { hasScopedAccess } from '../../shared/scopeAccess.js';
 import { recordBranchHeadDecision, revertBranchHeadDecision } from './branch-head-approval.record.js';
 import { resolveEmployeeIdForAuthUser, resolveBranchHeadScope } from './branch-head-scope.js';
+import { inboxService } from '../inbox/inbox.service.js';
 import { calculateSalary, SalaryComponents } from './salary.calculator.js';
 import {
   sendOnboardingTokenEmail,
@@ -754,6 +755,25 @@ export async function saveOffer(
     await deriveSalaryValidationFromOffer(String(req.candidate_id), createdBy)
       .catch((e) => console.error('[saveOffer] could not derive payroll validation:', e));
 
+    // When resubmitting after a Branch Head rejection, the ats_branch_head_approval
+    // row still holds approval_status='rejected'. recordBranchHeadDecision's UPDATE
+    // guard is AND approval_status='pending', so it would fall through to
+    // alreadyDecided:true and validateSalaryLock would find 'rejected' → the candidate
+    // would be permanently stuck. Reset the row to 'pending' here so the BH can
+    // approve the revised offer. Only touches the row if it exists and is 'rejected'
+    // — a fresh offer with no row or a still-pending row is left untouched.
+    await db.execute(
+      `UPDATE ats_branch_head_approval bha
+         JOIN ats_payroll_hr_validation pv ON pv.id = bha.payroll_validation_id
+        SET bha.approval_status = 'pending',
+            bha.branch_head_id  = NULL,
+            bha.remarks         = NULL,
+            bha.approved_at     = NULL,
+            bha.updated_at      = NOW()
+        WHERE pv.candidate_id = ? AND bha.approval_status = 'rejected'`,
+      [req.candidate_id],
+    ).catch((e) => console.error('[saveOffer] could not reset branch_head_approval:', e));
+
     await db.execute(
       `UPDATE ats_onboarding_request SET status = 'offer_submitted', updated_at = NOW() WHERE id = ?`,
       [requestId],
@@ -772,6 +792,55 @@ export async function saveOffer(
         offerSummary: `CTC: ₹${components.offered_ctc * 12}/year | Joining: ${offerData.date_of_joining}`,
       });
     }
+
+    // Inbox notification to Branch Head — covers both first submission and
+    // resubmission after rejection. Resolves the BH by user_assignment_scope
+    // (the modern path) or by branch_head_assignments (legacy), same union the
+    // approval queue itself uses, so the notification always reaches whoever
+    // can actually act on it.
+    db.execute<RowDataPacket[]>(
+      `SELECT DISTINCT u.id AS user_id
+         FROM auth_user u
+         JOIN user_roles ur ON ur.user_id = u.id AND ur.role_key = 'branch_head' AND ur.active_status = 1
+         JOIN employees e ON e.user_id = u.id AND e.active_status = 1
+        WHERE e.id IN (
+          SELECT bha2.branch_head_id FROM branch_head_assignments bha2
+           WHERE bha2.is_active = TRUE
+             AND bha2.branch_name IN (
+               SELECT COALESCE(b.branch_name, c2.applied_for_branch)
+                 FROM ats_candidate c2
+                 LEFT JOIN branch_master b
+                        ON b.id = c2.applied_for_branch
+                        OR b.branch_name = c2.applied_for_branch
+                        OR b.branch_code = c2.applied_for_branch
+                WHERE c2.id = ?
+             )
+        )
+        UNION
+        SELECT DISTINCT u2.id AS user_id
+          FROM auth_user u2
+          JOIN user_assignment_scope uas ON uas.user_id = u2.id
+                 AND uas.role_key = 'branch_head' AND uas.active_status = 1
+          JOIN user_roles ur2 ON ur2.user_id = u2.id AND ur2.role_key = 'branch_head' AND ur2.active_status = 1
+          JOIN ats_onboarding_request r2 ON r2.id = ?
+         WHERE uas.branch_id = r2.branch_id`,
+      [req.candidate_id, requestId],
+    ).then(async ([bhRows]) => {
+      await Promise.allSettled(
+        (bhRows as RowDataPacket[]).map((r) =>
+          inboxService.createItem({
+            user_id: String(r.user_id),
+            type: 'offer_pending_approval',
+            title: `Offer awaiting approval: ${String(req.full_name)}`,
+            description: `Revised salary offer for ${String(req.full_name)} is ready for your approval. CTC: ₹${components.offered_ctc * 12}/year · Joining: ${offerData.date_of_joining}`,
+            entity_type: 'candidate',
+            entity_id: String(req.candidate_id),
+            action_url: '/ats/offer-approvals',
+            priority: 'normal',
+          })
+        )
+      );
+    }).catch((e) => console.error('[saveOffer] could not send BH inbox notification:', e));
   }
 
   await syncCandidateProcessFromCostCentre(String(req.candidate_id), (offerData.cost_centre as string | undefined) ?? null);
@@ -1072,4 +1141,30 @@ export async function rejectOffer(offerId: string, approverId: string, remarks: 
       branchName: row.applied_for_branch ?? '',
     }).catch((err: unknown) => console.error('[rejectOffer] email failed:', err));
   }
+
+  // Inbox notification to the Payroll HR who validated this salary so they know
+  // to revise and resubmit. BH rejection was previously silent in-app — HR had
+  // to manually poll /ats/onboarding-requests to discover it.
+  db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT e.user_id
+       FROM ats_payroll_hr_validation pv
+       JOIN employees e ON e.id = pv.payroll_hr_id AND e.active_status = 1
+      WHERE pv.candidate_id = ?
+      ORDER BY COALESCE(pv.validated_at, pv.created_at) DESC
+      LIMIT 1`,
+    [row.candidate_id],
+  ).then(async ([hrRows]) => {
+    const hrUserId = (hrRows as RowDataPacket[])[0]?.user_id;
+    if (!hrUserId) return;
+    await inboxService.createItem({
+      user_id: String(hrUserId),
+      type: 'offer_rejected_by_branch_head',
+      title: `Offer rejected: ${String(row.full_name ?? 'Candidate')}`,
+      description: `Branch Head rejected the offer for ${String(row.full_name ?? 'this candidate')}${remarks ? ` — "${remarks}"` : ''}. Please revise the salary and resubmit.`,
+      entity_type: 'candidate',
+      entity_id: String(row.candidate_id),
+      action_url: '/ats/onboarding-requests',
+      priority: 'high',
+    });
+  }).catch((e) => console.error('[rejectOffer] could not notify payroll HR:', e));
 }

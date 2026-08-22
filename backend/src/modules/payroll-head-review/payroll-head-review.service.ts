@@ -386,6 +386,43 @@ export async function approve(employeeId: string, actorUserId: string) {
   }
   await audit(actorUserId, "PAYROLL_HEAD_REVIEW_APPROVED", employeeId, {});
   await writeHistory({ employeeId, reviewId: review.id, action: "approved", actorUserId });
+
+  // Notify the Branch Head who originally approved the offer — audit trail only,
+  // no action required. Payroll Head is the FINAL salary approver; BH does not
+  // re-approve. This gives BH visibility of what salary was set without creating
+  // any workflow obligation.
+  const targets = await resolveRejectionNotifyTargets(employeeId).catch(() => ({
+    payrollHrUserId: null, branchHeadUserId: null,
+  }));
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.full_name, e.employee_code, phr.salary_package_id,
+            sa.ctc_annual
+       FROM employees e
+       JOIN employee_payroll_head_review phr ON phr.employee_id = e.id
+       LEFT JOIN employee_salary_assignment sa ON sa.employee_id = e.id
+      WHERE e.id = ? LIMIT 1`,
+    [employeeId]
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const emp = empRows[0];
+  const name = emp?.full_name ?? 'employee';
+  const code = emp?.employee_code ?? '';
+  const ctcMonthly = emp?.ctc_annual ? Math.round(Number(emp.ctc_annual) / 12).toLocaleString('en-IN') : '—';
+
+  const notifyTargets = [targets.branchHeadUserId, targets.payrollHrUserId].filter(Boolean) as string[];
+  await Promise.allSettled(notifyTargets.map((userId) =>
+    inboxService.createItem({
+      user_id: userId,
+      type: 'payroll_head_review_approved',
+      title: `Salary approved for ${name} (${code})`,
+      description: `Payroll Head has reviewed and approved the salary for ${name}. Monthly CTC: ₹${ctcMonthly}. This employee is now payroll-eligible. No action required — this is for your records.`,
+      entity_type: 'employee',
+      entity_id: employeeId,
+      action_url: `/payroll/salary-review/${employeeId}`,
+      priority: 'low',
+    }).catch((e) => console.warn('[payroll-head-review] approve notify failed:', e))
+  ));
+
   return { review: await getReviewRow(employeeId) };
 }
 
