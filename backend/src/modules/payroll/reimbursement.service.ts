@@ -11,7 +11,8 @@ import { inboxService } from "../inbox/inbox.service.js";
 import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
-import { allocateMonthlyGrnNumber } from "../finance/grn-number-monthly.service.js";
+import { allocateGrnNumber } from "../finance/grn-number.service.js";
+import { allocateMonthlyGrnNumber, resolveGrnNumberFormat } from "../finance/grn-number-monthly.service.js";
 
 interface ReimbursementClaim extends RowDataPacket {
   id: string; employee_id: string; branch_id: string | null; claim_type: string; claim_month: string;
@@ -171,7 +172,19 @@ export const reimbursementService = {
       const [managerRows] = await connection.execute<RowDataPacket[]>(`SELECT id FROM imprest_manager WHERE branch_id = ? AND active_status = 1 AND (effective_from IS NULL OR effective_from <= CURDATE()) AND (effective_to IS NULL OR effective_to >= CURDATE()) LIMIT 1`, [branchId]);
       if (!managerRows.length) throw new Error("No active imprest manager for branch");
       const accountingPeriod = new Date().toISOString().slice(0, 7); const financialYear = financialYearFromPeriod(accountingPeriod);
-      const grnNumber = await allocateMonthlyGrnNumber({ periodCode: accountingPeriod, connection }); const grnId = randomUUID();
+      // Consult the same flag grn.service.ts's createDraft()/createUnbudgetedDraft() consult, so this
+      // conversion path stays consistent with the rest of the app regardless of which GRN number
+      // format is configured. NOTE: allocateGrnNumber does not accept an external `connection` (unlike
+      // allocateMonthlyGrnNumber) and always opens/commits its own transaction, so when the
+      // legacy_branch_fy branch runs here the number is allocated (and burned on rollback) outside this
+      // function's own transaction. That is a pre-existing limitation of allocateGrnNumber, not
+      // introduced here; changing its signature to accept a connection is a bigger change than this fix
+      // and needs separate sign-off.
+      const numberFormat = await resolveGrnNumberFormat();
+      const grnNumber = numberFormat === "monthly_company"
+        ? await allocateMonthlyGrnNumber({ periodCode: accountingPeriod, connection })
+        : await allocateGrnNumber(branchId, financialYear);
+      const grnId = randomUUID();
       const amount = Number(claim.amount_approved ?? claim.amount_claimed); const billDate = new Date().toISOString().slice(0, 10);
       await connection.execute(`INSERT INTO grn_request (id, grn_number, grn_type, branch_id, status, is_unbudgeted, head, sub_head, description, remarks, quantity, unit, unit_rate, amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount, bill_date, accounting_period, financial_year, attachment_file_path, attachment_original_name, attachment_mime, branch_head_reviewed_by, branch_head_reviewed_at, branch_head_review_note, submitted_by, submitted_at, created_by, created_at, source_reimbursement_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?)`, [grnId, grnNumber, "imprest", branchId, "branch_head_approved", 1, "REIMBURSEMENT", claim.claim_type, `Reimbursement: ${claim.description ?? claim.claim_type}`, `From reimbursement. Employee: ${claim.employee_name} (${claim.employee_code})`, 1, "amount", amount, amount, 0, amount, amount, amount, billDate, accountingPeriod, financialYear, claim.attachment_file_path, claim.attachment_original_name, claim.attachment_mime, claim.branch_head_reviewed_by, claim.branch_head_reviewed_at, `Auto-approved from reimbursement ${claimId}`, actorUserId, new Date(), actorUserId, claimId]);
       await connection.execute(`INSERT INTO grn_cost_allocation (id, grn_request_id, sequence_no, branch_id, allocation_percentage, quantity, unit, amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, lifecycle_status, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, [randomUUID(), grnId, 1, branchId, 100, 1, "amount", amount, 0, amount, amount, "reserved", actorUserId]);
