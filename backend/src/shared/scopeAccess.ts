@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2";
 import { db } from "../db/mysql.js";
+import { demoRoleForUserId } from "./demoAuth.js";
 
 export type ScopeType =
   | "all"
@@ -45,7 +46,18 @@ export async function getUserRoleKeys(userId: string): Promise<string[]> {
     "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
     [userId]
   );
-  return (rows as RowDataPacket[]).map((r: any) => String(r.role_key));
+  const dbRoles = (rows as RowDataPacket[]).map((r: any) => String(r.role_key));
+
+  // Demo/mock-token ids (DEMO_TOKEN_MAP in demoAuth.ts) have no user_roles row, so every
+  // scope check here silently failed for labelled demo accounts — including the demo
+  // super_admin, whose "sees everything" bypass in hasAnyRole()/buildScopeWhereClause()
+  // depends on this list actually containing "super_admin". Same fix already applied in
+  // reporting.scope.ts's resolveBranchScope() after it broke the Report Library on
+  // 2026-08-06 (see demoRoleForUserId()'s doc comment) — ported here for the same class of
+  // bug. demoRoleForUserId() returns null unless the demo bypass gate is on, so this cannot
+  // change behaviour for a real, non-demo user or in production.
+  const demoRole = demoRoleForUserId(userId);
+  return demoRole && !dbRoles.includes(demoRole) ? [...dbRoles, demoRole] : dbRoles;
 }
 
 export async function hasAnyRole(userId: string, ...roles: string[]): Promise<boolean> {
