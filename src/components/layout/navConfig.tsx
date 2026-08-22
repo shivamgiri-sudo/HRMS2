@@ -7,7 +7,7 @@ import {
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
   Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail, Share2,
-  Video, PenLine, Workflow, Layers3, CalendarOff, MessageSquare
+  Video, PenLine, Workflow, Layers3, CalendarOff, MessageSquare, AlertCircle
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -351,6 +351,9 @@ export const navGroups: NavGroup[] = [
           { label: "Bank Payment Readiness", href: "/payroll/bank-readiness",          icon: ic(ShieldCheck), pageCode: "PAYROLL_BANK_READINESS", roles: ["super_admin","admin","payroll_head","payroll","payroll_admin","payroll_branch","finance","finance_head","hr","branch_head","branch_admin"], description: "Who can and cannot be paid, and why" },
           { label: "Recalculation Queue",    href: "/payroll/recalculation-queue",      icon: ic(Settings2),    roles: ["admin","super_admin","payroll_head","payroll_branch"],                                description: "Payroll recalc queue" },
           { label: "Salary Review Queue",    href: "/payroll/salary-review",            icon: ic(ShieldCheck),  pageCode: "PAYROLL_HEAD_SALARY_REVIEW_QUEUE", roles: ["super_admin","payroll_head","admin"], description: "Mandatory salary/BGV/document/bank review before payroll eligibility" },
+          { label: "My Salary Disputes",    href: "/payroll/salary-disputes",          icon: ic(AlertCircle),  pageCode: "SALARY_DISPUTE", roles: ["employee"], description: "Raise and track salary disputes" },
+          { label: "Dispute Queue",         href: "/payroll/salary-disputes/queue",    icon: ic(AlertCircle),  pageCode: "SALARY_DISPUTE_QUEUE", roles: ["wfm","payroll_hr","payroll","payroll_head","super_admin"], description: "Review and resolve salary disputes" },
+          { label: "Team Disputes",         href: "/payroll/salary-disputes/team",     icon: ic(AlertCircle),  pageCode: "SALARY_DISPUTE_TEAM", roles: ["manager","branch_head","process_manager"], description: "View your team's salary disputes" },
         ],
       },
       {

@@ -32,6 +32,9 @@ const PayrollValidationScreen   = lazy(() => import("@/pages/payroll/PayrollVali
 const NocManagement             = lazy(() => import("@/pages/payroll/NocManagement"));
 const BranchPayrollReadiness    = lazy(() => import("@/pages/payroll/BranchPayrollReadiness"));
 const ProcessPayrollReadiness   = lazy(() => import("@/pages/payroll/ProcessPayrollReadiness"));
+const SalaryDisputePage        = lazy(() => import("@/pages/payroll/SalaryDisputePage"));
+const SalaryDisputeQueuePage   = lazy(() => import("@/pages/payroll/SalaryDisputeQueuePage"));
+const SalaryDisputeManagerView = lazy(() => import("@/pages/payroll/SalaryDisputeManagerView"));
 const ProcessSalaryVerify       = lazy(() => import("@/pages/payroll/ProcessSalaryVerify"));
 const PayrollCalendar           = lazy(() => import("@/pages/payroll/PayrollCalendar"));
 // PayrollCostSummary moved into ReportsHub — route redirects to hub
@@ -159,6 +162,9 @@ export const payrollRouteElements = (
       <Route path="/payroll/pf-management"       element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll']}><Gate pageCode="PAYROLL_PF_MANAGEMENT"><PfManagement /></Gate></ProtectedRoute>} />
       <Route path="/payroll/pf-creation-queue"   element={<Navigate to="/payroll/pf-management" replace />} />
       <Route path="/payroll/pf-batches"          element={<Navigate to="/payroll/pf-management?tab=batches" replace />} />
+      <Route path="/payroll/salary-disputes"       element={<ProtectedRoute roles={['employee','super_admin','admin','hr','hr_admin']}><Gate pageCode="SALARY_DISPUTE"><SalaryDisputePage /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/salary-disputes/queue" element={<ProtectedRoute roles={['wfm','payroll_hr','payroll','payroll_head','super_admin','admin']}><Gate pageCode="SALARY_DISPUTE_QUEUE"><SalaryDisputeQueuePage /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/salary-disputes/team"  element={<ProtectedRoute roles={['manager','branch_head','process_manager','super_admin','admin']}><Gate pageCode="SALARY_DISPUTE_TEAM"><SalaryDisputeManagerView /></Gate></ProtectedRoute>} />
       <Route path="/salary-increment"            element={<ProtectedRoute><Gate pageCode="SALARY_INCREMENT"><DashboardLayout><NativeSalaryIncrement /></DashboardLayout></Gate></ProtectedRoute>} />
   </>
 );
