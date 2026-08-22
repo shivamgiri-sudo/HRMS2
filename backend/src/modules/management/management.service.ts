@@ -451,6 +451,7 @@ export const managementService = {
       twoFaRows,
       moduleRows,
       activityRows,
+      branchCountRows,
     ] = await Promise.all([
       db.execute<RowDataPacket[]>("SELECT COUNT(*) AS total FROM auth_user"),
       db.execute<RowDataPacket[]>(
@@ -516,6 +517,9 @@ export const managementService = {
          ORDER BY sal.acted_at DESC
          LIMIT 12`
       ),
+      db.execute<RowDataPacket[]>(
+        "SELECT COUNT(*) AS count FROM branch_master WHERE active_status = 1"
+      ).catch(() => [[{ count: null }]] as any),
     ]);
 
     const modules = moduleRows[0].map((row) => {
@@ -556,6 +560,7 @@ export const managementService = {
         usersWithout2fa: (twoFaRows as any)[0]?.[0]?.count == null
           ? null
           : numberValue((twoFaRows as any)[0][0].count),
+        totalBranches: numberValue((branchCountRows as any)[0]?.[0]?.count),
       },
       modules,
       activities: activityRows[0],
@@ -882,7 +887,7 @@ export const managementService = {
            ) as present_pct,
            COUNT(DISTINCT s.employee_id) as present_count
          FROM branch_master b
-         LEFT JOIN employees e ON e.branch_id = b.id AND e.employment_status = 'active'
+         LEFT JOIN employees e ON e.branch_id = b.id AND e.active_status = 1 AND e.date_of_joining <= CURDATE()
          LEFT JOIN wfm_attendance_session s ON s.employee_id = e.id
            AND DATE(s.session_date) = CURDATE()
            AND s.current_status IN (${statusList(PRESENT_SESSION_STATUSES)})
@@ -900,7 +905,7 @@ export const managementService = {
          LEFT JOIN leave_request lr ON lr.employee_id = e.id
            AND lr.status = 'approved'
            AND YEAR(lr.start_date) = YEAR(CURDATE())
-         WHERE e.employment_status = 'active'`
+         WHERE e.active_status = 1`
       ),
       // Manager-specific: expense claims, work items
       //

@@ -102,9 +102,9 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
 
         <ReferencePanel title="Leave Overview (This Month)" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/leaves">View all</a>}>
           <div className="grid grid-cols-3 gap-3">
-            <div><p className="text-xs text-[#71809a]">Total Leaves</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(leaveTotal || null)}</p></div>
-            <div><p className="text-xs text-[#71809a]">Approved</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(leaveApproved || null)}</p></div>
-            <div><p className="text-xs text-[#71809a]">Pending</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(leavePending || null)}</p></div>
+            <div><p className="text-xs text-[#71809a]">Total Leaves</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(leaveTotal ?? null)}</p></div>
+            <div><p className="text-xs text-[#71809a]">Approved</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(leaveApproved ?? null)}</p></div>
+            <div><p className="text-xs text-[#71809a]">Pending</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(leavePending ?? null)}</p></div>
           </div>
           <div className="mt-5 rounded-lg bg-[#f4f8ff] p-4"><ReferenceProgress label="Leave Balance Usage" value={asNumber(data.workforce.leave_balance_usage_pct)} max={100} suffix="%" tone="blue" /></div>
         </ReferencePanel>
@@ -113,7 +113,7 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
           <div className="max-h-[230px] divide-y divide-[#edf1f6] overflow-y-auto">
             {recentJoiners.length ? recentJoiners.slice(0, 6).map((row, index) => (
               <ReferenceListRow key={String(row.id ?? index)} icon={UserPlus} title={String(row.employee_name ?? row.full_name ?? row.name ?? `New Joiner ${index + 1}`)} subtitle={String(row.designation_name ?? row.designation ?? "Designation not set")} value={String(row.joining_date ?? row.date ?? "—")} tone="blue" />
-            )) : <div className="px-4 py-12 text-center text-xs text-[#94a3b8]">Recent joiners are unavailable</div>}
+            )) : <div className="px-4 py-12 text-center text-xs text-[#94a3b8]">No joiners in the last 30 days</div>}
           </div>
         </ReferencePanel>
 
@@ -139,7 +139,7 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
                   <td>{formatValue(present)}</td>
                   <td className={pct === null ? "text-[#94a3b8]" : "font-semibold text-[#1d2b45]"}>{pct === null ? "No sessions" : formatValue(pct, "%")}</td>
                 </tr>;
-              }) : <tr><td colSpan={4} className="px-4 py-10 text-center text-[#94a3b8]">Branch snapshot is unavailable</td></tr>}
+              }) : <tr><td colSpan={4} className="px-4 py-10 text-center text-[#94a3b8]">Branch data loading...</td></tr>}
             </tbody></table>
           </div>
         </ReferencePanel>

@@ -436,7 +436,7 @@ export function ReferenceLineChart({
   xKey?: string;
   height?: number;
 }) {
-  if (!data.length) return <div className="flex h-44 items-center justify-center text-xs text-[#94a3b8]">Historical data is unavailable</div>;
+  if (!data.length) return <div className="flex h-44 items-center justify-center text-xs text-[#94a3b8]">No historical data yet</div>;
   return (
     <div style={{ height }} aria-label="Trend chart">
       <ResponsiveContainer width="100%" height="100%">

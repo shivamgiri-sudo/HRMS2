@@ -761,7 +761,7 @@ export async function getDpdpWithdrawalMetrics(scope: DashboardScope): Promise<M
       targetScopeId(scope.processIds),
     );
   } catch (err) {
-    return nullResult("DPDP_WITHDRAWAL", err);
+    return nullResult("DPDP", err);
   }
 }
 

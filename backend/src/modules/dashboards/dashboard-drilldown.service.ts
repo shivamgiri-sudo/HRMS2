@@ -98,6 +98,8 @@ export async function getDrilldown(
       return drillTrainingProgress(scope);
     case "LEAVE_APPROVALS":
       return drillLeaveApprovals(scope);
+    case "RECRUITER_PIPELINE":
+      return drillRecruiterPipeline(scope, filters);
     default:
       return {
         metricCode,
@@ -136,11 +138,12 @@ async function drillHeadcount(scope: DashboardScope): Promise<DrilldownResult> {
     // `branches` does not exist (the table is branch_master) and employees has no
     // `status` column — the old query threw on both.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.branch_id AS branchId,
-              b.branch_name AS branchName,
+      `SELECT b.branch_name AS branchName,
+              p.process_name AS processName,
               COUNT(*) AS count
          FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN process_master p ON p.id = e.process_id
         -- Matches getHeadcountMetrics exactly: active_status alone (never
         -- employment_status — see that function's comment) plus date_of_joining, so
         -- the drilldown always explains the tile it opens from rather than a
@@ -148,15 +151,15 @@ async function drillHeadcount(scope: DashboardScope): Promise<DrilldownResult> {
         WHERE e.active_status = 1
           AND e.date_of_joining <= CURDATE()
           AND ${scopeSql}
-        GROUP BY e.branch_id, b.branch_name
+        GROUP BY e.branch_id, b.branch_name, e.process_id, p.process_name
         ORDER BY count DESC`,
       params,
     );
     return {
       metricCode: "HEADCOUNT",
       records: (rows as any[]).map((r) => ({
-        branchId: r.branchId,
         branchName: r.branchName ?? "Unassigned",
+        processName: r.processName ?? "—",
         count: Number(r.count),
       })),
       totalCount: (rows as any[]).reduce((a, r) => a + Number(r.count), 0),
@@ -192,45 +195,33 @@ async function drillOnboarding(
       : "";
     const bucketParams = bucketStatuses ?? [];
 
-    const [statusRows] = await db.execute<RowDataPacket[]>(
-      `SELECT b.status AS status, COUNT(*) AS count
-         FROM ats_onboarding_bridge b ${join}
-        WHERE ${scopeSql}${bucketSql}
-        GROUP BY b.status
-        ORDER BY count DESC`,
-      [...params, ...bucketParams],
-    );
-
-    // ats_candidate stores full_name; it has no first_name/last_name.
-    const [topRows] = await db.execute<RowDataPacket[]>(
-      `SELECT b.id AS bridgeId,
-              b.candidate_id AS candidateId,
-              cand.full_name AS candidateName,
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT cand.full_name AS candidateName,
+              cand.candidate_code AS candidateCode,
+              pm.process_name AS appliedProcess,
+              bm.branch_name AS appliedBranch,
               b.status AS status,
               b.created_at AS createdAt
          FROM ats_onboarding_bridge b ${join}
-        WHERE b.status IN (${(bucketStatuses ?? ["pending", "initiated", "stuck", "profile_submitted"]).map(() => "?").join(",")})
-          AND ${scopeSql}
+        WHERE ${scopeSql}${bucketSql}
         ORDER BY b.created_at ASC
-        LIMIT 25`,
-      [...(bucketStatuses ?? ["pending", "initiated", "stuck", "profile_submitted"]), ...params],
+        LIMIT 200`,
+      [...params, ...bucketParams],
     );
 
+    const totalCount = rows.length;
     return {
       metricCode: "ONBOARDING",
-      records: (statusRows as any[]).map((r) => ({
+      records: (rows as any[]).map((r) => ({
+        candidateCode: r.candidateCode ?? "—",
+        candidateName: r.candidateName ?? "—",
+        appliedProcess: r.appliedProcess ?? "—",
+        appliedBranch: r.appliedBranch ?? "—",
         status: r.status,
-        count: Number(r.count),
-        candidates: (topRows as any[])
-          .filter((c) => c.status === r.status)
-          .map((c) => ({
-            bridgeId: c.bridgeId,
-            candidateId: c.candidateId,
-            candidateName: c.candidateName ?? "—",
-            createdAt: c.createdAt,
-          })),
+        createdOn: r.createdAt,
       })),
-      totalCount: (statusRows as any[]).reduce((a, r) => a + Number(r.count), 0),
+      totalCount,
+      note: capNote(totalCount, 200, "candidates"),
     };
   } catch (err) { sourceUnavailable(err); }
 }
@@ -252,8 +243,7 @@ async function drillAttendance(scope: DashboardScope): Promise<DrilldownResult> 
     }
 
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT a.employee_id AS employeeId,
-              e.employee_code AS employeeCode,
+      `SELECT e.employee_code AS employeeCode,
               COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS employeeName,
               b.branch_name AS branchName,
               a.attendance_status AS attendanceStatus,
@@ -272,12 +262,12 @@ async function drillAttendance(scope: DashboardScope): Promise<DrilldownResult> 
     return {
       metricCode: "ATTENDANCE",
       records: (rows as any[]).map((r) => ({
-        employeeId: r.employeeId,
         employeeCode: r.employeeCode,
         employeeName: r.employeeName ?? "—",
         branchName: r.branchName ?? "Unassigned",
         attendanceStatus: r.attendanceStatus,
         lateMark: Boolean(r.lateMark),
+        shiftName: null,
       })),
       totalCount: rows.length,
       note: `Exceptions for ${String(day)} (latest day with attendance records)`,
@@ -295,7 +285,8 @@ async function drillPayrollReadiness(scope: DashboardScope): Promise<DrilldownRe
       `SELECT b.branch_name AS branchName,
               COUNT(*) AS total,
               SUM(CASE WHEN COALESCE(TRIM(e.pan_number),'') = '' THEN 1 ELSE 0 END) AS missingPan,
-              SUM(CASE WHEN COALESCE(TRIM(e.uan_number),'') = '' THEN 1 ELSE 0 END) AS missingUan
+              SUM(CASE WHEN COALESCE(TRIM(e.uan_number),'') = '' THEN 1 ELSE 0 END) AS missingUan,
+              SUM(CASE WHEN COALESCE(TRIM(e.bank_account_number),'') = '' THEN 1 ELSE 0 END) AS missingBank
          FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
         WHERE e.active_status = 1 AND ${scopeSql}
@@ -310,6 +301,7 @@ async function drillPayrollReadiness(scope: DashboardScope): Promise<DrilldownRe
         total: Number(r.total),
         missingPan: Number(r.missingPan),
         missingUan: Number(r.missingUan),
+        missingBank: Number(r.missingBank),
       })),
       totalCount: (rows as any[]).reduce((a, r) => a + Number(r.total), 0),
       note: "Aggregated counts only — individual payroll identifiers are not exposed here",
@@ -366,8 +358,7 @@ async function drillNameMismatch(scope: DashboardScope): Promise<DrilldownResult
     // last_calculated_at. The old query used match_status / is_blocking /
     // mismatch_fields / created_at, none of which exist.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT nm.candidate_id AS candidateId,
-              cand.full_name AS name,
+      `SELECT cand.full_name AS name,
               nm.mismatch_sources AS mismatches,
               nm.blocks_employee_code AS blocking,
               nm.overall_match_status AS matchStatus,
@@ -383,7 +374,6 @@ async function drillNameMismatch(scope: DashboardScope): Promise<DrilldownResult
     return {
       metricCode: "NAME_MISMATCH",
       records: (rows as any[]).map((r) => ({
-        candidateId: r.candidateId,
         name: r.name ?? "—",
         mismatches: r.mismatches,
         blocking: Boolean(r.blocking),
@@ -441,14 +431,14 @@ async function drillResignation(scope: DashboardScope): Promise<DrilldownResult>
     // exit_request has no branch_id/process_id — scope through the employee.
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT er.id AS exitId,
-              COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS employeeName,
+      `SELECT COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS employeeName,
               e.employee_code AS employeeCode,
               er.submitted_at AS submittedAt,
               DATEDIFF(NOW(), er.submitted_at) AS daysPending,
               er.status AS exitStatus,
               er.exit_reason_category AS exitReason,
-              er.last_working_day_proposed AS lastWorkingDay
+              er.last_working_day_proposed AS lastWorkingDay,
+              er.notice_period_days AS noticePeriodDays
          FROM exit_request er
          LEFT JOIN employees e ON e.id = er.employee_id
         WHERE er.status NOT IN ('completed','cancelled','revoked')
@@ -460,7 +450,6 @@ async function drillResignation(scope: DashboardScope): Promise<DrilldownResult>
     return {
       metricCode: "RESIGNATION",
       records: (rows as any[]).map((r) => ({
-        exitId: r.exitId,
         employeeName: r.employeeName ?? "—",
         employeeCode: r.employeeCode,
         submittedAt: r.submittedAt,
@@ -468,6 +457,7 @@ async function drillResignation(scope: DashboardScope): Promise<DrilldownResult>
         exitStatus: r.exitStatus,
         exitReason: r.exitReason,
         lastWorkingDay: r.lastWorkingDay,
+        noticePeriodDays: r.noticePeriodDays,
       })),
       totalCount: rows.length,
       note: capNote(rows.length, 100, "resignations"),
@@ -480,12 +470,12 @@ async function drillBgv(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT bgv.candidate_id AS candidateId,
-              cand.full_name AS name,
+      `SELECT cand.full_name AS name,
               bgv.check_type AS checkType,
               bgv.status AS status,
               bgv.match_score AS matchScore,
-              bgv.created_at AS createdAt
+              bgv.created_at AS createdAt,
+              DATEDIFF(NOW(), bgv.created_at) AS ageDays
          FROM candidate_bgv_check bgv
          ${candidateScopeJoin("bgv.candidate_id")}
         -- Matches getBgvMetrics's own "pending" bucket exactly (including NULL treated
@@ -502,12 +492,12 @@ async function drillBgv(scope: DashboardScope): Promise<DrilldownResult> {
     return {
       metricCode: "BGV",
       records: (rows as any[]).map((r) => ({
-        candidateId: r.candidateId,
         name: r.name ?? "—",
         checkType: r.checkType,
         status: r.status ?? "pending",
         matchScore: r.matchScore === null ? null : Number(r.matchScore),
         createdAt: r.createdAt,
+        ageDays: Number(r.ageDays ?? 0),
       })),
       totalCount: rows.length,
       note: capNote(rows.length, 100, "BGV checks"),
@@ -546,9 +536,7 @@ async function drillAppointmentEsign(scope: DashboardScope): Promise<DrilldownRe
   try {
     const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT alr.id AS requestId,
-              alr.candidate_id AS candidateId,
-              cand.full_name AS name,
+      `SELECT cand.full_name AS name,
               alr.status AS status,
               alr.candidate_esign_status AS candidateEsignStatus,
               alr.company_sign_status AS companySignStatus,
@@ -564,8 +552,6 @@ async function drillAppointmentEsign(scope: DashboardScope): Promise<DrilldownRe
     return {
       metricCode: "APPOINTMENT_ESIGN",
       records: (rows as any[]).map((r) => ({
-        requestId: r.requestId,
-        candidateId: r.candidateId,
         name: r.name ?? "—",
         status: r.status,
         candidateEsignStatus: r.candidateEsignStatus,
@@ -585,9 +571,7 @@ async function drillJoiningDocEsign(scope: DashboardScope): Promise<DrilldownRes
     // Scope through the employee, which is the only reliable branch/process link.
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT jd.id AS checklistId,
-              jd.employee_id AS employeeId,
-              COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS employeeName,
+      `SELECT COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS employeeName,
               jd.document_name AS documentName,
               jd.status AS status,
               jd.verification_status AS verificationStatus,
@@ -604,8 +588,6 @@ async function drillJoiningDocEsign(scope: DashboardScope): Promise<DrilldownRes
     return {
       metricCode: "JOINING_DOC_ESIGN",
       records: (rows as any[]).map((r) => ({
-        checklistId: r.checklistId,
-        employeeId: r.employeeId,
         employeeName: r.employeeName ?? "—",
         documentName: r.documentName,
         status: r.status,
@@ -665,8 +647,7 @@ async function drillDocCompliance(scope: DashboardScope): Promise<DrilldownResul
     // Ordered so employees with nothing on file surface first — those are the
     // actionable ones. `verified` is a tinyint; there is no verification_status column.
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.id AS employeeId,
-              e.employee_code AS employeeCode,
+      `SELECT e.employee_code AS employeeCode,
               e.full_name AS employeeName,
               b.branch_name AS branchName,
               COALESCE(d.doc_count, 0) AS documentCount,
@@ -690,7 +671,6 @@ async function drillDocCompliance(scope: DashboardScope): Promise<DrilldownResul
     return {
       metricCode: "DOC_COMPLIANCE",
       records: (rows as any[]).map((r) => ({
-        employeeId: r.employeeId,
         employeeCode: r.employeeCode,
         employeeName: r.employeeName ?? "—",
         branchName: r.branchName ?? "Unassigned",
@@ -880,13 +860,60 @@ async function drillTrainingProgress(scope: DashboardScope): Promise<DrilldownRe
   } catch (err) { sourceUnavailable(err); }
 }
 
+// ─── RECRUITER_PIPELINE: live candidate pipeline per recruiter scope ─────────
+async function drillRecruiterPipeline(
+  scope: DashboardScope,
+  filters?: Record<string, unknown>,
+): Promise<DrilldownResult> {
+  try {
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
+    const join = candidateScopeJoin("c.id");
+    const statusFilter = typeof filters?.status === "string" ? filters.status : null;
+    const statusSql = statusFilter ? ` AND c.status = ?` : "";
+    const statusParams = statusFilter ? [statusFilter] : [];
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT c.candidate_code AS candidateCode,
+              c.full_name AS candidateName,
+              pm.process_name AS appliedProcess,
+              bm.branch_name AS appliedBranch,
+              c.current_stage AS currentStage,
+              c.status AS currentStatus,
+              c.recruiter_name AS recruiterName,
+              c.created_at AS appliedOn
+         FROM ats_candidate c
+         LEFT JOIN branch_master bm ON bm.branch_name = c.applied_for_branch
+         LEFT JOIN process_master pm ON pm.process_name = c.applied_for_process
+        WHERE ${scopeSql}${statusSql}
+        ORDER BY c.created_at DESC
+        LIMIT 200`,
+      [...params, ...statusParams],
+    );
+
+    return {
+      metricCode: "RECRUITER_PIPELINE",
+      records: (rows as any[]).map((r) => ({
+        candidateCode: r.candidateCode ?? "—",
+        candidateName: r.candidateName ?? "—",
+        appliedProcess: r.appliedProcess ?? "—",
+        appliedBranch: r.appliedBranch ?? "—",
+        currentStage: r.currentStage ?? "—",
+        currentStatus: r.currentStatus ?? "—",
+        recruiterName: r.recruiterName ?? "—",
+        appliedOn: r.appliedOn,
+      })),
+      totalCount: rows.length,
+      note: capNote(rows.length, 200, "candidates"),
+    };
+  } catch (err) { sourceUnavailable(err); }
+}
+
 // ─── LEAVE_APPROVALS: pending requests awaiting a decision ──────────────────
 async function drillLeaveApprovals(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT lr.id AS requestId,
-              e.employee_code AS employeeCode,
+      `SELECT e.employee_code AS employeeCode,
               e.full_name AS employeeName,
               b.branch_name AS branchName,
               lt.leave_code AS leaveTypeCode,
@@ -911,7 +938,6 @@ async function drillLeaveApprovals(scope: DashboardScope): Promise<DrilldownResu
     return {
       metricCode: "LEAVE_APPROVALS",
       records: (rows as any[]).map((r) => ({
-        requestId: r.requestId,
         employeeCode: r.employeeCode,
         employeeName: r.employeeName ?? "—",
         branchName: r.branchName ?? "Unassigned",

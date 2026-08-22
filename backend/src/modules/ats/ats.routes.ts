@@ -222,7 +222,7 @@ atsRouter.patch("/onboarding-bridge/:id",        requireRole("admin", "hr"), h(c
 
 // Reference data
 atsRouter.get("/sourcing-channels",              requireRole("admin", "hr", "recruiter"), h(c.listSourcingChannels.bind(c)));
-atsRouter.get("/stats",                          requireRole("admin", "hr", "recruiter", "manager"), h(c.getDashboardStats.bind(c)));
+atsRouter.get("/stats",                          requireRole("admin", "hr", "recruiter", "manager", "super_admin"), h(c.getDashboardStats.bind(c)));
 
 // Walk-in queue â€” candidates who arrived via Walk-In channel, sorted by walk_in_date desc
 atsRouter.get("/walkin-queue",                   requireRole("admin", "hr", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {

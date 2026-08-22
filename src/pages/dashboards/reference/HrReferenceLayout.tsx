@@ -80,7 +80,7 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
         { label: "Active Headcount", value: headcount, helper: "Employees currently active", icon: UsersRound, tone: "blue", href: "/employees", unavailableReason: metricUnavailableReason(m, "hc"), ...drill("hc") },
         { label: "Attendance Rate", value: attendanceRate, valueSuffix: "%", helper: "Latest processed attendance day", icon: UserCheck, tone: attendanceRate !== null && attendanceRate >= 85 ? "green" : "amber", unavailableReason: metricUnavailableReason(m, "att"), ...drill("att") },
         { label: "Appointment eSign Pending", value: appointmentEsign, helper: "Awaiting candidate or company signature", icon: FileCheck2, tone: "amber", unavailableReason: metricUnavailableReason(m, "appointmentEsign"), ...drill("appointmentEsign") },
-        { label: "Joining Docs Pending", value: joiningDocs, helper: joiningDocsOverdue ? `${joiningDocsOverdue} overdue` : "Checklist items outstanding", icon: FileCheck2, tone: joiningDocsOverdue ? "red" : "amber", href: "/ats/joining-documents-tracker", unavailableReason: metricUnavailableReason(m, "joiningDocEsign") },
+        { label: "Joining Docs Pending", value: joiningDocs, helper: joiningDocsOverdue ? `${joiningDocsOverdue} overdue` : "Checklist items outstanding", icon: FileCheck2, tone: joiningDocsOverdue ? "red" : "amber", href: "/ats/joining-documents-tracker", unavailableReason: metricUnavailableReason(m, "joiningDocEsign"), ...drill("joiningDocEsign") },
         { label: "Resignation Discussions", value: resignation, helper: "Manager discussions pending", icon: UsersRound, tone: "amber", href: "/exit/command-center", unavailableReason: metricUnavailableReason(m, "resign"), ...drill("resign") },
       ]} />
 

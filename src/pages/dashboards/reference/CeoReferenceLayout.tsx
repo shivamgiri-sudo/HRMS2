@@ -133,17 +133,30 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
             // Name Mismatch, TAT Breached and Incentive Pending removed — see the
             // note above the action strip. Their source tables hold no rows, so the
             // tiles could only ever assert a false zero.
-            ["Active Headcount", active, Users, "blue"],
-            ["Onboarding Pending", onboarding, UserCheck, "green"],
-            ["BGV Pending", bgv, ShieldAlert, "violet"],
-            ["Payroll Readiness", payrollReadiness === null ? null : `${payrollReadiness}%`, Target, "violet"],
-            ["Resignation Risk", resignation, UserMinus, "red"],
-            ["Document Coverage", docCoverage === null ? null : `${docCoverage}%`, BadgeCheck, "green"],
-          // as const: without it these heterogeneous tuples widen to one union per slot, so
-          // the first element carried the icon component type too and could not be rendered.
-          ] as const).map(([label, value, Icon, tone], index) => {
+            ["Active Headcount", active, Users, "blue", "hc", undefined],
+            ["Onboarding Pending", onboarding, UserCheck, "green", "onb", { bucket: "pending" }],
+            ["BGV Pending", bgv, ShieldAlert, "violet", "bgv", undefined],
+            ["Payroll Readiness", payrollReadiness === null ? null : `${payrollReadiness}%`, Target, "violet", undefined, undefined],
+            ["Resignation Risk", resignation, UserMinus, "red", "resign", undefined],
+            ["Document Coverage", docCoverage === null ? null : `${docCoverage}%`, BadgeCheck, "green", "docCompliance", undefined],
+          ] as [string, string | number | null, typeof Users, string, string | undefined, Record<string, string> | undefined][]).map(([label, value, Icon, tone, drillKey, drillFilters], index) => {
             const IconComponent = Icon as typeof Users;
-            return <div key={String(label)} className={`flex min-h-[100px] min-w-0 items-start gap-3 border-[#edf1f6] p-4 ${index % 4 !== 3 ? "sm:border-r" : ""} ${index < 4 ? "border-b" : ""}`}><span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone === "green" ? "bg-[#eaf8ef] text-[#16a34a]" : tone === "red" ? "bg-[#fff0f1] text-[#ef4444]" : tone === "violet" ? "bg-[#f3efff] text-[#7c3aed]" : "bg-[#edf4ff] text-[#0b63e5]"}`}><IconComponent className="h-4 w-4" /></span><div className="min-w-0"><p className="text-xs font-semibold leading-4 text-[#1d2b45]">{label}</p><p className="mt-2 text-[21px] font-extrabold leading-none text-[#0b1f44]">{formatValue(value)}</p><p className="mt-2 text-xs text-[#71809a]">Live organisation value</p></div></div>;
+            const drillProps = drillKey ? drill(drillKey, drillFilters) : {};
+            const hasDrill = Boolean(drillKey && (drillProps as Record<string, unknown>).onDrilldown);
+            return (
+              <div
+                key={String(label)}
+                onClick={hasDrill ? (drillProps as Record<string, unknown>).onDrilldown as React.MouseEventHandler<HTMLDivElement> : undefined}
+                className={`flex min-h-[100px] min-w-0 items-start gap-3 border-[#edf1f6] p-4 ${index % 4 !== 3 ? "sm:border-r" : ""} ${index < 4 ? "border-b" : ""} ${hasDrill ? "cursor-pointer hover:bg-[#f8fafc] transition-colors" : ""}`}
+              >
+                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone === "green" ? "bg-[#eaf8ef] text-[#16a34a]" : tone === "red" ? "bg-[#fff0f1] text-[#ef4444]" : tone === "violet" ? "bg-[#f3efff] text-[#7c3aed]" : "bg-[#edf4ff] text-[#0b63e5]"}`}><IconComponent className="h-4 w-4" /></span>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold leading-4 text-[#1d2b45]">{label}</p>
+                  <p className="mt-2 text-[21px] font-extrabold leading-none text-[#0b1f44]">{formatValue(value)}</p>
+                  <p className="mt-2 text-xs text-[#71809a]">{hasDrill ? "Click to view details" : "Live organisation value"}</p>
+                </div>
+              </div>
+            );
           })}
         </div>
         <ReferenceWorkInbox maxItems={5} />

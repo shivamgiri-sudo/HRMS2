@@ -84,7 +84,7 @@ export function RecruiterReferenceLayout({ data, filters }: { data: ReferenceDas
             // target). The arrow sits next to "in active pipeline", so it must describe
             // movement; variancePct here would have shown target shortfall as if it were.
             trend: m.ats?.changePct,
-            ...drill("onb"),
+            ...drill("recruiterPipeline"),
           },
           {
             label: "Walk-ins Today",
@@ -106,7 +106,7 @@ export function RecruiterReferenceLayout({ data, filters }: { data: ReferenceDas
             helper: "offer to onboarding converted",
             icon: CheckCircle2,
             tone: "green",
-            ...drill("onb"),
+            ...drill("recruiterPipeline", { status: "joined" }),
           },
         ]}
       />

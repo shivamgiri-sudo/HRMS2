@@ -28,6 +28,77 @@ export interface DashboardDrilldownDrawerProps {
 interface DrilldownData {
   summary?: Record<string, string | number>;
   records: Record<string, string | number | null>[];
+  totalCount?: number;
+}
+
+const COLUMN_LABELS: Record<string, string> = {
+  employeeCode: "Emp Code",
+  employeeName: "Employee",
+  branchName: "Branch",
+  processName: "Process",
+  appliedBranch: "Applied Branch",
+  attendanceStatus: "Status",
+  lateMark: "Late Mark",
+  shiftName: "Shift",
+  punchIn: "Punch In",
+  punchOut: "Punch Out",
+  candidateName: "Candidate",
+  candidateCode: "Candidate Code",
+  appliedProcess: "Applied For",
+  appliedOn: "Applied On",
+  currentStage: "Stage",
+  currentStatus: "Status",
+  checkType: "Check Type",
+  matchScore: "Match Score",
+  ageDays: "Age (Days)",
+  daysPending: "Days Pending",
+  lastWorkingDay: "LWD",
+  exitReason: "Exit Reason",
+  exitStatus: "Exit Status",
+  noticePeriodDays: "Notice (Days)",
+  submittedAt: "Submitted On",
+  leaveTypeName: "Leave Type",
+  leaveTypeCode: "Leave Code",
+  fromDate: "From",
+  toDate: "To",
+  totalDays: "Days",
+  appliedAt: "Applied On",
+  createdOn: "Created On",
+  createdAt: "Created On",
+  documentName: "Document",
+  verificationStatus: "Verification",
+  dueAt: "Due Date",
+  overdue: "Overdue",
+  documentCount: "Docs On File",
+  verifiedCount: "Verified",
+  missingPan: "Missing PAN",
+  missingUan: "Missing UAN",
+  missingBank: "Missing Bank A/C",
+  managerName: "Manager",
+  recruiterName: "Recruiter",
+  alreadyStarted: "Started",
+  needsBranchHead: "Needs BH Approval",
+  issueType: "Issue Type",
+  severity: "Severity",
+  autoFixFailed: "Auto-fix Failed",
+  oldestIssueDate: "Oldest Issue",
+  oldestAgeDays: "Oldest (Days)",
+  status: "Status",
+  count: "Count",
+};
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuidColumn(colName: string): boolean {
+  return colName === "id" || colName.endsWith("Id") || colName.endsWith("_id");
+}
+
+function isUuidValue(value: unknown): boolean {
+  return typeof value === "string" && UUID_PATTERN.test(value);
+}
+
+function formatColumnLabel(col: string): string {
+  return COLUMN_LABELS[col] ?? col.replace(/([A-Z])/g, " $1").replace(/_/g, " ").trim();
 }
 
 export function DashboardDrilldownDrawer({
@@ -83,7 +154,7 @@ export function DashboardDrilldownDrawer({
 
   const columns =
     data?.records && data.records.length > 0
-      ? Object.keys(data.records[0])
+      ? Object.keys(data.records[0]).filter((col) => !isUuidColumn(col))
       : [];
 
   return (
@@ -140,7 +211,7 @@ export function DashboardDrilldownDrawer({
                           key={col}
                           className="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap"
                         >
-                          {col.replace(/_/g, " ")}
+                          {formatColumnLabel(col)}
                         </th>
                       ))}
                     </tr>
@@ -153,9 +224,14 @@ export function DashboardDrilldownDrawer({
                       >
                         {columns.map((col) => (
                           <td key={col} className="px-3 py-2 text-slate-700 whitespace-nowrap">
-                            {row[col] !== null && row[col] !== undefined
-                              ? String(row[col])
-                              : "—"}
+                            {(() => {
+                              const v = row[col];
+                              if (v === null || v === undefined) return "—";
+                              if (typeof v === "boolean") return v ? "Yes" : "No";
+                              const s = String(v);
+                              if (isUuidValue(s)) return "—";
+                              return s;
+                            })()}
                           </td>
                         ))}
                       </tr>
@@ -163,6 +239,13 @@ export function DashboardDrilldownDrawer({
                   </tbody>
                 </table>
               </div>
+            )}
+            {data.totalCount !== undefined && data.totalCount !== null && (
+              <p className="mt-2 text-xs text-slate-400 text-right">
+                {data.records.length < data.totalCount
+                  ? `Showing ${data.records.length} of ${data.totalCount}`
+                  : `${data.totalCount} record${data.totalCount !== 1 ? "s" : ""}`}
+              </p>
             )}
           </>
         )}
