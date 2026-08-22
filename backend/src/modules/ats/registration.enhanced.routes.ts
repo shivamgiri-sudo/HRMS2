@@ -220,6 +220,17 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
         // preferences, branch and availability, which is what re-registration is
         // for. Correcting a name or email is an HR action on an authenticated
         // route, not something an anonymous request may do.
+        //
+        // record_type is forced back to 'candidate' here deliberately. This branch
+        // only runs when an existing ats_candidate row is being reused for a brand
+        // new walk-in (matched by mobile), and that row can be one of the June 2026
+        // bulk-imported employee-shaped rows whose candidate_code happens to equal
+        // an employee_code — those were correctly labelled 'legacy_employee' at
+        // import time. The moment a real person walks in and this UPDATE fires, the
+        // row stops being import noise and becomes a live application; leaving the
+        // old label in place silently hid genuine candidates from
+        // excludeEmployeeShapedCandidatesSql()'s callers, including the recruiter's
+        // own "My Candidates" queue (see ats-reporting-scope.ts).
         `UPDATE ats_candidate
          SET full_name = COALESCE(NULLIF(TRIM(full_name), ''), ?),
              email = COALESCE(NULLIF(TRIM(email), ''), ?),
@@ -244,6 +255,7 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
              education_proof_available = ?,
              active_status = 1,
              profile_status = 'registered',
+             record_type = 'candidate',
              current_stage = CASE
                WHEN current_stage IS NULL OR current_stage IN ('Applied', 'New', 'Screening')
                THEN 'Arrived'
@@ -457,9 +469,13 @@ registrationEnhancedRouter.post("/submit-enhanced", async (req, res) => {
       }
 
       await db.execute(
+        // record_type reset here too (see the identity-refresh UPDATE above for why):
+        // a candidate reaching the queue with a real token is unambiguously live,
+        // whichever branch above created or reused the row.
         `UPDATE ats_candidate
          SET q_token = ?,
              status = 'Waiting',
+             record_type = 'candidate',
              current_stage = CASE
                WHEN current_stage IS NULL OR current_stage IN ('Applied', 'New', 'Screening')
                THEN 'Arrived'
