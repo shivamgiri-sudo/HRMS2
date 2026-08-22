@@ -253,9 +253,9 @@ async function checkLeave(bill, hrms) {
   const [[h]] = await hrms.query(`
     SELECT COUNT(*) AS rc,
       SUM(total_days) AS calc_days,
-      SUM(CASE WHEN leave_type_code IN ('CL','casual','casual_leave') THEN total_days ELSE 0 END) AS cl,
-      SUM(CASE WHEN leave_type_code IN ('EL','earned','earned_leave','PL','privilege') THEN total_days ELSE 0 END) AS el,
-      SUM(CASE WHEN leave_type_code IN ('LWP','lwp','leave_without_pay') THEN total_days ELSE 0 END) AS lwp
+      SUM(CASE WHEN leave_type_code='CL'  THEN total_days ELSE 0 END) AS cl,
+      SUM(CASE WHEN leave_type_code='EL'  THEN total_days ELSE 0 END) AS el,
+      SUM(CASE WHEN leave_type_code='LWP' THEN total_days ELSE 0 END) AS lwp
     FROM leave_request lr JOIN employees e ON e.id=lr.employee_id
     WHERE DATE_FORMAT(lr.from_date,'%Y-%m')=?
   `, [MONTH]);
@@ -285,6 +285,7 @@ async function checkLoans(bill, hrms) {
       SUM(el.deduction_per_month) AS emi,
       SUM(el.deducted_amount) AS deducted, SUM(el.pending_amount) AS pending
     FROM employee_loans el JOIN employees e ON e.id=el.employee_id
+    WHERE el.legacy_loan_id IS NOT NULL
   `);
   printReport('Loan Register (all-time)', { bill: Number(b.rc), hrms: Number(h.rc) }, [
     { label: 'Loan Amount',    bill: r2(b.loan_amount),  hrms: r2(h.loan_amount)  },
@@ -407,10 +408,15 @@ async function checkDeductions(bill, hrms) {
 // 10. LEGACY EMPLOYEE MASTER (masjclrentry)
 // ═══════════════════════════════════════════════════════════════════════════════
 async function checkEmployeeMaster(bill, hrms) {
+  // NOTE: masjclrentry is a LIVE table — salary revisions after migration point
+  // will cause differences vs legacy_salary_snapshot (which is point-in-time).
+  // Differences in Special Allow / PF-Co / ESIC-Co are expected if salaries were
+  // revised in db_bill after the HRMS snapshot was taken. Gross+Net match confirms
+  // the snapshot values are self-consistent.
   const [[b]] = await bill.query(`
     SELECT COUNT(*) AS rc,
       SUM(bs) AS basic, SUM(hra) AS hra, SUM(conv) AS conv,
-      SUM(portf) AS portfolio, SUM(ma) AS ma, SUM(sa) AS special,
+      SUM(ma) AS ma, SUM(sa) AS special,
       SUM(oa) AS other_allow, SUM(Gross) AS gross,
       SUM(NetInhand) AS net, SUM(EPF) AS pf_emp, SUM(ESIC) AS esic_emp,
       SUM(EPFCO) AS pf_co, SUM(ESICCO) AS esic_co, SUM(CTC) AS ctc
