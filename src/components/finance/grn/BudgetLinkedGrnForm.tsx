@@ -22,6 +22,9 @@ import {
 } from "lucide-react";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from "@/components/ui/dialog";
 // SearchableSelect deliberately stays: vendor picking is server-side searched (search /
 // onSearchChange drive a query against a ~1.8k-row master), and it also supplies the hint /
 // keywords matching, the mobile bottom-sheet rendering and the loading and empty states. A plain
@@ -422,6 +425,10 @@ export function BudgetLinkedGrnForm({
   const [autoAnalyze, setAutoAnalyze] = useState(true);
   const [extractedFields, setExtractedFields] = useState<Record<string, any> | null>(null);
   const [showErrors, setShowErrors] = useState(false);
+  // Item 10: fresh-create submit success no longer auto-resets silently — it opens this
+  // confirmation modal instead, which resets (or offers "create another") on explicit click.
+  // Edit-and-resubmit (editGrnId set) is unaffected: that path still calls resetForm directly.
+  const [submittedGrn, setSubmittedGrn] = useState<{ grnNumber: string } | null>(null);
   const [vendorSearch, setVendorSearch] = useState("");
   // Multi-month recognition (Req 5). Both blank keeps the GRN single-month, which is what it
   // has always been and what every historical row already is.
@@ -1646,6 +1653,22 @@ export function BudgetLinkedGrnForm({
     if (navigateAway) onEditComplete?.();
   }
 
+  // Item 10: "GRN Raised" confirmation modal actions. Both stay on the Create GRN page
+  // (navigateAway: false) — the modal's own dismissal is the user's explicit "I'm done looking
+  // at the confirmation" click, so this is not the silent auto-reset the old behaviour was.
+  function handleCreateAnotherGrn(chosenType: GrnType) {
+    // Order matters: resetForm sets form to EMPTY_FORM (grnType: "vendor"), so the chosen type
+    // must be applied after the reset or it would be immediately overwritten.
+    resetForm({ navigateAway: false });
+    setForm((current) => ({ ...current, grnType: chosenType }));
+    setSubmittedGrn(null);
+  }
+
+  function handleCloseSubmittedGrnDialog() {
+    resetForm({ navigateAway: false });
+    setSubmittedGrn(null);
+  }
+
   function applyExtractedFields(fields: Record<string, any>) {
     setForm((current) => ({
       ...current,
@@ -1936,19 +1959,30 @@ export function BudgetLinkedGrnForm({
       return current;
     },
     onSuccess: (result, submit) => {
-      toast({
-        title: submit ? "GRN submitted to Branch Head" : "GRN draft saved",
-        description: result.grnNumber,
-      });
+      // Item 10: a fresh-create submit (no editGrnId) shows its confirmation via the
+      // "GRN Raised" modal instead of this toast, since the modal already states the GRN
+      // number clearly and a toast-plus-modal on the same success reads as double confirmation.
+      // The draft-save and edit-resubmit paths are unaffected and keep the toast.
+      const skipToastForModal = submit && !editGrnId;
+      if (!skipToastForModal) {
+        toast({
+          title: submit ? "GRN submitted to Branch Head" : "GRN draft saved",
+          description: result.grnNumber,
+        });
+      }
       void queryClient.invalidateQueries({ queryKey: ["grn-list"] });
       void queryClient.invalidateQueries({ queryKey: ["available-budget-lines"] });
       void queryClient.invalidateQueries({ queryKey: ["smart-grn-workspace", result.id] });
       // Was showing the just-submitted GRN until the user manually clicked "Start a new GRN" —
-      // reset automatically instead. A fresh create (no editGrnId) clears to a blank Create GRN
-      // form and stays put; an edit-and-resubmit (editGrnId set, reached via History/Queue's Edit
-      // button) still hands back to onEditComplete's Queue redirect, same as it always intended.
-      if (submit) {
-        resetForm({ navigateAway: Boolean(editGrnId) });
+      // an edit-and-resubmit (editGrnId set, reached via History/Queue's Edit button) still resets
+      // immediately and hands back to onEditComplete's Queue redirect, same as it always intended.
+      // A fresh create (no editGrnId) no longer resets automatically here — it opens the "GRN
+      // Raised" confirmation modal instead, and the reset happens from that modal's own actions
+      // ("Create another" / "Close") so the user sees the confirmation before the form clears.
+      if (submit && editGrnId) {
+        resetForm({ navigateAway: true });
+      } else if (submit && !editGrnId) {
+        setSubmittedGrn({ grnNumber: result.grnNumber });
       }
     },
     onError: (error: Error) => {
@@ -3313,6 +3347,47 @@ export function BudgetLinkedGrnForm({
           </dl>
         </aside>
       </div>
+
+      {/* Item 10: fresh-create submit confirmation — replaces the old silent auto-reset with an
+          explicit "GRN Raised" acknowledgement. Edit-and-resubmit (editGrnId set) never opens this;
+          that path still resets straight back to the Queue via onEditComplete. */}
+      <Dialog
+        open={Boolean(submittedGrn)}
+        onOpenChange={(open) => {
+          if (!open) handleCloseSubmittedGrnDialog();
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>GRN Raised</DialogTitle></DialogHeader>
+          <p className="text-[13px] text-grn-ink-soft">
+            GRN {submittedGrn?.grnNumber} has been submitted for Branch Head review.
+          </p>
+          <div className="mt-1 space-y-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-grn-ink-soft">
+              Create another
+            </p>
+            <div className="flex gap-2">
+              <Button
+                className="flex-1"
+                onClick={() => handleCreateAnotherGrn("vendor" as GrnType)}
+              >
+                <IndianRupee className="h-3.5 w-3.5" />
+                Create Vendor GRN
+              </Button>
+              <Button
+                className="flex-1"
+                onClick={() => handleCreateAnotherGrn("imprest" as GrnType)}
+              >
+                <UploadCloud className="h-3.5 w-3.5" />
+                Create Imprest GRN
+              </Button>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button onClick={handleCloseSubmittedGrnDialog}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
