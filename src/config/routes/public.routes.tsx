@@ -36,6 +36,13 @@ const EmployeeEpfComplianceReviewPage = lazy(() => import("@/pages/EmployeeEpfCo
 const VisitorSelfRegister = lazy(() => import("@/pages/VisitorSelfRegister"));
 const VisitorStatusPage   = lazy(() => import("@/pages/VisitorStatusPage"));
 const VisitorGatePage     = lazy(() => import("@/pages/VisitorGatePage"));
+const UXSkillDemo         = lazy(() => import("@/pages/UXSkillDemo"));
+const UXSkillDemoCompare  = lazy(() => import("@/pages/UXSkillDemoCompare"));
+const ProfileCompare      = lazy(() => import("@/pages/ProfileCompare"));
+const ProfileV3Demo       = lazy(() => import("@/pages/ProfileV3Demo"));
+const Step10Demo          = lazy(() => import("@/components/onboarding-full/Step10Demo"));
+const OnboardingFullDemo  = lazy(() => import("@/components/onboarding-full/OnboardingFullDemo"));
+const CandidateOnboardingFullPageV2 = lazy(() => import("@/pages/CandidateOnboardingFullPageV2"));
 
 export const publicRouteElements = (
   <>
@@ -49,6 +56,14 @@ export const publicRouteElements = (
       <Route path="/privacy-policy"   element={<PrivacyPolicy />} />
       <Route path="/terms-of-service" element={<TermsOfService />} />
       <Route path="/security"         element={<Security />} />
+
+      {/* Demo */}
+      <Route path="/ux-skill-demo"    element={<UXSkillDemo />} />
+      <Route path="/ux-skill-compare" element={<UXSkillDemoCompare />} />
+      <Route path="/profile-compare" element={<ProfileCompare />} />
+      <Route path="/profile-v3-demo" element={<ProfileV3Demo />} />
+      <Route path="/onboarding-step10-demo" element={<Step10Demo />} />
+      <Route path="/onboarding-demo" element={<OnboardingFullDemo />} />
 
       {/* Auth */}
       <Route path="/auth"           element={<Auth />} />
@@ -71,6 +86,8 @@ export const publicRouteElements = (
       {/* Candidate onboarding — CANONICAL: /onboard-full */}
       <Route path="/onboard"      element={<CandidateOnboardingPage />} />
       <Route path="/onboard-full" element={<CandidateOnboardingFullPage />} />
+      {/* V2 TEST — Redesigned UI, same backend */}
+      <Route path="/onboard-full-v2" element={<CandidateOnboardingFullPageV2 />} />
       {/* LEGACY: kept alive for existing email token links until token table is audited for zero active sessions */}
       <Route path="/onboard-full-legacy" element={<CandidateOnboardingV2 />} />
       {/* Duplicates eliminated → redirects to canonical */}

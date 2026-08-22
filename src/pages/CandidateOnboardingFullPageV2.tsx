@@ -1,18 +1,20 @@
 /**
- * Candidate Onboarding Full Page — MAS HRMS Design Patterns
+ * Candidate Onboarding Full Page V2 — Redesigned UI
  *
- * Uses useOnboardingFull hook for all backend logic.
- * Redesigned UI with glassmorphism, gradients, and colored sections.
+ * Uses the SAME useOnboardingFull hook (all backend logic unchanged).
+ * Only the UI components are redesigned with MAS HRMS design patterns.
+ *
+ * TEST PAGE — for local testing before production deployment.
  */
 
 import { useSearchParams } from "react-router-dom";
-import { CheckCircle2, Loader2, Home, User, MapPin, FileImage, ShieldCheck, Landmark, GraduationCap, Briefcase, Users, Send } from "lucide-react";
+import { CheckCircle2, Loader2, Home, User, MapPin, FileImage, ShieldCheck, Landmark, GraduationCap, Briefcase, Users, Send, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useOnboardingFull, STEP_LABELS } from "@/components/onboarding-full/useOnboardingFull";
 import type { Step } from "@/components/onboarding-full/useOnboardingFull";
 
-// Import V2 redesigned components
+// Import ALL V2 redesigned components
 import {
   Step1Welcome,
   Step2Personal,
@@ -53,7 +55,7 @@ const STEP_COLORS: Record<string, { gradient: string; bg: string; border: string
   emerald: { gradient: "from-emerald-600 to-green-600", bg: "bg-emerald-600", border: "border-emerald-200", text: "text-emerald-600" },
 };
 
-export default function CandidateOnboardingFullPage() {
+export default function CandidateOnboardingFullPageV2() {
   const [params] = useSearchParams();
   const token = params.get("token") ?? "";
 
@@ -147,6 +149,15 @@ export default function CandidateOnboardingFullPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50">
+      {/* Demo Banner */}
+      <div className="bg-gradient-to-r from-violet-600 to-purple-600 text-white p-3 text-center">
+        <div className="flex items-center justify-center gap-2">
+          <Sparkles className="h-5 w-5" />
+          <span className="font-bold text-sm">V2 Design Test</span>
+          <span className="text-white/70 text-xs">| MAS HRMS Design Patterns</span>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-slate-200 shadow-sm">
         <div className="max-w-4xl mx-auto px-4 py-3">
@@ -220,7 +231,7 @@ export default function CandidateOnboardingFullPage() {
 
       {/* Step Content */}
       <div className="max-w-4xl mx-auto p-4 pb-32">
-        {/* Step 1: Welcome */}
+        {/* Step 1: Welcome (V2) */}
         {onb.step === 1 && (
           <Step1Welcome
             status={onb.status}
@@ -232,7 +243,7 @@ export default function CandidateOnboardingFullPage() {
           />
         )}
 
-        {/* Step 2: Personal Details */}
+        {/* Step 2: Personal Details (V2) */}
         {onb.step === 2 && (
           <Step2Personal
             employee={onb.employee}
@@ -242,7 +253,7 @@ export default function CandidateOnboardingFullPage() {
           />
         )}
 
-        {/* Step 3: Address & KYC */}
+        {/* Step 3: Address & KYC (V2) */}
         {onb.step === 3 && (
           <Step3AddressKyc
             employee={onb.employee}
@@ -259,7 +270,7 @@ export default function CandidateOnboardingFullPage() {
           />
         )}
 
-        {/* Step 4: Documents */}
+        {/* Step 4: Documents (V2) */}
         {onb.step === 4 && (
           <Step4Documents
             status={onb.status}
@@ -271,7 +282,7 @@ export default function CandidateOnboardingFullPage() {
           />
         )}
 
-        {/* Step 5: BGV */}
+        {/* Step 5: BGV (V2) */}
         {onb.step === 5 && (
           <Step5Bgv
             bgv={onb.bgv}
@@ -292,7 +303,7 @@ export default function CandidateOnboardingFullPage() {
           />
         )}
 
-        {/* Step 6: Bank */}
+        {/* Step 6: Bank (V2) */}
         {onb.step === 6 && (
           <Step6Bank
             bank={onb.bank}
@@ -306,7 +317,7 @@ export default function CandidateOnboardingFullPage() {
           />
         )}
 
-        {/* Step 7: Education */}
+        {/* Step 7: Education (V2) */}
         {onb.step === 7 && (
           <Step7Education
             qual={onb.qual}
@@ -317,7 +328,7 @@ export default function CandidateOnboardingFullPage() {
           />
         )}
 
-        {/* Step 8: Experience */}
+        {/* Step 8: Experience (V2) */}
         {onb.step === 8 && (
           <Step8Experience
             experience={onb.experience}
@@ -327,7 +338,7 @@ export default function CandidateOnboardingFullPage() {
           />
         )}
 
-        {/* Step 9: Family & Language */}
+        {/* Step 9: Family & Language (V2) */}
         {onb.step === 9 && (
           <Step9FamilyLang
             family={onb.family}
@@ -341,7 +352,7 @@ export default function CandidateOnboardingFullPage() {
           />
         )}
 
-        {/* Step 10: Submit */}
+        {/* Step 10: Submit (V2) */}
         {onb.step === 10 && (
           <Step10Statutory
             statutory={onb.statutory}
