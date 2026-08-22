@@ -61,7 +61,10 @@ describe("dashboard access registry", () => {
       finance_head: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       accounts_head: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       branch_head: ["QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
-      manager: ["OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      // 2026-08-22: manager had no WFM_DASHBOARD grant at all and a deactivated
+      // QUALITY_DASHBOARD grant (leftover from the 2026-07-25 RBAC cleanup) — neither was
+      // deliberate, both fixed to match the parity manager already had on OPERATIONS_DASHBOARD.
+      manager: ["WFM_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       employee: ["EMPLOYEE_SELF_DASHBOARD"],
     };
 

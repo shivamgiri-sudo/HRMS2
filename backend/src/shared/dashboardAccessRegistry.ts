@@ -99,7 +99,10 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     displayName: "WFM",
     route: "/wfm/dashboard",
     pageCode: "WFM_DASHBOARD",
-    allowedRoleKeys: ["wfm", "ho_wfm", "wfm_spoc", "rta", "super_admin"],
+    // 'manager' added 2026-08-22: plain team/branch managers had no WFM Dashboard entitlement
+    // at all — not deliberate scoping, just never granted. They already hold the same-shaped
+    // Operations Dashboard grant; this brings WFM into parity with that.
+    allowedRoleKeys: ["wfm", "ho_wfm", "wfm_spoc", "rta", "manager", "super_admin"],
     scopeTypes: ["ORGANISATION", "BRANCH", "PROCESS"],
     sensitiveMetrics: ["attendance", "productivity"],
     permissions: { drilldown: true, export: true, filters: true },
@@ -132,7 +135,11 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     displayName: "Quality",
     route: "/quality-dashboard",
     pageCode: "QUALITY_DASHBOARD",
-    allowedRoleKeys: ["qa", "quality_analyst", "quality_lead", "qa_manager", "operations_manager", "tq_head", "branch_head", "ceo", "coo", "super_admin"],
+    // 'manager' added 2026-08-22: role_page_access already had a grant row for manager here,
+    // deactivated (active_status=0) — a leftover from the 2026-07-25 RBAC cleanup sweep, not a
+    // deliberate lock-out. This registry list is the other, independently-enforced gate
+    // (dashboard.routes.ts:65) — both need to agree or the DB grant alone does nothing.
+    allowedRoleKeys: ["qa", "quality_analyst", "quality_lead", "qa_manager", "operations_manager", "tq_head", "branch_head", "ceo", "coo", "manager", "super_admin"],
     scopeTypes: ["ORGANISATION", "BRANCH", "PROCESS", "TEAM"],
     sensitiveMetrics: ["quality", "coaching"],
     permissions: { drilldown: true, export: true, filters: true },
