@@ -143,6 +143,7 @@ import headerMappingProfileRouter from "./modules/wfm/header-mapping-profile.rou
 import { planningModeRouter } from "./modules/wfm/planning-mode.routes.js";
 import { rtaExceptionRouter } from "./modules/wfm/rta-exception.routes.js";
 import { attendanceDisputeRouter } from "./modules/attendance/attendance.dispute.routes.js";
+import { salaryDisputeRouter } from "./modules/salary-dispute/salary-dispute.routes.js";
 import { attendanceManualOverrideRouter } from "./modules/attendance/attendance.manual-override.routes.js";
 import { discardRouter } from "./modules/discard/discard.routes.js";
 import { mismatchReviewRouter } from "./modules/wfm/mismatch-review.routes.js";
@@ -598,6 +599,7 @@ app.use('/api/wfm/cosec-sync', cosecSyncRouter);
 app.use('/api/wfm/biometric-summary', biometricSummaryRouter);
 app.use("/api/attendance/exception-engine", attendanceExceptionRouter);
 app.use("/api/attendance", attendanceDisputeRouter);
+app.use("/api/salary-disputes", salaryDisputeRouter);
 app.use("/api/attendance", attendanceManualOverrideRouter);
 // Discard of approved leave / regularization / dispute — super_admin + wfm only.
 app.use("/api/discard", discardRouter);
