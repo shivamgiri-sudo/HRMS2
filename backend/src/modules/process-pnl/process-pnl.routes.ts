@@ -16,6 +16,7 @@ import { bpoPnlRouter } from "./bpo-pnl.routes.js";
 import { canonicalPnlService } from "./canonical-pnl.service.js";
 import { pnlBulkUploadRouter } from "./pnl-bulk-upload.routes.js";
 import { branchBudgetService, getCompanyBudgetConsolidation } from "./branch-budget.service.js";
+import { getHeadSubHeadCoverage } from "./budget-headroom-gate.service.js";
 import { getCeoOverview, getYtdSummary, type CeoFilters } from "./ceo-overview.service.js";
 import { budgetTopupService } from "./budget-topup.service.js";
 import { budgetClosureService } from "./budget-closure.service.js";
@@ -286,6 +287,42 @@ router.get(
       period: req.query.period ? String(req.query.period) : undefined,
     });
     res.json({ success: true, data });
+  })
+);
+
+/**
+ * Read-only branch-aggregate headroom check for a head/sub-head, backing the GRN raiser's inline
+ * warning before they even attempt to submit — see budget-headroom-gate.service.ts (Group C) for
+ * the authoritative gate actually enforced at save time; this is advisory UI plumbing only,
+ * deliberately not leaking per-line internals (budget-headroom-gate's `lines` array) to a raiser
+ * who should not see every cost centre's own budget line just to raise a GRN.
+ */
+router.get(
+  "/pnl/budget-headroom",
+  requireRole(...BUDGET_READ_ROLES),
+  h(async (req, res) => {
+    const user = actor(req);
+    const branchId = await resolveFinanceBranchScope({
+      userId: user.id,
+      primaryRole: user.role,
+      userRoles: user.roles,
+      requestedBranchId: req.query.branchId ? String(req.query.branchId) : undefined,
+    });
+    if (!branchId) throw Object.assign(new Error("Branch is required"), { statusCode: 400 });
+    const period = req.query.period ? String(req.query.period) : "";
+    const head = req.query.head ? String(req.query.head) : "";
+    if (!period) throw Object.assign(new Error("Period is required"), { statusCode: 400 });
+    if (!head) throw Object.assign(new Error("Head is required"), { statusCode: 400 });
+    const subHead = req.query.subHead ? String(req.query.subHead) : null;
+    const coverage = await getHeadSubHeadCoverage(branchId, period, head, subHead);
+    res.json({
+      success: true,
+      data: {
+        headerActive: coverage.headerActive,
+        hasAnyLine: coverage.lines.length > 0,
+        aggregateAvailable: coverage.aggregateAvailable,
+      },
+    });
   })
 );
 
