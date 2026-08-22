@@ -623,7 +623,7 @@ export function WorkInboxPanel({ data }: { data: ReferenceDashboardData }) {
       }
       bodyClassName="p-0"
     >
-      {!inbox || inbox.pending_count === 0 ? (
+      {!inbox || (inbox.pending_count ?? 0) === 0 ? (
         <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">
           {inbox ? "Nothing waiting on you." : "The work inbox could not be read."}
         </p>

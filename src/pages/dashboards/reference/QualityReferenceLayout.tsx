@@ -97,7 +97,7 @@ export function QualityReferenceLayout({ data, filters }: { data: ReferenceDashb
             value: auditScore !== null ? `${auditScore.toFixed(1)}%` : null,
             helper: "current period average",
             icon: Star,
-            tone: auditScore !== null && auditScore >= 85 ? "green" : auditScore !== null && auditScore >= 70 ? "amber" : "red",
+            tone: auditScore === null ? "slate" : auditScore >= 85 ? "green" : auditScore >= 70 ? "amber" : "red",
           },
           {
             label: "Audits Completed",
@@ -111,14 +111,14 @@ export function QualityReferenceLayout({ data, filters }: { data: ReferenceDashb
             value: failRate !== null ? `${failRate.toFixed(1)}%` : null,
             helper: "% of audits failed",
             icon: TrendingDown,
-            tone: failRate !== null && failRate <= 10 ? "green" : failRate !== null && failRate <= 20 ? "amber" : "red",
+            tone: failRate === null ? "slate" : failRate <= 10 ? "green" : failRate <= 20 ? "amber" : "red",
           },
           {
             label: "Pending Queue",
             value: pendingAudits,
             helper: "audits awaiting review",
             icon: AlertTriangle,
-            tone: pendingAudits && pendingAudits > 20 ? "red" : "amber",
+            tone: pendingAudits === null ? "slate" : pendingAudits > 20 ? "red" : "amber",
           },
         ]}
       />

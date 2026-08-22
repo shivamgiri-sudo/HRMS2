@@ -81,8 +81,8 @@ export function WfmAttendanceReferenceLayout({ data, filters }: { data: Referenc
         metrics={[
           { label: "Total Employees", value: active, helper: "In selected scope", icon: Users, tone: "blue",
             ...drill("hc"), },
-          { label: "Present Today", value: present, helper: attendanceRate === null ? "Live" : `${attendanceRate}%`, icon: UserCheck, tone: "green" },
-          { label: "Late Arrivals", value: late, helper: latePct === null ? "Today" : `${latePct}%`, icon: Clock3, tone: "amber" },
+          { label: "Present Today", value: present, helper: attendanceRate === null ? "Live" : `${attendanceRate}%`, icon: UserCheck, tone: "green", ...drill("att") },
+          { label: "Late Arrivals", value: late, helper: latePct === null ? "Today" : `${latePct}%`, icon: Clock3, tone: "amber", ...drill("att") },
           { label: "Absent Today", value: absent, helper: "Attendance status", icon: UserMinus, tone: "red",
             ...drill("att"), },
           { label: "On Leave", value: onLeave, helper: "Approved leave", icon: CalendarClock, tone: "blue",

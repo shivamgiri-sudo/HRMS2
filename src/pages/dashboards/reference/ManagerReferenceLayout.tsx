@@ -101,7 +101,7 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
           { label: "Present Today", value: present, helper: attendance === null ? "Live" : `${attendance}%`, icon: UserCheck, tone: "green" },
           { label: "On Leave", value: employeesOnLeaveToday, helper: team ? `${Math.round((employeesOnLeaveToday / Math.max(team, 1)) * 1000) / 10}%` : "Today", icon: CalendarDays, tone: "amber" },
           { label: "Absent", value: absent, helper: team && absent !== null ? `${Math.round((absent / Math.max(team, 1)) * 1000) / 10}%` : "Today", icon: UserMinus, tone: "red" },
-          { label: "New Joiners (This Month)", value: newJoiners, helper: "Last 30 days", icon: UserPlus, tone: "violet" },
+          { label: "New Joiners (This Month)", value: newJoiners, helper: "Last 30 days", icon: UserPlus, tone: "violet", ...drill("onb") },
           { label: "Open Positions", value: asNumber(data.ats.open_positions ?? data.ats.openPositions), helper: "View jobs", icon: BriefcaseBusiness, tone: "blue", href: "/ats/dashboard" },
         ]}
       />
@@ -110,7 +110,7 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
         <ReferencePanel title="Team Attendance" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/attendance">View Details</a>}>
           <ReferenceDonut compact centerValue={attendance === null ? null : `${attendance}%`} centerLabel="Present" data={[
             { name: "Present", value: present ?? 0 },
-            { name: "On Leave", value: employeesOnLeaveToday },
+            { name: "On Leave", value: employeesOnLeaveToday ?? 0 },
             { name: "Absent", value: absent ?? 0 },
             { name: "Work From Home", value: asNumber(data.workforce.working_remotely) ?? 0 },
           ]} />
