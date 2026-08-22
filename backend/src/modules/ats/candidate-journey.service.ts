@@ -422,6 +422,81 @@ export async function getCandidateFullJourney(candidateId: string): Promise<Jour
     gaps.push("Provisioning tasks (no employee record yet)");
   }
 
+  // ── PAYROLL HEAD SALARY ASSIGNMENT ────────────────────────────────────
+  // Shows the final salary confirmed by Payroll Head, with full component
+  // breakdown (Basic / HRA / Conveyance / Special / Gross / Net). Branch Head
+  // approves the OFFER salary; Payroll Head can revise it independently. BH
+  // needs to see what was FINALLY assigned — not just what they approved.
+  if (emp?.id) {
+    await source("Payroll Head salary review", "employee_payroll_head_review", async () => {
+      const [reviewRows] = await db.execute<RowDataPacket[]>(
+        `SELECT phr.status, phr.reviewed_at, phr.package_effective_from,
+                phr.rejection_category, phr.rejection_reason_code, phr.rejection_remarks,
+                sca.basic, sca.hra, sca.conveyance, sca.special_allowance, sca.gross,
+                sca.net_estimate, sca.effective_date,
+                spm.name AS package_name, spm.band_code,
+                COALESCE(ra.full_name, ra.email) AS reviewed_by_name
+           FROM employee_payroll_head_review phr
+           LEFT JOIN salary_component_assignments sca
+                  ON sca.employee_id = phr.employee_id AND sca.status = 'active'
+           LEFT JOIN salary_package_master spm ON spm.id = phr.salary_package_id
+           LEFT JOIN auth_user ra ON ra.id = phr.reviewed_by
+          WHERE phr.employee_id = ?
+          ORDER BY COALESCE(phr.reviewed_at, phr.created_at) DESC
+          LIMIT 1`,
+        [emp.id],
+      ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+
+      const r = reviewRows[0];
+      if (!r) return;
+
+      if (r.status === 'approved' && r.gross) {
+        const fmt = (n: unknown) => n != null ? `₹${Math.round(Number(n)).toLocaleString('en-IN')}` : null;
+        const components = [
+          r.basic          ? `Basic ${fmt(r.basic)}`          : null,
+          r.hra            ? `HRA ${fmt(r.hra)}`               : null,
+          r.conveyance     ? `Conv ${fmt(r.conveyance)}`       : null,
+          r.special_allowance ? `Special ${fmt(r.special_allowance)}` : null,
+          `Gross ${fmt(r.gross)}`,
+          r.net_estimate   ? `Net ${fmt(r.net_estimate)}`      : null,
+        ].filter(Boolean).join(' · ');
+
+        events.push({
+          phase: "EMPLOYEE",
+          activity_type: "Salary confirmed by Payroll Head",
+          status: r.package_name ? `${r.package_name}${r.band_code ? ` (Band ${r.band_code})` : ''}` : "Approved",
+          occurred_at: iso(r.reviewed_at),
+          actor_name: txt(r.reviewed_by_name),
+          source_table: "employee_payroll_head_review",
+          source_record_id: emp.id,
+          detail: `${components}${r.effective_date ? ` · Effective ${String(r.effective_date).slice(0, 10)}` : ''}`,
+        });
+      } else if (r.status === 'rejected') {
+        events.push({
+          phase: "EMPLOYEE",
+          activity_type: "Salary review rejected by Payroll Head",
+          status: `${r.rejection_category ?? ''} / ${r.rejection_reason_code ?? ''}`.replace(/^\s*\/\s*/, ''),
+          occurred_at: iso(r.reviewed_at),
+          actor_name: txt(r.reviewed_by_name),
+          source_table: "employee_payroll_head_review",
+          source_record_id: emp.id,
+          detail: txt(r.rejection_remarks),
+        });
+      } else {
+        events.push({
+          phase: "EMPLOYEE",
+          activity_type: "Salary review pending (Payroll Head)",
+          status: "PENDING REVIEW",
+          occurred_at: null,
+          actor_name: null,
+          source_table: "employee_payroll_head_review",
+          source_record_id: emp.id,
+          detail: "Employee is excluded from payroll until Payroll Head approves.",
+        });
+      }
+    });
+  }
+
   // ── order, dedupe, summarise ───────────────────────────────────────────
   const seen = new Set<string>();
   const ordered = events
