@@ -42,6 +42,10 @@ export interface BranchReadinessRecord {
   custom_deductions_confirmed_at: string | null;
   overtime_entered: number;
   overtime_confirmed_at: string | null;
+  leave_finalized: number;
+  leave_finalized_at: string | null;
+  regularization_complete: number;
+  regularization_complete_at: string | null;
   // computed metrics
   bank_details_pct: number;
   uan_complete_pct: number;
@@ -119,6 +123,14 @@ async function ensureTable(): Promise<void> {
         overtime_entered TINYINT(1) NOT NULL DEFAULT 0,
         overtime_confirmed_at DATETIME NULL,
         overtime_confirmed_by VARCHAR(36) NULL,
+
+        leave_finalized TINYINT(1) NOT NULL DEFAULT 0,
+        leave_finalized_at DATETIME NULL,
+        leave_finalized_by VARCHAR(36) NULL,
+
+        regularization_complete TINYINT(1) NOT NULL DEFAULT 0,
+        regularization_complete_at DATETIME NULL,
+        regularization_complete_by VARCHAR(36) NULL,
 
         bank_details_pct DECIMAL(5,2) NOT NULL DEFAULT 0,
         uan_complete_pct DECIMAL(5,2) NOT NULL DEFAULT 0,
@@ -225,12 +237,13 @@ export const payrollBranchReadinessService = {
       await db.execute(
         `INSERT IGNORE INTO payroll_branch_readiness
            (branch_id, process_month, process_id, process_name,
-            attendance_frozen, incentives_status,
+            attendance_data_ready, attendance_frozen, incentives_status,
             custom_deductions_uploaded, overtime_entered,
+            leave_finalized, regularization_complete,
             bank_details_pct, uan_complete_pct, noc_resolved, holiday_work_approved,
             branch_head_signoff, ho_override_ready,
             readiness_score, readiness_status, employee_count)
-         VALUES (?, ?, ?, ?, 0, 'not_uploaded', 0, 0, 0, 0, 1, 1, 0, 0, 0, 'not_started', 0)`,
+         VALUES (?, ?, ?, ?, 0, 0, 'not_uploaded', 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 'not_started', 0)`,
         [branchId, month, processId, processName]
       );
     } catch (err: unknown) {
@@ -556,7 +569,9 @@ export const payrollBranchReadinessService = {
     if (record.attendance_frozen)     score += 10; // payroll freeze (was 25)
     if (record.incentives_status === "approved") score += 20;
     if (record.custom_deductions_uploaded) score += 10;
-    if (record.overtime_entered) score += 10;
+    if (record.overtime_entered)         score += 10;
+    if (record.leave_finalized)          score += 5;
+    if (record.regularization_complete)  score += 5;
 
     const bankPct = record.bank_details_pct ?? 0;
     score += Math.min(15, (bankPct * 15) / 100);
@@ -841,6 +856,10 @@ export const payrollBranchReadinessService = {
         (record.custom_deductions_confirmed_at as string) ?? null,
       overtime_entered: Number(record.overtime_entered ?? 0),
       overtime_confirmed_at: (record.overtime_confirmed_at as string) ?? null,
+      leave_finalized: Number(record.leave_finalized ?? 0),
+      leave_finalized_at: (record.leave_finalized_at as string) ?? null,
+      regularization_complete: Number(record.regularization_complete ?? 0),
+      regularization_complete_at: (record.regularization_complete_at as string) ?? null,
       bank_details_pct: Number(record.bank_details_pct ?? 0),
       uan_complete_pct: Number(record.uan_complete_pct ?? 0),
       noc_resolved: Number(record.noc_resolved ?? 1),

@@ -19,6 +19,7 @@ import {
   Bell,
   TrendingUp,
   IndianRupee,
+  Calendar,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -120,6 +121,10 @@ interface BranchReadiness {
   incentives_status: "not_uploaded" | "uploaded" | "approved";
   custom_deductions_uploaded: number;
   overtime_entered: number;
+  leave_finalized: number;
+  leave_finalized_at: string | null;
+  regularization_complete: number;
+  regularization_complete_at: string | null;
   bank_details_pct: number;
   uan_complete_pct: number;
   noc_resolved: number;
@@ -259,6 +264,20 @@ const CHECKLIST_DEFS: ChecklistDef[] = [
     key: "incentives_status",
     label: "Incentives Approved",
     icon: <CheckCircle2 className="w-4 h-4" />,
+  },
+  {
+    key: "leave_finalized",
+    label: "Leaves Finalized",
+    icon: <Calendar className="w-4 h-4" />,
+    timestampKey: "leave_finalized_at",
+    isManual: true,
+  },
+  {
+    key: "regularization_complete",
+    label: "Regularizations Resolved",
+    icon: <CheckCircle2 className="w-4 h-4" />,
+    timestampKey: "regularization_complete_at",
+    isManual: true,
   },
   {
     key: "custom_deductions_uploaded",
@@ -962,7 +981,7 @@ function ManualToggleButton({
 }: {
   branchId: string;
   month: string;
-  fieldKey: "attendance_data_ready" | "custom_deductions_uploaded" | "overtime_entered";
+  fieldKey: "attendance_data_ready" | "leave_finalized" | "regularization_complete" | "custom_deductions_uploaded" | "overtime_entered";
   currentValue: number;
   label: string;
 }) {
@@ -1227,7 +1246,7 @@ function BranchView({
                   {isManualField && (
                     <ManualToggleButton
                       branchId={data.branch_id} month={month}
-                      fieldKey={def.key as "attendance_data_ready" | "custom_deductions_uploaded" | "overtime_entered"}
+                      fieldKey={def.key as "attendance_data_ready" | "leave_finalized" | "regularization_complete" | "custom_deductions_uploaded" | "overtime_entered"}
                       currentValue={data[def.key as keyof BranchReadiness] as number}
                       label={def.label}
                     />
