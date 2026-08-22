@@ -1608,7 +1608,23 @@ function HOView({ month }: { month: string }) {
     return { total, ready, inProgress, blocked, notStarted, avgScore };
   }, [branches]);
 
-  const notFrozenCount = branches.filter((b) => !b.attendance_frozen).length;
+  const notFrozenCount     = branches.filter((b) => !b.attendance_frozen).length;
+  const notReadyCount      = branches.filter((b) => !b.attendance_data_ready).length;
+  const allBranchesReady   = stats.total > 0 && stats.ready === stats.total;
+  const majorityReady      = stats.total > 0 && stats.ready >= Math.ceil(stats.total * 0.8);
+
+  const startRunMutation = useMutation({
+    mutationFn: async () => {
+      await hrmsApi.post(`/api/payroll/runs`, { run_month: month });
+    },
+    onSuccess: () => {
+      toast.success(`Payroll run for ${month} created. You can now calculate salaries.`);
+      refetch();
+    },
+    onError: (err: unknown) => {
+      toast.error((err as Error)?.message ?? "Failed to create payroll run");
+    },
+  });
 
   if (isLoading) {
     return (
@@ -1641,13 +1657,53 @@ function HOView({ month }: { month: string }) {
 
   return (
     <div className="space-y-4">
-      {/* Warning banner */}
-      {notFrozenCount > 0 && (
+      {/* All branches ready — Start Payroll Run CTA */}
+      {canOverride && (allBranchesReady || majorityReady) && (
+        <div className={`flex items-center justify-between gap-4 rounded-2xl border px-4 py-3
+          ${allBranchesReady
+            ? "border-emerald-200 bg-emerald-50"
+            : "border-blue-200 bg-blue-50"}`}>
+          <div>
+            <p className={`text-sm font-semibold ${allBranchesReady ? "text-emerald-900" : "text-blue-900"}`}>
+              {allBranchesReady
+                ? `All ${stats.total} branches ready — start payroll processing`
+                : `${stats.ready} of ${stats.total} branches ready (${Math.round(stats.ready / stats.total * 100)}%)`}
+            </p>
+            <p className={`text-xs mt-0.5 ${allBranchesReady ? "text-emerald-700" : "text-blue-700"}`}>
+              {allBranchesReady
+                ? "Create the payroll run to begin salary calculation."
+                : "You can start now or wait for remaining branches to sign off."}
+            </p>
+          </div>
+          <Button
+            size="sm"
+            className={`flex-shrink-0 ${allBranchesReady ? "bg-emerald-700 hover:bg-emerald-800" : ""}`}
+            disabled={startRunMutation.isPending}
+            onClick={() => startRunMutation.mutate()}
+          >
+            <IndianRupee className="mr-1.5 h-3.5 w-3.5" />
+            {startRunMutation.isPending ? "Creating…" : "Start Payroll Run"}
+          </Button>
+        </div>
+      )}
+
+      {/* Attendance data ready warning */}
+      {notReadyCount > 0 && (
         <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <AlertTriangle className="h-4 w-4 flex-shrink-0 text-amber-500" />
           <span>
-            <strong>{notFrozenCount}</strong> branch{notFrozenCount > 1 ? "es" : ""} not attendance-frozen — payroll run creation will be blocked for{" "}
-            {notFrozenCount > 1 ? "those branches" : "that branch"}.
+            <strong>{notReadyCount}</strong> branch{notReadyCount > 1 ? "es have" : " has"} not marked attendance data as ready — WFM must complete validation first.
+          </span>
+        </div>
+      )}
+
+      {/* Freeze reminder */}
+      {notFrozenCount > 0 && notReadyCount === 0 && (
+        <div className="flex items-center gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          <Lock className="h-4 w-4 flex-shrink-0 text-blue-500" />
+          <span>
+            <strong>{notFrozenCount}</strong> branch{notFrozenCount > 1 ? "es" : ""} not yet attendance-frozen.
+            Freeze attendance before running payroll calculation to lock the data.
           </span>
         </div>
       )}
