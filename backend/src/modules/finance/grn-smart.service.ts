@@ -1591,7 +1591,20 @@ export const grnSmartService = {
               // Funding source (budget_id/id/tax profile) is the FUNDING line's own; cost-centre
               // attribution is overridden to the ORIGINAL split's own cost centre — the raiser's
               // attributed cost centre, not whichever budget pool happened to pay for it.
-              line: { ...fundingLine, cost_centre_id: split.line.cost_centre_id, cost_centre_name: split.line.cost_centre_name },
+              line: {
+                ...fundingLine,
+                cost_centre_id: split.line.cost_centre_id,
+                cost_centre_name: split.line.cost_centre_name,
+                // gst_type/recoverable_tax_pct must match whichever line's rate actually produced
+                // the fixed cgst/sgst/igst/recoverable_tax_amount dollar figures in scaledAmounts
+                // above — that is always the ORIGINAL split's own line, never the funding line's
+                // (see the "Ground truth" comment above scaledAmounts). Without this override the
+                // persisted row's gst_type label could read e.g. "igst" while cgst_amount/
+                // sgst_amount are non-zero and igst_amount is 0, because the INSERT below reads
+                // gst_type/recoverable_tax_pct straight off cell.line.
+                gst_type: split.line.gst_type,
+                recoverable_tax_pct: split.line.recoverable_tax_pct,
+              },
               component: cell.component,
               componentIndex: cell.componentIndex,
               quantity: subQuantity,

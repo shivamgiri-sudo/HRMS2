@@ -375,6 +375,27 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
       expect(row.cost_centre_id).toBe("cc-A");
     }
 
+    // gst_type/recoverable_tax_pct columns must match the ORIGINAL split's own line (line-A:
+    // "cgst_sgst"/100), never the funding line's (line-B: "igst"/50) — even on the line-B-funded
+    // draws, since the cgst/sgst/igst dollar amounts stored on those rows were computed against
+    // line-A's gst_type, not line-B's. This is the regression test for the label/dollar mismatch
+    // bug: previously these rows spread `...fundingLine` and so persisted gst_type="igst" with
+    // recoverable_tax_pct=50 while the actual cgst_amount/sgst_amount/recoverable_tax_amount
+    // dollar figures were still computed off line-A's own cgst_sgst/100 profile.
+    for (const row of rows) {
+      expect(row.gst_type).toBe("cgst_sgst");
+      expect(Number(row.recoverable_tax_pct)).toBe(100);
+    }
+
+    // Internal consistency: since every row's gst_type is "cgst_sgst", igst_amount must be 0 and
+    // cgst_amount + sgst_amount must reproduce the row's own tax_amount (not split according to
+    // line-B's "igst" type for the line-B-funded rows) — within a single cent, since cgst/sgst/
+    // tax_amount are each independently roundMoney()'d off the same pro-rata drawFraction.
+    for (const row of rows) {
+      expect(Number(row.igst_amount)).toBeCloseTo(0, 6);
+      expect(Number(row.cgst_amount) + Number(row.sgst_amount)).toBeCloseTo(Number(row.tax_amount), 1);
+    }
+
     // gst_rate column is the INVOICE COMPONENT's own real rate, never the funding line's
     // (5% on line-A, 12% on line-B) — this is the test that would catch the ground-truth rule
     // being violated.
