@@ -230,6 +230,7 @@ import { grnRouter } from "./modules/finance/grn.routes.js";
 import { vendorApprovalRouter } from "./modules/finance/vendor-approval.routes.js";
 import { imprestRouter } from "./modules/finance/imprest.routes.js";
 import { salaryVoucherRouter } from "./modules/finance/salary-voucher.routes.js";
+import { legacyReportsRouter } from "./modules/legacy-reports/legacy-reports.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
 import { processPnlRouter } from "./modules/process-pnl/process-pnl.routes.js";
 import billabilityRouter from "./modules/process-pnl/billability.routes.js";
@@ -541,6 +542,7 @@ app.use("/api/finance/imprest", imprestRouter);
 // Its own prefix, like imprest: a salary voucher exposes a whole branch payroll, and it must
 // not be reachable through a path that a broader finance router also serves.
 app.use("/api/finance/payroll", salaryVoucherRouter);
+app.use("/api/legacy-reports", legacyReportsRouter);
 app.use("/api/finance/cost-centres", costCentreManagementRouter);
 app.use("/api/finance", processPnlRouter);
 // Mounted on its own base after processPnlRouter. Owning /api/finance/billability/* outright
