@@ -21,6 +21,21 @@ type DisputeType = "MISSING_OT"|"INCORRECT_ATTENDANCE"|"REGULARIZATION_NOT_APPLI
   "LEAVE_NOT_ASSIGNED"|"INCENTIVE_MISSING"|"WRONG_DEDUCTION"|
   "WRONG_COMPONENT_AMOUNT"|"SHIFT_ALLOWANCE_MISSING"|"DOUBLE_DEDUCTION"|"WRONG_LWP_COUNT"|"OTHER";
 
+// Icon container color per dispute type
+const DISPUTE_TYPE_COLOR: Record<string, string> = {
+  MISSING_OT:                  "bg-amber-500/15 text-amber-600",
+  INCORRECT_ATTENDANCE:        "bg-blue-500/15 text-blue-600",
+  REGULARIZATION_NOT_APPLIED: "bg-emerald-500/15 text-emerald-600",
+  LEAVE_NOT_ASSIGNED:          "bg-blue-500/15 text-blue-600",
+  INCENTIVE_MISSING:           "bg-emerald-500/15 text-emerald-600",
+  WRONG_DEDUCTION:             "bg-red-500/15 text-red-600",
+  DOUBLE_DEDUCTION:            "bg-red-500/15 text-red-600",
+  WRONG_LWP_COUNT:             "bg-orange-500/15 text-orange-600",
+  WRONG_COMPONENT_AMOUNT:      "bg-purple-500/15 text-purple-600",
+  SHIFT_ALLOWANCE_MISSING:     "bg-indigo-500/15 text-indigo-600",
+  OTHER:                       "bg-slate-500/15 text-slate-600",
+};
+
 const DISPUTE_TYPES: { value: DisputeType; label: string; icon: React.ReactNode; description: string }[] = [
   { value: "MISSING_OT", label: "Missing Overtime", icon: <Clock className="w-4 h-4" />, description: "Overtime worked but not paid" },
   { value: "INCORRECT_ATTENDANCE", label: "Incorrect Attendance", icon: <Calendar className="w-4 h-4" />, description: "Wrong P/A/HD status on a day" },
@@ -40,6 +55,63 @@ const STATUS_CONFIG: Record<DisputeStatus, { label: string; color: string; icon:
   rejected:             { label: "Rejected", color: "bg-red-100 text-red-800 border-red-200", icon: <XCircle className="w-3 h-3" /> },
   closed:               { label: "Closed", color: "bg-slate-100 text-slate-600 border-slate-200", icon: <CheckCircle2 className="w-3 h-3" /> },
 };
+
+const TIMELINE_STAGES: { key: DisputeStatus; label: string; reviewer: string }[] = [
+  { key: "pending_wfm",          label: "Raised",       reviewer: "Employee" },
+  { key: "pending_payroll_head", label: "WFM Review",   reviewer: "WFM Team" },
+  { key: "approved",             label: "Payroll Head", reviewer: "Payroll Head" },
+];
+
+const STATUS_ORDER: DisputeStatus[] = ["pending_wfm", "pending_payroll_head", "approved", "rejected", "closed"];
+
+function ApprovalTimeline({ dispute }: { dispute: any }) {
+  const currentIdx = STATUS_ORDER.indexOf(dispute.status as DisputeStatus);
+  const isRejected = dispute.status === "rejected";
+
+  return (
+    <div className="mt-3 flex items-start gap-0">
+      {TIMELINE_STAGES.map((stage, i) => {
+        const stageOrderIdx = STATUS_ORDER.indexOf(stage.key);
+        const isComplete = !isRejected && currentIdx > stageOrderIdx;
+        const isCurrent = dispute.status === stage.key ||
+          (i === 0 && dispute.status === "pending_wfm");
+        const isRejectedStage = isRejected && currentIdx >= stageOrderIdx;
+
+        let nodeClass = "w-6 h-6 rounded-full border-2 flex items-center justify-center text-[10px] font-bold flex-shrink-0 ";
+        let nodeContent: React.ReactNode = <span>{i + 1}</span>;
+
+        if (isRejectedStage && i === 1 && isRejected) {
+          nodeClass += "border-red-500 bg-red-500 text-white";
+          nodeContent = <XCircle className="w-3.5 h-3.5" />;
+        } else if (isComplete) {
+          nodeClass += "border-emerald-500 bg-emerald-500 text-white";
+          nodeContent = <CheckCircle2 className="w-3.5 h-3.5" />;
+        } else if (isCurrent) {
+          nodeClass += "border-blue-500 bg-blue-500 text-white ring-2 ring-blue-300 ring-offset-1";
+        } else {
+          nodeClass += "border-slate-300 bg-white text-slate-400";
+        }
+
+        return (
+          <div key={stage.key} className="flex items-start">
+            <div className="flex flex-col items-center">
+              <div className={nodeClass}>{nodeContent}</div>
+              <div className="mt-1 text-center" style={{ width: 64 }}>
+                <p className={`text-[10px] font-semibold leading-tight ${isComplete ? "text-emerald-700" : isCurrent ? "text-blue-700" : "text-slate-400"}`}>
+                  {stage.label}
+                </p>
+                <p className="text-[9px] text-slate-400 leading-tight">{stage.reviewer}</p>
+              </div>
+            </div>
+            {i < TIMELINE_STAGES.length - 1 && (
+              <div className={`h-px w-8 mt-3 mx-1 flex-shrink-0 ${isComplete ? "bg-emerald-400" : "bg-slate-200"}`} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 // Rolling 24 months for month picker
 const MONTH_OPTIONS = Array.from({ length: 24 }, (_, i) => {
@@ -92,21 +164,26 @@ function RaiseDisputeForm({ onSuccess }: { onSuccess: () => void }) {
     <div className="space-y-3">
       <p className="text-sm font-medium text-slate-700">What is the issue?</p>
       <div className="grid gap-2 sm:grid-cols-2">
-        {DISPUTE_TYPES.map(dt => (
-          <button key={dt.value}
-            onClick={() => setDisputeType(dt.value)}
-            className={`flex items-start gap-2.5 rounded-xl border p-3 text-left transition-colors
-              ${disputeType === dt.value
-                ? "border-blue-500 bg-blue-50"
-                : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"}`}
-          >
-            <span className={`mt-0.5 ${disputeType === dt.value ? "text-blue-600" : "text-slate-500"}`}>{dt.icon}</span>
-            <div>
-              <p className="text-xs font-semibold text-slate-800">{dt.label}</p>
-              <p className="text-[10px] text-slate-500 mt-0.5">{dt.description}</p>
-            </div>
-          </button>
-        ))}
+        {DISPUTE_TYPES.map(dt => {
+          const colorClass = DISPUTE_TYPE_COLOR[dt.value] ?? "bg-slate-500/15 text-slate-600";
+          return (
+            <button key={dt.value}
+              onClick={() => setDisputeType(dt.value)}
+              className={`flex items-start gap-2.5 rounded-xl border p-3 text-left transition-colors
+                ${disputeType === dt.value
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"}`}
+            >
+              <span className={`mt-0.5 w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${colorClass}`}>
+                {dt.icon}
+              </span>
+              <div>
+                <p className="text-xs font-semibold text-slate-800">{dt.label}</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">{dt.description}</p>
+              </div>
+            </button>
+          );
+        })}
       </div>
       <div className="flex gap-2">
         <Button variant="outline" onClick={() => setStep(1)}>Back</Button>
@@ -135,7 +212,7 @@ function RaiseDisputeForm({ onSuccess }: { onSuccess: () => void }) {
       <div className="flex gap-2">
         <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
         <Button
-          className="flex-1 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700"
+          className="flex-1 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 shadow-lg shadow-red-500/30"
           disabled={description.trim().length < 20 || mutation.isPending}
           onClick={() => mutation.mutate()}
         >
@@ -178,7 +255,7 @@ export default function SalaryDisputePage() {
 
         {/* Raise form */}
         {showRaise && (
-          <Card className="rounded-2xl border-red-200 bg-red-50/30">
+          <Card className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm border-red-200">
             <CardHeader className="pb-2">
               <CardTitle className="text-base text-red-800">New Salary Dispute</CardTitle>
             </CardHeader>
@@ -202,48 +279,42 @@ export default function SalaryDisputePage() {
           <div className="space-y-3">
             {disputes.map((d: any) => {
               const cfg = STATUS_CONFIG[d.status as DisputeStatus];
+              const typeColorClass = DISPUTE_TYPE_COLOR[d.dispute_type] ?? "bg-slate-500/15 text-slate-600";
+              const disputeTypeDef = DISPUTE_TYPES.find(t => t.value === d.dispute_type);
               return (
-                <Card key={d.id} className="rounded-2xl hover:shadow-md transition-shadow">
+                <Card key={d.id} className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm hover:shadow-md transition-shadow">
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-slate-800">
-                          {DISPUTE_TYPES.find(t => t.value === d.dispute_type)?.label ?? d.dispute_type}
-                        </p>
-                        <p className="text-xs text-slate-500 mt-0.5">Month: {d.run_month}</p>
-                        <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{d.description}</p>
+                      <div className="flex items-start gap-3 min-w-0">
+                        {disputeTypeDef && (
+                          <span className={`mt-0.5 w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${typeColorClass}`}>
+                            {disputeTypeDef.icon}
+                          </span>
+                        )}
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-800">
+                            {disputeTypeDef?.label ?? d.dispute_type}
+                          </p>
+                          <p className="text-xs text-slate-500 mt-0.5">Month: {d.run_month}</p>
+                          <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{d.description}</p>
+                        </div>
                       </div>
                       <div className="flex-shrink-0 flex flex-col items-end gap-1.5">
-                        <Badge className={`text-[10px] font-bold border ${cfg.color} flex items-center gap-1`}>
+                        <Badge className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${cfg.color} flex items-center gap-1`}>
                           {cfg.icon}{cfg.label}
                         </Badge>
                         {d.differential_amount && d.status === "approved" && (
-                          <span className="text-xs font-bold text-emerald-600">+₹{Number(d.differential_amount).toLocaleString("en-IN")}</span>
+                          <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-100 border border-emerald-200 rounded-full px-2 py-0.5">
+                            <IndianRupee className="w-3 h-3" />
+                            +{Number(d.differential_amount).toLocaleString("en-IN")}
+                          </span>
                         )}
                       </div>
                     </div>
-                    {/* Mini timeline */}
-                    <div className="flex items-center gap-1.5 mt-3">
-                      {(["pending_wfm","pending_payroll_head","approved"] as DisputeStatus[]).map((s, i) => {
-                        const statusOrder = ["pending_wfm","pending_payroll_head","approved","rejected"];
-                        const currentIdx = statusOrder.indexOf(d.status);
-                        const isComplete = i < currentIdx;
-                        const isCurrent = d.status === s;
-                        return (
-                          <div key={s} className="flex items-center gap-1">
-                            <div className={`w-2 h-2 rounded-full ${
-                              d.status === "rejected" && i <= currentIdx ? "bg-red-400"
-                              : isComplete || isCurrent ? "bg-blue-500"
-                              : "bg-slate-200"
-                            }`} />
-                            {i < 2 && <div className={`h-px w-6 ${isComplete ? "bg-blue-300" : "bg-slate-200"}`} />}
-                          </div>
-                        );
-                      })}
-                      <span className="text-[10px] text-slate-400 ml-1">{new Date(d.created_at).toLocaleDateString("en-IN")}</span>
-                    </div>
+                    {/* 3-stage approval timeline */}
+                    <ApprovalTimeline dispute={d} />
                     {d.arrear_run_month && (
-                      <p className="text-[10px] text-emerald-600 font-medium mt-1.5">
+                      <p className="text-[10px] text-emerald-600 font-medium mt-2">
                         Arrear will be paid in {d.arrear_run_month} salary
                       </p>
                     )}
