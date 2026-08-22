@@ -555,6 +555,25 @@ export function BudgetLinkedGrnForm({
   });
   const budgetLines = unwrapList(lineResponse) as BudgetLine[];
 
+  // Authoritative headroom check (Group C: budget-headroom-gate.service.ts, already enforced
+  // server-side at save time). This is advisory-only UI reading the same coverage decision the
+  // backend gate makes, so the raiser sees the real blocking reason before they even attempt to
+  // save, instead of the old client-only isUnbudgetedExpense heuristic's now-stale wording.
+  const { data: headroomResponse, isLoading: headroomLoading } = useQuery({
+    queryKey: ["budget-headroom", form.branchId, effectivePeriod, form.head, form.subHead],
+    enabled: Boolean(isVendor && form.branchId && effectivePeriod && form.head && form.subHead),
+    queryFn: () =>
+      hrmsApi.get<any>(
+        `/api/finance/pnl/budget-headroom?branchId=${encodeURIComponent(form.branchId)}`
+        + `&period=${encodeURIComponent(effectivePeriod)}`
+        + `&head=${encodeURIComponent(form.head)}`
+        + `&subHead=${encodeURIComponent(form.subHead)}`
+      ),
+  });
+  const headroom = unwrapData<{ headerActive: boolean; hasAnyLine: boolean; aggregateAvailable: number } | undefined>(
+    headroomResponse
+  );
+
   // Expense master: all active heads/subheads regardless of budget linkage.
   // Used to show "No budget" indicator for heads not covered by the current period's budget.
   const { data: expenseMasterResponse } = useQuery({
@@ -2435,6 +2454,60 @@ export function BudgetLinkedGrnForm({
                 </>
               )}
 
+              {/* Branch / Company — Vendor only. Moved to the front of the Vendor sequence per
+                  the raiser's requested reorder: branch/company picked first, before vendor
+                  details, invoice details or Budget Allocation. Same fields, same handlers,
+                  same state resets as before — pure relocation. */}
+              {isVendor && (
+              <DenseFieldGroup cols={2}>
+                <DenseField label="Branch" required error={err("branchId")}>
+                  <SearchableSelect
+                    id="grn-branch"
+                    aria-label="Branch"
+                    disabled={locked}
+                    className="h-8"
+                    options={branches.map((branch) => ({
+                      value: branch.id,
+                      label: branchLabel(branch),
+                      hint: branch.branch_code ?? undefined,
+                    }))}
+                    value={form.branchId}
+                    onChange={(value) => {
+                      setForm((current) => ({
+                        ...current,
+                        branchId: value,
+                        costCentreKey: "",
+                        head: "",
+                        subHead: "",
+                        budgetLineId: "",
+                      }));
+                      setAllocations([newAllocation()]);
+                      setInvoiceComponents([newInvoiceComponent()]);
+                    }}
+                    placeholder="Select branch"
+                    searchPlaceholder="Type a branch name…"
+                  />
+                </DenseField>
+                <DenseField label="Company">
+                  {companies.length > 1 ? (
+                    <SearchableSelect
+                      id="grn-company"
+                      aria-label="Legal entity"
+                      disabled={locked}
+                      className="h-8"
+                      options={companies.map((c) => ({ value: c.company_code, label: c.company_name }))}
+                      value={form.companyCode}
+                      onChange={(value) => setForm((current) => ({ ...current, companyCode: value }))}
+                      placeholder="Select company"
+                      searchPlaceholder="Type company name…"
+                    />
+                  ) : (
+                    <div className="h-8 flex items-center text-[12px] text-grn-ink">{companies[0]?.company_name || "MAS"}</div>
+                  )}
+                </DenseField>
+              </DenseFieldGroup>
+              )}
+
               {/* Row: Vendor, GSTIN, GST toggle (vendor only). Place of supply, Contract
                   reference and the IRN (e-invoice/Ack no./date) fields that used to sit here
                   were removed per the legacy-flow resequencing — they weren't part of the old
@@ -2572,68 +2645,11 @@ export function BudgetLinkedGrnForm({
                 </>
               )}
 
-              {/* ── Budget Allocation section (Vendor only now — Imprest has its own copy of
-                  this, using the same vendorHeadOptions/vendorSubHeadOptions, positioned earlier
-                  per the raiser's requested Imprest sequence). Head/Sub-head first, then the
-                  cost-centre split editor below decides which cost centre(s) carry how much.
-                  Imprest's old cost-centre-first cascade (headOptions/subHeadOptions/matchingLines/
-                  costCentreOptions, and the "Split" toggle into SplitAllocationEditor) stays
-                  defined above, untouched and simply unused by this JSX — nothing deleted, just
-                  no longer the path a raiser is put through. */}
-              {isVendor && (
-                <>
-                  <DenseSection
-                    title="Budget Allocation"
-                    action={<GrnBudgetImportButton branchId={form.branchId} period={effectivePeriod} disabled={locked} />}
-                  />
-
-                  {!form.branchId || !effectivePeriod ? (
-                    <div className="py-2 text-[11px] text-grn-warn">
-                      Select branch and date first to load budgets.
-                    </div>
-                  ) : linesLoading ? (
-                    <div className="flex items-center gap-2 py-3 text-[11px] text-grn-ink-soft">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading budgets…
-                    </div>
-                  ) : (
-                    <>
-                      <DenseFieldGroup cols={2}>
-                        <DenseField label="Head" required error={err("head")}>
-                          <SearchableSelect
-                            id="grn-head"
-                            aria-label="Expense head"
-                            options={vendorHeadOptions}
-                            value={form.head}
-                            onChange={(value) => setForm((current) => ({ ...current, head: value, subHead: "" }))}
-                            placeholder="Select head"
-                            searchPlaceholder="Type a head…"
-                          />
-                        </DenseField>
-                        <DenseField label="Sub-head" required error={err("subHead")}>
-                          <SearchableSelect
-                            id="grn-subhead"
-                            aria-label="Expense sub-head"
-                            disabled={!form.head}
-                            options={vendorSubHeadOptions}
-                            value={form.subHead}
-                            onChange={(value) => setForm((current) => ({ ...current, subHead: value }))}
-                            placeholder={form.head ? "Select sub-head" : "Select head first"}
-                            searchPlaceholder="Type a sub-head…"
-                          />
-                        </DenseField>
-                      </DenseFieldGroup>
-                      {form.head && !vendorHeadOptions.find((o) => o.value === form.head)?.hasBudget && (
-                        <p className="text-[10px] text-amber-600">
-                          No approved budget for this head — Finance Head must link during approval.
-                        </p>
-                      )}
-                    </>
-                  )}
-                </>
-              )}
-
               {/* Row: Date / Invoice # / Due Date — Vendor only; Imprest's Receipt date lives in
-                  its own Company/Branch/Receipt-date row earlier in the sequence. */}
+                  its own Company/Branch/Receipt-date row earlier in the sequence. Moved ahead of
+                  Budget Allocation per the raiser's requested reorder: Head/Sub-head selection now
+                  depends on the invoice date being entered first (see the !form.billDate branch
+                  below). */}
               {isVendor && (
               <DenseFieldGroup cols={3}>
                 <DenseField
@@ -2701,6 +2717,88 @@ export function BudgetLinkedGrnForm({
                   </DenseField>
                 )}
               </DenseFieldGroup>
+              )}
+
+              {/* ── Budget Allocation section (Vendor only now — Imprest has its own copy of
+                  this, using the same vendorHeadOptions/vendorSubHeadOptions, positioned earlier
+                  per the raiser's requested Imprest sequence). Head/Sub-head first, then the
+                  cost-centre split editor below decides which cost centre(s) carry how much.
+                  Imprest's old cost-centre-first cascade (headOptions/subHeadOptions/matchingLines/
+                  costCentreOptions, and the "Split" toggle into SplitAllocationEditor) stays
+                  defined above, untouched and simply unused by this JSX — nothing deleted, just
+                  no longer the path a raiser is put through.
+                  Moved to sit right after Invoice date/Invoice #/Due date per the raiser's
+                  requested reorder, and now gated on form.billDate being set first — an invoice
+                  date is what determines the accounting period the Head/Sub-head budget lines are
+                  fetched against, so picking Head/Sub-head before it is set is a dead end. */}
+              {isVendor && (
+                <>
+                  <DenseSection
+                    title="Budget Allocation"
+                    action={<GrnBudgetImportButton branchId={form.branchId} period={effectivePeriod} disabled={locked} />}
+                  />
+
+                  {!form.billDate ? (
+                    <>
+                      <DenseFieldGroup cols={2}>
+                        <DenseField label="Head">
+                          <div className="h-8 flex items-center rounded-[8px] border border-grn-line bg-slate-50 px-2 text-[12px] text-grn-ink-soft">
+                            Select
+                          </div>
+                        </DenseField>
+                        <DenseField label="Sub-head">
+                          <div className="h-8 flex items-center rounded-[8px] border border-grn-line bg-slate-50 px-2 text-[12px] text-grn-ink-soft">
+                            Select
+                          </div>
+                        </DenseField>
+                      </DenseFieldGroup>
+                      <p className="py-1 text-[11px] text-grn-ink-soft">
+                        Enter Invoice Date to select Head/Sub-head.
+                      </p>
+                    </>
+                  ) : !form.branchId || !effectivePeriod ? (
+                    <div className="py-2 text-[11px] text-grn-warn">
+                      Select branch and date first to load budgets.
+                    </div>
+                  ) : linesLoading ? (
+                    <div className="flex items-center gap-2 py-3 text-[11px] text-grn-ink-soft">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading budgets…
+                    </div>
+                  ) : (
+                    <>
+                      <DenseFieldGroup cols={2}>
+                        <DenseField label="Head" required error={err("head")}>
+                          <SearchableSelect
+                            id="grn-head"
+                            aria-label="Expense head"
+                            options={vendorHeadOptions}
+                            value={form.head}
+                            onChange={(value) => setForm((current) => ({ ...current, head: value, subHead: "" }))}
+                            placeholder="Select head"
+                            searchPlaceholder="Type a head…"
+                          />
+                        </DenseField>
+                        <DenseField label="Sub-head" required error={err("subHead")}>
+                          <SearchableSelect
+                            id="grn-subhead"
+                            aria-label="Expense sub-head"
+                            disabled={!form.head}
+                            options={vendorSubHeadOptions}
+                            value={form.subHead}
+                            onChange={(value) => setForm((current) => ({ ...current, subHead: value }))}
+                            placeholder={form.head ? "Select sub-head" : "Select head first"}
+                            searchPlaceholder="Type a sub-head…"
+                          />
+                        </DenseField>
+                      </DenseFieldGroup>
+                      {form.head && !vendorHeadOptions.find((o) => o.value === form.head)?.hasBudget && (
+                        <p className="text-[10px] text-amber-600">
+                          No approved budget for this head — Finance Head must link during approval.
+                        </p>
+                      )}
+                    </>
+                  )}
+                </>
               )}
 
               {/* Late invoice warning (non-finance raisers, >30 days old) */}
@@ -2824,79 +2922,76 @@ export function BudgetLinkedGrnForm({
                 </DenseFieldGroup>
               )}
 
-              {/* Branch / Company — Vendor only now; Imprest has its own Company/Branch/Receipt-
-                  date row earlier in the sequence. */}
-              {isVendor && (
-              <DenseFieldGroup cols={2}>
-                <DenseField label="Branch" required error={err("branchId")}>
-                  <SearchableSelect
-                    id="grn-branch"
-                    aria-label="Branch"
-                    disabled={locked}
-                    className="h-8"
-                    options={branches.map((branch) => ({
-                      value: branch.id,
-                      label: branchLabel(branch),
-                      hint: branch.branch_code ?? undefined,
-                    }))}
-                    value={form.branchId}
-                    onChange={(value) => {
-                      setForm((current) => ({
-                        ...current,
-                        branchId: value,
-                        costCentreKey: "",
-                        head: "",
-                        subHead: "",
-                        budgetLineId: "",
-                      }));
-                      setAllocations([newAllocation()]);
-                      setInvoiceComponents([newInvoiceComponent()]);
-                    }}
-                    placeholder="Select branch"
-                    searchPlaceholder="Type a branch name…"
-                  />
-                </DenseField>
-                <DenseField label="Company">
-                  {companies.length > 1 ? (
-                    <SearchableSelect
-                      id="grn-company"
-                      aria-label="Legal entity"
-                      disabled={locked}
-                      className="h-8"
-                      options={companies.map((c) => ({ value: c.company_code, label: c.company_name }))}
-                      value={form.companyCode}
-                      onChange={(value) => setForm((current) => ({ ...current, companyCode: value }))}
-                      placeholder="Select company"
-                      searchPlaceholder="Type company name…"
-                    />
-                  ) : (
-                    <div className="h-8 flex items-center text-[12px] text-grn-ink">{companies[0]?.company_name || "MAS"}</div>
-                  )}
-                </DenseField>
-              </DenseFieldGroup>
-              )}
             </div>
           </GrnCard>
 
           {/* Vendor GRNs: cost-centre split, then invoice GST components, in that order — the
               unified flow. Each is its own card for the same reason SplitAllocationEditor already
               is: its own toolbar and its own reconciliation footer. */}
-          {/* Unbudgeted expense warning */}
-          {isUnbudgetedExpense && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
-              <div className="flex items-start gap-2">
-                <svg className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                <div>
-                  <p className="font-medium">Unbudgeted Expense</p>
-                  <p className="text-sm text-amber-700">
-                    No budget exists for "{form.head} → {form.subHead}" in this period.
-                    This GRN will be flagged as unbudgeted and require Finance Head approval.
-                  </p>
+          {/* Authoritative budget-headroom warning — reads the same Group C gate
+              (budget-headroom-gate.service.ts) enforced server-side at save time, via
+              GET /pnl/budget-headroom. Advisory only: the server remains authoritative regardless
+              of what renders here. Replaces the old client-only "Unbudgeted Expense" banner, whose
+              "will be flagged as unbudgeted and require Finance Head approval" wording is no
+              longer true — NO_BUDGET_FOR_HEAD and HEADROOM_EXCEEDED are hard blocks now, not a
+              later approval step. */}
+          {isVendor && Boolean(form.branchId && effectivePeriod && form.head && form.subHead) && (
+            headroomLoading ? (
+              <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 text-[12px] text-grn-ink-soft">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking budget headroom…
+              </div>
+            ) : !headroom ? null : !headroom.headerActive ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" />
+                  <div>
+                    <p className="font-medium">No Approved Budget for this Branch</p>
+                    <p className="text-sm text-amber-700">
+                      No approved budget exists for this branch for {effectivePeriod}. A GRN cannot be raised until one is approved.
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : !headroom.hasAnyLine ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" />
+                  <div>
+                    <p className="font-medium">No Budget for this Head/Sub-head</p>
+                    <p className="text-sm text-amber-700">
+                      {form.head}/{form.subHead} has no budget anywhere in this branch. Raise a Budget Addition Request before submitting this GRN.
+                    </p>
+                    <button
+                      type="button"
+                      className="mt-2 inline-flex items-center rounded-[6px] border border-amber-300 bg-white px-2.5 py-1 text-[12px] font-medium text-amber-800 hover:bg-amber-100"
+                      onClick={() =>
+                        navigate(
+                          `/finance/branch-budget?tab=topups`
+                          + `&newLineHead=${encodeURIComponent(form.head)}`
+                          + `&newLineSubHead=${encodeURIComponent(form.subHead)}`
+                          + `&branchId=${encodeURIComponent(form.branchId)}`
+                          + `&period=${encodeURIComponent(effectivePeriod)}`
+                        )
+                      }
+                    >
+                      Raise a Budget Addition Request
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : headroom.aggregateAvailable <= 0 || (Number(form.amount) > 0 && headroom.aggregateAvailable < Number(form.amount)) ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
+                <div className="flex items-start gap-2">
+                  <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" />
+                  <div>
+                    <p className="font-medium">Budget Exhausted</p>
+                    <p className="text-sm text-amber-700">
+                      Branch-wide budget for {form.head}/{form.subHead} is exhausted.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : null
           )}
 
           {Boolean(form.branchId) && Boolean(effectivePeriod) && !linesLoading && vendorCostCentreGroups.length > 0 && (
