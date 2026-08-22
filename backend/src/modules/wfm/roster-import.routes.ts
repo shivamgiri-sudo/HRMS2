@@ -183,7 +183,13 @@ rosterImportRouter.get(
       }
 
       const page = Math.max(1, parseInt(String(req.query.page ?? '1'), 10));
-      const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit ?? '50'), 10)));
+      // Was capped at 200 here while the service layer (getImportRows -> sqlLimitOffset) and the
+      // grid's own fetch (`?limit=5000`, RosterImportPage.tsx) both already expected up to 5000.
+      // A batch with more than ~200 cell-rows — the normal case; a single branch's two-week
+      // upload is routinely 4,000+ — silently never returned its later rows to the correction
+      // grid at all. Errors sitting past row #200 in spreadsheet order were invisible: nothing
+      // to click, nothing to fix, and commit kept refusing for reasons the page couldn't show.
+      const limit = Math.min(5000, Math.max(1, parseInt(String(req.query.limit ?? '50'), 10)));
       const rawState = req.query.state as string | undefined;
       const state =
         rawState === 'VALID' || rawState === 'WARNING' || rawState === 'ERROR'
