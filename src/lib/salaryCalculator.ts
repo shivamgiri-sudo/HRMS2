@@ -94,14 +94,12 @@ export const PT_BY_STATE: Record<string, (gross: number) => number> = {
   // Chhattisgarh
   'Chhattisgarh': (g) => g < 15000 ? 0 : 200,
 
-  // Goa
-  'Goa': (g) => g < 15000 ? 0 : 200,
-
   // Sikkim
   'Sikkim': (g) => g < 20000 ? 0 : 208,
 
-  // States with NO Professional Tax — explicit zeros so intent is clear:
+  // States with NO Professional Tax — must match backend professional-tax-states.ts:
   'Delhi':              () => 0,
+  'New Delhi':          () => 0,
   'Uttar Pradesh':      () => 0,
   'Haryana':            () => 0,
   'Punjab':             () => 0,
@@ -109,13 +107,17 @@ export const PT_BY_STATE: Record<string, (gross: number) => number> = {
   'Uttarakhand':        () => 0,
   'Himachal Pradesh':   () => 0,
   'Jammu and Kashmir':  () => 0,
+  'Jammu & Kashmir':    () => 0,
   'Ladakh':             () => 0,
   'Chandigarh':         () => 0,
+  'Goa':                () => 0, // Goa abolished PT (in sync with backend)
   'Bihar':              () => 0, // Bihar abolished PT
   'Arunachal Pradesh':  () => 0,
   'Nagaland':           () => 0,
   'Manipur':            () => 0,
   'Mizoram':            () => 0,
+  'Andaman and Nicobar Islands': () => 0,
+  'Lakshadweep':        () => 0,
 };
 
 /** Returns monthly Professional Tax for the given state and gross salary. */

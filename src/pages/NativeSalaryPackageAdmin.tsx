@@ -11,7 +11,7 @@ import {
   Loader2, Plus, Pencil, Trash2, IndianRupee, Building2, Layers, Save, X, CheckCircle2,
   Calculator,
 } from 'lucide-react';
-import { calcFromCtc, calcFromInHand, type PkgCalcOptions } from '@/lib/salaryCalculator';
+import { calcFromCtc, calcFromInHand, PT_BY_STATE, type PkgCalcOptions } from '@/lib/salaryCalculator';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface Band { id: string; band_code: string; band_name: string; slab_from: number; slab_to: number; active_status: number; }
@@ -477,8 +477,9 @@ export default function NativeSalaryPackageAdmin() {
                           ['professional_tax', (() => {
                             const st = branchStates[editPkg?.branch_name ?? ''];
                             if (!st) return 'Prof. Tax (state unknown)';
-                            const { PT_BY_STATE } = require('@/lib/salaryCalculator');
-                            return PT_BY_STATE[st] ? `Prof. Tax — ${st}` : `Prof. Tax — N/A (${st})`;
+                            const fn = PT_BY_STATE[st];
+                            if (!fn) return `Prof. Tax (${st} — not configured)`;
+                            return fn(0) === 0 && fn(50000) === 0 ? `Prof. Tax — N/A (${st})` : `Prof. Tax — ${st}`;
                           })(), true],
                         ] as [string, string, boolean][]).map(([field, label, computed]) => (
                           <div key={field} className="flex items-center gap-2">
