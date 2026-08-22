@@ -7,6 +7,17 @@ export interface PkgCalcOptions {
    *  Defaults to 0 if the state is not known or not PT-applicable.
    *  PT is a state-level tax; Delhi, UP, Haryana and many others do not levy it. */
   state?: string;
+  /**
+   * PF wage ceiling used to cap the PF-eligible basic.
+   *
+   * EPF Act statutory ceiling is ₹15,000 (basic) — the employer MUST contribute
+   * on at least min(basic, 15000). The employer MAY contribute on a higher amount.
+   * MAS Callnet's statutory_config.pf_wage_limit = 999999 meaning full basic, so
+   * the default here matches production. Set to 15000 to show the statutory-minimum
+   * view. This field drives the package builder estimate only; actual payroll
+   * reads from statutory_config via payrollCalculate.service.ts.
+   */
+  pfWageLimit?: number;
 }
 
 export interface PkgComponents {
@@ -33,13 +44,15 @@ export interface PkgComponents {
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const CONV = 1600;
 const PF_EMP_RATE = 0.12;
-const PF_EMP_CAP = 1800;
 const PF_EMPLR_RATE = 0.12;
 const ESIC_EMP_RATE = 0.0075;
 const ESIC_EMPLR_RATE = 0.0325;
 const ESIC_LIMIT = 21000;
 const GRATUITY_RATE = 15 / 26 / 12;
 const ADMIN_RATE = 0.0101; // EPFO: 0.50% admin + 0.50% EDLI + 0.01% EDLI admin
+// Default PF wage limit: 999999 = full basic (matches MAS Callnet's statutory_config).
+// EPF Act statutory minimum is ₹15,000; employer may contribute on more.
+const DEFAULT_PF_WAGE_LIMIT = 999999;
 
 /**
  * Monthly Professional Tax by state and gross salary.
@@ -129,21 +142,23 @@ export function getProfessionalTax(gross: number, state?: string): number {
 
 function deriveComponents(gross: number, opts: PkgCalcOptions): PkgComponents {
   const { includePf, includeEsic, basicPct, hraPct, state } = opts;
+  const pfCap = opts.pfWageLimit ?? DEFAULT_PF_WAGE_LIMIT;
 
   const basic = r2(gross * (basicPct / 100));
   const hra = r2(basic * (hraPct / 100));
   const special_allowance = Math.max(0, r2(gross - basic - hra - CONV));
   const bonus = r2(basic * 0.0833);
 
-  const epf_employee = includePf ? r2(Math.min(basic * PF_EMP_RATE, PF_EMP_CAP)) : 0;
+  const pfBase = Math.min(basic, pfCap);
+  const epf_employee = includePf ? r2(pfBase * PF_EMP_RATE) : 0;
   const esic_employee = includeEsic && gross <= ESIC_LIMIT ? r2(gross * ESIC_EMP_RATE) : 0;
   const professional_tax = r2(getProfessionalTax(gross, state));
   const net_in_hand = r2(gross - epf_employee - esic_employee - professional_tax);
 
-  const epf_employer = includePf ? r2(Math.min(basic * PF_EMPLR_RATE, PF_EMP_CAP)) : 0;
+  const epf_employer = includePf ? r2(pfBase * PF_EMPLR_RATE) : 0;
   const esic_employer = includeEsic && gross <= ESIC_LIMIT ? r2(gross * ESIC_EMPLR_RATE) : 0;
   const gratuity = r2(basic * GRATUITY_RATE);
-  const admin_charges = includePf ? r2(basic * ADMIN_RATE) : 0;
+  const admin_charges = includePf ? r2(pfBase * ADMIN_RATE) : 0;
   const ctc = r2(gross + epf_employer + esic_employer + gratuity + admin_charges);
 
   return {
@@ -157,12 +172,14 @@ function deriveComponents(gross: number, opts: PkgCalcOptions): PkgComponents {
 
 export function calcFromCtc(monthlyCtc: number, opts: PkgCalcOptions): PkgComponents {
   const { includePf, includeEsic, basicPct } = opts;
+  const pfCap = opts.pfWageLimit ?? DEFAULT_PF_WAGE_LIMIT;
   const estGross = monthlyCtc * 0.88;
   const estBasic = estGross * (basicPct / 100);
-  const pf_e = includePf ? Math.min(estBasic * PF_EMPLR_RATE, PF_EMP_CAP) : 0;
+  const pfBase = Math.min(estBasic, pfCap);
+  const pf_e = includePf ? pfBase * PF_EMPLR_RATE : 0;
   const esic_e = includeEsic && estGross <= ESIC_LIMIT ? estGross * ESIC_EMPLR_RATE : 0;
   const grat = estBasic * GRATUITY_RATE;
-  const adm = includePf ? estBasic * ADMIN_RATE : 0;
+  const adm = includePf ? pfBase * ADMIN_RATE : 0;
   const gross = r2(Math.max(0, monthlyCtc - pf_e - esic_e - grat - adm));
   return deriveComponents(gross, opts);
 }
