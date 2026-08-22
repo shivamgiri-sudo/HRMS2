@@ -472,23 +472,6 @@
     text-align: right;
     font-feature-settings: "calt", "kern", "tnum";
   }
-  /* Compact density — used by P&L drilldown surfaces and any table opting into a tighter
-     row height via data-density="compact" on the <table> itself. */
-  .hrms-table[data-density="compact"] th {
-    padding: 6px 12px;
-  }
-  .hrms-table[data-density="compact"] td {
-    padding: 6px 12px;
-    font-size: var(--fs-sm, 0.8125rem);
-  }
-  /* A row that opens a drilldown — one consistent hover/cursor cue everywhere it's used,
-     instead of each view inventing its own. */
-  .hrms-table tbody tr[data-drillable="true"] {
-    cursor: pointer;
-  }
-  .hrms-table tbody tr[data-drillable="true"]:hover {
-    background: var(--surface-2, var(--surface-1));
-  }
 }
 
 /* ── Page header ─────────────────────────────────────────── */

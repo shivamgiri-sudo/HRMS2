@@ -20,7 +20,6 @@ import {
 } from "./ReferenceSharedPanels";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import { PayrollPrepWidget } from "@/components/dashboard/widgets/PayrollPrepWidget";
-import { RosterPublishHealthWidget } from "@/components/dashboard/widgets/RosterPublishHealthWidget";
 import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
 import {
   arrayAt,
@@ -94,7 +93,6 @@ export function WfmReferenceLayout({
 
       <TodayCelebrationsWidget />
       <PayrollPrepWidget month={currentMonth} />
-      <RosterPublishHealthWidget />
 
       <ReferenceMetricGrid
         columns={5}

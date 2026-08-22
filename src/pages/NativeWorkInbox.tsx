@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, Bell, BellOff, CheckCheck, CheckCircle2,
@@ -195,6 +195,24 @@ const MODULE_LABELS: Record<string, string> = {
   resignation: "Resignation",
   pip_checkpoint: "PIP",
   workflow_request: "Workflow",
+};
+
+const MODULE_REMARKS: Record<string, readonly string[]> = {
+  leave_approval:            ["Approved — coverage confirmed", "Declined — insufficient balance", "Approved with conditions"],
+  leave_request:             ["Approved — coverage confirmed", "Declined — insufficient balance"],
+  attendance_missing_punch:  ["Regularized — supervisor verified", "Declined — records correct"],
+  attendance_regularization: ["Regularized — supervisor verified", "Declined — records correct"],
+  regularization:            ["Regularized — verified", "Declined — records correct"],
+  bgv:                       ["Clear — proceeding", "Document resubmission requested", "Escalated to HR Head"],
+  exit_clearance:            ["Cleared", "Pending — asset return outstanding", "Escalated"],
+  resignation:               ["Acknowledged — notice period begins", "Escalated to Branch Head"],
+  onboarding:                ["Completed — employee notified", "Pending documents — follow-up sent"],
+  offboarding:               ["Clearance complete", "Pending — IT access outstanding"],
+  it_provisioning:           ["Provisioned", "Deferred — pending approval"],
+  asset_return:              ["Assets received and logged", "Partial return — follow-up required"],
+  pip_checkpoint:            ["Checkpoint noted — plan on track", "Checkpoint missed — escalating"],
+  walkin_feedback_pending:   ["Feedback submitted", "No-show — candidate not reachable"],
+  visitor_approval_needed:   ["Approved — visitor registered", "Declined — not authorised"],
 };
 
 export function humaniseModuleKey(key: string): string {
@@ -410,6 +428,30 @@ function FixDraftPanel({ workItemId }: { workItemId: string }) {
   );
 }
 
+// ── Remarks Chips ─────────────────────────────────────────────────────────────
+
+function RemarksChips({ module, onSelect }: { module: string; onSelect: (text: string) => void }) {
+  const chips = MODULE_REMARKS[module];
+  if (!chips?.length) return null;
+  return (
+    <div className="mb-2">
+      <p className="mb-1.5 text-[10px] font-black uppercase tracking-widest text-slate-400">Quick remarks</p>
+      <div className="flex flex-wrap gap-1.5">
+        {chips.map((chip) => (
+          <button
+            key={chip}
+            type="button"
+            onClick={() => onSelect(chip)}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 hover:border-slate-300 transition-colors"
+          >
+            {chip}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Action Sheet ──────────────────────────────────────────────────────────────
 
 function ActionSheet({
@@ -540,7 +582,8 @@ function ActionSheet({
 
           {task.source !== "derived" && (
             <div>
-              <p className="mb-2 text-xs font-black uppercase tracking-widest text-slate-400">Remarks (optional)</p>
+              <RemarksChips module={task.module} onSelect={(text) => setRemarks(text)} />
+              <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Remarks (optional)</p>
               <Textarea
                 value={remarks}
                 onChange={(e) => setRemarks(e.target.value)}
@@ -584,11 +627,15 @@ function TaskRow({
   onOpen,
   onQuickAct,
   acting,
+  focused = false,
+  showReassign = false,
 }: {
   task: PendingTask;
   onOpen: () => void;
   onQuickAct: () => void;
   acting: boolean;
+  focused?: boolean;
+  showReassign?: boolean;
 }) {
   const rs = RISK_STYLES[task.risk];
   const riskLabel =
@@ -597,7 +644,7 @@ function TaskRow({
     : task.risk.charAt(0).toUpperCase() + task.risk.slice(1);
 
   return (
-    <tr className={`group border-b border-slate-100 last:border-0 hover:bg-slate-50/80 transition-colors ${rs.row}`}>
+    <tr className={`group border-b border-slate-100 last:border-0 hover:bg-slate-50/80 transition-colors ${rs.row} ${focused ? "ring-2 ring-inset ring-blue-500 bg-blue-50/30" : ""}`}>
       {/* Risk */}
       <td className="py-2.5 pl-3 pr-2 whitespace-nowrap w-24">
         <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${rs.badge}`}>
@@ -665,6 +712,17 @@ function TaskRow({
               Act
             </button>
           )}
+          {showReassign && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                import("sonner").then(({ toast }) => toast.info("Reassignment coming in the next update."));
+              }}
+              className="rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-400 hover:bg-slate-50 transition-colors"
+            >
+              Reassign
+            </button>
+          )}
         </div>
       </td>
     </tr>
@@ -719,6 +777,142 @@ function ActedRow({ task, actedAt }: { task: PendingTask; actedAt: string }) {
   );
 }
 
+// ── Group Row ─────────────────────────────────────────────────────────────────
+
+function GroupRow({
+  group,
+  onExpand,
+  expanded,
+  onBulkAct,
+  acting,
+  onOpenItem,
+  onActItem,
+}: {
+  group: GroupedItem;
+  onExpand: () => void;
+  expanded: boolean;
+  onBulkAct: () => void;
+  acting: boolean;
+  onOpenItem: (task: PendingTask) => void;
+  onActItem: (task: PendingTask) => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const rs = RISK_STYLES[group.worstRisk];
+  const label = MODULE_LABELS[group.module] ?? humaniseModuleKey(group.module);
+
+  const handleBulkClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirming(true);
+  };
+
+  const handleConfirm = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirming(false);
+    onBulkAct();
+  };
+
+  const handleCancel = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirming(false);
+  };
+
+  return (
+    <>
+      <tr className={`border-b border-slate-100 bg-slate-50/60 hover:bg-slate-100/80 transition-colors ${rs.row}`}>
+        {/* Count badge + risk */}
+        <td className="py-2.5 pl-3 pr-2 whitespace-nowrap w-24">
+          <div className="flex items-center gap-1.5">
+            <span className="inline-flex items-center justify-center rounded-full bg-slate-800 text-white text-[10px] font-black px-2 py-0.5 min-w-[1.5rem]">
+              {group.items.length}
+            </span>
+            <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${rs.badge}`}>
+              {group.worstRisk === "due_soon" ? "Due Soon"
+                : group.worstRisk === "on_track" ? "On Track"
+                : group.worstRisk.charAt(0).toUpperCase() + group.worstRisk.slice(1)}
+            </span>
+          </div>
+        </td>
+        {/* Module */}
+        <td className="py-2.5 px-2 whitespace-nowrap w-28 hidden sm:table-cell">
+          <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-700">
+            {label}
+          </span>
+        </td>
+        {/* Description */}
+        <td className="py-2.5 px-2 min-w-0 max-w-xs">
+          <p className="text-sm font-semibold text-slate-700 leading-snug">
+            {label}
+            {group.branch_name && (
+              <span className="ml-1.5 font-normal text-slate-400">· {group.branch_name}</span>
+            )}
+          </p>
+          {confirming && (
+            <div className="mt-1.5 flex items-center gap-2">
+              <span className="text-xs text-amber-700 font-medium">
+                Close all {group.items.length} items?
+              </span>
+              <button
+                onClick={handleConfirm}
+                className="rounded-md bg-slate-900 px-2 py-0.5 text-xs font-bold text-white hover:bg-slate-700"
+              >
+                Yes, close all
+              </button>
+              <button
+                onClick={handleCancel}
+                className="rounded-md border border-slate-300 px-2 py-0.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </td>
+        {/* Priority */}
+        <td className="py-2.5 px-2 whitespace-nowrap w-20 hidden md:table-cell">
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${PRIORITY_STYLES[group.highestPriority] ?? PRIORITY_STYLES.normal}`}>
+            {group.highestPriority}
+          </span>
+        </td>
+        {/* Age placeholder */}
+        <td className="py-2.5 px-2 whitespace-nowrap w-32 hidden lg:table-cell">
+          <p className="text-xs text-slate-400">{group.items.length} items</p>
+        </td>
+        {/* Actions */}
+        <td className="py-2.5 pl-2 pr-3 whitespace-nowrap">
+          <div className="flex items-center gap-1.5 justify-end">
+            <button
+              onClick={onExpand}
+              className="inline-flex items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors"
+            >
+              <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+              {expanded ? "Collapse" : "Expand"}
+            </button>
+            {!confirming && (
+              <button
+                onClick={handleBulkClick}
+                disabled={acting}
+                className="inline-flex items-center gap-1 rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-700 transition-colors disabled:opacity-50"
+              >
+                {acting ? <Loader className="h-3 w-3 animate-spin" /> : <CheckCheck className="h-3 w-3" />}
+                Close All ({group.items.length})
+              </button>
+            )}
+          </div>
+        </td>
+      </tr>
+      {/* Expanded individual rows */}
+      {expanded && group.items.map((task) => (
+        <TaskRow
+          key={`${task.source}-${task.id}`}
+          task={task}
+          onOpen={() => onOpenItem(task)}
+          onQuickAct={() => onActItem(task)}
+          acting={false}
+        />
+      ))}
+    </>
+  );
+}
+
 // ── Table chrome ─────────────────────────────────────────────────────────────
 
 function TableHead() {
@@ -734,6 +928,119 @@ function TableHead() {
       </tr>
     </thead>
   );
+}
+
+// ── Section Classifier ────────────────────────────────────────────────────────
+
+const EXCLUSIVE_MODULES = new Set([
+  "exit_clearance", "resignation", "bgv", "payroll_attendance_conflict", "pip_checkpoint",
+]);
+
+function classifyItem(item: PendingTask | GroupedItem): "needs_you" | "team_can_handle" {
+  if ("kind" in item && item.kind === "group") {
+    if (item.worstRisk === "breached" || item.worstRisk === "due_soon") return "needs_you";
+    return "team_can_handle";
+  }
+  const task = item as PendingTask;
+  if (task.risk === "breached" || task.risk === "due_soon") return "needs_you";
+  if (task.priority === "urgent" || task.priority === "high") return "needs_you";
+  if (task.source === "derived") return "needs_you";
+  if (EXCLUSIVE_MODULES.has(task.module)) return "needs_you";
+  return "team_can_handle";
+}
+
+function SectionDivider({
+  label,
+  count,
+  actionLabel,
+  onAction,
+}: {
+  label: string;
+  count: number;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <tr>
+      <td colSpan={6} className="px-3 pt-4 pb-1.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{label}</span>
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{count}</span>
+          </div>
+          {actionLabel && onAction && (
+            <button
+              onClick={onAction}
+              className="text-[10px] font-semibold text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              {actionLabel}
+            </button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// ── Keyboard Navigation ───────────────────────────────────────────────────────
+
+function useKeyboardNav(opts: {
+  itemCount: number;
+  focusedIndex: number;
+  setFocusedIndex: (n: number) => void;
+  onAct: (index: number) => void;
+  onOpen: (index: number) => void;
+  onOpenUrl: (index: number) => void;
+  onToggleLegend: () => void;
+}) {
+  const optsRef = useRef(opts);
+  optsRef.current = opts;
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName?.toUpperCase();
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      const { itemCount, focusedIndex, setFocusedIndex, onAct, onOpen, onOpenUrl, onToggleLegend } = optsRef.current;
+
+      switch (e.key) {
+        case "j":
+        case "ArrowDown":
+          e.preventDefault();
+          setFocusedIndex(focusedIndex < itemCount - 1 ? focusedIndex + 1 : 0);
+          break;
+        case "k":
+        case "ArrowUp":
+          e.preventDefault();
+          setFocusedIndex(focusedIndex > 0 ? focusedIndex - 1 : itemCount - 1);
+          break;
+        case "a":
+          if (focusedIndex >= 0) { e.preventDefault(); onAct(focusedIndex); }
+          break;
+        case "o":
+          if (focusedIndex >= 0) { e.preventDefault(); onOpenUrl(focusedIndex); }
+          break;
+        case "d":
+          if (focusedIndex >= 0) { e.preventDefault(); onOpen(focusedIndex); }
+          break;
+        case "?":
+          e.preventDefault();
+          onToggleLegend();
+          break;
+        case "Escape":
+          setFocusedIndex(-1);
+          break;
+        case "s":
+          if (focusedIndex >= 0) {
+            e.preventDefault();
+            import("sonner").then(({ toast }) => toast.info("Snooze coming in the next update."));
+          }
+          break;
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 }
 
 // ── Main page ─────────────────────────────────────────────────────────────────
@@ -755,6 +1062,10 @@ export default function NativeWorkInbox() {
   const [showActed, setShowActed] = useState(false);
   // Per-row acting spinner state
   const [actingIds, setActingIds] = useState<Set<string>>(new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const [showKeyLegend, setShowKeyLegend] = useState(false);
+  const [bulkActingKeys, setBulkActingKeys] = useState<Set<string>>(new Set());
 
   const queryClient = useQueryClient();
   const canRunTriage = useHasRole("super_admin");
@@ -818,6 +1129,10 @@ export default function NativeWorkInbox() {
     return true;
   });
 
+  const groupedFiltered = groupItems(filtered);
+  const needsYou = groupedFiltered.filter((r) => classifyItem(r) === "needs_you");
+  const teamCanHandle = groupedFiltered.filter((r) => classifyItem(r) === "team_can_handle");
+
   const completeTask = async (id: string, remarks: string) => {
     const task = items.find((i) => i.id === id);
     if (!task) return;
@@ -867,6 +1182,94 @@ export default function NativeWorkInbox() {
     }
   };
 
+  const bulkActGroup = async (group: GroupedItem) => {
+    setBulkActingKeys((prev) => new Set(prev).add(group.groupKey));
+    try {
+      const ids = group.items.map((i) => i.id);
+      const res = await hrmsApi.post<{
+        success: boolean;
+        actioned: number;
+        failed: { id: string; reason: string }[];
+      }>("/api/inbox/bulk-actioned", {
+        ids,
+        source: group.source,
+        remarks: "Bulk acknowledged",
+      });
+
+      const failedIds = new Set((res.failed ?? []).map((f) => f.id));
+      const succeededIds = ids.filter((id) => !failedIds.has(id));
+
+      setItems((prev) => prev.filter((i) => !succeededIds.includes(i.id)));
+
+      if (succeededIds.length) {
+        const firstItem = group.items[0];
+        setActedItems((prev) => [
+          {
+            ...firstItem,
+            title: `Batch (${succeededIds.length} items) — ${MODULE_LABELS[group.module] ?? humaniseModuleKey(group.module)}${group.branch_name ? ` · ${group.branch_name}` : ""}`,
+            acted_at: new Date().toISOString(),
+          },
+          ...prev,
+        ]);
+      }
+
+      setSummary((prev) => {
+        if (!prev) return prev;
+        const updated = { ...prev, by_module: { ...prev.by_module } };
+        for (const item of group.items) {
+          if (failedIds.has(item.id)) continue;
+          updated.total = Math.max(0, updated.total - 1);
+          updated[item.risk] = Math.max(0, (updated[item.risk] as number ?? 1) - 1);
+          updated.by_module[item.module] = Math.max(0, (updated.by_module[item.module] ?? 1) - 1);
+        }
+        return updated;
+      });
+
+      queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      queryClient.invalidateQueries({ queryKey: ["notifications-unread-count"] });
+
+      if (res.failed?.length) {
+        import("sonner").then(({ toast }) => {
+          toast.warning(`${succeededIds.length} of ${ids.length} items closed. ${res.failed.length} were already actioned or not found.`);
+        });
+      }
+    } catch {
+      import("sonner").then(({ toast }) => {
+        toast.error("Bulk action failed. Please try again.");
+      });
+    } finally {
+      setBulkActingKeys((prev) => {
+        const s = new Set(prev);
+        s.delete(group.groupKey);
+        return s;
+      });
+    }
+  };
+
+  useKeyboardNav({
+    itemCount: filtered.length,
+    focusedIndex,
+    setFocusedIndex,
+    onAct: (index) => {
+      const item = filtered[index];
+      if (!item || "kind" in item) return;
+      const task = item as PendingTask;
+      if (task.source !== "derived") void completeTask(task.id, "");
+    },
+    onOpen: (index) => {
+      const item = filtered[index];
+      if (!item || "kind" in item) return;
+      setSelected(item as PendingTask);
+    },
+    onOpenUrl: (index) => {
+      const item = filtered[index];
+      if (!item || "kind" in item) return;
+      const url = (item as PendingTask).action_url;
+      if (url) window.open(url, "_blank");
+    },
+    onToggleLegend: () => setShowKeyLegend((v) => !v),
+  });
+
   return (
     <DashboardLayout>
       <main className="space-y-5 p-5 lg:p-7">
@@ -907,6 +1310,13 @@ export default function NativeWorkInbox() {
                 >
                   <RefreshCcw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
                   Refresh
+                </button>
+                <button
+                  onClick={() => setShowKeyLegend((v) => !v)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-3.5 py-2 text-xs font-bold text-white backdrop-blur-sm hover:bg-white/20 transition-all"
+                  title="Keyboard shortcuts (?)"
+                >
+                  <span className="font-mono">?</span>
                 </button>
               </div>
               {triageMsg && (
@@ -1003,7 +1413,7 @@ export default function NativeWorkInbox() {
             <div className="flex items-center justify-center py-16">
               <Loader className="h-7 w-7 animate-spin text-slate-400" />
             </div>
-          ) : filtered.length === 0 ? (
+          ) : groupedFiltered.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-slate-400">
               <BellOff className="mb-3 h-9 w-9 opacity-30" />
               <p className="font-semibold">
@@ -1020,15 +1430,85 @@ export default function NativeWorkInbox() {
               <table className="w-full min-w-[600px] border-collapse">
                 <TableHead />
                 <tbody>
-                  {filtered.map((task) => (
-                    <TaskRow
-                      key={`${task.source}-${task.id}`}
-                      task={task}
-                      onOpen={() => setSelected(task)}
-                      onQuickAct={() => void completeTask(task.id, "")}
-                      acting={actingIds.has(task.id)}
+                  {needsYou.length > 0 && (
+                    <SectionDivider label="Needs You" count={needsYou.length} />
+                  )}
+                  {needsYou.map((row) => {
+                    if ("kind" in row && row.kind === "group") {
+                      return (
+                        <GroupRow
+                          key={row.groupKey}
+                          group={row}
+                          expanded={expandedGroups.has(row.groupKey)}
+                          onExpand={() =>
+                            setExpandedGroups((prev) => {
+                              const s = new Set(prev);
+                              s.has(row.groupKey) ? s.delete(row.groupKey) : s.add(row.groupKey);
+                              return s;
+                            })
+                          }
+                          onBulkAct={() => void bulkActGroup(row)}
+                          acting={bulkActingKeys.has(row.groupKey)}
+                          onOpenItem={(task) => setSelected(task)}
+                          onActItem={(task) => void completeTask(task.id, "")}
+                        />
+                      );
+                    }
+                    const task = row as PendingTask;
+                    const rowIndex = groupedFiltered.indexOf(row);
+                    return (
+                      <TaskRow
+                        key={`${task.source}-${task.id}`}
+                        task={task}
+                        onOpen={() => setSelected(task)}
+                        onQuickAct={() => void completeTask(task.id, "")}
+                        acting={actingIds.has(task.id)}
+                        focused={rowIndex === focusedIndex}
+                      />
+                    );
+                  })}
+
+                  {teamCanHandle.length > 0 && (
+                    <SectionDivider
+                      label="Your Team Can Handle"
+                      count={teamCanHandle.length}
                     />
-                  ))}
+                  )}
+                  {teamCanHandle.map((row) => {
+                    if ("kind" in row && row.kind === "group") {
+                      return (
+                        <GroupRow
+                          key={row.groupKey}
+                          group={row}
+                          expanded={expandedGroups.has(row.groupKey)}
+                          onExpand={() =>
+                            setExpandedGroups((prev) => {
+                              const s = new Set(prev);
+                              s.has(row.groupKey) ? s.delete(row.groupKey) : s.add(row.groupKey);
+                              return s;
+                            })
+                          }
+                          onBulkAct={() => void bulkActGroup(row)}
+                          acting={bulkActingKeys.has(row.groupKey)}
+                          onOpenItem={(task) => setSelected(task)}
+                          onActItem={(task) => void completeTask(task.id, "")}
+                        />
+                      );
+                    }
+                    const task = row as PendingTask;
+                    const rowIndex = groupedFiltered.indexOf(row);
+                    return (
+                      <TaskRow
+                        key={`${task.source}-${task.id}`}
+                        task={task}
+                        onOpen={() => setSelected(task)}
+                        onQuickAct={() => void completeTask(task.id, "")}
+                        acting={actingIds.has(task.id)}
+                        focused={rowIndex === focusedIndex}
+                        showReassign
+                      />
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -1078,6 +1558,33 @@ export default function NativeWorkInbox() {
         onClose={() => setSelected(null)}
         onComplete={completeTask}
       />
+
+      {showKeyLegend && (
+        <div className="fixed bottom-4 right-4 z-50 rounded-2xl border border-slate-200 bg-white shadow-2xl p-4 w-56">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-black uppercase tracking-widest text-slate-500">Keyboard shortcuts</p>
+            <button onClick={() => setShowKeyLegend(false)} className="p-1 rounded hover:bg-slate-100">
+              <X className="h-3.5 w-3.5 text-slate-400" />
+            </button>
+          </div>
+          <div className="space-y-1.5 text-xs text-slate-600">
+            {([
+              ["J / K", "Navigate rows"],
+              ["A", "Act on row"],
+              ["D", "Details sheet"],
+              ["O", "Open link"],
+              ["S", "Snooze (soon)"],
+              ["?", "Toggle this panel"],
+              ["Esc", "Clear focus"],
+            ] as [string, string][]).map(([key, desc]) => (
+              <div key={key} className="flex justify-between">
+                <kbd className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700">{key}</kbd>
+                <span className="text-slate-500">{desc}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

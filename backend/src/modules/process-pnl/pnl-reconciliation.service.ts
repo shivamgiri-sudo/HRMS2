@@ -2,7 +2,6 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { tableExists } from "../../shared/dbHelpers.js";
 import { OWN_COMPANY_SQL } from "./pnl-actuals.service.js";
-import { assertNotFuturePeriod } from "./pnl-period-guard.js";
 
 export type PnlReconciliationMode = "FINAL" | "LIVE_MTD" | "BLOCKED";
 export type PnlSourceStatus = "ACTUAL" | "ACCRUAL" | "MISSING" | "PARTIAL";
@@ -437,9 +436,6 @@ export async function getPnlReconciliation(
   if (!PERIOD_RE.test(period)) {
     throw Object.assign(new Error("period must be YYYY-MM"), { statusCode: 400 });
   }
-  // A future period matches 0 rows on every source table and would render as a real branch that
-  // traded nothing — refuse it explicitly rather than let it look like a genuine zero.
-  assertNotFuturePeriod(period);
 
   const [costCentres, revenue, grn, budgets, payroll, freshness, exceptionsOut] = await Promise.all([
     readCostCentres(filters),

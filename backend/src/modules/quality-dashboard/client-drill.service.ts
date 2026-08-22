@@ -284,22 +284,3 @@ export async function getClientTranscript(leadId: string, clientId: string) {
     fatal_parameters: breached.length ? breached.join(", ") : undefined,
   };
 }
-
-/**
- * call_recording holds a raw URL into the dialer's internal LAN recording server
- * (e.g. http://192.168.x.x/...), not reachable from a browser outside that LAN — the
- * route handler proxies the bytes rather than handing this URL to the frontend, both to
- * make playback actually work off-LAN and to avoid leaking internal network topology.
- * Same clientId+leadId scoping as getClientTranscript, for the same reason.
- */
-export async function getClientRecordingUrl(leadId: string, clientId: string): Promise<string | null> {
-  const rows = await querySource<Record<string, unknown>>(
-    `SELECT call_recording
-       FROM db_audit.call_quality_assessment
-      WHERE lead_id = ? AND ClientId = ?
-      LIMIT 1`,
-    [leadId, clientId]
-  );
-  const url = rows[0]?.call_recording ? String(rows[0].call_recording).trim() : "";
-  return url || null;
-}

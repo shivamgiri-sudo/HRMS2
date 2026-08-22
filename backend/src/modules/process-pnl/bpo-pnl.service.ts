@@ -3,7 +3,6 @@ import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { queryRows, tableExists } from "../../shared/dbHelpers.js";
 import { writeAuditLog } from "../../shared/auditLog.js";
-import { assertNotFuturePeriod } from "./pnl-period-guard.js";
 import {
   allocatePoolAmount,
   calculateBpoCostWaterfall,
@@ -284,14 +283,8 @@ function defaultPeriod(): string {
 }
 
 function normalizeFilters(filters: Partial<PnlQueryFilters>): PnlQueryFilters {
-  const period = filters.period && /^\d{4}-\d{2}$/.test(filters.period) ? filters.period : defaultPeriod();
-  // A well-formed but FUTURE period would otherwise match 0 rows on every source table and
-  // render as a real process that traded nothing — refuse it explicitly. Malformed input still
-  // falls back to defaultPeriod() above, unchanged; this only rejects a period a caller
-  // deliberately asked for that has not happened yet.
-  assertNotFuturePeriod(period);
   return {
-    period,
+    period: filters.period && /^\d{4}-\d{2}$/.test(filters.period) ? filters.period : defaultPeriod(),
     branchId: filters.branchId,
     branchIds: filters.branchIds,
     processId: filters.processId,

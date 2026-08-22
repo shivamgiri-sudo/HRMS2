@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 987,
-  "columnCount": 14068,
+  "tableCount": 991,
+  "columnCount": 14116,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -16044,6 +16044,62 @@
       "donor_value",
       "active_status",
       "backed_up_at"
+    ],
+    "manager_raised_request": [
+      "id",
+      "request_type",
+      "employee_id",
+      "raised_by_user_id",
+      "raised_by_employee_id",
+      "raised_by_role",
+      "payload",
+      "consent_status",
+      "consent_decided_at",
+      "decline_reason",
+      "resulting_request_id",
+      "created_at"
+    ],
+    "mira_action_audit_log": [
+      "id",
+      "user_id",
+      "employee_id",
+      "action_type",
+      "status",
+      "payload",
+      "guard_reasons",
+      "leave_request_id",
+      "error_message",
+      "created_at"
+    ],
+    "upload_deduction_snapshot": [
+      "id",
+      "branch_name",
+      "cost_center",
+      "employee_code",
+      "employee_name",
+      "salary_month",
+      "mobile_deduction",
+      "short_collection",
+      "asset_recovery",
+      "insurance",
+      "professional_tax",
+      "leave_deduction",
+      "others_deduction",
+      "remarks",
+      "deduction_remarks",
+      "process_status",
+      "import_date",
+      "synced_at"
+    ],
+    "qual_incentive_snapshot": [
+      "id",
+      "employee_code",
+      "sal_year",
+      "sal_month",
+      "amount",
+      "remarks",
+      "import_date",
+      "synced_at"
     ]
   }
 }

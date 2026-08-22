@@ -10,12 +10,6 @@
  * dashboard at all.
  *
  * Captured 2026-07-30 from mas_hrms. The four *_head roles were added 2026-07-30 00:25.
- * `operations_manager`, `coo`, `quality_analyst`, `recruitment_hr` were added
- * 2026-08-21 (migration 432_workforce_role_catalog_ops_coo_qa_recruitment.sql) —
- * same drift pattern: platform/policy/roles.ts, dashboardAccessRegistry.ts and
- * rbacPageMatrix.ts already treated these as real roles, but the DB catalog
- * (and therefore user_roles' FK) never contained them, so nobody could actually
- * be assigned them and every route/dashboard branch checking for them was dead.
  * Refresh with: npx tsx scripts/role-dashboard-gap.ts (it reads the live table).
  */
 export const WORKFORCE_ROLE_CATALOG = [
@@ -26,7 +20,6 @@ export const WORKFORCE_ROLE_CATALOG = [
   "branch_head",
   "branch_it",
   "ceo",
-  "coo",
   "employee",
   "finance",
   "finance_head",
@@ -35,16 +28,13 @@ export const WORKFORCE_ROLE_CATALOG = [
   "it",
   "it_head",
   "manager",
-  "operations_manager",
   "payroll",
   "payroll_admin",
   "payroll_head",
   "payroll_hr",
   "process_manager",
   "qa",
-  "quality_analyst",
   "recruiter",
-  "recruitment_hr",
   "super_admin",
   "team_leader",
   "tl",

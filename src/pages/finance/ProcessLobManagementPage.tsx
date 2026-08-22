@@ -21,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { MonthYearPicker } from "@/components/finance/MonthYearPicker";
-import { PnlFreshnessBadge } from "@/components/finance/pnl/PnlFreshnessBadge";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -334,10 +333,7 @@ export default function ProcessLobManagementPage() {
               <span>/</span>
               <span>LOB workspace</span>
             </div>
-            <div className="mt-1 flex items-center gap-2">
-              <h1 className="text-lg font-bold text-slate-950">Process &amp; LOB Profitability</h1>
-              {period && <PnlFreshnessBadge period={period} />}
-            </div>
+            <h1 className="mt-1 text-lg font-bold text-slate-950">Process &amp; LOB Profitability</h1>
             <p className="mt-0.5 text-xs text-slate-500">
               Configure separate seats, rates and delivery for every LOB while keeping the process total reconciled.
             </p>
@@ -364,7 +360,7 @@ export default function ProcessLobManagementPage() {
         <Card>
           <CardContent className="grid gap-3 p-4 md:grid-cols-[180px_minmax(260px,1fr)_auto] md:items-end">
             <Field label="Period">
-              <MonthYearPicker value={period} onChange={(v) => updateSearch({ period: v })} maxPeriod={currentPeriod()} />
+              <MonthYearPicker value={period} onChange={(v) => updateSearch({ period: v })} />
             </Field>
             <Field label="Process">
               <select className={selectClass} value={processId} onChange={(event) => updateSearch({ processId: event.target.value })}>

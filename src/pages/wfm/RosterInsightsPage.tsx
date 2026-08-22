@@ -17,7 +17,6 @@ import { RefreshCw } from "lucide-react";
 const WorkforcePlanning = lazy(() => import("@/pages/NativeWorkforcePlanning"));
 const AutoRoster        = lazy(() => import("@/pages/NativeWFMAutoRoster"));
 const WeekoffFairness   = lazy(() => import("@/pages/wfm/WeekoffFairness"));
-const Analytics         = lazy(() => import("@/pages/wfm/RosterAnalyticsPanel"));
 
 const TABS = [
   {
@@ -37,12 +36,6 @@ const TABS = [
     label: "Week-off fairness",
     blurb: "Whether week-offs are being shared out evenly, per process and week.",
     Component: WeekoffFairness,
-  },
-  {
-    value: "analytics",
-    label: "Analytics",
-    blurb: "Shrinkage trend, publish/acknowledge status, attrition and habitual lateness — one filter bar, one page.",
-    Component: Analytics,
   },
 ];
 

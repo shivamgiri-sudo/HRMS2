@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { X, Activity, AlertTriangle, Target, BarChart2, Phone, FileText, TrendingUp, PlayCircle } from "lucide-react";
+import { X, Activity, AlertTriangle, Target, BarChart2, Phone, FileText, TrendingUp } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line,
@@ -111,10 +111,6 @@ const TABS: Array<{ id: TabId; label: string; icon: React.ReactNode }> = [
 export function ClientQualityDrillModal({ clientId, clientName, from, to, onClose }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("performance");
   const [transcriptModal, setTranscriptModal] = useState<string | null>(null);
-  const [recordingState, setRecordingState] = useState<
-    { status: "idle" } | { status: "loading" } | { status: "error"; msg: string } | { status: "ready"; url: string }
-  >({ status: "idle" });
-  const recordingObjectUrlRef = useRef<string | null>(null);
 
   const key = [clientId, from, to];
 
@@ -161,43 +157,6 @@ export function ClientQualityDrillModal({ clientId, clientName, from, to, onClos
     queryFn: () => hrmsApi.get<{ success: boolean; data: TranscriptData }>(`/api/quality-dashboard/client-drill/transcript?leadId=${transcriptModal}&clientId=${clientId}`).then(r => (r as any)?.data ?? r),
     enabled: !!transcriptModal,
   });
-
-  // Recording is fetched on demand (button click), not eagerly like the transcript above —
-  // it's a multi-MB binary blob (hrmsApi.getBlob, since <audio src> can't carry the auth
-  // header) rather than a lightweight JSON payload, so we don't want to pull it down for
-  // every call the user merely inspects the transcript of.
-  async function loadRecording() {
-    if (!transcriptModal) return;
-    setRecordingState({ status: "loading" });
-    try {
-      const blob = await hrmsApi.getBlob(
-        `/api/quality-dashboard/client-drill/recording?leadId=${transcriptModal}&clientId=${clientId}`
-      );
-      const url = URL.createObjectURL(blob);
-      recordingObjectUrlRef.current = url;
-      setRecordingState({ status: "ready", url });
-    } catch (err) {
-      setRecordingState({
-        status: "error",
-        msg: err instanceof Error ? err.message : "Failed to load recording",
-      });
-    }
-  }
-
-  // Reset the player and release its blob URL whenever a different call's transcript
-  // modal opens (or closes) — otherwise the previous call's audio keeps playing/buffered
-  // and its object URL leaks for the life of the page.
-  useEffect(() => {
-    return () => {
-      if (recordingObjectUrlRef.current) {
-        URL.revokeObjectURL(recordingObjectUrlRef.current);
-        recordingObjectUrlRef.current = null;
-      }
-    };
-  }, [transcriptModal]);
-  useEffect(() => {
-    setRecordingState({ status: "idle" });
-  }, [transcriptModal]);
 
   const kpi = kpisQ.data;
 
@@ -497,22 +456,6 @@ export function ClientQualityDrillModal({ clientId, clientName, from, to, onClos
                   </div>
                   <div className="rounded-xl border border-slate-200 bg-white p-4">
                     <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{transcriptQ.data.transcript_text || "No transcript available."}</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                    <p className="mb-2 text-xs font-semibold text-slate-500">Call Recording</p>
-                    {recordingState.status === "idle" && (
-                      <button
-                        onClick={loadRecording}
-                        className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100"
-                      >
-                        <PlayCircle className="h-4 w-4" /> Load Recording
-                      </button>
-                    )}
-                    {recordingState.status === "loading" && <Spinner />}
-                    {recordingState.status === "error" && <ErrBanner msg={recordingState.msg} />}
-                    {recordingState.status === "ready" && (
-                      <audio controls src={recordingState.url} className="w-full" preload="none" />
-                    )}
                   </div>
                 </div>
               ) : <p className="text-center text-sm text-slate-500">No transcript data found.</p>}

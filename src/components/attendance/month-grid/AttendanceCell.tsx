@@ -14,6 +14,14 @@ import { cn } from "@/lib/utils";
  * One per cell is the documented anti-pattern and would be ruinous at this count.
  */
 
+const MINUTES = (m?: number) =>
+  !m ? "—" : `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+
+const SOURCE_LABEL: Record<string, string> = {
+  dialler: "APR / dialler",
+  biometric: "Biometric punch",
+};
+
 export function AttendanceCell({
   day,
   weekend,
@@ -89,32 +97,48 @@ export function AttendanceCell({
         </td>
       </TooltipTrigger>
 
-      {/* Deliberately a glance, not a report: a click now opens the full Day Detail panel
-          with every field this used to cram in here (LWP, source, late-by, mismatch note,
-          raw status_change_reason) plus real actions. Piling all of that into a hover
-          popover was the "not very clear / not user friendly" complaint — a wall of
-          same-size text with a raw machine-written audit string sitting next to a plain
-          sentence, no visual hierarchy. This says only what's worth knowing before you
-          decide whether to click at all. */}
-      <TooltipContent side="top" className="max-w-[14rem] space-y-1.5">
-        <p className="text-sm font-semibold leading-tight text-slate-100">{dateLabel}</p>
-        <p className="text-xs font-medium text-slate-300">{theme.label}</p>
+      <TooltipContent side="top" className="max-w-[16rem] space-y-1 text-xs">
+        <p className="font-semibold text-slate-100">{dateLabel} · {theme.label}</p>
 
         {!day.hasRecord ? (
-          <p className="text-xs text-orange-300">No record — blocks payroll.</p>
-        ) : (
-          <p className="text-xs text-slate-400">
-            In {day.clockIn ?? "—"} · Out {day.clockOut ?? "—"}
+          <p className="text-orange-300">
+            No attendance record exists for this day. Payroll will not run for the month
+            until every employee has a record for every day.
           </p>
-        )}
-        {day.needsAttention && day.hasRecord && (
-          <p className="text-xs font-medium text-orange-300">Blocks payroll</p>
-        )}
-        {day.pendingRegularizationId && (
-          <p className="text-xs font-medium text-amber-300">Correction pending</p>
+        ) : (
+          <>
+            <p className="text-slate-300">
+              In {day.clockIn ?? "—"} · Out {day.clockOut ?? "—"} · Worked {MINUTES(day.minutes)}
+            </p>
+            <p className="text-slate-300">
+              LWP {Number(day.lwp ?? 0).toFixed(2)}
+              {day.lateMark ? ` · Late by ${day.lateBy ?? 0}m` : ""}
+            </p>
+            <p className="text-slate-400">
+              Source: {SOURCE_LABEL[String(day.source)] ?? day.source ?? "—"}
+              {day.sourceSystem ? ` (${day.sourceSystem})` : ""}
+            </p>
+            {day.regularized && <p className="text-indigo-300">Corrected by an approved regularization.</p>}
+            {day.overridden && <p className="text-indigo-300">Manually overridden.</p>}
+            {day.locked && <p className="text-slate-400">Locked for payroll.</p>}
+            {day.sourceMismatch && (
+              <p className="text-sky-300">
+                APR and biometric disagreed on this day. The status above is what payroll
+                will use — no action needed unless it looks wrong.
+              </p>
+            )}
+            {day.note && <p className="text-slate-400">“{day.note}”</p>}
+          </>
         )}
 
-        <p className="border-t border-slate-700 pt-1 text-[11px] text-slate-500">Click for full details</p>
+        {day.needsAttention && day.hasRecord && (
+          <p className="text-orange-300">
+            This day has no usable attendance decision yet and will block payroll.
+          </p>
+        )}
+        {day.pendingRegularizationId && (
+          <p className="text-amber-300">A regularization request is awaiting approval.</p>
+        )}
       </TooltipContent>
     </Tooltip>
   );

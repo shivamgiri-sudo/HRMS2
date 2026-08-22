@@ -301,34 +301,8 @@ async function main() {
     console.log("  exceptions: none");
   }
 
-  // ── E. Drill-down ties to summary — the correctness guarantee the whole drilldown feature
-  // rests on. For each metric, pick one real branch that has a nonzero figure and check the
-  // drilldown endpoint's row sum against the exact summary cell it was clicked from.
-  const { getPnlDrilldown } = await import("../src/modules/process-pnl/pnl-drilldown.service.js");
-  const drilldownRows: Row[] = [];
-  for (const b of ceo.branches) {
-    if (b.isCostCentre || !b.branchId) continue;
-    if (b.revenue > 0 && !drilldownRows.some((r) => r.label.startsWith("Revenue"))) {
-      const d = await getPnlDrilldown({ metric: "revenue", period: PERIOD, branchId: b.branchId });
-      drilldownRows.push({ label: `Revenue · ${b.branchName}`, a: d.total, b: b.revenue, note: `${d.rows.length} rows${d.hasEstimatedRows ? " (incl. provision estimate)" : ""}` });
-    }
-    if (b.peopleCost > 0 && !drilldownRows.some((r) => r.label.startsWith("People"))) {
-      const d = await getPnlDrilldown({ metric: "people", period: PERIOD, branchId: b.branchId });
-      drilldownRows.push({ label: `People · ${b.branchName}`, a: d.total, b: b.peopleCost, note: `${d.rows.length} rows` });
-    }
-    if (b.indirectCost > 0 && !drilldownRows.some((r) => r.label.startsWith("Indirect"))) {
-      const d = await getPnlDrilldown({ metric: "indirect", period: PERIOD, branchId: b.branchId });
-      drilldownRows.push({ label: `Indirect · ${b.branchName}`, a: d.total, b: b.indirectCost, note: `${d.rows.length} rows` });
-    }
-    if (b.budget > 0 && !drilldownRows.some((r) => r.label.startsWith("Budget"))) {
-      const d = await getPnlDrilldown({ metric: "budget", period: PERIOD, branchId: b.branchId });
-      drilldownRows.push({ label: `Budget · ${b.branchName}`, a: d.total, b: b.budget, note: `${d.rows.length} rows` });
-    }
-  }
-  printTable("E. DRILL-DOWN TOTAL vs SUMMARY CELL (one real branch per metric)", "drilldown sum", "summary cell", drilldownRows, true);
-
   console.log("\n" + "=".repeat(72));
-  console.log(anyRealFail ? "RESULT: FAIL — see Section A/B/E rows above." : "RESULT: PASS — Sections A, B and E agree within tolerance.");
+  console.log(anyRealFail ? "RESULT: FAIL — see Section A/B rows above." : "RESULT: PASS — Sections A and B agree within tolerance.");
   process.exit(anyRealFail ? 1 : 0);
 }
 

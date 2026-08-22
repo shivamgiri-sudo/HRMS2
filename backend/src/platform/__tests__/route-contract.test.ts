@@ -85,6 +85,14 @@ const KNOWN_GAPS: Record<string, string> = {
   "GET /api/wfm/roster":
     "Deliberately unbuilt. /roster/assignments cannot serve it: requireRosterPlanScope throws when planId is absent, before the global-role bypass, and the caller is a plan-agnostic date-range view. Needs a cross-plan read model.",
 
+  // ── Pages added 2026-08-22 by concurrent session; backend routes not yet built.
+  "GET /api/call-master/inbound/today":
+    "NOT REACHABLE: NativeOpsCommandCenter.tsx is not mounted in any route — no lazy import or <Route> wires it into the app. Page is unfinished scaffolding. Backend route should be built alongside the page mount.",
+  "GET /api/operations-live/summary":
+    "NOT REACHABLE: Same page as above (NativeOpsCommandCenter.tsx). Not mounted in the router. Backend route needed when the page is wired up.",
+  "POST /api/lms-integration/assign":
+    "REACHABLE via /quality/tni (NativeTNIAnalysis.tsx, mounted in performance.routes.tsx). Backend LMS integration assign route not yet built — blocked on LMS integration layer (Package 6 in the charter). Do not stub — needs real LMS integration scaffolding.",
+
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {

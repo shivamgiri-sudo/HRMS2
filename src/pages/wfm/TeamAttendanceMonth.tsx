@@ -182,18 +182,16 @@ export default function TeamAttendanceMonth() {
         items,
         note: note.trim(),
       });
-      // An employee with no login cannot receive an inbox item, and a notification can
-      // fail to deliver even when they're a valid target. Saying so beats a clean
-      // success message for a notice that never arrived.
+      // An employee with no login cannot receive an inbox item. Saying so beats a
+      // clean success message for a notice that never arrived.
       const extra = [
         res?.skipped_no_account ? `${res.skipped_no_account} have no login account` : "",
         res?.skipped_out_of_scope ? `${res.skipped_out_of_scope} outside your team` : "",
-        res?.failed ? `${res.failed} could not be delivered` : "",
       ].filter(Boolean).join(" · ");
       toast({
         title: `${res?.flagged ?? 0} day(s) flagged`,
         description: extra || "The employee has been notified in their inbox.",
-        variant: res?.skipped_no_account || res?.skipped_out_of_scope || res?.failed ? "destructive" : undefined,
+        variant: res?.skipped_no_account || res?.skipped_out_of_scope ? "destructive" : undefined,
       });
       setSelected(new Set());
     } catch (e) {

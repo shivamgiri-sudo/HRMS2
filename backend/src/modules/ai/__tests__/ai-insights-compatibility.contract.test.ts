@@ -11,13 +11,7 @@ describe("AI insights compatibility route", () => {
   it("keeps the authenticated dashboard insight endpoint available", () => {
     expect(routeSource).toContain("aiInsightsRouter.use(requireAuth)");
     expect(routeSource).toContain("aiInsightsRouter.post('/insights'");
-    // Previously this asserted the route was a hardcoded `apiSuccess({ insights: [] })`
-    // stub that ignored context_type/data entirely — every dashboard AI Brief panel
-    // (KPI, attendance, leave, ATS, exit risk, CEO dashboard, WFM roster, quality/ops)
-    // silently showed nothing regardless of input. Fixed 2026-08-22: the route now
-    // delegates to the rule-based ai-insights-engine.ts, which derives real insights
-    // from the caller's own data. Assert the real wiring instead of the old stub text.
-    expect(routeSource).toContain("generateInsights(contextType, payload)");
+    expect(routeSource).toContain("apiSuccess({ insights: [] })");
   });
 
   it("gates the 3 Mira Analytics routes to super_admin/admin only", () => {

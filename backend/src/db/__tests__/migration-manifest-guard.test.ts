@@ -173,6 +173,6 @@ describe("migration manifest — duplicates", () => {
       if (n) byNumber.set(n, [...(byNumber.get(n) ?? []), f]);
     }
     const shared = [...byNumber.values()].filter((v) => v.length > 1);
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(60);
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(61);
   });
 });

@@ -51,10 +51,11 @@ export const vendorApprovalService = {
     const limitClause = filters.limit ? `LIMIT ${Math.min(filters.limit, 200)}` : "LIMIT 100";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT r.*,
-              CONCAT(COALESCE(u.first_name,''), ' ', COALESCE(u.last_name,'')) AS raised_by_name,
+              CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS raised_by_name,
               b.branch_name
          FROM vendor_approval_request r
          LEFT JOIN auth_user u ON u.id = r.raised_by
+         LEFT JOIN employees e ON e.user_id = u.id
          LEFT JOIN branch_master b ON b.id = r.branch_id
          ${where}
          ORDER BY r.raised_at DESC

@@ -34,7 +34,6 @@ import {
 } from "../reference-dashboard-model";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
 import { TodayCelebrationsWidget } from "@/components/dashboard/TodayCelebrationsWidget";
-import { RosterPublishHealthWidget } from "@/components/dashboard/widgets/RosterPublishHealthWidget";
 import {
   AttendanceBreakdownPanel,
   LiveVsProcessedPanel,
@@ -147,10 +146,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
             return <div key={String(label)} className={`flex min-h-[100px] min-w-0 items-start gap-3 border-[#edf1f6] p-4 ${index % 4 !== 3 ? "sm:border-r" : ""} ${index < 4 ? "border-b" : ""}`}><span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${tone === "green" ? "bg-[#eaf8ef] text-[#16a34a]" : tone === "red" ? "bg-[#fff0f1] text-[#ef4444]" : tone === "violet" ? "bg-[#f3efff] text-[#7c3aed]" : "bg-[#edf4ff] text-[#0b63e5]"}`}><IconComponent className="h-4 w-4" /></span><div className="min-w-0"><p className="text-xs font-semibold leading-4 text-[#1d2b45]">{label}</p><p className="mt-2 text-[21px] font-extrabold leading-none text-[#0b1f44]">{formatValue(value)}</p><p className="mt-2 text-xs text-[#71809a]">Live organisation value</p></div></div>;
           })}
         </div>
-        <div className="grid gap-3">
-          <ReferenceWorkInbox maxItems={5} />
-          <RosterPublishHealthWidget compact />
-        </div>
+        <ReferenceWorkInbox maxItems={5} />
       </div>
 
       <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[0.62fr_1.05fr]">
