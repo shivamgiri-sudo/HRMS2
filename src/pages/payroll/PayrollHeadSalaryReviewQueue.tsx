@@ -1,27 +1,14 @@
-/**
- * Payroll Head mandatory salary/journey review queue.
- *
- * Lists every employee waiting on a Payroll Head decision before payroll can
- * build their salary — see payrollCalculate.service.ts's employee_payroll_head_review
- * gate (migration 1541). One central queue, all branches, per the owner decision
- * that scoping this per-branch is out of scope for v1 — the branch filter below is
- * a convenience for narrowing a long list, not real per-branch access scoping.
- *
- * The aging badge (1542) exists because this gate now sits between "hired" and
- * "paid": a review nobody looks at blocks that employee's pay indefinitely, and
- * there is deliberately no automated escalation yet — this is the honest
- * stopgap that makes an aging queue visible rather than silent.
- */
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, Search, RefreshCw, ShieldCheck, XCircle, Clock, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Loader2, Search, RefreshCw, ShieldCheck, XCircle, Clock, AlertTriangle, ArrowRight, IndianRupee } from 'lucide-react';
 
 interface QueueRow {
   review_id: string;
@@ -39,157 +26,215 @@ interface QueueRow {
   full_name: string;
   designation_name: string | null;
   branch_name: string | null;
+  ctc_annual?: number | null;
 }
 
-/** No SLA-enforcing cron here (yet) — this is the honest fallback: make aging
- * visible at a glance rather than let a forgotten review sit invisibly. */
-function AgingBadge({ hours, status }: { hours: number; status: string }) {
+const STATUS_CFG = {
+  pending_review: { label: 'Pending Review', chip: 'bg-amber-50 text-amber-700 border border-amber-200', icon: Clock },
+  approved:       { label: 'Approved',       chip: 'bg-emerald-50 text-emerald-700 border border-emerald-200', icon: ShieldCheck },
+  rejected:       { label: 'Rejected',       chip: 'bg-rose-50 text-rose-700 border border-rose-200', icon: XCircle },
+} as const;
+
+function AgingChip({ hours, status }: { hours: number; status: string }) {
   if (status !== 'pending_review') return null;
-  if (hours >= 48) return <Badge className="bg-red-100 text-red-800"><AlertTriangle className="h-3 w-3 mr-1 inline" /> {Math.floor(hours / 24)}d pending</Badge>;
-  if (hours >= 24) return <Badge className="bg-amber-100 text-amber-800">{Math.floor(hours / 24)}d pending</Badge>;
-  return <Badge className="bg-slate-100 text-slate-500">{hours}h pending</Badge>;
+  if (hours >= 48) return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+      <AlertTriangle className="h-3 w-3" />{Math.floor(hours / 24)}d overdue
+    </span>
+  );
+  if (hours >= 24) return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+      <Clock className="h-3 w-3" />{Math.floor(hours / 24)}d
+    </span>
+  );
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">
+      {hours}h
+    </span>
+  );
 }
 
-const STATUS_META: Record<string, { label: string; className: string; icon: typeof Clock }> = {
-  pending_review: { label: 'Pending Review', className: 'bg-amber-100 text-amber-800', icon: Clock },
-  approved: { label: 'Approved', className: 'bg-emerald-100 text-emerald-800', icon: ShieldCheck },
-  rejected: { label: 'Rejected', className: 'bg-red-100 text-red-800', icon: XCircle },
-};
+const inr = (n: number | null | undefined) =>
+  n == null ? '—' : `₹${Math.round(Number(n) / 12).toLocaleString('en-IN')}/mo`;
 
 export default function PayrollHeadSalaryReviewQueue() {
   const navigate = useNavigate();
-  const [status, setStatus] = useState<'pending_review' | 'approved' | 'rejected'>('pending_review');
+  const [tab, setTab] = useState<'pending_review' | 'approved' | 'rejected'>('pending_review');
   const [q, setQ] = useState('');
   const [branch, setBranch] = useState('');
   const [branches, setBranches] = useState<string[]>([]);
   const [rows, setRows] = useState<QueueRow[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ status });
+      const params = new URLSearchParams({ status: tab });
       if (q.trim()) params.set('q', q.trim());
       if (branch) params.set('branch', branch);
       const r = await hrmsApi.get<{ success: boolean; data: QueueRow[] }>(`/api/payroll-head-review/queue?${params}`);
-      setRows((r as any)?.data ?? []);
+      const data = (r as any)?.data ?? [];
+      setRows(data);
+      setCounts(prev => ({ ...prev, [tab]: data.length }));
     } catch {
       setRows([]);
     } finally {
       setLoading(false);
     }
-  }, [status, q, branch]);
+  }, [tab, q, branch]);
 
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
     hrmsApi.get<{ success: boolean; data: string[] }>('/api/payroll-head-review/branches')
       .then((r: any) => setBranches(r?.data ?? []))
-      .catch(() => setBranches([]));
+      .catch(() => {});
   }, []);
+
+  const tabLabel = (s: string) => {
+    const c = counts[s];
+    const base = STATUS_CFG[s as keyof typeof STATUS_CFG]?.label ?? s;
+    return c != null ? `${base} (${c})` : base;
+  };
 
   return (
     <DashboardLayout>
-      <div className="p-6 space-y-4">
-        <div className="flex items-center justify-between">
+      <div className="p-6 space-y-5">
+        {/* Header */}
+        <div className="flex items-start justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">Salary Review Queue</h1>
-            <p className="text-sm text-slate-500 mt-1">
-              Every newly created employee stays out of payroll until reviewed here.
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Salary Review Queue</h1>
+            <p className="mt-1 text-sm text-slate-500">
+              Every new employee is blocked from payroll until reviewed and approved here.
             </p>
           </div>
-          <Button variant="outline" onClick={() => void load()} disabled={loading}>
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} className="min-h-[40px]">
+            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />Refresh
           </Button>
         </div>
 
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex gap-1 rounded-lg border border-slate-200 p-1">
-                {(['pending_review', 'approved', 'rejected'] as const).map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => setStatus(s)}
-                    className={`px-3 py-1.5 text-sm rounded-md font-medium transition-colors ${
-                      status === s ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
-                    }`}
-                  >
-                    {STATUS_META[s].label}
-                  </button>
-                ))}
-              </div>
-              <div className="relative flex-1 min-w-[200px]">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
-                <Input
-                  placeholder="Search name or employee code…"
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') void load(); }}
-                  className="pl-8"
-                />
-              </div>
-              <Select value={branch || '__all__'} onValueChange={(v) => setBranch(v === '__all__' ? '' : v)}>
-                <SelectTrigger className="w-[200px]"><SelectValue placeholder="All branches" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__all__">All branches</SelectItem>
-                  {branches.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
-                </SelectContent>
-              </Select>
+        {/* Filters */}
+        <div className="flex flex-wrap items-center gap-3">
+          <Tabs value={tab} onValueChange={(v) => setTab(v as typeof tab)}>
+            <TabsList>
+              <TabsTrigger value="pending_review" className="cursor-pointer">{tabLabel('pending_review')}</TabsTrigger>
+              <TabsTrigger value="approved" className="cursor-pointer">{tabLabel('approved')}</TabsTrigger>
+              <TabsTrigger value="rejected" className="cursor-pointer">{tabLabel('rejected')}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <div className="relative flex-1 min-w-[220px] max-w-xs">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
+            <Input
+              placeholder="Name or employee code…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              className="pl-8 h-9 text-sm"
+            />
+          </div>
+          <Select value={branch || '__all__'} onValueChange={(v) => setBranch(v === '__all__' ? '' : v)}>
+            <SelectTrigger className="w-[180px] h-9 text-sm">
+              <SelectValue placeholder="All branches" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All branches</SelectItem>
+              {branches.map((b) => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Table */}
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          {loading ? (
+            <div className="flex items-center justify-center py-20 text-slate-400">
+              <Loader2 className="h-6 w-6 animate-spin" />
             </div>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div className="flex items-center justify-center py-16 text-slate-400">
-                <Loader2 className="h-6 w-6 animate-spin" />
-              </div>
-            ) : rows.length === 0 ? (
-              <div className="text-center py-16 text-slate-400">No employees in this state.</div>
-            ) : (
-              <div className="space-y-2">
+          ) : rows.length === 0 ? (
+            <div className="flex flex-col items-center py-20 text-slate-400">
+              <ShieldCheck className="h-10 w-10 mb-3 text-slate-300" />
+              <p className="font-medium text-slate-600">No employees in this state</p>
+              <p className="text-sm mt-1">
+                {tab === 'pending_review' ? 'All new hires have been reviewed.' : 'Nothing here yet.'}
+              </p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader className="bg-slate-50">
+                <TableRow className="border-slate-200 hover:bg-slate-50">
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 w-[220px]">Employee</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Designation</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Branch</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 text-right">Monthly CTC</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Status</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Waiting</TableHead>
+                  <TableHead className="text-[11px] font-semibold uppercase tracking-wider text-slate-500 w-10"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {rows.map((row) => {
-                  const meta = STATUS_META[row.status];
-                  const Icon = meta.icon;
+                  const cfg = STATUS_CFG[row.status];
+                  const Icon = cfg.icon;
                   return (
-                    <button
+                    <TableRow
                       key={row.review_id}
+                      className="cursor-pointer hover:bg-slate-50 transition-colors border-slate-100"
                       onClick={() => navigate(`/payroll/salary-review/${row.employee_id}`)}
-                      className="w-full flex items-center justify-between rounded-xl border border-slate-200 p-4 text-left hover:border-slate-300 hover:bg-slate-50 transition-colors"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 font-semibold">
-                          {row.full_name?.charAt(0)?.toUpperCase() ?? '?'}
-                        </div>
-                        <div>
-                          <div className="font-semibold text-slate-900">{row.full_name}</div>
-                          <div className="text-xs text-slate-500">
-                            {row.employee_code} · {row.designation_name ?? '—'} · {row.branch_name ?? '—'}
+                      <TableCell className="py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="h-8 w-8 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 font-semibold text-sm flex-shrink-0">
+                            {row.full_name?.charAt(0)?.toUpperCase() ?? '?'}
+                          </div>
+                          <div>
+                            <p className="font-semibold text-slate-900 text-sm leading-tight">{row.full_name}</p>
+                            <p className="font-mono text-[11px] text-slate-400 mt-0.5">{row.employee_code}</p>
                           </div>
                         </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <AgingBadge hours={row.pending_hours} status={row.status} />
-                        {row.status === 'pending_review' && !row.package_accepted && (
-                          <Badge className="bg-slate-100 text-slate-600">Package not accepted</Badge>
-                        )}
-                        {row.resubmit_count > 0 && (
-                          <Badge className="bg-blue-100 text-blue-800">Resubmitted ×{row.resubmit_count}</Badge>
-                        )}
-                        {row.reopen_count > 0 && (
-                          <Badge className="bg-purple-100 text-purple-800">Reopened ×{row.reopen_count}</Badge>
-                        )}
-                        <Badge className={meta.className}>
-                          <Icon className="h-3 w-3 mr-1 inline" /> {meta.label}
-                        </Badge>
-                        <ArrowRight className="h-4 w-4 text-slate-400" />
-                      </div>
-                    </button>
+                      </TableCell>
+                      <TableCell className="text-sm text-slate-700 py-3">{row.designation_name ?? '—'}</TableCell>
+                      <TableCell className="text-sm text-slate-700 py-3">{row.branch_name ?? '—'}</TableCell>
+                      <TableCell className="text-sm text-right tabular-nums text-slate-700 py-3">
+                        <span className="inline-flex items-center gap-0.5">
+                          <IndianRupee className="h-3 w-3 text-slate-400" />
+                          {row.ctc_annual ? Math.round(row.ctc_annual / 12).toLocaleString('en-IN') : '—'}
+                        </span>
+                      </TableCell>
+                      <TableCell className="py-3">
+                        <div className="flex flex-col gap-1">
+                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${cfg.chip}`}>
+                            <Icon className="h-3 w-3" />{cfg.label}
+                          </span>
+                          {row.status === 'pending_review' && !row.package_accepted && (
+                            <span className="text-[10px] text-slate-400">Package not accepted</span>
+                          )}
+                          {row.status === 'rejected' && row.rejection_category && (
+                            <span className="text-[10px] text-rose-500">{row.rejection_category}</span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-3">
+                        <div className="flex flex-col gap-1">
+                          <AgingChip hours={row.pending_hours} status={row.status} />
+                          {row.resubmit_count > 0 && (
+                            <span className="text-[10px] text-blue-600">Resubmitted ×{row.resubmit_count}</span>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-3">
+                        <ArrowRight className="h-4 w-4 text-slate-300" />
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+              </TableBody>
+            </Table>
+          )}
+        </div>
+
+        <p className="text-xs text-slate-400">
+          {rows.length > 0 && `${rows.length} employee${rows.length !== 1 ? 's' : ''} shown`}
+          {tab === 'pending_review' && rows.length > 0 && ' — salary will not build for any of these until approved'}
+        </p>
       </div>
     </DashboardLayout>
   );
