@@ -40,22 +40,18 @@ Builds on the existing `attendance.dispute.routes.ts` pattern. New module: `sala
 
 ```
 Employee raises dispute
-  → status: pending_manager
-  → Inbox: Reporting Manager notified
+  → status: pending_wfm
+  → Inbox: WFM + Payroll HR of employee's branch notified
+  → Inbox: Reporting Manager notified (VIEW ONLY — for team awareness, no action required)
 
-Stage 1 — Reporting Manager
-  Approve → status: pending_wfm
-    → Inbox: WFM + Payroll HR of employee's branch notified
-  Reject  → status: rejected (terminal)
-
-Stage 2 — WFM + Payroll HR (branch)
+Stage 1 — WFM + Payroll HR (branch)
   Validate attendance/payroll data
   Enter corrective details + system auto-calculates differential
   Approve → status: pending_payroll_head
     → Inbox: Payroll Head notified with full case + differential
   Reject  → status: rejected (terminal)
 
-Stage 3 — Payroll Head
+Stage 2 — Payroll Head
   Reviews full case history, all remarks, differential amount
   Approve → status: approved
     → ARREAR component created in next month's salary_prep_line_component
@@ -78,11 +74,8 @@ Stage 3 — Payroll Head
 | `dispute_type` | ENUM | See dispute types above + 'OTHER' |
 | `affected_dates` | JSON | Array of 'YYYY-MM-DD' strings |
 | `description` | TEXT | Employee's explanation (min 20 chars) |
-| `status` | ENUM | draft, pending_manager, pending_wfm, pending_payroll_head, approved, rejected, closed |
-| `manager_id` | CHAR(36) | Reporting manager at time of raise |
-| `manager_remarks` | TEXT | |
-| `manager_reviewed_at` | DATETIME | |
-| `manager_reviewed_by` | CHAR(36) | user_id |
+| `status` | ENUM | draft, pending_wfm, pending_payroll_head, approved, rejected, closed |
+| `manager_id` | CHAR(36) | Reporting manager (notified for awareness only) |
 | `wfm_corrective_json` | JSON | Corrective data entered by WFM (what was wrong, what is correct) |
 | `differential_amount` | DECIMAL(10,2) | Auto-calculated or WFM-entered |
 | `differential_basis` | TEXT | How differential was calculated |
@@ -134,11 +127,10 @@ All under `/api/salary-disputes`
 | POST | `/` | employee | Raise new dispute |
 | GET | `/my` | employee | My disputes list |
 | GET | `/:id` | scoped | Dispute detail |
-| POST | `/:id/manager-review` | reporting_manager | Stage 1 approve/reject |
-| POST | `/:id/wfm-review` | wfm, payroll_hr | Stage 2: enter corrective data + approve/reject |
-| POST | `/:id/payroll-head-review` | payroll_head | Stage 3 approve/reject |
+| POST | `/:id/wfm-review` | wfm, payroll_hr | Stage 1: enter corrective data + approve/reject |
+| POST | `/:id/payroll-head-review` | payroll_head | Stage 2 final approve/reject |
 | GET | `/branch/:branchId` | wfm, payroll_hr, payroll_head | Branch dispute queue |
-| GET | `/queue/manager` | manager | Manager's pending queue |
+| GET | `/queue/manager` | manager | Read-only view: team disputes (awareness only) |
 | GET | `/queue/payroll-head` | payroll_head | Payroll head queue |
 
 ---
@@ -160,10 +152,10 @@ If next month's run doesn't exist yet, set `arrear_run_month` and apply when run
 
 | Event | Recipient | Type |
 |---|---|---|
-| Dispute raised | Reporting Manager | `SALARY_DISPUTE_MANAGER_PENDING` |
-| Manager approved | WFM + Payroll HR (branch) | `SALARY_DISPUTE_WFM_PENDING` |
+| Dispute raised | WFM + Payroll HR (branch) | `SALARY_DISPUTE_WFM_PENDING` |
+| Dispute raised | Reporting Manager | `SALARY_DISPUTE_MANAGER_VIEW` (view-only, no action) |
 | WFM approved | Payroll Head | `SALARY_DISPUTE_PAYHEAD_PENDING` |
-| Approved (any stage rejection) | Employee | `SALARY_DISPUTE_RESOLVED` |
+| Approved or Rejected | Employee | `SALARY_DISPUTE_RESOLVED` |
 | Arrear applied | Employee | `SALARY_DISPUTE_ARREAR_APPLIED` |
 
 ---
@@ -187,11 +179,13 @@ If next month's run doesn't exist yet, set `arrear_run_month` and apply when run
 - Each completed node shows: reviewer name, date, remarks
 - Approved disputes show: differential amount + arrear payment month
 
-### 3. Manager Queue (Reporting Manager)
-- Surfaces via Work Inbox (`SALARY_DISPUTE_MANAGER_PENDING`)
-- Card shows: employee name/code, dispute type, affected month, dates, description
-- Action: Approve (with remarks) / Reject (with mandatory reason)
-- Mandatory remarks: min 10 chars
+### 3. Manager Team View (Reporting Manager — Read Only)
+- Surfaces via Work Inbox notification (`SALARY_DISPUTE_MANAGER_VIEW`) for awareness
+- Also accessible via My Team → Salary Disputes tab
+- Shows list of all open disputes from their direct reportees
+- Columns: Employee, Month, Type, Status, Raised On
+- Click to view full dispute detail (read-only, no action buttons)
+- Helps manager stay in sync with how many team members have disputes in progress
 
 ### 4. WFM + Payroll HR Review
 - Surfaces via Work Inbox (`SALARY_DISPUTE_WFM_PENDING`)
