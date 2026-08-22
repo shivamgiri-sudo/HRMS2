@@ -18,7 +18,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import { Calculator, Loader2, CheckCircle2 } from 'lucide-react';
-import { calcFromCtc, calcFromInHand, type PkgCalcOptions, type PkgComponents } from '@/lib/salaryCalculator';
+import { calcFromCtc, calcFromInHand, getProfessionalTax, PT_BY_STATE, type PkgCalcOptions, type PkgComponents } from '@/lib/salaryCalculator';
 
 interface Band { id: string; band_code: string; band_name: string; slab_from: number; slab_to: number; }
 
@@ -45,10 +45,12 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultBranch: string;
+  /** branch_master.state — used to compute correct Professional Tax slab */
+  branchState?: string;
   onPackageCreated: (packageId: string, pkg: PkgDraft) => void;
 }
 
-export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPackageCreated }: Props) {
+export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, branchState, onPackageCreated }: Props) {
   const [bands, setBands]         = useState<Band[]>([]);
   const [draft, setDraft]         = useState<PkgDraft>({ ...BLANK, branch_name: defaultBranch });
   const [calcMode, setCalcMode]   = useState<'ctc' | 'inhand'>('ctc');
@@ -79,7 +81,7 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
 
   // Auto-calculate on input change
   useEffect(() => {
-    const opts: PkgCalcOptions = { includePf, includeEsic, basicPct, hraPct };
+    const opts: PkgCalcOptions = { includePf, includeEsic, basicPct, hraPct, state: branchState };
     if (calcMode === 'ctc') {
       const v = parseFloat(ctcInput);
       if (!isNaN(v) && v > 0) {
@@ -235,7 +237,11 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
               {([
                 ['epf_employee', "PF (Employee 12%)", true],
                 ['esic_employee', "ESIC (Employee 0.75%)", true],
-                ['professional_tax', "Professional Tax", true],
+                ['professional_tax', branchState
+                  ? PT_BY_STATE[branchState]
+                    ? `Prof. Tax (${branchState})`
+                    : `Prof. Tax — Not applicable in ${branchState}`
+                  : 'Prof. Tax (state unknown)', true],
               ] as [string, string, boolean][]).map(([field, label, auto]) => (
                 <div key={field} className="flex items-center gap-2">
                   <Label className="text-xs w-36 shrink-0">{label}</Label>

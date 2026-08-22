@@ -123,6 +123,7 @@ export default function PayrollHeadSalaryReviewDetail() {
   }, []);
 
   const employeeBranch = journey?.employee?.branch_name as string | undefined;
+  const employeeState  = journey?.employee?.branch_state as string | undefined;
   useEffect(() => {
     if (!employeeBranch) { setPackages([]); return; }
     hrmsApi.get<{ data: any[] }>(`/api/payroll-masters/packages?branch=${encodeURIComponent(employeeBranch)}`)
@@ -620,6 +621,7 @@ export default function PayrollHeadSalaryReviewDetail() {
         open={pkgBuilderOpen}
         onOpenChange={setPkgBuilderOpen}
         defaultBranch={employeeBranch ?? ''}
+        branchState={employeeState}
         onPackageCreated={(pkgId) => void onPackageBuilt(pkgId)}
       />
 

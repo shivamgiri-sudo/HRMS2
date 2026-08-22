@@ -40,6 +40,17 @@ payrollMastersRouter.delete('/slabs/:id', requireRole('admin'), h(async (req, re
   res.json({ success: true });
 }));
 
+// ── BRANCH STATES — branch_name → state, for Professional Tax calculation ────
+// Consumed by the salary package builder: PT varies by state (e.g. Delhi=₹0,
+// Gujarat=₹200, ESIC-exempt states). Never returns PII — only branch metadata.
+payrollMastersRouter.get('/branch-states', h(async (req, res) => {
+  const { db } = await import('../../db/mysql.js');
+  const [rows] = await (db as any).execute(
+    `SELECT branch_name, state FROM branch_master WHERE active_status = 1 AND state IS NOT NULL ORDER BY branch_name`
+  );
+  res.json({ success: true, data: rows });
+}));
+
 // ── SALARY BANDS ──────────────────────────────────────────────────────────────
 payrollMastersRouter.get('/bands', h(async (req, res) => {
   const includeInactive = String(req.query.include_inactive ?? '') === '1';

@@ -63,6 +63,17 @@ export default function NativeSalaryPackageAdmin() {
   // Distinct branches from cost centres
   const branches = [...new Set(costCentres.map(c => c.branch_name))].sort();
 
+  // Branch → state mapping for Professional Tax (loaded once)
+  const [branchStates, setBranchStates] = useState<Record<string, string>>({});
+  useEffect(() => {
+    hrmsApi.get<any>('/api/payroll-masters/branch-states')
+      .then((r: any) => {
+        const map: Record<string, string> = {};
+        for (const row of (r?.data ?? [])) if (row.branch_name && row.state) map[row.branch_name] = row.state;
+        setBranchStates(map);
+      }).catch(() => {});
+  }, []);
+
   // ── Load ───────────────────────────────────────────────────────────────────
   const loadBands = useCallback(async () => {
     const r = await hrmsApi.get<any>('/api/payroll-masters/bands');
@@ -91,7 +102,11 @@ export default function NativeSalaryPackageAdmin() {
   // Auto-calculate whenever driver input or toggles change (only when dialog is open)
   useEffect(() => {
     if (!editPkg) return;
-    const opts: PkgCalcOptions = { includePf, includeEsic, basicPct, hraPct };
+    const selectedBranch = editPkg?.branch_name ?? pkgBranch;
+    const opts: PkgCalcOptions = {
+      includePf, includeEsic, basicPct, hraPct,
+      state: selectedBranch ? branchStates[selectedBranch] : undefined,
+    };
     if (calcMode === 'ctc') {
       const v = parseFloat(ctcInput);
       if (!v || v <= 0) return;
@@ -457,9 +472,14 @@ export default function NativeSalaryPackageAdmin() {
                       <div className="space-y-2">
                         <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b pb-1">Deductions &amp; Employer Costs</p>
                         {([
-                          ['epf_employee', 'PF (Employee)', true],
-                          ['esic_employee', 'ESIC (Employee)', true],
-                          ['professional_tax', 'Professional Tax', true],
+                          ['epf_employee', 'PF (Employee 12%)', true],
+                          ['esic_employee', 'ESIC (Employee 0.75%)', true],
+                          ['professional_tax', (() => {
+                            const st = branchStates[editPkg?.branch_name ?? ''];
+                            if (!st) return 'Prof. Tax (state unknown)';
+                            const { PT_BY_STATE } = require('@/lib/salaryCalculator');
+                            return PT_BY_STATE[st] ? `Prof. Tax — ${st}` : `Prof. Tax — N/A (${st})`;
+                          })(), true],
                         ] as [string, string, boolean][]).map(([field, label, computed]) => (
                           <div key={field} className="flex items-center gap-2">
                             <Label className="text-xs w-36 shrink-0">{label}</Label>

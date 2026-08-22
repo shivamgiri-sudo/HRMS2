@@ -151,7 +151,7 @@ export async function getEmployeeJourney(employeeId: string) {
     history,
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
-      `SELECT e.*, b.branch_name, dm.designation_name FROM employees e
+      `SELECT e.*, b.branch_name, b.state AS branch_state, dm.designation_name FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN designation_master dm ON dm.id = e.designation_id
         WHERE e.id = ? LIMIT 1`,
