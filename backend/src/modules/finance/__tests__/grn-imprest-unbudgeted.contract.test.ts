@@ -37,6 +37,11 @@ function readRepo(relativePath: string) {
  *      so one GRN can mix cost centres with and without an approved budget line under the same
  *      Head/Sub-head — the raiser is never blocked, and every unbudgeted row is flagged
  *      (grn_cost_allocation.is_unbudgeted) for later reporting on what was never budgeted.
+ *   5. Group C step 2a (2026-08-22): saveAllocations() stopped letting an unbudgeted row through
+ *      with no capacity check at all. It is now checked, like every budgeted row, against budget
+ *      aggregated across the whole branch for its head+sub-head (budget-headroom-gate.service.ts)
+ *      and funded from a REAL line found there — is_unbudgeted still records that the raiser
+ *      picked no line themselves, but budget_line_id is no longer NULL waiting to be linked.
  */
 describe("unbudgeted Imprest GRN — raise, save, submit, approve", () => {
   it("the form drives Imprest through costCentreSplits, never the old single-line cascade", () => {
@@ -93,16 +98,29 @@ describe("unbudgeted Imprest GRN — raise, save, submit, approve", () => {
     expect(service).toContain("cost centre not found or inactive");
     expect(service).toContain("cost centre does not belong to this branch");
 
-    // The synthetic line borrows head/sub_head/gst_type from a budgeted row in the same save
-    // when one exists, and only falls back to the GRN header's own columns (stale/blank for a
-    // GRN that started out mixed) when every row in this save is unbudgeted.
+    // The unbudgeted row's own head/sub_head/gst_type (used to derive the money it needs funded,
+    // and to look up branch-wide coverage for that head+sub-head) borrows from a budgeted row in
+    // the same save when one exists, and only falls back to the GRN header's own columns (stale/
+    // blank for a GRN that started out mixed) when every row in this save is unbudgeted.
+    //
+    // Updated for Group C step 2a (2026-08-22, branch-aggregate headroom gate): this used to be
+    // one field of a synthetic `line` object that was ALSO the funding line (no capacity check at
+    // all). It is now just a local used to price the row's target amount — the real funding
+    // line(s) are resolved separately via getHeadSubHeadCoverage/allocateAcrossLines below, so the
+    // exact source shape changed even though the borrowing rule itself did not.
     expect(service).toContain('unit: "amount"');
     expect(service).toContain(
-      "head: referenceLine ? String(referenceLine.head) : String(grn.head || \"Unbudgeted\"),"
+      "head = referenceLine ? String(referenceLine.head) : String(grn.head || \"Unbudgeted\");"
     );
 
-    // is_unbudgeted is written per allocation row, unchanged from before — the NULL
-    // budget_line_id that identifies it is overwritten if a budget line is later linked.
+    // is_unbudgeted is written per allocation row, unchanged from before.
+    //
+    // Updated for Group C step 2a: it is NO LONGER true that budget_line_id starts NULL for an
+    // unbudgeted row and gets overwritten only if Finance Head later links one — the headroom gate
+    // now supplies a real funding line (drawn from the branch aggregate) at save time, so
+    // budget_line_id is real from the start. is_unbudgeted is the only surviving signal that the
+    // raiser themselves picked no line; it must stay independent of budget_line_id for that
+    // reason, not because that column changes later.
     expect(service).toContain("pnl_cost_amount, lifecycle_status, remarks, is_unbudgeted, created_by)");
     expect(service).toContain("item.isUnbudgeted ? 1 : 0, actorUserId,");
 

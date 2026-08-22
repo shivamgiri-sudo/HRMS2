@@ -14,6 +14,11 @@ import {
 } from "../process-pnl/branch-budget.service.js";
 import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
 import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
+import {
+  getHeadSubHeadCoverage,
+  allocateAcrossLines,
+} from "../process-pnl/budget-headroom-gate.service.js";
+import { refuse } from "../process-pnl/finance-error.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
 import {
@@ -154,6 +159,22 @@ function roundMoney(value: number) {
 
 function roundQuantity(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 10_000) / 10_000;
+}
+
+/**
+ * Reverses `calculateBudgetLine`'s gross-from-quoted arithmetic (branch-budget.service.ts) so a
+ * draw against a specific funding line reproduces exactly `grossTarget` as that draw's own
+ * `grossAmount`, given the funding line's own tax profile.
+ *
+ * Mirrors calculateBudgetLine's own branches: gross === quoted for "inclusive", "exempt"/
+ * "non_gst", or any treatment with gstRate === 0 — only "exclusive"/"reverse_charge" with
+ * gstRate > 0 adds tax on top of the quoted figure, so only that case needs dividing back out.
+ */
+function requiredQuotedAmount(grossTarget: number, taxTreatment: string, gstRate: number): number {
+  if (["exclusive", "reverse_charge"].includes(taxTreatment) && Number(gstRate) > 0) {
+    return grossTarget / (1 + Number(gstRate) / 100);
+  }
+  return grossTarget;
 }
 
 function safeJson(value: unknown) {
@@ -774,12 +795,37 @@ export const grnSmartService = {
       }
       const referenceLine = resolvedLines.find(Boolean) ?? null;
 
+      // Group C, step 2a: branch-wide headroom gate (2026-08-22). Every allocation row — budgeted
+      // or unbudgeted alike — is now checked against budget aggregated across every line in the
+      // branch sharing that row's head+sub-head (budget-headroom-gate.service.ts), not just the
+      // one line the raiser happened to pick. A row whose own line is short can spill onto a
+      // sibling line (direct or pooled) automatically; a row that cannot be covered at all across
+      // the whole branch aggregate is refused rather than silently accepted (the previous
+      // behaviour for an unbudgeted row, which had no capacity check whatsoever) or checked only
+      // against its own single line's headroom (the previous behaviour for a budgeted row).
+      const period = consumptionPeriodOf(grn);
       const prepared: any[] = [];
-      const groupedUsage = new Map<string, { amount: number; quantity: number; line: any }>();
+      // Running totals of what THIS save has already drawn against each real line, keyed by
+      // line id. getHeadSubHeadCoverage re-reads finance_budget_line fresh for every row, which
+      // by itself would let two rows in the SAME GRN that share a head+sub-head each draw against
+      // the same aggregate as if the other had not happened — a real, mainstream case (splitting
+      // one invoice across cost centres under one expense category), not an edge case. These maps
+      // are consulted before each row's allocateAcrossLines call and updated after every draw, so
+      // the second row of such a pair sees the first row's draws already subtracted out.
+      const drawnAmountByLineId = new Map<string, number>();
+      const drawnQuantityByLineId = new Map<string, number>();
       for (let index = 0; index < input.allocations.length; index += 1) {
         const allocation = input.allocations[index];
+        const isUnbudgetedRow = !allocation?.budgetLineId;
 
-        if (!allocation?.budgetLineId) {
+        let head: string;
+        let subHead: string | null;
+        let originalCostCentreId: string;
+        let originalCostCentreName: string | null;
+        let grossTarget: number;
+        let preferredLineId: string | null;
+
+        if (isUnbudgetedRow) {
           if (!allocation?.costCentreId) {
             throw new Error(`Allocation ${index + 1}: cost centre is required for an unbudgeted allocation`);
           }
@@ -805,97 +851,178 @@ export const grnSmartService = {
           if (!Number.isFinite(unitRate) || unitRate < 0) {
             throw new Error(`Allocation ${index + 1}: unit rate is invalid`);
           }
-          // Synthetic line, the same convention saveComponentAllocations() already uses for an
-          // unbudgeted vendor split: unit "amount", no tax treatment since there is no line to
-          // carry one — an Imprest allocation has no invoice-component GST breakdown to apply.
           // head/sub_head/gst_type borrow from referenceLine (a budgeted row in this same save,
           // if any) rather than the GRN header, which is only populated at create time for a
-          // WHOLLY unbudgeted GRN and can be stale/blank for one that started out mixed.
-          const line: any = {
-            id: null,
-            budget_id: null,
-            head: referenceLine ? String(referenceLine.head) : String(grn.head || "Unbudgeted"),
-            sub_head: referenceLine ? String(referenceLine.sub_head || "") : String(grn.sub_head || ""),
-            item_name: referenceLine ? String(referenceLine.head) : String(grn.head || "Unbudgeted Expense"),
-            cost_centre_id: cc.id,
-            cost_centre_name: cc.cost_centre_name,
-            process_id: null,
-            unit: "amount",
-            unit_rate: unitRate,
-            tax_treatment: "exclusive",
-            gst_rate: 0,
-            gst_type: referenceLine ? String(referenceLine.gst_type) : "cgst_sgst",
-            recoverable_tax_pct: 100,
-            justification: "Unbudgeted expense",
-          };
-          const amounts = calculateBudgetLine({
-            head: line.head,
-            subHead: line.sub_head,
-            itemName: line.item_name,
+          // WHOLLY unbudgeted GRN and can be stale/blank for one that started out mixed. This
+          // "target" synthetic line is only used to derive grossTarget (the money this row needs
+          // funded) — unlike before, it is never itself the funding line.
+          head = referenceLine ? String(referenceLine.head) : String(grn.head || "Unbudgeted");
+          subHead = referenceLine ? String(referenceLine.sub_head || "") : String(grn.sub_head || "");
+          const itemName = referenceLine ? String(referenceLine.head) : String(grn.head || "Unbudgeted Expense");
+          const gstType = referenceLine ? String(referenceLine.gst_type) : "cgst_sgst";
+          const targetAmounts = calculateBudgetLine({
+            head,
+            subHead,
+            itemName,
             quantity,
-            unit: line.unit,
+            unit: "amount",
             unitRate,
-            taxTreatment: line.tax_treatment as BudgetTaxTreatment,
-            gstRate: line.gst_rate,
-            gstType: line.gst_type as BudgetGstType,
-            recoverableTaxPct: line.recoverable_tax_pct,
-            justification: line.justification,
+            taxTreatment: "exclusive" as BudgetTaxTreatment,
+            gstRate: 0,
+            gstType: gstType as BudgetGstType,
+            recoverableTaxPct: 100,
+            justification: "Unbudgeted expense",
           });
-          // No budget capacity to check, and nothing to add to groupedUsage below — an
-          // unbudgeted row has no line to hold a running total against.
-          prepared.push({ line, quantity, unitRate, amounts, remarks: allocation.remarks?.trim() || null, isUnbudgeted: true });
-          continue;
+          grossTarget = targetAmounts.grossAmount;
+          originalCostCentreId = cc.id;
+          originalCostCentreName = cc.cost_centre_name;
+          preferredLineId = null;
+        } else {
+          // Already locked and period-checked in the pre-pass above.
+          const line = resolvedLines[index]!;
+          const quantity = Number(allocation.quantity);
+          if (!Number.isFinite(quantity) || quantity <= 0) {
+            throw new Error(`Allocation ${index + 1}: quantity must be greater than zero`);
+          }
+          const unitRate = allocation.unitRate == null ? Number(line.unit_rate) : Number(allocation.unitRate);
+          if (!Number.isFinite(unitRate) || unitRate < 0) {
+            throw new Error(`Allocation ${index + 1}: unit rate is invalid`);
+          }
+          if (unitRate > Number(line.unit_rate) + 0.0001) {
+            throw new Error(`Allocation ${index + 1}: unit rate exceeds the approved rate`);
+          }
+          // Priced against the ORIGINALLY SELECTED line's own tax profile purely to derive the
+          // money target (grossTarget) this row needs funded — which line(s) actually end up
+          // funding it, and their own tax profile, is decided below by allocateAcrossLines.
+          const targetAmounts = calculateBudgetLine({
+            head: String(line.head),
+            subHead: line.sub_head,
+            itemName: String(line.item_name),
+            quantity,
+            unit: String(line.unit),
+            unitRate,
+            taxTreatment: String(line.tax_treatment) as BudgetTaxTreatment,
+            gstRate: Number(line.gst_rate),
+            gstType: String(line.gst_type) as BudgetGstType,
+            recoverableTaxPct: Number(line.recoverable_tax_pct),
+            justification: String(line.justification || "Approved budget allocation"),
+          });
+          grossTarget = targetAmounts.grossAmount;
+          head = String(line.head);
+          subHead = line.sub_head;
+          originalCostCentreId = line.cost_centre_id;
+          originalCostCentreName = line.cost_centre_name;
+          preferredLineId = String(allocation.budgetLineId);
         }
 
-        // Already locked and period-checked in the pre-pass above.
-        const line = resolvedLines[index]!;
-        const quantity = Number(allocation.quantity);
-        if (!Number.isFinite(quantity) || quantity <= 0) {
-          throw new Error(`Allocation ${index + 1}: quantity must be greater than zero`);
+        const coverage = await getHeadSubHeadCoverage(String(grn.branch_id), period, head, subHead);
+        if (!coverage.headerActive) {
+          throw refuse(
+            409,
+            "NO_BRANCH_BUDGET",
+            `No approved budget exists for this branch for ${period}. A GRN cannot be raised until one is approved.`
+          );
         }
-        const unitRate = allocation.unitRate == null ? Number(line.unit_rate) : Number(allocation.unitRate);
-        if (!Number.isFinite(unitRate) || unitRate < 0) {
-          throw new Error(`Allocation ${index + 1}: unit rate is invalid`);
+        if (!coverage.lines.length) {
+          throw refuse(
+            409,
+            "NO_BUDGET_FOR_HEAD",
+            `${head}/${subHead || ""} has no budget anywhere in this branch. Raise a budget addition request before submitting this GRN.`
+          );
         }
-        if (unitRate > Number(line.unit_rate) + 0.0001) {
-          throw new Error(`Allocation ${index + 1}: unit rate exceeds the approved rate`);
-        }
-        const amounts = calculateBudgetLine({
-          head: String(line.head),
-          subHead: line.sub_head,
-          itemName: String(line.item_name),
-          quantity,
-          unit: String(line.unit),
-          unitRate,
-          taxTreatment: String(line.tax_treatment) as BudgetTaxTreatment,
-          gstRate: Number(line.gst_rate),
-          gstType: String(line.gst_type) as BudgetGstType,
-          recoverableTaxPct: Number(line.recoverable_tax_pct),
-          justification: String(line.justification || "Approved budget allocation"),
+
+        // Net out whatever earlier rows in this same save already drew against each of these
+        // lines before handing them to the allocator — see drawnAmountByLineId's comment above.
+        const netLines = coverage.lines.map((candidate) => {
+          const alreadyDrawn = drawnAmountByLineId.get(String(candidate.id)) ?? 0;
+          return alreadyDrawn > 0
+            ? { ...candidate, available_gross_amount: Math.max(0, Number(candidate.available_gross_amount) - alreadyDrawn) }
+            : candidate;
         });
-        const usage = groupedUsage.get(String(line.id)) ?? { amount: 0, quantity: 0, line };
-        usage.amount = roundMoney(usage.amount + amounts.grossAmount);
-        usage.quantity = roundQuantity(usage.quantity + quantity);
-        groupedUsage.set(String(line.id), usage);
-        prepared.push({ line, quantity, unitRate, amounts, remarks: allocation.remarks?.trim() || null });
-      }
 
-      for (const usage of groupedUsage.values()) {
-        const availableAmount = roundMoney(
-          Number(usage.line.gross_amount || 0)
-          - Number(usage.line.reserved_amount || 0)
-          - Number(usage.line.consumed_amount || 0)
-        );
-        const availableQuantity = roundQuantity(
-          Number(usage.line.quantity || 0)
-          - Number(usage.line.reserved_quantity || 0)
-          - Number(usage.line.consumed_quantity || 0)
-        );
-        if (usage.amount > availableAmount + 0.01) {
-          throw new Error(`${usage.line.item_name}: split allocation exceeds available budget by ${(usage.amount - availableAmount).toFixed(2)}`);
-        }
-        if (usage.quantity > availableQuantity + 0.0001) {
-          throw new Error(`${usage.line.item_name}: split allocation exceeds available quantity by ${roundQuantity(usage.quantity - availableQuantity)}`);
+        // Branch-wide money split. Can throw HEADROOM_EXCEEDED if the branch aggregate (not just
+        // the one line the raiser picked) cannot cover this row — let it propagate.
+        const draws = allocateAcrossLines(preferredLineId, grossTarget, netLines);
+        const baseRemarks = allocation.remarks?.trim() || null;
+
+        for (let drawIndex = 0; drawIndex < draws.length; drawIndex += 1) {
+          const draw = draws[drawIndex];
+          const fundingLine = coverage.lines.find((candidate) => String(candidate.id) === String(draw.lineId));
+          if (!fundingLine) {
+            throw new Error(`Allocation ${index + 1}: internal error resolving funding line ${draw.lineId}`);
+          }
+
+          // Reproduce exactly draw.amount as this draw's own grossAmount, from the FUNDING line's
+          // own tax profile (which can differ from the originally selected line's).
+          const quotedAmount = requiredQuotedAmount(
+            draw.amount,
+            String(fundingLine.tax_treatment),
+            Number(fundingLine.gst_rate)
+          );
+          const fundingUnitRate = Number(fundingLine.unit_rate);
+          const drawQuantity = fundingUnitRate > 0 ? roundQuantity(quotedAmount / fundingUnitRate) : 0;
+
+          // Quantity headroom is a SEPARATE check from the money split above. allocateAcrossLines
+          // only ever balances money (see its doc comment) — it has no visibility into physical
+          // unit quantity, so a draw that clears the money check can still ask for more of this
+          // specific line's own available_quantity than remains. This is a hard stop for the
+          // whole save: deliberately NOT re-run against the allocator excluding this line, since
+          // joint amount+quantity bin-packing across the branch is out of scope here. Netted
+          // against this same save's own earlier draws against this line (drawnQuantityByLineId),
+          // for the same reason the money side is netted above.
+          const alreadyDrawnQuantity = drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0;
+          const availableQuantity = Number(fundingLine.available_quantity) - alreadyDrawnQuantity;
+          if (drawQuantity > availableQuantity + 0.0001) {
+            const shortfall = roundQuantity(drawQuantity - availableQuantity);
+            throw Object.assign(
+              refuse(
+                409,
+                "HEADROOM_EXCEEDED",
+                `${fundingLine.item_name}: split allocation exceeds available quantity by ${shortfall} ${fundingLine.unit}`
+              ),
+              { shortfall }
+            );
+          }
+
+          const amounts = calculateBudgetLine({
+            head: String(fundingLine.head),
+            subHead: fundingLine.sub_head,
+            itemName: String(fundingLine.item_name),
+            quantity: drawQuantity,
+            unit: String(fundingLine.unit),
+            unitRate: fundingUnitRate,
+            taxTreatment: String(fundingLine.tax_treatment) as BudgetTaxTreatment,
+            gstRate: Number(fundingLine.gst_rate),
+            gstType: String(fundingLine.gst_type) as BudgetGstType,
+            recoverableTaxPct: Number(fundingLine.recoverable_tax_pct),
+            justification: String(fundingLine.justification || "Approved budget allocation"),
+          });
+
+          // Spillover audit trail: only the first/primary draw for a row keeps the raiser's own
+          // remarks verbatim. Every draw beyond it exists only because the row's own line came up
+          // short, so it gets a note explaining why it is here.
+          const remarks = drawIndex === 0
+            ? baseRemarks
+            : `Auto-allocated from branch aggregate headroom for ${head}/${subHead || ""} — original line's own share was insufficient`;
+
+          prepared.push({
+            // Funding source (budget_id/id/tax profile) is fundingLine's own; cost-centre
+            // attribution is overridden to the ORIGINAL allocation row's own cost centre — the
+            // GRN's cost-centre attribution reflects who incurred the spend, not which budget
+            // pool paid for it.
+            line: { ...fundingLine, cost_centre_id: originalCostCentreId, cost_centre_name: originalCostCentreName },
+            quantity: drawQuantity,
+            unitRate: fundingUnitRate,
+            amounts,
+            remarks,
+            // Inherited from the ORIGINAL allocation row, regardless of which line ended up
+            // funding it — a budgeted row that merely spilled onto a sibling line is not
+            // "unbudgeted"; only a row that started with no budgetLineId at all is.
+            isUnbudgeted: isUnbudgetedRow,
+          });
+
+          drawnAmountByLineId.set(String(fundingLine.id), (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + draw.amount);
+          drawnQuantityByLineId.set(String(fundingLine.id), (drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0) + drawQuantity);
         }
       }
 
@@ -916,10 +1043,19 @@ export const grnSmartService = {
           ? Math.round((item.amounts.grossAmount / totalGross) * 100 * 1_000_000) / 1_000_000
           : 0;
         await connection.execute(
-          // is_unbudgeted written per row, same reason saveComponentAllocations() already does
-          // this for the vendor path: the NULL budget_line_id that identifies an unbudgeted split
-          // is overwritten the moment Finance Head links a budget line during approval, so the
-          // flag has to survive independently of that column.
+          // is_unbudgeted written per row. IMPORTANT — this differs from saveComponentAllocations()
+          // (untouched, vendor-only path): as of the Group C step 2a headroom gate (2026-08-22),
+          // an unbudgeted row saved HERE always gets a REAL budget_id/budget_line_id, drawn from
+          // the branch aggregate for its head+sub-head (see getHeadSubHeadCoverage/
+          // allocateAcrossLines above) — it is no longer persisted with a NULL budget_line_id
+          // waiting to be linked. is_unbudgeted is the only surviving signal that the raiser
+          // themselves picked no line; do not assume NULL budget_line_id identifies such a row any
+          // more for allocations saved through this method. See flagged concern in the step-2a
+          // report about linkUnbudgetedBudgetLines() (Finance Head's manual "link a budget line"
+          // action, which required budget_line_id IS NULL): it becomes unreachable for any
+          // allocation saved through this method after this change, since hasBudgetLine() now
+          // returns true immediately. It remains reachable only for legacy rows already in the
+          // database with a NULL budget_line_id from before this deploy.
           `INSERT INTO grn_cost_allocation
            (id, grn_request_id, sequence_no, budget_id, budget_line_id, branch_id,
             process_id, cost_centre_id, cost_class, allocation_percentage,
