@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 991,
-  "columnCount": 14116,
+  "tableCount": 1003,
+  "columnCount": 14318,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -1939,6 +1939,25 @@
       "updated_by",
       "updated_at"
     ],
+    "attendance_legacy_snapshot": [
+      "id",
+      "source_table",
+      "source_id",
+      "bio_code",
+      "employee_code",
+      "cost_center",
+      "employee_name",
+      "branch_name",
+      "in_time",
+      "out_time",
+      "status",
+      "old_status",
+      "attend_date",
+      "emp_status",
+      "import_date",
+      "pending_status",
+      "synced_at"
+    ],
     "attendance_manual_override": [
       "id",
       "employee_id",
@@ -2345,14 +2364,40 @@
       "process_name",
       "revenue_date",
       "actual_revenue",
-      "synced_at"
+      "synced_at",
+      "branch",
+      "finance_year",
+      "finance_month",
+      "finance_month1",
+      "insert_date",
+      "cost_center_id",
+      "header_id",
+      "cost_center_month_det",
+      "cost_center_month_det_rate",
+      "forecast",
+      "mtd",
+      "db_bill_created_at",
+      "db_bill_created_by"
     ],
     "bill_revenue_target_snapshot": [
       "source_id",
       "process_name",
       "target_month",
       "target_revenue",
-      "synced_at"
+      "synced_at",
+      "branch",
+      "finance_year",
+      "finance_month",
+      "finance_month1",
+      "insert_date",
+      "cost_center_id",
+      "header_id",
+      "cost_center_month_det",
+      "cost_center_month_det_rate",
+      "forecast",
+      "mtd",
+      "db_bill_created_at",
+      "db_bill_created_by"
     ],
     "billing_credit_note_line_snapshot": [
       "bill_source_id",
@@ -3658,6 +3703,19 @@
       "created_at",
       "updated_at"
     ],
+    "change_doj_snapshot": [
+      "id",
+      "branch_name",
+      "employee_code",
+      "employee_name",
+      "old_doj",
+      "new_doj",
+      "remarks",
+      "approve_status",
+      "approve_date",
+      "created_at",
+      "synced_at"
+    ],
     "chat_funnel_detail": [
       "id",
       "conversion_funnel_event_id",
@@ -4885,6 +4943,22 @@
       "retry_count",
       "created_at"
     ],
+    "doc_legacy_snapshot": [
+      "id",
+      "offer_no",
+      "interview_id",
+      "doc_type",
+      "doc_name",
+      "filename",
+      "file_no",
+      "page_no",
+      "box_no",
+      "doc_status",
+      "doc_status_date",
+      "doc_status_remark",
+      "save_date",
+      "synced_at"
+    ],
     "document_access_log": [
       "id",
       "vault_item_id",
@@ -6061,6 +6135,19 @@
       "accuracy",
       "captured_at"
     ],
+    "employee_move_snapshot": [
+      "id",
+      "employee_code",
+      "from_branch",
+      "to_branch",
+      "from_cost_center",
+      "to_cost_center",
+      "move_month",
+      "reason",
+      "move_by",
+      "move_date",
+      "synced_at"
+    ],
     "employee_nominee": [
       "id",
       "employee_id",
@@ -7140,6 +7227,18 @@
       "created_at",
       "updated_at"
     ],
+    "field_attendance_snapshot": [
+      "id",
+      "employee_code",
+      "employee_name",
+      "branch_name",
+      "cost_center",
+      "attend_date",
+      "status",
+      "old_status",
+      "created_at",
+      "synced_at"
+    ],
     "finance_action_audit_log": [
       "id",
       "action_type",
@@ -7400,6 +7499,11 @@
       "requested_quantity",
       "reason",
       "is_direct",
+      "is_new_line",
+      "head",
+      "sub_head",
+      "unit",
+      "unit_rate",
       "status",
       "branch_head_reviewed_by",
       "branch_head_reviewed_at",
@@ -7411,6 +7515,14 @@
       "applied_at",
       "created_at",
       "updated_at"
+    ],
+    "finance_budget_topup_request_split": [
+      "id",
+      "topup_request_id",
+      "cost_centre_id",
+      "amount",
+      "quantity",
+      "created_at"
     ],
     "finance_budget_transfer": [
       "id",
@@ -8802,6 +8914,16 @@
       "remarks",
       "approve_status",
       "upload_type",
+      "import_date",
+      "synced_at"
+    ],
+    "incometax_legacy_snapshot": [
+      "id",
+      "employee_code",
+      "employee_name",
+      "branch_name",
+      "tax_month",
+      "income_tax",
       "import_date",
       "synced_at"
     ],
@@ -10307,6 +10429,20 @@
       "updated_at",
       "closed_at"
     ],
+    "manager_raised_request": [
+      "id",
+      "request_type",
+      "employee_id",
+      "raised_by_user_id",
+      "raised_by_employee_id",
+      "raised_by_role",
+      "payload",
+      "consent_status",
+      "consent_decided_at",
+      "decline_reason",
+      "resulting_request_id",
+      "created_at"
+    ],
     "manpower_requisition": [
       "id",
       "req_code",
@@ -10431,6 +10567,18 @@
       "monthly_rate",
       "effective_from",
       "is_active"
+    ],
+    "mira_action_audit_log": [
+      "id",
+      "user_id",
+      "employee_id",
+      "action_type",
+      "status",
+      "payload",
+      "guard_reasons",
+      "leave_request_id",
+      "error_message",
+      "created_at"
     ],
     "mira_fix_draft": [
       "id",
@@ -12328,6 +12476,68 @@
       "remark",
       "created_at"
     ],
+    "qual_attendance_snapshot": [
+      "id",
+      "employee_code",
+      "present",
+      "wo",
+      "holiday",
+      "half_day",
+      "compoff",
+      "el",
+      "cl",
+      "sl",
+      "arrer_days",
+      "ot",
+      "sal_month",
+      "sal_year",
+      "created_at",
+      "synced_at"
+    ],
+    "qual_incentive_snapshot": [
+      "id",
+      "employee_code",
+      "sal_year",
+      "sal_month",
+      "amount",
+      "remarks",
+      "import_date",
+      "synced_at"
+    ],
+    "qual_leave_snapshot": [
+      "id",
+      "employee_code",
+      "pl",
+      "cl",
+      "sl",
+      "leave_status",
+      "leave_month",
+      "leave_year",
+      "synced_at"
+    ],
+    "qual_salary_snapshot": [
+      "id",
+      "qual_emp_code",
+      "employee_code",
+      "employee_name",
+      "designation",
+      "doj",
+      "basic",
+      "hra",
+      "conv",
+      "other_allowance",
+      "gross",
+      "paid_days",
+      "total_gross",
+      "pf",
+      "tds",
+      "esi",
+      "net_pay",
+      "sal_month",
+      "sal_year",
+      "save_date",
+      "synced_at"
+    ],
     "quick_poll": [
       "id",
       "question",
@@ -12988,6 +13198,32 @@
       "active_status",
       "created_at"
     ],
+    "salary_dispute": [
+      "id",
+      "employee_id",
+      "employee_code",
+      "run_month",
+      "dispute_type",
+      "affected_dates",
+      "description",
+      "status",
+      "manager_id",
+      "branch_id",
+      "process_id",
+      "wfm_corrective_json",
+      "differential_amount",
+      "differential_basis",
+      "wfm_remarks",
+      "wfm_reviewed_at",
+      "wfm_reviewed_by",
+      "payroll_head_remarks",
+      "payroll_head_reviewed_at",
+      "payroll_head_reviewed_by",
+      "arrear_run_month",
+      "arrear_line_id",
+      "created_at",
+      "updated_at"
+    ],
     "salary_employee_verification": [
       "id",
       "run_month",
@@ -13588,6 +13824,32 @@
       "active_status",
       "created_at",
       "updated_at"
+    ],
+    "salary_upload_snapshot": [
+      "data_id",
+      "employee_code",
+      "employee_name",
+      "cost_center",
+      "designation",
+      "branch",
+      "basic",
+      "hra",
+      "gross",
+      "net_salary",
+      "ctc",
+      "pf_employee",
+      "pf_employer",
+      "esic_employee",
+      "esic_employer",
+      "income_tax",
+      "professional_tax",
+      "working_days",
+      "earned_days",
+      "sal_date",
+      "finance_year",
+      "finance_month",
+      "salary_payment_mode",
+      "synced_at"
     ],
     "salary_verification_flag": [
       "id",
@@ -14630,6 +14892,26 @@
       "created_entity_id",
       "error_messages",
       "created_at"
+    ],
+    "upload_deduction_snapshot": [
+      "id",
+      "branch_name",
+      "cost_center",
+      "employee_code",
+      "employee_name",
+      "salary_month",
+      "mobile_deduction",
+      "short_collection",
+      "asset_recovery",
+      "insurance",
+      "professional_tax",
+      "leave_deduction",
+      "others_deduction",
+      "remarks",
+      "deduction_remarks",
+      "process_status",
+      "import_date",
+      "synced_at"
     ],
     "upload_template_master": [
       "id",
@@ -16044,62 +16326,6 @@
       "donor_value",
       "active_status",
       "backed_up_at"
-    ],
-    "manager_raised_request": [
-      "id",
-      "request_type",
-      "employee_id",
-      "raised_by_user_id",
-      "raised_by_employee_id",
-      "raised_by_role",
-      "payload",
-      "consent_status",
-      "consent_decided_at",
-      "decline_reason",
-      "resulting_request_id",
-      "created_at"
-    ],
-    "mira_action_audit_log": [
-      "id",
-      "user_id",
-      "employee_id",
-      "action_type",
-      "status",
-      "payload",
-      "guard_reasons",
-      "leave_request_id",
-      "error_message",
-      "created_at"
-    ],
-    "upload_deduction_snapshot": [
-      "id",
-      "branch_name",
-      "cost_center",
-      "employee_code",
-      "employee_name",
-      "salary_month",
-      "mobile_deduction",
-      "short_collection",
-      "asset_recovery",
-      "insurance",
-      "professional_tax",
-      "leave_deduction",
-      "others_deduction",
-      "remarks",
-      "deduction_remarks",
-      "process_status",
-      "import_date",
-      "synced_at"
-    ],
-    "qual_incentive_snapshot": [
-      "id",
-      "employee_code",
-      "sal_year",
-      "sal_month",
-      "amount",
-      "remarks",
-      "import_date",
-      "synced_at"
     ]
   }
 }
