@@ -929,7 +929,11 @@ export default function PnlMasterControlCenterPage() {
                     }
                     formSlot={
                       <div className="grid gap-4">
-                        <Field label="Process"><ProcessSelect value={revenueRuleForm.processId} onChange={(value) => setRevenueRuleForm((current) => ({ ...current, processId: value }))} processes={processes} /></Field>
+                        {/* RevenueRulePayload carries no branchId of its own (process-scoped only,
+                            branch is implicit via the process) — narrowed against the page-level
+                            branchFilter instead, per user decision, same as Cost-component/
+                            Classification's own-field pattern below but keyed off the page filter. */}
+                        <Field label="Process"><ProcessSelect value={revenueRuleForm.processId} onChange={(value) => setRevenueRuleForm((current) => ({ ...current, processId: value }))} processes={processes.filter((process) => !branchFilter || process.branch_id === branchFilter)} /></Field>
                         <Field label="Rule name"><Input className="rounded-xl" value={revenueRuleForm.ruleName} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, ruleName: event.target.value }))} placeholder="Primary seat billing" /></Field>
                         <div className="grid gap-4 sm:grid-cols-2">
                           <Field label="Billing model"><select className={selectClass} value={revenueRuleForm.billingModel} onChange={(event) => setRevenueRuleForm((current) => ({ ...current, billingModel: event.target.value }))}><option value="per_seat">Per seat</option><option value="per_fte">Per FTE</option><option value="per_productive_hour">Per productive hour</option><option value="per_login_hour">Per login hour</option><option value="per_talk_minute">Per talk minute</option><option value="per_transaction">Per transaction</option><option value="per_mandate">Per mandate</option><option value="per_case">Per case</option><option value="fixed_monthly">Fixed monthly</option><option value="outcome_based">Outcome based</option></select></Field>
@@ -1084,7 +1088,9 @@ export default function PnlMasterControlCenterPage() {
                       }
                       formSlot={
                         <div className="grid gap-4">
-                          <Field label="Process"><ProcessSelect value={deliveryForm.processId} onChange={(value) => setDeliveryForm((current) => ({ ...current, processId: value }))} processes={processes} /></Field>
+                          {/* DeliveryActualPayload carries no branchId of its own — narrowed
+                              against the page-level branchFilter instead, per user decision. */}
+                          <Field label="Process"><ProcessSelect value={deliveryForm.processId} onChange={(value) => setDeliveryForm((current) => ({ ...current, processId: value }))} processes={processes.filter((process) => !branchFilter || process.branch_id === branchFilter)} /></Field>
                           <div className="grid gap-4 sm:grid-cols-3">
                             <Field label="Period"><MonthYearPicker value={deliveryForm.periodCode} onChange={(v) => setDeliveryForm((current) => ({ ...current, periodCode: v }))} /></Field>
                             <Field label="Activity date"><Input className="rounded-xl" type="date" value={deliveryForm.activityDate ?? ""} onChange={(event) => setDeliveryForm((current) => ({ ...current, activityDate: event.target.value }))} /></Field>
@@ -1146,7 +1152,9 @@ export default function PnlMasterControlCenterPage() {
                       }
                       formSlot={
                         <div className="grid gap-4">
-                          <Field label="Process"><ProcessSelect value={revenueComponentForm.processId} onChange={(value) => setRevenueComponentForm((current) => ({ ...current, processId: value }))} processes={processes} /></Field>
+                          {/* RevenueComponentPayload carries no branchId of its own — narrowed
+                              against the page-level branchFilter instead, per user decision. */}
+                          <Field label="Process"><ProcessSelect value={revenueComponentForm.processId} onChange={(value) => setRevenueComponentForm((current) => ({ ...current, processId: value }))} processes={processes.filter((process) => !branchFilter || process.branch_id === branchFilter)} /></Field>
                           <div className="grid gap-4 sm:grid-cols-2">
                             <Field label="Component type"><select className={selectClass} value={revenueComponentForm.componentType} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, componentType: event.target.value }))}><option value="incentive">Incentive</option><option value="reward">Reward</option><option value="penalty">Penalty</option><option value="sla_deduction">SLA deduction</option><option value="credit_note">Credit note</option><option value="rate_true_up">Rate true-up</option><option value="fx_adjustment">FX adjustment</option><option value="ramp_up">Ramp-up</option><option value="training_revenue">Training revenue</option><option value="one_time">One-time</option><option value="other">Other</option></select></Field>
                             <Field label="Direction"><select className={selectClass} value={revenueComponentForm.direction} onChange={(event) => setRevenueComponentForm((current) => ({ ...current, direction: event.target.value as "increase" | "decrease" }))}><option value="increase">Increase revenue</option><option value="decrease">Decrease revenue</option></select></Field>

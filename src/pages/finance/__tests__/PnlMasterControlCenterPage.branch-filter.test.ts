@@ -12,11 +12,12 @@ import { readFileSync } from "node:fs";
  * covers the reward/penalty Cost Centre dropdown, which now passes branchFilter through to
  * useCostCentreList (that endpoint already supports branch_id server-side).
  *
- * NOT covered here — flagged in the task report rather than guessed at: the Revenue-rule,
- * Delivery, and Revenue-component forms/payloads (RevenueRulePayload, DeliveryActualPayload,
- * RevenueComponentPayload in useBpoPnlConfiguration.ts) carry no branchId field at all, so
- * there is no per-form value to filter their Process dropdowns against without inventing new
- * UI-only state that isn't part of this fix's scope.
+ * Revenue-rule, Delivery, and Revenue-component forms/payloads (RevenueRulePayload,
+ * DeliveryActualPayload, RevenueComponentPayload in useBpoPnlConfiguration.ts) carry no
+ * branchId field at all — flagged in the task report rather than guessed at, then resolved by
+ * explicit user decision: reuse the page-level `branchFilter` (which already exists and already
+ * scopes other queries on this page) to narrow these three forms' Process dropdowns too, rather
+ * than inventing a new per-form branch selector.
  *
  * No test file previously existed for this page (1500+ lines, no rendering harness set up for
  * it) — this is a source-text contract check, matching the established convention already used
@@ -52,5 +53,17 @@ describe("PnlMasterControlCenterPage — Process dropdowns scoped to their form'
     expect(SRC).toMatch(
       /useCostCentreList\(\{\s*status:\s*["']active["'],\s*branch_id:\s*branchFilter \|\| undefined\s*\}\)/
     );
+  });
+
+  it("Revenue-rule, Delivery, and Revenue-component forms all filter processes by the page-level branchFilter (none has a branchId field of its own)", () => {
+    const occurrences = (
+      SRC.match(/processes=\{processes\.filter\(\(process\) => !branchFilter \|\| process\.branch_id === branchFilter\)\}/g) ?? []
+    ).length;
+    expect(occurrences).toBe(3);
+    // Each must be wired to its own form's own onChange — not, say, three copies of the same
+    // dropdown. Confirms the three distinct setters this fix touched are all present.
+    expect(SRC).toContain("setRevenueRuleForm((current) => ({ ...current, processId: value }))");
+    expect(SRC).toContain("setDeliveryForm((current) => ({ ...current, processId: value }))");
+    expect(SRC).toContain("setRevenueComponentForm((current) => ({ ...current, processId: value }))");
   });
 });
