@@ -10,16 +10,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Separator } from '@/components/ui/separator';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
 import {
   Loader2, ArrowLeft, CheckCircle2, XCircle, FileText, ShieldCheck, Banknote,
   IndianRupee, FileSignature, AlertTriangle, RotateCcw, History as HistoryIcon,
-  User, Building2, Briefcase, CalendarDays, Plus, Package,
+  User, Building2, Briefcase, CalendarDays, Plus, Package, Calculator,
 } from 'lucide-react';
+import { PackageBuilderDialog } from '@/components/payroll/PackageBuilderDialog';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
@@ -96,14 +95,10 @@ export default function PayrollHeadSalaryReviewDetail() {
   const [reopenReason, setReopenReason] = useState('');
 
   // Package assignment
-  const [pkgTab, setPkgTab]                     = useState<'existing' | 'new'>('existing');
   const [packages, setPackages]                 = useState<any[]>([]);
   const [selectedPkgId, setSelectedPkgId]       = useState('');
   const [effectiveDate, setEffectiveDate]       = useState('');
-  // New package fields
-  const [newPkgName, setNewPkgName]             = useState('');
-  const [newPkgBand, setNewPkgBand]             = useState('');
-  const [newPkgCtc, setNewPkgCtc]               = useState('');
+  const [pkgBuilderOpen, setPkgBuilderOpen]     = useState(false);
 
   const load = useCallback(async () => {
     if (!employeeId) return;
@@ -159,12 +154,17 @@ export default function PayrollHeadSalaryReviewDetail() {
     }), 'Package assigned.'
   );
 
-  const assignNew = () => run(() =>
-    hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/create-and-assign`, {
-      name: newPkgName, band_code: newPkgBand, package_amount: Number(newPkgCtc) * 12,
-      effective_date: effectiveDate,
-    }), 'New package created and assigned.'
-  );
+  const onPackageBuilt = async (pkgId: string) => {
+    if (!effectiveDate) {
+      setError('Please set an effective date before building a package.');
+      return;
+    }
+    await run(() =>
+      hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/assign`, {
+        package_id: pkgId, effective_date: effectiveDate,
+      }), 'New package created and assigned.'
+    );
+  };
 
   const acceptPackage = () => run(() =>
     hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/accept`, {}),
@@ -364,75 +364,54 @@ export default function PayrollHeadSalaryReviewDetail() {
 
             {/* Assign controls — only for reviewer on pending */}
             {status === 'pending_review' && isReviewer && (
-              <div className="border-t border-slate-100 pt-4">
-                <Tabs value={pkgTab} onValueChange={(v) => setPkgTab(v as 'existing' | 'new')}>
-                  <TabsList className="mb-4">
-                    <TabsTrigger value="existing" className="cursor-pointer">
-                      <Package className="h-3.5 w-3.5 mr-1.5" />Select from Catalog
-                    </TabsTrigger>
-                    <TabsTrigger value="new" className="cursor-pointer">
-                      <Plus className="h-3.5 w-3.5 mr-1.5" />Create New Package
-                    </TabsTrigger>
-                  </TabsList>
+              <div className="border-t border-slate-100 pt-4 space-y-4">
+                {/* Effective date — required for both paths */}
+                <div className="flex items-end gap-3">
+                  <div>
+                    <Label className="text-xs mb-1.5 block">Effective Date <span className="text-rose-500">*</span></Label>
+                    <Input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} className="w-[160px]" />
+                  </div>
+                  <p className="text-xs text-slate-400 mb-2">Set this first — required for both catalog and new package.</p>
+                </div>
 
-                  <TabsContent value="existing" className="mt-0">
-                    <div className="grid grid-cols-[1fr,auto,auto] gap-3 items-end">
-                      <div>
-                        <Label className="text-xs mb-1.5 block">Salary Package</Label>
-                        <Select value={selectedPkgId} onValueChange={setSelectedPkgId}>
-                          <SelectTrigger><SelectValue placeholder="Choose a package…" /></SelectTrigger>
-                          <SelectContent>
-                            {packages.length === 0
-                              ? <SelectItem value="__none__" disabled>No packages for this branch</SelectItem>
-                              : packages.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>
-                                  {p.name ?? `Band ${p.band_code}`} · {inr(p.package_amount / 12)}/mo
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div>
-                        <Label className="text-xs mb-1.5 block">Effective Date</Label>
-                        <Input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} className="w-[160px]" />
-                      </div>
-                      <Button disabled={busy || !selectedPkgId || !effectiveDate} onClick={() => void assignExisting()} className="cursor-pointer">
-                        Assign
-                      </Button>
-                    </div>
-                  </TabsContent>
-
-                  <TabsContent value="new" className="mt-0">
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label className="text-xs mb-1.5 block">Package Name</Label>
-                        <Input placeholder="e.g. Agent – Band D – AHD" value={newPkgName} onChange={(e) => setNewPkgName(e.target.value)} />
-                      </div>
-                      <div>
-                        <Label className="text-xs mb-1.5 block">Band Code</Label>
-                        <Input placeholder="e.g. D" value={newPkgBand} onChange={(e) => setNewPkgBand(e.target.value)} className="w-24" />
-                      </div>
-                      <div>
-                        <Label className="text-xs mb-1.5 block">Monthly CTC (₹)</Label>
-                        <Input type="number" placeholder="e.g. 13617" value={newPkgCtc} onChange={(e) => setNewPkgCtc(e.target.value)} />
-                      </div>
-                      <div>
-                        <Label className="text-xs mb-1.5 block">Effective Date</Label>
-                        <Input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} />
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-2">
-                      Creates a new shared catalog entry for {employeeBranch ?? 'this branch'}, then assigns it.
-                    </p>
-                    <Button
-                      className="mt-3 cursor-pointer"
-                      disabled={busy || !newPkgName || !newPkgBand || !newPkgCtc || !effectiveDate}
-                      onClick={() => void assignNew()}
-                    >
-                      Create &amp; Assign Package
+                {/* Select from catalog */}
+                <div>
+                  <Label className="text-xs mb-1.5 block flex items-center gap-1.5">
+                    <Package className="h-3.5 w-3.5 text-slate-500" />Select from Catalog
+                  </Label>
+                  <div className="flex items-center gap-3">
+                    <Select value={selectedPkgId} onValueChange={setSelectedPkgId}>
+                      <SelectTrigger className="flex-1"><SelectValue placeholder="Choose a package…" /></SelectTrigger>
+                      <SelectContent>
+                        {packages.length === 0
+                          ? <SelectItem value="__none__" disabled>No packages for this branch yet</SelectItem>
+                          : packages.map((p) => (
+                            <SelectItem key={p.id} value={p.id}>
+                              {p.name ?? `Band ${p.band_code}`} · {inr(p.package_amount / 12)}/mo
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <Button disabled={busy || !selectedPkgId || !effectiveDate} onClick={() => void assignExisting()} className="cursor-pointer shrink-0">
+                      Assign
                     </Button>
-                  </TabsContent>
-                </Tabs>
+                  </div>
+                </div>
+
+                {/* Build new */}
+                <div className="flex items-center gap-3 pt-1 border-t border-slate-100">
+                  <p className="text-xs text-slate-500 flex-1">
+                    No suitable package in catalog? Build one with the salary calculator — PF/ESIC toggles, From CTC or From In-Hand, all statutory components included.
+                  </p>
+                  <Button
+                    variant="outline"
+                    disabled={busy || !effectiveDate}
+                    onClick={() => setPkgBuilderOpen(true)}
+                    className="cursor-pointer shrink-0 gap-2"
+                  >
+                    <Calculator className="h-4 w-4" />Build New Package
+                  </Button>
+                </div>
               </div>
             )}
 
@@ -635,6 +614,14 @@ export default function PayrollHeadSalaryReviewDetail() {
           </Card>
         )}
       </div>
+
+      {/* ── Package Builder Dialog ─────────────────────────────────────────────── */}
+      <PackageBuilderDialog
+        open={pkgBuilderOpen}
+        onOpenChange={setPkgBuilderOpen}
+        defaultBranch={employeeBranch ?? ''}
+        onPackageCreated={(pkgId) => void onPackageBuilt(pkgId)}
+      />
 
       {/* ── Reject Dialog ──────────────────────────────────────────────────────── */}
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
