@@ -57,9 +57,12 @@ export interface CeoOverviewPanelProps {
   /** Branch chosen on the page's own filter bar; empty means all branches. */
   branchId?: string;
   onBranchChange?: (branchId: string) => void;
+  /** Jumps the whole page to a different month — wired to the trend sparkline, so clicking an
+   *  earlier bar re-reads that month's real overview instead of just showing a tooltip. */
+  onPeriodChange?: (period: string) => void;
 }
 
-export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOverviewPanelProps) {
+export function CeoOverviewPanel({ period, branchId, onBranchChange, onPeriodChange }: CeoOverviewPanelProps) {
   /*
    * All three filters are lists. The question this panel answers is comparative — "Noida and
    * Noida-2 against Ahmedabad", "these four processes only" — and asking it one branch at a time
@@ -92,8 +95,19 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
   const narrowed = branchIds.length > 0 || processIds.length > 0 || costCentreIds.length > 0;
 
   const [drill, setDrill] = useState<{ descriptor: PnlDrillDescriptor; summaryCellValue: number } | null>(null);
-  const openDrill = (metric: "revenue" | "people" | "indirect", branchId: string, branchName: string, value: number) => {
-    setDrill({ descriptor: { metric, period, branchId, branchLabel: branchName }, summaryCellValue: value });
+  const openDrill = (metric: "revenue" | "people" | "indirect" | "budget", branchId: string, branchName: string, value: number) => {
+    setDrill({ descriptor: { metric, period, branchId, scopeLabel: branchName }, summaryCellValue: value });
+  };
+  /** The Focus panel is scoped to whichever single process or cost centre the filters narrowed
+   *  to (buildFocus's own precondition on the backend) — read from this panel's own filter
+   *  state rather than adding an id field to CeoFocus just for this. */
+  const openFocusDrill = (metric: "revenue" | "people" | "indirect", value: number) => {
+    if (!data?.focus) return;
+    if (data.focus.kind === "process" && processIds[0]) {
+      setDrill({ descriptor: { metric, period, processId: processIds[0], scopeLabel: data.focus.label }, summaryCellValue: value });
+    } else if (data.focus.kind === "cost_centre" && costCentreIds[0]) {
+      setDrill({ descriptor: { metric, period, costCentreId: costCentreIds[0], scopeLabel: data.focus.label }, summaryCellValue: value });
+    }
   };
 
   /** Company-average margin, used as the comparison baseline. Excludes the rows that would skew
@@ -224,12 +238,15 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
             {marginPct === null ? "—" : `${marginPct.toFixed(1)}%`}
           </div>
           <div className="mt-1 text-xs text-slate-500">{lakh(operatingProfit)} operating profit</div>
-          <div className="mt-2 flex h-7 items-end gap-1" aria-hidden="true">
+          <div className="mt-2 flex h-7 items-end gap-1">
             {data.trend.map((t) => (
-              <span
+              <button
                 key={t.period}
-                title={`${t.period}: ${t.marginPct === null ? "—" : t.marginPct.toFixed(1) + "%"}`}
-                className={`flex-1 rounded-t ${t.period === period ? "bg-teal-700" : "bg-slate-200 dark:bg-slate-700"}`}
+                type="button"
+                disabled={!onPeriodChange || t.period === period}
+                onClick={() => onPeriodChange?.(t.period)}
+                title={`${onPeriodChange && t.period !== period ? "View " : ""}${t.period}: ${t.marginPct === null ? "—" : t.marginPct.toFixed(1) + "%"}`}
+                className={`flex-1 rounded-t transition-colors ${t.period === period ? "bg-teal-700" : "bg-slate-200 hover:bg-teal-400 dark:bg-slate-700 dark:hover:bg-teal-800"} ${onPeriodChange && t.period !== period ? "cursor-pointer" : "cursor-default"}`}
                 style={{ height: `${Math.max(8, (Math.abs(t.marginPct ?? 0) / trendMax) * 100)}%` }}
               />
             ))}
@@ -322,7 +339,10 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
                   avgMargin={avgMargin}
                   onSelect={onBranchChange}
                   onDrill={(metric, branchId) => {
-                    const value = metric === "revenue" ? b.revenue : metric === "people" ? b.peopleCost : b.indirectCost;
+                    const value = metric === "revenue" ? b.revenue
+                      : metric === "people" ? b.peopleCost
+                      : metric === "budget" ? b.budget
+                      : b.indirectCost;
                     openDrill(metric, branchId, b.branchName, value);
                   }}
                 />
@@ -366,13 +386,16 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
           <div className="p-5">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <FocusCell label="Invoiced revenue" value={lakh(data.focus.revenue)}
-                detail={`${data.focus.invoiceLines} invoice line${data.focus.invoiceLines === 1 ? "" : "s"}`} />
+                detail={`${data.focus.invoiceLines} invoice line${data.focus.invoiceLines === 1 ? "" : "s"}`}
+                onClick={() => openFocusDrill("revenue", data.focus!.revenue)} />
               <FocusCell label="People cost" value={lakh(data.focus.peopleCost)}
-                detail={`${data.focus.staffPaid.toLocaleString("en-IN")} paid${data.focus.staffZeroPaid > 0 ? ` · ${data.focus.staffZeroPaid} at zero` : ""}`} />
+                detail={`${data.focus.staffPaid.toLocaleString("en-IN")} paid${data.focus.staffZeroPaid > 0 ? ` · ${data.focus.staffZeroPaid} at zero` : ""}`}
+                onClick={() => openFocusDrill("people", data.focus!.peopleCost)} />
               <FocusCell label="Indirect cost" value={lakh(data.focus.indirectCost)}
                 detail={data.focus.budget > 0
                   ? `${lakh(Math.abs(data.focus.budget - data.focus.indirectCost))} ${data.focus.budget >= data.focus.indirectCost ? "under" : "over"} budget`
-                  : "no budget recorded"} />
+                  : "no budget recorded"}
+                onClick={() => openFocusDrill("indirect", data.focus!.indirectCost)} />
               <FocusCell label="Operating profit" value={lakh(data.focus.operatingProfit)}
                 detail={data.focus.marginPct === null ? "no revenue to measure against" : `${data.focus.marginPct.toFixed(1)}% margin`}
                 tone={marginTone(data.focus.marginPct, false)} />
@@ -454,14 +477,20 @@ export function CeoOverviewPanel({ period, branchId, onBranchChange }: CeoOvervi
 }
 
 function FocusCell({
-  label, value, detail, tone,
-}: { label: string; value: string; detail: string; tone?: string }) {
+  label, value, detail, tone, onClick,
+}: { label: string; value: string; detail: string; tone?: string; onClick?: () => void }) {
+  const Tag = onClick ? "button" : "div";
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-800/40">
+    <Tag
+      type={onClick ? "button" : undefined}
+      onClick={onClick}
+      className={`rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 text-left dark:border-slate-800 dark:bg-slate-800/40 ${onClick ? "cursor-pointer transition-colors hover:border-blue-300 hover:bg-blue-50/60 dark:hover:border-blue-800 dark:hover:bg-blue-950/20" : ""}`}
+      title={onClick ? "Click for underlying detail" : undefined}
+    >
       <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{label}</div>
       <div className={`mt-1 text-[22px] font-semibold leading-tight tabular-nums ${tone ?? ""}`}>{value}</div>
       <div className="mt-0.5 text-[11.5px] text-slate-500">{detail}</div>
-    </div>
+    </Tag>
   );
 }
 
@@ -505,10 +534,10 @@ function BranchRow({
   onSelect?: (branchId: string) => void;
   /** Opens the drill-down drawer for one metric cell. undefined (e.g. a cost-centre row with
    *  no real branchId) simply leaves that cell non-interactive. */
-  onDrill?: (metric: "revenue" | "people" | "indirect", branchId: string) => void;
+  onDrill?: (metric: "revenue" | "people" | "indirect" | "budget", branchId: string) => void;
 }) {
   const drillable = Boolean(onDrill && row.branchId && !row.isCostCentre);
-  const drillCell = (metric: "revenue" | "people" | "indirect", content: React.ReactNode) => (
+  const drillCell = (metric: "revenue" | "people" | "indirect" | "budget", content: React.ReactNode) => (
     <td
       className={`px-3 py-2.5 text-right tabular-nums ${drillable ? "cursor-pointer hover:bg-blue-50 hover:underline dark:hover:bg-blue-950/30" : ""}`}
       onClick={(e) => {
@@ -570,9 +599,21 @@ function BranchRow({
         {lakh(row.operatingProfit)}
       </td>
       {compare === "budget" && (
-        <td className="px-3 py-2.5 text-right tabular-nums text-blue-700">
-          {row.budget > 0 ? lakh(row.budget) : "—"}
-        </td>
+        row.budget > 0
+          ? (
+            <td
+              className={`px-3 py-2.5 text-right tabular-nums text-blue-700 ${drillable ? "cursor-pointer hover:bg-blue-50 hover:underline dark:hover:bg-blue-950/30" : ""}`}
+              onClick={(e) => {
+                if (!drillable || !row.branchId) return;
+                e.stopPropagation();
+                onDrill!("budget", row.branchId);
+              }}
+              title={drillable ? "Click for underlying budget lines" : undefined}
+            >
+              {lakh(row.budget)}
+            </td>
+          )
+          : <td className="px-3 py-2.5 text-right tabular-nums text-blue-700">—</td>
       )}
       {compare === "budget" && (() => {
         if (row.budget <= 0) return <td className="px-3 py-2.5 text-right text-slate-400">—</td>;

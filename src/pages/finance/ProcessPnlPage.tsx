@@ -444,6 +444,7 @@ export default function ProcessPnlPage() {
                   period={period}
                   branchId={branchId || undefined}
                   onBranchChange={(id) => updateFilters({ branchId: id })}
+                  onPeriodChange={(p) => updateFilters({ period: p })}
                 />
 
                 {/* YTD summary strip */}

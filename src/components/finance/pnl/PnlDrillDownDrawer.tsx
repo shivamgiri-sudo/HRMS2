@@ -14,12 +14,17 @@ import { formatCurrency } from "@/lib/currency";
 
 export type PnlDrillMetric = "revenue" | "people" | "indirect" | "budget";
 
+/** Exactly one of branchId/processId/costCentreId — a cell is scoped one way or the other,
+ *  never both (the branch comparison table scopes by branch; the Focus panel, shown when a
+ *  filter narrows to a single process or cost centre, scopes by whichever that is). */
 export interface PnlDrillDescriptor {
   metric: PnlDrillMetric;
   period: string;
-  branchId: string;
-  /** Shown in the header, e.g. "NOIDA-2". */
-  branchLabel: string;
+  branchId?: string;
+  processId?: string;
+  costCentreId?: string;
+  /** Shown in the header, e.g. "NOIDA-2" or "Onfido". */
+  scopeLabel: string;
 }
 
 export interface PnlDrillDownDrawerProps {
@@ -72,11 +77,10 @@ export function PnlDrillDownDrawer({ open, onClose, descriptor, summaryCellValue
     setLoading(true);
     setError(null);
     setData(null);
-    const params = new URLSearchParams({
-      metric: descriptor.metric,
-      period: descriptor.period,
-      branchId: descriptor.branchId,
-    });
+    const params = new URLSearchParams({ metric: descriptor.metric, period: descriptor.period });
+    if (descriptor.branchId) params.set("branchId", descriptor.branchId);
+    else if (descriptor.processId) params.set("processId", descriptor.processId);
+    else if (descriptor.costCentreId) params.set("costCentreId", descriptor.costCentreId);
     hrmsApi
       .get<{ success: boolean; data: DrilldownData }>(`/api/finance/pnl/drilldown?${params.toString()}`)
       .then((res) => {
@@ -91,7 +95,7 @@ export function PnlDrillDownDrawer({ open, onClose, descriptor, summaryCellValue
     return () => {
       cancelled = true;
     };
-  }, [open, descriptor?.metric, descriptor?.period, descriptor?.branchId]);
+  }, [open, descriptor?.metric, descriptor?.period, descriptor?.branchId, descriptor?.processId, descriptor?.costCentreId]);
 
   if (!descriptor) return null;
   const drillTotal = data?.total ?? 0;
@@ -102,7 +106,7 @@ export function PnlDrillDownDrawer({ open, onClose, descriptor, summaryCellValue
       <SheetContent side="right" className="flex w-full flex-col overflow-hidden sm:max-w-xl">
         <SheetHeader className="shrink-0">
           <SheetTitle className="text-base font-semibold">
-            {METRIC_LABEL[descriptor.metric]} — {descriptor.branchLabel}
+            {METRIC_LABEL[descriptor.metric]} — {descriptor.scopeLabel}
           </SheetTitle>
           <SheetDescription className="text-xs uppercase tracking-wide text-slate-400">
             {descriptor.period}

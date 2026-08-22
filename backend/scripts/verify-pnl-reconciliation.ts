@@ -320,6 +320,10 @@ async function main() {
       const d = await getPnlDrilldown({ metric: "indirect", period: PERIOD, branchId: b.branchId });
       drilldownRows.push({ label: `Indirect · ${b.branchName}`, a: d.total, b: b.indirectCost, note: `${d.rows.length} rows` });
     }
+    if (b.budget > 0 && !drilldownRows.some((r) => r.label.startsWith("Budget"))) {
+      const d = await getPnlDrilldown({ metric: "budget", period: PERIOD, branchId: b.branchId });
+      drilldownRows.push({ label: `Budget · ${b.branchName}`, a: d.total, b: b.budget, note: `${d.rows.length} rows` });
+    }
   }
   printTable("E. DRILL-DOWN TOTAL vs SUMMARY CELL (one real branch per metric)", "drilldown sum", "summary cell", drilldownRows, true);
 
