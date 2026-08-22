@@ -1,5 +1,6 @@
 import { db } from '../../db/mysql.js';
 import { resolveBranchHeadScope, buildCandidateBranchPredicate } from './branch-head-scope.js';
+import { getUserAssignmentScopes } from '../../shared/scopeAccess.js';
 import { RowDataPacket } from 'mysql2/promise';
 import { sendSelectedEmail, sendRejectedEmail } from './ats.email.service.js';
 import { approveOffer, rejectOffer } from './ats.onboarding.service.js';
@@ -63,24 +64,65 @@ interface ApprovalHistoryRow extends RowDataPacket {
 }
 
 /**
+ * Resolve all branch names and IDs a branch head is allowed to see.
+ *
+ * Source A: branch_head_assignments (legacy, keyed by employees.id)
+ * Source B: user_assignment_scope   (modern, keyed by auth_user.id)
+ *
+ * Both are unioned so a branch head assigned via either path works.
+ * authUserId is optional for backward-compat callers that only have employees.id.
+ */
+async function resolveBranchScope(
+  branchHeadId: string,
+  authUserId?: string,
+): Promise<{ branchNames: string[]; branchIds: string[] }> {
+  const [legacyRows] = await db.execute<BranchRow[]>(
+    `SELECT DISTINCT branch_name FROM branch_head_assignments
+      WHERE branch_head_id = ? AND is_active = TRUE`,
+    [branchHeadId],
+  ).catch(() => [[]] as unknown as [BranchRow[]]);
+
+  const branchNames = legacyRows.map((r) => r.branch_name).filter(Boolean);
+
+  let branchIds: string[] = [];
+  if (authUserId) {
+    const scopes = await getUserAssignmentScopes(authUserId, ['branch_head']).catch(() => []);
+    branchIds = scopes.map((s) => String(s.branch_id ?? '')).filter(Boolean);
+  }
+
+  return { branchNames, branchIds };
+}
+
+/**
  * Get pending approvals for branch head
  */
-export async function getPendingApprovals(branchHeadId: string): Promise<PendingApproval[]> {
-  // Get branch head's assigned branches
-  const [branches] = await db.execute<BranchRow[]>(
-    `SELECT DISTINCT branch_name
-     FROM branch_head_assignments
-     WHERE branch_head_id = ? AND is_active = TRUE`,
-    [branchHeadId]
-  );
+export async function getPendingApprovals(branchHeadId: string, authUserId?: string): Promise<PendingApproval[]> {
+  const { branchNames, branchIds } = await resolveBranchScope(branchHeadId, authUserId);
 
-  if (branches.length === 0) {
+  if (branchNames.length === 0 && branchIds.length === 0) {
     return [];
   }
 
-  const branchNames = branches.map((b) => b.branch_name);
-  const placeholders = branchNames.map(() => '?').join(',');
-  const branchMatchParams = [...branchNames, ...branchNames, ...branchNames, ...branchNames];
+  // Build WHERE clause covering both name-based and id-based branch matches.
+  const whereClauses: string[] = [];
+  const branchMatchParams: unknown[] = [];
+
+  if (branchNames.length > 0) {
+    const ph = branchNames.map(() => '?').join(',');
+    whereClauses.push(
+      `c.applied_for_branch IN (${ph})`,
+      `c.branch_display_name IN (${ph})`,
+      `cb.branch_name IN (${ph})`,
+      `cb.branch_code IN (${ph})`,
+    );
+    branchMatchParams.push(...branchNames, ...branchNames, ...branchNames, ...branchNames);
+  }
+
+  if (branchIds.length > 0) {
+    const ph = branchIds.map(() => '?').join(',');
+    whereClauses.push(`c.applied_for_branch IN (${ph})`, `cb.id IN (${ph})`);
+    branchMatchParams.push(...branchIds, ...branchIds);
+  }
 
   // Get pending approvals for these branches
   const [approvals] = await db.execute<RowDataPacket[]>(
@@ -117,12 +159,7 @@ export async function getPendingApprovals(branchHeadId: string): Promise<Pending
       OR cb.branch_code = c.applied_for_branch
     WHERE phv.validation_status = 'validated'
       AND bha.approval_status = 'pending'
-      AND (
-        c.applied_for_branch IN (${placeholders})
-        OR c.branch_display_name IN (${placeholders})
-        OR cb.branch_name IN (${placeholders})
-        OR cb.branch_code IN (${placeholders})
-      )
+      AND (${whereClauses.join(' OR ')})
       AND c.current_stage = 'payroll_validated'
     ORDER BY phv.validated_at DESC`,
     branchMatchParams
@@ -357,31 +394,53 @@ export async function getApprovalHistory(candidateId: string): Promise<ApprovalH
 /**
  * Get branch head statistics
  */
-export async function getBranchHeadStats(branchHeadId: string): Promise<{
+export async function getBranchHeadStats(branchHeadId: string, authUserId?: string): Promise<{
   total_pending: number;
   total_approved: number;
   total_rejected: number;
   this_month_approved: number;
 }> {
-  const [stats] = await db.execute<RowDataPacket[]>(
-    `SELECT
-      COUNT(*) as total_pending
-    FROM ats_payroll_hr_validation phv
-    INNER JOIN ats_candidate c ON c.id = phv.candidate_id
-    INNER JOIN ats_branch_head_approval approval ON approval.payroll_validation_id = phv.id
-    LEFT JOIN branch_master cb
-      ON cb.id = c.applied_for_branch
-      OR cb.branch_name = c.applied_for_branch
-      OR cb.branch_code = c.applied_for_branch
-    INNER JOIN branch_head_assignments bha
-      ON bha.branch_name IN (c.applied_for_branch, c.branch_display_name, cb.branch_name, cb.branch_code)
-    WHERE bha.branch_head_id = ?
-      AND bha.is_active = TRUE
-      AND phv.validation_status = 'validated'
-      AND approval.approval_status = 'pending'
-      AND c.current_stage = 'payroll_validated'`,
-    [branchHeadId]
-  );
+  const { branchNames, branchIds } = await resolveBranchScope(branchHeadId, authUserId);
+
+  let pendingCount = 0;
+  if (branchNames.length > 0 || branchIds.length > 0) {
+    const whereClauses: string[] = [];
+    const params: unknown[] = [];
+    if (branchNames.length > 0) {
+      const ph = branchNames.map(() => '?').join(',');
+      whereClauses.push(
+        `c.applied_for_branch IN (${ph})`,
+        `c.branch_display_name IN (${ph})`,
+        `cb.branch_name IN (${ph})`,
+        `cb.branch_code IN (${ph})`,
+      );
+      params.push(...branchNames, ...branchNames, ...branchNames, ...branchNames);
+    }
+    if (branchIds.length > 0) {
+      const ph = branchIds.map(() => '?').join(',');
+      whereClauses.push(`c.applied_for_branch IN (${ph})`, `cb.id IN (${ph})`);
+      params.push(...branchIds, ...branchIds);
+    }
+
+    const [stats] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) as total_pending
+       FROM ats_payroll_hr_validation phv
+       INNER JOIN ats_candidate c ON c.id = phv.candidate_id
+       INNER JOIN ats_branch_head_approval approval ON approval.payroll_validation_id = phv.id
+       LEFT JOIN branch_master cb
+         ON cb.id = c.applied_for_branch
+         OR cb.branch_name = c.applied_for_branch
+         OR cb.branch_code = c.applied_for_branch
+       WHERE phv.validation_status = 'validated'
+         AND approval.approval_status = 'pending'
+         AND c.current_stage = 'payroll_validated'
+         AND (${whereClauses.join(' OR ')})`,
+      params,
+    );
+    pendingCount = Number(stats[0]?.total_pending ?? 0);
+  }
+
+  const [stats] = [[ { total_pending: pendingCount } ]];
 
   const [approved] = await db.execute<RowDataPacket[]>(
     `SELECT COUNT(*) as total_approved

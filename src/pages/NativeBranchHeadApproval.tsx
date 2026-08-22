@@ -172,7 +172,9 @@ function OfferRow({
         <div className="flex flex-col gap-0.5">
           <span className="font-mono text-xs text-slate-700">{offer.cost_centre_code ?? '—'}</span>
           {offer.client_name && (
-            <span className="text-[11px] text-slate-400">{offer.client_name}</span>
+            <span className="max-w-[110px] truncate text-[11px] text-slate-400" title={offer.client_name}>
+              {offer.client_name}
+            </span>
           )}
         </div>
       </TableCell>
@@ -185,19 +187,16 @@ function OfferRow({
         {shortDate(offer.date_of_joining)}
       </TableCell>
 
-      <TableCell className="py-3">
+      <TableCell className="py-3 text-center">
         <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md border border-slate-200 bg-slate-50 px-1.5 font-mono text-xs text-slate-600">
           {offer.salary_band || '—'}
         </span>
       </TableCell>
 
-      {/* Money right-aligned with tabular figures so the columns line up
-          digit-for-digit — the point of a salary table. */}
-      <TableCell className="py-3 text-right font-semibold tabular-nums text-slate-900 whitespace-nowrap">
-        {inr(offer.offered_ctc)}
-      </TableCell>
-      <TableCell className="py-3 text-right tabular-nums text-slate-600 whitespace-nowrap">
-        {inr(offer.gross)}
+      {/* CTC + Gross stacked — saves one column and keeps the key numbers together. */}
+      <TableCell className="py-3 text-right tabular-nums whitespace-nowrap">
+        <div className="font-semibold text-slate-900">{inr(offer.offered_ctc)}</div>
+        <div className="text-[11px] text-slate-400">{inr(offer.gross)} gross</div>
       </TableCell>
       <TableCell className="py-3 text-right tabular-nums text-slate-600 whitespace-nowrap">
         {inr(offer.net_in_hand)}
@@ -207,9 +206,9 @@ function OfferRow({
         <Input
           value={remark}
           onChange={e => onRemarkChange(offer.offer_id, e.target.value)}
-          placeholder="Add remarks…"
+          placeholder="Remarks…"
           disabled={isActing}
-          className="h-9 min-w-[9rem] text-sm"
+          className="h-9 w-full min-w-[140px] text-sm"
           onClick={(e) => e.stopPropagation()}
         />
       </TableCell>
@@ -323,7 +322,8 @@ export default function NativeBranchHeadApproval() {
     } finally {
       setActing(null);  // unfreeze button as soon as POST resolves
     }
-    void load();  // refresh list in background — does not block the button
+    void load();       // refresh list in background
+    void loadStats();  // refresh tab counts
   };
 
   if (user && !roleKeys.some(k => ALLOWED.includes(k))) {
@@ -381,12 +381,13 @@ export default function NativeBranchHeadApproval() {
     if (tab === 'approved' || tab === 'rejected') void loadDecisions(tab);
   }, [tab, loadDecisions]);
 
-  useEffect(() => {
-    // Built long ago and never called by any screen.
+  const loadStats = useCallback(() => {
     hrmsApi.get<{ data: typeof stats }>('/api/ats/branch-head-approval/stats')
       .then((r) => setStats(r.data ?? null))
       .catch(() => setStats(null));
   }, []);
+
+  useEffect(() => { loadStats(); }, [loadStats]);
 
   return (
     <DashboardLayout>
@@ -537,17 +538,16 @@ export default function NativeBranchHeadApproval() {
                     <TableHeader className="[&_tr]:border-slate-200">
                       <TableRow className="bg-slate-50 hover:bg-slate-50">
                         {[
-                          ['Candidate', 'sticky left-0 z-20 bg-slate-50'],
-                          ['Branch & Type', ''],
-                          ['Cost Centre', ''],
-                          ['Process', ''],
-                          ['Joining', ''],
-                          ['Band', ''],
-                          ['Monthly CTC', 'text-right'],
-                          ['Gross', 'text-right'],
-                          ['Net in Hand', 'text-right'],
-                          ['Remarks', ''],
-                          ['Actions', 'sticky right-0 z-20 bg-slate-50'],
+                          ['Candidate',     'sticky left-0 z-20 bg-slate-50 min-w-[160px]'],
+                          ['Branch & Type', 'min-w-[140px]'],
+                          ['Cost Centre',   'min-w-[120px]'],
+                          ['Process',       'min-w-[110px]'],
+                          ['Joining',       'min-w-[90px]'],
+                          ['Band',          'w-14 text-center'],
+                          ['CTC / Gross',   'text-right min-w-[130px]'],
+                          ['Net in Hand',   'text-right min-w-[100px]'],
+                          ['Remarks',       'min-w-[160px]'],
+                          ['Actions',       'sticky right-0 z-20 bg-slate-50 min-w-[170px]'],
                         ].map(([label, cls]) => (
                           <TableHead
                             key={label}

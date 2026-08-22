@@ -45,7 +45,7 @@ branchHeadApprovalRouter.use(
 branchHeadApprovalRouter.get('/pending', h(async (req, res) => {
   try {
     const branchHeadId = await resolveEmployeeIdForAuthUser(req.authUser!.id);
-    const approvals = await getPendingApprovals(branchHeadId);
+    const approvals = await getPendingApprovals(branchHeadId, req.authUser!.id);
 
     return res.json({
       success: true,
@@ -121,7 +121,7 @@ branchHeadApprovalRouter.get('/history/:candidateId', h(async (req: Request, res
 branchHeadApprovalRouter.get('/stats', h(async (req, res) => {
   try {
     const branchHeadId = await resolveEmployeeIdForAuthUser(req.authUser!.id);
-    const stats = await getBranchHeadStats(branchHeadId);
+    const stats = await getBranchHeadStats(branchHeadId, req.authUser!.id);
 
     return res.json({
       success: true,

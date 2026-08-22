@@ -4,7 +4,7 @@ import { db } from '../../db/mysql.js';
 import { env } from '../../config/env.js';
 import { hasScopedAccess } from '../../shared/scopeAccess.js';
 import { recordBranchHeadDecision, revertBranchHeadDecision } from './branch-head-approval.record.js';
-import { resolveEmployeeIdForAuthUser } from './branch-head-scope.js';
+import { resolveEmployeeIdForAuthUser, resolveBranchHeadScope } from './branch-head-scope.js';
 import { calculateSalary, SalaryComponents } from './salary.calculator.js';
 import {
   sendOnboardingTokenEmail,
@@ -997,13 +997,28 @@ export async function rejectOffer(offerId: string, approverId: string, remarks: 
   if (!rows.length) throw Object.assign(new Error('Offer not found'), { statusCode: 404 });
   const row = (rows as RowDataPacket[])[0];
 
-  const allowed = await hasScopedAccess(
-    approverId,
-    ['branch_head'],
-    { branchId: row.applied_for_branch, processId: row.applied_for_process },
-    { allowAdminBypass: true },
-  );
-  if (!allowed) throw Object.assign(new Error('Access denied'), { statusCode: 403 });
+  // hasScopedAccess compares user_assignment_scope.branch_id (UUID) against
+  // applied_for_branch, which stores a branch name or code — never a UUID on
+  // legacy candidates. Use resolveBranchHeadScope instead so the name/id union
+  // matches correctly. Admin/super_admin bypass via unrestricted flag.
+  const scope = await resolveBranchHeadScope(approverId);
+  if (!scope.unrestricted) {
+    const b = String(row.applied_for_branch ?? '');
+    // Resolve applied_for_branch to a branch_master row so we can compare both name and id.
+    const [bmRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, branch_name, branch_code FROM branch_master
+        WHERE id = ? OR branch_name = ? OR branch_code = ? LIMIT 1`,
+      [b, b, b],
+    );
+    const bm = bmRows[0] as RowDataPacket | undefined;
+    const nameMatch = scope.branchNames.some(
+      (n) => n === b || n === bm?.branch_name || n === bm?.branch_code,
+    );
+    const idMatch = bm?.id && scope.branchIds.includes(String(bm.id));
+    if (!nameMatch && !idMatch) {
+      throw Object.assign(new Error('Access denied'), { statusCode: 403 });
+    }
+  }
 
   await db.execute(
     `INSERT INTO ats_offer_approval (id, offer_id, approver_id, action, remarks)
