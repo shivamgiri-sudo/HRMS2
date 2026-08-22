@@ -241,9 +241,17 @@ interface ChecklistDef {
 }
 
 const CHECKLIST_DEFS: ChecklistDef[] = [
+  // ── WFM declares attendance data is complete (replaces freeze-before-run gate)
+  {
+    key: "attendance_data_ready",
+    label: "Attendance Data Ready",
+    icon: <CheckCircle2 className="w-4 h-4" />,
+    timestampKey: "attendance_data_ready_at",
+    isManual: true,
+  },
   {
     key: "attendance_frozen",
-    label: "Attendance Frozen",
+    label: "Attendance Frozen (by Payroll Head)",
     icon: <Lock className="w-4 h-4" />,
     timestampKey: "attendance_frozen_at",
   },
@@ -954,7 +962,7 @@ function ManualToggleButton({
 }: {
   branchId: string;
   month: string;
-  fieldKey: "custom_deductions_uploaded" | "overtime_entered";
+  fieldKey: "attendance_data_ready" | "custom_deductions_uploaded" | "overtime_entered";
   currentValue: number;
   label: string;
 }) {
@@ -1107,7 +1115,9 @@ function BranchView({
   }
 
   const colors = getScoreColors(data.readiness_score);
-  const canSignOff = Boolean(data.attendance_frozen) && !data.branch_head_signoff;
+  // Fixed: require attendance_data_ready (WFM declaration) not attendance_frozen
+  // (which needs a payroll run to exist first — a chicken-and-egg impossible state).
+  const canSignOff = Boolean(data.attendance_data_ready) && !data.branch_head_signoff;
 
   // Build list of failing checklist items for blocked guidance
   const failingItems = CHECKLIST_DEFS.filter((def) => !getChecklistValue(data, def));
@@ -1161,15 +1171,28 @@ function BranchView({
         </div>
       )}
 
-      {/* Attendance freeze request */}
-      {isBranchRole && !data.attendance_frozen && (
-        <div className="flex items-center justify-between gap-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3">
+      {/* Step 1: WFM declares attendance data is ready */}
+      {isBranchRole && !data.attendance_data_ready && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-700 flex-shrink-0" />
+            <p className="text-sm font-semibold text-amber-900">Mark attendance data as ready</p>
+          </div>
+          <p className="text-xs text-amber-700">
+            Once you have validated attendance, resolved missing punches, uploaded incentives and deductions —
+            mark attendance data as ready. This enables Branch Head sign-off.
+          </p>
+        </div>
+      )}
+      {/* Step 2: After data is ready, request Payroll Head to freeze */}
+      {isBranchRole && data.attendance_data_ready && !data.attendance_frozen && (
+        <div className="flex items-center justify-between gap-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3">
           <div>
-            <p className="text-sm font-semibold text-amber-900">Attendance not yet frozen</p>
-            <p className="text-xs text-amber-700 mt-0.5">Notify the Payroll Head to freeze attendance once data is final.</p>
+            <p className="text-sm font-semibold text-blue-900">Request attendance freeze</p>
+            <p className="text-xs text-blue-700 mt-0.5">Attendance data is ready. Notify Payroll Head to freeze it.</p>
           </div>
           <Button size="sm" variant="outline"
-            className="flex-shrink-0 rounded-xl border-amber-400 text-amber-800 hover:bg-amber-100"
+            className="flex-shrink-0 rounded-xl border-blue-400 text-blue-800 hover:bg-blue-100"
             disabled={freezeRequestMutation.isPending} onClick={() => freezeRequestMutation.mutate()}>
             <Bell className="mr-1.5 h-3.5 w-3.5" />
             {freezeRequestMutation.isPending ? "Sending…" : "Request Freeze"}
@@ -1204,7 +1227,7 @@ function BranchView({
                   {isManualField && (
                     <ManualToggleButton
                       branchId={data.branch_id} month={month}
-                      fieldKey={def.key as "custom_deductions_uploaded" | "overtime_entered"}
+                      fieldKey={def.key as "attendance_data_ready" | "custom_deductions_uploaded" | "overtime_entered"}
                       currentValue={data[def.key as keyof BranchReadiness] as number}
                       label={def.label}
                     />

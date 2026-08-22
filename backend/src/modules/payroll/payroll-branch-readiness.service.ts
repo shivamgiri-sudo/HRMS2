@@ -99,6 +99,11 @@ async function ensureTable(): Promise<void> {
         process_month VARCHAR(7) NOT NULL,
         branch_id VARCHAR(36) NOT NULL,
 
+        -- WFM declaration: data is complete (replaces freeze-before-run gate)
+        attendance_data_ready TINYINT(1) NOT NULL DEFAULT 0,
+        attendance_data_ready_at DATETIME NULL,
+        attendance_data_ready_by VARCHAR(36) NULL,
+
         attendance_frozen TINYINT(1) NOT NULL DEFAULT 0,
         attendance_frozen_at DATETIME NULL,
         attendance_frozen_by VARCHAR(36) NULL,
@@ -125,6 +130,11 @@ async function ensureTable(): Promise<void> {
         branch_head_signoff_by VARCHAR(36) NULL,
         branch_head_remarks TEXT NULL,
 
+        process_manager_signoff TINYINT(1) NOT NULL DEFAULT 0,
+        process_manager_signoff_at DATETIME NULL,
+        process_manager_signoff_by VARCHAR(36) NULL,
+        process_manager_remarks TEXT NULL,
+
         readiness_score DECIMAL(5,2) NOT NULL DEFAULT 0,
         readiness_status ENUM('not_started','in_progress','ready','blocked') NOT NULL DEFAULT 'not_started',
 
@@ -134,6 +144,10 @@ async function ensureTable(): Promise<void> {
         employee_count_active INT NOT NULL DEFAULT 0,
         employee_count_left INT NOT NULL DEFAULT 0,
         projection_computed_at DATETIME NULL,
+
+        salary_verification_done TINYINT(1) NOT NULL DEFAULT 0,
+        salary_verification_at DATETIME NULL,
+        salary_verification_by VARCHAR(36) NULL,
 
         ho_override_ready TINYINT(1) NOT NULL DEFAULT 0,
         ho_override_by VARCHAR(36) NULL,
@@ -1203,9 +1217,13 @@ export const payrollBranchReadinessService = {
         // it to create the run made creation impossible — verified live 2026-08-17, where
         // 0 of 74 rows in this table have ever been frozen and August 2026 had no run at all.
         // Freeze stays enforced where it can actually hold: lock, finalize and disburse.
+        // Fixed 2026-08-23: attendance_frozen cannot be 1 before a run exists
+        // (freezeAttendance needs a runId). readiness_status='ready' already
+        // accounts for the score threshold — using it here is sufficient and
+        // consistent with computeStatus() which was corrected earlier.
         const isReady =
           rec.ho_override_ready === 1 ||
-          (rec.attendance_frozen === 1 && rec.readiness_status === "ready");
+          rec.readiness_status === "ready";
 
         if (isReady) {
           ready.push(branch.branch_name);

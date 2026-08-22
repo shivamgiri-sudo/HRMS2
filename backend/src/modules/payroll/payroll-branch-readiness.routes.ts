@@ -274,6 +274,7 @@ payrollBranchReadinessRouter.get(
 // ---------------------------------------------------------------------------
 
 const ALLOWED_CHECKLIST_ITEMS = [
+  "attendance_data_ready",      // WFM declaration: attendance data is complete
   "custom_deductions_uploaded",
   "overtime_entered",
 ] as const;
@@ -309,9 +310,9 @@ payrollBranchReadinessRouter.post(
 
       // Determine the confirmation timestamp column
       const confirmedAtCol =
-        safeItem === "custom_deductions_uploaded"
-          ? "custom_deductions_confirmed_at"
-          : "overtime_confirmed_at";
+        safeItem === "attendance_data_ready"    ? "attendance_data_ready_at"       :
+        safeItem === "custom_deductions_uploaded" ? "custom_deductions_confirmed_at" :
+          "overtime_confirmed_at";
 
       // Try to update in DB; fall through gracefully if table absent
       try {
