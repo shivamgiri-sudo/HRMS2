@@ -633,37 +633,35 @@ export async function getRevenueAtRisk(): Promise<RevenueAtRisk> {
   const byProcess: RevenueAtRisk['by_process'] = [];
 
   try {
-    const legacyPool = await getLegacyPool();
-
-    // Monthly target
-    const [targetRows] = await legacyPool.execute<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(TargetRevenue),0) AS total_target
-       FROM dashboard_target_revenue
-       WHERE YEAR(TargetMonth) = ? AND MONTH(TargetMonth) = ?`,
+    // Monthly target — read from snapshot table (synced from db_bill)
+    const [targetRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(target_revenue),0) AS total_target
+       FROM bill_revenue_target_snapshot
+       WHERE YEAR(target_month) = ? AND MONTH(target_month) = ?`,
       [y, m]
     );
     target = Number((targetRows as any[])[0]?.total_target ?? 0);
 
-    // MTD actual
-    const [actualRows] = await legacyPool.execute<RowDataPacket[]>(
-      `SELECT COALESCE(SUM(ActualRevenue),0) AS total_actual
-       FROM dashboard_data_revenue
-       WHERE RevenueDate BETWEEN ? AND ?`,
+    // MTD actual — read from snapshot table
+    const [actualRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(SUM(actual_revenue),0) AS total_actual
+       FROM bill_revenue_actual_snapshot
+       WHERE revenue_date BETWEEN ? AND ?`,
       [monthStart, today]
     );
     actual = Number((actualRows as any[])[0]?.total_actual ?? 0);
 
     // By process
-    const [processRows] = await legacyPool.execute<RowDataPacket[]>(
-      `SELECT t.ProcessName AS process,
-              COALESCE(SUM(t.TargetRevenue),0) AS target,
-              COALESCE(SUM(a.ActualRevenue),0) AS actual
-       FROM dashboard_target_revenue t
-       LEFT JOIN dashboard_data_revenue a
-         ON a.ProcessName = t.ProcessName
-         AND a.RevenueDate BETWEEN ? AND ?
-       WHERE YEAR(t.TargetMonth) = ? AND MONTH(t.TargetMonth) = ?
-       GROUP BY t.ProcessName
+    const [processRows] = await db.execute<RowDataPacket[]>(
+      `SELECT t.process_name AS process,
+              COALESCE(SUM(t.target_revenue),0) AS target,
+              COALESCE(SUM(a.actual_revenue),0) AS actual
+       FROM bill_revenue_target_snapshot t
+       LEFT JOIN bill_revenue_actual_snapshot a
+         ON a.process_name = t.process_name
+         AND a.revenue_date BETWEEN ? AND ?
+       WHERE YEAR(t.target_month) = ? AND MONTH(t.target_month) = ?
+       GROUP BY t.process_name
        ORDER BY target DESC
        LIMIT 10`,
       [monthStart, today, y, m]
@@ -673,7 +671,7 @@ export async function getRevenueAtRisk(): Promise<RevenueAtRisk> {
       const gap = act - tgt;
       byProcess.push({ process: r.process, target: tgt, actual: act, gap, gap_pct: tgt > 0 ? parseFloat(((gap / tgt) * 100).toFixed(1)) : 0 });
     }
-  } catch { /* legacy DB unavailable — return zeroes */ }
+  } catch { /* snapshot unavailable — return zeroes */ }
 
   const gap = actual - target;
   const gapPct = target > 0 ? parseFloat(((gap / target) * 100).toFixed(1)) : 0;
