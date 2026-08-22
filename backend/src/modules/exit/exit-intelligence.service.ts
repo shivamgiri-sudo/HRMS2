@@ -182,7 +182,66 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
     clearanceParams,
   );
 
-  return { summary: summary[0] ?? {}, requests, clearance };
+  // Attrition trend (last 6 months)
+  const [attritionTrend] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       DATE_FORMAT(er.created_at, '%Y-%m') AS month,
+       SUM(CASE WHEN er.exit_type = 'voluntary' THEN 1 ELSE 0 END) AS voluntary,
+       SUM(CASE WHEN er.exit_type = 'involuntary' THEN 1 ELSE 0 END) AS involuntary,
+       COUNT(*) AS total,
+       ROUND(COUNT(*) * 100.0 / NULLIF((
+         SELECT COUNT(*) FROM employees e2
+         WHERE e2.active_status = 1
+           AND e2.date_of_joining <= LAST_DAY(er.created_at)
+       ), 0), 2) AS rate
+     FROM exit_request er
+     WHERE er.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+       AND er.status NOT IN ('draft', 'rejected', 'revoked', 'withdrawn')
+     GROUP BY DATE_FORMAT(er.created_at, '%Y-%m')
+     ORDER BY month ASC
+     LIMIT 6`
+  );
+
+  // Exit reason breakdown
+  const [reasonBreakdown] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COALESCE(er.exit_reason_category, 'other') AS reason,
+       COUNT(*) AS count
+     FROM exit_request er
+     WHERE er.created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+       AND er.status NOT IN ('draft', 'rejected', 'revoked', 'withdrawn')
+     GROUP BY COALESCE(er.exit_reason_category, 'other')
+     ORDER BY count DESC
+     LIMIT 12`
+  );
+
+  // Branch breakdown
+  const [branchBreakdown] = await db.execute<RowDataPacket[]>(
+    `SELECT
+       COALESCE(b.branch_name, 'Unknown') AS branch,
+       COUNT(*) AS count,
+       ROUND(COUNT(*) * 100.0 / NULLIF((
+         SELECT COUNT(*) FROM employees e2
+         WHERE e2.branch_id = e.branch_id AND e2.active_status = 1
+       ), 0), 2) AS rate
+     FROM exit_request er
+     JOIN employees e ON e.id = er.employee_id
+     LEFT JOIN branch_master b ON b.id = e.branch_id
+     WHERE er.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+       AND er.status NOT IN ('draft', 'rejected', 'revoked', 'withdrawn')
+     GROUP BY e.branch_id, b.branch_name
+     ORDER BY count DESC
+     LIMIT 10`
+  );
+
+  return {
+    summary: summary[0] ?? {},
+    requests,
+    clearance,
+    attrition_trend: attritionTrend,
+    reason_breakdown: reasonBreakdown,
+    branch_breakdown: branchBreakdown,
+  };
 }
 
 export async function addRetentionAction(input: {
