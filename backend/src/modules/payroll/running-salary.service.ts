@@ -134,7 +134,11 @@ export async function computeRunningSalary(
   const esicEmrPct     = statConfig["esic_employer_pct"] ?? 3.25;
   const esicWageLimit  = statConfig["esic_wage_limit"]   ?? 21000;
   const pfWageLimit    = statConfig["pf_wage_limit"]     ?? 15000;
-  const defaultPt      = statConfig["professional_tax"]  ?? 200;
+  // No fallback to 200. PT is a state levy with no org-wide default — the same
+  // policy the locked payroll run enforces. An employee with no branch state
+  // gets 0 here (no deduction shown in running salary) rather than a number
+  // nobody approved. statutory_config has never held this key in production.
+  const defaultPt      = statConfig["professional_tax"]  ?? 0;
 
   // Check PF / ESI opt-outs
   const [overrideRows] = await db.execute<RowDataPacket[]>(
