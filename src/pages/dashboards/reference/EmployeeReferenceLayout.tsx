@@ -32,6 +32,7 @@ import { WeeklyWinnersWidget } from "@/components/engagement/WeeklyWinnersWidget
 import { SocialFeedWidget } from "@/components/social/SocialFeedWidget";
 import { VideoModal } from "@/components/social/VideoModal";
 import { MyMeetingsWidget } from "@/components/mcnmeet/MyMeetingsWidget";
+import MyPerformanceTile from "@/components/employee/MyPerformanceTile";
 import { useState } from "react";
 
 export function EmployeeReferenceLayout({ data, employeeName }: { data: ReferenceDashboardData; employeeName: string }) {
@@ -120,6 +121,12 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
           { label: "Attendance %", value: attendancePct, valueSuffix: "%", helper: "Full + half days", icon: Target, tone: "blue",
             ...drill("att"), },
         ]} />
+      </ReferencePanel>
+
+      {/* This page had attendance, LMS, onboarding and leave — no quality/KPI section at
+          all, despite that being the other half of "how am I doing". */}
+      <ReferencePanel title="My Performance" bodyClassName="p-2 sm:p-3">
+        <MyPerformanceTile hideKpi={false} hideQuality={false} title="" />
       </ReferencePanel>
 
       <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.02fr_0.98fr]">

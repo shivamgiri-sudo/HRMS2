@@ -13,7 +13,29 @@ import { hrmsApi } from "@/lib/hrmsApi";
 
 type DashboardStats = { headcount: number; attrition_rate: number; avg_kpi_score: number; open_tickets: number; pending_leaves: number; attendance_rate: number };
 type TeamKpi = { employee_id: string; employee_code?: string; employee_name: string; period: string; overall_score: number; rank_position: number; trend: "up" | "down" | "stable" };
-type CoachingSession = { id: string; employee_id: string; employee_name: string; coach_user_id: string; session_date: string; session_type: string; notes: string; action_items: string; status: string };
+// action_items is a MySQL JSON column (backend/sql/019_performance_surfaces.sql)
+// — mysql2 auto-parses JSON columns into a real object on SELECT, so a session
+// auto-raised by raiseCoachingFromQuality() (coaching-writer.service.ts) comes
+// back as {priority, qualityPercentage, targetPercentage, consecutiveShortfalls,
+// fatalTriggered, assessedAudits, periodStart, periodEnd}, not a string. A
+// manually-created session (POST /api/management/coaching) can still hand a
+// plain string. Rendering it directly as `{s.action_items}` crashed the whole
+// Coaching tab with "Objects are not valid as a React child" the moment the
+// first auto-raised session existed — see formatActionItems below.
+type CoachingActionItems = string | Record<string, unknown> | null;
+type CoachingSession = { id: string; employee_id: string; employee_name: string; coach_user_id: string; session_date: string; session_type: string; notes: string; action_items: CoachingActionItems; status: string };
+
+function formatActionItems(items: CoachingActionItems): string {
+  if (!items) return "–";
+  if (typeof items === "string") return items || "–";
+  const parts: string[] = [];
+  if (items.priority) parts.push(String(items.priority).toUpperCase());
+  if (items.qualityPercentage != null) parts.push(`Quality ${Number(items.qualityPercentage).toFixed(1)}%`);
+  if (items.targetPercentage != null) parts.push(`Target ${Number(items.targetPercentage).toFixed(1)}%`);
+  if (items.consecutiveShortfalls) parts.push(`${items.consecutiveShortfalls}-wk shortfall`);
+  if (items.fatalTriggered) parts.push("Fatal error");
+  return parts.length ? parts.join(" · ") : "–";
+}
 type PerformanceAlert = { id: string; employee_id: string; employee_name: string; alert_type: string; severity: "critical" | "high" | "medium" | "low"; message: string; acknowledged: boolean };
 type CoachingForm = { employee_id: string; session_date: string; session_type: string; notes: string; action_items: string };
 type TeamMember = { id: string; employee_code: string; full_name: string };
@@ -208,7 +230,7 @@ export default function NativeManagementDashboard() {
   const textMatch = (...values: unknown[]) => !q || values.join(" ").toLowerCase().includes(q);
   const filteredAlerts = alerts.filter((a) => (severityFilter === "All" || a.severity.toLowerCase() === severityFilter.toLowerCase()) && textMatch(a.employee_name, a.alert_type, a.message, a.severity));
   const filteredKpi = teamKpi.filter((row) => textMatch(row.employee_name, row.employee_id, row.period, row.trend));
-  const filteredCoaching = coachingSessions.filter((s) => textMatch(s.employee_name, s.employee_id, s.session_type, s.notes, s.action_items, s.status));
+  const filteredCoaching = coachingSessions.filter((s) => textMatch(s.employee_name, s.employee_id, s.session_type, s.notes, formatActionItems(s.action_items), s.status));
 
   const unacknowledgedCount = alerts.filter((a) => !a.acknowledged).length;
   const criticalAlerts = alerts.filter((a) => !a.acknowledged && ["critical", "high"].includes(a.severity)).length;
@@ -863,7 +885,7 @@ export default function NativeManagementDashboard() {
                               <td className="p-4 font-mono text-xs text-slate-600">{s.session_date?.slice(0, 10)}</td>
                               <td className="p-4 capitalize text-slate-700 font-medium">{s.session_type?.replace(/_/g, " ")}</td>
                               <td className="max-w-[200px] truncate p-4 text-slate-600">{s.notes || "–"}</td>
-                              <td className="max-w-[200px] truncate p-4 text-slate-500">{s.action_items || "–"}</td>
+                              <td className="max-w-[220px] truncate p-4 text-slate-500" title={typeof s.action_items === "string" ? s.action_items : JSON.stringify(s.action_items)}>{formatActionItems(s.action_items)}</td>
                               <td className="p-4">
                                 <SessionStatusBadge status={s.status} />
                               </td>

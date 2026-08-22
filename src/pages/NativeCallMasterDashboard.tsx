@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer,
@@ -6,7 +7,7 @@ import {
 import {
   Phone, TrendingUp, TrendingDown, Users, AlertTriangle, Shield,
   Award, Download, RefreshCcw, ChevronDown, ChevronUp, Activity,
-  Target, Zap, BarChart2, DownloadCloud,
+  Target, Zap, BarChart2, DownloadCloud, UploadCloud,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -82,6 +83,7 @@ function StatCard({
 
 // ── Main Component ─────────────────────────────────────────────────────────────
 export default function NativeCallMasterDashboard() {
+  const navigate = useNavigate();
   const { hasAnyRole } = useWorkforceAccess();
   const canAccess = hasAnyRole("super_admin","admin","ceo","manager","process_manager","operations_manager","qa","quality_analyst");
 
@@ -221,6 +223,16 @@ export default function NativeCallMasterDashboard() {
                   <option key={c.id} value={String(c.id)}>{c.name}</option>
                 ))}
               </select>
+            )}
+            {/* PERFORMANCE_HUB page grant (rbacPageMatrix.ts) only covers qa/operations_manager/
+                ceo/tq_head + super_admin — narrower than canAccess above. Gated to match so this
+                doesn't link manager/process_manager/quality_analyst/admin into a 403. */}
+            {hasAnyRole("super_admin", "qa", "operations_manager", "ceo", "tq_head") && (
+              <button onClick={() => navigate("/performance-hub")}
+                title="Manually upload call/quality data for periods the automatic sync doesn't cover"
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+                <UploadCloud className="h-4 w-4" /> Upload Data
+              </button>
             )}
             <button onClick={() => setRefresh(r => r + 1)}
               className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700">

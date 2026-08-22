@@ -122,9 +122,9 @@ export function InboundQualityPanel({ from, to, queryKey }: Props) {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
           { label: "Total Audited",   val: kpis?.total_audited ?? 0,                     color: "bg-blue-50 border-blue-100" },
-          { label: "Avg CQ Score",    val: `${(kpis?.avg_cq_score ?? 0).toFixed(1)}%`,   color: "bg-emerald-50 border-emerald-100" },
+          { label: "Avg CQ Score",    val: `${safeNum(kpis?.avg_cq_score).toFixed(1)}%`, color: "bg-emerald-50 border-emerald-100" },
           { label: "Fatal Calls",     val: kpis?.fatal_count ?? 0,                        color: "bg-red-50 border-red-100" },
-          { label: "Fatal %",         val: `${(kpis?.fatal_pct ?? 0).toFixed(1)}%`,       color: "bg-orange-50 border-orange-100" },
+          { label: "Fatal %",         val: `${safeNum(kpis?.fatal_pct).toFixed(1)}%`,    color: "bg-orange-50 border-orange-100" },
         ].map(({ label, val, color }) => (
           <div key={label} className={`rounded-xl border p-3 ${color}`}>
             <p className="text-[11px] font-semibold text-slate-500">{label}</p>
@@ -174,7 +174,7 @@ export function InboundQualityPanel({ from, to, queryKey }: Props) {
                   <span className="text-sm font-black text-slate-300 tabular-nums">{i + 1}</span>
                   <span className="flex-1 truncate text-sm font-semibold text-slate-800">{a.agent}</span>
                   <span className="text-xs text-slate-400">{a.calls} calls</span>
-                  <span className="font-bold text-emerald-700 tabular-nums">{a.score.toFixed(1)}%</span>
+                  <span className="font-bold text-emerald-700 tabular-nums">{safeNum(a.score).toFixed(1)}%</span>
                 </div>
               ))}
             </div>

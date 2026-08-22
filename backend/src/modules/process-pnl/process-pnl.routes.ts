@@ -1354,14 +1354,9 @@ router.get(
     const metric = String(req.query.metric ?? "");
     const period = String(req.query.period ?? "");
     const requestedBranchId = req.query.branchId ? String(req.query.branchId) : undefined;
-    const processId = req.query.processId ? String(req.query.processId) : undefined;
-    const costCentreId = req.query.costCentreId ? String(req.query.costCentreId) : undefined;
     const user = actor(req);
     // Same branch-scope resolution every other P&L route uses — a branch-confined user cannot
-    // drill into a branch's figures they aren't entitled to see the summary for either. Applies
-    // when the cell clicked was branch-scoped (the branch comparison table); a process/cost-centre
-    // scoped drill (the Focus panel) is trusted the same way getCeoOverview() itself already
-    // trusts a processId/costCentreId filter — no separate cross-check exists there either.
+    // drill into a branch's figures they aren't entitled to see the summary for either.
     const confinedRequestedBranch = await resolveFinanceBranchScope({
       userId: user.id, primaryRole: user.role, userRoles: user.roles, requestedBranchId,
     });
@@ -1369,26 +1364,15 @@ router.get(
       userId: user.id, primaryRole: user.role, userRoles: user.roles,
     });
     const branchId = hardBranchScope ?? confinedRequestedBranch ?? requestedBranchId;
-    if (!branchId && !processId && !costCentreId) {
-      res.status(400).json({ success: false, error: "one of branchId, processId, costCentreId is required" });
+    if (!branchId) {
+      res.status(400).json({ success: false, error: "branchId is required" });
       return;
     }
     if (!["revenue", "people", "indirect", "budget"].includes(metric)) {
       res.status(400).json({ success: false, error: "metric must be one of revenue, people, indirect, budget" });
       return;
     }
-    if (metric === "budget" && !branchId) {
-      res.status(400).json({ success: false, error: "budget drilldown requires branchId" });
-      return;
-    }
-    // branchId only applied when no process/cost-centre scope was requested — the two are
-    // alternative scopes for the same cell, never combined (a Focus-panel click never also
-    // carries the page's branch filter as an additional AND).
-    const query = (
-      processId ? { metric, period, processId }
-      : costCentreId ? { metric, period, costCentreId }
-      : { metric, period, branchId }
-    ) as PnlDrilldownQuery;
+    const query = { metric, period, branchId } as PnlDrilldownQuery;
     const data = await getPnlDrilldown(query);
     res.json({ success: true, data });
   })

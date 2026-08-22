@@ -392,6 +392,20 @@ function scoringTypeFor(kpi: { direction?: string | null; scoring_type?: string 
   return lowerBetter ? 'lower_better' : 'higher_better';
 }
 
+/**
+ * Direction-aware percentile of `myValue` among `peerValues` (each peer's own
+ * period average for this same metric). For a lower_is_better metric (AHT,
+ * ACW), beating more peers means having a LOWER average than more of them —
+ * inverting this would tell an agent they're in the top percentile for being
+ * the slowest on the team. Returns null when there's no meaningful peer set
+ * (fewer than 2 peers) rather than a misleading 0/100.
+ */
+export function computePercentile(myValue: number, peerValues: number[], lowerIsBetter: boolean): number | null {
+  if (peerValues.length < 2) return null;
+  const beatenOrTied = peerValues.filter(v => (lowerIsBetter ? v >= myValue : v <= myValue)).length;
+  return Math.round((beatenOrTied / peerValues.length) * 100);
+}
+
 // ─── Live KPI performance ──────────────────────────────────────────────────────
 
 export async function getLiveKpiPerformance(employeeId: string, period: Period, anchorDate?: string) {
@@ -416,6 +430,74 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
      ORDER BY score_date ASC`,
     [employeeId, start, end, ...metricIds]
   );
+
+  // Peer comparison: same job/process peer group, same date range, same metrics.
+  // Peer group narrows from most to least specific (process+designation is who
+  // this employee actually works alongside doing the same job; department is a
+  // fallback for anyone process/designation can't group). Mirrors the same
+  // "exclude automated test records" pattern kpi.service.ts's leaderboard query
+  // uses — a Codex E2E synthetic employee sharing a process would otherwise
+  // silently distort a real employee's peer average.
+  const peerAverages = new Map<string, { peer_avg: number; peer_count: number }>();
+  const peerValuesByMetric = new Map<string, Array<{ employee_id: string; avg_value: number }>>();
+  try {
+    const [empOrgRows] = await db.execute<RowDataPacket[]>(
+      `SELECT department_id, designation_id, process_id FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId]
+    );
+    const empOrg = (empOrgRows as any[])[0];
+    let peerClause: string | null = null;
+    let peerParam: string | null = null;
+    if (empOrg?.process_id && empOrg?.designation_id) {
+      peerClause = 'e.process_id = ? AND e.designation_id = ?';
+    } else if (empOrg?.process_id) {
+      peerClause = 'e.process_id = ?';
+    } else if (empOrg?.designation_id) {
+      peerClause = 'e.designation_id = ?';
+    } else if (empOrg?.department_id) {
+      peerClause = 'e.department_id = ?';
+    }
+
+    if (peerClause && metricIds.length) {
+      const peerParams: unknown[] = empOrg?.process_id && empOrg?.designation_id
+        ? [empOrg.process_id, empOrg.designation_id]
+        : [empOrg?.process_id ?? empOrg?.designation_id ?? empOrg?.department_id];
+
+      const [peerRows] = await db.execute<RowDataPacket[]>(
+        `SELECT kda.metric_id, kda.employee_id, AVG(kda.actual_value) AS avg_value
+         FROM kpi_daily_actual kda
+         JOIN employees e ON e.id = kda.employee_id AND e.active_status = 1
+         WHERE kda.metric_id IN (${placeholders})
+           AND kda.score_date BETWEEN ? AND ?
+           AND ${peerClause}
+           AND e.employee_code NOT LIKE 'CODEX\\_E2E%'
+           AND COALESCE(e.full_name, '') NOT LIKE '%Codex E2E%'
+         GROUP BY kda.metric_id, kda.employee_id`,
+        [...metricIds, start, end, ...peerParams]
+      );
+
+      for (const row of peerRows as any[]) {
+        const avgValue = Number(row.avg_value);
+        if (isNaN(avgValue)) continue;
+        if (!peerValuesByMetric.has(row.metric_id)) peerValuesByMetric.set(row.metric_id, []);
+        peerValuesByMetric.get(row.metric_id)!.push({ employee_id: row.employee_id, avg_value: avgValue });
+      }
+      for (const [metricId, values] of peerValuesByMetric) {
+        // Include self in both the average and the count — "peer average" reads
+        // as "people like me" and excluding self from a 2-person process would
+        // make "peer average" mean "the one other person", which is misleading.
+        const sum = values.reduce((s, v) => s + v.avg_value, 0);
+        peerAverages.set(metricId, {
+          peer_avg: Math.round((sum / values.length) * 100) / 100,
+          peer_count: values.length,
+        });
+      }
+    }
+  } catch {
+    // Peer comparison is an enrichment, not core data — if it fails for any
+    // reason (missing org-unit columns, transient query error), the KPI card
+    // must still render with real scores; peer_avg/percentile simply stay null.
+  }
 
   // Get rating config (S/A/B/C/D)
   const [ratingRows] = await db.execute<RowDataPacket[]>(
@@ -463,6 +545,19 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
 
     const rating = avgActual !== null ? getRating(scorePct) : null;
 
+    // Percentile among the peer group actually queried above (same process +
+    // designation where available), direction-aware: for a lower_is_better
+    // metric like AHT, beating more peers means having a LOWER average than
+    // more of them, not a higher one.
+    const peerInfo = peerAverages.get(kpi.metric_id) ?? null;
+    const percentile = avgActual !== null && peerInfo
+      ? computePercentile(
+          avgActual,
+          (peerValuesByMetric.get(kpi.metric_id) ?? []).map(v => v.avg_value),
+          kpi.direction === 'lower_is_better'
+        )
+      : null;
+
     return {
       metric_id: kpi.metric_id,
       metric_code: kpi.metric_code,
@@ -479,6 +574,9 @@ export async function getLiveKpiPerformance(employeeId: string, period: Period, 
       rating: rating?.label ?? null,
       rating_color: rating?.color ?? null,
       resolved_from: kpi.resolved_from,
+      peer_avg: peerInfo?.peer_avg ?? null,
+      peer_count: peerInfo?.peer_count ?? null,
+      percentile,
       trend_data: dailyRows.map(r => ({
         date: r.score_date instanceof Date
           ? r.score_date.toISOString().split('T')[0]

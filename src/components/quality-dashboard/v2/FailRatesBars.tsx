@@ -47,8 +47,12 @@ export function FailRatesBars({ summary: s, loading }: Props) {
       ) : (
         <div className="space-y-3.5">
           {PARAMS.map(({ key, label }) => {
-            // `|| 0` still guards the runtime case the type cannot: the API may omit a rate.
-            const val = s[key] || 0;
+            // Number(...) guards two runtime cases the type cannot: the API may omit a
+            // rate (undefined/null -> NaN -> 0), or return it as a numeric string from a
+            // MySQL DECIMAL column that mysql2 didn't cast (e.g. "12.5") — a bare `|| 0`
+            // let a truthy string straight through and crashed here with "val.toFixed is
+            // not a function" the moment a real fail-rate value came back as a string.
+            const val = Number(s[key]) || 0;
             return (
               <div key={key}>
                 <div className="mb-1 flex items-center justify-between">

@@ -276,10 +276,19 @@ router.get("/agents", requireRole(...ALLOWED_ROLES), h(async (req: Authenticated
     // specifically because binding the number fails - a workaround one Number() away from
     // breaking again.
 
+    // active_status is read via a SELECT-list alias (agent_active_status), not
+    // referenced directly in HAVING. This pool's connection genuinely rejects
+    // `HAVING ... ANY_VALUE(e.active_status) ...` with "Unknown column
+    // 'e.active_status' in 'having clause'" — a real 500 on this endpoint,
+    // confirmed live in-browser — even though the identical LEFT JOIN alias is
+    // referenced fine in the SELECT list two lines above. A HAVING clause can
+    // always resolve a SELECT-list alias; that's the portable fix regardless
+    // of why the raw column reference fails on this particular connection.
     const [rows] = await pool.execute<RowDataPacket[]>(`
       SELECT
         cqa.User AS agent_code,
         ANY_VALUE(COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), cqa.User)) AS agent_name,
+        COALESCE(ANY_VALUE(e.active_status), 1) AS agent_active_status,
         COUNT(*) as total_calls,
         ROUND(AVG(cqa.quality_percentage), 2) as avg_score,
         COUNT(CASE WHEN cqa.quality_percentage >= 80 THEN 1 END) as calls_above_80,
@@ -299,7 +308,7 @@ router.get("/agents", requireRole(...ALLOWED_ROLES), h(async (req: Authenticated
       GROUP BY cqa.User
       HAVING COUNT(*) >= 3
         AND agent_name NOT LIKE 'Codex E2E%'
-        AND COALESCE(ANY_VALUE(e.active_status), 1) = 1
+        AND agent_active_status = 1
       ORDER BY avg_score DESC
       ${sqlLimit(limit, { maxLimit: 100 })}
     `, params);

@@ -12,7 +12,7 @@ import { X } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useAuth } from "@/contexts/AuthContext";
 import type { AppRole } from "@/types/roles";
-import type { UserRoleData } from "@/hooks/useUserRole";
+import type { UserRoleData, WorkforcePageAccess } from "@/hooks/useUserRole";
 
 // ─── Feature flag key ──────────────────────────────────────────────────────────
 const LS_ENABLED_KEY = "hrms_viewas_enabled";
@@ -103,6 +103,34 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user?.id]);
 
+  // Real page grants for a role, in the shape useWorkforceAccess()'s canViewPage()
+  // expects. Previously this whole feature hardcoded `pages: []`, which made
+  // ProtectedRoute's `canViewPage(routePageCode)` check — "the source of truth" for
+  // page-mapped routes per its own comment — deny every page-gated route for every
+  // impersonated employee regardless of their real role's real grants. Fetched from
+  // the same admin-only endpoint the role-permissions editor UI uses
+  // (GET /api/access/roles/:roleKey/permissions), not invented here.
+  async function fetchRolePages(roleKey: string): Promise<WorkforcePageAccess[]> {
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(
+        `/api/access/roles/${roleKey}/permissions`
+      );
+      const rows = res?.data ?? [];
+      return rows.map((row) => ({
+        page_code: row.page_code,
+        can_view: Boolean(row.permissions?.can_view),
+        can_create: Boolean(row.permissions?.can_create),
+        can_edit: Boolean(row.permissions?.can_edit),
+        can_delete: Boolean(row.permissions?.can_delete),
+        can_export: Boolean(row.permissions?.can_export),
+      }));
+    } catch {
+      // Same fail-closed default the rest of this hook already relies on: an
+      // empty pages list denies every page-mapped route rather than opening one.
+      return [];
+    }
+  }
+
   const setActiveEmployee = useCallback(
     async (emp: ViewAsEmployee) => {
       if (!user?.id) return;
@@ -122,6 +150,7 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
         const roles = [rawRole] as AppRole[];
         const roleKeys = expandRoleKeys(roles);
         const primaryRole = getPrimaryRole(roles);
+        const pages = await fetchRolePages(rawRole);
 
         const synthetic: UserRoleData = {
           roles,
@@ -131,7 +160,7 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
           employeeCode: empData?.employee_code ?? emp.employee_code,
           employeeName: empData?.full_name ?? emp.full_name,
           scopes: [],
-          pages: [],
+          pages,
           disabledPageCodes: [],
         };
 
@@ -149,6 +178,7 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
         // Fallback: use whatever role was passed with the option
         const rawRole = emp.primary_role ?? "employee";
         const roles = [rawRole] as AppRole[];
+        const pages = await fetchRolePages(rawRole);
         const synthetic: UserRoleData = {
           roles,
           roleKeys: expandRoleKeys(roles),
@@ -157,7 +187,7 @@ export function ViewAsProvider({ children }: { children: React.ReactNode }) {
           employeeCode: emp.employee_code,
           employeeName: emp.full_name,
           scopes: [],
-          pages: [],
+          pages,
           disabledPageCodes: [],
         };
         queryClient.setQueryData(["user-role-workforce-os", user.id], synthetic);
