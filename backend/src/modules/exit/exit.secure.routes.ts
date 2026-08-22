@@ -13,33 +13,24 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 const EXIT_SCOPE_ROLES = ["manager", "assistant_manager", "tl", "branch_head", "process_manager", "hr"];
 
 /**
- * FSM transitions for exit_request.status. Matches the frontend exactly — verified against
- * every updateStatus(...) call site in NativeExitManagement.tsx and NativeExitCommandCenter.tsx,
- * which already only ever offer this same linear progression (+ revoke from any non-terminal
- * state) via the UI. Originally built in exit-status-guard.compat.routes.ts, which never ran:
- * that router is mounted after this one and Express dispatches to the first handler that
- * matches, so its guard was dead code. Consolidated here, the one router that's actually
- * reachable for PATCH/POST /api/exit/:id/status.
+ * FSM transitions for exit_request.status.
  *
- * clearance_pending/fnf_pending/closed/withdrawn added 2026-08-14 (delta-audit Stage 5g,
- * user-approved): resignation.routes.ts's /mark-clearance-pending, /mark-fnf-pending, /close
- * and /withdraw wrote these four statuses directly via raw UPDATE with no transition check at
- * all — a status vocabulary this FSM didn't even recognize, so those four endpoints could
- * never have been guarded by it even in principle. Modeled as a second terminal chain off
- * 'accepted' (accepted → clearance_pending → fnf_pending → closed), parallel to the existing
- * accepted → notice_serving → exited chain — both are ways an accepted resignation concludes.
- * 'withdrawn' mirrors 'revoked' exactly (same source states): resignation.routes.ts's own
- * comment on /withdraw is "employee withdraws own resignation; HR/admin may withdraw on
- * behalf", the self/HR-initiated-cancel counterpart to 'revoked'. Live DB verified before
- * this change: exit_request has 2 rows in production, both already 'exited' — none in any of
- * these four states, so extending the map changes no live transition.
+ * Corrected business flow (2026-08-23):
+ * - Employee submits resignation → goes to Manager
+ * - Manager reviews and accepts resignation → status becomes "accepted"
+ * - HR does retention attempts / exit interview during accepted period (via clearance tasks)
+ * - HR or Employee can revoke if retained (revoke reason is optional)
+ * - Admin does IT deprovisioning via clearance tasks only (NOT a status approval gate)
+ * - After clearance → notice_serving → exited
+ *
+ * Removed from approval chain:
+ * - hr_review: HR does retention/interview but doesn't approve resignations
+ * - admin_review: Admin does IT deprovisioning via clearance tasks, not status approval
  */
 export const ALLOWED_EXIT_TRANSITIONS: Record<string, string[]> = {
   draft: ["submitted", "revoked", "withdrawn"],
-  submitted: ["manager_review", "hr_review", "rejected", "revoked", "withdrawn"],
-  manager_review: ["hr_review", "rejected", "revoked", "withdrawn"],
-  hr_review: ["admin_review", "accepted", "rejected", "revoked", "withdrawn"],
-  admin_review: ["accepted", "rejected", "revoked", "withdrawn"],
+  submitted: ["manager_review", "revoked", "withdrawn"],
+  manager_review: ["accepted", "rejected", "revoked", "withdrawn"],
   accepted: ["notice_serving", "clearance_pending", "revoked", "withdrawn"],
   notice_serving: ["exited", "revoked", "withdrawn"],
   clearance_pending: ["fnf_pending", "revoked", "withdrawn"],
@@ -176,11 +167,11 @@ exitSecureRouter.get("/stats", h(async (req: any, res: any) => {
   );
   const counts: Record<string, number> = {};
   for (const row of rows as any[]) counts[String(row.status)] = Number(row.cnt ?? 0);
-  const statuses = ["draft", "submitted", "manager_review", "hr_review", "admin_review", "accepted", "rejected", "revoked", "notice_serving", "exited"];
+  const statuses = ["draft", "submitted", "manager_review", "accepted", "rejected", "revoked", "withdrawn", "notice_serving", "clearance_pending", "fnf_pending", "closed", "exited"];
   const detailed = Object.fromEntries(statuses.map((s) => [s, counts[s] ?? 0])) as Record<string, number>;
   const total = Object.values(detailed).reduce((a, b) => a + b, 0);
-  const pending = detailed.submitted + detailed.manager_review + detailed.hr_review + detailed.admin_review;
-  return res.json({ success: true, data: { ...detailed, total, pending, completed: detailed.exited, active_notice: detailed.accepted + detailed.notice_serving } });
+  const pending = detailed.submitted + detailed.manager_review;
+  return res.json({ success: true, data: { ...detailed, total, pending, completed: detailed.exited + detailed.closed, active_notice: detailed.accepted + detailed.notice_serving + detailed.clearance_pending + detailed.fnf_pending } });
 }));
 
 exitSecureRouter.get("/", h(async (req: any, res: any) => {
@@ -233,13 +224,16 @@ async function handleExitStatusUpdate(req: any, res: any) {
   }
 
   const nextStatus = normalizeExitStatus(req.body?.status);
-  const allowed = ["submitted", "manager_review", "hr_review", "admin_review", "accepted", "notice_serving", "exited", "revoked", "rejected"];
+  const allowed = ["submitted", "manager_review", "accepted", "notice_serving", "exited", "revoked", "rejected", "withdrawn"];
   if (!allowed.includes(nextStatus)) {
     return res.status(400).json({ success: false, message: "Invalid exit status" });
   }
 
   const remarks = String(req.body?.remarks ?? "").trim();
-  if (!remarks) return res.status(400).json({ success: false, message: "Remarks are required" });
+  const remarksOptionalFor = ["revoked", "withdrawn"];
+  if (!remarks && !remarksOptionalFor.includes(nextStatus)) {
+    return res.status(400).json({ success: false, message: "Remarks are required" });
+  }
 
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,

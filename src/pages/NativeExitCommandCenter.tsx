@@ -75,7 +75,7 @@ type FullFinalCalc = {
   is_ff_provisional: number;
 };
 
-const statusFlow = ["submitted", "manager_review", "hr_review", "accepted", "notice_serving", "exited"];
+const statusFlow = ["submitted", "manager_review", "accepted", "notice_serving", "exited"];
 const CHART_COLORS = ["#3B82F6", "#10B981", "#F59E0B", "#EF4444", "#8B5CF6", "#EC4899", "#14B8A6", "#F97316"];
 const REASON_COLORS: Record<string, string> = {
   better_opportunity: "#3B82F6",
@@ -436,8 +436,7 @@ function BulkActionsTab({ exitRequests, onRefresh }: { exitRequests: ExitRow[]; 
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="manager_review">Move to Manager Review</SelectItem>
-                  <SelectItem value="hr_review">Move to HR Review</SelectItem>
-                  <SelectItem value="accepted">Accept</SelectItem>
+                  <SelectItem value="accepted">Accept (Manager Approved)</SelectItem>
                   <SelectItem value="notice_serving">Start Notice</SelectItem>
                   <SelectItem value="exited">Mark Exited</SelectItem>
                   <SelectItem value="generate_clearance">Generate Clearance</SelectItem>

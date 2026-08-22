@@ -109,7 +109,6 @@ const REASON_CATEGORIES: Array<{ code: string; label: string }> = [
   { code: "other",                     label: "Other" },
 ];
 
-const INVOLUNTARY_NEEDS_ADMIN = ["termination", "absconding"];
 
 function normalizeStatus(status: string) {
   return status === "exit_confirmed" ? "exited" : status;
@@ -482,7 +481,7 @@ export default function NativeExitManagement() {
     }
   };
 
-  const STATUSES = ["all", "submitted", "manager_review", "hr_review", "admin_review", "accepted", "notice_serving", "exited", "revoked", "rejected"];
+  const STATUSES = ["all", "submitted", "manager_review", "accepted", "notice_serving", "exited", "revoked", "rejected", "withdrawn"];
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -495,9 +494,6 @@ export default function NativeExitManagement() {
   const agedCount = filtered.filter((r) => !["exited", "rejected", "revoked"].includes(normalizeStatus(r.status)) && ageDays(r.created_at) > 7).length;
   const clearanceBlocked = filtered.filter((r) => normalizeStatus(r.status) === "notice_serving" && Number(r.clearance_total ?? 0) > Number(r.clearance_cleared ?? 0)).length;
 
-  // Helper: does this exit need admin approval before acceptance?
-  const needsAdminReview = (r: ExitRequest) =>
-    r.exit_type === "involuntary" && INVOLUNTARY_NEEDS_ADMIN.includes(r.exit_sub_type);
 
   return (
     <DashboardLayout>
@@ -573,7 +569,6 @@ export default function NativeExitManagement() {
                 <tbody>
                   {filtered.map((r) => {
                     const status = normalizeStatus(r.status);
-                    const isInvoluntaryAdmin = needsAdminReview(r);
                     return (
                       <tr key={r.id} className="border-t hover:bg-slate-50/80">
                         {/* Employee cell — name, code, branch, process */}
@@ -606,7 +601,6 @@ export default function NativeExitManagement() {
                         <td className="p-4 capitalize text-slate-700">
                           <div>{label(r.exit_type)}</div>
                           <div className="text-xs text-slate-500">{label(r.exit_sub_type)}</div>
-                          {isInvoluntaryAdmin && <span className="mt-1 inline-block rounded bg-orange-50 px-1.5 py-0.5 text-xs text-orange-700 font-semibold">Admin required</span>}
                         </td>
                         <td className="p-4 text-slate-600">
                           <div className="capitalize font-semibold">{reasonLabel(r.exit_reason_category)}</div>
@@ -660,17 +654,7 @@ export default function NativeExitManagement() {
                               <button onClick={() => openReviewModal(r.id, "manager_review", r.last_working_day_proposed ?? "")} disabled={updating === r.id} className="rounded-lg bg-amber-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50">Review</button>
                             )}
                             {status === "manager_review" && (
-                              <button onClick={() => updateStatus(r.id, "hr_review")} disabled={updating === r.id} className="rounded-lg bg-violet-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-violet-700 disabled:opacity-50">HR Review</button>
-                            )}
-                            {status === "hr_review" && (
-                              isInvoluntaryAdmin ? (
-                                <button onClick={() => updateStatus(r.id, "admin_review", { remarks: "Sent for admin approval (involuntary exit)" })} disabled={updating === r.id} className="rounded-lg bg-orange-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-orange-700 disabled:opacity-50">Admin Review</button>
-                              ) : (
-                                <button onClick={() => openReviewModal(r.id, "accepted", r.last_working_day_proposed ?? "")} disabled={updating === r.id} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">Accept</button>
-                              )
-                            )}
-                            {status === "admin_review" && (
-                              <button onClick={() => openReviewModal(r.id, "accepted", r.last_working_day_proposed ?? "")} disabled={updating === r.id} className="rounded-lg bg-emerald-700 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-800 disabled:opacity-50">Approve</button>
+                              <button onClick={() => openReviewModal(r.id, "accepted", r.last_working_day_proposed ?? "")} disabled={updating === r.id} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 disabled:opacity-50">Accept</button>
                             )}
                             {status === "accepted" && (
                               <button onClick={() => updateStatus(r.id, "notice_serving")} disabled={updating === r.id} className="rounded-lg bg-cyan-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-cyan-700 disabled:opacity-50">Notice</button>
@@ -817,12 +801,6 @@ export default function NativeExitManagement() {
                 </div>
               </div>
 
-              {/* Admin-review notice for involuntary exits */}
-              {form.exitType === "involuntary" && INVOLUNTARY_NEEDS_ADMIN.includes(form.exitSubType) && (
-                <div className="rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3 text-xs text-orange-800 font-semibold">
-                  This exit type requires Admin approval before acceptance.
-                </div>
-              )}
 
               {/* Absconding since date */}
               {form.exitSubType === "absconding" && (
