@@ -9,7 +9,18 @@
 -- script (backend/scripts/populate-call-centre-code.mjs), this index
 -- is what makes every subsequent KPI quality sync fast.
 --
--- Safe to re-run: ADD INDEX IF NOT EXISTS is idempotent on MySQL 8.0+.
+-- Safe to re-run: checks information_schema before adding, compatible with MySQL 5.7+.
 
-ALTER TABLE employees
-  ADD INDEX IF NOT EXISTS idx_call_centre_code (call_centre_code);
+SET @idx_exists := (
+  SELECT COUNT(*) FROM information_schema.statistics
+  WHERE table_schema = DATABASE()
+    AND table_name   = 'employees'
+    AND index_name   = 'idx_call_centre_code'
+);
+SET @sql := IF(@idx_exists > 0,
+  'SELECT 1 -- index already exists',
+  'ALTER TABLE employees ADD INDEX idx_call_centre_code (call_centre_code)'
+);
+PREPARE _stmt FROM @sql;
+EXECUTE _stmt;
+DEALLOCATE PREPARE _stmt;
