@@ -655,6 +655,41 @@ router.post(
   requireRole(...TOPUP_CREATE_ROLES),
   h(async (req, res) => {
     const user = actor(req);
+    const isNewLine = Boolean(req.body?.isNewLine);
+    // Array.isArray guard here, not a length check — create()'s own validation is what refuses
+    // an empty/malformed split set, with a message the reviewer can act on.
+    const costCentreSplits = Array.isArray(req.body?.costCentreSplits) ? req.body.costCentreSplits : [];
+
+    if (isNewLine) {
+      const budgetId = String(req.body?.budgetId ?? "");
+      if (!budgetId) throw Object.assign(new Error("A budget is required"), { statusCode: 400 });
+      const budgetBranchId = await budgetTopupService.getBudgetBranch(budgetId);
+      await assertFinanceRecordBranch({
+        userId: user.id,
+        primaryRole: user.role,
+        userRoles: user.roles,
+        recordBranchId: budgetBranchId,
+      });
+      const data = await budgetTopupService.create(
+        {
+          isNewLine: true,
+          budgetId,
+          head: req.body?.head != null ? String(req.body.head) : undefined,
+          subHead: req.body?.subHead != null ? String(req.body.subHead) : undefined,
+          unit: req.body?.unit != null ? String(req.body.unit) : undefined,
+          unitRate: req.body?.unitRate != null ? Number(req.body.unitRate) : undefined,
+          requestedAmount: Number(req.body?.requestedAmount ?? 0),
+          requestedQuantity: Number(req.body?.requestedQuantity ?? 0),
+          reason: String(req.body?.reason ?? ""),
+          costCentreSplits,
+        },
+        user.id,
+        user.role
+      );
+      res.status(201).json({ success: true, data });
+      return;
+    }
+
     const budgetLineId = String(req.body?.budgetLineId ?? "");
     if (!budgetLineId) throw Object.assign(new Error("A budget line is required"), { statusCode: 400 });
     const lineBranchId = await budgetTopupService.getLineBranch(budgetLineId);
@@ -670,6 +705,7 @@ router.post(
         requestedAmount: Number(req.body?.requestedAmount ?? 0),
         requestedQuantity: Number(req.body?.requestedQuantity ?? 0),
         reason: String(req.body?.reason ?? ""),
+        costCentreSplits,
       },
       user.id,
       user.role
@@ -733,6 +769,7 @@ router.post(
         budgetLineId: req.params.lineId,
         additionalQuantity: Number(req.body?.additionalQuantity ?? 0),
         reason: String(req.body?.reason ?? ""),
+        costCentreSplits: Array.isArray(req.body?.costCentreSplits) ? req.body.costCentreSplits : [],
       },
       user.id,
       user.role

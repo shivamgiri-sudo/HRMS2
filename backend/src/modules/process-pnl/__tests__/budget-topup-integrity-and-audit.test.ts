@@ -59,17 +59,48 @@ beforeEach(() => {
   execute.mockImplementation(async (sql: string) => {
     if (/FROM finance_budget_line l/i.test(String(sql))) return [[LINE], []];
     if (/FROM finance_budget_topup_request t/i.test(String(sql))) return [[{ id: "t-1" }], []];
+    // Group D: create() validates every split's cost centre exists, is active, and belongs to
+    // the line's branch — same lookup grn.service.ts's createUnbudgetedDraft() already applies.
+    if (/FROM cost_centre_master/i.test(String(sql))) {
+      return [[{ id: "cc-1", branch_id: LINE.branch_id, active_status: 1 }], []];
+    }
     return [[], []];
   });
   query.mockResolvedValue([[], []]);
+  // Group D: create() now inserts into finance_budget_topup_request AND
+  // finance_budget_topup_request_split in one transaction, so it needs a real connection
+  // instead of the bare pool. Reusing the SAME `execute` mock as the pool means any
+  // test-specific execute.mockImplementation override (a different LINE shape, etc.) applies
+  // identically whichever one create() happens to call through.
+  getConnection.mockResolvedValue({
+    execute,
+    beginTransaction: vi.fn(async () => {}),
+    commit: vi.fn(async () => {}),
+    rollback: vi.fn(async () => {}),
+    release: vi.fn(() => {}),
+  });
 });
 
-const create = (overrides: Record<string, unknown> = {}) =>
-  budgetTopupService.create(
-    { budgetLineId: "line-1", requestedAmount: 5000, requestedQuantity: 5, reason: "Headcount added", ...overrides } as any,
+/** Default cost-centre split always covers the whole requestedAmount/requestedQuantity (whether
+ *  the defaults above or an override), so a test that only overrides requestedAmount/Quantity
+ *  doesn't also have to hand-derive a matching split every time. Passing an explicit
+ *  costCentreSplits override still wins (spread last). */
+const create = (overrides: Record<string, unknown> = {}) => {
+  const requestedAmount = (overrides as any).requestedAmount ?? 5000;
+  const requestedQuantity = (overrides as any).requestedQuantity ?? 5;
+  return budgetTopupService.create(
+    {
+      budgetLineId: "line-1",
+      requestedAmount,
+      requestedQuantity,
+      reason: "Headcount added",
+      costCentreSplits: [{ costCentreId: "cc-1", amount: requestedAmount, quantity: requestedQuantity }],
+      ...overrides,
+    } as any,
     "user-raiser",
     "branch_admin",
   );
+};
 
 describe("the approved amount is the amount that gets applied", () => {
   it("accepts a quantity that matches the amount at the line's unit rate", async () => {
@@ -105,6 +136,9 @@ describe("the approved amount is the amount that gets applied", () => {
     execute.mockImplementation(async (sql: string) => {
       if (/FROM finance_budget_line l/i.test(String(sql))) return [[{ ...LINE, unit_rate: 120000 }], []];
       if (/FROM finance_budget_topup_request t/i.test(String(sql))) return [[{ id: "t-1" }], []];
+      if (/FROM cost_centre_master/i.test(String(sql))) {
+        return [[{ id: "cc-1", branch_id: LINE.branch_id, active_status: 1 }], []];
+      }
       return [[], []];
     });
     await expect(create({ requestedAmount: 400000, requestedQuantity: 3.3333 })).resolves.toBeDefined();
