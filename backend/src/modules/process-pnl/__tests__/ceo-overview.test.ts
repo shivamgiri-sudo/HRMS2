@@ -370,6 +370,69 @@ describe("multi-select filters", () => {
   });
 });
 
+describe("filter options — active + branch scoped (bug fix)", () => {
+  /*
+   * Two defects, both in filterOptions(): (1) the cost-centre option query never checked
+   * active_status at all (the process query already did), so a deactivated cost centre stayed
+   * offered in the dropdown forever; (2) filterOptions() was the one query called without the
+   * caller's own `scope` — every sibling query beside it (revenueByBranch, peopleByBranch,
+   * spendByBranch, marginTrend) already receives it — so selecting a branch anywhere else on the
+   * page never narrowed either the Process or Cost Centre dropdown. These tests assert on the
+   * actual SQL/params handed to `execute`, not on returned row content, since the shared mockDb
+   * fixture doesn't discriminate branch-scoped rows from unscoped ones — the point here is
+   * confirming what's ASKED of the database, matching how the fix was verified before it shipped.
+   */
+  const branches = [
+    { id: "a", branch_name: "NOIDA", active_status: 1 },
+    { id: "b", branch_name: "NOIDA-2", active_status: 1 },
+    { id: "c", branch_name: "AHMEDABAD-JALDARSHAN", active_status: 1 },
+  ];
+
+  function findCall(substring: string) {
+    const call = execute.mock.calls.find(([sql]) => String(sql).includes(substring));
+    if (!call) throw new Error(`No execute() call matched: ${substring}`);
+    return { sql: String(call[0]), params: call[1] as unknown[] };
+  }
+
+  it("cost-centre options now filter on active_status = 1 (previously missing entirely)", async () => {
+    mockDb({ branches });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    await getCeoOverview("2026-06", {});
+    const { sql } = findCall("ccm.cost_centre_code AS code");
+    expect(sql).toContain("ccm.active_status = 1");
+  });
+
+  it("no branch selected: neither option query filters by branch_id", async () => {
+    mockDb({ branches });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    await getCeoOverview("2026-06", {});
+    expect(findCall("pm.process_name AS name").sql).not.toContain("branch_id IN");
+    expect(findCall("ccm.cost_centre_code AS code").sql).not.toContain("branch_id IN");
+  });
+
+  it("branch selected: both option queries filter by that branch, params bound in order", async () => {
+    mockDb({ branches });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    await getCeoOverview("2026-06", { branchIds: ["a", "b"] });
+
+    const processCall = findCall("pm.process_name AS name");
+    expect(processCall.sql).toContain("pm.branch_id IN (?,?)");
+    expect(processCall.params).toEqual(["2026-06", "a", "b"]);
+
+    const ccCall = findCall("ccm.cost_centre_code AS code");
+    expect(ccCall.sql).toContain("ccm.branch_id IN (?,?)");
+    expect(ccCall.params).toEqual(["2026-06", "a", "b"]);
+  });
+
+  it("singular branchId still narrows the option queries (folded into scope like everywhere else)", async () => {
+    mockDb({ branches });
+    const { getCeoOverview } = await import("../ceo-overview.service.js");
+    await getCeoOverview("2026-06", { branchId: "c" });
+    expect(findCall("pm.process_name AS name").params).toEqual(["2026-06", "c"]);
+    expect(findCall("ccm.cost_centre_code AS code").params).toEqual(["2026-06", "c"]);
+  });
+});
+
 describe("focus panel — the caveats are the point", () => {
   it("warns when a cost centre carries its whole branch's overhead", async () => {
     /*

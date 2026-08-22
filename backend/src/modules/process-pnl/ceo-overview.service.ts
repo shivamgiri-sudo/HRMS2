@@ -828,15 +828,29 @@ async function marginTrend(endPeriod: string, s: CeoScope): Promise<CeoTrendPoin
   );
 }
 
-/** Only offer a filter value that has data behind it — an option that returns an empty page is
- *  indistinguishable from a broken one. */
-async function filterOptions(period: string) {
+/**
+ * Only offer a filter value that has data behind it — an option that returns an empty page is
+ * indistinguishable from a broken one.
+ *
+ * Takes `scope` for two reasons that were both missing before this fix: (1) an inactive cost
+ * centre stayed offered forever, since this query never checked `active_status` at all (the
+ * process query already did); (2) selecting a branch anywhere else on this page never narrowed
+ * either dropdown, because this was the one query beside `revenueByBranch`/`peopleByBranch`/
+ * `spendByBranch`/`marginTrend` that was called without the caller's own `scope` object — every
+ * sibling query already receives it, this one was simply left out.
+ */
+async function filterOptions(period: string, scope: CeoScope) {
   // Guard: tables may not exist if mirrors haven't synced yet for this period
   const [hasSalaryPrep, hasInvoice] = await Promise.all([
     tableExists("salary_prep_line"),
     tableExists("billing_invoice_particular_snapshot"),
   ]);
 
+  // Empty when no branch is selected, so an unfiltered request still offers every active
+  // process/cost centre exactly as before — only a real branch selection narrows either list.
+  const processBranchCondition = scope.branchIds.length
+    ? `AND pm.branch_id IN (${marks(scope.branchIds)})`
+    : "";
   const processes = hasSalaryPrep
     ? (await db.execute<RowDataPacket[]>(
         `SELECT DISTINCT pm.id AS id, pm.process_name AS name
@@ -845,11 +859,15 @@ async function filterOptions(period: string) {
            JOIN employees e ON e.id = l.employee_id
            JOIN process_master pm ON pm.id = e.process_id
           WHERE pm.active_status = 1
+          ${processBranchCondition}
           ORDER BY pm.process_name`,
-        [period],
+        [period, ...scope.branchIds],
       ))[0]
     : [];
 
+  const costCentreBranchCondition = scope.branchIds.length
+    ? `AND ccm.branch_id IN (${marks(scope.branchIds)})`
+    : "";
   const costCentres = hasInvoice
     ? (await db.execute<RowDataPacket[]>(
         `SELECT DISTINCT ccm.id AS id, ccm.cost_centre_code AS code
@@ -858,8 +876,10 @@ async function filterOptions(period: string) {
              ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
               = p.cost_centre_code COLLATE utf8mb4_unicode_ci
           WHERE p.period_code = ?
+            AND ccm.active_status = 1
+          ${costCentreBranchCondition}
           ORDER BY ccm.cost_centre_code`,
-        [period],
+        [period, ...scope.branchIds],
       ))[0]
     : [];
 
@@ -1040,7 +1060,7 @@ export async function getCeoOverview(period: string, filters: CeoFilters = {}): 
   const [revenue, people, spend, budget, trend, options, billing] = await Promise.all([
     revenueByBranch(period, scope), peopleByBranch(period, scope),
     spendByBranch(period, scope), budgetByBranch(period),
-    marginTrend(period, scope), filterOptions(period),
+    marginTrend(period, scope), filterOptions(period, scope),
     billingCompleteness(period, scope, nameOfBranch),
   ]);
 
