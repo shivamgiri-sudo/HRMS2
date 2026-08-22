@@ -283,8 +283,8 @@ async function checkLoans(bill, hrms) {
     SELECT COUNT(*) AS rc,
       SUM(Amount) AS loan_amount, SUM(Installments) AS installments,
       SUM(DeductionPerMonth) AS emi,
-      SUM(DeductedAmount) AS deducted,
-      SUM(Amount - DeductedAmount) AS pending
+      SUM(COALESCE(DeductedAmount,0)) AS deducted,
+      SUM(Amount - COALESCE(DeductedAmount,0)) AS pending
     FROM LoanMaster WHERE EmpCode NOT LIKE 'IDC%'
   `);
   const [[h]] = await hrms.query(`
