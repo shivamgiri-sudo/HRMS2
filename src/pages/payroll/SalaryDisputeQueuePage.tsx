@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2, XCircle, IndianRupee, Clock, ChevronRight,
-  AlertCircle, BarChart2, Calendar, CreditCard, FileText
+  AlertCircle, BarChart2, Calendar, CreditCard, FileText, AlertTriangle
 } from "lucide-react";
 import { toast } from "sonner";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -65,6 +65,23 @@ function ReviewDialog({
     staleTime: 60_000,
   });
   const salary = (salaryRaw as any)?.data?.data ?? (salaryRaw as any)?.data ?? null;
+
+  // Fetch attachments
+  const { data: attachRaw } = useQuery({
+    queryKey: ["dispute-attachments", dispute.id],
+    queryFn: () => hrmsApi.get(`/api/salary-disputes/${dispute.id}/attachments`),
+    staleTime: 60_000,
+  });
+  const attachments = unwrap<any[]>(attachRaw) ?? [];
+
+  // Fetch audit log (for appeals to show history)
+  const { data: auditRaw } = useQuery({
+    queryKey: ["dispute-audit", dispute.id],
+    queryFn: () => hrmsApi.get(`/api/salary-disputes/${dispute.id}/audit-log`),
+    enabled: !!dispute.original_dispute_id,
+    staleTime: 60_000,
+  });
+  const auditLog = unwrap<any[]>(auditRaw) ?? [];
 
   const suggestedDifferential = salary?.perDayRate && disputedDays
     ? Math.round(salary.perDayRate * parseInt(disputedDays || "0"))
@@ -140,6 +157,63 @@ function ReviewDialog({
               </p>
             )}
           </div>
+
+          {/* ── Section: Appeal Context ── */}
+          {dispute.original_dispute_id && (
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-purple-500 mb-2">Appeal Information</p>
+              <div className="rounded-xl bg-purple-50 border border-purple-200 p-3 space-y-2">
+                <p className="text-sm text-purple-700 font-medium">This is an appeal of a rejected dispute.</p>
+                {dispute.appeal_reason && (
+                  <p className="text-sm text-slate-700">{dispute.appeal_reason}</p>
+                )}
+                {auditLog.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-purple-600 cursor-pointer hover:underline">
+                      View Audit History ({auditLog.length} events)
+                    </summary>
+                    <div className="mt-2 space-y-1 text-xs">
+                      {auditLog.map((a: any) => (
+                        <div key={a.id} className="flex gap-2 text-slate-600">
+                          <span className="font-mono text-slate-400">
+                            {new Date(a.created_at).toLocaleDateString("en-IN")}
+                          </span>
+                          <span className="font-medium">{a.action}</span>
+                          {a.remarks && <span>— {a.remarks}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Section: Attachments ── */}
+          {attachments.length > 0 && (
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+                Attachments ({attachments.length})
+              </p>
+              <div className="space-y-1">
+                {attachments.map((a: any) => (
+                  <a
+                    key={a.id}
+                    href={`/api/files/download/${a.file_path}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 text-sm text-blue-600 hover:underline bg-blue-50 rounded-lg p-2 border border-blue-100"
+                  >
+                    <FileText className="w-4 h-4" />
+                    {a.file_name}
+                    <span className="text-xs text-slate-400 ml-auto">
+                      {a.file_size ? `${Math.round(a.file_size / 1024)}KB` : ""}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* ── Section: Salary Details (WFM only) ── */}
           {role === "wfm" && salary && (
@@ -369,6 +443,16 @@ export default function SalaryDisputeQueuePage() {
                           {typeBadge.icon}
                           {d.dispute_type.replace(/_/g, " ")}
                         </Badge>
+                        {d.sla_breached === 1 && (
+                          <Badge className="text-[10px] font-bold border flex items-center gap-1 bg-red-100 text-red-700 border-red-200">
+                            <AlertTriangle className="w-3 h-3" /> SLA Breached
+                          </Badge>
+                        )}
+                        {d.original_dispute_id && (
+                          <Badge className="text-[10px] font-bold border flex items-center gap-1 bg-purple-100 text-purple-700 border-purple-200">
+                            Appeal
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-xs text-slate-500 mt-0.5">Month: {d.run_month}</p>
                       <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{d.description}</p>
