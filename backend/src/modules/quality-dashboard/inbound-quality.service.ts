@@ -404,19 +404,24 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters) {
    */
   const [row] = await querySource<Record<string, number>>(
     `SELECT COUNT(*) AS total,
-      ROUND(100.0*SUM(COALESCE(call_answered_within_5_seconds,0))/NULLIF(COUNT(*),0),1) AS call_answered_within_5_seconds,
+      -- SUM(COALESCE(x,0))/COUNT(*) counts every row where x is NULL (not recorded) as
+      -- a fail in the denominator too. Same root bug as the AVG(COALESCE(x,0)) pattern
+      -- fixed elsewhere in this file and in quality-dashboard.routes.ts /
+      -- call-master.service.ts / costEfficiency.service.ts: SUM(x)/COUNT(x) sums and
+      -- counts only the rows where the parameter was actually scored.
+      ROUND(100.0*SUM(call_answered_within_5_seconds)/NULLIF(COUNT(call_answered_within_5_seconds),0),1) AS call_answered_within_5_seconds,
       NULL AS call_identified_by_name,
-      ROUND(100.0*SUM(COALESCE(customer_concern_acknowledged,0))/NULLIF(COUNT(*),0),1) AS customer_concern_acknowledged,
-      ROUND(100.0*SUM(COALESCE(express_empathy,0))/NULLIF(COUNT(*),0),1) AS express_empathy,
-      ROUND(100.0*SUM(COALESCE(active_listening,0))/NULLIF(COUNT(*),0),1) AS active_listening,
-      ROUND(100.0*SUM(COALESCE(assurance_or_appreciation_provided,0))/NULLIF(COUNT(*),0),1) AS assurance_or_appreciation_provided,
-      ROUND(100.0*SUM(COALESCE(politeness_and_no_sarcasm,0))/NULLIF(COUNT(*),0),1) AS politeness_and_no_sarcasm,
-      ROUND(100.0*SUM(COALESCE(correct_and_complete_information,0))/NULLIF(COUNT(*),0),1) AS correct_and_complete_information,
-      ROUND(100.0*SUM(COALESCE(proper_hold_procedure,0))/NULLIF(COUNT(*),0),1) AS proper_hold_procedure,
+      ROUND(100.0*SUM(customer_concern_acknowledged)/NULLIF(COUNT(customer_concern_acknowledged),0),1) AS customer_concern_acknowledged,
+      ROUND(100.0*SUM(express_empathy)/NULLIF(COUNT(express_empathy),0),1) AS express_empathy,
+      ROUND(100.0*SUM(active_listening)/NULLIF(COUNT(active_listening),0),1) AS active_listening,
+      ROUND(100.0*SUM(assurance_or_appreciation_provided)/NULLIF(COUNT(assurance_or_appreciation_provided),0),1) AS assurance_or_appreciation_provided,
+      ROUND(100.0*SUM(politeness_and_no_sarcasm)/NULLIF(COUNT(politeness_and_no_sarcasm),0),1) AS politeness_and_no_sarcasm,
+      ROUND(100.0*SUM(correct_and_complete_information)/NULLIF(COUNT(correct_and_complete_information),0),1) AS correct_and_complete_information,
+      ROUND(100.0*SUM(proper_hold_procedure)/NULLIF(COUNT(proper_hold_procedure),0),1) AS proper_hold_procedure,
       NULL AS call_avoidance,
-      ROUND(100.0*SUM(COALESCE(address_recorded_completely,0))/NULLIF(COUNT(*),0),1) AS address_recorded_completely,
-      ROUND(100.0*SUM(COALESCE(professionalism_maintained,0))/NULLIF(COUNT(*),0),1) AS professionalism_maintained,
-      ROUND(100.0*SUM(COALESCE(proper_call_closure,0))/NULLIF(COUNT(*),0),1) AS proper_call_closure,
+      ROUND(100.0*SUM(address_recorded_completely)/NULLIF(COUNT(address_recorded_completely),0),1) AS address_recorded_completely,
+      ROUND(100.0*SUM(professionalism_maintained)/NULLIF(COUNT(professionalism_maintained),0),1) AS professionalism_maintained,
+      ROUND(100.0*SUM(proper_call_closure)/NULLIF(COUNT(proper_call_closure),0),1) AS proper_call_closure,
       NULL AS first_call_resolution
      FROM db_audit.call_quality_assessment q
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}`,
