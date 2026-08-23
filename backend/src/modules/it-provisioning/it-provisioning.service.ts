@@ -903,8 +903,7 @@ export async function getProvisioningStats(filters: {
        SUM(CASE WHEN ipr.status IN ('pending','pending_unassigned') AND LOWER(ipr.task_code) REGEXP 'id_card|idcard' THEN 1 ELSE 0 END) AS pending_id_card,
        SUM(CASE WHEN ipr.status IN ('pending','pending_unassigned') AND ipr.sla_due_at < NOW() THEN 1 ELSE 0 END) AS overdue,
        SUM(CASE WHEN ipr.status IN ('actioned','confirmed')
-                 AND DATE(CONVERT_TZ(COALESCE(ipr.actioned_at, ipr.updated_at), '+00:00', '+05:30'))
-                     = DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))
+                 AND DATE(COALESCE(ipr.actioned_at, ipr.updated_at)) = DATE(NOW())
                 THEN 1 ELSE 0 END) AS completed_today
      FROM it_provisioning_request ipr
      JOIN employees e ON e.id = ipr.employee_id

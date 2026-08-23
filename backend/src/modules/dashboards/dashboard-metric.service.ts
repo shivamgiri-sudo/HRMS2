@@ -909,6 +909,7 @@ export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS total,
+         SUM(CASE WHEN c.status IN ('draft_generated','hr_fill_required','employee_review_pending') THEN 1 ELSE 0 END) AS notStarted,
          SUM(CASE WHEN c.status IN ('pending_candidate_esign','esign_initiated') THEN 1 ELSE 0 END) AS pending,
          SUM(CASE WHEN c.status IN ('esign_completed','completed','signed_verified') THEN 1 ELSE 0 END) AS completed,
          SUM(CASE WHEN c.status = 'esign_failed' THEN 1 ELSE 0 END) AS failed,
@@ -922,6 +923,7 @@ export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<
 
     const r = rows[0] as any;
     const pending = Number(r.pending ?? 0);
+    const notStarted = Number(r.notStarted ?? 0);
     const overdue = Number(r.overdue ?? 0);
     const failed = Number(r.failed ?? 0);
     const status: MetricResult["status"] = overdue > 0 ? "critical" : failed > 0 ? "warn" : pending > 10 ? "warn" : "ok";
@@ -931,6 +933,7 @@ export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<
       pending,
       {
         total: Number(r.total ?? 0),
+        notStarted,
         pending,
         completed: Number(r.completed ?? 0),
         failed,

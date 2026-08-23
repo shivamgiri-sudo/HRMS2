@@ -1915,7 +1915,7 @@ wfmRouter.get("/my-attendance", h(async (req: any, res: any) => {
      FROM attendance_daily_record
      WHERE employee_id = ?
        AND DATE_FORMAT(record_date, '%Y-%m') = ?
-       AND record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))`,
+       AND record_date <= DATE(NOW())`,
     [selfEmp.id, monthStr]
   );
 
@@ -2002,8 +2002,8 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
          WHERE adr2.employee_id = ?
            AND DATE_FORMAT(adr2.record_date, '%Y-%m') = ?
            AND (
-             ? <> DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+05:30'), '%Y-%m')
-             OR adr2.record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))
+             ? <> DATE_FORMAT(NOW(), '%Y-%m')
+             OR adr2.record_date <= DATE(NOW())
            )
        ) AS netHours,
        COALESCE(SUM(CASE WHEN work_mode IN ('wfo', 'office') THEN 1 ELSE 0 END), 0) AS wfoDays
@@ -2011,8 +2011,8 @@ wfmRouter.get("/attendance/summary/:employeeId/:month", h(async (req: any, res: 
      WHERE employee_id = ?
        AND DATE_FORMAT(record_date, '%Y-%m') = ?
        AND (
-         ? <> DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+05:30'), '%Y-%m')
-         OR record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))
+         ? <> DATE_FORMAT(NOW(), '%Y-%m')
+         OR record_date <= DATE(NOW())
        )`,
     [employeeId, month, month, employeeId, month, month]
   );
