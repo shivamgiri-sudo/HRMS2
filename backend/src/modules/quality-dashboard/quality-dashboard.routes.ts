@@ -170,11 +170,18 @@ router.get("/summary", requireRole(...ALLOWED_ROLES), h(async (req: Authenticate
         COUNT(DISTINCT User) as unique_agents,
         COUNT(DISTINCT ClientId) as unique_clients,
         SUM(CASE WHEN COALESCE(data_theft_or_misuse,'') != '' AND data_theft_or_misuse != 'null' THEN 1 ELSE 0 END) as fraud_flags,
-        ROUND(100 - (AVG(COALESCE(call_answered_within_5_seconds,0)) * 100), 1) as fail_rate_call_open,
-        ROUND(100 - (AVG(COALESCE(professionalism_maintained,0)) * 100), 1) as fail_rate_professionalism,
-        ROUND(100 - (AVG(COALESCE(active_listening,0)) * 100), 1) as fail_rate_active_listening,
-        ROUND(100 - (AVG(COALESCE(proper_call_closure,0)) * 100), 1) as fail_rate_call_closure,
-        ROUND(100 - (AVG(COALESCE(correct_and_complete_information,0)) * 100), 1) as fail_rate_accuracy
+        -- Each fail_rate is scoped to calls where that specific parameter was actually
+        -- recorded (COUNT(col), not COUNT(*)) rather than treating every NULL as a fail.
+        -- Confirmed live: professionalism_maintained alone is NULL on 4,788 of 13,071
+        -- rows in a typical 30-day window -- more than the 3,871 rows with no
+        -- quality_percentage at all -- so "not scored on this parameter" is common even
+        -- among calls that otherwise got a score, and COALESCE(x,0) was counting every
+        -- one of those as a hard fail and inflating every fail-rate tile.
+        ROUND(100 - (AVG(call_answered_within_5_seconds) * 100), 1) as fail_rate_call_open,
+        ROUND(100 - (AVG(professionalism_maintained) * 100), 1) as fail_rate_professionalism,
+        ROUND(100 - (AVG(active_listening) * 100), 1) as fail_rate_active_listening,
+        ROUND(100 - (AVG(proper_call_closure) * 100), 1) as fail_rate_call_closure,
+        ROUND(100 - (AVG(correct_and_complete_information) * 100), 1) as fail_rate_accuracy
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?${clientCond}${scopeCond}
     `, params);

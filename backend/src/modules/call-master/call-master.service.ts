@@ -277,9 +277,12 @@ export async function getCXParameters(filters: CallMasterFilters) {
 
   if (lob === "Inbound") {
     const ibF = buildInboundClientFilter(clientIds);
+    // AVG() already ignores NULL; COALESCE(x,0) would force a not-recorded parameter
+    // to count as a fail, deflating every pass-rate column (same bug fixed in
+    // quality-dashboard.routes.ts / inbound-quality.service.ts for this same table).
     const cols = INBOUND_PARAMS.map((p) =>
       p.column
-        ? `ROUND(AVG(COALESCE(\`${p.column}\`,0))*100,1) AS \`${p.key}\``
+        ? `ROUND(AVG(\`${p.column}\`)*100,1) AS \`${p.key}\``
         : `NULL AS \`${p.key}\``
     ).join(",\n      ");
     const [row] = await querySource<Record<string, number>>(

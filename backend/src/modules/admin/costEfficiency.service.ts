@@ -116,7 +116,7 @@ export class CostEfficiencyService {
           COUNT(DISTINCT CASE
             WHEN cqa.id IS NOT NULL THEN cqa.id
           END) as calls_handled_30d,
-          ROUND(AVG(COALESCE(cqa.quality_percentage, 0)), 2) as avg_quality_pct,
+          ROUND(AVG(cqa.quality_percentage), 2) as avg_quality_pct,
           ROUND(COALESCE(spl.gross_salary, 0) / NULLIF(COUNT(DISTINCT cqa.id), 0), 2) as cost_per_call,
           ROUND(COALESCE(spl.gross_salary, 0) / NULLIF(AVG(cqa.quality_percentage), 0), 2) as cost_per_quality_point,
           ROUND(COALESCE(spl.gross_salary, 0), 2) as payroll_investment,
