@@ -47,8 +47,11 @@ export function FailRatesBars({ summary: s, loading }: Props) {
       ) : (
         <div className="space-y-3.5">
           {PARAMS.map(({ key, label }) => {
-            // `|| 0` still guards the runtime case the type cannot: the API may omit a rate.
-            const val = s[key] || 0;
+            // `|| 0` doesn't catch every runtime shape the type can't rule out (a string,
+            // or a value the API omitted differently) -- Number() + isFinite is the guard
+            // that also makes val.toFixed() safe below.
+            const raw = Number(s[key]);
+            const val = Number.isFinite(raw) ? raw : 0;
             return (
               <div key={key}>
                 <div className="mb-1 flex items-center justify-between">
