@@ -119,15 +119,16 @@ router.get(
         params.push(processId);
       }
 
-      // Overall compliance score (adherence-based)
+      // Overall compliance score (attendance-based)
       const [compRows] = await db.execute<RowDataPacket[]>(
         `SELECT
            COUNT(DISTINCT ra.employee_id) AS total_employees,
-           SUM(CASE WHEN ra.adherence_status = 'GREEN' THEN 1 ELSE 0 END) AS compliant,
-           SUM(CASE WHEN ra.adherence_status IN ('AMBER','RED','BROWN') THEN 1 ELSE 0 END) AS violations,
-           COUNT(*) AS total_shifts
+           SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS compliant,
+           SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS violations,
+           SUM(CASE WHEN ra.is_week_off = 0 THEN 1 ELSE 0 END) AS total_shifts
          FROM roster_assignment ra
          JOIN employees e ON ra.employee_id = e.id
+         LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
          WHERE ${whereClause}`,
         params
       );
@@ -149,8 +150,8 @@ router.get(
            JOIN roster_assignment ra2 ON ra1.employee_id = ra2.employee_id
              AND ra2.roster_date = DATE_ADD(ra1.roster_date, INTERVAL 1 DAY)
            JOIN employees e ON ra1.employee_id = e.id
-           JOIN wfm_shift_master sm1 ON ra1.shift_id = sm1.id
-           JOIN wfm_shift_master sm2 ON ra2.shift_id = sm2.id
+           JOIN wfm_shift_master sm1 ON ra1.shift_template_id = sm1.id
+           JOIN wfm_shift_master sm2 ON ra2.shift_template_id = sm2.id
            WHERE ra1.roster_date BETWEEN ? AND DATE_SUB(?, INTERVAL 1 DAY)
              ${branchId ? 'AND e.branch_id = ?' : ''}
              ${processId ? 'AND e.process_id = ?' : ''}
@@ -176,7 +177,7 @@ router.get(
            JOIN employees e ON ra.employee_id = e.id,
              (SELECT @seq := 0, @prev_emp := '', @prev_date := NULL) AS vars
            WHERE ra.roster_date BETWEEN ? AND ?
-             AND ra.status NOT IN ('WEEK_OFF','HOLIDAY','LEAVE')
+             AND ra.is_week_off = 0
              ${branchId ? 'AND e.branch_id = ?' : ''}
              ${processId ? 'AND e.process_id = ?' : ''}
            ORDER BY employee_id, roster_date
@@ -198,7 +199,7 @@ router.get(
            FROM roster_assignment ra
            JOIN employees e ON ra.employee_id = e.id
            WHERE ra.roster_date BETWEEN ? AND ?
-             AND ra.status = 'WEEK_OFF'
+             AND ra.is_week_off = 1
              ${branchId ? 'AND e.branch_id = ?' : ''}
              ${processId ? 'AND e.process_id = ?' : ''}
            GROUP BY e.id
@@ -220,9 +221,9 @@ router.get(
              SUM(COALESCE(sm.required_minutes, 480)) / 60 AS weekly_hours
            FROM roster_assignment ra
            JOIN employees e ON ra.employee_id = e.id
-           LEFT JOIN wfm_shift_master sm ON ra.shift_id = sm.id
+           LEFT JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
            WHERE ra.roster_date BETWEEN ? AND ?
-             AND ra.status NOT IN ('WEEK_OFF','HOLIDAY','LEAVE')
+             AND ra.is_week_off = 0
              ${branchId ? 'AND e.branch_id = ?' : ''}
              ${processId ? 'AND e.process_id = ?' : ''}
            GROUP BY ra.employee_id, WEEK(ra.roster_date)
@@ -243,9 +244,9 @@ router.get(
            SELECT ra.employee_id, COUNT(*) AS night_count
            FROM roster_assignment ra
            JOIN employees e ON ra.employee_id = e.id
-           JOIN wfm_shift_master sm ON ra.shift_id = sm.id
+           JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
            WHERE ra.roster_date BETWEEN ? AND ?
-             AND sm.shift_type = 'NIGHT'
+             AND (HOUR(sm.start_time) >= 20 OR HOUR(sm.start_time) < 6)
              ${branchId ? 'AND e.branch_id = ?' : ''}
              ${processId ? 'AND e.process_id = ?' : ''}
            GROUP BY ra.employee_id, WEEK(ra.roster_date)
@@ -355,32 +356,38 @@ router.get(
            p.process_name,
            b.branch_name,
            CASE
-             WHEN ra.adherence_status = 'RED' THEN 'ABSENT_NO_CALL'
-             WHEN ra.adherence_status = 'AMBER' THEN 'LATE_ARRIVAL'
-             WHEN ra.adherence_status = 'BROWN' THEN 'EARLY_LOGOUT'
+             WHEN adr.attendance_status IS NULL OR adr.attendance_status = 'absent' THEN 'ABSENT_NO_CALL'
+             WHEN adr.clock_in_time IS NOT NULL AND sm.start_time IS NOT NULL
+               AND TIMESTAMPDIFF(MINUTE, CONCAT(ra.roster_date, ' ', sm.start_time), adr.clock_in_time) > 5 THEN 'LATE_ARRIVAL'
              ELSE 'ADHERENCE'
            END AS rule_id,
            CASE
-             WHEN ra.adherence_status = 'RED' THEN 'Absent Without Notification'
-             WHEN ra.adherence_status = 'AMBER' THEN 'Late Arrival'
-             WHEN ra.adherence_status = 'BROWN' THEN 'Early Logout / Incomplete Shift'
+             WHEN adr.attendance_status IS NULL OR adr.attendance_status = 'absent' THEN 'Absent Without Notification'
+             WHEN adr.clock_in_time IS NOT NULL AND sm.start_time IS NOT NULL
+               AND TIMESTAMPDIFF(MINUTE, CONCAT(ra.roster_date, ' ', sm.start_time), adr.clock_in_time) > 5 THEN 'Late Arrival'
              ELSE 'Adherence Violation'
            END AS rule_name,
-           ra.adherence_status AS severity,
+           CASE
+             WHEN adr.attendance_status IS NULL OR adr.attendance_status = 'absent' THEN 'RED'
+             WHEN adr.clock_in_time IS NOT NULL AND sm.start_time IS NOT NULL
+               AND TIMESTAMPDIFF(MINUTE, CONCAT(ra.roster_date, ' ', sm.start_time), adr.clock_in_time) > 5 THEN 'AMBER'
+             ELSE 'AMBER'
+           END AS severity,
            sm.shift_name,
-           ra.status
+           CASE WHEN ra.is_week_off = 1 THEN 'WEEK_OFF' ELSE 'WORKING' END AS status
          FROM roster_assignment ra
          JOIN employees e ON ra.employee_id = e.id
          LEFT JOIN process_master p ON e.process_id = p.id
          LEFT JOIN branch_master b ON e.branch_id = b.id
-         LEFT JOIN wfm_shift_master sm ON ra.shift_id = sm.id
+         LEFT JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
+         LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
          WHERE ra.roster_date BETWEEN ? AND ?
-           AND ra.adherence_status IN ('RED', 'AMBER', 'BROWN')
+           AND ra.is_week_off = 0
+           AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day')
            ${branchFilter}
-           ${ruleId ? "AND CASE WHEN ra.adherence_status = 'RED' THEN 'ABSENT_NO_CALL' WHEN ra.adherence_status = 'AMBER' THEN 'LATE_ARRIVAL' WHEN ra.adherence_status = 'BROWN' THEN 'EARLY_LOGOUT' END = ?" : ''}
-         ORDER BY ra.roster_date DESC, ra.adherence_status
+         ORDER BY ra.roster_date DESC
          LIMIT ?`,
-        ruleId ? [...params.slice(0, -1), ruleId, limit] : params
+        params
       );
 
       res.json({
@@ -428,11 +435,12 @@ router.get(
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT
            DATE_FORMAT(ra.roster_date, '%Y-%m') AS month,
-           COUNT(*) AS total_shifts,
-           SUM(CASE WHEN ra.adherence_status = 'GREEN' THEN 1 ELSE 0 END) AS compliant,
-           SUM(CASE WHEN ra.adherence_status IN ('AMBER','RED','BROWN') THEN 1 ELSE 0 END) AS violations
+           SUM(CASE WHEN ra.is_week_off = 0 THEN 1 ELSE 0 END) AS total_shifts,
+           SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS compliant,
+           SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS violations
          FROM roster_assignment ra
          JOIN employees e ON ra.employee_id = e.id
+         LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
          WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
            ${branchFilter}
          GROUP BY DATE_FORMAT(ra.roster_date, '%Y-%m')

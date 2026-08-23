@@ -405,7 +405,7 @@ export async function getManagerTeamDrilldown(req: Request, res: Response) {
          (SELECT COUNT(DISTINCT a3.record_date)
             FROM attendance_daily_record a3
            WHERE a3.employee_id = e.id
-             AND a3.is_late = 1
+             AND a3.late_mark > 0
              AND a3.record_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)
          )                                                                      AS late_marks_30d,
          /* Prediction score: compound formula consistent with attritionRisk.service */

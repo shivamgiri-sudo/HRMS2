@@ -189,13 +189,13 @@ export async function getWeeklyShrinkageIntelligence(
        ra.shift_end_time,
        st.start_time AS template_start,
        st.end_time AS template_end,
-       att.first_in,
-       att.last_out,
-       att.total_hours
+       att.clock_in_time AS first_in,
+       att.clock_out_time AS last_out,
+       att.raw_minutes / 60 AS total_hours
      FROM employees e
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
      LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
-     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.attendance_date = ra.roster_date
+     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
      LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
      LEFT JOIN process_master pm ON pm.id = e.process_id
      WHERE e.branch_id = ?
@@ -333,11 +333,11 @@ export async function getWeeklyShrinkageIntelligence(
   try {
     const [prevRows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         COUNT(CASE WHEN ra.assignment_type IN ('LEAVE', 'TRAINING') OR att.first_in IS NULL THEN 1 END) AS shrinkage,
+         COUNT(CASE WHEN ra.assignment_type IN ('LEAVE', 'TRAINING') OR att.clock_in_time IS NULL THEN 1 END) AS shrinkage,
          COUNT(*) AS total
        FROM employees e
        JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
-       LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.attendance_date = ra.roster_date
+       LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
        WHERE e.branch_id = ?
          AND e.active_status = 1
          AND ra.roster_date BETWEEN ? AND ?
@@ -438,10 +438,10 @@ export async function getQualityAdherenceCorrelation(
        e.full_name AS employee_name,
        COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING') THEN 1 END) AS planned_shifts,
        COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING')
-                   AND att.first_in IS NOT NULL THEN 1 END) AS attended_shifts
+                   AND att.clock_in_time IS NOT NULL THEN 1 END) AS attended_shifts
      FROM employees e
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
-     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.attendance_date = ra.roster_date
+     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
      WHERE ${whereClause}
        AND ra.roster_date BETWEEN ? AND ?
      GROUP BY e.id, e.employee_code, e.full_name
@@ -629,12 +629,12 @@ export async function getCostOfNonAdherence(
        ra.shift_end_time,
        st.start_time AS template_start,
        st.end_time AS template_end,
-       att.first_in,
-       att.total_hours
+       att.clock_in_time AS first_in,
+       att.raw_minutes / 60 AS total_hours
      FROM employees e
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
      LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
-     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.attendance_date = ra.roster_date
+     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
      WHERE ${whereClause}
        AND ra.roster_date BETWEEN ? AND ?`,
     [...params, firstDay, lastDay]
@@ -742,10 +742,10 @@ export async function getShrinkageForecast(branchId: string): Promise<ShrinkageF
        DAY(ra.roster_date) AS dom,
        COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF', 'HOLIDAY') THEN 1 END) AS planned,
        COUNT(CASE WHEN ra.assignment_type NOT IN ('WEEK_OFF', 'HOLIDAY', 'LEAVE', 'TRAINING')
-                   AND att.first_in IS NULL THEN 1 END) AS absent
+                   AND att.clock_in_time IS NULL THEN 1 END) AS absent
      FROM employees e
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
-     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.attendance_date = ra.roster_date
+     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
      WHERE e.branch_id = ?
        AND e.active_status = 1
        AND ra.roster_date BETWEEN ? AND ?

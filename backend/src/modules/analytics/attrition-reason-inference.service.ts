@@ -161,7 +161,7 @@ export async function inferAttritionReason(req: Request, res: Response) {
          e.date_of_exit,
          e.reporting_manager_id,
          COALESCE(e.gross_salary, e.ctc, 0) AS ctc,
-         COALESCE(e.source_of_hire, '') AS source_of_hire,
+         COALESCE(e.source, '') AS source_of_hire,
          e.employment_status
        FROM employees e
        WHERE e.id = ? OR e.employee_code = ?
@@ -185,7 +185,7 @@ export async function inferAttritionReason(req: Request, res: Response) {
            NULLIF(COUNT(DISTINCT adr.record_date), 0) * 100
          , 2) AS attendance_pct,
          COUNT(DISTINCT CASE
-           WHEN adr.is_late = 1 AND adr.record_date >= DATE_SUB(?, INTERVAL 30 DAY)
+           WHEN adr.late_mark > 0 AND adr.record_date >= DATE_SUB(?, INTERVAL 30 DAY)
            THEN adr.record_date
          END) AS late_marks_30d
        FROM attendance_daily_record adr
@@ -360,7 +360,7 @@ export async function getInferredReasonBreakdown(req: Request, res: Response) {
          e.reporting_manager_id,
          DATEDIFF(e.date_of_exit, e.date_of_joining) AS aon_days,
          COALESCE(e.gross_salary, e.ctc, 0) AS ctc,
-         COALESCE(e.source_of_hire, '') AS source_of_hire,
+         COALESCE(e.source, '') AS source_of_hire,
          e.date_of_exit,
          /* Attendance 60d pre-exit */
          ROUND(
@@ -380,7 +380,7 @@ export async function getInferredReasonBreakdown(req: Request, res: Response) {
          (SELECT COUNT(DISTINCT a3.record_date)
             FROM attendance_daily_record a3
            WHERE a3.employee_id = e.id
-             AND a3.is_late = 1
+             AND a3.late_mark > 0
              AND a3.record_date BETWEEN DATE_SUB(e.date_of_exit, INTERVAL 30 DAY) AND e.date_of_exit
          ) AS late_marks_30d,
          /* Avg quality 60d pre-exit */

@@ -187,11 +187,13 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
     // Get employee basic info
     const { db } = await import('../../db/mysql.js');
     const [empRows] = await db.execute<any[]>(
-      `SELECT e.id, e.employee_code, e.full_name, e.designation,
+      `SELECT e.id, e.employee_code, e.full_name,
+              COALESCE(dm.designation_name, '') AS designation,
               p.process_name, b.branch_name, e.reporting_manager_id,
               m.full_name AS manager_name, e.date_of_joining,
               DATEDIFF(NOW(), e.date_of_joining) AS aon_days
        FROM employees e
+       LEFT JOIN designation_master dm ON dm.id = e.designation_id
        LEFT JOIN process_master p ON e.process_id = p.id
        LEFT JOIN branch_master b ON e.branch_id = b.id
        LEFT JOIN employees m ON e.reporting_manager_id = m.id
@@ -211,12 +213,13 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
     const [adherenceRows] = await db.execute<any[]>(
       `SELECT
          COUNT(*) AS planned,
-         SUM(CASE WHEN status IN ('PRESENT','HALF_DAY') THEN 1 ELSE 0 END) AS present,
-         SUM(CASE WHEN adherence_status = 'GREEN' THEN 1 ELSE 0 END) AS on_time,
-         SUM(CASE WHEN adherence_status = 'AMBER' THEN 1 ELSE 0 END) AS late,
-         SUM(CASE WHEN adherence_status = 'RED' THEN 1 ELSE 0 END) AS absent,
-         SUM(CASE WHEN adherence_status = 'BROWN' THEN 1 ELSE 0 END) AS incomplete
+         SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present,
+         SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark = 0 THEN 1 ELSE 0 END) AS on_time,
+         SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark > 0 THEN 1 ELSE 0 END) AS late,
+         SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS absent,
+         0 AS incomplete
        FROM roster_assignment ra
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE ra.employee_id = ? AND DATE_FORMAT(ra.roster_date, '%Y-%m') = ?`,
       [employeeId, currentMonth]
     );
@@ -239,11 +242,12 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
       `SELECT
          DATE_FORMAT(ra.roster_date, '%Y-%m') AS month,
          COUNT(*) AS planned,
-         SUM(CASE WHEN status IN ('PRESENT','HALF_DAY') THEN 1 ELSE 0 END) AS present,
-         SUM(CASE WHEN adherence_status = 'GREEN' THEN 1 ELSE 0 END) AS on_time,
-         SUM(CASE WHEN adherence_status = 'AMBER' THEN 1 ELSE 0 END) AS late,
-         SUM(CASE WHEN adherence_status = 'RED' THEN 1 ELSE 0 END) AS absent
+         SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present,
+         SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark = 0 THEN 1 ELSE 0 END) AS on_time,
+         SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark > 0 THEN 1 ELSE 0 END) AS late,
+         SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS absent
        FROM roster_assignment ra
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE ra.employee_id = ?
          AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
        GROUP BY DATE_FORMAT(ra.roster_date, '%Y-%m')
@@ -264,8 +268,9 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
       `SELECT
          DAYNAME(ra.roster_date) AS day_name,
          COUNT(*) AS total,
-         SUM(CASE WHEN status IN ('PRESENT','HALF_DAY') THEN 1 ELSE 0 END) AS present
+         SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present
        FROM roster_assignment ra
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE ra.employee_id = ?
          AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
        GROUP BY DAYNAME(ra.roster_date), DAYOFWEEK(ra.roster_date)
@@ -292,9 +297,10 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
       `SELECT
          sm.shift_name,
          COUNT(*) AS total,
-         SUM(CASE WHEN ra.status IN ('PRESENT','HALF_DAY') THEN 1 ELSE 0 END) AS present
+         SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present
        FROM roster_assignment ra
-       JOIN wfm_shift_master sm ON ra.shift_id = sm.id
+       JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE ra.employee_id = ?
          AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
        GROUP BY sm.id, sm.shift_name`,
@@ -310,15 +316,16 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
     // Team and branch comparison
     const [compRows] = await db.execute<any[]>(
       `SELECT
-         (SELECT AVG(CASE WHEN status IN ('PRESENT','HALF_DAY') THEN 1 ELSE 0 END) * 100
-          FROM roster_assignment WHERE employee_id IN (
-            SELECT id FROM employees WHERE reporting_manager_id = ?
-          ) AND DATE_FORMAT(roster_date, '%Y-%m') = ?) AS team_avg,
-         (SELECT AVG(CASE WHEN status IN ('PRESENT','HALF_DAY') THEN 1 ELSE 0 END) * 100
-          FROM roster_assignment ra2
-          JOIN employees e2 ON ra2.employee_id = e2.id
-          WHERE e2.branch_id = (SELECT branch_id FROM employees WHERE id = ?)
-          AND DATE_FORMAT(ra2.roster_date, '%Y-%m') = ?) AS branch_avg`,
+         (SELECT AVG(CASE WHEN adr2.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) * 100
+          FROM attendance_daily_record adr2
+          JOIN employees et ON et.id = adr2.employee_id
+          WHERE et.reporting_manager_id = ?
+            AND DATE_FORMAT(adr2.record_date, '%Y-%m') = ?) AS team_avg,
+         (SELECT AVG(CASE WHEN adr3.attendance_status IN ('present','half_day') THEN 1 ELSE 0 END) * 100
+          FROM attendance_daily_record adr3
+          JOIN employees eb ON eb.id = adr3.employee_id
+          WHERE eb.branch_id = (SELECT branch_id FROM employees WHERE id = ?)
+            AND DATE_FORMAT(adr3.record_date, '%Y-%m') = ?) AS branch_avg`,
       [emp.reporting_manager_id || employeeId, currentMonth, employeeId, currentMonth]
     );
 
@@ -429,16 +436,18 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, 
          sm.id AS shift_id,
          sm.shift_name,
          CONCAT(TIME_FORMAT(sm.start_time, '%H:%i'), ' - ', TIME_FORMAT(sm.end_time, '%H:%i')) AS shift_time,
-         sm.shift_type,
+         CASE WHEN HOUR(sm.start_time) >= 20 OR HOUR(sm.start_time) < 6 THEN 'NIGHT'
+              WHEN HOUR(sm.start_time) >= 14 THEN 'EVENING' ELSE 'MORNING' END AS shift_type,
          COUNT(DISTINCT ra.employee_id) AS total_employees,
-         AVG(CASE WHEN ra.status IN ('PRESENT','HALF_DAY') THEN 100 ELSE 0 END) AS adherence_pct,
-         AVG(CASE WHEN ra.adherence_status = 'GREEN' THEN 100 ELSE 0 END) AS on_time_pct,
+         AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct,
+         AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark = 0 THEN 100 ELSE 0 END) AS on_time_pct,
          AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg,
-         sm.break_minutes AS break_budget,
-         AVG(COALESCE(wb.total_break_minutes, sm.break_minutes)) AS avg_break_minutes
+         30 AS break_budget,
+         AVG(COALESCE(wb.total_break_minutes, 30)) AS avg_break_minutes
        FROM roster_assignment ra
        JOIN employees e ON ra.employee_id = e.id
-       JOIN wfm_shift_master sm ON ra.shift_id = sm.id
+       JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        LEFT JOIN (
          SELECT employee_id, DATE(punch_date) AS d, AVG(quality_percentage) AS quality_percentage
          FROM call_quality_assessment GROUP BY employee_id, DATE(punch_date)
@@ -448,7 +457,7 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, 
          FROM wfm_break_log GROUP BY employee_id, session_date
        ) wb ON ra.employee_id = wb.employee_id AND ra.roster_date = wb.session_date
        ${whereClause}
-       GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time, sm.shift_type, sm.break_minutes
+       GROUP BY sm.id, sm.shift_name, sm.start_time, sm.end_time
        ORDER BY adherence_pct DESC`,
       params
     );
@@ -504,9 +513,9 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
       `SELECT
          COUNT(*) AS total_sessions,
          AVG(wb.total_break) AS avg_break,
-         AVG(sm.break_minutes) AS budget,
-         SUM(CASE WHEN wb.total_break > sm.break_minutes THEN 1 ELSE 0 END) AS over_break,
-         SUM(CASE WHEN wb.total_break < sm.break_minutes * 0.5 THEN 1 ELSE 0 END) AS under_break
+         30 AS budget,
+         SUM(CASE WHEN wb.total_break > 30 THEN 1 ELSE 0 END) AS over_break,
+         SUM(CASE WHEN wb.total_break < 15 THEN 1 ELSE 0 END) AS under_break
        FROM (
          SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break
          FROM wfm_break_log WHERE session_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
@@ -514,7 +523,6 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
        ) wb
        JOIN employees e ON wb.employee_id = e.id
        JOIN roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
-       JOIN wfm_shift_master sm ON ra.shift_id = sm.id
        WHERE 1=1 ${branchFilter}`,
       params
     );
@@ -535,7 +543,7 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
          sm.id AS shift_id,
          sm.shift_name,
          AVG(wb.total_break) AS avg_break,
-         sm.break_minutes AS budget
+         30 AS budget
        FROM (
          SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break
          FROM wfm_break_log WHERE session_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
@@ -543,9 +551,9 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
        ) wb
        JOIN employees e ON wb.employee_id = e.id
        JOIN roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
-       JOIN wfm_shift_master sm ON ra.shift_id = sm.id
+       JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
        WHERE 1=1 ${branchFilter}
-       GROUP BY sm.id, sm.shift_name, sm.break_minutes`,
+       GROUP BY sm.id, sm.shift_name`,
       params
     );
 
@@ -564,7 +572,7 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
          e.id AS employee_id,
          e.employee_code,
          e.full_name AS employee_name,
-         AVG(wb.total_break - sm.break_minutes) AS avg_excess,
+         AVG(wb.total_break - 30) AS avg_excess,
          COUNT(*) AS occurrences
        FROM (
          SELECT employee_id, session_date, SUM(break_duration_minutes) AS total_break
@@ -573,10 +581,9 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
        ) wb
        JOIN employees e ON wb.employee_id = e.id
        JOIN roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
-       JOIN wfm_shift_master sm ON ra.shift_id = sm.id
-       WHERE wb.total_break > sm.break_minutes ${branchFilter}
+       WHERE wb.total_break > 30 ${branchFilter}
        GROUP BY e.id, e.employee_code, e.full_name
-       HAVING AVG(wb.total_break - sm.break_minutes) > 5
+       HAVING AVG(wb.total_break - 30) > 5
        ORDER BY avg_excess DESC
        LIMIT 10`,
       params
@@ -649,16 +656,17 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
          p.process_name,
          b.branch_name,
          COUNT(DISTINCT ra.employee_id) AS team_size,
-         AVG(CASE WHEN ra.status IN ('PRESENT','HALF_DAY') THEN 100 ELSE 0 END) AS adherence_pct,
-         AVG(CASE WHEN ra.adherence_status = 'GREEN' THEN 100 ELSE 0 END) AS on_time_pct,
+         AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct,
+         AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark = 0 THEN 100 ELSE 0 END) AS on_time_pct,
          AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg,
-         AVG(CASE WHEN ra.status NOT IN ('PRESENT','HALF_DAY','LEAVE','WEEK_OFF','HOLIDAY') THEN 100 ELSE 0 END) AS shrinkage_pct,
+         AVG(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 100 ELSE 0 END) AS shrinkage_pct,
          90 AS break_compliance_pct
        FROM roster_assignment ra
        JOIN employees e ON ra.employee_id = e.id
        JOIN employees m ON e.reporting_manager_id = m.id
        LEFT JOIN process_master p ON e.process_id = p.id
        LEFT JOIN branch_master b ON e.branch_id = b.id
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        LEFT JOIN (
          SELECT employee_id, DATE(punch_date) AS d, AVG(quality_percentage) AS quality_percentage
          FROM call_quality_assessment GROUP BY employee_id, DATE(punch_date)
@@ -696,13 +704,14 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
          p.process_name,
          b.branch_name,
          COUNT(DISTINCT ra.employee_id) AS employee_count,
-         AVG(CASE WHEN ra.status IN ('PRESENT','HALF_DAY') THEN 100 ELSE 0 END) AS adherence_pct,
+         AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct,
          AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg,
-         AVG(CASE WHEN ra.status NOT IN ('PRESENT','HALF_DAY','LEAVE','WEEK_OFF','HOLIDAY') THEN 100 ELSE 0 END) AS shrinkage_pct
+         AVG(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 100 ELSE 0 END) AS shrinkage_pct
        FROM roster_assignment ra
        JOIN employees e ON ra.employee_id = e.id
        JOIN process_master p ON e.process_id = p.id
        LEFT JOIN branch_master b ON e.branch_id = b.id
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        LEFT JOIN (
          SELECT employee_id, DATE(punch_date) AS d, AVG(quality_percentage) AS quality_percentage
          FROM call_quality_assessment GROUP BY employee_id, DATE(punch_date)
@@ -734,12 +743,13 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
          b.branch_name,
          COUNT(DISTINCT ra.employee_id) AS employee_count,
          COUNT(DISTINCT e.reporting_manager_id) AS manager_count,
-         AVG(CASE WHEN ra.status IN ('PRESENT','HALF_DAY') THEN 100 ELSE 0 END) AS adherence_pct,
+         AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct,
          AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg,
-         AVG(CASE WHEN ra.status NOT IN ('PRESENT','HALF_DAY','LEAVE','WEEK_OFF','HOLIDAY') THEN 100 ELSE 0 END) AS shrinkage_pct
+         AVG(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 100 ELSE 0 END) AS shrinkage_pct
        FROM roster_assignment ra
        JOIN employees e ON ra.employee_id = e.id
        JOIN branch_master b ON e.branch_id = b.id
+       LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        LEFT JOIN (
          SELECT employee_id, DATE(punch_date) AS d, AVG(quality_percentage) AS quality_percentage
          FROM call_quality_assessment GROUP BY employee_id, DATE(punch_date)
@@ -804,15 +814,14 @@ router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'pr
     const [teamRows] = await db.execute<any[]>(
       `SELECT e.id AS employee_id, e.employee_code, e.full_name AS employee_name,
               sm.shift_name,
-              ra.status AS roster_status,
-              ra.adherence_status,
+              CASE WHEN ra.is_week_off = 1 THEN 'WEEK_OFF' ELSE 'WORKING' END AS roster_status,
               adr.attendance_status,
-              adr.first_in AS login_time,
-              TIMESTAMPDIFF(MINUTE, CONCAT(?, ' ', sm.start_time), adr.first_in) AS late_minutes,
+              adr.clock_in_time AS login_time,
+              TIMESTAMPDIFF(MINUTE, CONCAT(?, ' ', sm.start_time), adr.clock_in_time) AS late_minutes,
               wb.on_break
        FROM employees e
        LEFT JOIN roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
-       LEFT JOIN wfm_shift_master sm ON ra.shift_id = sm.id
+       LEFT JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id AND adr.record_date = ?
        LEFT JOIN (
          SELECT employee_id, 1 AS on_break
@@ -829,7 +838,7 @@ router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'pr
     const members = teamRows.map((r: any) => {
       let status: string = 'pending';
       if (r.roster_status === 'WEEK_OFF') status = 'week_off';
-      else if (r.roster_status === 'LEAVE') status = 'on_leave';
+      else if (r.attendance_status === 'on_leave') status = 'on_leave';
       else if (r.attendance_status === 'present') status = r.late_minutes > 5 ? 'late' : 'present';
       else if (r.attendance_status === 'absent') status = 'absent';
       else if (r.attendance_status === 'half_day') status = 'present';

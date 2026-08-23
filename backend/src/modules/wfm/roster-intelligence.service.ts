@@ -172,14 +172,14 @@ async function generateSingleManagerDigest(
        ra.shift_end_time,
        st.start_time AS template_start,
        st.end_time AS template_end,
-       att.first_in,
-       att.last_out,
-       att.total_hours,
-       att.status AS att_status
+       att.clock_in_time AS first_in,
+       att.clock_out_time AS last_out,
+       att.raw_minutes / 60 AS total_hours,
+       att.attendance_status AS att_status
      FROM employees e
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
      LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
-     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.attendance_date = ?
+     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ?
      WHERE e.reporting_manager_id = ?
        AND e.active_status = 1
        AND e.employment_status = 'Active'`,
@@ -323,12 +323,12 @@ export async function generateBranchDashboard(
        ra.assignment_type,
        ra.shift_start_time,
        st.start_time AS template_start,
-       att.first_in,
-       att.total_hours
+       att.clock_in_time AS first_in,
+       att.raw_minutes / 60 AS total_hours
      FROM employees e
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
      LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
-     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.attendance_date = ?
+     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ?
      LEFT JOIN process_master pm ON pm.id = e.process_id
      WHERE e.branch_id = ?
        AND e.active_status = 1
@@ -397,13 +397,13 @@ export async function generateBranchDashboard(
        COUNT(*) AS unplanned_count
      FROM employees e
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
-     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.attendance_date = ra.roster_date
+     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
      LEFT JOIN process_master pm ON pm.id = e.process_id
      WHERE e.branch_id = ?
        AND e.active_status = 1
        AND ra.roster_date BETWEEN ? AND ?
        AND ra.assignment_type NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY')
-       AND att.first_in IS NULL
+       AND att.clock_in_time IS NULL
      GROUP BY e.id, e.employee_code, e.full_name, pm.process_name
      HAVING unplanned_count >= 3
      ORDER BY unplanned_count DESC
@@ -464,14 +464,14 @@ export async function detectUnplannedAbsences(
      FROM employees e
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
      LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
-     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.attendance_date = ?
+     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ?
      LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
      LEFT JOIN process_master pm ON pm.id = e.process_id
      LEFT JOIN branch_master bm ON bm.id = e.branch_id
      WHERE e.active_status = 1
        AND e.employment_status = 'Active'
        AND ra.assignment_type NOT IN ('WEEK_OFF', 'LEAVE', 'HOLIDAY', 'TRAINING')
-       AND att.first_in IS NULL`,
+       AND att.clock_in_time IS NULL`,
     [date, date]
   );
 
@@ -560,12 +560,12 @@ export async function generateWeeklyShrinkageReport(
        ra.assignment_type,
        ra.shift_start_time,
        st.start_time AS template_start,
-       att.first_in,
-       att.total_hours
+       att.clock_in_time AS first_in,
+       att.raw_minutes / 60 AS total_hours
      FROM employees e
      JOIN wfm_roster_assignment ra ON ra.employee_id = e.id
      LEFT JOIN wfm_shift_template st ON st.id = ra.shift_template_id
-     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.attendance_date = ra.roster_date
+     LEFT JOIN attendance_daily_record att ON att.employee_id = e.id AND att.record_date = ra.roster_date
      LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
      WHERE e.branch_id = ?
        AND e.active_status = 1

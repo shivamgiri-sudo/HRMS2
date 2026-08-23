@@ -153,13 +153,13 @@ async function fetchRolling60dShrinkagePct(
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT
        COUNT(*)                                                         AS emp_days,
-       SUM(CASE WHEN adr.status IN ('P','present')               THEN 1 ELSE 0 END) AS present_days,
-       SUM(CASE WHEN adr.status IN ('HD','half_day')              THEN 0.5 ELSE 0 END) AS half_day_days,
-       SUM(CASE WHEN adr.status IN ('WW','week_off_worked')        THEN 1 ELSE 0 END) AS wow_days
+       SUM(CASE WHEN adr.attendance_status IN ('P','present')               THEN 1 ELSE 0 END) AS present_days,
+       SUM(CASE WHEN adr.attendance_status IN ('HD','half_day')              THEN 0.5 ELSE 0 END) AS half_day_days,
+       SUM(CASE WHEN adr.attendance_status IN ('WW','week_off_worked')        THEN 1 ELSE 0 END) AS wow_days
      FROM attendance_daily_record adr
      JOIN employees e ON e.id = adr.employee_id
      WHERE e.process_id = ?${branchCond}
-       AND adr.attendance_date >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)`,
+       AND adr.record_date >= DATE_SUB(CURDATE(), INTERVAL 60 DAY)`,
     params
   );
   const r = (rows as RowDataPacket[])[0];

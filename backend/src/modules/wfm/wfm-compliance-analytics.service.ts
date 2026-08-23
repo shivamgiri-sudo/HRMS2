@@ -71,7 +71,7 @@ export async function getEmployeeWfmCompliance(req: Request, res: Response): Pro
               ws.start_time,
               ws.required_minutes
        FROM wfm_roster_assignment wra
-       LEFT JOIN wfm_shift_master ws ON ws.shift_id = wra.shift_id
+       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
        WHERE wra.employee_id = ?
          AND wra.roster_date BETWEEN ? AND ?`,
       [employeeId, periodStart, periodEnd]
@@ -284,7 +284,7 @@ export async function getBranchWfmCompliance(req: Request, res: Response): Promi
               ws.start_time,
               ws.required_minutes
        FROM wfm_roster_assignment wra
-       LEFT JOIN wfm_shift_master ws ON ws.shift_id = wra.shift_id
+       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
        WHERE wra.employee_id IN (${empPlaceholders})
          AND wra.roster_date BETWEEN ? AND ?`,
       [...employeeIds, periodStart, periodEnd]
