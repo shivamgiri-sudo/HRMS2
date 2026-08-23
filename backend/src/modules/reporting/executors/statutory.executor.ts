@@ -960,7 +960,7 @@ export async function gratuityLiabilityRegister(
       LEFT JOIN branch_master b ON b.id = e.branch_id
       LEFT JOIN process_master gpm ON gpm.id = e.process_id
       LEFT JOIN cost_centre_master gcc ON gcc.id = e.cost_centre_id
-     WHERE ${clauses.join(" AND ")} AND TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) >= 5
+     WHERE ${clauses.join(" AND ")}
      ORDER BY gratuity_liability DESC`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
@@ -1081,7 +1081,7 @@ export async function pfEsicSalaryRegister(
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
            spr.run_month AS payroll_month,
-           COALESCE(eu.uan, e.epf_number) AS uan,
+           COALESCE(eu.uan, e.uan_number) AS uan,
            e.esic_number,
            LEAST(COALESCE(spl.basic, 0), 15000) AS pf_basic,
            spl.gross_salary AS gross_wages,

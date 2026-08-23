@@ -323,8 +323,10 @@ export async function employeeMovement(
   const from  = dateParam(filters.from, `${new Date().getFullYear()}-01-01`);
   const to    = dateParam(filters.to, today);
 
+  // The SELECT CASE WHEN has two ? placeholders that appear before the WHERE in SQL text,
+  // so they must lead the params array — push them before appendScopeConditions.
+  const params: unknown[]  = [from, to];  // for SELECT CASE WHEN ... BETWEEN ? AND ?
   const clauses: string[] = ["e.id IS NOT NULL"];
-  const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("(e.date_of_joining BETWEEN ? AND ? OR COALESCE(e.date_of_exit,e.date_of_leaving,e.resignation_date) BETWEEN ? AND ?)");
@@ -351,7 +353,6 @@ export async function employeeMovement(
       LEFT JOIN cost_centre_master sp_cc ON sp_cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
      ORDER BY e.id ASC`;
-  params.push(from, to);
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
   // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
@@ -682,7 +683,7 @@ export async function incrementRequests(
       LEFT JOIN process_master p ON p.id = e.process_id
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
-     ORDER BY sir.created_at DESC`;
+     ORDER BY ${options.mode === "worker" ? "sir.id ASC" : "sir.created_at DESC"}`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
   // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire

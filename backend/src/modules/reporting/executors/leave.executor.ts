@@ -460,7 +460,8 @@ export async function leaveLwpReconciliation(
       LEFT JOIN cost_centre_master zcc ON zcc.id = e.cost_centre_id
       LEFT JOIN process_master zpm ON zpm.id = e.process_id
      WHERE ${clauses.join(" AND ")} AND adr.lwp_value > 0
-     GROUP BY e.id, e.employee_code, e.first_name, e.last_name, spl.lwp_days
+     GROUP BY e.id, e.employee_code, e.full_name, e.first_name, e.last_name, spl.lwp_days,
+              zpm.process_name, zcc.cost_centre_code, zcc.cost_centre_name
      HAVING lwp_days_attendance > 0
      ORDER BY ABS(variance) DESC`;
 

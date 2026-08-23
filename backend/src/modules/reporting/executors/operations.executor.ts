@@ -98,7 +98,10 @@ export async function agentPerformanceSummary(
 
   let cursorClause = "";
   if (options.mode === "worker" && options.cursor != null) {
-    cursorClause = ` HAVING MIN(kpi.call_date) > ?`;
+    // Cursor is employee_code (string), so filter by agent_employee_code in WHERE before GROUP BY.
+    // The previous HAVING MIN(kpi.call_date) > employee_code always produced NULL and
+    // silently truncated exports after the first chunk.
+    cursorClause = ` AND kpi.agent_employee_code > ?`;
     qParams.push(options.cursor as string);
   }
 
@@ -121,8 +124,8 @@ export async function agentPerformanceSummary(
                 ELSE 'Poor' END AS quality_band
       FROM Shivamgiri.v_call_master_unified_kpi kpi
      WHERE kpi.agent_employee_code IN (${placeholders})
-       AND kpi.call_date BETWEEN ? AND ?
-     GROUP BY kpi.agent_employee_code, LEFT(kpi.call_date, 7)${cursorClause}
+       AND kpi.call_date BETWEEN ? AND ?${cursorClause}
+     GROUP BY kpi.agent_employee_code, LEFT(kpi.call_date, 7)
      ORDER BY kpi.agent_employee_code ASC
      LIMIT ${options.limit} OFFSET ${options.mode === "worker" ? 0 : options.offset}`;
 
