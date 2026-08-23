@@ -434,13 +434,14 @@ export async function getCandidateFullJourney(candidateId: string): Promise<Jour
                 phr.rejection_category, phr.rejection_reason_code, phr.rejection_remarks,
                 sca.basic, sca.hra, sca.conveyance, sca.special_allowance, sca.gross,
                 sca.net_estimate, sca.effective_date,
-                spm.band_code AS package_name, spm.band_code,
-                ra.email AS reviewed_by_name
+                spm.band_code,
+                COALESCE(e_ra.full_name, ra.email) AS reviewed_by_name
            FROM employee_payroll_head_review phr
            LEFT JOIN salary_component_assignments sca
                   ON sca.employee_id = phr.employee_id AND sca.status = 'active'
            LEFT JOIN salary_package_master spm ON spm.id = phr.salary_package_id
            LEFT JOIN auth_user ra ON ra.id = phr.reviewed_by
+           LEFT JOIN employees e_ra ON e_ra.user_id = ra.id
           WHERE phr.employee_id = ?
           ORDER BY COALESCE(phr.reviewed_at, phr.created_at) DESC
           LIMIT 1`,
@@ -464,7 +465,7 @@ export async function getCandidateFullJourney(candidateId: string): Promise<Jour
         events.push({
           phase: "EMPLOYEE",
           activity_type: "Salary confirmed by Payroll Head",
-          status: r.package_name ? `${r.package_name}${r.band_code ? ` (Band ${r.band_code})` : ''}` : "Approved",
+          status: r.band_code ? `Band ${r.band_code}` : "Approved",
           occurred_at: iso(r.reviewed_at),
           actor_name: txt(r.reviewed_by_name),
           source_table: "employee_payroll_head_review",
