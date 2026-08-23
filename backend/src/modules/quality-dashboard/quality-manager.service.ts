@@ -111,8 +111,17 @@ export class QualityManagerService {
       }
 
       // Calculate team summary
-      const avgQuality = qualityMetrics.length > 0
-        ? qualityMetrics.reduce((sum: number, m: any) => sum + m.quality_pct, 0) / qualityMetrics.length
+      //
+      // Must be call-weighted, not an average of each agent's own average --
+      // qualityMetrics.reduce(sum + quality_pct)/length gives every agent equal
+      // weight regardless of call volume, so a 5-call agent skews the team number
+      // as much as a 500-call agent. Verified live (org-wide, 7-day window):
+      // call-weighted 74.80 vs unweighted-average-of-agents 75.07 -- the smaller
+      // team a manager actually sees this for makes the per-agent weight
+      // imbalance larger, not smaller, than that org-wide gap.
+      const totalCallsForAvg = qualityMetrics.reduce((sum: number, m: any) => sum + Number(m.calls_handled ?? 0), 0);
+      const avgQuality = totalCallsForAvg > 0
+        ? qualityMetrics.reduce((sum: number, m: any) => sum + Number(m.quality_pct ?? 0) * Number(m.calls_handled ?? 0), 0) / totalCallsForAvg
         : 0;
 
       const totalCalls = qualityMetrics.reduce((sum: number, m: any) => sum + m.calls_handled, 0);

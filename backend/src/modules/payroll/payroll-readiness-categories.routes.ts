@@ -22,6 +22,8 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { resolveDashboardScope } from "../../shared/dashboardScope.js";
 import {
   evaluateReadinessCategories,
   type CategoryCheckResult,
@@ -98,6 +100,78 @@ async function resolveRunForMonth(month: string): Promise<string | null> {
   return ((rows[0] as RowDataPacket | undefined)?.id as string | undefined) ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// Run-level branch scope verification (IDOR fix)
+//
+// branch_head and process_manager roles must only access readiness data for
+// runs whose branch_filter matches their own branch scope. Org-wide roles
+// (super_admin, payroll_head, finance_head, admin, payroll) bypass this.
+// A null/empty branch_filter means the run is org-wide and only org-wide
+// roles may access it.
+// ---------------------------------------------------------------------------
+
+const ORG_WIDE_READINESS_ROLES = ["super_admin", "payroll_head", "finance_head", "admin", "payroll"];
+
+/**
+ * Verifies the caller has branch-level entitlement to view a run's readiness data.
+ * Returns true if access is permitted, false otherwise.
+ */
+async function verifyRunBranchScope(runId: string, userId: string): Promise<boolean> {
+  const ctx = await getUserRoleContext(userId);
+
+  // Org-wide roles bypass branch scope check entirely
+  if (ctx.isSuperAdmin || ORG_WIDE_READINESS_ROLES.includes(ctx.primaryRole)) {
+    return true;
+  }
+
+  // Resolve the run's branch_filter
+  const [runRows] = await db.execute<RowDataPacket[]>(
+    `SELECT branch_filter FROM salary_prep_run WHERE id = ? LIMIT 1`,
+    [runId],
+  );
+  const run = runRows[0] as RowDataPacket | undefined;
+  if (!run) return false; // run does not exist
+
+  const branchFilter = run.branch_filter as string | null;
+
+  // Resolve caller's branch scope
+  let scope;
+  try {
+    scope = await resolveDashboardScope(userId, ctx.primaryRole);
+  } catch {
+    return false; // fail closed
+  }
+
+  // Org-wide scope can see everything
+  if (scope.level === "ORG_ALL") return true;
+
+  // If the run has no branch_filter (org-wide run), only org-wide scope can see it.
+  // Branch-scoped users should not see the full org-wide readiness evaluation.
+  if (!branchFilter) return false;
+
+  // If the caller has no branch assignment, deny
+  if (scope.branchIds.length === 0) return false;
+
+  // Resolve the run's branch_filter to branch IDs for comparison.
+  // branch_filter stores branch name(s) or id(s). We resolve names to IDs.
+  const filterParts = branchFilter.split(",").map((s) => s.trim()).filter(Boolean);
+  if (filterParts.length === 0) return false;
+
+  // Try matching as IDs first, then as names
+  const callerBranchSet = new Set(scope.branchIds);
+
+  // Direct ID match
+  if (filterParts.some((part) => callerBranchSet.has(part))) return true;
+
+  // Name-to-ID resolution
+  const [branchRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM branch_master WHERE branch_name IN (${filterParts.map(() => "?").join(",")})`,
+    filterParts,
+  );
+  const resolvedIds = (branchRows as RowDataPacket[]).map((r) => String(r.id));
+  return resolvedIds.some((id) => callerBranchSet.has(id));
+}
+
 payrollReadinessCategoriesRouter.get(
   "/month/:month",
   requireAuth,
@@ -112,6 +186,16 @@ payrollReadinessCategoriesRouter.get(
       if (!runId) {
         return res.json({ success: true, month, status: "not_created", data: null });
       }
+
+      // IDOR guard: verify caller's branch scope covers this run
+      const userId = req.authUser!.id;
+      if (!(await verifyRunBranchScope(runId, userId))) {
+        return res.status(403).json({
+          success: false,
+          message: "You do not have access to readiness data for this payroll run",
+        });
+      }
+
       const result = await evaluateReadinessCategories(runId);
       const allow = DRILLDOWN_ROLES.includes(String(req.authUser?.role ?? ""));
       return res.json({ success: true, month, status: "checked", data: shape(result, allow) });
@@ -135,7 +219,18 @@ payrollReadinessCategoriesRouter.get(
   requireRole("super_admin", "payroll_head", "finance_head", "admin", "payroll", "branch_head", "process_manager"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const result = await evaluateReadinessCategories(String(req.params.runId));
+      const runId = String(req.params.runId);
+
+      // IDOR guard: verify caller's branch scope covers this run
+      const userId = req.authUser!.id;
+      if (!(await verifyRunBranchScope(runId, userId))) {
+        return res.status(403).json({
+          success: false,
+          message: "You do not have access to readiness data for this payroll run",
+        });
+      }
+
+      const result = await evaluateReadinessCategories(runId);
       const allow = DRILLDOWN_ROLES.includes(String(req.authUser?.role ?? ""));
       return res.json({ success: true, data: shape(result, allow) });
     } catch (err: unknown) {

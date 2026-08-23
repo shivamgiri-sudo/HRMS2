@@ -281,12 +281,21 @@ async function drillPayrollReadiness(scope: DashboardScope): Promise<DrilldownRe
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     // Counts only, never per-employee bank/PAN/UAN values: this drilldown is reachable
     // from dashboards whose viewers are not payroll roles.
+    // Tenure grace window must match getPayrollReadinessMetrics exactly (bank/PAN: > 30
+    // days since joining; UAN: > 60 days) -- see that function's extensive comment on
+    // why a brand-new joiner's missing bank/PAN/UAN isn't a data-quality problem, just
+    // normal onboarding/EPFO lag. This drawer had no grace window at all, so it always
+    // showed a larger, noisier count than the tile it opens from (every employee ever
+    // missing a field, not just employees where the missing field is now overdue).
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT b.branch_name AS branchName,
               COUNT(*) AS total,
-              SUM(CASE WHEN COALESCE(TRIM(e.pan_number),'') = '' THEN 1 ELSE 0 END) AS missingPan,
-              SUM(CASE WHEN COALESCE(TRIM(e.uan_number),'') = '' THEN 1 ELSE 0 END) AS missingUan,
-              SUM(CASE WHEN COALESCE(TRIM(e.bank_account_number),'') = '' THEN 1 ELSE 0 END) AS missingBank
+              SUM(CASE WHEN COALESCE(TRIM(e.pan_number),'') = ''
+                        AND DATEDIFF(CURDATE(), e.date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingPan,
+              SUM(CASE WHEN COALESCE(TRIM(e.uan_number),'') = ''
+                        AND DATEDIFF(CURDATE(), e.date_of_joining) > 60 THEN 1 ELSE 0 END) AS missingUan,
+              SUM(CASE WHEN COALESCE(TRIM(e.bank_account_number),'') = ''
+                        AND DATEDIFF(CURDATE(), e.date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingBank
          FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
         WHERE e.active_status = 1 AND ${scopeSql}
@@ -314,6 +323,11 @@ async function drillTat(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     // task_tat_instance has branch_id but no process_id, so process-level narrowing is
     // not expressible here; branch scope still applies.
+    // Terminal-status vocabulary must match getTatMetrics exactly -- that tile excludes
+    // ('closed','resolved'), this drawer was excluding ('completed','cancelled') instead,
+    // a disjoint set. task_tat_instance is empty in production (verified live this audit,
+    // same finding that removed 'tat' from the dashboard registries), so currently dormant,
+    // but fixed for when/if the pipeline starts feeding rows.
     const { sql: scopeSql, params } = buildScopeWhere(scope, "t.branch_id", "t.branch_id");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT t.id AS taskId,
@@ -325,7 +339,7 @@ async function drillTat(scope: DashboardScope): Promise<DrilldownResult> {
               t.owner_role AS ownerRole,
               t.status AS status
          FROM task_tat_instance t
-        WHERE t.status NOT IN ('completed','cancelled')
+        WHERE t.status NOT IN ('closed','resolved')
           AND t.due_at IS NOT NULL AND t.due_at < NOW()
           AND ${scopeSql}
         ORDER BY t.due_at ASC
@@ -429,6 +443,11 @@ async function drillIncentive(scope: DashboardScope): Promise<DrilldownResult> {
 async function drillResignation(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     // exit_request has no branch_id/process_id — scope through the employee.
+    // Terminal-status set must match getResignationMetrics exactly (case-insensitive,
+    // excludes 'exited' not 'revoked') -- verified live the two sets disagreed: 2
+    // 'exited' + 1 'revoked' row in production, so the tile (excluding 'exited') and
+    // this drawer (excluding 'revoked') were counting two completely disjoint sets of
+    // rows as "active".
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS employeeName,
@@ -441,7 +460,7 @@ async function drillResignation(scope: DashboardScope): Promise<DrilldownResult>
               er.notice_period_days AS noticePeriodDays
          FROM exit_request er
          LEFT JOIN employees e ON e.id = er.employee_id
-        WHERE er.status NOT IN ('completed','cancelled','revoked')
+        WHERE LOWER(er.status) NOT IN ('completed','cancelled','exited')
           AND ${scopeSql}
         ORDER BY er.submitted_at ASC
         LIMIT 100`,
@@ -506,17 +525,25 @@ async function drillBgv(scope: DashboardScope): Promise<DrilldownResult> {
 }
 
 // ─── DPDP ────────────────────────────────────────────────────────────────────
-async function drillDpdp(_scope: DashboardScope): Promise<DrilldownResult> {
+async function drillDpdp(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    // dpdp_consent_withdrawal carries no branch/process/employee FK, so it cannot be
-    // row-scoped. Returning it unscoped would leak across branches, so expose counts
-    // by status only.
+    // dpdp_consent_withdrawal carries no branch/process FK of its own, but
+    // getDpdpWithdrawalMetrics (the tile this drawer opens from) reaches branch/process
+    // through the requester's employee record (LEFT JOIN employees e ON e.user_id =
+    // dcw.requester_id). This drilldown's comment claimed no such link existed and
+    // returned every row org-wide regardless of scope -- a branch-scoped HR user's tile
+    // count and drawer count would disagree, and the drawer would show other branches'
+    // requests. Mirrored the tile's join+scope so both agree.
+    const { sql: scopeSql, params } = buildScopeWhere(scope, "e.branch_id", "e.process_id");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT status, COUNT(*) AS count,
-              SUM(CASE WHEN sla_due_at IS NOT NULL AND sla_due_at < NOW() THEN 1 ELSE 0 END) AS overdue
-         FROM dpdp_consent_withdrawal
-        GROUP BY status
+      `SELECT dcw.status, COUNT(*) AS count,
+              SUM(CASE WHEN dcw.sla_due_at IS NOT NULL AND dcw.sla_due_at < NOW() THEN 1 ELSE 0 END) AS overdue
+         FROM dpdp_consent_withdrawal dcw
+         LEFT JOIN employees e ON e.user_id = dcw.requester_id
+        WHERE ${scopeSql}
+        GROUP BY dcw.status
         ORDER BY count DESC`,
+      params,
     );
     return {
       metricCode: "DPDP",
@@ -526,7 +553,7 @@ async function drillDpdp(_scope: DashboardScope): Promise<DrilldownResult> {
         overdue: Number(r.overdue ?? 0),
       })),
       totalCount: (rows as any[]).reduce((a, r) => a + Number(r.count), 0),
-      note: "Aggregate only — DPDP requests carry no branch/process link to scope by",
+      note: "Aggregate by status only — DPDP requests have no direct branch/process column, scoped through the requester's employee record",
     };
   } catch (err) { sourceUnavailable(err); }
 }
@@ -534,16 +561,28 @@ async function drillDpdp(_scope: DashboardScope): Promise<DrilldownResult> {
 // ─── APPOINTMENT_ESIGN ───────────────────────────────────────────────────────
 async function drillAppointmentEsign(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
+    // Filter and scope must match getAppointmentEsignMetrics exactly. That tile reads
+    // current_state/candidate_esign_status/company_sign_status (OR'd) and scopes
+    // through the employee (employee_id is NOT NULL on every row). This drawer was
+    // reading a different column (`status`, a separate, simpler enum with its own
+    // vocabulary -- draft/sent_for_esign/candidate_signed/company_signed/completed/
+    // blocked, none of which match current_state's pending/override values) and
+    // scoping through the nullable candidate_id instead. Currently both give the
+    // same count only because production data hasn't yet produced a status/
+    // current_state combination where they'd diverge (verified live) -- fixed before
+    // that becomes a live mismatch.
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT cand.full_name AS name,
-              alr.status AS status,
+      `SELECT COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS name,
+              alr.current_state AS status,
               alr.candidate_esign_status AS candidateEsignStatus,
               alr.company_sign_status AS companySignStatus,
               alr.created_at AS createdAt
          FROM appointment_letter_request alr
-         ${candidateScopeJoin("alr.candidate_id")}
-        WHERE COALESCE(alr.status,'pending') NOT IN ('completed','cancelled')
+         LEFT JOIN employees e ON e.id = alr.employee_id
+        WHERE (alr.current_state IN ('candidate_esign_pending','company_sign_pending','override_requested')
+               OR alr.candidate_esign_status = 'pending'
+               OR alr.company_sign_status = 'pending')
           AND ${scopeSql}
         ORDER BY alr.created_at ASC
         LIMIT 100`,
@@ -569,6 +608,14 @@ async function drillJoiningDocEsign(scope: DashboardScope): Promise<DrilldownRes
   try {
     // Rows key on employee_id when the joiner has converted, candidate_id before that.
     // Scope through the employee, which is the only reliable branch/process link.
+    // Filter must match getJoiningDocEsignMetrics exactly: that tile's headline "pending"
+    // value is action_type='esign' AND status IN ('pending_candidate_esign','esign_initiated')
+    // only. This drawer had neither the action_type filter nor a matching status set --
+    // verified live, employee_joining_document_checklist also holds a completely separate
+    // action_type='upload' workflow (33 rows, statuses like 'pending_hr_upload') that the
+    // tile never counts at all, and this drawer's own NOT IN ('completed','verified') check
+    // used a status value ('verified') that doesn't even appear in the real schema. Fixed
+    // to reproduce the tile's pending bucket precisely.
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS employeeName,
@@ -579,7 +626,8 @@ async function drillJoiningDocEsign(scope: DashboardScope): Promise<DrilldownRes
               CASE WHEN jd.due_at IS NOT NULL AND jd.due_at < NOW() THEN 1 ELSE 0 END AS overdue
          FROM employee_joining_document_checklist jd
          LEFT JOIN employees e ON e.id = jd.employee_id
-        WHERE COALESCE(jd.status,'pending') NOT IN ('completed','verified')
+        WHERE jd.action_type = 'esign'
+          AND jd.status IN ('pending_candidate_esign','esign_initiated')
           AND ${scopeSql}
         ORDER BY jd.due_at IS NULL, jd.due_at ASC
         LIMIT 100`,
@@ -646,6 +694,12 @@ async function drillDocCompliance(scope: DashboardScope): Promise<DrilldownResul
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     // Ordered so employees with nothing on file surface first — those are the
     // actionable ones. `verified` is a tinyint; there is no verification_status column.
+    // Filter must match getDocumentComplianceMetrics's headline value exactly: that
+    // tile's DOC_COMPLIANCE metric.value is employeesWithNoDocs (doc_count = 0, zero
+    // documents on file at all). This drawer was filtering on verified_count = 0
+    // instead -- a broader population that also included employees who uploaded
+    // documents but have none verified yet. Narrowed to doc_count = 0 so the drawer's
+    // total matches the tile it opens from.
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT e.employee_code AS employeeCode,
               e.full_name AS employeeName,
@@ -662,7 +716,7 @@ async function drillDocCompliance(scope: DashboardScope): Promise<DrilldownResul
             GROUP BY employee_id
          ) d ON d.employee_id = e.id
         WHERE e.active_status = 1
-          AND COALESCE(d.verified_count, 0) = 0
+          AND COALESCE(d.doc_count, 0) = 0
           AND ${scopeSql}
         ORDER BY documentCount ASC, e.employee_code ASC
         LIMIT 100`,

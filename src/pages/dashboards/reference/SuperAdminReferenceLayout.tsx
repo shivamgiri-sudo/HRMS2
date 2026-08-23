@@ -49,6 +49,7 @@ import {
   AttendanceExceptionPanel,
   DocumentCompliancePanel,
 } from "./ReferenceSharedPanels";
+import { RootCausesPanel } from "@/components/dashboard/RootCausesPanel";
 
 export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: ReactNode }) {
   const { productHeaderControls } = useReferenceDashboardShell();
@@ -205,6 +206,9 @@ export function SuperAdminReferenceLayout({ data, filters }: { data: ReferenceDa
         <AttendanceExceptionPanel data={data} />
         <DocumentCompliancePanel data={data} />
       </div>
+
+      {/* Root Cause Analysis — collapsible deep-dive */}
+      <RootCausesPanel />
     </div>
   );
 }

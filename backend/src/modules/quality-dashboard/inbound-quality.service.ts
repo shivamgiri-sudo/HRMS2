@@ -191,11 +191,16 @@ export async function getInboundProcessKPIs(filters: InboundQualityFilters) {
         ROUND(AVG(CASE WHEN q.quality_percentage>0 THEN q.quality_percentage END),1) AS cq_score_no_fatal,
         SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
         ROUND(SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END)*100.0/NULLIF(COUNT(*),0),1) AS fatal_pct,
-        ROUND(AVG(COALESCE(q.professionalism_maintained,0))*100,1) AS avg_opening,
-        ROUND(AVG(COALESCE(q.correct_and_complete_information,0))*100,1) AS avg_soft,
-        ROUND(AVG(COALESCE(q.proper_hold_procedure,0))*100,1) AS avg_hold,
-        ROUND(AVG(COALESCE(q.address_recorded_completely,0))*100,1) AS avg_resolution,
-        ROUND(AVG(COALESCE(q.proper_call_closure,0))*100,1) AS avg_closing,
+        -- AVG() already ignores NULL; COALESCE(x,0) was forcing every not-recorded
+        -- parameter to count as a fail, understating each pass rate below. Same bug
+        -- fixed in quality-dashboard.routes.ts's fail_rate_* columns, confirmed live
+        -- there: professionalism_maintained alone is NULL on ~37% of a typical 30-day
+        -- window, more than the rows with no quality_percentage at all.
+        ROUND(AVG(q.professionalism_maintained)*100,1) AS avg_opening,
+        ROUND(AVG(q.correct_and_complete_information)*100,1) AS avg_soft,
+        ROUND(AVG(q.proper_hold_procedure)*100,1) AS avg_hold,
+        ROUND(AVG(q.address_recorded_completely)*100,1) AS avg_resolution,
+        ROUND(AVG(q.proper_call_closure)*100,1) AS avg_closing,
         SUM(CASE WHEN (${ALERT_FIELD})='Social Media and Consumer Court Threat' THEN 1 ELSE 0 END) AS social_threat,
         SUM(CASE WHEN (${ALERT_FIELD})='Scam Leads' THEN 1 ELSE 0 END) AS potential_scam
        FROM db_audit.call_quality_assessment q
@@ -399,19 +404,24 @@ export async function getScoreComponentDetail(filters: InboundQualityFilters) {
    */
   const [row] = await querySource<Record<string, number>>(
     `SELECT COUNT(*) AS total,
-      ROUND(100.0*SUM(COALESCE(call_answered_within_5_seconds,0))/NULLIF(COUNT(*),0),1) AS call_answered_within_5_seconds,
+      -- SUM(COALESCE(x,0))/COUNT(*) counts every row where x is NULL (not recorded) as
+      -- a fail in the denominator too. Same root bug as the AVG(COALESCE(x,0)) pattern
+      -- fixed elsewhere in this file and in quality-dashboard.routes.ts /
+      -- call-master.service.ts / costEfficiency.service.ts: SUM(x)/COUNT(x) sums and
+      -- counts only the rows where the parameter was actually scored.
+      ROUND(100.0*SUM(call_answered_within_5_seconds)/NULLIF(COUNT(call_answered_within_5_seconds),0),1) AS call_answered_within_5_seconds,
       NULL AS call_identified_by_name,
-      ROUND(100.0*SUM(COALESCE(customer_concern_acknowledged,0))/NULLIF(COUNT(*),0),1) AS customer_concern_acknowledged,
-      ROUND(100.0*SUM(COALESCE(express_empathy,0))/NULLIF(COUNT(*),0),1) AS express_empathy,
-      ROUND(100.0*SUM(COALESCE(active_listening,0))/NULLIF(COUNT(*),0),1) AS active_listening,
-      ROUND(100.0*SUM(COALESCE(assurance_or_appreciation_provided,0))/NULLIF(COUNT(*),0),1) AS assurance_or_appreciation_provided,
-      ROUND(100.0*SUM(COALESCE(politeness_and_no_sarcasm,0))/NULLIF(COUNT(*),0),1) AS politeness_and_no_sarcasm,
-      ROUND(100.0*SUM(COALESCE(correct_and_complete_information,0))/NULLIF(COUNT(*),0),1) AS correct_and_complete_information,
-      ROUND(100.0*SUM(COALESCE(proper_hold_procedure,0))/NULLIF(COUNT(*),0),1) AS proper_hold_procedure,
+      ROUND(100.0*SUM(customer_concern_acknowledged)/NULLIF(COUNT(customer_concern_acknowledged),0),1) AS customer_concern_acknowledged,
+      ROUND(100.0*SUM(express_empathy)/NULLIF(COUNT(express_empathy),0),1) AS express_empathy,
+      ROUND(100.0*SUM(active_listening)/NULLIF(COUNT(active_listening),0),1) AS active_listening,
+      ROUND(100.0*SUM(assurance_or_appreciation_provided)/NULLIF(COUNT(assurance_or_appreciation_provided),0),1) AS assurance_or_appreciation_provided,
+      ROUND(100.0*SUM(politeness_and_no_sarcasm)/NULLIF(COUNT(politeness_and_no_sarcasm),0),1) AS politeness_and_no_sarcasm,
+      ROUND(100.0*SUM(correct_and_complete_information)/NULLIF(COUNT(correct_and_complete_information),0),1) AS correct_and_complete_information,
+      ROUND(100.0*SUM(proper_hold_procedure)/NULLIF(COUNT(proper_hold_procedure),0),1) AS proper_hold_procedure,
       NULL AS call_avoidance,
-      ROUND(100.0*SUM(COALESCE(address_recorded_completely,0))/NULLIF(COUNT(*),0),1) AS address_recorded_completely,
-      ROUND(100.0*SUM(COALESCE(professionalism_maintained,0))/NULLIF(COUNT(*),0),1) AS professionalism_maintained,
-      ROUND(100.0*SUM(COALESCE(proper_call_closure,0))/NULLIF(COUNT(*),0),1) AS proper_call_closure,
+      ROUND(100.0*SUM(address_recorded_completely)/NULLIF(COUNT(address_recorded_completely),0),1) AS address_recorded_completely,
+      ROUND(100.0*SUM(professionalism_maintained)/NULLIF(COUNT(professionalism_maintained),0),1) AS professionalism_maintained,
+      ROUND(100.0*SUM(proper_call_closure)/NULLIF(COUNT(proper_call_closure),0),1) AS proper_call_closure,
       NULL AS first_call_resolution
      FROM db_audit.call_quality_assessment q
      WHERE q.CallDate BETWEEN ? AND ? AND q.quality_percentage IS NOT NULL${cf.clause}`,
@@ -604,11 +614,13 @@ export async function getAgentParameterWise(
       ANY_VALUE(COALESCE(am.AgentName, q.User)) AS agent,
       COALESCE(NULLIF(TRIM(q.Campaign),''),'Unknown') AS campaign,
       COUNT(*) AS audit_count,
-      ROUND(AVG(COALESCE(q.professionalism_maintained,0))*100,1) AS opening_pct,
-      ROUND(AVG(COALESCE(q.correct_and_complete_information,0))*100,1) AS soft_pct,
-      ROUND(AVG(COALESCE(q.proper_hold_procedure,0))*100,1) AS hold_pct,
-      ROUND(AVG(COALESCE(q.address_recorded_completely,0))*100,1) AS resolution_pct,
-      ROUND(AVG(COALESCE(q.proper_call_closure,0))*100,1) AS closing_pct,
+      -- AVG() already ignores NULL; COALESCE(x,0) forced a not-recorded parameter to
+      -- count as a fail. Same fix as the org-level query above.
+      ROUND(AVG(q.professionalism_maintained)*100,1) AS opening_pct,
+      ROUND(AVG(q.correct_and_complete_information)*100,1) AS soft_pct,
+      ROUND(AVG(q.proper_hold_procedure)*100,1) AS hold_pct,
+      ROUND(AVG(q.address_recorded_completely)*100,1) AS resolution_pct,
+      ROUND(AVG(q.proper_call_closure)*100,1) AS closing_pct,
       ROUND(AVG(q.quality_percentage),1) AS cq_score,
       SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count
      FROM db_audit.call_quality_assessment q

@@ -1280,6 +1280,12 @@ export const managementService = {
          LIMIT 10`
       ),
       // 3. Shrinkage cost from latest snapshot
+      // FIX: Revenue at Risk now uses actual client billing rates from billing_invoice table.
+      // Previously used CTC/365/8 which conflates employee COST with client REVENUE — a
+      // fundamentally wrong metric (CTC is what we pay, billing is what the client pays us).
+      // Methodology: per-process avg hourly billing rate = last invoice net_amount / period_days / 8.
+      // This gives us a per-process-per-hour revenue rate derived from real invoicing.
+      // Falls back to org-wide avg billing rate if a process has no invoice history.
       db.execute<RowDataPacket[]>(
         `SELECT
            sds.process_id,
@@ -1289,14 +1295,22 @@ export const managementService = {
            sds.total_shrinkage_pct,
            sds.snapshot_date,
            ROUND(
-             COALESCE(sds.absent_hc, 0) * COALESCE(
-               (SELECT AVG(esa.ctc_annual / 365 / 8)
-                FROM employee_salary_assignment esa
-                JOIN employees e ON e.id = esa.employee_id
-                WHERE e.process_id = sds.process_id
-                  AND esa.effective_from <= CURDATE()
-                  AND (esa.effective_to IS NULL OR esa.effective_to >= CURDATE())
-               ), 0
+             COALESCE(sds.absent_hc, 0) * 8 * COALESCE(
+               -- Priority 1: per-process hourly billing rate from most recent approved/paid invoice
+               -- Formula: net_amount / billable_units / 8 (billable_units = seats or FTEs billed)
+               -- If billable_units is 0 or NULL, derive from rostered_hc as denominator
+               (SELECT bi.net_amount / NULLIF(COALESCE(NULLIF(bi.billable_units, 0), sds.rostered_hc) * 8 * DATEDIFF(bi.period_to, bi.period_from), 0)
+                FROM billing_invoice bi
+                WHERE bi.process_id = sds.process_id
+                  AND bi.status IN ('approved', 'paid')
+                ORDER BY bi.period_from DESC
+                LIMIT 1),
+               -- Priority 2: org-wide avg hourly billing rate (last 2 months) as fallback
+               (SELECT SUM(bi2.net_amount) / NULLIF(SUM(COALESCE(NULLIF(bi2.billable_units, 0), 1) * 8 * DATEDIFF(bi2.period_to, bi2.period_from)), 0)
+                FROM billing_invoice bi2
+                WHERE bi2.status IN ('approved', 'paid')
+                  AND bi2.period_from >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 2 MONTH), '%Y-%m-01')),
+               0
              ), 2
            ) AS estimated_daily_revenue_at_risk
          FROM shrinkage_daily_snapshot sds

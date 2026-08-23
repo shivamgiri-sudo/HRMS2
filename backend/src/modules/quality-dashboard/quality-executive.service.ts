@@ -65,33 +65,52 @@ export class QualityExecutiveService {
       const currentRow = currentMetrics?.[0] as any;
       const currentQuality = currentRow?.current_quality || 0;
 
-      // Get 7-day average for trend
-      const [sevenDayMetrics] = await conn.execute<RowDataPacket[]>(
+      // FIX: Compare DISJOINT periods for meaningful trend analysis.
+      // 7-day trend: current 7 days vs previous 7 days (days 8–14 ago)
+      const [currentSevenDayMetrics] = await conn.execute<RowDataPacket[]>(
         `SELECT ROUND(AVG(cqa.quality_percentage), 2) as avg_quality
          FROM db_audit.call_quality_assessment cqa
          WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 7 DAY)`
       );
 
-      const sevenDayQuality = (sevenDayMetrics?.[0] as any)?.avg_quality || currentQuality;
+      const [previousSevenDayMetrics] = await conn.execute<RowDataPacket[]>(
+        `SELECT ROUND(AVG(cqa.quality_percentage), 2) as avg_quality
+         FROM db_audit.call_quality_assessment cqa
+         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 14 DAY)
+           AND cqa.CallDate < DATE_SUB(NOW(), INTERVAL 7 DAY)`
+      );
 
-      // Get 30-day baseline for 30-day trend
-      const [thirtyDayMetrics] = await conn.execute<RowDataPacket[]>(
+      const currentSevenDayQuality = (currentSevenDayMetrics?.[0] as any)?.avg_quality || currentQuality;
+      const previousSevenDayQuality = (previousSevenDayMetrics?.[0] as any)?.avg_quality || currentSevenDayQuality;
+
+      // 30-day trend: current 30 days vs previous 30 days (days 31–60 ago)
+      const [currentThirtyDayMetrics] = await conn.execute<RowDataPacket[]>(
         `SELECT ROUND(AVG(cqa.quality_percentage), 2) as avg_quality
          FROM db_audit.call_quality_assessment cqa
          WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
       );
 
-      const thirtyDayQuality = (thirtyDayMetrics?.[0] as any)?.avg_quality || currentQuality;
+      const [previousThirtyDayMetrics] = await conn.execute<RowDataPacket[]>(
+        `SELECT ROUND(AVG(cqa.quality_percentage), 2) as avg_quality
+         FROM db_audit.call_quality_assessment cqa
+         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 60 DAY)
+           AND cqa.CallDate < DATE_SUB(NOW(), INTERVAL 30 DAY)`
+      );
 
-      // Calculate trends
+      const currentThirtyDayQuality = (currentThirtyDayMetrics?.[0] as any)?.avg_quality || currentQuality;
+      const previousThirtyDayQuality = (previousThirtyDayMetrics?.[0] as any)?.avg_quality || currentThirtyDayQuality;
+
+      // Calculate trends comparing disjoint periods
+      const sevenDayDelta = Math.round((currentSevenDayQuality - previousSevenDayQuality) * 100) / 100;
       const trend7day = {
-        direction: sevenDayQuality > currentQuality ? '↗' : sevenDayQuality < currentQuality ? '↘' : '→',
-        change_pct: Math.round((sevenDayQuality - currentQuality) * 100) / 100
+        direction: sevenDayDelta > 0 ? '↗' : sevenDayDelta < 0 ? '↘' : '→',
+        change_pct: sevenDayDelta
       };
 
+      const thirtyDayDelta = Math.round((currentThirtyDayQuality - previousThirtyDayQuality) * 100) / 100;
       const trend30day = {
-        direction: thirtyDayQuality > currentQuality ? '↗' : thirtyDayQuality < currentQuality ? '↘' : '→',
-        change_pct: Math.round((thirtyDayQuality - currentQuality) * 100) / 100
+        direction: thirtyDayDelta > 0 ? '↗' : thirtyDayDelta < 0 ? '↘' : '→',
+        change_pct: thirtyDayDelta
       };
 
       // Executive metrics
@@ -189,16 +208,21 @@ export class QualityExecutiveService {
               ) / 100;
 
       // Organization benchmarks
+      //
+      // avg_quality/std_dev must be computed directly over calls, not over each
+      // agent's pre-averaged score, or every agent counts equally regardless of call
+      // volume -- a 5-call agent skews the org number as much as a 500-call agent.
+      // Verified live: call-weighted avg 70.86 vs the unweighted "average of agent
+      // averages" 73.27 for the same 30-day window, a 2.4-point gap on a headline
+      // tile. medianQuality above is intentionally still per-agent (median of the
+      // typical agent's own average is the right question for that statistic); only
+      // avg_quality and std_dev needed the fix.
       const [benchmarks] = await conn.execute<RowDataPacket[]>(
         `SELECT
-           ROUND(AVG(user_stats.quality_percentage), 2) as avg_quality,
-           ROUND(STDDEV(user_stats.quality_percentage), 2) as std_dev
-         FROM (
-           SELECT ROUND(AVG(cqa.quality_percentage), 2) as quality_percentage
-           FROM db_audit.call_quality_assessment cqa
-           WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
-           GROUP BY cqa.User
-         ) AS user_stats`,
+           ROUND(AVG(cqa.quality_percentage), 2) as avg_quality,
+           ROUND(STDDEV(cqa.quality_percentage), 2) as std_dev
+         FROM db_audit.call_quality_assessment cqa
+         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)`,
         [daysBack]
       );
 

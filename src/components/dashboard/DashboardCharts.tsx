@@ -21,27 +21,9 @@ export function AnimNum({ value, suffix = '' }: { value: number; suffix?: string
   return <>{displayed.toLocaleString()}{suffix}</>;
 }
 
-// Sparkline Chart
-export function Sparkline({ data, color, height = 28 }: { data: number[]; color: string; height?: number }) {
-  if (!data.length) return null;
-  const max = Math.max(...data);
-  const min = Math.min(...data);
-  const range = max - min || 1;
-  const points = data.map((v, i) => `${(i / (data.length - 1)) * 100},${100 - ((v - min) / range) * 80}`).join(' ');
-  const gradientId = `spark-${color.replace('#', '')}-${Math.random().toString(36).slice(2, 8)}`;
-  return (
-    <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ height, width: '100%' }}>
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon points={`0,100 ${points} 100,100`} fill={`url(#${gradientId})`} />
-      <polyline points={points} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
+// Sparkline is now a standalone component (see ./Sparkline); re-exported here
+// so existing DashboardCharts imports keep working without duplicating the implementation.
+export { Sparkline } from './Sparkline';
 
 // Area Chart
 export function AreaChart({ data, color, height = 50 }: { data: number[]; color: string; height?: number }) {

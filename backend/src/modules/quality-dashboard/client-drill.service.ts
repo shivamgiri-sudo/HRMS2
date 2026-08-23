@@ -46,7 +46,12 @@ export async function getClientKpis(f: ClientDrillFilters) {
             ROUND(AVG(CASE WHEN q.quality_percentage>0 THEN q.quality_percentage END),1) AS without_fatal_cq,
             SUM(CASE WHEN q.quality_percentage>=98 THEN 1 ELSE 0 END) AS excellent,
             SUM(CASE WHEN q.quality_percentage>=90 AND q.quality_percentage<98 THEN 1 ELSE 0 END) AS good,
-            SUM(CASE WHEN q.quality_percentage>0 AND q.quality_percentage<85 THEN 1 ELSE 0 END) AS below_avg,
+            -- Was q.quality_percentage<85, leaving [85,90) invisible in every bucket --
+            -- neither "good" (needs >=90) nor "below_avg" nor excellent/fatal. Verified
+            -- live, read-only, on a 30-day window: 656 of 9,657 scored calls (6.8%) fell
+            -- into that gap. below_avg's upper bound now matches good's lower bound (90)
+            -- so the four buckets partition every scored call exactly once.
+            SUM(CASE WHEN q.quality_percentage>0 AND q.quality_percentage<90 THEN 1 ELSE 0 END) AS below_avg,
             SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
             ROUND(AVG(q.total_score),1) AS avg_parameters
        FROM db_audit.call_quality_assessment q
@@ -114,7 +119,9 @@ export async function getClientAgents(f: ClientDrillFilters) {
             SUM(CASE WHEN q.quality_percentage=0 THEN 1 ELSE 0 END) AS fatal_count,
             SUM(CASE WHEN q.quality_percentage>=98 THEN 1 ELSE 0 END) AS excellent_count,
             SUM(CASE WHEN q.quality_percentage>=90 AND q.quality_percentage<98 THEN 1 ELSE 0 END) AS good_count,
-            SUM(CASE WHEN q.quality_percentage>0 AND q.quality_percentage<85 THEN 1 ELSE 0 END) AS below_avg_count
+            -- Same [85,90) gap fixed above in getClientOverview -- below_avg_count's
+            -- upper bound now matches good_count's lower bound (90).
+            SUM(CASE WHEN q.quality_percentage>0 AND q.quality_percentage<90 THEN 1 ELSE 0 END) AS below_avg_count
        FROM db_audit.call_quality_assessment q
        LEFT JOIN mas_hrms.employees e ON e.employee_code = q.User
       WHERE ${SCOPE}

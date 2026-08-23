@@ -159,8 +159,8 @@ router.get("/employee/summary", requireFixedDashboard("EMPLOYEE_SELF_DASHBOARD")
        ) AS attendance_pct
      FROM attendance_daily_record
      WHERE employee_id = ?
-       AND record_date >= DATE_FORMAT(CONVERT_TZ(NOW(), '+00:00', '+05:30'), '%Y-%m-01')
-       AND record_date <= DATE(CONVERT_TZ(NOW(), '+00:00', '+05:30'))`,
+       AND record_date >= DATE_FORMAT(NOW(), '%Y-%m-01')
+       AND record_date <= DATE(NOW())`,
     [(employee as any).id],
   );
 

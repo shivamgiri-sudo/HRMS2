@@ -17,6 +17,8 @@ export function requireRole(...allowedRoles: string[]) {
       // Demo bypass: resolve roles from req.authUser.role (set by DEMO_TOKEN_MAP)
       // instead of querying the DB. This allows mock-token-{role} to correctly
       // exercise role-based access control in tests / demo mode.
+      // ⚠️  WARNING: INTERNAL_DEMO_BYPASS must NEVER be enabled in production.
+      // Defence-in-depth: env.ts process.exit(1)'s on violation at startup.
       if (req.authUser.isDemo && process.env.INTERNAL_DEMO_BYPASS === "true" && process.env.NODE_ENV !== "production") {
         const userRoles = normalizeRoleInputs([req.authUser.role || "employee"]);
         if (userRoles.includes("super_admin")) {

@@ -119,9 +119,24 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   // three tiles are removed from CeoReferenceLayout instead; re-add the keys here
   // once the pipelines feed data.
   CEO_DASHBOARD: ["hc", "att", "payroll", "onb", "resign", "attException", "docCompliance", "bgv"],
+  // `tat`, `dpdp`, `nm` removed 23-Aug-2026 audit: same empty-source-table reasoning
+  // as CEO_DASHBOARD's exclusions above (task_tat_instance, dpdp_consent_withdrawal,
+  // candidate_name_match_summary all verified 0 rows in production), plus confirmed
+  // via full-file grep that HrReferenceLayout.tsx has never had a tile for any of the
+  // three -- this bundle was fetching three metrics nobody ever built UI for, against
+  // tables with nothing in them either. Re-add if a layout tile is built AND the
+  // source pipeline starts feeding rows.
+  //
+  // `attException` added 23-Aug-2026 (visual QA): the opposite gap -- HrReferenceLayout
+  // .tsx's "Attendance Exceptions" GlassPanel (metricDetail(m, "attException", ...))
+  // was live and rendering, but this bundle never requested the metric, so it always
+  // showed "not available" regardless of real data. Confirmed via a logged-in visual
+  // check (screenshot) plus a live query: attendance_reconciliation_issue holds 11,930
+  // rows in the last 30 days, 5,383 open, 5,109 of those open rows are severity=blocker
+  // -- i.e. payroll-stopping issues that HR had no visibility into at all.
   HR_DASHBOARD: [
-    "onb", "tat", "resign", "dpdp", "appointmentEsign", "bgv", "nm", "joiningDocEsign",
-    "hc", "att", "docCompliance", "training", "leaveApprovals",
+    "onb", "resign", "appointmentEsign", "bgv", "joiningDocEsign",
+    "hc", "att", "docCompliance", "training", "leaveApprovals", "attException",
   ],
   WFM_DASHBOARD: ["hc", "att", "attException", "biometric"],
   // "hc" added — WfmAttendanceReferenceLayout.tsx's first tile, "Total Employees",
@@ -133,10 +148,23 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   // Scoped headcount and attendance context for QA; audit scores stay on /api/quality-dashboard/*.
   QUALITY_DASHBOARD: ["hc", "att"],
   OPERATIONS_DASHBOARD: ["hc", "att"],
-  RECRUITER_DASHBOARD: ["onb", "tat", "recruiterActivity"],
+  // `tat` removed 23-Aug-2026 audit: task_tat_instance is empty in production (same
+  // fact already documented above for CEO_DASHBOARD), and RecruiterReferenceLayout.tsx
+  // never rendered it anyway -- confirmed via full-file grep, zero metricDetail(m,
+  // "tat", ...) calls, direct or via OnboardingFunnelPanel/RecruiterFunnelPanel. This
+  // was a silent no-op: a query run every load whose result nothing ever read.
+  RECRUITER_DASHBOARD: ["onb", "recruiterActivity"],
   // Incoming joiners are provisioning demand; exits are deprovisioning and asset recovery.
   IT_MANAGER_DASHBOARD: ["hc", "onb", "resign"],
-  MANAGEMENT_DASHBOARD: ["hc", "att", "tat", "training", "leaveApprovals"],
+  // `tat` removed 23-Aug-2026 audit: same task_tat_instance-is-empty reason as
+  // RECRUITER_DASHBOARD above. ManagerReferenceLayout.tsx never rendered it either.
+  // `onb` added 23-Aug-2026 (reverse-direction registry audit): ManagerReferenceLayout
+  // .tsx's "New Joiners" tile reads `numberAt(data.workforce, "summary",
+  // "new_joiners_30d") ?? metricDetail(m, "onb", "pending") ?? metricValue(m, "onb")` --
+  // the workforce-endpoint value is real and covers the tile today, so this was dead
+  // fallback code rather than a blank tile, but the metric half of that `??` chain could
+  // never fire without this key. Added so the fallback is real rather than decorative.
+  MANAGEMENT_DASHBOARD: ["hc", "att", "training", "leaveApprovals", "onb"],
   EMPLOYEE_SELF_DASHBOARD: ["att", "leaveApprovals"],
 };
 

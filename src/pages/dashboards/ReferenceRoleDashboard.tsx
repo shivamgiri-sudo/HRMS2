@@ -306,10 +306,13 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     retry: 1,
   });
 
+  // FIX: Use limit=2000 to avoid undercounting leave records in orgs with >100 active leaves.
+  // The previous limit=100 caused the "On Leave" count to be capped, showing incorrect numbers
+  // for any organisation with more than 100 concurrent approved leaves.
   const managerLeavesQuery = useQuery({
     queryKey: ["reference-dashboard-manager-leaves"],
     queryFn: async () => {
-      const value = unwrap(await hrmsApi.get<unknown>("/api/leave/requests?limit=100"));
+      const value = unwrap(await hrmsApi.get<unknown>("/api/leave/requests?limit=2000"));
       const record = asRecord(value);
       return Array.isArray(value) ? asArray(value) : asArray(record.rows ?? record.requests ?? record.data);
     },

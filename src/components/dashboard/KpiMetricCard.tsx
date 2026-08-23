@@ -3,6 +3,8 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TrendingUp, TrendingDown, Minus, ExternalLink } from "lucide-react";
+import { Sparkline } from "./Sparkline";
+import { useMetricTrend } from "@/hooks/useMetricTrend";
 
 export interface KpiMetricCardProps {
   metric: string;
@@ -16,6 +18,14 @@ export interface KpiMetricCardProps {
   loading?: boolean;
   onClick?: () => void;
   drilldownAvailable?: boolean;
+  /** Show a 7-point sparkline from the metric trend endpoint */
+  showSparkline?: boolean;
+  /** Dashboard code for the trend API (required when showSparkline=true) */
+  dashboardCode?: string;
+  /** Metric code for the trend API (required when showSparkline=true) */
+  metricCode?: string;
+  /** Override sparkline data directly (skips API call when provided) */
+  sparklineData?: number[];
 }
 
 function resolveTrendColor(
@@ -61,8 +71,26 @@ export function KpiMetricCard({
   loading = false,
   onClick,
   drilldownAvailable = false,
+  showSparkline,
+  dashboardCode,
+  metricCode,
+  sparklineData,
 }: KpiMetricCardProps) {
   const trendColor = resolveTrendColor(trend, status, higherIsBetter);
+
+  // Fetch trend data from API when showSparkline is true (and no override data)
+  const shouldFetch = showSparkline && !sparklineData && !!dashboardCode && !!metricCode;
+  const { data: fetchedTrend } = useMetricTrend(
+    shouldFetch ? dashboardCode : undefined,
+    shouldFetch ? metricCode : undefined
+  );
+  const trendData = sparklineData ?? (showSparkline ? fetchedTrend : undefined);
+
+  // Resolve sparkline stroke color from the card's status
+  const sparklineColor =
+    status === "good" ? "#10b981" :
+    status === "bad" ? "#ef4444" :
+    "#6366f1"; // default indigo accent
 
   if (loading) {
     return (
@@ -134,6 +162,19 @@ export function KpiMetricCard({
           </span>
         )}
       </div>
+
+      {/* Sparkline — gracefully hidden when no data */}
+      {trendData && trendData.length >= 2 && (
+        <div className="mt-1">
+          <Sparkline
+            data={trendData}
+            width={50}
+            height={20}
+            strokeColor={sparklineColor}
+            strokeWidth={1.5}
+          />
+        </div>
+      )}
 
       {drilldownAvailable && onClick && (
         <button

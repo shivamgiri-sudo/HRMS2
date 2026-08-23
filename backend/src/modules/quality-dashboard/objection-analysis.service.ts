@@ -1,9 +1,64 @@
+/**
+ * Objection Analysis Service
+ *
+ * SECURITY FIX: All query functions now accept a scope parameter and apply row-level
+ * filtering via AgentName (for branch_head scope) or campaign_id (for process_manager scope).
+ * Previously, any user with route access could see full org-wide objection data regardless
+ * of their role-based scope assignment.
+ */
+
 import type { RowDataPacket } from "mysql2";
 import { sqlLimit } from "../../db/pagination.js";
 import { getShivamgiriPool } from "../../db/shivamgiriDb.js";
 
 function getCiPool() {
   return getShivamgiriPool();
+}
+
+/**
+ * Scope descriptor resolved by the route layer (resolveScope in quality-dashboard.routes.ts).
+ * Duplicated here as an interface to avoid circular imports.
+ */
+export interface QualityScope {
+  global: boolean;
+  campaignIds: string[] | null;
+  agentCodes: string[] | null;
+  resolvedAuditCodes?: string[] | null;
+}
+
+/**
+ * Build a WHERE clause fragment for db_external.CallDetails scoped by AgentName or campaign_id.
+ * Mirrors the auditScopeCond() pattern in quality-dashboard.routes.ts but targets the
+ * CallDetails table columns.
+ *
+ * SECURITY: ensures non-global callers only see rows matching their assigned agents/processes.
+ *
+ * @param tableAlias - optional table alias (e.g. "cd") to prefix column names
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function callDetailsScopeCond(scope: QualityScope, params: any[], tableAlias?: string): string {
+  if (scope.global) return "";
+  const prefix = tableAlias ? `${tableAlias}.` : "";
+
+  // Process manager: filter by campaign_id (process names)
+  if (scope.campaignIds !== null) {
+    if (!scope.campaignIds.length) { params.push("__no_match__"); return ` AND ${prefix}campaign_id = ?`; }
+    const ph = scope.campaignIds.map(() => "?").join(",");
+    params.push(...scope.campaignIds);
+    return ` AND ${prefix}campaign_id IN (${ph})`;
+  }
+
+  // Branch head: filter by AgentName (agent employee codes)
+  // Also use resolvedAuditCodes if agentCodes is null (process_manager resolved codes)
+  const codes = scope.agentCodes ?? scope.resolvedAuditCodes ?? null;
+  if (codes !== null) {
+    if (!codes.length) { params.push("__no_match__"); return ` AND ${prefix}AgentName = ?`; }
+    const ph = codes.map(() => "?").join(",");
+    params.push(...codes);
+    return ` AND ${prefix}AgentName IN (${ph})`;
+  }
+
+  return "";
 }
 
 /**
@@ -18,8 +73,16 @@ export interface ObjectionPattern {
   SALES_CLOSE_RATE_AFTER_OBJECTION_PCT: number | null;
 }
 
-export async function getTopObjectionPatterns(limit = 50): Promise<ObjectionPattern[]> {
+/**
+ * SECURITY FIX: Added scope parameter - filters by AgentName/campaign_id so
+ * branch_head sees only their branch's objection patterns.
+ */
+export async function getTopObjectionPatterns(limit = 50, scope?: QualityScope): Promise<ObjectionPattern[]> {
   const pool = getCiPool();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const params: any[] = [];
+  const scopeCond = scope ? callDetailsScopeCond(scope, params) : "";
+
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
       CustomerObjectionCategory AS OBJECTION,
@@ -47,11 +110,11 @@ export async function getTopObjectionPatterns(limit = 50): Promise<ObjectionPatt
       AND CustomerObjectionCategory != ''
       AND CustomerObjectionCategory != 'null'
       AND CustomerObjectionCategory != 'None'
-      AND CustomerObjectionCategory IS NOT NULL
+      AND CustomerObjectionCategory IS NOT NULL${scopeCond}
     GROUP BY CustomerObjectionCategory
     ORDER BY CALL_COUNT DESC
     ${sqlLimit(limit)}`,
-    []
+    params
   );
 
   return rows as ObjectionPattern[];
@@ -69,8 +132,16 @@ export interface TopHandler {
   SALES_CLOSED_COUNT: number;
 }
 
-export async function getTopObjectionHandlers(limit = 50): Promise<TopHandler[]> {
+/**
+ * SECURITY FIX: Added scope parameter - filters by AgentName/campaign_id so
+ * branch_head/process_manager sees only their scoped agents' handler stats.
+ */
+export async function getTopObjectionHandlers(limit = 50, scope?: QualityScope): Promise<TopHandler[]> {
   const pool = getCiPool();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const params: any[] = [];
+  const scopeCond = scope ? callDetailsScopeCond(scope, params, "cd") : "";
+
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
       cd.AgentName as HANDLER_CODE,
@@ -97,12 +168,12 @@ export async function getTopObjectionHandlers(limit = 50): Promise<TopHandler[]>
       AND cd.CustomerObjectionCategory != 'None'
       AND cd.ObjectionHandling IS NOT NULL
       AND cd.ObjectionHandling NOT IN ('', 'null')
-      AND cd.AgentName IS NOT NULL
+      AND cd.AgentName IS NOT NULL${scopeCond}
     GROUP BY cd.AgentName, e.full_name, e.first_name, e.last_name
     HAVING COUNT(*) >= 5
     ORDER BY SALES_CLOSE_RATE_AFTER_OBJ_PCT DESC
     ${sqlLimit(limit)}`,
-    []
+    params
   );
 
   return rows as TopHandler[];
@@ -119,8 +190,15 @@ export interface ObjectionSalesMetric {
   CONVERSION_RATE_AFTER_HANDLING_PCT: number | null;
 }
 
-export async function getSalesClosedAfterObjection(limit = 50): Promise<ObjectionSalesMetric[]> {
+/**
+ * SECURITY FIX: Added scope parameter - filters by AgentName/campaign_id.
+ */
+export async function getSalesClosedAfterObjection(limit = 50, scope?: QualityScope): Promise<ObjectionSalesMetric[]> {
   const pool = getCiPool();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const params: any[] = [];
+  const scopeCond = scope ? callDetailsScopeCond(scope, params, "cd") : "";
+
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
       cd.CustomerObjectionCategory AS OBJECTION,
@@ -143,11 +221,11 @@ export async function getSalesClosedAfterObjection(limit = 50): Promise<Objectio
     WHERE cd.CustomerObjectionCategory IS NOT NULL
       AND cd.CustomerObjectionCategory != ''
       AND cd.CustomerObjectionCategory != 'null'
-      AND cd.CustomerObjectionCategory != 'None'
+      AND cd.CustomerObjectionCategory != 'None'${scopeCond}
     GROUP BY cd.CustomerObjectionCategory
     ORDER BY SALES_CLOSED_AFTER_HANDLING DESC
     ${sqlLimit(limit)}`,
-    []
+    params
   );
 
   return rows as ObjectionSalesMetric[];
@@ -166,8 +244,16 @@ export interface ProcessObjectionMetric {
   SALES_AFTER_OBJECTION: number;
 }
 
-export async function getObjectionsByProcess(limit = 100): Promise<ProcessObjectionMetric[]> {
+/**
+ * SECURITY FIX: Added scope parameter - process_manager only sees their assigned processes,
+ * branch_head only sees their branch's agents' objection data by process.
+ */
+export async function getObjectionsByProcess(limit = 100, scope?: QualityScope): Promise<ProcessObjectionMetric[]> {
   const pool = getCiPool();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const params: any[] = [];
+  const scopeCond = scope ? callDetailsScopeCond(scope, params, "cd") : "";
+
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
       COALESCE(cd.campaign_id, 'UNASSIGNED') as PROCESS_CODE,
@@ -191,11 +277,11 @@ export async function getObjectionsByProcess(limit = 100): Promise<ProcessObject
     WHERE cd.CustomerObjectionCategory IS NOT NULL
       AND cd.CustomerObjectionCategory != ''
       AND cd.CustomerObjectionCategory != 'null'
-      AND cd.CustomerObjectionCategory != 'None'
+      AND cd.CustomerObjectionCategory != 'None'${scopeCond}
     GROUP BY cd.campaign_id, pm.process_name, cd.CustomerObjectionCategory
     ORDER BY PROCESS_CODE, OBJECTION_COUNT DESC
     ${sqlLimit(limit)}`,
-    []
+    params
   );
 
   return rows as ProcessObjectionMetric[];
@@ -203,6 +289,11 @@ export async function getObjectionsByProcess(limit = 100): Promise<ProcessObject
 
 /**
  * Objection & Rebuttal Reference Matrix
+ *
+ * NOTE: This query hits db_external.tbl_obj which is a reference/knowledge-base table
+ * (objection -> rebuttal mappings), not per-agent call data. It has no AgentName or
+ * campaign_id column, so scope filtering is not applicable here. This is intentionally
+ * unscoped — it's reference material available to all authorized roles.
  */
 export interface ObjectionRebuttal {
   CustomerObjectionCategory: string;
@@ -266,13 +357,22 @@ export interface ObjectionHealthDashboard {
  * CallDate does carry an index (Index_3), so bounding the range lets the optimiser seek instead
  * of scanning the table.
  */
+
+/**
+ * SECURITY FIX: Added scope parameter - filters health dashboard aggregates by the caller's
+ * assigned agents/processes so branch_head/process_manager see only their scoped data.
+ */
 export async function getObjectionHealthDashboard(
-  filters: { startDate?: string; endDate?: string } = {}
+  filters: { startDate?: string; endDate?: string } = {},
+  scope?: QualityScope
 ): Promise<ObjectionHealthDashboard> {
   const pool = getCiPool();
   const bounded = Boolean(filters.startDate && filters.endDate);
   const dateClause = bounded ? " AND CallDate BETWEEN ? AND ?" : "";
-  const dateParams = bounded ? [filters.startDate as string, filters.endDate as string] : [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const params: any[] = bounded ? [filters.startDate as string, filters.endDate as string] : [];
+  const scopeCond = scope ? callDetailsScopeCond(scope, params) : "";
+
   const [rows] = await pool.execute<RowDataPacket[]>(
     `SELECT
       COUNT(*) as TOTAL_OBJECTIONS_RAISED,
@@ -302,8 +402,8 @@ export async function getObjectionHealthDashboard(
     WHERE CustomerObjectionCategory IS NOT NULL
       AND CustomerObjectionCategory != ''
       AND CustomerObjectionCategory != 'null'
-      AND CustomerObjectionCategory != 'None'${dateClause}`,
-    dateParams
+      AND CustomerObjectionCategory != 'None'${dateClause}${scopeCond}`,
+    params
   );
 
   if (rows.length === 0) {
@@ -335,19 +435,24 @@ export interface ObjectionAnalysisReport {
   rebuttalMatrix: ObjectionRebuttal[];
 }
 
+/**
+ * SECURITY FIX: Added scope parameter - propagates to all sub-queries so the
+ * comprehensive report respects caller's row-level access.
+ */
 export async function generateComprehensiveObjectionReport(
   patternLimit = 50,
   handlerLimit = 50,
   processLimit = 100,
-  rebuttalLimit = 100
+  rebuttalLimit = 100,
+  scope?: QualityScope
 ): Promise<ObjectionAnalysisReport> {
   const [dashboard, topPatterns, topHandlers, salesMetrics, processList, rebuttalMatrix] =
     await Promise.all([
-      getObjectionHealthDashboard(),
-      getTopObjectionPatterns(patternLimit),
-      getTopObjectionHandlers(handlerLimit),
-      getSalesClosedAfterObjection(patternLimit),
-      getObjectionsByProcess(processLimit),
+      getObjectionHealthDashboard({}, scope),
+      getTopObjectionPatterns(patternLimit, scope),
+      getTopObjectionHandlers(handlerLimit, scope),
+      getSalesClosedAfterObjection(patternLimit, scope),
+      getObjectionsByProcess(processLimit, scope),
       getObjectionRebuttalMatrix(rebuttalLimit),
     ]);
 

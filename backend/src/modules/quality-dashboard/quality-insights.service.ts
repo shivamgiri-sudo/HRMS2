@@ -1,6 +1,10 @@
 /**
  * Quality Insights Service
  * AI-powered analytics and predictions for quality metrics
+ *
+ * SECURITY FIX: All query functions now accept a scope parameter and apply row-level
+ * filtering. Without scope enforcement, any user with route access (e.g. branch_head,
+ * process_manager) could see org-wide quality data instead of only their scoped subset.
  */
 
 import type { RowDataPacket } from 'mysql2';
@@ -11,10 +15,73 @@ function getCiPool() {
 }
 
 /**
- * Get hour-of-day quality heatmap data
+ * Scope descriptor resolved by the route layer (resolveScope in quality-dashboard.routes.ts).
+ * Duplicated here as an interface to avoid circular imports — the canonical implementation
+ * lives in the routes file.
  */
-export async function getQualityHeatmap(from: string, to: string) {
+export interface QualityScope {
+  global: boolean;
+  campaignIds: string[] | null;
+  agentCodes: string[] | null;
+  resolvedAuditCodes?: string[] | null;
+}
+
+/**
+ * Build a WHERE clause fragment for db_audit.call_quality_assessment scoped by User.
+ * Mirrors the auditScopeCond() helper in quality-dashboard.routes.ts.
+ *
+ * SECURITY: ensures non-global callers only see rows matching their assigned agents.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function auditScopeCond(scope: QualityScope, params: any[]): string {
+  if (scope.global) return "";
+  const codes = scope.agentCodes ?? scope.resolvedAuditCodes ?? null;
+  if (codes !== null) {
+    if (!codes.length) { params.push("__no_match__"); return " AND User = ?"; }
+    const ph = codes.map(() => "?").join(",");
+    params.push(...codes);
+    return ` AND User IN (${ph})`;
+  }
+  return "";
+}
+
+/**
+ * Build a WHERE clause fragment for db_external.CallDetails scoped by AgentName/campaign_id.
+ *
+ * SECURITY: ensures non-global callers only see rows matching their assigned agents or processes.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function callDetailsScopeCond(scope: QualityScope, params: any[]): string {
+  if (scope.global) return "";
+  // Process manager: filter by campaign_id (process name matches CallDetails.campaign_id)
+  if (scope.campaignIds !== null) {
+    if (!scope.campaignIds.length) { params.push("__no_match__"); return " AND campaign_id = ?"; }
+    const ph = scope.campaignIds.map(() => "?").join(",");
+    params.push(...scope.campaignIds);
+    return ` AND campaign_id IN (${ph})`;
+  }
+  // Branch head: filter by AgentName (agent employee codes)
+  if (scope.agentCodes !== null) {
+    if (!scope.agentCodes.length) { params.push("__no_match__"); return " AND AgentName = ?"; }
+    const ph = scope.agentCodes.map(() => "?").join(",");
+    params.push(...scope.agentCodes);
+    return ` AND AgentName IN (${ph})`;
+  }
+  return "";
+}
+
+/**
+ * Get hour-of-day quality heatmap data
+ *
+ * SECURITY FIX: Now accepts scope and filters by User so branch_head/process_manager
+ * only see heatmap data for their scoped agents.
+ */
+export async function getQualityHeatmap(from: string, to: string, scope: QualityScope) {
   const pool = getCiPool();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const params: any[] = [from, to];
+  const scopeCond = auditScopeCond(scope, params);
+
   const [rows] = await pool.execute<RowDataPacket[]>(`
     SELECT
       DAYNAME(CallDate) as day_name,
@@ -24,10 +91,10 @@ export async function getQualityHeatmap(from: string, to: string) {
       ROUND(AVG(quality_percentage), 1) as avg_score,
       COUNT(CASE WHEN quality_percentage < 50 THEN 1 END) as critical_calls
     FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ?
+    WHERE CallDate BETWEEN ? AND ?${scopeCond}
     GROUP BY DAYOFWEEK(CallDate), HOUR(CallDate)
     ORDER BY dow, hour
-  `, [from, to]);
+  `, params);
 
   // Transform to heatmap structure
   const heatmap: Record<string, Record<number, { score: number; calls: number; critical: number }>> = {};
@@ -44,9 +111,16 @@ export async function getQualityHeatmap(from: string, to: string) {
 
 /**
  * Predict agent at-risk status based on quality trends
+ *
+ * SECURITY FIX: Now accepts scope and filters by User so branch_head/process_manager
+ * only see risk predictions for their scoped agents.
  */
-export async function predictAgentRisk(from: string, to: string) {
+export async function predictAgentRisk(from: string, to: string, scope: QualityScope) {
   const pool = getCiPool();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const params: any[] = [to, to, from, to];
+  const scopeCond = auditScopeCond(scope, params);
+
   const [rows] = await pool.execute<RowDataPacket[]>(`
     WITH agent_metrics AS (
       SELECT
@@ -61,7 +135,7 @@ export async function predictAgentRisk(from: string, to: string) {
         SUM(CASE WHEN quality_percentage < 50 THEN 1 ELSE 0 END) as critical_count
       FROM db_audit.call_quality_assessment
       WHERE CallDate BETWEEN ? AND ?
-        AND User IS NOT NULL AND User != ''
+        AND User IS NOT NULL AND User != ''${scopeCond}
       GROUP BY User
       HAVING COUNT(*) >= 5
     )
@@ -105,15 +179,18 @@ export async function predictAgentRisk(from: string, to: string) {
         ELSE 4
       END,
       week_avg ASC
-  `, [to, to, from, to]);
+  `, params);
 
   return rows;
 }
 
 /**
  * Generate automated insights based on current data patterns
+ *
+ * SECURITY FIX: Now accepts scope and applies row-level filtering to all sub-queries.
+ * branch_head/process_manager only see insights derived from their scoped agents' data.
  */
-export async function generateInsights(from: string, to: string) {
+export async function generateInsights(from: string, to: string, scope: QualityScope) {
   const pool = getCiPool();
   const insights: Array<{
     type: 'success' | 'warning' | 'critical' | 'opportunity';
@@ -124,6 +201,10 @@ export async function generateInsights(from: string, to: string) {
   }> = [];
 
   // Insight 1: Quality trend
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const trendParams: any[] = [from, to];
+  const trendScopeCond = auditScopeCond(scope, trendParams);
+
   const [trendData] = await pool.execute<RowDataPacket[]>(`
     SELECT
       AVG(CASE WHEN DATE(CallDate) = CURDATE() THEN quality_percentage END) as today_avg,
@@ -131,8 +212,8 @@ export async function generateInsights(from: string, to: string) {
       AVG(CASE WHEN CallDate >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN quality_percentage END) as week_avg,
       AVG(CASE WHEN CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN quality_percentage END) as month_avg
     FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ?
-  `, [from, to]);
+    WHERE CallDate BETWEEN ? AND ?${trendScopeCond}
+  `, trendParams);
 
   const trend = trendData[0];
   if (trend.today_avg && trend.yesterday_avg) {
@@ -157,18 +238,23 @@ export async function generateInsights(from: string, to: string) {
   }
 
   // Insight 2: Critical agents
+  // SECURITY: scope the critical-agents sub-query to only show agents within caller's scope
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const criticalParams: any[] = [];
+  const criticalScopeCond = auditScopeCond(scope, criticalParams);
+
   const [criticalAgents] = await pool.execute<RowDataPacket[]>(`
     SELECT cqa.User, COUNT(*) as poor_calls,
            COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, COALESCE(e.last_name,'')), cqa.User) AS display_name
     FROM db_audit.call_quality_assessment cqa
     LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
     WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
-      AND cqa.quality_percentage < 50
+      AND cqa.quality_percentage < 50${criticalScopeCond}
     GROUP BY cqa.User, e.full_name, e.first_name, e.last_name
     HAVING COUNT(*) >= 3
     ORDER BY poor_calls DESC
     LIMIT 3
-  `, []);
+  `, criticalParams);
 
   if (criticalAgents.length > 0) {
     insights.push({
@@ -180,14 +266,22 @@ export async function generateInsights(from: string, to: string) {
   }
 
   // Insight 3: Best practices opportunity
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const topParams: any[] = [from, to];
+  const topScopeCond = auditScopeCond(scope, topParams);
+
   const [topPerformers] = await pool.execute<RowDataPacket[]>(`
     SELECT
       COUNT(DISTINCT User) as top_count,
       AVG(quality_percentage) as top_avg
     FROM db_audit.call_quality_assessment
     WHERE CallDate BETWEEN ? AND ?
-      AND quality_percentage >= 90
-  `, [from, to]);
+      AND quality_percentage >= 90${topScopeCond}
+  `, topParams);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const bottomParams: any[] = [from, to];
+  const bottomScopeCond = auditScopeCond(scope, bottomParams);
 
   const [bottomPerformers] = await pool.execute<RowDataPacket[]>(`
     SELECT
@@ -195,8 +289,8 @@ export async function generateInsights(from: string, to: string) {
       AVG(quality_percentage) as bottom_avg
     FROM db_audit.call_quality_assessment
     WHERE CallDate BETWEEN ? AND ?
-      AND quality_percentage < 70
-  `, [from, to]);
+      AND quality_percentage < 70${bottomScopeCond}
+  `, bottomParams);
 
   if (topPerformers[0].top_count > 0 && bottomPerformers[0].bottom_count > 0) {
     const gap = topPerformers[0].top_avg - bottomPerformers[0].bottom_avg;
@@ -209,17 +303,21 @@ export async function generateInsights(from: string, to: string) {
   }
 
   // Insight 4: Peak hour performance
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const peakParams: any[] = [from, to];
+  const peakScopeCond = auditScopeCond(scope, peakParams);
+
   const [peakHours] = await pool.execute<RowDataPacket[]>(`
     SELECT
       HOUR(CallDate) as hour,
       AVG(quality_percentage) as avg_score,
       COUNT(*) as call_volume
     FROM db_audit.call_quality_assessment
-    WHERE CallDate BETWEEN ? AND ?
+    WHERE CallDate BETWEEN ? AND ?${peakScopeCond}
     GROUP BY HOUR(CallDate)
     ORDER BY avg_score ASC
     LIMIT 1
-  `, [from, to]);
+  `, peakParams);
 
   if (peakHours[0]) {
     insights.push({
@@ -236,11 +334,18 @@ export async function generateInsights(from: string, to: string) {
 
 /**
  * Calculate ROI of quality improvements
+ *
+ * SECURITY FIX: Now accepts scope and filters both db_audit and db_external queries
+ * so branch_head/process_manager only see ROI projections based on their scoped data.
  */
-export async function calculateQualityROI(from: string, to: string) {
+export async function calculateQualityROI(from: string, to: string, scope: QualityScope) {
   const pool = getCiPool();
 
   // Get quality and sales correlation
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const params: any[] = [from, to];
+  const scopeCond = auditScopeCond(scope, params);
+
   const [data] = await pool.execute<RowDataPacket[]>(`
     SELECT
       AVG(qc.quality_percentage) as avg_quality,
@@ -250,8 +355,8 @@ export async function calculateQualityROI(from: string, to: string) {
     FROM db_audit.call_quality_assessment qc
     LEFT JOIN db_external.CallDetails cd ON cd.CallDate = qc.CallDate
       AND cd.AgentName = qc.User COLLATE utf8mb4_unicode_ci
-    WHERE qc.CallDate BETWEEN ? AND ?
-  `, [from, to]);
+    WHERE qc.CallDate BETWEEN ? AND ?${scopeCond}
+  `, params);
 
   const current = data[0];
   const conversionRate = (current.sales_count / current.total_calls) * 100;

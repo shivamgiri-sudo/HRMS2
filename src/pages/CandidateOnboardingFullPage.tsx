@@ -1,7 +1,8 @@
 /**
- * Candidate Onboarding Full Page — Production
+ * Candidate Onboarding Full Page — MAS HRMS Design Patterns
  *
  * Uses useOnboardingFull hook for all backend logic.
+ * Redesigned UI with glassmorphism, gradients, and colored sections.
  */
 
 import { useSearchParams } from "react-router-dom";
@@ -11,7 +12,7 @@ import { Progress } from "@/components/ui/progress";
 import { useOnboardingFull, STEP_LABELS } from "@/components/onboarding-full/useOnboardingFull";
 import type { Step } from "@/components/onboarding-full/useOnboardingFull";
 
-// Import V1 (production) components
+// Import V2 redesigned components
 import {
   Step1Welcome,
   Step2Personal,
@@ -19,13 +20,13 @@ import {
   Step4Documents,
   Step5Bgv,
   Step6Bank,
-} from "@/components/onboarding-full/OnboardingSteps1to5";
+} from "@/components/onboarding-full/OnboardingSteps1to5V2";
 import {
   Step7Education,
   Step8Experience,
   Step9FamilyLang,
   Step10Statutory,
-} from "@/components/onboarding-full/OnboardingSteps6to10";
+} from "@/components/onboarding-full/OnboardingSteps6to10V2";
 
 // Step configuration with colors
 const STEPS = [
@@ -246,15 +247,15 @@ export default function CandidateOnboardingFullPage() {
           <Step3AddressKyc
             employee={onb.employee}
             setEmployee={onb.setEmployee}
+            status={onb.status}
             saving={onb.saving}
             onSave={onb.saveEmployee}
-            digilockerStatus={onb.digilockerSessionState}
-            onDigilocker={onb.startDigilocker}
-            digilockerRedirectUrl={onb.redirectUrl}
+            digilockerUrl={onb.redirectUrl}
+            digilockerLoading={onb.saving}
+            digilockerError={null}
+            onDigilockerStart={onb.startDigilocker}
             consentAccepted={onb.consentAccepted}
             onConsent={onb.grantConsent}
-            onSyncDigilocker={onb.syncDigilocker}
-            digilockerSyncing={onb.digilockerSyncing}
           />
         )}
 
