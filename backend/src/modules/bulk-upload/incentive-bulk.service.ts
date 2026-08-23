@@ -121,6 +121,21 @@ export async function importIncentiveBatch(
 
     if (!validationError) d.pay_month = normalizeMonth(d.pay_month) as string;
 
+    // Duplicate guard: same employee + incentive code + pay month already staged/approved
+    if (!validationError && emp && master) {
+      const [dupRows] = await db.execute<RowDataPacket[]>(
+        `SELECT iul.id FROM incentive_upload_line iul
+           JOIN incentive_upload_batch iub ON iub.id = iul.batch_id
+          WHERE iul.employee_id = ? AND iub.incentive_id = ? AND iub.salary_month = ?
+            AND iub.status NOT IN ('rejected','inactive')
+          LIMIT 1`,
+        [emp.id, master.id, d.pay_month],
+      );
+      if ((dupRows as RowDataPacket[]).length > 0) {
+        validationError = `Duplicate: ${d.incentive_code} for ${d.employee_code} in ${d.pay_month} already exists in a pending/approved batch`;
+      }
+    }
+
     if (validationError || !emp || !master) {
       const msg = `Row ${row.rowNo} (${d.employee_code || "no code"}): ${validationError}`;
       errors.push(msg);
@@ -168,6 +183,19 @@ export async function importIncentiveBatch(
   }
 
   await markPendingApproval(batchId, branchId, staged, failed);
+
+  // Audit: record that this upload was staged, even if later rejected
+  for (const incentiveBatchId of incentiveBatches.values()) {
+    void logSensitiveAction({
+      actor_user_id: userId,
+      action_type: "INCENTIVE_BATCH_UPLOADED",
+      module_key: "incentives",
+      entity_type: "incentive_upload_batch",
+      entity_id: incentiveBatchId,
+      new_value_json: { upload_batch_id: batchId, staged, failed, branch_id: branchId },
+    });
+  }
+
   return { staged, failed, branchId, errors };
 }
 

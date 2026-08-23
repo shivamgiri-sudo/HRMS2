@@ -77,6 +77,20 @@ export async function importDeductionBatch(
 
     if (!validationError) d.run_month = normalizeMonth(d.run_month) as string;
 
+    // Duplicate guard: same employee + deduction code + run month already active/pending
+    if (!validationError && emp) {
+      const [dupRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM employee_deduction_entries
+          WHERE employee_id = ? AND deduction_type_code = ? AND run_month = ?
+            AND status NOT IN ('inactive','rejected')
+          LIMIT 1`,
+        [emp.id, typeCode, d.run_month],
+      );
+      if ((dupRows as RowDataPacket[]).length > 0) {
+        validationError = `Duplicate: deduction ${d.deduction_type_code} for ${d.employee_code} in ${d.run_month} already exists`;
+      }
+    }
+
     if (validationError || !emp) {
       const msg = `Row ${row.rowNo} (${d.employee_code || "no code"}): ${validationError}`;
       errors.push(msg);
@@ -109,6 +123,17 @@ export async function importDeductionBatch(
   }
 
   await markPendingApproval(batchId, branchId, staged, failed);
+
+  // Audit: record that this upload was staged, even if later rejected
+  void logSensitiveAction({
+    actor_user_id: userId,
+    action_type: "DEDUCTION_BATCH_UPLOADED",
+    module_key: "payroll",
+    entity_type: "upload_batch",
+    entity_id: batchId,
+    new_value_json: { staged, failed, branch_id: branchId },
+  });
+
   return { staged, failed, branchId, errors };
 }
 
