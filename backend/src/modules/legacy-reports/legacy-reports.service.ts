@@ -12,10 +12,12 @@ import { db } from "../../db/mysql.js";
 
 export type LegacyFilter = {
   branch?: string;
+  process?: string;     // process_name exact match
   month?: string;       // 'YYYY-MM'
   from_date?: string;   // 'YYYY-MM-DD'
   to_date?: string;     // 'YYYY-MM-DD'
   employee_code?: string;
+  employee_name?: string; // partial name search
 };
 
 export type LegacyColumn = {
@@ -56,6 +58,20 @@ function dateRangeWhere(col: string, from?: string, to?: string): [string, unkno
   return [parts.length ? `AND ${parts.join(" AND ")}` : "", vals];
 }
 
+function processJoin(alias: string, emp: string): string {
+  return `LEFT JOIN process_master ${alias} ON ${alias}.id = ${emp}.process_id`;
+}
+
+function processWhere(alias: string, process?: string): [string, unknown[]] {
+  if (!process) return ["", []];
+  return [`AND ${alias}.process_name = ?`, [process]];
+}
+
+function nameWhere(col: string, name?: string): [string, unknown[]] {
+  if (!name) return ["", []];
+  return [`AND ${col} LIKE ?`, [`%${name}%`]];
+}
+
 function numSum(rows: Record<string, unknown>[], keys: string[]): Record<string, number> {
   const s: Record<string, number> = {};
   for (const k of keys) s[k] = 0;
@@ -88,6 +104,7 @@ const REPORTS: Record<string, ReportDef> = {
       { key: "employee_code", label: "Emp Code",      format: "text" },
       { key: "employee_name", label: "Employee Name", format: "text" },
       { key: "branch_name",   label: "Branch",        format: "text" },
+      { key: "process_name",  label: "Process",       format: "text" },
       { key: "cost_centre",   label: "Cost Centre",   format: "text" },
       { key: "designation",   label: "Designation",   format: "text" },
       { key: "working_days",  label: "Working Days",  format: "number",   align: "right" },
@@ -125,11 +142,14 @@ const REPORTS: Record<string, ReportDef> = {
       const month = f.month || new Date().toISOString().slice(0, 7);
       const [mw, mv] = monthWhere("spr.run_month", month);
       const [ew, ev] = empWhere("spl.employee_code", f.employee_code);
+      const [nw, nv] = nameWhere("e.full_name", f.employee_name);
+      const [pw, pv] = processWhere("pm", f.process);
       return q(`
         SELECT
           spl.employee_code,
           e.full_name                                                            AS employee_name,
           bm.branch_name,
+          COALESCE(pm.process_name, 'UNASSIGNED')                               AS process_name,
           cc.cost_centre_code                                                    AS cost_centre,
           dm.designation_name                                                    AS designation,
           spl.working_days,
@@ -168,13 +188,14 @@ const REPORTS: Record<string, ReportDef> = {
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
         LEFT JOIN designation_master dm ON dm.id = e.designation_id
         LEFT JOIN salary_prep_line_component c ON c.line_id = spl.id
-        WHERE 1=1 ${bw} ${mw} ${ew}
+        ${processJoin("pm", "e")}
+        WHERE 1=1 ${bw} ${mw} ${ew} ${nw} ${pw}
         GROUP BY spl.id, spl.employee_code, e.full_name, bm.branch_name,
-                 cc.cost_centre_code, dm.designation_name,
+                 pm.process_name, cc.cost_centre_code, dm.designation_name,
                  spl.working_days, spl.present_days, spl.gross_salary, spl.net_salary
         ORDER BY bm.branch_name, spl.employee_code
         LIMIT 10000
-      `, [...bv, ...mv, ...ev]);
+      `, [...bv, ...mv, ...ev, ...nv, ...pv]);
     },
   },
 
@@ -307,7 +328,9 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Attendance Issues",
     columns: [
       { key: "employee_code",       label: "Emp Code",       format: "text" },
+      { key: "employee_name",       label: "Employee Name",  format: "text" },
       { key: "branch_name",         label: "Branch",         format: "text" },
+      { key: "process_name",        label: "Process",        format: "text" },
       { key: "session_date",        label: "Att Date",       format: "date" },
       { key: "old_status",          label: "Current Status", format: "text" },
       { key: "new_status",          label: "Expected Status",format: "text" },
@@ -319,21 +342,25 @@ const REPORTS: Record<string, ReportDef> = {
     ],
     async query(f) {
       const [ew, ev] = empWhere("e.employee_code", f.employee_code);
+      const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const [dw, dv] = f.from_date ? dateRangeWhere("ar.session_date", f.from_date, f.to_date)
         : monthWhere("ar.session_date", f.month);
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
+      const [pw, pv] = processWhere("pm", f.process);
       return q(`
-        SELECT e.employee_code, bm.branch_name,
+        SELECT e.employee_code, e.full_name AS employee_name,
+               bm.branch_name, pm.process_name,
                ar.session_date, ar.old_status, ar.new_status,
                ar.dispute_type, ar.reason, ar.status,
                ar.reviewed_at, ar.manager_review_note
         FROM attendance_regularization ar
         JOIN employees e ON e.id = ar.employee_id
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
-        WHERE ar.escalated_to LIKE 'BWAI:%' ${ew} ${dw} ${bw}
+        ${processJoin("pm", "e")}
+        WHERE ar.escalated_to LIKE 'BWAI:%' ${ew} ${nw} ${dw} ${bw} ${pw}
         ORDER BY bm.branch_name, e.employee_code, ar.session_date
         LIMIT 50000
-      `, [...ev, ...dv, ...bv]);
+      `, [...ev, ...nv, ...dv, ...bv, ...pv]);
     },
   },
 
@@ -344,6 +371,7 @@ const REPORTS: Record<string, ReportDef> = {
       { key: "employee_code", label: "Emp Code",     format: "text" },
       { key: "employee_name", label: "Employee Name",format: "text" },
       { key: "branch_name",   label: "Branch",       format: "text" },
+      { key: "process_name",  label: "Process",      format: "text" },
       { key: "cost_center",   label: "Cost Centre",  format: "text" },
       { key: "from_date",     label: "Leave From",   format: "date" },
       { key: "to_date",       label: "Leave To",     format: "date" },
@@ -355,11 +383,14 @@ const REPORTS: Record<string, ReportDef> = {
     async query(f) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       const [ew, ev] = empWhere("e.employee_code", f.employee_code);
+      const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const [dw, dv] = f.from_date ? dateRangeWhere("lr.from_date", f.from_date, f.to_date)
         : monthWhere("lr.from_date", f.month);
+      const [pw, pv] = processWhere("pm", f.process);
       return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
-               bm.branch_name, cc.cost_centre_code AS cost_center,
+               bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
+               cc.cost_centre_code AS cost_center,
                lr.from_date, lr.to_date, lr.total_days,
                lr.leave_type_code AS leave_type,
                lr.status, lr.reason
@@ -367,10 +398,11 @@ const REPORTS: Record<string, ReportDef> = {
         JOIN employees e ON e.id = lr.employee_id
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-        WHERE 1=1 ${bw} ${ew} ${dw}
+        ${processJoin("pm", "e")}
+        WHERE 1=1 ${bw} ${ew} ${nw} ${dw} ${pw}
         ORDER BY bm.branch_name, e.employee_code, lr.from_date
         LIMIT 50000
-      `, [...bv, ...ev, ...dv]);
+      `, [...bv, ...ev, ...nv, ...dv, ...pv]);
     },
   },
 
@@ -382,6 +414,7 @@ const REPORTS: Record<string, ReportDef> = {
       { key: "employee_code",      label: "Emp Code",          format: "text" },
       { key: "employee_name",      label: "Employee Name",     format: "text" },
       { key: "branch_name",        label: "Branch",            format: "text" },
+      { key: "process_name",       label: "Process",           format: "text" },
       { key: "loan_type",          label: "Type",              format: "text" },
       { key: "loan_amount",        label: "Amount",            format: "currency", align: "right" },
       { key: "installment_amount", label: "Installment/Month", format: "currency", align: "right" },
@@ -395,9 +428,12 @@ const REPORTS: Record<string, ReportDef> = {
     async query(f) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       const [ew, ev] = empWhere("e.employee_code", f.employee_code);
+      const [nw, nv] = nameWhere("e.full_name", f.employee_name);
+      const [pw, pv] = processWhere("pm", f.process);
       return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
-               bm.branch_name, el.loan_type,
+               bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
+               el.loan_type,
                el.amount AS loan_amount, el.deduction_per_month AS installment_amount, el.installments AS total_installments,
                el.start_date, el.end_date,
                el.deducted_amount,
@@ -406,10 +442,11 @@ const REPORTS: Record<string, ReportDef> = {
         FROM employee_loans el
         JOIN employees e ON e.id = el.employee_id
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
-        WHERE 1=1 ${bw} ${ew}
+        ${processJoin("pm", "e")}
+        WHERE 1=1 ${bw} ${ew} ${nw} ${pw}
         ORDER BY bm.branch_name, e.employee_code
         LIMIT 10000
-      `, [...bv, ...ev]);
+      `, [...bv, ...ev, ...nv, ...pv]);
     },
   },
 
@@ -686,16 +723,19 @@ const REPORTS: Record<string, ReportDef> = {
     async query(f) {
       const [bw, bv] = branchWhere("ls.branch_name", f.branch);
       const [ew, ev] = empWhere("ls.employee_code", f.employee_code);
+      const [nw, nv] = nameWhere("ls.employee_name", f.employee_name);
+      const pw  = f.process ? "AND ls.process = ?"     : "";
+      const pv  = f.process ? [f.process]              : [];
       return q(`
         SELECT ls.employee_code, ls.employee_name, ls.branch_name,
                ls.process, ls.designation, ls.doj, ls.dol,
                ls.basic, ls.hra, ls.gross, ls.ctc_monthly, ls.net_salary,
                ls.pf_eligible, ls.esic_eligible
         FROM legacy_salary_snapshot ls
-        WHERE 1=1 ${bw} ${ew}
+        WHERE 1=1 ${bw} ${ew} ${nw} ${pw}
         ORDER BY ls.branch_name, ls.employee_code
         LIMIT 50000
-      `, [...bv, ...ev]);
+      `, [...bv, ...ev, ...nv, ...pv]);
     },
   },
 
@@ -704,7 +744,9 @@ const REPORTS: Record<string, ReportDef> = {
     label: "Salary History",
     columns: [
       { key: "employee_code",  label: "Emp Code",     format: "text" },
+      { key: "employee_name",  label: "Name",         format: "text" },
       { key: "branch_name",    label: "Branch",       format: "text" },
+      { key: "process_name",   label: "Process",      format: "text" },
       { key: "designation",    label: "Designation",  format: "text" },
       { key: "basic",          label: "Basic",        format: "currency", align: "right" },
       { key: "hra",            label: "HRA",          format: "currency", align: "right" },
@@ -715,18 +757,23 @@ const REPORTS: Record<string, ReportDef> = {
     ],
     async query(f) {
       const [ew, ev] = empWhere("e.employee_code", f.employee_code);
+      const [nw, nv] = nameWhere("e.full_name", f.employee_name);
+      const [pw, pv] = processWhere("pm", f.process);
       const bCond = f.branch ? "AND esh.branch_name = ?" : "";
       const bv    = f.branch ? [f.branch] : [];
       return q(`
-        SELECT e.employee_code, esh.branch_name, esh.designation_name AS designation,
+        SELECT e.employee_code, e.full_name AS employee_name,
+               esh.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
+               esh.designation_name AS designation,
                esh.basic, esh.hra, esh.gross, esh.ctc AS ctc_monthly,
                esh.net_in_hand, esh.effective_from
         FROM employee_salary_history esh
         JOIN employees e ON e.id = esh.employee_id
-        WHERE esh.source = 'data_migration' ${ew} ${bCond}
+        ${processJoin("pm", "e")}
+        WHERE esh.source = 'data_migration' ${ew} ${nw} ${bCond} ${pw}
         ORDER BY e.employee_code, esh.effective_from DESC
         LIMIT 50000
-      `, [...ev, ...bv]);
+      `, [...ev, ...nv, ...bv, ...pv]);
     },
   },
 

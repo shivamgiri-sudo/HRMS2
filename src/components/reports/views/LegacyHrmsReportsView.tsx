@@ -77,14 +77,22 @@ function formatCell(value: unknown, format: string): string {
 
 // ── component ─────────────────────────────────────────────────────────────────
 
+// Filter mode: month-picker vs date-range
+type FilterMode = "month" | "range";
+
 export default function LegacyHrmsReportsView() {
   const [selected, setSelected]     = useState<string>("");
+  const [filterMode, setFilterMode] = useState<FilterMode>("month");
   const [month, setMonth]           = useState<string>("");
+  const [fromDate, setFromDate]     = useState<string>("");
+  const [toDate, setToDate]         = useState<string>("");
   const [branch, setBranch]         = useState<string>("");
+  const [process, setProcess]       = useState<string>("");
   const [empCode, setEmpCode]       = useState<string>("");
-  const [runKey, setRunKey]         = useState(0);   // bump to re-fetch
+  const [empName, setEmpName]       = useState<string>("");
+  const [runKey, setRunKey]         = useState(0);
   const tokenRef = useRef<string>(
-    localStorage.getItem("token") ?? sessionStorage.getItem("token") ?? ""
+    localStorage.getItem("hrms_access_token") ?? localStorage.getItem("token") ?? ""
   );
 
   // ── report list ──────────────────────────────────────────────────────────
@@ -95,11 +103,29 @@ export default function LegacyHrmsReportsView() {
   });
   const reports: ReportMeta[] = unwrap<ReportMeta[]>(listRaw) ?? [];
 
-  // ── data query ───────────────────────────────────────────────────────────
-  const params: Record<string, string> = {};
-  if (month)   params.month          = month;
-  if (branch)  params.branch         = branch;
-  if (empCode) params.employee_code  = empCode;
+  // ── process list for dropdown ────────────────────────────────────────────
+  const { data: procRaw } = useQuery({
+    queryKey: ["process-master-list"],
+    queryFn: () => hrmsApi.get("/api/process-master"),
+    staleTime: 300_000,
+  });
+  const processOptions: string[] = (() => {
+    const raw = unwrap<{ process_name?: string; name?: string }[]>(procRaw) ?? [];
+    return Array.from(new Set(raw.map(p => p.process_name ?? p.name ?? "").filter(Boolean))).sort();
+  })();
+
+  // ── build params ─────────────────────────────────────────────────────────
+  function buildParams(): Record<string, string> {
+    const p: Record<string, string> = {};
+    if (filterMode === "month" && month) p.month = month;
+    if (filterMode === "range" && fromDate) p.from_date = fromDate;
+    if (filterMode === "range" && toDate)   p.to_date   = toDate;
+    if (branch)  p.branch         = branch;
+    if (process) p.process        = process;
+    if (empCode) p.employee_code  = empCode;
+    if (empName) p.employee_name  = empName;
+    return p;
+  }
 
   const {
     data: resultRaw,
@@ -107,8 +133,12 @@ export default function LegacyHrmsReportsView() {
     error,
     isSuccess,
   } = useQuery({
-    queryKey: ["legacy-report-data", selected, runKey],
-    queryFn: () => hrmsApi.get(`/api/legacy-reports/${selected}`, { params }),
+    queryKey: ["legacy-report-data", selected, runKey, filterMode, month, fromDate, toDate, branch, process, empCode, empName],
+    queryFn: () => {
+      const params = buildParams();
+      const qs = new URLSearchParams(params).toString();
+      return hrmsApi.get(`/api/legacy-reports/${selected}${qs ? `?${qs}` : ""}`);
+    },
     enabled: !!selected && runKey > 0,
     staleTime: 0,
   });
@@ -118,17 +148,18 @@ export default function LegacyHrmsReportsView() {
 
   // ── CSV export ───────────────────────────────────────────────────────────
   function handleExport() {
+    const token = localStorage.getItem("hrms_access_token") ?? localStorage.getItem("token") ?? tokenRef.current;
+    const params = buildParams();
     const qs = new URLSearchParams(params).toString();
     const url = `/api/legacy-reports/${selected}/export${qs ? `?${qs}` : ""}`;
-    fetch(url, {
-      headers: { Authorization: `Bearer ${tokenRef.current}` },
-    })
+    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.blob())
       .then(blob => {
         const bUrl = URL.createObjectURL(blob);
+        const suffix = month || (fromDate ? `${fromDate}_${toDate ?? ""}` : "");
         const a = Object.assign(document.createElement("a"), {
           href: bUrl,
-          download: `legacy-${selected}${month ? `-${month}` : ""}.csv`,
+          download: `legacy-${selected}${suffix ? `-${suffix}` : ""}.csv`,
         });
         a.click();
         URL.revokeObjectURL(bUrl);
@@ -185,71 +216,121 @@ export default function LegacyHrmsReportsView() {
           <>
             {/* Filter bar */}
             <div className="px-4 py-2.5 border-b border-slate-200 dark:border-slate-700
-                            bg-white dark:bg-slate-950 flex flex-wrap gap-2 items-end shrink-0">
+                            bg-white dark:bg-slate-950 shrink-0 space-y-2">
 
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-slate-500">Month</span>
-                <Select value={month} onValueChange={setMonth}>
-                  <SelectTrigger className="w-36 h-8 text-xs">
-                    <SelectValue placeholder="All months" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="">All months</SelectItem>
-                    {MONTH_OPTIONS.map(m => (
-                      <SelectItem key={m} value={m}>{m}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              {/* Row 1: date mode toggle + date pickers */}
+              <div className="flex flex-wrap gap-2 items-end">
+                {/* Date mode toggle */}
+                <div className="flex rounded-md border border-slate-200 dark:border-slate-700 overflow-hidden h-8">
+                  <button
+                    className={`px-3 text-xs font-medium transition-colors ${filterMode === "month" ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"}`}
+                    onClick={() => setFilterMode("month")}
+                  >Month</button>
+                  <button
+                    className={`px-3 text-xs font-medium transition-colors border-l border-slate-200 dark:border-slate-700 ${filterMode === "range" ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900" : "text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"}`}
+                    onClick={() => setFilterMode("range")}
+                  >Date Range</button>
+                </div>
+
+                {filterMode === "month" ? (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-xs text-slate-500">Month</span>
+                    <Select value={month} onValueChange={setMonth}>
+                      <SelectTrigger className="w-36 h-8 text-xs">
+                        <SelectValue placeholder="Current month" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">Current month</SelectItem>
+                        {MONTH_OPTIONS.map(m => (
+                          <SelectItem key={m} value={m}>{m}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs text-slate-500">From</span>
+                      <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+                        className="w-36 h-8 text-xs" />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs text-slate-500">To</span>
+                      <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+                        className="w-36 h-8 text-xs" />
+                    </div>
+                  </>
+                )}
+
+                {/* Branch */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-500">Branch</span>
+                  <Input value={branch} onChange={e => setBranch(e.target.value)}
+                    placeholder="Any branch" className="w-40 h-8 text-xs" />
+                </div>
+
+                {/* Process */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-500">Process</span>
+                  {processOptions.length > 0 ? (
+                    <Select value={process} onValueChange={setProcess}>
+                      <SelectTrigger className="w-48 h-8 text-xs">
+                        <SelectValue placeholder="All processes" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">All processes</SelectItem>
+                        {processOptions.map(p => (
+                          <SelectItem key={p} value={p}>{p}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Input value={process} onChange={e => setProcess(e.target.value)}
+                      placeholder="e.g. HDFC CC" className="w-40 h-8 text-xs" />
+                  )}
+                </div>
               </div>
 
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-slate-500">Branch</span>
-                <Input
-                  value={branch}
-                  onChange={e => setBranch(e.target.value)}
-                  placeholder="Any branch"
-                  className="w-44 h-8 text-xs"
-                />
-              </div>
+              {/* Row 2: employee filters + run button */}
+              <div className="flex flex-wrap gap-2 items-end">
+                {/* Employee code */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-500">Emp Code</span>
+                  <Input value={empCode} onChange={e => setEmpCode(e.target.value)}
+                    placeholder="e.g. MAS12345" className="w-32 h-8 text-xs" />
+                </div>
 
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-slate-500">Emp Code</span>
-                <Input
-                  value={empCode}
-                  onChange={e => setEmpCode(e.target.value)}
-                  placeholder="e.g. MAS12345"
-                  className="w-32 h-8 text-xs"
-                />
-              </div>
+                {/* Employee name search */}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-500">Name Search</span>
+                  <Input value={empName} onChange={e => setEmpName(e.target.value)}
+                    placeholder="Partial name" className="w-40 h-8 text-xs" />
+                </div>
 
-              <Button
-                size="sm"
-                className="h-8"
-                onClick={() => setRunKey(k => k + 1)}
-                disabled={isFetching}
-              >
-                <Search className="w-3.5 h-3.5 mr-1.5" />
-                {isFetching ? "Loading…" : "Run Report"}
-              </Button>
-
-              {result && result.total > 0 && (
-                <Button size="sm" variant="outline" className="h-8" onClick={handleExport}>
-                  <Download className="w-3.5 h-3.5 mr-1.5" />
-                  Export CSV
+                <Button size="sm" className="h-8" onClick={() => setRunKey(k => k + 1)} disabled={isFetching}>
+                  <Search className="w-3.5 h-3.5 mr-1.5" />
+                  {isFetching ? "Loading…" : "Run Report"}
                 </Button>
-              )}
 
-              <div className="ml-auto flex items-center gap-2">
-                {selectedLabel && (
-                  <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                    {selectedLabel}
-                  </span>
+                {result && result.total > 0 && (
+                  <Button size="sm" variant="outline" className="h-8" onClick={handleExport}>
+                    <Download className="w-3.5 h-3.5 mr-1.5" />
+                    Export CSV
+                  </Button>
                 )}
-                {result != null && (
-                  <Badge variant="secondary" className="text-xs">
-                    {result.total.toLocaleString("en-IN")} rows
-                  </Badge>
-                )}
+
+                <div className="ml-auto flex items-center gap-2">
+                  {selectedLabel && (
+                    <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      {selectedLabel}
+                    </span>
+                  )}
+                  {result != null && (
+                    <Badge variant="secondary" className="text-xs">
+                      {result.total.toLocaleString("en-IN")} rows
+                    </Badge>
+                  )}
+                </div>
               </div>
             </div>
 

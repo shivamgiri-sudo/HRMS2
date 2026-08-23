@@ -15,11 +15,13 @@ const h =
 
 function parseFilter(query: Record<string, unknown>): LegacyFilter {
   return {
-    branch:        query.branch        ? String(query.branch)        : undefined,
-    month:         query.month         ? String(query.month)         : undefined,
-    from_date:     query.from_date     ? String(query.from_date)     : undefined,
-    to_date:       query.to_date       ? String(query.to_date)       : undefined,
-    employee_code: query.employee_code ? String(query.employee_code) : undefined,
+    branch:         query.branch         ? String(query.branch)         : undefined,
+    process:        query.process        ? String(query.process)        : undefined,
+    month:          query.month          ? String(query.month)          : undefined,
+    from_date:      query.from_date      ? String(query.from_date)      : undefined,
+    to_date:        query.to_date        ? String(query.to_date)        : undefined,
+    employee_code:  query.employee_code  ? String(query.employee_code)  : undefined,
+    employee_name:  query.employee_name  ? String(query.employee_name)  : undefined,
   };
 }
 
