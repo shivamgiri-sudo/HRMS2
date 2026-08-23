@@ -106,7 +106,7 @@ export default function LegacyHrmsReportsView() {
   // ── process list for dropdown ────────────────────────────────────────────
   const { data: procRaw } = useQuery({
     queryKey: ["process-master-list"],
-    queryFn: () => hrmsApi.get("/api/process-master"),
+    queryFn: () => hrmsApi.get("/api/processes"),
     staleTime: 300_000,
   });
   const processOptions: string[] = (() => {
