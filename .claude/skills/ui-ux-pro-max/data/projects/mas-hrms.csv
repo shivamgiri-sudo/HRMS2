@@ -1,0 +1,22 @@
+Component,Pattern,Code,Usage,Notes
+GlassCard,Glassmorphism container,"className=""rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm hover:shadow-md""",All cards and containers,Core wrapper for all content sections
+GradientHeader,Gradient hero section,"className=""bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 text-white p-6 rounded-2xl""",Page headers and profile banners,Add subtle overlay for depth
+GradientHeaderBlue,Blue gradient section,"className=""bg-gradient-to-r from-blue-600 to-indigo-600 text-white""",Bank account sections,For financial data sections
+GradientHeaderPurple,Purple gradient section,"className=""bg-gradient-to-r from-purple-600 to-violet-600 text-white""",PF/UAN/Identity sections,For statutory data
+GradientHeaderAmber,Amber gradient section,"className=""bg-gradient-to-r from-amber-500 to-orange-500 text-white""",Emergency contact sections,Urgent/important data
+GradientHeaderEmerald,Emerald gradient section,"className=""bg-gradient-to-r from-emerald-500 to-green-500 text-white""",Nominee and success sections,Positive/confirmed states
+GradientHeaderTeal,Teal gradient section,"className=""bg-gradient-to-r from-teal-500 to-cyan-500 text-white""",Attendance summary sections,For attendance/time data
+ColoredCardBlue,Blue background card,"className=""bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-4""",Casual Leave balance,General info cards
+ColoredCardGreen,Green background card,"className=""bg-gradient-to-br from-emerald-50 to-green-50 border border-emerald-200 rounded-xl p-4""",Earned Leave balance,Success/positive cards
+ColoredCardPurple,Purple background card,"className=""bg-gradient-to-br from-purple-50 to-violet-50 border border-purple-200 rounded-xl p-4""",Medical Leave balance,Special/unique cards
+ColoredCardAmber,Amber background card,"className=""bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 rounded-xl p-4""",Leave Without Pay/warnings,Warning/attention cards
+ColoredCardPink,Pink background card,"className=""bg-gradient-to-br from-pink-50 to-rose-50 border border-pink-200 rounded-xl p-4""",Personal/paternity data,Personal info cards
+ColoredCardCyan,Cyan background card,"className=""bg-gradient-to-br from-cyan-50 to-teal-50 border border-cyan-200 rounded-xl p-4""",Maternity/info data,Info/neutral cards
+DonutChart,Leave balance donut,"<svg width=""56"" height=""56""><circle stroke=""#e5e7eb"" fill=""none"" cx=""28"" cy=""28"" r=""23"" strokeWidth=""5""/><circle stroke=""currentColor"" fill=""none"" cx=""28"" cy=""28"" r=""23"" strokeWidth=""5"" strokeDasharray={circumference} strokeDashoffset={offset}/></svg>",Leave balance visualization,Show remaining days in center
+IconContainer,Colored icon wrapper,"<div className=""w-8 h-8 rounded-lg flex items-center justify-center"" style={{backgroundColor: `${color}15`}}><Icon className=""h-4 w-4"" style={{color}}/></div>",Section icons,Match color to section theme
+StatusBadge,Compact status badge,"className=""text-xs font-bold px-2 py-0.5 rounded-full""",Status indicators,Use colored backgrounds
+InfoField,Read-only field display,"<div className=""flex items-center gap-3 py-2 px-3 rounded-xl bg-gray-50/50 hover:bg-gray-100/50""><IconContainer/><div><p className=""text-[10px] font-semibold text-gray-400 uppercase tracking-wide"">{label}</p><p className=""text-sm font-semibold text-gray-800"">{value}</p></div></div>",Profile data display,Compact info layout
+CompactForm,Inline form layout,"className=""grid grid-cols-2 gap-4""",Date pickers and form fields,Use From/To labels
+GradientButton,Gradient CTA button,"className=""bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/30 px-6 py-3 rounded-xl font-semibold""",Primary actions,Add hover transform
+TableHeader,Compact table header,"className=""bg-gray-50/80 text-xs font-bold text-gray-500 uppercase px-4 py-3""",Data tables,Subtle background
+TableRow,Hoverable table row,"className=""hover:bg-gray-50/50 transition-colors px-4 py-3""",Data tables,Smooth hover effect
