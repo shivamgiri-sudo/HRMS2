@@ -531,3 +531,161 @@ runningSalaryRouter.get(
     return res.json({ success: true, data, run_month: runMonth, count: data.length, total, page, limit });
   }
 );
+
+/**
+ * GET /api/payroll/running-summary-aggregate?month=YYYY-MM&group_by=branch|process|cost_centre&branch_id=&process_id=
+ *
+ * Returns running-month salary AGGREGATED by branch, process, or cost centre.
+ * Used by the Running Salary Center's scope-level summary views.
+ *
+ * Each group row shows: headcount, total_gross, total_net, finalized_count, estimate_count.
+ * For finalized employees the stored salary_prep_line figures are used directly.
+ * For non-finalized employees the monthly gross from employee_salary_assignment is used as
+ * a projection base (same conservative approximation as payroll governance checks).
+ *
+ * This endpoint never calls computeRunningSalary per-employee — it is a pure SQL aggregate
+ * so it responds in milliseconds regardless of headcount.
+ */
+runningSalaryRouter.get(
+  "/running-summary-aggregate",
+  requireAuth,
+  async (req: AuthenticatedRequest, res: Response) => {
+    const userId = req.authUser!.id;
+    if (
+      !(await hasAnyRole(
+        userId,
+        "super_admin", "admin", "payroll_head", "payroll_branch", "payroll",
+        "branch_head", "management", "hr", "hr_admin", "wfm", "process_manager",
+      ))
+    ) {
+      return res.status(403).json({ success: false, message: "Access denied" });
+    }
+
+    const { db } = await import("../../db/mysql.js");
+
+    const rawMonth = (req.query.month as string) || "";
+    let runMonthYYYYMM: string;
+    if (rawMonth && /^\d{4}-\d{2}$/.test(rawMonth)) {
+      runMonthYYYYMM = rawMonth;
+    } else {
+      runMonthYYYYMM = await resolveDefaultRunMonth(db);
+    }
+
+    const groupBy = (req.query.group_by as string) || "branch";
+    if (!["branch", "process", "cost_centre"].includes(groupBy)) {
+      return res.status(400).json({ success: false, message: "group_by must be branch, process, or cost_centre" });
+    }
+
+    const { branch_id, process_id } = req.query as Record<string, string>;
+
+    // Build scope clause — restricts to the caller's assigned scope
+    const scoped = await buildScopeWhereClause(
+      userId,
+      RUNNING_SALARY_SCOPE_ROLES,
+      EMPLOYEE_SCOPE_ALIASES,
+      { allowAdminBypass: true, allowCeoAllRead: true },
+    );
+
+    const conds: string[] = [
+      "e.employment_status = 'active'",
+      "esa.active_status = 1",
+      `(${scoped.sql})`,
+    ];
+    const params: unknown[] = [...scoped.params];
+
+    if (branch_id) { conds.push("e.branch_id = ?"); params.push(branch_id); }
+    if (process_id) { conds.push("e.process_id = ?"); params.push(process_id); }
+
+    // Choose group columns based on group_by
+    let groupIdExpr: string;
+    let groupNameExpr: string;
+    let groupLabel: string;
+    let extraJoin = "";
+
+    if (groupBy === "branch") {
+      groupIdExpr = "e.branch_id";
+      groupNameExpr = "COALESCE(bm.branch_name, 'Unassigned')";
+      groupLabel = "branch";
+    } else if (groupBy === "process") {
+      groupIdExpr = "e.process_id";
+      groupNameExpr = "COALESCE(pm.process_name, 'Unassigned')";
+      groupLabel = "process";
+    } else {
+      groupIdExpr = "e.cost_centre_id";
+      groupNameExpr = "COALESCE(cc.cost_centre_name, 'Unassigned')";
+      groupLabel = "cost_centre";
+      extraJoin = "LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id";
+    }
+
+    const whereSql = conds.join(" AND ");
+
+    // Aggregate query:
+    // - For employees with a finalized salary_prep_line in this month: use stored gross/net
+    // - For others: use esa.gross_amount (monthly CTC gross) as projection
+    // One LEFT JOIN on salary_prep_line — picks the most authoritative status (same ORDER as batch endpoint)
+    const sql = `
+      SELECT
+        ${groupIdExpr} AS group_id,
+        ${groupNameExpr} AS group_name,
+        COUNT(DISTINCT e.id) AS headcount,
+        SUM(COALESCE(spl.gross_salary, esa.gross_amount, 0)) AS total_gross,
+        SUM(COALESCE(spl.net_salary, esa.gross_amount * 0.85, 0)) AS total_net,
+        SUM(CASE WHEN spl.id IS NOT NULL THEN 1 ELSE 0 END) AS finalized_count,
+        SUM(CASE WHEN spl.id IS NULL THEN 1 ELSE 0 END) AS estimate_count,
+        AVG(COALESCE(spl.gross_salary, esa.gross_amount, 0)) AS avg_gross
+      FROM employees e
+      JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
+      LEFT JOIN branch_master bm ON bm.id = e.branch_id
+      LEFT JOIN process_master pm ON pm.id = e.process_id
+      ${extraJoin}
+      LEFT JOIN (
+        SELECT spl2.employee_id, spl2.gross_salary, spl2.net_salary, spl2.id
+        FROM salary_prep_line spl2
+        JOIN salary_prep_run spr2 ON spr2.id = spl2.run_id
+        WHERE spr2.run_month = ?
+          AND spr2.status IN ('locked','approved','disbursed','completed','finalized','draft','processing','calculating','calculated')
+          AND spl2.status NOT IN ('excluded','blocked')
+        ORDER BY
+          CASE spr2.status
+            WHEN 'disbursed'   THEN 1 WHEN 'finalized' THEN 2 WHEN 'locked'      THEN 3
+            WHEN 'approved'    THEN 4 WHEN 'completed' THEN 5 WHEN 'calculated'  THEN 6
+            WHEN 'processing'  THEN 7 WHEN 'calculating' THEN 8 WHEN 'draft'     THEN 9
+            ELSE 10 END
+        LIMIT 18446744073709551615
+      ) spl ON spl.employee_id = e.id
+      WHERE ${whereSql}
+      GROUP BY ${groupIdExpr}, ${groupNameExpr}
+      ORDER BY total_gross DESC
+    `;
+
+    // Params: runMonthYYYYMM for the subquery, then scope/filter params
+    const allParams = [runMonthYYYYMM, ...params];
+
+    try {
+      const [rows] = await (db as any).execute(sql, allParams);
+      const data = (rows as any[]).map((r: any) => ({
+        group_id:        r.group_id,
+        group_name:      r.group_name,
+        group_type:      groupLabel,
+        headcount:       Number(r.headcount ?? 0),
+        total_gross:     Math.round(Number(r.total_gross ?? 0)),
+        total_net:       Math.round(Number(r.total_net ?? 0)),
+        avg_gross:       Math.round(Number(r.avg_gross ?? 0)),
+        finalized_count: Number(r.finalized_count ?? 0),
+        estimate_count:  Number(r.estimate_count ?? 0),
+      }));
+
+      return res.json({
+        success: true,
+        data,
+        run_month: runMonthYYYYMM,
+        group_by: groupLabel,
+        total_headcount: data.reduce((s: number, r: any) => s + r.headcount, 0),
+        total_gross:     data.reduce((s: number, r: any) => s + r.total_gross, 0),
+        total_net:       data.reduce((s: number, r: any) => s + r.total_net, 0),
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  }
+);

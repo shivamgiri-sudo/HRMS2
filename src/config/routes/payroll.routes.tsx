@@ -24,23 +24,13 @@ const RecalculationQueue        = lazy(() => import("@/pages/payroll/Recalculati
 const AttendanceControlTower    = lazy(() => import("@/pages/payroll/AttendanceControlTower"));
 const RunningPayrollBreakdown   = lazy(() => import("@/pages/payroll/RunningPayrollBreakdown"));
 const HolidayMaster             = lazy(() => import("@/pages/payroll/HolidayMaster"));
-const DisbursalManagement       = lazy(() => import("@/pages/payroll/DisbursalManagement"));
-const BankPaymentReadiness      = lazy(() => import("@/pages/payroll/BankPaymentReadiness"));
-const HolidayWorkRequest        = lazy(() => import("@/pages/payroll/HolidayWorkRequest"));
-const HolidayWorkApprovals      = lazy(() => import("@/pages/payroll/HolidayWorkApprovals"));
+// Legacy redirect-only pages removed — routes below use Navigate instead
 const PayrollValidationScreen   = lazy(() => import("@/pages/payroll/PayrollValidationScreen"));
 const NocManagement             = lazy(() => import("@/pages/payroll/NocManagement"));
-const BranchPayrollReadiness    = lazy(() => import("@/pages/payroll/BranchPayrollReadiness"));
-const ProcessPayrollReadiness   = lazy(() => import("@/pages/payroll/ProcessPayrollReadiness"));
-const SalaryDisputePage        = lazy(() => import("@/pages/payroll/SalaryDisputePage"));
-const SalaryDisputeQueuePage   = lazy(() => import("@/pages/payroll/SalaryDisputeQueuePage"));
-const SalaryDisputeManagerView = lazy(() => import("@/pages/payroll/SalaryDisputeManagerView"));
+const SalaryDisputeHub         = lazy(() => import("@/pages/payroll/SalaryDisputeHub"));
 const ProcessSalaryVerify       = lazy(() => import("@/pages/payroll/ProcessSalaryVerify"));
 const PayrollCalendar           = lazy(() => import("@/pages/payroll/PayrollCalendar"));
-// PayrollCostSummary moved into ReportsHub — route redirects to hub
-const StatutoryFilingTracker    = lazy(() => import("@/pages/payroll/StatutoryFilingTracker"));
 const PayrollAuditTrail         = lazy(() => import("@/pages/payroll/PayrollAuditTrail"));
-// PayrollVarianceReport moved into ReportsHub — route redirects to hub
 const BulkOutputs               = lazy(() => import("@/pages/payroll/BulkOutputs"));
 const LoanManagement            = lazy(() => import("@/pages/payroll/LoanManagement"));
 const PayrollSignOff            = lazy(() => import("@/pages/payroll/PayrollSignOff"));
@@ -48,8 +38,6 @@ const SalaryCertificate         = lazy(() => import("@/pages/payroll/SalaryCerti
 const TdsCertificatePartA       = lazy(() => import("@/pages/payroll/TdsCertificatePartA"));
 const ReimbursementManagement   = lazy(() => import("@/pages/payroll/ReimbursementManagement"));
 const PayrollEpfCompliancePage  = lazy(() => import("@/pages/PayrollEpfCompliancePage"));
-const PfCreationQueuePage       = lazy(() => import("@/pages/payroll/PfCreationQueuePage"));
-const PfBatchesPage             = lazy(() => import("@/pages/payroll/PfBatchesPage"));
 const NativePayrollHOQueues     = lazy(() => import("@/pages/NativePayrollHOQueues"));
 const NativeChequeNameValidation = lazy(() => import("@/pages/NativeChequeNameValidation"));
 const NativeSalaryIncrement     = lazy(() => import("@/pages/NativeSalaryIncrement"));
@@ -171,9 +159,10 @@ export const payrollRouteElements = (
       <Route path="/payroll/pf-management"       element={<ProtectedRoute roles={['admin','super_admin','payroll_hr','payroll']}><Gate pageCode="PAYROLL_PF_MANAGEMENT"><PfManagement /></Gate></ProtectedRoute>} />
       <Route path="/payroll/pf-creation-queue"   element={<Navigate to="/payroll/pf-management" replace />} />
       <Route path="/payroll/pf-batches"          element={<Navigate to="/payroll/pf-management?tab=batches" replace />} />
-      <Route path="/payroll/salary-disputes"       element={<ProtectedRoute roles={['employee','super_admin','admin','hr','hr_admin']}><Gate pageCode="SALARY_DISPUTE"><SalaryDisputePage /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/salary-disputes/queue" element={<ProtectedRoute roles={['wfm','payroll_hr','payroll','payroll_head','super_admin','admin']}><Gate pageCode="SALARY_DISPUTE_QUEUE"><SalaryDisputeQueuePage /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/salary-disputes/team"  element={<ProtectedRoute roles={['manager','branch_head','process_manager','super_admin','admin']}><Gate pageCode="SALARY_DISPUTE_TEAM"><SalaryDisputeManagerView /></Gate></ProtectedRoute>} />
+      {/* Salary Dispute Hub — merged page with role-based tabs (mine | queue | team) */}
+      <Route path="/payroll/salary-disputes"       element={<ProtectedRoute roles={['employee','wfm','payroll_hr','payroll','payroll_head','manager','branch_head','process_manager','super_admin','admin','hr','hr_admin']}><Gate pageCode="SALARY_DISPUTE"><SalaryDisputeHub /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/salary-disputes/queue" element={<Navigate to="/payroll/salary-disputes?tab=queue" replace />} />
+      <Route path="/payroll/salary-disputes/team"  element={<Navigate to="/payroll/salary-disputes?tab=team" replace />} />
       <Route path="/salary-increment"            element={<ProtectedRoute><Gate pageCode="SALARY_INCREMENT"><DashboardLayout><NativeSalaryIncrement /></DashboardLayout></Gate></ProtectedRoute>} />
   </>
 );
