@@ -29,6 +29,8 @@ import {
   RefreshCw,
   BarChart3,
   PieChart,
+  GraduationCap,
+  BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -733,6 +735,60 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
                     </div>
                   ))}
                 </div>
+              </div>
+            );
+          })()}
+        </GlassPanel>
+      </div>
+
+      {/* Training Progress -- computed on this dashboard's own metric bundle
+          (see dashboard-definition.service.ts: HR_DASHBOARD includes "training")
+          but never rendered anywhere on this layout until now. */}
+      <div className="grid grid-cols-1 gap-4 mb-4">
+        <GlassPanel title="Training Progress" icon={GraduationCap} iconColor="#8B5CF6">
+          {(() => {
+            const completed = metricDetail(m, "training", "completed");
+            const inProgress = metricDetail(m, "training", "inProgress");
+            const notStarted = metricDetail(m, "training", "notStarted");
+            const courses = metricDetail(m, "training", "courses");
+            const learners = metricDetail(m, "training", "learners");
+            const avgCompletionPct = metricDetail(m, "training", "avgCompletionPct");
+            const avgScore = metricDetail(m, "training", "avgScore");
+            const assignments = metricDetail(m, "training", "assignments");
+            const hasData = assignments !== null && assignments > 0;
+            return hasData ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    <DonutChart value={avgCompletionPct ?? 0} max={100} color="#8B5CF6" size={64} />
+                    <span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-gray-700">{avgCompletionPct ?? 0}%</span>
+                  </div>
+                  <div>
+                    <p className="text-lg font-bold text-gray-900">{learners ?? 0} learners</p>
+                    <p className="text-xs text-gray-500">
+                      {courses ?? 0} courses{avgScore === null ? "" : ` · avg score ${avgScore}`}
+                    </p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-emerald-50 rounded-lg p-2">
+                    <p className="text-sm font-bold text-emerald-600">{completed ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Completed</p>
+                  </div>
+                  <div className="bg-amber-50 rounded-lg p-2">
+                    <p className="text-sm font-bold text-amber-600">{inProgress ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">In Progress</p>
+                  </div>
+                  <div className="bg-red-50 rounded-lg p-2">
+                    <p className="text-sm font-bold text-red-600">{notStarted ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Not Started</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-6 text-center">
+                <BookOpen className="h-8 w-8 text-gray-300 mb-2" />
+                <p className="text-xs text-gray-400">Training progress data not available</p>
               </div>
             );
           })()}
