@@ -62,22 +62,41 @@ router.get("/my-requests", h(async (req: any, res: any) => {
   return res.json({ ok: true, data: rows });
 }));
 
-// GET /api/rm-change/pending - list pending requests for approval (WFM/HR/Admin)
-router.get("/pending", requireRole("admin", "hr", "wfm"), h(async (_req: any, res: any) => {
+// GET /api/rm-change/pending - list pending requests for approval (WFM/HR/Admin/Payroll HR)
+router.get("/pending", requireRole("admin", "hr", "wfm", "payroll_hr"), h(async (req: any, res: any) => {
+  const role: string = req.authUser?.role ?? "";
+  const isBranchScoped = role === "wfm" || role === "payroll_hr";
+
+  let branchId: string | null = null;
+  if (isBranchScoped) {
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+      [req.authUser!.id]
+    );
+    branchId = empRows[0]?.branch_id ?? null;
+    if (!branchId) {
+      return res.json({ ok: true, data: [] });
+    }
+  }
+
+  const query = `SELECT rm.*,
+          e.employee_code,
+          CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+          CONCAT(cm.first_name, ' ', COALESCE(cm.last_name, '')) AS current_manager_name,
+          CONCAT(nm.first_name, ' ', COALESCE(nm.last_name, '')) AS requested_manager_name,
+          b.branch_name
+   FROM rm_change_requests rm
+   JOIN employees e ON e.id = rm.employee_id
+   LEFT JOIN employees cm ON cm.id = rm.current_manager_id
+   LEFT JOIN employees nm ON nm.id = rm.requested_manager_id
+   LEFT JOIN branch_master b ON b.id = rm.branch_id
+   WHERE rm.status = 'pending'
+     ${isBranchScoped ? "AND rm.branch_id = ?" : ""}
+   ORDER BY rm.created_at DESC`;
+
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT rm.*,
-            e.employee_code,
-            CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-            CONCAT(cm.first_name, ' ', COALESCE(cm.last_name, '')) AS current_manager_name,
-            CONCAT(nm.first_name, ' ', COALESCE(nm.last_name, '')) AS requested_manager_name,
-            b.branch_name
-     FROM rm_change_requests rm
-     JOIN employees e ON e.id = rm.employee_id
-     LEFT JOIN employees cm ON cm.id = rm.current_manager_id
-     LEFT JOIN employees nm ON nm.id = rm.requested_manager_id
-     LEFT JOIN branch_master b ON b.id = rm.branch_id
-     WHERE rm.status = 'pending'
-     ORDER BY rm.created_at DESC`
+    query,
+    isBranchScoped ? [branchId] : []
   );
 
   return res.json({ ok: true, data: rows });
@@ -141,12 +160,25 @@ router.post("/", h(async (req: any, res: any) => {
 }));
 
 // POST /api/rm-change/:id/action - approve or reject a request
-router.post("/:id/action", requireRole("admin", "hr", "wfm"), h(async (req: any, res: any) => {
+router.post("/:id/action", requireRole("admin", "hr", "wfm", "payroll_hr"), h(async (req: any, res: any) => {
   const { id } = req.params;
   const { action, remarks } = req.body;
 
   if (!["approved", "rejected"].includes(action)) {
     return res.status(400).json({ ok: false, message: "action must be 'approved' or 'rejected'" });
+  }
+
+  const role: string = req.authUser?.role ?? "";
+  const isBranchScoped = role === "wfm" || role === "payroll_hr";
+
+  // For branch-scoped roles, resolve actor's branch upfront
+  let actorBranchId: string | null = null;
+  if (isBranchScoped) {
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT branch_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
+      [req.authUser!.id]
+    );
+    actorBranchId = empRows[0]?.branch_id ?? null;
   }
 
   const connection = await db.getConnection();
@@ -165,6 +197,12 @@ router.post("/:id/action", requireRole("admin", "hr", "wfm"), h(async (req: any,
     }
 
     const request = rows[0];
+
+    // Branch-scoped roles can only action requests for their own branch
+    if (isBranchScoped && request.branch_id !== actorBranchId) {
+      await connection.rollback();
+      return res.status(403).json({ ok: false, message: "Forbidden: this request belongs to a different branch" });
+    }
 
     if (request.status !== "pending") {
       await connection.rollback();
