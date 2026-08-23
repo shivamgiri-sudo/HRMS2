@@ -245,7 +245,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   const workforceQuery = useQuery({
     queryKey: ["reference-dashboard-workforce", variant, branchId, processId],
     queryFn: async () => asRecord(unwrap(await hrmsApi.get<unknown>(`/api/management/workforce-dashboard${params}`))),
-    enabled: accessGranted && ["ceo", "manager", "super_admin", "operations", "quality"].includes(variant),
+    enabled: accessGranted && ["ceo", "manager", "super_admin", "operations", "quality", "hr"].includes(variant),
     staleTime: 60_000,
     retry: 1,
   });
@@ -409,7 +409,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     ...(["hr", "ceo", "manager", "super_admin", "recruiter"].includes(variant) ? [atsQuery] : []),
     ...(variant === "recruiter" ? [recruiterHiringQuery] : []),
     ...(variant === "super_admin" ? [systemQuery] : []),
-    ...(["ceo", "manager", "super_admin", "operations", "quality"].includes(variant) ? [workforceQuery] : []),
+    ...(["ceo", "manager", "super_admin", "operations", "quality", "hr"].includes(variant) ? [workforceQuery] : []),
     ...(["ceo", "payroll", "super_admin"].includes(variant) ? [pnlQuery] : []),
     ...(variant === "payroll" ? [payrollRunsQuery, payrollQuery] : []),
     ...(["wfm", "wfm_attendance", "manager", "operations"].includes(variant) ? [biometricQuery] : []),
