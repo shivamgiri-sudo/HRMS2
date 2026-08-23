@@ -16,9 +16,6 @@ const PageLoader = () => (
 const NativeConfigurationCenter     = lazy(() => import("@/pages/NativeConfigurationCenter"));
 const Settings                      = lazy(() => import("@/pages/Settings"));
 const Profile                       = lazy(() => import("@/pages/Profile"));
-const ProfileEnhanced               = lazy(() => import("@/pages/ProfileEnhanced"));
-const ProfileEnhancedV2             = lazy(() => import("@/pages/ProfileEnhancedV2"));
-const ProfileV3                     = lazy(() => import("@/pages/ProfileV3"));
 const NativeAssetsManager           = lazy(() => import("@/pages/NativeAssetsManager"));
 const NativeExitPass                = lazy(() => import("@/pages/NativeExitPass"));
 const NativeExitPassPrint           = lazy(() => import("@/pages/NativeExitPassPrint"));
@@ -116,9 +113,6 @@ export const platformRouteElements = (
       {/* Core platform */}
       <Route path="/settings"        element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/profile"         element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><Profile /></Gate></ProtectedRoute>} />
-      <Route path="/profile-enhanced" element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><ProfileEnhanced /></Gate></ProtectedRoute>} />
-      <Route path="/profile-v2" element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><ProfileEnhancedV2 /></Gate></ProtectedRoute>} />
-      <Route path="/profile-v3" element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><ProfileV3 /></Gate></ProtectedRoute>} />
       <Route path="/departments"     element={<ProtectedRoute><Departments /></ProtectedRoute>} />
       <Route path="/calendar"        element={<ProtectedRoute><CompanyCalendar /></ProtectedRoute>} />
       <Route path="/notifications"   element={<ProtectedRoute><Notifications /></ProtectedRoute>} />

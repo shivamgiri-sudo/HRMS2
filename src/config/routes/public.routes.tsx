@@ -36,10 +36,6 @@ const EmployeeEpfComplianceReviewPage = lazy(() => import("@/pages/EmployeeEpfCo
 const VisitorSelfRegister = lazy(() => import("@/pages/VisitorSelfRegister"));
 const VisitorStatusPage   = lazy(() => import("@/pages/VisitorStatusPage"));
 const VisitorGatePage     = lazy(() => import("@/pages/VisitorGatePage"));
-const UXSkillDemo         = lazy(() => import("@/pages/UXSkillDemo"));
-const UXSkillDemoCompare  = lazy(() => import("@/pages/UXSkillDemoCompare"));
-const ProfileCompare      = lazy(() => import("@/pages/ProfileCompare"));
-const ProfileV3Demo       = lazy(() => import("@/pages/ProfileV3Demo"));
 const Step10Demo          = lazy(() => import("@/components/onboarding-full/Step10Demo"));
 const OnboardingFullDemo  = lazy(() => import("@/components/onboarding-full/OnboardingFullDemo"));
 const CandidateOnboardingFullPageV2 = lazy(() => import("@/pages/CandidateOnboardingFullPageV2"));
@@ -58,10 +54,6 @@ export const publicRouteElements = (
       <Route path="/security"         element={<Security />} />
 
       {/* Demo */}
-      <Route path="/ux-skill-demo"    element={<UXSkillDemo />} />
-      <Route path="/ux-skill-compare" element={<UXSkillDemoCompare />} />
-      <Route path="/profile-compare" element={<ProfileCompare />} />
-      <Route path="/profile-v3-demo" element={<ProfileV3Demo />} />
       <Route path="/onboarding-step10-demo" element={<Step10Demo />} />
       <Route path="/onboarding-demo" element={<OnboardingFullDemo />} />
 
