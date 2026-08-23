@@ -158,7 +158,13 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   IT_MANAGER_DASHBOARD: ["hc", "onb", "resign"],
   // `tat` removed 23-Aug-2026 audit: same task_tat_instance-is-empty reason as
   // RECRUITER_DASHBOARD above. ManagerReferenceLayout.tsx never rendered it either.
-  MANAGEMENT_DASHBOARD: ["hc", "att", "training", "leaveApprovals"],
+  // `onb` added 23-Aug-2026 (reverse-direction registry audit): ManagerReferenceLayout
+  // .tsx's "New Joiners" tile reads `numberAt(data.workforce, "summary",
+  // "new_joiners_30d") ?? metricDetail(m, "onb", "pending") ?? metricValue(m, "onb")` --
+  // the workforce-endpoint value is real and covers the tile today, so this was dead
+  // fallback code rather than a blank tile, but the metric half of that `??` chain could
+  // never fire without this key. Added so the fallback is real rather than decorative.
+  MANAGEMENT_DASHBOARD: ["hc", "att", "training", "leaveApprovals", "onb"],
   EMPLOYEE_SELF_DASHBOARD: ["att", "leaveApprovals"],
 };
 
