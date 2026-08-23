@@ -31,6 +31,7 @@ import {
   PieChart,
   GraduationCap,
   BookOpen,
+  CalendarClock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -741,10 +742,11 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
         </GlassPanel>
       </div>
 
-      {/* Training Progress -- computed on this dashboard's own metric bundle
-          (see dashboard-definition.service.ts: HR_DASHBOARD includes "training")
-          but never rendered anywhere on this layout until now. */}
-      <div className="grid grid-cols-1 gap-4 mb-4">
+      {/* Training Progress + Leave Approvals -- both computed on this dashboard's own
+          metric bundle (see dashboard-definition.service.ts: HR_DASHBOARD includes
+          "training" and "leaveApprovals") but neither was ever rendered on this
+          layout until this audit. */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         <GlassPanel title="Training Progress" icon={GraduationCap} iconColor="#8B5CF6">
           {(() => {
             const completed = metricDetail(m, "training", "completed");
@@ -789,6 +791,54 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
               <div className="flex flex-col items-center justify-center py-6 text-center">
                 <BookOpen className="h-8 w-8 text-gray-300 mb-2" />
                 <p className="text-xs text-gray-400">Training progress data not available</p>
+              </div>
+            );
+          })()}
+        </GlassPanel>
+
+        <GlassPanel title="Leave Approvals" icon={CalendarClock} iconColor="#F59E0B">
+          {(() => {
+            const pending = metricDetail(m, "leaveApprovals", "pending");
+            const oldest = metricDetail(m, "leaveApprovals", "oldestPendingDays");
+            const alreadyStarted = metricDetail(m, "leaveApprovals", "pendingAlreadyStarted");
+            const needsBranchHead = metricDetail(m, "leaveApprovals", "needsBranchHead");
+            const approved = metricDetail(m, "leaveApprovals", "approved");
+            const rejected = metricDetail(m, "leaveApprovals", "rejected");
+            const hasData = pending !== null;
+            return hasData ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900">{pending ?? 0}</p>
+                    <p className="text-xs text-gray-500">Pending approval</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-red-600">{alreadyStarted ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Start date passed</p>
+                  </div>
+                </div>
+                <p className="text-[11px] text-gray-400">
+                  {oldest === null ? "No pending requests" : `Oldest waiting ${oldest} days`}
+                </p>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="bg-amber-50 rounded-lg p-2">
+                    <p className="text-sm font-bold text-amber-600">{needsBranchHead ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Needs Branch Head</p>
+                  </div>
+                  <div className="bg-emerald-50 rounded-lg p-2">
+                    <p className="text-sm font-bold text-emerald-600">{approved ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Approved</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-2">
+                    <p className="text-sm font-bold text-gray-600">{rejected ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Rejected</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-6 text-center">
+                <CalendarClock className="h-8 w-8 text-gray-300 mb-2" />
+                <p className="text-xs text-gray-400">Leave approval data not available</p>
               </div>
             );
           })()}
