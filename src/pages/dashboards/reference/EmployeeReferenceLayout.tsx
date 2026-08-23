@@ -8,6 +8,7 @@ import {
   FileText,
   FolderOpen,
   Headphones,
+  Home,
   Target,
   TrendingUp,
   TriangleAlert,
@@ -121,6 +122,47 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
             ...drill("att"), },
         ]} />
       </ReferencePanel>
+
+      {/* WFO vs WFH Split */}
+      {(() => {
+        const wfoDays = asNumber(attendance.wfoDays ?? attendance.wfo_days ?? attendance.fromOffice ?? attendance.office_days);
+        const wfhDays = asNumber(attendance.wfhDays ?? attendance.wfh_days ?? attendance.fromHome ?? attendance.remote_days);
+        const totalWfDays = (wfoDays ?? 0) + (wfhDays ?? 0);
+        if (totalWfDays === 0) return null;
+        const wfoPct = Math.round(((wfoDays ?? 0) / totalWfDays) * 100);
+        const wfhPct = 100 - wfoPct;
+        return (
+          <ReferencePanel title="Work Location Split" bodyClassName="px-5 py-4">
+            <div className="flex items-center gap-6">
+              <div className="relative shrink-0">
+                <svg viewBox="0 0 36 36" className="w-20 h-20 -rotate-90">
+                  <circle cx="18" cy="18" r="14" fill="none" stroke="#3B82F6" strokeWidth="5" strokeDasharray={`${wfoPct} ${wfhPct}`} strokeDashoffset="0" />
+                  <circle cx="18" cy="18" r="14" fill="none" stroke="#8B5CF6" strokeWidth="5" strokeDasharray={`${wfhPct} ${wfoPct}`} strokeDashoffset={`-${wfoPct}`} />
+                </svg>
+                <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-[#0b1f44]">{totalWfDays}d</span>
+              </div>
+              <div className="grid grid-cols-2 gap-4 flex-1">
+                <div className="rounded-xl bg-blue-50 border border-blue-100 p-3 text-center">
+                  <div className="flex items-center justify-center gap-1.5 mb-1">
+                    <Briefcase className="h-3.5 w-3.5 text-blue-600" />
+                    <span className="text-xs font-semibold text-blue-700">WFO</span>
+                  </div>
+                  <p className="text-xl font-extrabold text-blue-700">{wfoDays ?? 0}</p>
+                  <p className="text-[10px] text-blue-500">{wfoPct}% of days</p>
+                </div>
+                <div className="rounded-xl bg-purple-50 border border-purple-100 p-3 text-center">
+                  <div className="flex items-center justify-center gap-1.5 mb-1">
+                    <Home className="h-3.5 w-3.5 text-purple-600" />
+                    <span className="text-xs font-semibold text-purple-700">WFH</span>
+                  </div>
+                  <p className="text-xl font-extrabold text-purple-700">{wfhDays ?? 0}</p>
+                  <p className="text-[10px] text-purple-500">{wfhPct}% of days</p>
+                </div>
+              </div>
+            </div>
+          </ReferencePanel>
+        );
+      })()}
 
       <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.02fr_0.98fr]">
         <ReferencePanel

@@ -1,4 +1,6 @@
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { Sparkline } from "./Sparkline";
+import { useMetricTrend } from "@/hooks/useMetricTrend";
 
 export interface MetricTileEnhancedProps {
   label: string;
@@ -15,6 +17,14 @@ export interface MetricTileEnhancedProps {
   loading?: boolean;
   className?: string;
   animate?: boolean;
+  /** Show a 7-point sparkline from the metric trend endpoint */
+  showSparkline?: boolean;
+  /** Dashboard code for the trend API (required when showSparkline=true) */
+  dashboardCode?: string;
+  /** Metric code for the trend API (required when showSparkline=true) */
+  metricCode?: string;
+  /** Override sparkline data directly (skips API call when provided) */
+  sparklineData?: number[];
 }
 
 function trendIcon(trend?: string | null, higherIsBetter = true) {
@@ -56,8 +66,24 @@ function varianceBadge(variancePct?: number | null, higherIsBetter = true) {
 export function MetricTileEnhanced({
   label, value, unit = "", previousValue, target, variance, variancePct,
   trend, status, higherIsBetter = true, icon, loading, className = "",
+  showSparkline, dashboardCode, metricCode, sparklineData,
 }: MetricTileEnhancedProps) {
   const colors = statusColors(status);
+
+  // Fetch trend data from API when showSparkline is true (and no override data)
+  const shouldFetch = showSparkline && !sparklineData && !!dashboardCode && !!metricCode;
+  const { data: fetchedTrend } = useMetricTrend(
+    shouldFetch ? dashboardCode : undefined,
+    shouldFetch ? metricCode : undefined
+  );
+  const trendData = sparklineData ?? (showSparkline ? fetchedTrend : undefined);
+
+  // Resolve sparkline stroke color from the card's status accent
+  const sparklineColor =
+    status === "ok" || status === "good" ? "#10b981" :
+    status === "warn" || status === "warning" ? "#f59e0b" :
+    status === "critical" ? "#ef4444" :
+    "#64748b";
 
   if (loading) {
     return (
@@ -96,6 +122,19 @@ export function MetricTileEnhanced({
           {trendIcon(trend, higherIsBetter)}
         </div>
       </div>
+
+      {/* Sparkline — gracefully hidden when no data */}
+      {trendData && trendData.length >= 2 && (
+        <div className="mt-1.5">
+          <Sparkline
+            data={trendData}
+            width={50}
+            height={20}
+            strokeColor={sparklineColor}
+            strokeWidth={1.5}
+          />
+        </div>
+      )}
 
       {/* Target progress bar — only when there's a real target */}
       {achievementPct !== null && (

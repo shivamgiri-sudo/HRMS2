@@ -118,7 +118,7 @@ router.get("/workforce-dashboard", requireRole("admin", "hr", "ceo", "manager", 
   res.json({ data: await managementService.getWorkforceDashboard(branchId, processId, scope.level) });
 }));
 
-router.get("/system-dashboard", requireRole("admin", "super_admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get("/system-dashboard", requireRole("super_admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
   res.json({ data: await managementService.getSystemDashboard() });
 }));
 
@@ -215,7 +215,7 @@ router.get("/attrition-breakdown", requireRole("admin", "hr", "ceo", "manager", 
   }
 }));
 
-router.get("/ceo-metrics", requireRole("admin", "hr", "ceo", "finance"), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get("/ceo-metrics", requireRole("ceo", "admin", "super_admin"), h(async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const data = await managementService.getCeoMetrics();
 

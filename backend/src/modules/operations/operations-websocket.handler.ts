@@ -1,17 +1,32 @@
 import type WebSocket from 'ws';
 import type { IncomingMessage } from 'http';
 import { logger } from '../../logger.js';
-import { operationsLiveService } from './operations-live.service.js';
+import { operationsLiveService, type OperationsScopeFilter } from './operations-live.service.js';
 import { authService } from '../auth/auth.service.js';
 import { isAccountRevoked } from '../../shared/accountStatus.js';
 import { getUserRoleContext } from '../../shared/roleResolver.js';
+import { resolveDashboardScope } from '../../shared/dashboardScope.js';
 import { normalizeRoleInputs, expandRoles } from '../../platform/policy/index.js';
 import { DEMO_TOKEN_MAP } from '../../shared/demoAuth.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
+
+/**
+ * Per-client scope resolved at connection time. Mirrors the HTTP surface's
+ * resolveOperationsScope logic so WebSocket clients only receive data they
+ * are entitled to — never org-wide unless the user truly has ORG_ALL scope.
+ */
+interface ClientScope {
+  names: OperationsScopeFilter;
+  ids: { branchIds: readonly string[] | null; processIds: readonly string[] | null };
+}
 
 interface SubscribedClient {
   ws: WebSocket;
   subscriptions: Set<string>;
   lastPing: number;
+  /** Row-level scope resolved once at connection time */
+  scope: ClientScope;
 }
 
 // Same authorization boundary as the equivalent HTTP surface (operations-live.routes.ts's
@@ -74,6 +89,45 @@ class OperationsWebSocketHandler {
   }
 
   /**
+   * Resolve the caller's scope (branch/process entitlement) — mirrors
+   * resolveOperationsScope from operations-live.routes.ts.
+   */
+  private async resolveClientScope(userId: string): Promise<ClientScope> {
+    const ctx = await getUserRoleContext(userId);
+    let scope;
+    try {
+      scope = await resolveDashboardScope(userId, ctx.primaryRole);
+    } catch {
+      // Fail closed: an unresolvable scope yields nothing, never everything.
+      return { names: { branchNames: [], processNames: null }, ids: { branchIds: [], processIds: null } };
+    }
+    if (scope.level === "ORG_ALL") {
+      return { names: null, ids: { branchIds: null, processIds: null } };
+    }
+
+    const branchIds = scope.branchIds.length ? scope.branchIds : null;
+    const processIds = scope.processIds.length ? scope.processIds : null;
+
+    const nameFor = async (table: string, col: string, ids: readonly string[] | null) => {
+      if (!ids) return null;
+      if (ids.length === 0) return [];
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT ${col} AS name FROM ${table} WHERE id IN (${ids.map(() => "?").join(",")})`,
+        [...ids],
+      );
+      return (rows as any[]).map((r) => String(r.name)).filter(Boolean);
+    };
+
+    return {
+      names: {
+        branchNames: await nameFor("branch_master", "branch_name", branchIds),
+        processNames: await nameFor("process_master", "process_name", processIds),
+      },
+      ids: { branchIds, processIds },
+    };
+  }
+
+  /**
    * Handle new WebSocket connection
    */
   async handleConnection(
@@ -96,11 +150,15 @@ class OperationsWebSocketHandler {
         return;
       }
 
+      // Resolve scope once at connection time — only emit data this user is entitled to.
+      const scope = await this.resolveClientScope(userId);
+
       const clientId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const client: SubscribedClient = {
         ws,
         subscriptions: new Set(['live-status', 'roster-vs-actual', 'attrition-risk']),
         lastPing: Date.now(),
+        scope,
       };
 
       this.clients.set(clientId, client);
@@ -164,39 +222,42 @@ class OperationsWebSocketHandler {
   }
 
   /**
-   * Broadcast updates to all connected clients
+   * Broadcast updates to connected clients, scoped per-client.
+   *
+   * Each client's data is fetched with its own scope filter so a branch_head
+   * only receives agents/risk data for their own branches — never org-wide.
    */
   private async broadcast(): Promise<void> {
     if (this.clients.size === 0) {
       return;
     }
 
-    try {
-      // Fetch current data
-      const [liveStatus, rosterVsActual, attritionRisk] = await Promise.all([
-        operationsLiveService.getLiveStatus(),
-        operationsLiveService.getRosterVsActual(),
-        operationsLiveService.getAttritionRiskScores(),
-      ]);
+    for (const [clientId, client] of this.clients) {
+      try {
+        const [liveStatus, rosterVsActual, attritionRisk] = await Promise.all([
+          client.subscriptions.has('live-status')
+            ? operationsLiveService.getLiveStatus(undefined, undefined, client.scope.names)
+            : null,
+          client.subscriptions.has('roster-vs-actual')
+            ? operationsLiveService.getRosterVsActual(client.scope.names)
+            : null,
+          client.subscriptions.has('attrition-risk')
+            ? operationsLiveService.getAttritionRiskScores(0, client.scope.ids)
+            : null,
+        ]);
 
-      // Send to subscribed clients
-      for (const [clientId, client] of this.clients) {
-        try {
-          if (client.subscriptions.has('live-status')) {
-            this.sendMessage(client.ws, 'live-status', liveStatus);
-          }
-          if (client.subscriptions.has('roster-vs-actual')) {
-            this.sendMessage(client.ws, 'roster-vs-actual', rosterVsActual);
-          }
-          if (client.subscriptions.has('attrition-risk')) {
-            this.sendMessage(client.ws, 'attrition-risk', attritionRisk);
-          }
-        } catch (error) {
-          logger.error({ err: error, clientId }, '[OperationsWS] Failed to send to client');
+        if (liveStatus) {
+          this.sendMessage(client.ws, 'live-status', liveStatus);
         }
+        if (rosterVsActual) {
+          this.sendMessage(client.ws, 'roster-vs-actual', rosterVsActual);
+        }
+        if (attritionRisk) {
+          this.sendMessage(client.ws, 'attrition-risk', attritionRisk);
+        }
+      } catch (error) {
+        logger.error({ err: error, clientId }, '[OperationsWS] Failed to broadcast to client');
       }
-    } catch (error) {
-      logger.error({ err: error }, '[OperationsWS] Broadcast error');
     }
   }
 

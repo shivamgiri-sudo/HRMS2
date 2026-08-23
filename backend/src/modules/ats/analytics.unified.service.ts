@@ -149,8 +149,11 @@ export async function getSourceChannelROI(): Promise<{
 }[]> {
   // New system data
   const [newData] = await db.execute<SourceRow[]>(
+    /* FIX: Previously defaulted NULL sourcing_channel to 'Walk-in', which misattributed
+       ~2,741 unknown-source candidates as Walk-in and inflated Walk-in ROI metrics.
+       Changed to 'Unspecified' so unknown sources are reported honestly. */
     `SELECT
-      COALESCE(sourcing_channel, 'Walk-in') as source_channel,
+      COALESCE(sourcing_channel, 'Unspecified') as source_channel,
       COUNT(*) as total_candidates,
       SUM(CASE WHEN current_stage = 'joined' THEN 1 ELSE 0 END) as total_hired,
       ROUND((SUM(CASE WHEN current_stage = 'joined' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2) as conversion_rate,
@@ -227,16 +230,27 @@ export async function getPredictiveAnalytics(): Promise<{
     : 0;
 
   // Find bottleneck
+  /* FIX: Previously used ats_candidate.updated_at which resets on any metadata edit
+     (name correction, phone update, etc.), making candidates appear "unstuck" when they
+     aren't. Now uses ats_candidate_stage_log.stage_date — the actual timestamp of when
+     the candidate entered their current stage — for accurate stuck-duration reporting. */
   const [bottleneck] = await db.execute<StageRow[]>(
     `SELECT
-      current_stage,
+      c.current_stage,
       COUNT(*) as stuck_count,
-      AVG(DATEDIFF(CURDATE(), updated_at)) as avg_days_stuck
-    FROM ats_candidate
-    WHERE current_stage NOT IN ('joined', 'rejected', 'rejected_by_branch_head')
-    AND active_status = 1
+      AVG(DATEDIFF(CURDATE(), sl.stage_date)) as avg_days_stuck
+    FROM ats_candidate c
+    INNER JOIN ats_candidate_stage_log sl
+      ON sl.candidate_id = c.id
+      AND sl.stage = c.current_stage
+      AND sl.id = (
+        SELECT MAX(sl2.id) FROM ats_candidate_stage_log sl2
+        WHERE sl2.candidate_id = c.id AND sl2.stage = c.current_stage
+      )
+    WHERE c.current_stage NOT IN ('joined', 'rejected', 'rejected_by_branch_head')
+    AND c.active_status = 1
     AND ${EXCLUDE_EMPLOYEE_SHAPED}
-    GROUP BY current_stage
+    GROUP BY c.current_stage
     ORDER BY avg_days_stuck DESC
     LIMIT 1`
   );

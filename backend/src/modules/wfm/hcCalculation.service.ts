@@ -277,7 +277,8 @@ function calcChat(input: HcInput): HcResult {
   if (!concurrency) errors.push("chat_concurrency is required");
 
   const total_workload_mins = volume * duration_mins;
-  const agent_capacity_mins = 60 * concurrency; // per agent per hour; for full slot: × slot_hours, but concurrency already continuous
+  // Agent capacity = 60 mins/hr × concurrency × slot hours (must cover full slot, not just one hour)
+  const agent_capacity_mins = 60 * concurrency * (input.slot_hours ?? 8);
   const productive_hc = agent_capacity_mins > 0 ? total_workload_mins / agent_capacity_mins : 0;
   const planned_hc = shrink(productive_hc, shrinkage);
 
@@ -285,7 +286,7 @@ function calcChat(input: HcInput): HcResult {
     productive_hc: ceil(productive_hc),
     planned_hc: ceil(planned_hc),
     calculation_method: "concurrency",
-    notes: { chat_volume: volume, avg_chat_duration_mins: +duration_mins.toFixed(2), chat_concurrency: concurrency, total_workload_mins: +total_workload_mins.toFixed(0), agent_capacity_mins_per_agent: +agent_capacity_mins.toFixed(0), shrinkage_pct: shrinkage, productive_hc: +productive_hc.toFixed(2) },
+    notes: { chat_volume: volume, avg_chat_duration_mins: +duration_mins.toFixed(2), chat_concurrency: concurrency, slot_hours: input.slot_hours ?? 8, total_workload_mins: +total_workload_mins.toFixed(0), agent_capacity_mins_per_agent: +agent_capacity_mins.toFixed(0), shrinkage_pct: shrinkage, productive_hc: +productive_hc.toFixed(2) },
     errors,
   };
 }

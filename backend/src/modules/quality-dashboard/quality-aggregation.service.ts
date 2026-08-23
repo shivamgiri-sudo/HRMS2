@@ -115,9 +115,11 @@ export class QualityAggregationService {
             direction: (row.cq_7day_avg || 0) > (row.cq_30day_avg || 0) ? '↗' : (row.cq_7day_avg || 0) < (row.cq_30day_avg || 0) ? '↘' : '→',
             change_pct: Math.round(((row.cq_7day_avg || 0) - (row.cq_current || 0)) * 10) / 10,
           },
+          // FIX: Compute actual 30-day trend change percentage from historical data.
+          // Compares the 30-day average against the current score to show real movement.
           trend_30day: {
-            direction: (row.cq_30day_avg || 0) > ((row.cq_current || 0) - 3) ? '↗' : '↘',
-            change_pct: -1, // TODO: calculate from 60d vs 30d
+            direction: (row.cq_30day_avg || 0) > (row.cq_current || 0) ? '↗' : (row.cq_30day_avg || 0) < (row.cq_current || 0) ? '↘' : '→',
+            change_pct: Math.round(((row.cq_current || 0) - (row.cq_30day_avg || 0)) * 10) / 10,
           },
           weekly: row.weekly_breakdown ? JSON.parse(row.weekly_breakdown) : [],
           status: this.getStatus(row.cq_current),

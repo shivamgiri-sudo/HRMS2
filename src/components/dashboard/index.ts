@@ -30,3 +30,6 @@ export type { ExportButtonProps } from "./ExportButton";
 
 export { DashboardActionStrip, DashboardCard } from "./DashboardPolish";
 export type { ActionStripItem } from "./DashboardPolish";
+
+export { Sparkline } from "./Sparkline";
+export type { SparklineProps } from "./Sparkline";

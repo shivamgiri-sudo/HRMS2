@@ -34,9 +34,18 @@ export const DEMO_TOKEN_MAP: Record<string, { id: string; email: string; role: s
 /**
  * Is the demo bypass active? Exactly the gate authMiddleware.requireAuth applies, kept here
  * so every consumer asks the same question rather than re-deriving it.
+ *
+ * ⚠️  WARNING: INTERNAL_DEMO_BYPASS grants full role-based access to hardcoded demo
+ * identities that have NO database backing. It MUST NEVER be enabled in production.
+ * The env.ts startup validator already process.exit(1)'s on violation, and this
+ * function double-checks NODE_ENV as defence-in-depth.
  */
 export function isDemoBypassEnabled(): boolean {
-  return process.env.INTERNAL_DEMO_BYPASS === "true" && process.env.NODE_ENV !== "production";
+  // SECURITY: Production guard — bypass disabled unconditionally in production
+  if (process.env.NODE_ENV === "production") {
+    return false; // bypass disabled in production regardless of env var
+  }
+  return process.env.INTERNAL_DEMO_BYPASS === "true";
 }
 
 /**

@@ -217,8 +217,8 @@ export const platformRouteElements = (
       {/* Control tower */}
       <Route path="/control-tower"               element={<ProtectedRoute roles={['admin','super_admin','hr','manager']}><Gate pageCode="CONTROL_TOWER"><NativeControlTower /></Gate></ProtectedRoute>} />
 
-      {/* Management dashboard */}
-      <Route path="/management/dashboard"        element={<ProtectedRoute><Gate pageCode="MANAGEMENT_DASHBOARD"><NativeManagementDashboard /></Gate></ProtectedRoute>} />
+      {/* Management dashboard — restricted to management-level roles */}
+      <Route path="/management/dashboard"        element={<ProtectedRoute roles={['ceo','admin','super_admin','hr','manager','branch_head','process_manager']}><Gate pageCode="MANAGEMENT_DASHBOARD"><NativeManagementDashboard /></Gate></ProtectedRoute>} />
       <Route path="/management/ceo-command-center" element={<Navigate to="/ceo/dashboard" replace />} />
 
       {/* Engagement */}

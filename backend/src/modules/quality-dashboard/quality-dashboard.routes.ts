@@ -607,10 +607,12 @@ router.get("/sales-funnel", requireRole(...ALLOWED_ROLES), h(async (req, res) =>
 }));
 
 // GET /api/quality-dashboard/heatmap
-router.get("/heatmap", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+// SECURITY FIX: Now resolves scope so branch_head/process_manager see only their agents' heatmap
+router.get("/heatmap", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const { from, to } = dateDefaults(req.query);
-    const data = await getQualityHeatmap(from, to);
+    const scope = await resolveScope(req);
+    const data = await getQualityHeatmap(from, to, scope);
     return res.json({ success: true, heatmap: data });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
@@ -620,15 +622,14 @@ router.get("/heatmap", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
 }));
 
 // GET /api/quality-dashboard/agent-risk
+// SECURITY FIX: Scope is now applied at the SQL level inside predictAgentRisk instead of
+// post-filtering in JS. The old post-filter only handled agentCodes (branch_head) and
+// missed process_manager scope entirely.
 router.get("/agent-risk", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const { from, to } = dateDefaults(req.query);
     const scope = await resolveScope(req);
-    let agents = await predictAgentRisk(from, to);
-    if (!scope.global && scope.agentCodes !== null) {
-      const codesSet = new Set(scope.agentCodes);
-      agents = agents.filter((a: any) => codesSet.has(a.agent_code));
-    }
+    const agents = await predictAgentRisk(from, to, scope);
     return res.json({ success: true, agents });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
@@ -638,10 +639,12 @@ router.get("/agent-risk", requireRole(...ALLOWED_ROLES), h(async (req: Authentic
 }));
 
 // GET /api/quality-dashboard/insights
-router.get("/insights", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+// SECURITY FIX: Now resolves scope so insights are computed only from the caller's scoped data
+router.get("/insights", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const { from, to } = dateDefaults(req.query);
-    const insights = await generateInsights(from, to);
+    const scope = await resolveScope(req);
+    const insights = await generateInsights(from, to, scope);
     return res.json({ success: true, insights });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
@@ -651,10 +654,12 @@ router.get("/insights", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
 }));
 
 // GET /api/quality-dashboard/roi
-router.get("/roi", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+// SECURITY FIX: Now resolves scope so ROI projections are based only on the caller's scoped data
+router.get("/roi", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const { from, to } = dateDefaults(req.query);
-    const roi = await calculateQualityROI(from, to);
+    const scope = await resolveScope(req);
+    const roi = await calculateQualityROI(from, to, scope);
     return res.json({ success: true, roi });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
@@ -669,10 +674,12 @@ router.get("/roi", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
 
 // GET /api/quality-dashboard/objections/patterns
 // Top objection types with resolution rates and sales conversion metrics
-router.get("/objections/patterns", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+// SECURITY FIX: Now resolves scope so branch_head/process_manager see only their scoped data
+router.get("/objections/patterns", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
-    const patterns = await getTopObjectionPatterns(limit);
+    const scope = await resolveScope(req);
+    const patterns = await getTopObjectionPatterns(limit, scope);
     return res.json({ success: true, patterns });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
@@ -683,10 +690,12 @@ router.get("/objections/patterns", requireRole(...ALLOWED_ROLES), h(async (req, 
 
 // GET /api/quality-dashboard/objections/handlers
 // Top objection handlers with best resolution and sales conversion rates
-router.get("/objections/handlers", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+// SECURITY FIX: Now resolves scope so branch_head/process_manager see only their scoped agents
+router.get("/objections/handlers", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
-    const handlers = await getTopObjectionHandlers(limit);
+    const scope = await resolveScope(req);
+    const handlers = await getTopObjectionHandlers(limit, scope);
     return res.json({ success: true, handlers });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
@@ -697,10 +706,12 @@ router.get("/objections/handlers", requireRole(...ALLOWED_ROLES), h(async (req, 
 
 // GET /api/quality-dashboard/objections/sales-metrics
 // Sales conversion rates after objection handling by objection type
-router.get("/objections/sales-metrics", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+// SECURITY FIX: Now resolves scope so branch_head/process_manager see only their scoped data
+router.get("/objections/sales-metrics", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
-    const metrics = await getSalesClosedAfterObjection(limit);
+    const scope = await resolveScope(req);
+    const metrics = await getSalesClosedAfterObjection(limit, scope);
     return res.json({ success: true, metrics });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
@@ -711,10 +722,12 @@ router.get("/objections/sales-metrics", requireRole(...ALLOWED_ROLES), h(async (
 
 // GET /api/quality-dashboard/objections/by-process
 // Objection types breakdown by process/campaign
-router.get("/objections/by-process", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+// SECURITY FIX: Now resolves scope so process_manager only sees their assigned processes
+router.get("/objections/by-process", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const limit = Math.min(Number(req.query.limit ?? 100), 500);
-    const data = await getObjectionsByProcess(limit);
+    const scope = await resolveScope(req);
+    const data = await getObjectionsByProcess(limit, scope);
     return res.json({ success: true, data });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
@@ -739,14 +752,16 @@ router.get("/objections/rebuttals", requireRole(...ALLOWED_ROLES), h(async (req,
 
 // GET /api/quality-dashboard/objections/health
 // Overall objection health dashboard metrics
-router.get("/objections/health", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+// SECURITY FIX: Now resolves scope so branch_head/process_manager see only their scoped aggregates
+router.get("/objections/health", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
+    const scope = await resolveScope(req);
     // Optional bounds. Passing neither keeps the all-time figures this returned before; passing
     // both lets the query seek on CallDate's index instead of scanning 503k rows.
     const dashboard = await getObjectionHealthDashboard({
       startDate: req.query.from ? String(req.query.from) : undefined,
       endDate: req.query.to ? String(req.query.to) : undefined,
-    });
+    }, scope);
     return res.json({ success: true, dashboard });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : "External DB unavailable";
@@ -771,18 +786,21 @@ router.get("/objections/health", requireRole(...ALLOWED_ROLES), h(async (req, re
 
 // GET /api/quality-dashboard/objections/comprehensive-report
 // Complete objection analysis report (all metrics consolidated)
-router.get("/objections/comprehensive-report", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+// SECURITY FIX: Now resolves scope so the full report respects row-level access
+router.get("/objections/comprehensive-report", requireRole(...ALLOWED_ROLES), h(async (req: AuthenticatedRequest, res) => {
   try {
     const patternLimit = Math.min(Number(req.query.patternLimit ?? 50), 200);
     const handlerLimit = Math.min(Number(req.query.handlerLimit ?? 50), 200);
     const processLimit = Math.min(Number(req.query.processLimit ?? 100), 500);
     const rebuttalLimit = Math.min(Number(req.query.rebuttalLimit ?? 100), 500);
+    const scope = await resolveScope(req);
 
     const report = await generateComprehensiveObjectionReport(
       patternLimit,
       handlerLimit,
       processLimit,
-      rebuttalLimit
+      rebuttalLimit,
+      scope
     );
     return res.json({ success: true, report });
   } catch (err: unknown) {

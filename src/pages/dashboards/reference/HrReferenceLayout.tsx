@@ -176,6 +176,10 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
   const pending = metricDetail(m, "onb", "pending") ?? metricValue(m, "onb");
   const stuck = metricDetail(m, "onb", "stuck");
   const bgv = metricDetail(m, "bgv", "pending") ?? metricValue(m, "bgv");
+  // BGV Clear Rate: use cleared & total from the same candidate BGV population
+  const bgvCleared = metricDetail(m, "bgv", "cleared");
+  const bgvFlagged = metricDetail(m, "bgv", "flagged");
+  const bgvTotal = (bgv ?? 0) + (bgvCleared ?? 0) + (bgvFlagged ?? 0);
   const headcount = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
   const attendanceRate = metricDetail(m, "att", "attendanceRate") ?? metricValue(m, "att");
   const appointmentEsign = metricDetail(m, "appointmentEsign", "pending") ?? metricValue(m, "appointmentEsign");
@@ -487,7 +491,12 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600">BGV Clear Rate</span>
-                <Gauge value={bgv && headcount ? Math.round(Math.max(0, 100 - (bgv / headcount) * 100)) : 81} color="#F59E0B" />
+                {/* BGV Clear Rate = cleared / total candidate BGV checks (same population) */}
+                {bgvCleared != null && bgvTotal > 0 ? (
+                  <Gauge value={Math.round((bgvCleared / bgvTotal) * 100)} color="#F59E0B" />
+                ) : (
+                  <span className="text-xs font-medium text-gray-400">No data</span>
+                )}
               </div>
             </div>
           </GlassPanel>
@@ -568,6 +577,166 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
       {/* Work Inbox - Full Width */}
       <div className="mb-4">
         <ReferenceWorkInbox maxItems={5} />
+      </div>
+
+      {/* Document Compliance + Attendance Exceptions + Resignation Breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 mb-4">
+        <GlassPanel title="Document Compliance" icon={FileCheck2} iconColor="#10B981">
+          {(() => {
+            const docCoverage = metricDetail(m, "docCompliance", "coveragePct");
+            const noDocs = metricDetail(m, "docCompliance", "employeesWithNoDocs");
+            const withDocs = metricDetail(m, "docCompliance", "employeesWithDocs");
+            const verified = metricDetail(m, "docCompliance", "verifiedDocs");
+            const unverified = metricDetail(m, "docCompliance", "unverifiedDocs");
+            const hasData = docCoverage !== null || noDocs !== null || withDocs !== null;
+            return hasData ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    <DonutChart value={docCoverage ?? 0} max={100} color="#10B981" size={64} />
+                    <span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-gray-700">{docCoverage ?? 0}%</span>
+                  </div>
+                  <div>
+                    <p className="text-lg font-bold text-gray-900">{docCoverage ?? 0}%</p>
+                    <p className="text-xs text-gray-500">Coverage Rate</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-center">
+                  <div className="bg-red-50 rounded-lg p-2">
+                    <p className="text-sm font-bold text-red-600">{noDocs ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">No Documents</p>
+                  </div>
+                  <div className="bg-emerald-50 rounded-lg p-2">
+                    <p className="text-sm font-bold text-emerald-600">{withDocs ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">With Docs</p>
+                  </div>
+                  <div className="bg-green-50 rounded-lg p-2">
+                    <p className="text-sm font-bold text-green-600">{verified ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Verified</p>
+                  </div>
+                  <div className="bg-amber-50 rounded-lg p-2">
+                    <p className="text-sm font-bold text-amber-600">{unverified ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Awaiting Check</p>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-6 text-center">
+                <FileCheck2 className="h-8 w-8 text-gray-300 mb-2" />
+                <p className="text-xs text-gray-400">Document compliance data not available</p>
+              </div>
+            );
+          })()}
+        </GlassPanel>
+
+        <GlassPanel title="Attendance Exceptions" icon={TriangleAlert} iconColor="#F59E0B">
+          {(() => {
+            const blockers = metricDetail(m, "attException", "blockers");
+            const payableMismatch = metricDetail(m, "attException", "payableMismatch");
+            const missingAdr = metricDetail(m, "attException", "missingAdr");
+            const warnings = metricDetail(m, "attException", "warnings");
+            const openTotal = metricDetail(m, "attException", "openTotal");
+            const resolved = metricDetail(m, "attException", "resolved");
+            const hasData = blockers !== null || openTotal !== null;
+            return hasData ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900">{openTotal ?? 0}</p>
+                    <p className="text-xs text-gray-500">Open exceptions</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-red-600">{blockers ?? 0}</p>
+                    <p className="text-[10px] text-gray-500">Blocking payroll</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {[
+                    { label: "Payable Mismatch", value: payableMismatch, color: "bg-red-500" },
+                    { label: "Missing Record", value: missingAdr, color: "bg-orange-500" },
+                    { label: "Warnings", value: warnings, color: "bg-amber-400" },
+                    { label: "Resolved (30d)", value: resolved, color: "bg-emerald-500" },
+                  ].map((item) => {
+                    const max = Math.max(openTotal ?? 1, 1);
+                    const pct = Math.min(100, Math.round(((item.value ?? 0) / max) * 100));
+                    return (
+                      <div key={item.label}>
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-gray-600">{item.label}</span>
+                          <span className="font-semibold text-gray-900">{item.value ?? 0}</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
+                          <div className={cn("h-full rounded-full transition-all", item.color)} style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-6 text-center">
+                <TriangleAlert className="h-8 w-8 text-gray-300 mb-2" />
+                <p className="text-xs text-gray-400">Exception data not available</p>
+              </div>
+            );
+          })()}
+        </GlassPanel>
+
+        <GlassPanel title="Resignation Breakdown" icon={XCircle} iconColor="#EC4899">
+          {(() => {
+            const pendingDisc = metricDetail(m, "resign", "pendingDiscussion");
+            const accepted = metricDetail(m, "resign", "accepted");
+            const withdrawn = metricDetail(m, "resign", "withdrawn");
+            const totalActive = metricDetail(m, "resign", "totalActive");
+            const hasData = pendingDisc !== null || accepted !== null || withdrawn !== null;
+
+            if (!hasData) {
+              return (
+                <div className="flex flex-col items-center justify-center py-6 text-center">
+                  <XCircle className="h-8 w-8 text-gray-300 mb-2" />
+                  <p className="text-xs text-gray-400">Resignation data not available</p>
+                </div>
+              );
+            }
+
+            const segments = [
+              { label: "Pending Discussion", value: pendingDisc ?? 0, color: "#F59E0B" },
+              { label: "Accepted", value: accepted ?? 0, color: "#3B82F6" },
+              { label: "Withdrawn", value: withdrawn ?? 0, color: "#10B981" },
+            ];
+            const total = segments.reduce((s, seg) => s + seg.value, 0) || 1;
+            let offset = 0;
+
+            return (
+              <div className="space-y-3">
+                <div className="flex items-center gap-4">
+                  <svg viewBox="0 0 36 36" className="w-16 h-16 -rotate-90 shrink-0">
+                    {segments.map((seg, i) => {
+                      const pct = Math.round((seg.value / total) * 100);
+                      const dash = `${pct} ${100 - pct}`;
+                      const dashOffset = -offset;
+                      offset += pct;
+                      return <circle key={i} cx="18" cy="18" r="14" fill="none" stroke={seg.color} strokeWidth="5" strokeDasharray={dash} strokeDashoffset={dashOffset} />;
+                    })}
+                  </svg>
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900">{totalActive ?? total}</p>
+                    <p className="text-xs text-gray-500">Active exits</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {segments.map((seg) => (
+                    <div key={seg.label} className="flex items-center gap-2 text-xs">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
+                      <span className="text-gray-600 flex-1">{seg.label}</span>
+                      <span className="font-semibold text-gray-900">{seg.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+        </GlassPanel>
       </div>
 
       {/* Approval Workflow Card - Pattern #120 */}
