@@ -8,23 +8,22 @@ import { ChevronDown, ChevronUp, Loader, AlertTriangle, SearchX, Zap } from "luc
 import { hrmsApi } from "@/lib/hrmsApi";
 
 interface RootCause {
-  id: string;
-  title: string;
-  severity: "critical" | "high" | "medium" | "low";
-  affected_metric: string;
-  suggested_action: string;
-  identified_at?: string;
+  domain: string;
+  label: string;
+  entityId: string;
+  count: number;
+  severity: "critical" | "warn";
+  detail: string;
+  drilldownUrl?: string;
 }
 
 const SEVERITY_CONFIG: Record<string, { bg: string; text: string; ring: string; dot: string }> = {
   critical: { bg: "bg-red-50", text: "text-red-900", ring: "ring-red-300", dot: "bg-red-500" },
-  high: { bg: "bg-orange-50", text: "text-orange-900", ring: "ring-orange-300", dot: "bg-orange-500" },
-  medium: { bg: "bg-amber-50", text: "text-amber-800", ring: "ring-amber-300", dot: "bg-amber-500" },
-  low: { bg: "bg-slate-50", text: "text-slate-700", ring: "ring-slate-300", dot: "bg-slate-400" },
+  warn: { bg: "bg-amber-50", text: "text-amber-800", ring: "ring-amber-300", dot: "bg-amber-500" },
 };
 
 function SeverityBadge({ severity }: { severity: string }) {
-  const cfg = SEVERITY_CONFIG[severity] ?? SEVERITY_CONFIG.low;
+  const cfg = SEVERITY_CONFIG[severity] ?? SEVERITY_CONFIG.warn;
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold capitalize ring-1 ${cfg.bg} ${cfg.text} ${cfg.ring}`}>
       <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
@@ -39,18 +38,18 @@ export function RootCausesPanel() {
   const { data: causes, isLoading, error } = useQuery<RootCause[], Error>({
     queryKey: ["super-admin", "root-causes"],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: RootCause[] }>(
+      const res = await hrmsApi.get<{ success: boolean; data: { rootCauses: RootCause[]; generatedAt: string } }>(
         "/api/dashboards/SUPER_ADMIN_DASHBOARD/root-causes"
       );
-      return (res as { success: boolean; data: RootCause[] }).data ?? [];
+      return (res as { success: boolean; data: { rootCauses: RootCause[] } }).data?.rootCauses ?? [];
     },
     staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
     retry: 2,
   });
 
-  const items = causes ?? [];
-  const criticalCount = items.filter((c) => c.severity === "critical" || c.severity === "high").length;
+  const items = Array.isArray(causes) ? causes : [];
+  const criticalCount = items.filter((c) => c.severity === "critical").length;
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white shadow-sm transition-all hover:shadow-md">
@@ -69,7 +68,7 @@ export function RootCausesPanel() {
               {isLoading ? "Loading..." : `${items.length} identified cause${items.length !== 1 ? "s" : ""}`}
               {criticalCount > 0 && (
                 <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">
-                  {criticalCount} critical/high
+                  {criticalCount} critical
                 </span>
               )}
             </p>
@@ -112,25 +111,25 @@ export function RootCausesPanel() {
             <div className="space-y-3">
               {items.map((cause) => (
                 <div
-                  key={cause.id}
+                  key={cause.entityId}
                   className="group rounded-xl border border-slate-100 bg-slate-50/50 p-4 transition-all hover:border-slate-200 hover:bg-white hover:shadow-sm"
                 >
                   <div className="flex items-start justify-between gap-3 mb-2.5">
-                    <h4 className="text-sm font-bold text-slate-900 leading-snug">{cause.title}</h4>
+                    <h4 className="text-sm font-bold text-slate-900 leading-snug">{cause.label}</h4>
                     <SeverityBadge severity={cause.severity} />
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">
-                        Affected Metric
+                        Domain
                       </p>
-                      <p className="text-xs font-semibold text-slate-700">{cause.affected_metric}</p>
+                      <p className="text-xs font-semibold text-slate-700">{cause.domain}</p>
                     </div>
                     <div>
                       <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-0.5">
-                        Suggested Action
+                        Detail
                       </p>
-                      <p className="text-xs font-medium text-slate-600 leading-relaxed">{cause.suggested_action}</p>
+                      <p className="text-xs font-medium text-slate-600 leading-relaxed">{cause.detail}</p>
                     </div>
                   </div>
                 </div>
