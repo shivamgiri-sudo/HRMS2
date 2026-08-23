@@ -621,18 +621,18 @@ runningSalaryRouter.get(
 
     // Aggregate query:
     // - For employees with a finalized salary_prep_line in this month: use stored gross/net
-    // - For others: use esa.gross_amount (monthly CTC gross) as projection
+    // - For others: use esa.ctc_annual / 12 (monthly CTC gross) as projection
     // One LEFT JOIN on salary_prep_line — picks the most authoritative status (same ORDER as batch endpoint)
     const sql = `
       SELECT
         ${groupIdExpr} AS group_id,
         ${groupNameExpr} AS group_name,
         COUNT(DISTINCT e.id) AS headcount,
-        SUM(COALESCE(spl.gross_salary, esa.gross_amount, 0)) AS total_gross,
-        SUM(COALESCE(spl.net_salary, esa.gross_amount * 0.85, 0)) AS total_net,
+        SUM(COALESCE(spl.gross_salary, esa.ctc_annual / 12, 0)) AS total_gross,
+        SUM(COALESCE(spl.net_salary, (esa.ctc_annual / 12) * 0.85, 0)) AS total_net,
         SUM(CASE WHEN spl.id IS NOT NULL THEN 1 ELSE 0 END) AS finalized_count,
         SUM(CASE WHEN spl.id IS NULL THEN 1 ELSE 0 END) AS estimate_count,
-        AVG(COALESCE(spl.gross_salary, esa.gross_amount, 0)) AS avg_gross
+        AVG(COALESCE(spl.gross_salary, esa.ctc_annual / 12, 0)) AS avg_gross
       FROM employees e
       JOIN employee_salary_assignment esa ON esa.employee_id = e.id AND esa.active_status = 1
       LEFT JOIN branch_master bm ON bm.id = e.branch_id
