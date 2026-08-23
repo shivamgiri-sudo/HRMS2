@@ -11,7 +11,7 @@ import { rosterSwapService, rosterConflictService, coverageService, attritionSer
 
 const router = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
-const WFM_SCOPE_ROLES = ["wfm", "process_manager", "branch_head", "manager", "assistant_manager", "tl", "hr"];
+const WFM_SCOPE_ROLES = ["wfm", "process_manager", "branch_head", "manager", "assistant_manager", "tl", "hr", "operations_manager"];
 
 router.use(requireAuth);
 
@@ -151,7 +151,7 @@ router.post("/roster/swaps/:id/review", requireRole("admin", "hr", "wfm", "manag
 }));
 
 // ── Roster Conflicts ──────────────────────────────────────────────────────────
-router.get("/roster/conflicts", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader", "branch_head", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/roster/conflicts", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader", "branch_head", "process_manager", "operations_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const scope = await employeeScope(req.authUser!.id);
   const resolved = req.query.resolved !== undefined ? req.query.resolved === "true" : undefined;
   res.json({ success: true, data: await rosterConflictService.list({ ...(req.query as any), resolved, ...scope }) });
@@ -163,7 +163,7 @@ router.post("/roster/conflicts/:id/resolve", requireRole("admin", "hr", "wfm", "
 }));
 
 // ── Coverage / Shrinkage Snapshots ────────────────────────────────────────────
-router.get("/coverage", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader", "branch_head", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/coverage", requireRole("admin", "hr", "wfm", "manager", "assistant_manager", "team_leader", "branch_head", "process_manager", "operations_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const scope = await employeeScope(req.authUser!.id);
   res.json(await coverageService.summarize({ ...(req.query as any), ...scope }));
 }));
@@ -175,7 +175,7 @@ router.post("/coverage/snapshot", requireRole("admin", "hr", "wfm", "manager"), 
 }));
 
 // ── Attrition ─────────────────────────────────────────────────────────────────
-router.get("/attrition/summary", requireRole("admin", "hr", "wfm", "manager", "branch_head", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/attrition/summary", requireRole("admin", "hr", "wfm", "manager", "branch_head", "process_manager", "operations_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const scope = await employeeScope(req.authUser!.id);
   res.json(await attritionService.getSummary({ ...(req.query as any), ...scope }));
 }));

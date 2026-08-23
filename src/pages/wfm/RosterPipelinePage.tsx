@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useWfmScopeFilter, filterByScope } from "@/hooks/useWfmScopeFilter";
 import {
   CheckCircle2,
   ChevronRight,
@@ -173,6 +174,11 @@ export default function RosterPipelinePage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { roleKeys } = useWorkforceAccess();
+  const {
+    processIds: scopedProcessIds,
+    branchIds: scopedBranchIds,
+    hasAllAccess,
+  } = useWfmScopeFilter();
 
   const canGenerate = roleKeys.some((r) => ["admin", "wfm", "super_admin"].includes(r));
   const canApprove  = roleKeys.some((r) => ["process_manager", "admin", "super_admin"].includes(r));
@@ -201,8 +207,11 @@ export default function RosterPipelinePage() {
     queryFn: () => hrmsApi.get<{ data: Branch[] }>("/api/org/branches?active_status=1"),
     staleTime: 10 * 60 * 1000,
   });
-  const processes = procResp?.data ?? [];
-  const branches  = branchResp?.data ?? [];
+  const allProcesses = procResp?.data ?? [];
+  const allBranches  = branchResp?.data ?? [];
+  // Filter processes/branches based on user's assigned scope (branch_head/process_manager/operations_manager)
+  const processes = filterByScope(allProcesses, scopedProcessIds, hasAllAccess);
+  const branches  = filterByScope(allBranches, scopedBranchIds, hasAllAccess);
 
   // ── Step 1: create or load plan ─────────────────────────────────────────────
   const createPlanMutation = useMutation({

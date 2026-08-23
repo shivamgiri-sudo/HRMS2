@@ -32,23 +32,22 @@ router.get(
 
 router.get(
   "/requirements",
-  requireRole("admin", "hr", "wfm", "process_manager", "ceo"),
+  requireRole("admin", "hr", "wfm", "process_manager", "branch_head", "operations_manager", "ceo"),
   h(async (req, res) => {
     const q = z.object({
       process_id: z.string().uuid().optional(),
       branch_id: z.string().uuid().optional(),
     }).parse(req.query);
 
-    // Apply scope filtering
+    // Apply scope filtering - actually use the clause
     const scoped = await buildScopeWhereClause(
       req.authUser!.id,
-      ["wfm", "process_manager"],
+      ["wfm", "process_manager", "branch_head", "operations_manager"],
       { branchId: "branch_id", processId: "process_id" },
       { allowCeoAllRead: true }
     );
 
-    // Service handles filtering, but we validate scope access
-    const data = await s.listRequirements(q);
+    const data = await s.listRequirements(q, scoped);
     res.json({ success: true, data });
   })
 );
@@ -75,7 +74,7 @@ router.post(
 
 router.get(
   "/plans",
-  requireRole("admin", "hr", "wfm", "process_manager", "ceo"),
+  requireRole("admin", "hr", "wfm", "process_manager", "branch_head", "operations_manager", "ceo"),
   h(async (req, res) => {
     const q = z.object({
       process_id: z.string().uuid().optional(),
@@ -84,15 +83,15 @@ router.get(
       to_date: z.string().regex(DATE_RE).optional(),
     }).parse(req.query);
 
-    // Apply scope filtering
+    // Apply scope filtering - actually use the clause
     const scoped = await buildScopeWhereClause(
       req.authUser!.id,
-      ["wfm", "process_manager"],
-      { branchId: "rp.branch_id", processId: "rp.process_id" },
+      ["wfm", "process_manager", "branch_head", "operations_manager"],
+      { branchId: "p.branch_id", processId: "p.process_id" },
       { allowCeoAllRead: true }
     );
 
-    const data = await s.listPlans(q);
+    const data = await s.listPlans(q, scoped);
     res.json({ success: true, data });
   })
 );
@@ -280,8 +279,17 @@ router.post(
 
 router.get(
   "/health-summary",
-  requireRole("admin", "hr", "wfm", "process_manager", "branch_head", "ceo"),
-  h(async (_req, res) => res.json({ success: true, data: await s.getHealthSummary() }))
+  requireRole("admin", "hr", "wfm", "process_manager", "branch_head", "operations_manager", "ceo"),
+  h(async (req, res) => {
+    // Apply scope filtering for health summary
+    const scoped = await buildScopeWhereClause(
+      req.authUser!.id,
+      ["wfm", "process_manager", "branch_head", "operations_manager"],
+      { branchId: "p.branch_id", processId: "p.process_id" },
+      { allowCeoAllRead: true }
+    );
+    res.json({ success: true, data: await s.getHealthSummary(scoped) });
+  })
 );
 
 // GET /api/wfm/auto-roster/schedule-config — list per-process auto-schedule settings

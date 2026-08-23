@@ -644,11 +644,19 @@ export const autoRosterSyncedService = {
     return rows[0] as AnyRow;
   },
 
-  async listRequirements(filters: { process_id?: string; branch_id?: string }) {
+  async listRequirements(
+    filters: { process_id?: string; branch_id?: string },
+    scope?: { sql: string; params: unknown[] }
+  ) {
     const conds = ["active_status = 1"];
     const params: unknown[] = [];
     if (filters.process_id) { conds.push("(process_id = ? OR process_id IS NULL)"); params.push(filters.process_id); }
     if (filters.branch_id) { conds.push("(branch_id = ? OR branch_id IS NULL)"); params.push(filters.branch_id); }
+    // Apply scope filter if provided (branch_head/process_manager/operations_manager see only their assigned scope)
+    if (scope && scope.sql !== "1=1") {
+      conds.push(`(${scope.sql})`);
+      params.push(...scope.params);
+    }
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT * FROM wfm_client_slot_requirement WHERE ${conds.join(" AND ")} ORDER BY requirement_date, day_of_week, slot_start`,
       params
@@ -693,13 +701,21 @@ export const autoRosterSyncedService = {
     return { ...(await getPlan(id)), control: await getPlanControl(id) };
   },
 
-  async listPlans(filters: { process_id?: string; branch_id?: string; from_date?: string; to_date?: string }) {
+  async listPlans(
+    filters: { process_id?: string; branch_id?: string; from_date?: string; to_date?: string },
+    scope?: { sql: string; params: unknown[] }
+  ) {
     const conds: string[] = [];
     const params: unknown[] = [];
     if (filters.process_id) { conds.push("p.process_id = ?"); params.push(filters.process_id); }
     if (filters.branch_id) { conds.push("p.branch_id = ?"); params.push(filters.branch_id); }
     if (filters.from_date) { conds.push("p.to_date >= ?"); params.push(filters.from_date); }
     if (filters.to_date) { conds.push("p.from_date <= ?"); params.push(filters.to_date); }
+    // Apply scope filter if provided (branch_head/process_manager/operations_manager see only their assigned scope)
+    if (scope && scope.sql !== "1=1") {
+      conds.push(`(${scope.sql})`);
+      params.push(...scope.params);
+    }
     const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT p.*, c.approval_status, c.shrinkage_pct, c.publish_lock_status, c.last_coverage_score, c.notification_status
@@ -1576,7 +1592,10 @@ export const autoRosterSyncedService = {
     );
   },
 
-  async getHealthSummary(): Promise<{ total_plans: number; pending_approval: number; best_coverage_score: number | null; open_critical_gaps: number }> {
+  async getHealthSummary(scope?: { sql: string; params: unknown[] }): Promise<{ total_plans: number; pending_approval: number; best_coverage_score: number | null; open_critical_gaps: number }> {
+    // Build scope condition for branch_head/process_manager/operations_manager
+    const scopeCond = scope && scope.sql !== "1=1" ? `AND (${scope.sql})` : "";
+    const scopeParams = scope && scope.sql !== "1=1" ? scope.params : [];
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(DISTINCT p.id)                                                      AS total_plans,
@@ -1586,7 +1605,8 @@ export const autoRosterSyncedService = {
        FROM wfm_roster_plan p
        LEFT JOIN wfm_roster_plan_control c  ON c.plan_id  = p.id
        LEFT JOIN wfm_roster_conflict_log cl ON cl.plan_id = p.id
-       WHERE p.from_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`
+       WHERE p.from_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) ${scopeCond}`,
+      scopeParams
       // open_critical_gaps falls back to null, not 0. The query works today,
       // but if it ever stops, "0 open critical gaps" asserts that roster
       // coverage is sound at exactly the moment nothing is known about it.

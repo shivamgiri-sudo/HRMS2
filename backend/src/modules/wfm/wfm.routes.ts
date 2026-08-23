@@ -229,7 +229,7 @@ wfmRouter.patch("/breaks/:breakId/end", h(async (req: any, res: any) => {
 // Regularization routes moved to wfm.regularization.secure.routes.ts
 
 // Live tracker
-wfmRouter.get("/live", requireRole("admin", "wfm", "manager", "branch_head", "process_manager", "team_leader"), async (req: any, res: any, next: any) => {
+wfmRouter.get("/live", requireRole("admin", "wfm", "manager", "branch_head", "process_manager", "team_leader", "operations_manager"), async (req: any, res: any, next: any) => {
   try {
     const schema = z.object({
       date:        z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -421,7 +421,7 @@ wfmRouter.patch("/week-off-preference/:id/approve", requireAuth, requireRole("ad
 // ── Shift Rotation Type ────────────────────────────────────────────────────────
 
 // GET /api/wfm/rotation-summary?processId=&branchId= — per-type employee counts
-wfmRouter.get("/rotation-summary", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager"), h(async (req: any, res: any) => {
+wfmRouter.get("/rotation-summary", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
   const { processId, branchId } = req.query;
   if (!processId) return res.status(400).json({ error: "processId is required" });
   const { db: dbConn } = await import("../../db/mysql.js");
@@ -474,7 +474,7 @@ wfmRouter.patch("/employees/:id/shift-rotation", requireAuth, requireRole("admin
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/planning-rules?processId=&branchId=
-wfmRouter.get("/planning-rules", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager"), h(async (req: any, res: any) => {
+wfmRouter.get("/planning-rules", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
   const { processId, branchId } = req.query;
   if (!processId) return res.status(400).json({ error: "processId is required" });
   const data = await planningRuleService.list(processId, branchId);
@@ -557,7 +557,7 @@ wfmRouter.delete("/rest-policy/:id", requireAuth, requireRole("admin", "wfm"), h
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/slot-requirements?processId=&fromDate=&toDate=&coverageStatus=
-wfmRouter.get("/slot-requirements", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager"), h(async (req: any, res: any) => {
+wfmRouter.get("/slot-requirements", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
   const { processId, branchId, fromDate, toDate, coverageStatus } = req.query;
   if (!processId) return res.status(400).json({ error: "processId is required" });
   const data = await slotRequirementService.list({ processId, branchId, fromDate, toDate, coverageStatus });
@@ -619,7 +619,7 @@ wfmRouter.delete("/slot-requirements/:id", requireAuth, requireRole("admin", "wf
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // GET /api/wfm/weekoff/day-rules?processId=&weekStartDate=
-wfmRouter.get("/weekoff/day-rules", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager"), h(async (req: any, res: any) => {
+wfmRouter.get("/weekoff/day-rules", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
   const { processId, weekStartDate } = req.query;
   if (!processId) return res.status(400).json({ error: "processId is required" });
   const data = await weekoffDayRuleService.list(processId, weekStartDate);
@@ -650,7 +650,7 @@ wfmRouter.delete("/weekoff/day-rules/:id", requireAuth, requireRole("admin", "wf
 
 // GET /api/wfm/weekoff/day-rules/capacity-grid?processId=&weekStartDate=
 // Returns 7-element capacity check grid including min_hc, max_weekoff, allocated counts
-wfmRouter.get("/weekoff/day-rules/capacity-grid", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager"), h(async (req: any, res: any) => {
+wfmRouter.get("/weekoff/day-rules/capacity-grid", requireAuth, requireRole("admin", "super_admin", "wfm", "hr", "manager", "branch_head", "operations_manager"), h(async (req: any, res: any) => {
   const { processId, weekStartDate } = req.query;
   if (!processId || !weekStartDate) return res.status(400).json({ error: "processId and weekStartDate are required" });
   const { db: dbConn } = await import("../../db/mysql.js");

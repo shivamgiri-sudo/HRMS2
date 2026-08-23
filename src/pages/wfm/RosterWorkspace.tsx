@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useWfmScopeFilter, filterByScope } from "@/hooks/useWfmScopeFilter";
 import {
   Calendar,
   RefreshCw,
@@ -140,6 +141,7 @@ function ShiftCell({ assignment }: { assignment: AutoRosterAssignment | undefine
 export default function RosterWorkspace() {
   const qc = useQueryClient();
   const { roleKeys } = useWorkforceAccess();
+  const { processIds: scopedProcessIds, hasAllAccess: hasAllProcessAccess, scopeDescription } = useWfmScopeFilter();
 
   const canGenerate = roleKeys.some((r) => ["admin", "wfm", "super_admin"].includes(r));
   const canApprove  = roleKeys.some((r) => ["process_manager", "admin", "super_admin"].includes(r));
@@ -160,7 +162,9 @@ export default function RosterWorkspace() {
     queryFn: () => hrmsApi.get<ProcessListResponse>("/api/processes"),
     staleTime: 10 * 60 * 1000,
   });
-  const processes: Process[] = (procResp?.data ?? []).map((p) => ({ id: p.id, name: p.name }));
+  const allProcesses: Process[] = (procResp?.data ?? []).map((p) => ({ id: p.id, name: p.name }));
+  // Filter processes based on user's assigned scope (branch_head/process_manager/operations_manager)
+  const processes: Process[] = filterByScope(allProcesses, scopedProcessIds, hasAllProcessAccess);
 
   // auto-roster namespace: snake_case query params, returns approval_status from plan_control JOIN
   const { data: planResp, isLoading: plansLoading, refetch: refetchPlans } = useQuery<PlanListResponse>({
