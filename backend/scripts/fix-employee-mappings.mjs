@@ -21,8 +21,12 @@ async function main() {
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    connectTimeout: 60000
+    connectTimeout: 60000,
+    acquireTimeout: 60000
   });
+  // Set session variables for long-running updates
+  await conn.execute('SET SESSION innodb_lock_wait_timeout = 120');
+  await conn.execute('SET SESSION wait_timeout = 300');
 
   try {
     console.log('=== EMPLOYEE MAPPING FIX SCRIPT ===\n');
@@ -54,15 +58,17 @@ async function main() {
     `);
     let processFixed = 0;
     for (const row of toFixProcess) {
-      try {
-        await conn.execute(`UPDATE employees SET process_id=?, updated_at=NOW() WHERE id=?`, [row.process_id, row.id]);
-        processFixed++;
-      } catch (e) {
-        if (e.code === 'ER_LOCK_DEADLOCK') {
-          await new Promise(r => setTimeout(r, 100));
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
           await conn.execute(`UPDATE employees SET process_id=?, updated_at=NOW() WHERE id=?`, [row.process_id, row.id]);
           processFixed++;
-        } else throw e;
+          break;
+        } catch (e) {
+          if ((e.code === 'ER_LOCK_DEADLOCK' || e.code === 'ER_LOCK_WAIT_TIMEOUT') && attempt < 2) {
+            console.log('  Retry', row.id, 'after', e.code);
+            await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          } else throw e;
+        }
       }
     }
     console.log('  Backfilled process_id for', processFixed, 'employees');
@@ -79,15 +85,17 @@ async function main() {
     `);
     let branchFixed = 0;
     for (const row of toFixBranch) {
-      try {
-        await conn.execute(`UPDATE employees SET branch_id=?, updated_at=NOW() WHERE id=?`, [row.branch_id, row.id]);
-        branchFixed++;
-      } catch (e) {
-        if (e.code === 'ER_LOCK_DEADLOCK') {
-          await new Promise(r => setTimeout(r, 100));
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
           await conn.execute(`UPDATE employees SET branch_id=?, updated_at=NOW() WHERE id=?`, [row.branch_id, row.id]);
           branchFixed++;
-        } else throw e;
+          break;
+        } catch (e) {
+          if ((e.code === 'ER_LOCK_DEADLOCK' || e.code === 'ER_LOCK_WAIT_TIMEOUT') && attempt < 2) {
+            console.log('  Retry', row.id, 'after', e.code);
+            await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+          } else throw e;
+        }
       }
     }
     console.log('  Backfilled branch_id for', branchFixed, 'employees');
