@@ -11,7 +11,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { FilePen, CheckCircle, ChevronRight, Search, Copy, Loader2 } from 'lucide-react';
+import { FilePen, CheckCircle, ChevronRight, Search, Copy, Loader2, ArrowLeft } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { cn, formatISTDate } from '@/lib/utils';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -166,13 +167,29 @@ export default function NativeOfferLetterGeneration() {
   return (
     <DashboardLayout>
       <div className="space-y-5">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600 text-white shadow">
-            <FilePen className="h-5 w-5" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-slate-900">Offer Letter Generation</h1>
-            <p className="text-sm text-slate-500">Generate, send and track HR letters for employees</p>
+
+        {/* Back link */}
+        <Link
+          to="/ats/onboarding-requests"
+          className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 transition-colors hover:text-slate-800"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Onboarding Requests
+        </Link>
+
+        {/* Gradient header */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-violet-600 text-white p-6 shadow-lg">
+          <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
+          <div className="absolute right-24 bottom-0 h-16 w-16 rounded-full bg-violet-300/20 blur-xl" />
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/15">
+              <FilePen className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-blue-200">HR · Letters</p>
+              <h1 className="mt-0.5 text-2xl font-bold text-white">Offer Letter Generation</h1>
+              <p className="mt-0.5 text-sm text-blue-100">Generate, send and track HR letters for employees</p>
+            </div>
           </div>
         </div>
 
