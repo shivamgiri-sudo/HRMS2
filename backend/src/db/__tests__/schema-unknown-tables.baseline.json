@@ -2,6 +2,18 @@
   "db/__tests__/schema-column-refs.test.ts": [
     "leave_requests"
   ],
+  "modules/finance/client-payment-tracking.service.ts": [
+    "client_invoice_payment_log",
+    "client_invoice_payment_status"
+  ],
+  "modules/finance/mandate-seat-tracking.service.ts": [
+    "mandate_seat_history"
+  ],
+  "modules/salary-dispute/salary-dispute.service.ts": [
+    "email_queue",
+    "salary_dispute_attachment",
+    "salary_dispute_audit"
+  ],
   "modules/assets/exit-pass.service.ts": [
     "exit_pass_approvals",
     "exit_pass_audit_logs",
