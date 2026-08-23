@@ -347,7 +347,7 @@ export async function createEmployeeFromCandidate(
      */
     const rawCostCentre = offer.cost_centre ?? null;
     const [ccRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT cm.id, cm.cost_centre_code
+      `SELECT cm.id, cm.cost_centre_code, cm.process_id, cm.branch_id
          FROM cost_centre_master cm
         WHERE cm.id = COALESCE(
                 ?,
@@ -357,8 +357,12 @@ export async function createEmployeeFromCandidate(
         LIMIT 1`,
       [rawCostCentre, candidateId]
     );
-    const costCentreId   = (ccRows[0] as { id?: string; cost_centre_code?: string } | undefined)?.id ?? null;
-    const costCentreCode = (ccRows[0] as { id?: string; cost_centre_code?: string } | undefined)?.cost_centre_code ?? null;
+    const ccRow = ccRows[0] as { id?: string; cost_centre_code?: string; process_id?: string; branch_id?: string } | undefined;
+    const costCentreId   = ccRow?.id ?? null;
+    const costCentreCode = ccRow?.cost_centre_code ?? null;
+    // Inherit process_id and branch_id from cost_centre if candidate data is missing
+    const resolvedProcessId = candRow?.process_id ?? ccRow?.process_id ?? null;
+    const resolvedBranchId  = candRow?.branch_id ?? ccRow?.branch_id ?? null;
     if (!costCentreId) {
       result.warnings.push(
         'No cost centre could be resolved for this employee; it must be set manually.'
@@ -392,8 +396,8 @@ export async function createEmployeeFromCandidate(
         candRow?.marital_status ?? null,
         candRow?.current_address ?? null,
         candRow?.permanent_address ?? null,
-        candRow?.branch_id ?? null,
-        candRow?.process_id ?? null,
+        resolvedBranchId,
+        resolvedProcessId,
         offer.department_id ?? null,
         offer.designation_id ?? null,
         costCentreId,

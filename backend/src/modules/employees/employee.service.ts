@@ -175,6 +175,22 @@ export const employeeService = {
     const id = randomUUID();
     // salary_start_date defaults to date_of_joining when not explicitly set
     const salaryStartDate = input.salaryStartDate ?? input.dateOfJoining;
+
+    // Resolve branch_id and process_id from cost_centre if not explicitly provided
+    let resolvedBranchId = input.branchId ?? null;
+    let resolvedProcessId = input.processId ?? null;
+    const costCentreId = (input as any).costCentreId ?? null;
+    if (costCentreId && (!resolvedBranchId || !resolvedProcessId)) {
+      const [ccRows] = await db.execute<RowDataPacket[]>(
+        `SELECT branch_id, process_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
+        [costCentreId]
+      );
+      if (ccRows.length > 0) {
+        resolvedBranchId = resolvedBranchId ?? ccRows[0].branch_id ?? null;
+        resolvedProcessId = resolvedProcessId ?? ccRows[0].process_id ?? null;
+      }
+    }
+
     await db.execute(
       // cost_centre_id is written here because updateEmployee already accepts costCentreId:
       // without it, an employee added through this path could not have a cost centre until
@@ -200,9 +216,9 @@ export const employeeService = {
         input.dateOfJoining,
         salaryStartDate,
         input.employmentType ?? "Full Time",
-        input.branchId ?? null,
+        resolvedBranchId,
         input.departmentId ?? null,
-        input.processId ?? null,
+        resolvedProcessId,
         input.designationId ?? null,
         (input as any).costCentreId ?? null,
         (input as any).costCentreId ?? null,
