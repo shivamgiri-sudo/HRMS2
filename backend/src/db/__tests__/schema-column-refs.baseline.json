@@ -1,46 +1,4 @@
 {
-  "modules/wfm/roster-analytics.routes.ts": [
-    "attendance_daily_record.first_in",
-    "employees.designation",
-    "roster_assignment.adherence_status",
-    "roster_assignment.shift_id",
-    "roster_assignment.status",
-    "wfm_shift_master.break_minutes",
-    "wfm_shift_master.shift_type"
-  ],
-  "modules/wfm/roster-analytics.service.ts": [
-    "attendance_daily_record.attendance_date",
-    "attendance_daily_record.first_in",
-    "attendance_daily_record.last_out",
-    "attendance_daily_record.total_hours"
-  ],
-  "modules/wfm/roster-intelligence.service.ts": [
-    "attendance_daily_record.attendance_date",
-    "attendance_daily_record.first_in",
-    "attendance_daily_record.last_out",
-    "attendance_daily_record.status",
-    "attendance_daily_record.total_hours"
-  ],
-  "modules/wfm/wfm-compliance-analytics.routes.ts": [
-    "roster_assignment.adherence_status",
-    "roster_assignment.shift_id",
-    "roster_assignment.status",
-    "wfm_shift_master.shift_type"
-  ],
-  "modules/wfm/wfm-compliance-analytics.service.ts": [
-    "wfm_shift_master.shift_id"
-  ],
-  "modules/workforce-mandate/hc-formula.service.ts": [
-    "attendance_daily_record.attendance_date",
-    "attendance_daily_record.status"
-  ],
-  "modules/analytics/attrition-reason-inference.service.ts": [
-    "attendance_daily_record.is_late",
-    "employees.source_of_hire"
-  ],
-  "modules/analytics/manager-risk.service.ts": [
-    "attendance_daily_record.is_late"
-  ],
   "modules/reporting/report-suite.routes.ts": [
     "action_plan.action_plan_number",
     "action_plan.action_type",
