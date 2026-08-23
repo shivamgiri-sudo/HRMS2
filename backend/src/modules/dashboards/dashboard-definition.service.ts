@@ -126,9 +126,17 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   // three -- this bundle was fetching three metrics nobody ever built UI for, against
   // tables with nothing in them either. Re-add if a layout tile is built AND the
   // source pipeline starts feeding rows.
+  //
+  // `attException` added 23-Aug-2026 (visual QA): the opposite gap -- HrReferenceLayout
+  // .tsx's "Attendance Exceptions" GlassPanel (metricDetail(m, "attException", ...))
+  // was live and rendering, but this bundle never requested the metric, so it always
+  // showed "not available" regardless of real data. Confirmed via a logged-in visual
+  // check (screenshot) plus a live query: attendance_reconciliation_issue holds 11,930
+  // rows in the last 30 days, 5,383 open, 5,109 of those open rows are severity=blocker
+  // -- i.e. payroll-stopping issues that HR had no visibility into at all.
   HR_DASHBOARD: [
     "onb", "resign", "appointmentEsign", "bgv", "joiningDocEsign",
-    "hc", "att", "docCompliance", "training", "leaveApprovals",
+    "hc", "att", "docCompliance", "training", "leaveApprovals", "attException",
   ],
   WFM_DASHBOARD: ["hc", "att", "attException", "biometric"],
   // "hc" added — WfmAttendanceReferenceLayout.tsx's first tile, "Total Employees",
