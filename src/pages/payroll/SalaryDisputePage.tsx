@@ -291,6 +291,21 @@ export default function SalaryDisputePage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const [appealId, setAppealId] = useState<string | null>(null);
+  const [appealReason, setAppealReason] = useState("");
+
+  const appealMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      hrmsApi.post(`/api/salary-disputes/${id}/appeal`, { appealReason: reason }),
+    onSuccess: () => {
+      toast.success("Appeal submitted. WFM will re-review your dispute.");
+      qc.invalidateQueries({ queryKey: ["my-salary-disputes"] });
+      setAppealId(null);
+      setAppealReason("");
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   return (
     <DashboardLayout>
       <div className="p-4 md:p-6 max-w-3xl mx-auto space-y-5">
@@ -394,10 +409,64 @@ export default function SalaryDisputePage() {
                         </Button>
                       </div>
                     )}
+                    {d.status === "rejected" && d.appeal_count === 0 && (
+                      <div className="mt-3 pt-3 border-t flex justify-end">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-xs text-blue-600 border-blue-200 hover:bg-blue-50"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAppealId(d.id);
+                          }}
+                        >
+                          Appeal Decision
+                        </Button>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               );
             })}
+          </div>
+        )}
+
+        {/* Appeal Modal */}
+        {appealId && (
+          <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+            <Card className="w-full max-w-md rounded-2xl shadow-2xl">
+              <CardHeader className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-t-2xl p-4">
+                <CardTitle className="text-white text-base">Appeal Rejected Dispute</CardTitle>
+              </CardHeader>
+              <CardContent className="p-4 space-y-4">
+                <p className="text-sm text-slate-600">
+                  Your dispute was rejected. You can submit one appeal with additional information.
+                </p>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700">Why should this be reconsidered? (min 20 chars)</label>
+                  <Textarea
+                    value={appealReason}
+                    onChange={e => setAppealReason(e.target.value)}
+                    placeholder="Explain why you believe the rejection was incorrect and provide any new evidence..."
+                    rows={4}
+                    className="mt-1 resize-none"
+                  />
+                  <p className="text-xs text-slate-400 mt-1 text-right">{appealReason.length} / 20 min</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" className="flex-1" onClick={() => { setAppealId(null); setAppealReason(""); }}>
+                    Cancel
+                  </Button>
+                  <Button
+                    className="flex-1"
+                    disabled={appealReason.trim().length < 20 || appealMutation.isPending}
+                    onClick={() => appealMutation.mutate({ id: appealId, reason: appealReason })}
+                  >
+                    {appealMutation.isPending ? "Submitting…" : "Submit Appeal"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           </div>
         )}
       </div>

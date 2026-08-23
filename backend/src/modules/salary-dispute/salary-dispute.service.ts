@@ -166,6 +166,12 @@ export const salaryDisputeService = {
 
     const dispute = (await getById(id))!;
 
+    // Set SLA deadline
+    await salaryDisputeService.setSlaOnRaise(id);
+
+    // Log audit
+    await salaryDisputeService.logAudit(id, "raised", employeeId, "employee", null, "pending_wfm", description);
+
     // Notify WFM + Payroll HR of branch
     await notifyRoles(
       ["wfm", "payroll_hr", "payroll"],
@@ -247,6 +253,16 @@ export const salaryDisputeService = {
 
     const updated = (await getById(id))!;
 
+    // Update SLA
+    await salaryDisputeService.updateSlaOnStatusChange(id, newStatus);
+
+    // Log audit
+    await salaryDisputeService.logAudit(
+      id, payload.action === "approve" ? "wfm_approved" : "wfm_rejected",
+      actorUserId, "wfm", "pending_wfm", newStatus, payload.remarks,
+      { differential_amount: payload.differentialAmount }
+    );
+
     if (payload.action === "approve") {
       // Notify Payroll Head
       await notifyRoles(
@@ -288,6 +304,15 @@ export const salaryDisputeService = {
     );
 
     const updated = (await getById(id))!;
+
+    // Update SLA (clear it since resolved)
+    await salaryDisputeService.updateSlaOnStatusChange(id, newStatus);
+
+    // Log audit
+    await salaryDisputeService.logAudit(
+      id, payload.action === "approve" ? "ph_approved" : "ph_rejected",
+      actorUserId, "payroll_head", "pending_payroll_head", newStatus, payload.remarks
+    );
 
     if (payload.action === "approve") {
       await salaryDisputeService.applyArrear(id);
@@ -462,6 +487,224 @@ export const salaryDisputeService = {
         assignedToUserId: String((eu as any).user_id),
         priority: "high",
       });
+    }
+  },
+
+  // ─── AUDIT LOGGING ────────────────────────────────────────────────────────
+  async logAudit(
+    disputeId: string,
+    action: string,
+    actorUserId: string,
+    actorRole: string,
+    fromStatus: string | null,
+    toStatus: string | null,
+    remarks?: string,
+    metadata?: object
+  ): Promise<void> {
+    await db.execute(
+      `INSERT INTO salary_dispute_audit
+         (id, dispute_id, action, actor_user_id, actor_role, from_status, to_status, remarks, metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        randomUUID(), disputeId, action, actorUserId, actorRole,
+        fromStatus, toStatus, remarks ?? null,
+        metadata ? JSON.stringify(metadata) : null,
+      ]
+    );
+  },
+
+  async getAuditLog(disputeId: string): Promise<any[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT sda.*, CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS actor_name
+         FROM salary_dispute_audit sda
+         LEFT JOIN employees e ON e.user_id = sda.actor_user_id
+        WHERE sda.dispute_id = ?
+        ORDER BY sda.created_at ASC`,
+      [disputeId]
+    );
+    return rows as any[];
+  },
+
+  // ─── SLA MANAGEMENT ───────────────────────────────────────────────────────
+  async setSlaOnRaise(disputeId: string): Promise<void> {
+    const [[config]] = await db.execute<RowDataPacket[]>(
+      `SELECT sla_hours FROM salary_dispute_sla_config WHERE stage = 'pending_wfm' AND active_status = 1`,
+      []
+    );
+    const slaHours = config ? Number((config as any).sla_hours) : 48;
+    await db.execute(
+      `UPDATE salary_dispute SET sla_due_at = DATE_ADD(NOW(), INTERVAL ? HOUR) WHERE id = ?`,
+      [slaHours, disputeId]
+    );
+  },
+
+  async updateSlaOnStatusChange(disputeId: string, newStatus: string): Promise<void> {
+    if (newStatus === "pending_payroll_head") {
+      const [[config]] = await db.execute<RowDataPacket[]>(
+        `SELECT sla_hours FROM salary_dispute_sla_config WHERE stage = 'pending_payroll_head' AND active_status = 1`,
+        []
+      );
+      const slaHours = config ? Number((config as any).sla_hours) : 24;
+      await db.execute(
+        `UPDATE salary_dispute SET sla_due_at = DATE_ADD(NOW(), INTERVAL ? HOUR), sla_breached = 0 WHERE id = ?`,
+        [slaHours, disputeId]
+      );
+    } else if (["approved", "rejected", "closed"].includes(newStatus)) {
+      await db.execute(
+        `UPDATE salary_dispute SET sla_due_at = NULL WHERE id = ?`,
+        [disputeId]
+      );
+    }
+  },
+
+  async checkAndMarkBreachedSlas(): Promise<number> {
+    const [result] = await db.execute(
+      `UPDATE salary_dispute
+          SET sla_breached = 1
+        WHERE sla_due_at IS NOT NULL
+          AND sla_due_at < NOW()
+          AND sla_breached = 0
+          AND status IN ('pending_wfm', 'pending_payroll_head')`
+    );
+    return (result as any).affectedRows || 0;
+  },
+
+  async getBreachedDisputes(): Promise<SalaryDispute[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT sd.*, e.full_name AS employee_name
+         FROM salary_dispute sd
+         JOIN employees e ON e.id = sd.employee_id
+        WHERE sd.sla_breached = 1 AND sd.status IN ('pending_wfm', 'pending_payroll_head')
+        ORDER BY sd.sla_due_at ASC`
+    );
+    return (rows as Record<string, unknown>[]).map(mapRow);
+  },
+
+  // ─── APPEAL WORKFLOW ──────────────────────────────────────────────────────
+  async appeal(
+    originalDisputeId: string,
+    employeeId: string,
+    appealReason: string
+  ): Promise<SalaryDispute> {
+    const original = await getById(originalDisputeId);
+    if (!original) throw new Error("Original dispute not found.");
+    if (original.employee_id !== employeeId) throw new Error("Not your dispute.");
+    if (original.status !== "rejected") throw new Error("Can only appeal rejected disputes.");
+    if ((original as any).appeal_count >= 1) throw new Error("Maximum one appeal allowed per dispute.");
+
+    if (appealReason.trim().length < 20)
+      throw new Error("Appeal reason must be at least 20 characters.");
+
+    // Create new dispute as appeal
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO salary_dispute
+         (id, employee_id, employee_code, run_month, dispute_type,
+          affected_dates, description, status, manager_id, branch_id, process_id,
+          appeal_count, appeal_reason, original_dispute_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_wfm', ?, ?, ?, 1, ?, ?)`,
+      [
+        id, original.employee_id, original.employee_code, original.run_month,
+        original.dispute_type, JSON.stringify(original.affected_dates),
+        `[APPEAL] ${appealReason.trim()}\n\n[Original Description] ${original.description}`,
+        original.manager_id, original.branch_id, original.process_id,
+        appealReason.trim(), originalDisputeId,
+      ]
+    );
+
+    // Mark original as closed with appeal reference
+    await db.execute(
+      `UPDATE salary_dispute SET status = 'closed', appeal_count = 1 WHERE id = ?`,
+      [originalDisputeId]
+    );
+
+    // Set SLA
+    await salaryDisputeService.setSlaOnRaise(id);
+
+    // Log audit
+    await salaryDisputeService.logAudit(
+      id, "appealed", employeeId, "employee", "rejected", "pending_wfm",
+      appealReason, { original_dispute_id: originalDisputeId }
+    );
+
+    // Notify WFM
+    await notifyRoles(
+      ["wfm", "payroll_hr", "payroll"],
+      "SALARY_DISPUTE_APPEAL",
+      `Appeal: ${original.employee_code} — ${original.run_month}`,
+      `Employee appealed a rejected ${original.dispute_type.replace(/_/g, " ")} dispute. Requires re-review.`,
+      id
+    );
+
+    return (await getById(id))!;
+  },
+
+  // ─── ATTACHMENTS ──────────────────────────────────────────────────────────
+  async addAttachment(
+    disputeId: string,
+    fileName: string,
+    filePath: string,
+    fileType: string,
+    fileSize: number,
+    uploadedBy: string
+  ): Promise<{ id: string }> {
+    const id = randomUUID();
+    await db.execute(
+      `INSERT INTO salary_dispute_attachment
+         (id, dispute_id, file_name, file_path, file_type, file_size, uploaded_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [id, disputeId, fileName, filePath, fileType, fileSize, uploadedBy]
+    );
+    return { id };
+  },
+
+  async getAttachments(disputeId: string): Promise<any[]> {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT * FROM salary_dispute_attachment WHERE dispute_id = ? ORDER BY uploaded_at DESC`,
+      [disputeId]
+    );
+    return rows as any[];
+  },
+
+  async deleteAttachment(attachmentId: string, actorUserId: string): Promise<void> {
+    // Only allow uploader to delete
+    const [[att]] = await db.execute<RowDataPacket[]>(
+      `SELECT uploaded_by FROM salary_dispute_attachment WHERE id = ?`,
+      [attachmentId]
+    );
+    if (!att) throw new Error("Attachment not found.");
+    if ((att as any).uploaded_by !== actorUserId) throw new Error("Can only delete your own attachments.");
+
+    await db.execute(`DELETE FROM salary_dispute_attachment WHERE id = ?`, [attachmentId]);
+  },
+
+  // ─── EMAIL NOTIFICATIONS ──────────────────────────────────────────────────
+  async getEmployeeEmail(employeeId: string): Promise<string | null> {
+    const [[emp]] = await db.execute<RowDataPacket[]>(
+      `SELECT personal_email, official_email FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId]
+    );
+    if (!emp) return null;
+    return (emp as any).official_email || (emp as any).personal_email || null;
+  },
+
+  async sendDisputeEmail(
+    employeeId: string,
+    subject: string,
+    body: string
+  ): Promise<void> {
+    const email = await salaryDisputeService.getEmployeeEmail(employeeId);
+    if (!email) return;
+
+    // Queue email via notification system (if exists)
+    try {
+      await db.execute(
+        `INSERT INTO email_queue (id, to_email, subject, body, status, created_at)
+         VALUES (?, ?, ?, ?, 'pending', NOW())`,
+        [randomUUID(), email, subject, body]
+      );
+    } catch {
+      // email_queue may not exist - skip silently
     }
   },
 };

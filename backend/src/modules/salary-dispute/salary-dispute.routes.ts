@@ -126,5 +126,72 @@ salaryDisputeRouter.post("/:id/withdraw", h(async (req, res) => {
   if (dispute.status !== "pending_wfm") return res.status(400).json({ success: false, message: "Can only withdraw disputes pending WFM review." });
 
   await db.execute(`UPDATE salary_dispute SET status = 'closed' WHERE id = ?`, [req.params.id]);
+  await salaryDisputeService.logAudit(req.params.id, "withdrawn", req.authUser!.id, "employee", "pending_wfm", "closed");
   res.json({ success: true, message: "Dispute withdrawn." });
 }));
+
+// Appeal a rejected dispute
+salaryDisputeRouter.post("/:id/appeal", h(async (req, res) => {
+  const employeeId = await getEmployeeIdForUser(req.authUser!.id);
+  if (!employeeId) return res.status(400).json({ success: false, message: "No employee linked." });
+
+  const { appealReason } = req.body;
+  if (!appealReason?.trim()) return res.status(400).json({ success: false, message: "Appeal reason is required." });
+
+  const newDispute = await salaryDisputeService.appeal(req.params.id, employeeId, appealReason);
+  res.status(201).json({ success: true, data: newDispute });
+}));
+
+// Get audit log for a dispute
+salaryDisputeRouter.get("/:id/audit-log", requireRole("wfm", "payroll_hr", "payroll", "payroll_head", "super_admin"),
+  h(async (req, res) => {
+    const auditLog = await salaryDisputeService.getAuditLog(req.params.id);
+    res.json({ success: true, data: auditLog });
+  })
+);
+
+// Get attachments for a dispute
+salaryDisputeRouter.get("/:id/attachments", h(async (req, res) => {
+  const attachments = await salaryDisputeService.getAttachments(req.params.id);
+  res.json({ success: true, data: attachments });
+}));
+
+// Upload attachment (handled by files module, this just records the reference)
+salaryDisputeRouter.post("/:id/attachments", h(async (req, res) => {
+  const employeeId = await getEmployeeIdForUser(req.authUser!.id);
+  const dispute = await salaryDisputeService.get(req.params.id);
+
+  if (!dispute) return res.status(404).json({ success: false, message: "Dispute not found." });
+
+  // Only allow employee or reviewers to add attachments
+  const isOwner = dispute.employee_id === employeeId;
+  const isReviewer = req.authUser!.role && ["wfm", "payroll_hr", "payroll", "payroll_head", "super_admin"].includes(req.authUser!.role);
+  if (!isOwner && !isReviewer) {
+    return res.status(403).json({ success: false, message: "Not authorized to add attachments." });
+  }
+
+  const { fileName, filePath, fileType, fileSize } = req.body;
+  if (!fileName || !filePath) {
+    return res.status(400).json({ success: false, message: "fileName and filePath are required." });
+  }
+
+  const result = await salaryDisputeService.addAttachment(
+    req.params.id, fileName, filePath, fileType || "unknown", fileSize || 0, req.authUser!.id
+  );
+  res.status(201).json({ success: true, data: result });
+}));
+
+// Delete attachment
+salaryDisputeRouter.delete("/attachments/:attachmentId", h(async (req, res) => {
+  await salaryDisputeService.deleteAttachment(req.params.attachmentId, req.authUser!.id);
+  res.json({ success: true, message: "Attachment deleted." });
+}));
+
+// Get SLA breached disputes (admin only)
+salaryDisputeRouter.get("/admin/sla-breached", requireRole("payroll_head", "super_admin", "cfo"),
+  h(async (req, res) => {
+    await salaryDisputeService.checkAndMarkBreachedSlas();
+    const breached = await salaryDisputeService.getBreachedDisputes();
+    res.json({ success: true, data: breached });
+  })
+);
