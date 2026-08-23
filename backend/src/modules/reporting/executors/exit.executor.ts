@@ -541,7 +541,7 @@ export async function tenureDistribution(
   const params: unknown[]  = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
-  clauses.push("e.active_status = 1", "LOWER(COALESCE(e.employment_status,'active')) = 'active'");
+  clauses.push("e.active_status = 1");
 
   const base = `
     SELECT CASE

@@ -799,7 +799,7 @@ reportSuiteRouter.get("/:code", reportScopeMiddleware, reportCatalogAccessMiddle
       // conditions are pushed after, in the order their placeholders appear.
       await addFullScopedEmployeeFilters(req, clauses, params);
       clauses.push("e.active_status = 1");
-      clauses.push("ep.status = 'active'");
+      clauses.push("ep.status = 'on_probation'");
       clauses.push("ep.probation_end_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)");
       params.push(days);
       sql = `SELECT e.employee_code, COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,

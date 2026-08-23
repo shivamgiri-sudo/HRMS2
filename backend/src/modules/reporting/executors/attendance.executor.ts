@@ -463,6 +463,7 @@ export async function shiftAdherenceDetail(
              MAX(logout_time) AS latest_punch,
              SUM(total_login_minutes) AS total_login_minutes
         FROM wfm_attendance_session
+       WHERE session_date BETWEEN '${from}' AND '${to}'
        GROUP BY employee_id, session_date
     ) agg_ses ON agg_ses.employee_id = adr.employee_id AND agg_ses.session_date = adr.record_date
     LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
@@ -1322,8 +1323,8 @@ export async function attendanceRegisterGrid(
            SUM(CASE WHEN adr.attendance_status = 'lwp'      THEN 1 ELSE 0 END) AS lwp_days,
            SUM(CASE WHEN adr.late_by_minutes > 0            THEN 1 ELSE 0 END) AS late_days,
            COUNT(*) AS working_days,
-           ? AS date_from,
-           ? AS date_to
+           '${from}' AS date_from,
+           '${to}' AS date_to
       FROM attendance_daily_record adr
       JOIN employees e ON e.id = adr.employee_id
       LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -1332,7 +1333,6 @@ export async function attendanceRegisterGrid(
      WHERE ${clauses.join(" AND ")}
      GROUP BY e.id, e.employee_code, employee_name, b.branch_name, p.process_name, sp_cc.cost_centre_code, sp_cc.cost_centre_name
      ORDER BY e.id ASC`;
-  params.push(from, to);
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
   // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
