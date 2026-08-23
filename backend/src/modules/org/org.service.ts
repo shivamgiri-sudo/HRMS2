@@ -655,6 +655,11 @@ export const costCentreService = {
     branch_id: string;
     process_id: string;
     department_id?: string;
+    current_mandate?: number;
+    working_days_per_week?: number;
+    billing_days_per_month?: number;
+    hours_per_fte_per_day?: number;
+    billing_type?: string;
   }) {
     // Check for orphaned records - block creation until all are migrated
     const { orphaned } = await this.countOrphanedRecords();
