@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Link } from "react-router-dom";
 import {
   Activity, AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronRight,
-  Clock, Copy, Download, Eye, FileText, Loader2, RefreshCw, Send, ShieldCheck, Upload, XCircle,
+  Clock, Copy, Download, Eye, FileText, Loader2, RefreshCw, Send, ShieldCheck, Upload, XCircle, Zap,
 } from "lucide-react";
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
@@ -292,10 +292,10 @@ export default function EmployeeJoiningDocumentsPage() {
   };
 
   const statTiles = [
-    { label: "Total Documents",  value: stats.total,      Icon: FileText,      color: "text-slate-600",  bg: "bg-slate-50"  },
-    { label: "Completed",         value: stats.completed,  Icon: CheckCircle2,  color: "text-emerald-600",bg: "bg-emerald-50"},
-    { label: "Pending",           value: stats.pending,    Icon: Clock,         color: "text-amber-600",  bg: "bg-amber-50"  },
-    { label: "Needs Correction",  value: stats.correction, Icon: XCircle,       color: "text-red-600",    bg: "bg-red-50"    },
+    { label: "Total Documents",  value: stats.total,      Icon: FileText,      color: "text-slate-600",   bg: "bg-slate-50",   border: "border-slate-200"   },
+    { label: "Completed",        value: stats.completed,  Icon: CheckCircle2,  color: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-200" },
+    { label: "Pending",          value: stats.pending,    Icon: Clock,         color: "text-amber-700",   bg: "bg-amber-50",   border: "border-amber-200"   },
+    { label: "Needs Correction", value: stats.correction, Icon: XCircle,       color: "text-red-700",     bg: "bg-red-50",     border: "border-red-200"     },
   ];
 
   return (
@@ -313,27 +313,28 @@ export default function EmployeeJoiningDocumentsPage() {
           </Link>
 
           {/* Page header */}
-          <div className="relative overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-blue-600 via-cyan-500 to-emerald-500" />
-            <div className="flex flex-wrap items-start justify-between gap-4 p-5 pt-6 sm:p-6 sm:pt-7">
+          <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-cyan-600 p-6 shadow-lg text-white">
+            <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
+            <div className="absolute right-24 bottom-0 h-20 w-20 rounded-full bg-cyan-400/20 blur-xl" />
+            <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <p className="text-xs font-bold uppercase tracking-widest text-blue-600">Employee · Joining Pack</p>
-                <h1 className="mt-1 text-2xl font-bold text-slate-900">
+                <p className="text-xs font-bold uppercase tracking-widest text-blue-200">Employee · Joining Pack</p>
+                <h1 className="mt-1 text-2xl font-bold text-white">
                   {pack?.employee.full_name || (loading ? "Loading…" : "Joining Documents")}
                 </h1>
-                <p className="mt-0.5 font-mono text-xs text-slate-400">{pack?.employee.employee_code || "—"}</p>
+                <p className="mt-0.5 font-mono text-xs text-blue-200">{pack?.employee.employee_code || "—"}</p>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <span className="text-3xl font-black text-slate-900">{Math.round(progress)}%</span>
-                <p className="text-xs capitalize text-slate-400">{statusText(pack?.employee.joining_document_status)}</p>
-                <div className="h-2 w-48 overflow-hidden rounded-full bg-slate-100">
+                <span className="text-3xl font-black text-white">{Math.round(progress)}%</span>
+                <p className="text-xs capitalize text-blue-200">{statusText(pack?.employee.joining_document_status)}</p>
+                <div className="h-2 w-48 overflow-hidden rounded-full bg-white/20">
                   <div
-                    className="h-2 rounded-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-500"
+                    className="h-2 rounded-full bg-white transition-all duration-500"
                     style={{ width: `${Math.max(4, progress)}%` }}
                   />
                 </div>
               </div>
-              <Button type="button" variant="outline" className="min-h-[44px] gap-2 self-start" onClick={() => void load()}>
+              <Button type="button" variant="outline" className="min-h-[44px] gap-2 self-start border-white/30 bg-white/10 text-white hover:bg-white/20" onClick={() => void load()}>
                 <RefreshCw className="h-4 w-4" /> Refresh
               </Button>
             </div>
@@ -345,8 +346,8 @@ export default function EmployeeJoiningDocumentsPage() {
 
           {/* Stat tiles */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {statTiles.map(({ label, value, Icon, color, bg }) => (
-              <div key={label} className="rounded-xl border bg-white p-4 shadow-sm">
+            {statTiles.map(({ label, value, Icon, color, bg, border }) => (
+              <div key={label} className={`rounded-2xl border ${border} bg-white p-4 shadow-sm`}>
                 <div className={`mb-2 inline-flex rounded-lg p-2 ${bg}`}>
                   <Icon className={`h-4 w-4 ${color}`} />
                 </div>
@@ -692,23 +693,48 @@ export default function EmployeeJoiningDocumentsPage() {
 }
 
 
+type KitRecord = {
+  id: string; status: string; blocked_reason: string | null;
+  document_count: number; total_pages: number;
+  sent_at: string | null; completed_at: string | null; items: number;
+};
+
+const KIT_BADGE: Record<string, string> = {
+  queued:     "bg-amber-100 text-amber-700",
+  assembling: "bg-amber-100 text-amber-700",
+  sent:       "bg-cyan-100 text-cyan-700",
+  signed:     "bg-emerald-100 text-emerald-700",
+  failed:     "bg-red-100 text-red-700",
+  blocked:    "bg-red-100 text-red-700",
+};
+
 /**
  * Send every joining document in one email, one consent and one billed eSign
  * call, instead of six separate sends.
  *
  * Shows blockers first: a kit that cannot go out is the common case, and HR
  * needs the work list more often than the button.
+ *
+ * After the POST returns `{ status: "queued" }` the component polls
+ * GET /joining-kit every 5 s (up to 90 s) until a kit reaches sent/failed.
  */
 function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: () => void }) {
   const [preview, setPreview] = useState<{
     documents: Array<{ code: string; name: string; status: string; fillStatus: string | null }>;
     hrFillPending: string[];
-    kits: Array<{ id: string; status: string; blocked_reason: string | null; document_count: number;
-                  total_pages: number; sent_at: string | null; completed_at: string | null }>;
+    kits: Array<KitRecord>;
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "blocked" | "error"; text: string } | null>(null);
+  const [pollPhase, setPollPhase] = useState<"idle" | "assembling" | "sent" | "failed" | "timeout">("idle");
+  const [pollData, setPollData] = useState<{ docCount?: number; reason?: string } | null>(null);
+
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollStart = useRef<number>(0);
+  // stable refs so poll closure never captures stale callbacks
+  const loadRef = useRef<() => Promise<void>>(async () => {});
+  const onSentRef = useRef(onSent);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -722,7 +748,44 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
     }
   }, [employeeId]);
 
+  useEffect(() => { loadRef.current = load; }, [load]);
+  useEffect(() => { onSentRef.current = onSent; }, [onSent]);
   useEffect(() => { void load(); }, [load]);
+
+  // Clean up any pending poll timer on unmount
+  useEffect(() => () => { if (pollTimer.current) clearTimeout(pollTimer.current); }, []);
+
+  const startPolling = useCallback(() => {
+    if (pollTimer.current) clearTimeout(pollTimer.current);
+
+    const tick = async () => {
+      if (Date.now() - pollStart.current > 90_000) {
+        setPollPhase("timeout");
+        return;
+      }
+      try {
+        const r = await hrmsApi.get<{ data: KitRecord[] }>(`/api/employees/${employeeId}/joining-kit`);
+        const kits = r.data ?? [];
+        const sent = kits.find(k => k.status === "sent");
+        const failed = kits.find(k => k.status === "failed" || k.status === "blocked");
+        if (sent) {
+          setPollPhase("sent");
+          setPollData({ docCount: sent.document_count });
+          void loadRef.current();
+          onSentRef.current();
+          return;
+        }
+        if (failed) {
+          setPollPhase("failed");
+          setPollData({ reason: failed.blocked_reason ?? "Kit failed to assemble." });
+          return;
+        }
+      } catch { /* ignore transient poll errors — keep retrying */ }
+      pollTimer.current = setTimeout(tick, 5_000);
+    };
+
+    pollTimer.current = setTimeout(tick, 5_000);
+  }, [employeeId]);
 
   const send = async () => {
     if (!window.confirm(
@@ -731,11 +794,16 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
     )) return;
     setSending(true);
     setMsg(null);
+    setPollPhase("idle");
+    setPollData(null);
     try {
-      const r = await hrmsApi.post<{ message?: string }>(`/api/employees/${employeeId}/joining-kit/send`, {});
-      setMsg({ kind: "ok", text: r.message ?? "Kit sent." });
-      await load();
-      onSent();
+      await hrmsApi.post<{ message?: string; data?: { kitId: string; status: string } }>(
+        `/api/employees/${employeeId}/joining-kit/send`, {},
+      );
+      // Backend now returns { status: "queued" } — watch for completion via poll
+      setPollPhase("assembling");
+      pollStart.current = Date.now();
+      startPolling();
     } catch (err: unknown) {
       // A blocked kit comes back 409 with the reason. That is an expected
       // answer, not a fault, so it is not styled as an error.
@@ -750,8 +818,9 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
   const blocked = (preview?.hrFillPending.length ?? 0) > 0;
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {/* Header with left accent */}
+      <div className="flex flex-wrap items-start justify-between gap-3 border-l-4 border-cyan-500 pl-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-widest text-cyan-600">One email · one signature</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Joining documents kit</h2>
@@ -760,7 +829,7 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
             and the signature is placed in each document&apos;s own signature area.
           </p>
         </div>
-        {!open && (
+        {pollPhase === "idle" && !open && (
           <Button
             type="button" onClick={() => void send()}
             disabled={sending || loading || blocked || !preview?.documents.length}
@@ -799,11 +868,75 @@ function JoiningKitPanel({ employeeId, onSent }: { employeeId: string; onSent: (
             </div>
           )}
 
-          {open && (
+          {/* Kit history list with per-status colored badges */}
+          {(preview?.kits ?? []).length > 0 && (
+            <div className="mt-4 space-y-2">
+              {preview!.kits.map((k) => {
+                const isActive = k.status === "queued" || k.status === "assembling";
+                return (
+                  <div key={k.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase ${KIT_BADGE[k.status] ?? "bg-slate-100 text-slate-600"} ${isActive ? "animate-pulse" : ""}`}>
+                        {k.status}
+                      </span>
+                      <span className="text-sm text-slate-700">{k.document_count} documents · {k.total_pages} pages</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-400">
+                      {k.sent_at && <span>Sent {new Date(k.sent_at).toLocaleString("en-IN")}</span>}
+                      {k.completed_at && (
+                        <span className="font-medium text-emerald-600">Signed {new Date(k.completed_at).toLocaleString("en-IN")}</span>
+                      )}
+                      {k.blocked_reason && <span className="text-red-600">{k.blocked_reason}</span>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* "Already open" notice when poll is idle */}
+          {open && pollPhase === "idle" && (
             <div className="mt-4 rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-sm text-cyan-900">
               A kit is already open for this employee — {open.document_count} documents, {open.total_pages} pages
               {open.sent_at ? `, sent ${new Date(open.sent_at).toLocaleString("en-IN")}` : ""}.
               Wait for it to be signed, or ask the employee to check their email.
+            </div>
+          )}
+
+          {/* Poll phase feedback banners */}
+          {pollPhase === "assembling" && (
+            <div className="mt-4 flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <Zap className="h-4 w-4 shrink-0 animate-pulse text-amber-600" />
+              <div>
+                <span className="mr-2 rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-amber-700 animate-pulse">
+                  assembling
+                </span>
+                Kit is being assembled. This usually takes a few seconds…
+              </div>
+            </div>
+          )}
+
+          {pollPhase === "sent" && (
+            <div className="mt-4 flex items-center gap-3 rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-sm text-cyan-900">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-cyan-600" />
+              <div>
+                <span className="mr-2 rounded-full bg-cyan-100 px-2.5 py-0.5 text-[10px] font-bold uppercase text-cyan-700">sent</span>
+                {pollData?.docCount ? `Kit sent — ${pollData.docCount} documents` : "Kit sent successfully."}
+              </div>
+            </div>
+          )}
+
+          {pollPhase === "failed" && (
+            <div className="mt-4 flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-900">
+              <AlertTriangle className="h-4 w-4 shrink-0 text-red-600" />
+              {pollData?.reason ?? "Kit failed to assemble."}
+            </div>
+          )}
+
+          {pollPhase === "timeout" && (
+            <div className="mt-4 flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
+              <Clock className="h-4 w-4 shrink-0 text-slate-400" />
+              Still assembling — check back in a moment.
             </div>
           )}
 

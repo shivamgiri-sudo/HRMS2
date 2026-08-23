@@ -146,9 +146,9 @@ function Toggle({ form, setForm, name }: { form: any; setForm: (next: any) => vo
 
 function ReadOnlyField({ label, value }: { label: string; value: string | number | undefined }) {
   return (
-    <div className="rounded border border-slate-200 bg-slate-50 p-3">
-      <div className="text-xs uppercase text-slate-500">{label}</div>
-      <div className="mt-1 font-medium text-slate-900">{value ?? "-"}</div>
+    <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-3">
+      <div className="text-xs uppercase text-blue-500 tracking-wide font-semibold">{label}</div>
+      <div className="mt-1 font-semibold text-slate-900">{value ?? "-"}</div>
     </div>
   );
 }
@@ -162,7 +162,7 @@ function ProvisioningTaskCard({ task }: { task: ProvisioningTask }) {
   const isOverdue = task.sla_due && new Date(task.sla_due) < new Date() && !isComplete;
 
   return (
-    <div className={`rounded border p-4 ${isComplete ? "border-emerald-200 bg-emerald-50" : isOverdue ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}>
+    <div className={`rounded-xl border p-4 ${isComplete ? "border-emerald-200 bg-emerald-50" : isOverdue ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}>
       <div className="flex items-start gap-3">
         <div className={isComplete ? "text-emerald-600" : isOverdue ? "text-amber-600" : "text-slate-400"}>
           {icons[task.task_code] || <ClipboardCheck className="h-5 w-5" />}
@@ -294,38 +294,52 @@ export default function NativeJoiningControlRoom() {
   return (
     <DashboardLayout>
       <div className="min-h-screen bg-slate-50 p-4">
-        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-950">Joining Control Room</h1>
-            <p className="text-sm text-slate-600">Monitor onboarding status, JCLR logistics, statutory, DPDP consent, and provisioning tasks.</p>
-          </div>
-          <div className="flex gap-2">
-            <div className="relative">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-slate-400" />
-              <Input className="w-72 pl-8" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search candidate" onKeyDown={(event) => event.key === "Enter" && loadQueue()} />
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-indigo-600 via-blue-600 to-cyan-600 text-white p-6 mb-4 shadow-lg">
+          <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-blue-200">HR · Onboarding</p>
+              <h1 className="text-2xl font-bold text-white">Joining Control Room</h1>
+              <p className="text-sm text-blue-100 mt-1">Monitor onboarding status, JCLR logistics, statutory, DPDP consent, and provisioning tasks.</p>
             </div>
-            <Button type="button" variant="outline" onClick={loadQueue} disabled={busy}><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>
+            <div className="flex gap-2">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-white/60" />
+                <Input className="w-64 pl-9 bg-white/10 border-white/20 text-white placeholder:text-white/50 focus:bg-white/20" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search candidate" onKeyDown={(event) => event.key === "Enter" && loadQueue()} />
+              </div>
+              <Button type="button" variant="outline" onClick={loadQueue} disabled={busy} className="border-white/30 bg-white/10 text-white hover:bg-white/20 min-h-[44px]"><RefreshCw className="mr-2 h-4 w-4" />Refresh</Button>
+            </div>
           </div>
         </div>
 
-        {error && <div className="mb-3 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
-        {message && <div className="mb-3 rounded border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>}
+        {error && <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+        {message && <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{message}</div>}
 
         <div className="grid gap-4 xl:grid-cols-[440px_1fr]">
-          <div className="rounded border border-slate-200 bg-white">
-            <div className="border-b border-slate-200 px-4 py-3 font-semibold">Onboarding Queue</div>
+          <div className="rounded-2xl border border-blue-200 bg-white shadow-sm">
+            <div className="border-b border-blue-100 bg-blue-50 px-4 py-3 font-semibold text-blue-800 rounded-t-2xl">Onboarding Queue</div>
             <div className="max-h-[76vh] overflow-auto">
-              {queue.map((row) => (
+              {queue.map((row) => {
+                const rs = row.readiness_status?.toLowerCase() || "";
+                const isReady = rs.includes("ready") || rs.includes("complete");
+                const isBlocked = rs.includes("blocked");
+                const agingDays = row.aging_days ?? 0;
+                const agingColor = agingDays > 7 ? "text-red-600" : agingDays > 3 ? "text-amber-600" : "text-emerald-600";
+                const dotColor = isReady ? "bg-emerald-500" : isBlocked ? "bg-amber-500" : "bg-blue-500";
+                return (
                 <button
                   key={row.candidate_id}
                   type="button"
                   onClick={() => setSelectedId(row.candidate_id)}
-                  className={`grid w-full gap-2 border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50 ${selectedId === row.candidate_id ? "bg-slate-100" : ""}`}
+                  className={`grid w-full gap-2 border-b border-slate-100 px-4 py-3 text-left hover:bg-blue-50/50 transition-colors ${selectedId === row.candidate_id ? "bg-blue-50 border-l-4 border-l-blue-600" : ""}`}
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="font-semibold text-slate-950">{row.full_name}</div>
-                      <div className="text-xs text-slate-500">{row.candidate_code || row.mobile || row.email}</div>
+                    <div className="flex items-start gap-2">
+                      <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${dotColor}`} />
+                      <div>
+                        <div className="font-semibold text-slate-950">{row.full_name}</div>
+                        <div className="text-xs text-slate-500">{row.candidate_code || row.mobile || row.email}</div>
+                      </div>
                     </div>
                     {statusBadge(row.readiness_status)}
                   </div>
@@ -342,22 +356,23 @@ export default function NativeJoiningControlRoom() {
                   )}
                   <div className="flex items-center justify-between gap-2 text-xs">
                     <span className="truncate text-slate-700">{row.next_action}</span>
-                    <span className="shrink-0 text-slate-500">{row.aging_days ?? 0}d</span>
+                    <span className={`shrink-0 font-semibold ${agingColor}`}>{agingDays}d</span>
                   </div>
                 </button>
-              ))}
+                );
+              })}
               {!queue.length && <div className="p-8 text-center text-sm text-slate-500">No candidates found.</div>}
             </div>
           </div>
 
-          <div className="min-w-0 rounded border border-slate-200 bg-white">
+          <div className="min-w-0 rounded-2xl border border-blue-200 bg-white shadow-sm">
             {!selected || !detail ? (
               <div className="grid min-h-[520px] place-items-center text-sm text-slate-500">Select a candidate to continue.</div>
             ) : (
               <>
-                <div className="border-b border-slate-200 p-4">
+                <div className="border-b border-blue-100 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-4">
-                    <div>
+                    <div className="border-l-4 border-l-blue-500 pl-3">
                       <div className="text-xl font-bold text-slate-950">{selected.full_name}</div>
                       <div className="text-sm text-slate-600">{selected.email} | {selected.mobile}</div>
                       {hasEmployeeCode && (
@@ -376,16 +391,16 @@ export default function NativeJoiningControlRoom() {
                     </div>
                   </div>
                   {detail.summary.blockers?.length ? (
-                    <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                       <div className="mb-1 flex items-center gap-2 font-semibold"><AlertTriangle className="h-4 w-4" />Pending blockers</div>
                       <div className="grid gap-1">{detail.summary.blockers.map((item) => <span key={item}>{item}</span>)}</div>
                     </div>
                   ) : hasEmployeeCode ? (
-                    <div className="mt-3 flex items-center gap-2 rounded border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-800">
+                    <div className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-medium text-emerald-800">
                       <CheckCircle2 className="h-4 w-4" />Employee created. Provisioning tasks dispatched.
                     </div>
                   ) : (
-                    <div className="mt-3 flex items-center gap-2 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                    <div className="mt-3 flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
                       <Loader2 className="h-4 w-4 animate-spin" />Awaiting Branch Head approval to auto-generate employee code.
                     </div>
                   )}
@@ -417,8 +432,8 @@ export default function NativeJoiningControlRoom() {
                       ["Employee code", detail.summary.employee_code || "Pending BH approval"],
                       ["Aging", `${detail.summary.aging_days ?? 0} days`],
                     ].map(([label, value]) => (
-                      <div key={label} className="rounded border border-slate-200 p-4">
-                        <div className="text-xs uppercase text-slate-500">{label}</div>
+                      <div key={label} className="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
+                        <div className="text-xs uppercase text-blue-500 tracking-wide font-semibold">{label}</div>
                         <div className="mt-1 font-semibold text-slate-900">{value}</div>
                       </div>
                     ))}
@@ -427,7 +442,7 @@ export default function NativeJoiningControlRoom() {
                   <TabsContent value="offer" className="grid gap-4">
                     {offer ? (
                       <>
-                        <div className="rounded border border-slate-200 p-4">
+                        <div className="rounded-xl border border-blue-100 bg-white p-4 shadow-sm">
                           <div className="mb-3 flex items-center justify-between">
                             <h3 className="font-semibold text-slate-900">Employment Offer</h3>
                             {statusBadge(offer.status)}
@@ -443,7 +458,7 @@ export default function NativeJoiningControlRoom() {
                             <ReadOnlyField label="Reporting Manager" value={offer.manager_name} />
                           </div>
                         </div>
-                        <div className="rounded border border-slate-200 p-4">
+                        <div className="rounded-xl border border-blue-100 bg-white p-4 shadow-sm">
                           <h3 className="mb-3 font-semibold text-slate-900">Salary Breakdown (from Offer)</h3>
                           <div className="grid gap-3 md:grid-cols-5">
                             <ReadOnlyField label="Gross" value={offer.gross ? `₹${offer.gross.toLocaleString()}` : undefined} />
@@ -465,7 +480,7 @@ export default function NativeJoiningControlRoom() {
                         </p>
                       </>
                     ) : (
-                      <div className="rounded border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
                         <AlertTriangle className="mb-2 h-5 w-5" />
                         No employment offer found. Submit an offer from{" "}
                         <Link to="/ats/onboarding-requests" className="font-medium underline">Onboarding Requests</Link> first.
@@ -474,7 +489,7 @@ export default function NativeJoiningControlRoom() {
                   </TabsContent>
 
                   <TabsContent value="dates" className="grid gap-4">
-                    <div className="rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                    <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
                       If the joining date is delayed or preponed, update the effective dates below. This affects when attendance, statutory deductions, and first payroll month begin.
                     </div>
                     <div className="grid gap-4 md:grid-cols-4">
@@ -504,17 +519,17 @@ export default function NativeJoiningControlRoom() {
 
                   <TabsContent value="bgv" className="grid gap-4">
                     <div className="grid gap-4 md:grid-cols-2">
-                      <div className="rounded border border-slate-200 p-4">
+                      <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
                         <div className="text-sm font-semibold">BGV Status</div>
                         <div className="mt-2">{statusBadge(detail.summary.bgv_status)}</div>
                       </div>
-                      <div className="rounded border border-slate-200 p-4">
+                      <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4">
                         <div className="text-sm font-semibold">Name/Document Match</div>
                         <div className="mt-2 text-sm text-slate-600">Review per-document name match in Documents tab.</div>
                       </div>
                     </div>
                     {detail.summary.bgv_status !== "verified" && detail.summary.bgv_status !== "completed" && (
-                      <div className="rounded border border-amber-200 bg-amber-50 p-4">
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                         <div className="mb-2 font-semibold text-amber-900">BGV Not Complete</div>
                         <p className="mb-3 text-sm text-amber-800">
                           If automated BGV failed or is unavailable, you can manually verify and override from the{" "}
@@ -528,7 +543,7 @@ export default function NativeJoiningControlRoom() {
                   </TabsContent>
 
                   <TabsContent value="jclr" className="grid gap-4">
-                    <div className="rounded border border-slate-200 bg-slate-50 p-4 text-sm">
+                    <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4 text-sm">
                       <div className="font-semibold text-slate-900">BM / Branch Head JCLR Approval</div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         {statusBadge(detail.summary.jclr_approval_status)}
@@ -588,7 +603,7 @@ export default function NativeJoiningControlRoom() {
                   <TabsContent value="provisioning" className="grid gap-4">
                     {hasEmployeeCode ? (
                       <>
-                        <div className="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+                        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
                           Employee code generated. Provisioning tasks have been auto-dispatched to IT, Admin, WFM, and HR.
                         </div>
                         <div className="grid gap-4 md:grid-cols-2">
@@ -597,7 +612,7 @@ export default function NativeJoiningControlRoom() {
                               <ProvisioningTaskCard key={task.task_code} task={task} />
                             ))
                           ) : (
-                            <div className="col-span-2 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                            <div className="col-span-2 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
                               Provisioning tasks are being dispatched — refresh in a moment.
                             </div>
                           )}
@@ -612,7 +627,7 @@ export default function NativeJoiningControlRoom() {
                         </div>
                       </>
                     ) : (
-                      <div className="rounded border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                      <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4 text-sm text-slate-600">
                         Provisioning tasks will be auto-dispatched after employee code is generated (on Branch Head approval).
                       </div>
                     )}
