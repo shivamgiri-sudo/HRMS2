@@ -486,11 +486,28 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600">Onboarding Rate</span>
-                <Gauge value={submitted && pending ? Math.round((submitted / (submitted + pending)) * 100) : 85} color="#10B981" />
+                {/* Was falling back to a hardcoded 85 when submitted/pending were
+                    unavailable -- a fabricated rate on an executive-visible tile,
+                    the exact "false number reads as real" issue this codebase
+                    otherwise deliberately avoids (see metricUnavailableReason /
+                    the CEO dashboard's empty-source-table exclusions). Matches the
+                    BGV gauge right below it: show "No data" instead of a number. */}
+                {submitted !== null && pending !== null && submitted + pending > 0 ? (
+                  <Gauge value={Math.round((submitted / (submitted + pending)) * 100)} color="#10B981" />
+                ) : (
+                  <span className="text-xs font-medium text-gray-400">No data</span>
+                )}
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600">Attendance</span>
-                <Gauge value={Math.round(attendanceRate ?? 77)} color="#6366F1" />
+                {/* Was falling back to a hardcoded 77 when attendanceRate was
+                    unavailable -- same fabricated-number issue as Onboarding Rate
+                    above. */}
+                {attendanceRate !== null ? (
+                  <Gauge value={Math.round(attendanceRate)} color="#6366F1" />
+                ) : (
+                  <span className="text-xs font-medium text-gray-400">No data</span>
+                )}
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600">BGV Clear Rate</span>
