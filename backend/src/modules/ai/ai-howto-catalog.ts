@@ -91,7 +91,8 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'payslip_download',
     title: 'Download your payslip',
-    aliases: [/\bpayslip\b/i, /\bsalary\s*slip\b/i],
+    // Excludes "bulk payslip" so bulk_payslip_outputs is not shadowed
+    aliases: [/\b(?!(?:bulk|mass|all)\s*)payslip\b/i, /\bmy\s*payslip\b/i, /\bsalary\s*slip\b/i, /\bdownload\b.*\b(?!mass\b|bulk\b|all\b)payslip\b/i],
     steps: [
       '1. Go to Payroll → Payslips.',
       '2. Pick the month you need.',
@@ -141,7 +142,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'attendance_regularization',
     title: 'Request an attendance regularization',
-    aliases: [/\bregulari[sz]/i, /\bfix\b.*\battendance\b/i, /\bcorrect\b.*\b(punch|attendance)\b/i],
+    aliases: [/\bregulari[sz]/i, /\bfix\b.*\battendance\b/i, /\bcorrect\b.*\b(punch|attendance)\b/i, /\bmarked\s*absent\b/i, /\b(wrong|incorrect)\s*punch\b/i, /\battendance\s*(wrong|correct|fix|update)\b/i],
     steps: [
       '1. Go to Attendance Regularization.',
       '2. Pick the date with the missing/incorrect punch.',
@@ -161,7 +162,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
     // in the array than resignation_approve, .find() would shadow it with
     // the wrong entry (verified live by a failing RBAC cross-check test
     // before this fix).
-    aliases: [/\b(submit|raise|file)\b.*\bresign/i],
+    aliases: [/\b(submit|raise|file)\b.*\bresign/i, /\bI\s+(want|need)\s+to\s+resign\b/i, /\bresign\b.*\b(how|where|system)\b/i],
     steps: [
       '1. Go to Exit → My Resignation.',
       '2. Click "Submit Resignation".',
@@ -189,7 +190,8 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'team_roster_view',
     title: "View your team's roster",
-    aliases: [/\broster\b/i, /\bteam\b.*\bschedule\b/i],
+    // Narrow alias — bare /\broster\b/ shadows every other roster entry
+    aliases: [/\bteam\b.*\broster\b/i, /\bteam\b.*\bschedule\b/i],
     steps: [
       '1. Go to My Team.',
       '2. The roster tab shows shifts, week-offs, and holidays for your team.',
@@ -202,7 +204,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'tax_declaration_submit',
     title: 'Submit your tax declaration',
-    aliases: [/\btax\s*declaration\b/i, /\b(80c|hra|section\s*80)\b/i],
+    aliases: [/\btax\s*declaration\b/i, /\b(80c|hra|section\s*80)\b/i, /\bsection\s*80[a-z]?\b/i],
     steps: [
       '1. Go to Payroll → Tax Declaration.',
       '2. Enter your investment declarations and HRA/exemption details.',
@@ -216,7 +218,8 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'lms_access',
     title: 'Access your training',
-    aliases: [/\b(lms|training|course|learning)\b/i],
+    // Excludes coordinator/batch/trainer context so lms_coordinator is not shadowed
+    aliases: [/\bmy\s*(lms|learning|course|training)\b/i, /\baccess\b.*\b(lms|training|learning)\b/i, /\b(lms|training|course)\b.*\b(my|access|view|see|progress)\b/i],
     steps: [
       '1. Go to Learning → My Learning.',
       '2. Your assigned courses, modules and progress are shown there.',
@@ -277,7 +280,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'loan_view_status',
     title: 'Check loan or advance status',
-    aliases: [/\b(check|view|see|track)\b.*\b(loan|advance)\b.*\b(status|balance|outstanding|emi)\b/i, /\bloan\s*(status|balance|emi)\b/i],
+    aliases: [/\b(loan|advance)\b.*\b(status|balance|outstanding|emi)\b/i, /\b(outstanding|balance|emi)\b.*\b(loan|advance)\b/i, /\bloan\s*(status|balance|emi)\b/i],
     steps: [
       '1. Go to Payroll → Loans.',
       '2. Your active loans and EMI schedule are listed there.',
@@ -293,7 +296,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'salary_dispute_raise',
     title: 'Raise a salary dispute',
-    aliases: [/\b(raise|report|flag|dispute)\b.*\b(salary|pay|payroll)\b.*\b(wrong|issue|discrepancy|dispute|error)\b/i, /\bsalary\s*dispute\b/i, /\bwrong\s*salary\b/i, /\bsalary\s*(wrong|incorrect|missing)\b/i],
+    aliases: [/\bsalary\s*dispute\b/i, /\b(salary|pay)\b.*\b(wrong|incorrect|missing|discrepancy|dispute|error|issue)\b/i, /\b(wrong|incorrect|discrepancy)\b.*\b(salary|pay)\b/i, /\b(raise|report|flag)\b.*\b(salary|pay)\b.*\b(dispute|issue|discrepancy)\b/i],
     steps: [
       '1. Go to Payroll → Salary Disputes.',
       '2. Click "Raise New Dispute".',
@@ -310,7 +313,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'incentive_upload',
     title: 'Upload or manage employee incentives',
-    aliases: [/\b(upload|bulk\s*upload|add|enter)\b.*\bincentive\b/i, /\bincentive\b.*\b(upload|bulk|manage|add)\b/i, /\bhow.*incentive.*employee\b/i, /\bbulk.*incentive\b/i],
+    aliases: [/\b(upload|bulk\s*upload|add|enter)\b.*\bincentives?\b/i, /\bincentives?\b.*\b(upload|bulk|manage|add)\b/i, /\bincentives?\b.*\bemployee\b/i, /\bbulk.*incentives?\b/i, /\bincentives?\b/i],
     steps: [
       '1. Go to Payroll → Incentives.',
       '2. Click "Upload Incentives" or "Add Incentive" for individual entries.',
@@ -327,7 +330,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'overtime_manage',
     title: 'Manage or approve overtime',
-    aliases: [/\bovertime\b/i, /\b\bot\b.*\b(approve|manage|upload|entry)\b/i],
+    aliases: [/\bovertime\b/i, /\bot\b.*\b(approve|manage|upload|entry)\b/i, /\b(upload|manage|approve|entry)\b.*\bot\b/i],
     steps: [
       '1. Go to Payroll → Overtime.',
       '2. View pending OT requests from your team or upload OT hours in bulk.',
@@ -359,7 +362,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'full_final',
     title: 'Process full and final settlement',
-    aliases: [/\bfull\s*(and|&)\s*final\b/i, /\bf&f\b/i, /\bfnf\b/i, /\bfinal\s*settlement\b/i, /\bfull\s*final\s*settlement\b/i],
+    aliases: [/\bfull\s*(and|&)\s*final\b/i, /\bf&f\b/i, /\bfnf\b/i, /\bfinal\s*settlement\b/i, /\bfull\s*final\s*settlement\b/i, /\bgratuity\b/i, /\bleave\s*encashment\b/i],
     steps: [
       '1. Go to Payroll → Full & Final.',
       '2. Search for the exiting employee.',
@@ -376,7 +379,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'bulk_upload',
     title: 'Bulk upload employee data',
-    aliases: [/\bbulk\s*(upload|import)\b/i, /\bupload\b.*\b(employee|salary|attendance)\b.*\bbulk\b/i],
+    aliases: [/\bbulk\s*(upload|import)\b/i, /\bupload\b.*\b(employee|salary|attendance)\b.*\bbulk\b/i, /\bupload\b.*\b(?:all|\d+)\b.*\bemployees?\b/i],
     steps: [
       '1. Go to Bulk Upload (from the main menu or Admin section).',
       '2. Select the data type — employees, salary, attendance, incentives, etc.',
@@ -393,7 +396,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'bank_payment_readiness',
     title: 'Check bank account readiness and generate payment file',
-    aliases: [/\bbank\s*(file|readiness|payment)\b/i, /\bneft\b.*\bfile\b/i, /\b(generate|create)\b.*\bpayment\s*file\b/i, /\bdisburs/i],
+    aliases: [/\bbank\s*(file|readiness|payment)\b/i, /\bneft\b.*\bfile\b/i, /\b(generate|create)\b.*\bpayment\s*file\b/i, /\bdisburs/i, /\bbank\s*account\s*readiness\b/i],
     steps: [
       '1. Go to Payroll → Payment Center.',
       '2. The Bank tab shows employee bank account validation status.',
@@ -410,7 +413,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'payroll_readiness',
     title: 'Check payroll readiness status',
-    aliases: [/\bpayroll\s*readiness\b/i, /\b(branch|process)\b.*\breadiness\b/i, /\breadiness\b.*\bpayroll\b/i, /\b(attendance lock|leave finali)\b/i],
+    aliases: [/\bpayroll\s*readiness\b/i, /\b(branch|process)\b.*\breadiness\b/i, /\breadiness\b.*\bpayroll\b/i, /\b(attendance lock|leave finali)\b/i, /\bbranches?\b.*\bready\b.*\bpayroll\b/i, /\bready\b.*\bpayroll\b/i],
     steps: [
       '1. Go to Payroll → Readiness Dashboard.',
       '2. Select Branch or Process view to check attendance lock, leave finalization, and regularization status.',
@@ -426,7 +429,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'statutory_filing',
     title: 'Track PF, ESI, PT or TDS statutory filing',
-    aliases: [/\b(pf|esi|pt|tds)\b.*\b(filing|status|due|compliance)\b/i, /\bstatutory\s*(filing|compliance)\b/i, /\bchallan\b/i],
+    aliases: [/\b(pf|esi|pt|tds)\b.*\b(filing|status|due|compliance)\b/i, /\bstatutory\s*filing\b/i, /\bstatutory\s*compliance\s*status\b/i, /\bchallan\b/i],
     steps: [
       '1. Go to Payroll → Statutory Center.',
       '2. The Filing tab shows PF/ESI/PT/TDS filing status, due dates, and outstanding amounts.',
@@ -459,7 +462,8 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'attendance_view',
     title: 'View your attendance',
-    aliases: [/\b(view|check|see|my)\b.*\battendance\b/i, /\battendance\b.*\b(history|record|log)\b/i],
+    // Deliberately excludes "team" and "live" so team_attendance_view and wfm_live_tracker are not shadowed
+    aliases: [/\b(view|check|see)\b(?!.*\b(team|live|lookup|any|all\s+employee)\b).*\b(my\s+)?attendance\b/i, /\bmy\s+attendance\b/i, /\battendance\b.*\b(history|record|log)\b/i, /\bpunch\s*(in|out|time|history)\b/i],
     steps: [
       '1. Go to Attendance.',
       '2. Your monthly attendance calendar is shown with present, absent, half-day, and leave markers.',
@@ -490,7 +494,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'leave_balance_check',
     title: 'Check your leave balance',
-    aliases: [/\bleave\s*balance\b/i, /\bhow\s*many\s*(days|leave)\b/i, /\b(remaining|available)\s*(leave|days)\b/i],
+    aliases: [/\bleave\s*balance\b/i, /\bhow\s*many\s*(days|leave|cl|el|ml)\b/i, /\b(remaining|available)\s*(leave|days|cl|el|ml)\b/i, /\b(cl|el|ml|lwp)\s*(days|balance|remaining|left)\b/i],
     steps: [
       '1. Go to Leaves.',
       '2. Your leave balance for all leave types (CL, EL, ML, LWP, etc.) is shown at the top of the page.',
@@ -505,7 +509,8 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'roster_manage',
     title: 'View or manage the roster',
-    aliases: [/\b(view|manage|publish|create|edit)\b.*\broster\b/i, /\broster\b.*\b(view|manage|publish)\b/i],
+    // Excludes "my roster" so my_roster_view is not shadowed
+    aliases: [/\b(manage|publish|create|edit)\b.*\broster\b/i, /\broster\b.*\b(manage|publish|create)\b/i, /\b(wfm|team)\b.*\broster\b/i],
     steps: [
       '1. Go to WFM → Roster.',
       '2. Select the branch, process, and week to view or edit shifts.',
@@ -520,7 +525,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'my_roster_view',
     title: 'View my own shift schedule',
-    aliases: [/\bmy\s*roster\b/i, /\bmy\s*(shift|schedule)\b/i, /\b(when|what)\b.*\b(shift|my roster|my schedule)\b/i],
+    aliases: [/\bmy\s*roster\b/i, /\bmy\s*(shift|schedule)\b(?!.*\bpreference\b)/i, /\b(view|see|check)\b.*\bmy\s*(roster|schedule|shift)\b(?!.*\bpreference\b)/i, /\b(when|what)\b.*\b(shift|roster|schedule)\b/i],
     steps: [
       '1. Go to My Roster.',
       '2. Your upcoming shifts, week-offs, and holidays for the month are displayed.',
@@ -547,7 +552,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'wfm_live_tracker',
     title: 'View live attendance and biometric status',
-    aliases: [/\blive\s*(tracker|attendance|biometric)\b/i, /\bbiometric\s*(live|status|command)\b/i, /\bwho\s*is\s*(present|in)\b/i, /\blive\s*status\b/i],
+    aliases: [/\blive\s*(tracker|attendance|biometric|status)\b/i, /\bbiometric\s*(live|status|command)\b/i, /\bwho\s*is\s*(present|in)\b/i, /\breal.?time\s*(attendance|biometric|status)\b/i],
     steps: [
       '1. Go to WFM → Live Tracker.',
       '2. See real-time punch-in/out status by branch and process.',
@@ -577,7 +582,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'job_requisition',
     title: 'Raise a job requisition or hiring demand',
-    aliases: [/\b(raise|create|add)\b.*\b(job\s*requisition|jr|hiring\s*demand|vacancy)\b/i, /\bjob\s*requisition\b/i, /\bhiring\s*demand\b/i],
+    aliases: [/\b(raise|create|add)\b.*\b(job\s*requisition|jr|hiring\s*demand|vacancy)\b/i, /\bjob\s*requisition\b/i, /\bhiring\s*demand\b/i, /\bhire\b.*\bpeople\b/i, /\braise\b.*\brequirement\b/i, /\bopening\b/i],
     steps: [
       '1. Go to Recruitment → Job Requisition.',
       '2. Click "New Requisition".',
@@ -592,7 +597,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'candidate_registration',
     title: 'Register a new candidate for walk-in or interview',
-    aliases: [/\bregister\b.*\bcandidate\b/i, /\bcandidate\s*registration\b/i, /\bwalk.?in\b.*\bregister\b/i],
+    aliases: [/\bregister\b.*\bcandidate\b/i, /\bcandidate\s*registration\b/i, /\bwalk.?in\b.*\bregister\b/i, /\badd\b.*\bcandidate\b/i, /\bnew\s*candidate\b/i],
     steps: [
       '1. Go to ATS → Walk-in Queue.',
       '2. Click "Register Candidate".',
@@ -636,7 +641,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'onboarding_requests',
     title: 'Review onboarding requests for new joiners',
-    aliases: [/\bonboarding\s*request\b/i, /\bnew\s*joiner\b.*\bonboard/i, /\bjoining\s*document\b/i],
+    aliases: [/\bonboarding\s*requests?\b/i, /\bnew\s*joiner\b.*\bonboard/i, /\bjoining\s*documents?\b/i, /\bnew\s*joiner\b.*\bdocuments?\b/i, /\bapprove\b.*\bonboarding\b/i, /\breview\b.*\bonboarding\b/i],
     steps: [
       '1. Go to ATS → Onboarding Requests.',
       '2. See all candidates who have accepted offers and are pending document collection and system activation.',
@@ -666,7 +671,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'employee_profile',
     title: 'View your own profile',
-    aliases: [/\bmy\s*profile\b/i, /\b(view|edit|update)\b.*\b(my\s*)?(profile|personal\s*details)\b/i],
+    aliases: [/\bmy\s*profile\b/i, /\b(view|edit|update)\b.*\b(my\s*)?(profile|personal\s*details)\b/i, /\bbank\s*account\b.*\b(update|change|number)\b/i],
     steps: [
       '1. Click your avatar at the top right and select My Profile, or go to Profile.',
       '2. Update personal details, bank account, emergency contact, and documents from there.',
@@ -679,7 +684,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'org_chart',
     title: 'View the organisation chart',
-    aliases: [/\borg\s*chart\b/i, /\borganisation\s*(chart|tree|structure)\b/i, /\breporting\s*hierarchy\b/i],
+    aliases: [/\borg\s*chart\b/i, /\borganisation\s*(chart|tree|structure)\b/i, /\breporting\s*hierarchy\b/i, /\borganis(?:ation|e)\s*hierarchy\b/i, /\borganiz(?:ation|e)\s*hierarchy\b/i],
     steps: [
       '1. Go to Org Chart.',
       '2. The hierarchy is displayed from CEO down to employees.',
@@ -693,7 +698,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'employee_lifecycle',
     title: 'Manage employee lifecycle — confirmation, promotion, transfer',
-    aliases: [/\b(confirmation|probation|promote|promotion|transfer)\b.*\bemployee\b/i, /\bemployee\s*lifecycle\b/i],
+    aliases: [/\bemployee\s*lifecycle\b/i, /\b(confirm|probation)\b.*\bemployee\b/i, /\bemployee\b.*\b(confirm|probation)\b/i, /\b(promot|transfer)\b.*\bemployee\b/i, /\bemployee\b.*\b(promot|transfer)\b/i, /\bprocess\b.*\bpromotion\b/i, /\bpromotion\b.*\bprocess\b/i],
     steps: [
       '1. Go to Employee Lifecycle.',
       '2. See employees due for confirmation, upcoming promotions, and pending transfers.',
@@ -709,7 +714,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'exit_management',
     title: 'Manage exit requests and resignation approvals',
-    aliases: [/\bexit\s*(management|request|command)\b/i, /\b(manage|view)\b.*\b(resignation|exit)\b.*\b(list|request|all)\b/i],
+    aliases: [/\bexit\s*(management|requests?|command)\b/i, /\b(manage|view|handle)\b.*\b(exit|resignation)\b.*\b(list|requests?|all)\b/i, /\b(all|view)\b.*\b(resignation|exit)\s*(requests?|list)\b/i, /\b(manage|handle)\b.*\bexit\s*requests?\b/i, /\bview\b.*\bresignation\b.*\brequests?\b/i, /\ball\s*resignation\b/i],
     steps: [
       '1. Go to Exit Management.',
       '2. See all exit requests — submitted, under manager review, accepted, notice serving.',
@@ -739,7 +744,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'my_kpi',
     title: 'View my KPI performance',
-    aliases: [/\bmy\s*kpi\b/i, /\bkpi\b.*\b(my|score|performance|target)\b/i],
+    aliases: [/\bmy\s*kpi\b/i, /\bkpi\b.*\b(my|score|performance|target)\b/i, /\bperformance\s*score\b/i, /\bmy\s*score\b/i],
     steps: [
       '1. Go to My KPI.',
       '2. Your daily/weekly/monthly KPI scores and targets are shown.',
@@ -753,7 +758,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'performance_feedback',
     title: 'Submit or view performance feedback / appraisal',
-    aliases: [/\bperformance\s*(feedback|review|appraisal)\b/i, /\b(submit|give|view)\b.*\b(feedback|appraisal)\b/i],
+    aliases: [/\bperformance\s*(feedback|review|appraisal)\b/i, /\b(submit|give|view)\b.*\b(feedback|appraisal)\b/i, /\bmy\s*appraisal\b/i, /\bdo\b.*\bappraisal\b/i],
     steps: [
       '1. Go to Performance → My Reports.',
       '2. Open the active feedback form for the current cycle.',
@@ -783,7 +788,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'quality_dashboard',
     title: 'View the quality dashboard',
-    aliases: [/\bquality\s*(dashboard|score|audit)\b/i, /\bqa\s*(dashboard|score)\b/i],
+    aliases: [/\bquality\s*(dashboard|score|audit)\b/i, /\bqa\s*(dashboard|score|audit)\b/i, /\baudit\s*score\b/i],
     steps: [
       '1. Go to Quality Dashboard.',
       '2. See audit scores by agent, process, and date range.',
@@ -797,7 +802,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'qa_file_audit',
     title: 'Conduct a QA file or call audit',
-    aliases: [/\b(file|call)\s*audit\b/i, /\bconduct\b.*\b(audit|qa)\b/i, /\bqa\s*file\b/i],
+    aliases: [/\b(file|call)\s*audit\b/i, /\bconduct\b.*\b(audit|qa)\b/i, /\bqa\s*file\b/i, /\baudit\b.*\btransaction\b/i],
     steps: [
       '1. Go to Quality → File Audit.',
       '2. Select the agent and the call/file to audit.',
@@ -813,7 +818,8 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'call_master',
     title: 'View Call Master or operations performance data',
-    aliases: [/\bcall\s*master\b/i, /\b(inbound|outbound)\s*(call|report|data)\b/i, /\boperations\s*(dashboard|data|performance|report)\b/i],
+    // Excludes "operations dashboard" phrase to avoid shadowing operations_dashboard entry
+    aliases: [/\bcall\s*master\b/i, /\b(inbound|outbound)\s*(call|report|data)\b/i, /\boperations\s*(data|performance\s*data|call\s*data|report)\b/i],
     steps: [
       '1. Go to Call Master.',
       '2. See real-time and historical call data by process, campaign, and agent.',
@@ -843,7 +849,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'branch_budget',
     title: 'View or manage branch budget',
-    aliases: [/\bbranch\s*budget\b/i, /\bbudget\b.*\b(branch|monthly|annual)\b/i, /\bopex\b/i],
+    aliases: [/\bbranch\s*budget\b/i, /\bbudget\b.*\b(branch|monthly|annual)\b/i, /\bopex\b/i, /\bmonthly\s*budget\b/i, /\bbudget\s*vs\s*actual\b/i],
     steps: [
       '1. Go to Finance → Branch Budget.',
       '2. Select the branch and month to view actual vs budgeted spend.',
@@ -857,7 +863,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'vendor_management',
     title: 'Manage vendors',
-    aliases: [/\bvendor\b.*\b(manage|add|list|view|onboard)\b/i, /\b(add|create|view|onboard)\b.*\bvendor\b/i],
+    aliases: [/\bvendor\b.*\b(manage|add|list|view|onboard)\b/i, /\b(add|create|view|onboard)\b.*\bvendor\b/i, /\bvendor\s*management\b/i],
     steps: [
       '1. Go to Vendors.',
       '2. View the vendor directory or click "Add Vendor" to onboard a new vendor.',
@@ -901,7 +907,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'assets_view',
     title: 'View or manage company assets',
-    aliases: [/\b(view|manage|check)\b.*\basset\b/i, /\basset\b.*\b(list|assigned|return)\b/i, /\bmy\s*assets\b/i, /\blaptop|headset|id\s*card\b/i],
+    aliases: [/\b(view|manage|check|see)\b.*\bassets?\b/i, /\bassets?\b.*\b(list|assigned|return)\b/i, /\bmy\s*assets\b/i, /\blaptop|headset|id\s*card\b/i, /\bassets?\b.*\bemployee\b/i],
     steps: [
       '1. Go to Assets Manager.',
       '2. See all assets assigned to you or your team.',
@@ -915,7 +921,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'letters_generate',
     title: 'Generate or view official HR letters',
-    aliases: [/\b(generate|create|view|issue)\b.*\bletter\b/i, /\bappointment\s*letter\b/i, /\bexperience\s*letter\b/i, /\bincrement\s*letter\b/i],
+    aliases: [/\b(generate|create|view|issue)\b.*\bletter\b/i, /\bappointment\s*letter\b/i, /\bexperience\s*letter\b/i, /\bincrement\s*letter\b/i, /\bletter\s*generation\b/i, /\bgeneration\b.*\bletter\b/i],
     steps: [
       '1. Go to Letters.',
       '2. Select the letter type (appointment, increment, experience, warning, etc.).',
@@ -945,7 +951,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'access_control',
     title: 'Manage user roles and page access',
-    aliases: [/\b(role|access|permission)\b.*\b(manage|assign|change|control)\b/i, /\b(grant|revoke)\b.*\baccess\b/i, /\baccess\s*control\b/i, /\buser\s*role\b/i],
+    aliases: [/\b(role|access|permission)\b.*\b(manage|assign|change|control)\b/i, /\b(grant|revoke)\b.*\baccess\b/i, /\baccess\s*control\b/i, /\buser\s*roles?\b/i, /\b(manage|assign|change)\b.*\b(roles?|access(?:es)?|permissions?)\b/i],
     steps: [
       '1. Go to Settings → Access Control.',
       '2. Search for a user and assign or remove roles.',
@@ -959,7 +965,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'org_masters',
     title: 'Manage organisation masters — branches, processes, designations',
-    aliases: [/\borg\s*master\b/i, /\b(branch|process|designation|department)\b.*\b(master|config|add|create)\b/i, /\badd\s*(new\s*)?(branch|process|designation)\b/i],
+    aliases: [/\borg\s*master\b/i, /\b(branch|designation|department)\b.*\b(master|config|add|create)\b/i, /\badd\s*(new\s*)?(branch|designation)\b/i, /\bnew\s+branch\b/i, /\bnew\s+designation\b/i, /\b(add|create)\b.*\b(branch|department|designation)\b/i],
     steps: [
       '1. Go to Org Masters.',
       '2. Navigate to the relevant section: Branch, Process, Designation, Department, etc.',
@@ -973,7 +979,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'integration_hub',
     title: 'Manage integrations and data sync',
-    aliases: [/\bintegration\s*hub\b/i, /\b(sync|connect|integration)\b.*\b(biometric|source|external)\b/i, /\bbiometric\s*sync\b/i],
+    aliases: [/\bintegration\s*hub\b/i, /\b(sync|connect|integration)\b.*\b(biometric|source|external)\b/i, /\bbiometric\s*sync\b/i, /\bmanage\s*integrations?\b/i, /\bintegration\b.*\b(manage|trigger|check|error)\b/i],
     steps: [
       '1. Go to Integration Hub.',
       '2. See all connected systems (biometric, Call Master, LMS, etc.).',
@@ -1003,7 +1009,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'work_inbox',
     title: 'View all pending approvals and tasks',
-    aliases: [/\bwork\s*inbox\b/i, /\bpending\s*(approval|task|action)\b/i, /\bmy\s*(tasks|approvals|inbox|pending)\b/i, /\bwhat\s*(is|are)\s*(pending|waiting)\b/i],
+    aliases: [/\bwork\s*inbox\b/i, /\bpending\s*(approval|task|action)\b/i, /\bmy\s*(tasks|approvals|inbox|pending)\b/i, /\bwhat\s*(is|are)\s*(pending|waiting)\b/i, /\btasks?\b.*\bpending\b.*\b(action|me)\b/i],
     steps: [
       '1. Go to Work Inbox.',
       '2. All items pending your action are listed — leaves, regularizations, exits, reimbursements, etc.',
@@ -1019,7 +1025,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'lms_coordinator',
     title: 'Manage training batches as LMS coordinator',
-    aliases: [/\b(lms|training)\b.*\b(coordinator|manage\s*batch|batch\s*manage)\b/i, /\bcoordinator\b.*\b(training|lms)\b/i, /\bbatch\s*(manage|training)\b/i],
+    aliases: [/\b(lms|training)\b.*\b(coordinator|manage\s*batch|batch\s*manage)\b/i, /\bcoordinator\b.*\b(training|lms)\b/i, /\bbatch\s*(manage|training)\b/i, /\bmanage\s*training\s*batch\b/i, /\btraining\s*batch\b/i, /\blearner\s*progress\b.*\btrainer\b/i],
     steps: [
       '1. Go to Learning → Coordinator.',
       '2. See your assigned training batches, learner progress, and MCQ scores.',
@@ -1035,7 +1041,8 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'reports_center',
     title: 'Access reports and download data',
-    aliases: [/\b(reports?|reporting)\s*(center|section|page)?\b/i, /\b(download|export)\b.*\b(report|data)\b/i, /\bhr\s*reports?\b/i, /\bpayroll\s*report\b/i],
+    // Narrow enough to not shadow "direct reports", "EPF compliance report", "my team", etc.
+    aliases: [/\breports?\s*(center|section|page)\b/i, /\breporting\s*center\b/i, /\b(download|export)\b.*\b(report|data)\b.*\b(hrms|from|center)\b/i, /\bhr\s*reports?\b/i, /\bpayroll\s*reports?\b/i, /\battendance\s*reports?\b/i, /\b(download|export|get)\b.*\b(hr|payroll|attendance)\s*reports?\b/i],
     steps: [
       '1. Go to Reports.',
       '2. Browse by category — Payroll, Attendance, Leave, Employee, etc.',
@@ -1045,5 +1052,533 @@ export const HOWTO_CATALOG: HowToEntry[] = [
     auth: { mode: 'page_code', pageCode: 'REPORTS_CENTER' },
     status: 'verified',
     deniedExplanation: 'Your role does not have access to the Reports Center.',
+  },
+
+  // ─── DASHBOARDS ──────────────────────────────────────────────────────────────
+  {
+    code: 'ceo_dashboard',
+    title: 'View CEO dashboard',
+    aliases: [/\bceo\s*dashboard\b/i, /\bexecutive\s*dashboard\b/i, /\bmanagement\s*overview\b/i],
+    steps: ['1. Go to CEO → Dashboard.', '2. See org-wide KPIs — headcount, attrition, payroll cost, quality, and operations summary.'],
+    route: '/ceo/dashboard',
+    auth: { mode: 'page_code', pageCode: 'CEO_DASHBOARD' },
+    status: 'verified',
+    deniedExplanation: 'The CEO Dashboard is restricted to CEO and senior leadership roles.',
+  },
+  {
+    code: 'hr_dashboard',
+    title: 'View HR dashboard',
+    aliases: [/\bhr\s*dashboard\b/i, /\bhuman\s*resource\s*dashboard\b/i],
+    steps: ['1. Go to HR → Dashboard.', '2. See headcount, attrition, pending approvals, leave summary, and onboarding pipeline.'],
+    route: '/hr/dashboard',
+    auth: { mode: 'page_code', pageCode: 'HR_DASHBOARD' },
+    status: 'verified',
+    deniedExplanation: 'The HR Dashboard is restricted to HR roles.',
+  },
+  {
+    code: 'manager_dashboard',
+    title: 'View manager dashboard',
+    aliases: [/\bmanager\s*dashboard\b/i, /\bteam\s*dashboard\b/i, /\bmanagement\s*dashboard\b/i],
+    steps: ['1. Go to Manager → Dashboard.', '2. See your team\'s attendance, leave, KPI performance, and pending actions.'],
+    route: '/manager/dashboard',
+    auth: { mode: 'page_code', pageCode: 'MANAGEMENT_DASHBOARD' },
+    status: 'verified',
+    deniedExplanation: 'The Manager Dashboard is only available to managers and branch heads.',
+  },
+  {
+    code: 'wfm_dashboard',
+    title: 'View WFM dashboard',
+    aliases: [/\bwfm\s*dashboard\b/i, /\bworkforce\s*management\s*dashboard\b/i],
+    steps: ['1. Go to WFM → Dashboard.', '2. See real-time shrinkage, adherence, roster coverage, and attendance metrics.'],
+    route: '/wfm/dashboard',
+    auth: { mode: 'page_code', pageCode: 'WFM_DASHBOARD' },
+    status: 'verified',
+    deniedExplanation: 'The WFM Dashboard is restricted to WFM roles.',
+  },
+  {
+    code: 'employee_self_dashboard',
+    title: 'View my personal dashboard',
+    aliases: [/\bmy\s*dashboard\b/i, /\bself\s*dashboard\b/i, /\bhome\s*dashboard\b/i, /\bemployee\s*dashboard\b/i, /\bpersonal\s*dashboard\b/i],
+    steps: ['1. Go to My Dashboard.', '2. See your attendance summary, leave balance, payslip, KPI, and pending tasks in one view.'],
+    route: '/my-dashboard',
+    auth: { mode: 'page_code', pageCode: 'EMPLOYEE_SELF_DASHBOARD' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to the Employee Self Dashboard.',
+  },
+  {
+    code: 'operations_dashboard',
+    title: 'View operations dashboard',
+    aliases: [/\boperations\s*dashboard\b/i, /\bops\s*dashboard\b/i],
+    steps: ['1. Go to Operations Dashboard.', '2. See real-time call metrics, SLA adherence, shrinkage, and process-wise performance.'],
+    route: '/operations-dashboard',
+    auth: { mode: 'page_code', pageCode: 'OPERATIONS_DASHBOARD' },
+    status: 'verified',
+    deniedExplanation: 'The Operations Dashboard is restricted to Operations Managers, Process Managers, and above.',
+  },
+  {
+    code: 'recruiter_dashboard',
+    title: 'View recruiter dashboard',
+    aliases: [/\brecruiter\s*dashboard\b/i, /\bhiring\s*dashboard\b/i, /\brecruitment\s*metrics\b/i],
+    steps: ['1. Go to ATS → Recruiter Dashboard.', '2. See your daily targets, sourcing numbers, walk-ins, offers, and joiners.'],
+    route: '/recruiter-dashboard',
+    auth: { mode: 'page_code', pageCode: 'RECRUITER_DASHBOARD' },
+    status: 'verified',
+    deniedExplanation: 'The Recruiter Dashboard is restricted to Recruiters and Recruitment HR.',
+  },
+  {
+    code: 'payroll_hr_dashboard',
+    title: 'View payroll HR dashboard',
+    aliases: [/\bpayroll\s*hr\s*dashboard\b/i, /\bpayroll\s*dashboard\b/i],
+    steps: ['1. Go to Payroll HR → Dashboard.', '2. See payroll processing status, pending validations, UAN queue, and statutory dues.'],
+    route: '/payroll-hr/dashboard',
+    auth: { mode: 'page_code', pageCode: 'PAYROLL_HR_DASHBOARD' },
+    status: 'verified',
+    deniedExplanation: 'The Payroll HR Dashboard is restricted to Payroll HR roles.',
+  },
+
+  // ─── COMPLIANCE ───────────────────────────────────────────────────────────────
+  {
+    code: 'statutory_compliance',
+    title: 'View statutory compliance status',
+    aliases: [/\bstatutory\s*compliance\b/i, /\bcompliance\s*(status|check|overview)\b/i, /\b(pf|esic|pt|tds)\s*compliance\b/i],
+    steps: ['1. Go to Compliance → Statutory.', '2. See filing status, due dates, and compliance health for PF, ESI, PT, TDS.'],
+    route: '/compliance/statutory',
+    auth: { mode: 'page_code', pageCode: 'STATUTORY_COMPLIANCE' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Statutory Compliance.',
+  },
+  {
+    code: 'labour_compliance',
+    title: 'View labour law compliance',
+    aliases: [/\blabour\b.*\bcompliance\b/i, /\blabor\b.*\bcompliance\b/i, /\blabor\s*(law|compliance)\b/i, /\bshops?\s*(and|&)\s*establishment\b/i],
+    steps: ['1. Go to Compliance → Labour.', '2. Track Shops & Establishment, Factories Act, and other labour law obligations.'],
+    route: '/compliance/labour',
+    auth: { mode: 'page_code', pageCode: 'LABOUR_COMPLIANCE' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Labour Compliance.',
+  },
+  {
+    code: 'dpdp_compliance',
+    title: 'Manage DPDP (data privacy) compliance',
+    aliases: [/\bdpdp\b/i, /\bdata\s*(privacy|protection)\s*compliance\b/i, /\bconsent\s*management\b/i],
+    steps: ['1. Go to Compliance → DPDP.', '2. View consent records, data access requests, and privacy obligation status.'],
+    route: '/compliance/dpdp',
+    auth: { mode: 'page_code', pageCode: 'DPDP_COMPLIANCE' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to DPDP Compliance.',
+  },
+  {
+    code: 'it_provisioning',
+    title: 'Track IT provisioning for new joiners or exits',
+    aliases: [/\bit\s*provisioning\b/i, /\bprovisioning\s*(tracker|status)\b/i, /\b(email|system|access)\s*(setup|provision|create)\b.*\b(new\s*joiner|employee)\b/i, /\bset\s*up\s*(email|access)\b.*\b(new\s*joiner|employee)\b/i, /\bprovisioning\b.*\b(onboard|setup|access|new)\b/i, /\b(track|check)\s*provisioning\b/i, /\bit\s*access\s*(?:setup|tracker)\b/i],
+    steps: ['1. Go to IT Provisioning Tracker.', '2. See all pending provisioning tasks — email ID, system access, biometric, SIM.', '3. Mark tasks as completed when done.'],
+    route: '/it-provisioning',
+    auth: { mode: 'page_code', pageCode: 'IT_PROVISIONING_TRACKER' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to the IT Provisioning Tracker.',
+  },
+
+  // ─── PAYROLL — REMAINING PAGES ───────────────────────────────────────────────
+  {
+    code: 'holiday_work_request',
+    title: 'Request compensation for working on a holiday',
+    aliases: [/\bholiday\s*work\b/i, /\bwork(ed)?\s*on\s*(a\s*)?holiday\b/i, /\bcomp\s*off\b/i, /\bcompensatory\s*off\b/i],
+    steps: [
+      '1. Go to Payroll → Holiday Work.',
+      '2. Click "Submit Holiday Work Request".',
+      '3. Select the holiday date and hours worked.',
+      '4. Submit — your manager/WFM will approve the comp-off or OT.',
+    ],
+    route: '/payroll/holiday-work',
+    auth: { mode: 'static_roles', roles: ['super_admin', 'admin', 'wfm', 'payroll_head', 'payroll_branch'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/holiday-work)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Holiday Work management.',
+  },
+  {
+    code: 'holiday_master',
+    title: 'Define or manage the holiday calendar',
+    aliases: [/\bholiday\s*(master|calendar|list|add)\b/i, /\b(add|create|define)\b.*\bholiday\b/i, /\bnational\s*holidays?\b/i, /\bdefine\b.*\bholiday\b/i],
+    steps: [
+      '1. Go to Payroll → Holiday Master.',
+      '2. Select the year and branch.',
+      '3. Add or remove holidays — national, regional, and company-specific.',
+    ],
+    route: '/payroll/holiday-master',
+    auth: { mode: 'static_roles', roles: ['super_admin', 'admin', 'payroll_head', 'payroll_branch'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/holiday-master)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Holiday Master. This is for Payroll and Admin.',
+  },
+  {
+    code: 'payroll_sign_off',
+    title: 'Sign off and finalise payroll for the month',
+    aliases: [/\bpayroll\s*sign.?off\b/i, /\bsign.?off\s*payroll\b/i, /\bfinalise\s*payroll\b/i, /\bfinalize\s*payroll\b/i, /\bapprove\s*payroll\b/i, /\block\s*payroll\b/i],
+    steps: [
+      '1. Go to Payroll → Sign Off.',
+      '2. Review the payroll summary — headcount, gross, deductions, net pay.',
+      '3. Click "Sign Off" to lock payroll for the month and release for disbursal.',
+    ],
+    route: '/payroll/sign-off',
+    auth: { mode: 'static_roles', roles: ['super_admin', 'payroll_head', 'finance', 'ceo', 'admin'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/sign-off)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Payroll Sign-Off. This is for Payroll Head, Finance Head, CEO, and Admin.',
+  },
+  {
+    code: 'tds_form16',
+    title: 'Download Form 16 / TDS certificate',
+    aliases: [/\bform\s*16\b/i, /\btds\s*certificate\b/i, /\bincome\s*tax\s*certificate\b/i, /\btds\s*part\s*a\b/i],
+    steps: [
+      '1. Go to Payroll → TDS Certificate Part A.',
+      '2. Select the financial year and employee.',
+      '3. Generate and download Form 16 Part A.',
+    ],
+    route: '/payroll/tds-certificate-part-a',
+    auth: { mode: 'static_roles', roles: ['super_admin', 'admin', 'payroll_head', 'payroll', 'payroll_hr', 'finance'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/tds-certificate-part-a)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to TDS Certificate / Form 16. This is for Payroll and Finance teams.',
+  },
+  {
+    code: 'epf_compliance',
+    title: 'Check EPF/PF UAN and compliance status',
+    aliases: [/\b(epf|pf)\s*(compliance|uan|kyc)\b/i, /\buan\s*(status|kyc|missing|pending)\b/i, /\b(pf|epf)\s*contribution\b/i],
+    steps: [
+      '1. Go to Payroll → EPF Compliance.',
+      '2. See UAN status, KYC pending employees, and contribution history.',
+      '3. Use PF Management for ECR file generation and EPFO batch submission.',
+    ],
+    route: '/payroll/epf-compliance',
+    auth: { mode: 'static_roles', roles: ['admin', 'super_admin', 'payroll_hr', 'payroll', 'hr', 'manager'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/epf-compliance)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to EPF Compliance.',
+  },
+  {
+    code: 'pf_management',
+    title: 'Manage PF batches and ECR file generation',
+    aliases: [/\bpf\s*(management|batch|ecr)\b/i, /\becr\s*(file|generate|download)\b/i, /\bepfo\s*submission\b/i, /\bepfo\b/i],
+    steps: [
+      '1. Go to Payroll → PF Management.',
+      '2. Use the Queue tab for UAN creation requests.',
+      '3. Use the Batches tab to generate and download the ECR file for EPFO submission.',
+    ],
+    route: '/payroll/pf-management',
+    auth: { mode: 'static_roles', roles: ['admin', 'super_admin', 'payroll_hr', 'payroll'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/pf-management)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to PF Management.',
+  },
+  {
+    code: 'noc_salary_hold',
+    title: 'Request or manage salary NOC or salary hold',
+    aliases: [/\bnoc\b/i, /\bno\s*objection\s*certificate\b/i, /\bsalary\s*hold\b/i, /\bhold\s*salary\b/i, /\bhold\b.*\bsalary\b/i, /\bsalary\b.*\bhold\b/i],
+    steps: [
+      '1. Go to Payroll → NOC.',
+      '2. Search for the employee and select Hold or Release.',
+      '3. Enter the reason and confirm — salary will be blocked or released for the next payroll run.',
+    ],
+    route: '/payroll/noc',
+    auth: { mode: 'static_roles', roles: ['super_admin', 'payroll_head', 'payroll_branch', 'payroll', 'admin'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/noc)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to NOC / Salary Hold management.',
+  },
+  {
+    code: 'payroll_audit_trail',
+    title: 'View payroll audit trail and change history',
+    aliases: [/\bpayroll\s*audit\b/i, /\bpayroll\s*(change|history|log)\b/i, /\bwho\s*changed\b.*\bpayroll\b/i, /\bwho\s*changed\b.*\b(salary|component)\b/i],
+    steps: [
+      '1. Go to Payroll → Audit Trail.',
+      '2. Filter by employee, date, or change type.',
+      '3. See a full log of every salary change, component edit, and approval with timestamps.',
+    ],
+    route: '/payroll/audit-trail',
+    auth: { mode: 'static_roles', roles: ['super_admin', 'payroll_head', 'finance', 'admin'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/audit-trail)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to the Payroll Audit Trail.',
+  },
+  {
+    code: 'bulk_payslip_outputs',
+    title: 'Generate bulk payslips or bank files',
+    aliases: [/\bbulk\s*(payslips?|outputs?)\b/i, /\b(generate|download)\b.*\b(all|bulk)\s*payslips?\b/i, /\bmass\s*payslips?\b/i, /\ball\s*payslips?\b/i, /\bgenerate\b.*\bpayslips?\b/i],
+    steps: [
+      '1. Go to Payroll → Bulk Outputs.',
+      '2. Select the month and output type (payslips PDF, bank file, statutory report).',
+      '3. Click Generate — a ZIP file will be prepared for download.',
+    ],
+    route: '/payroll/bulk-outputs',
+    auth: { mode: 'static_roles', roles: ['super_admin', 'payroll_head', 'admin'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/bulk-outputs)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Bulk Outputs.',
+  },
+  {
+    code: 'salary_review_queue',
+    title: 'Review pending salary changes in the approval queue',
+    aliases: [/\bsalary\s*review\s*(queue|approval)\b/i, /\bpending\s*salary\s*(change|revision|review)\b/i, /\bsalary\s*revision\s*approval\b/i, /\bsalary\s*changes?\b.*\breview\b/i, /\breview\b.*\bsalary\s*changes?\b/i, /\bpending\s*salary\b/i],
+    steps: [
+      '1. Go to Payroll → Salary Review.',
+      '2. See all pending salary change requests across employees.',
+      '3. Click an employee to view the proposed change and approve or reject.',
+    ],
+    route: '/payroll/salary-review',
+    auth: { mode: 'static_roles', roles: ['super_admin', 'payroll_head', 'admin'], citation: 'src/config/routes/payroll.routes.tsx (ProtectedRoute roles on /payroll/salary-review)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to the Salary Review queue. This is for Payroll Head and Admin.',
+  },
+
+  // ─── ATTENDANCE — REMAINING ───────────────────────────────────────────────────
+  {
+    code: 'team_attendance_view',
+    title: 'View team attendance summary',
+    aliases: [/\bteam\s*attendance\b/i, /\b(my\s*team|team\s*member)\b.*\battendance\b/i, /\battendance\b.*\bteam\b/i, /\bview\b.*\bteam\b.*\battendance\b/i, /\bteam\b.*\battendance\b.*\b(month|summary|view)\b/i],
+    steps: [
+      '1. Go to WFM → Team Attendance.',
+      '2. See a monthly grid of all your team members — present, absent, leave, half-day.',
+      '3. Filter by branch or process to narrow results.',
+    ],
+    route: '/wfm/team-attendance',
+    auth: { mode: 'page_code', pageCode: 'TEAM_ATTENDANCE' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Team Attendance. This is for Managers, WFM, and HR.',
+  },
+  {
+    code: 'attendance_lookup_admin',
+    title: 'Look up any employee\'s attendance (HR/Admin)',
+    aliases: [/\b(hr|admin)\b.*\battendance\s*(lookup|view|check)\b/i, /\battendance\s*lookup\b/i, /\bcheck\s*attendance\s*of\b/i, /\bcheck\b.*\battendance\b.*\b(of|for)\b.*\bemployees?\b/i, /\battendance\b.*\b(any|all)\b.*\bemployees?\b/i],
+    steps: [
+      '1. Go to HR → Attendance Lookup.',
+      '2. Search for any employee by name or code.',
+      '3. View their full attendance history with punch details.',
+    ],
+    route: '/hr/attendance-lookup',
+    auth: { mode: 'page_code', pageCode: 'ATTENDANCE_LOOKUP' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to HR Attendance Lookup.',
+  },
+
+  // ─── LEAVE — REMAINING ────────────────────────────────────────────────────────
+  {
+    code: 'maternity_leave',
+    title: 'Apply for or manage maternity leave',
+    aliases: [/\bmaternity\s*leave\b/i, /\bmaternity\b/i, /\bpaternity\s*leave\b/i],
+    steps: [
+      '1. Go to Maternity Leave.',
+      '2. Click "Apply for Maternity Leave".',
+      '3. Enter the expected delivery date and leave duration.',
+      '4. Upload required documents and submit.',
+    ],
+    route: '/maternity-leave',
+    auth: { mode: 'static_roles', roles: ['super_admin', 'admin', 'hr'], citation: 'src/config/routes/workforce.routes.tsx (ProtectedRoute roles on /maternity-leave)' },
+    status: 'verified',
+    deniedExplanation: 'Maternity leave administration is handled by HR or Admin. Employees should contact HR directly.',
+  },
+
+  // ─── WFM — REMAINING ─────────────────────────────────────────────────────────
+  {
+    code: 'week_off_preference',
+    title: 'Submit week-off preferences',
+    aliases: [/\bweek.?off\s*preference\b/i, /\bpreferred\s*week.?off\b/i, /\b(change|request)\b.*\bweek.?off\b/i],
+    steps: [
+      '1. Go to Week-Off Preferences.',
+      '2. Select your preferred weekly off day(s).',
+      '3. Submit — WFM will try to accommodate in the next roster cycle.',
+    ],
+    route: '/week-off-preferences',
+    auth: { mode: 'static_roles', roles: [], citation: 'src/config/routes/workforce.routes.tsx (ProtectedRoute with no roles on /week-off-preferences — any employee)' },
+    status: 'verified',
+    deniedExplanation: 'Every employee can submit week-off preferences.',
+  },
+  {
+    code: 'rta_board',
+    title: 'View Real-Time Adherence (RTA) board',
+    aliases: [/\brta\b/i, /\breal.?time\s*adherence\b/i, /\badherence\s*board\b/i, /\bnon.?adherent\b/i, /\badherence\b.*\b(agent|board|live)\b/i],
+    steps: [
+      '1. Go to RTA Board.',
+      '2. See live agent adherence — on-call, break, idle, non-adherent.',
+      '3. Filter by process or team to identify adherence issues.',
+    ],
+    route: '/rta-board',
+    auth: { mode: 'page_code', pageCode: 'RTA_BOARD' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to the RTA Board.',
+  },
+
+  // ─── EMPLOYEE MANAGEMENT — REMAINING ─────────────────────────────────────────
+  {
+    code: 'my_team',
+    title: 'View and manage my team',
+    aliases: [/\bmy\s*team\b/i, /\b(view|manage|see)\b.*\b(my\s*)?(direct\s*reports|reportees?|subordinates?)\b/i, /\bteam\s*members?\b/i],
+    steps: [
+      '1. Go to My Team.',
+      '2. See your direct reports with attendance, leave, KPI, and roster at a glance.',
+      '3. Take quick actions — approve leave, view profile, message.',
+    ],
+    route: '/my-team',
+    auth: { mode: 'static_roles', roles: ['super_admin', 'manager', 'process_manager', 'tl', 'team_leader', 'assistant_manager', 'branch_head', 'admin', 'hr'], citation: 'src/config/routes/people.routes.tsx (ProtectedRoute roles on /my-team)' },
+    status: 'verified',
+    deniedExplanation: 'My Team is available to Managers, Team Leaders, Branch Heads, HR, and Admins.',
+  },
+  {
+    code: 'salary_increment',
+    title: 'Process a salary increment for an employee',
+    aliases: [/\bsalary\s*increment\b/i, /\bincrement\b/i, /\b(hike|raise|revision)\b.*\bsalary\b/i, /\bsalary\s*(hike|raise|revision)\b/i, /\bincrease\b.*\bsalary\b/i, /\bsalary\b.*\bincrease\b/i],
+    steps: [
+      '1. Go to Salary Increment.',
+      '2. Search for the employee.',
+      '3. Enter the new CTC or percentage hike and effective date.',
+      '4. Submit for Payroll Head approval.',
+    ],
+    route: '/salary-increment',
+    auth: { mode: 'page_code', pageCode: 'SALARY_INCREMENT' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to process Salary Increments.',
+  },
+
+  // ─── PERFORMANCE / PEOPLE EXPERIENCE ─────────────────────────────────────────
+  {
+    code: 'people_experience',
+    title: 'View people experience and engagement data',
+    aliases: [/\bpeople\s*experience\b/i, /\bengagement\b.*\b(command|center|dashboard)\b/i, /\bpulse\s*(survey|score)\b/i, /\bemployee\s*sentiment\b/i, /\bengagement\s*score\b/i, /\bemployee\s*engagement\b/i],
+    steps: [
+      '1. Go to People Experience → Command Center.',
+      '2. See engagement scores, pulse survey results, and attrition risk by team and branch.',
+      '3. Drill down by department or manager to identify at-risk groups.',
+    ],
+    route: '/people-experience/command-center',
+    auth: { mode: 'static_roles', roles: ['admin', 'hr', 'ceo', 'coo', 'manager', 'process_manager', 'team_leader', 'tl', 'branch_head', 'employee'], citation: 'src/config/routes/people.routes.tsx (ProtectedRoute roles on /people-experience/command-center)' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to People Experience Command Center.',
+  },
+  {
+    code: 'career_planning',
+    title: 'View career path and plan growth',
+    aliases: [/\bcareer\s*(planning|path|growth|roadmap)\b/i, /\b(plan|view)\b.*\bcareer\b/i],
+    steps: [
+      '1. Go to Career Planning.',
+      '2. See your current position, possible next roles, and skill gaps.',
+      '3. Use the development plan section to set learning goals.',
+    ],
+    route: '/career-planning',
+    auth: { mode: 'page_code', pageCode: 'CAREER_PLANNING' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Career Planning.',
+  },
+
+  // ─── GOVERNANCE / OPERATIONS ──────────────────────────────────────────────────
+  {
+    code: 'tat_dashboard',
+    title: 'View TAT or SLA compliance dashboard',
+    aliases: [/\btat\b/i, /\bturnaround\s*time\b/i, /\bsla\s*(compliance|dashboard|status)\b/i, /\bsla\s*breach\b/i, /\btat\s*report\b/i],
+    steps: [
+      '1. Go to Governance → TAT Dashboard.',
+      '2. See SLA adherence by process, breach counts, and TAT trends.',
+    ],
+    route: '/governance/tat-dashboard',
+    auth: { mode: 'page_code', pageCode: 'TAT_DASHBOARD' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to the TAT Dashboard.',
+  },
+  {
+    code: 'ats_recruiter_workspace',
+    title: 'Open ATS recruiter workspace / my candidate queue',
+    aliases: [/\brecruiter\s*workspace\b/i, /\bmy\s*candidates?\b/i, /\bcalling\s*(entry|queue)\b/i, /\bhiring\s*entry\b/i, /\bdaily\s*candidate\s*queue\b/i, /\bcalling\s*queue\b/i],
+    steps: [
+      '1. Go to ATS → Recruiter Workspace.',
+      '2. See your assigned candidates for today — to call, to screen, to schedule.',
+      '3. Update candidate status after each interaction.',
+    ],
+    route: '/ats/recruiter/workspace',
+    auth: { mode: 'page_code', pageCode: 'ATS_RECRUITER_WORKSPACE' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to the Recruiter Workspace.',
+  },
+
+  // ─── ADMIN / PLATFORM — REMAINING ────────────────────────────────────────────
+  {
+    code: 'workflow_admin',
+    title: 'Configure approval workflows',
+    aliases: [/\bworkflow\b.*\b(config|admin|setup|manage)\b/i, /\b(approval\s*workflow|configure\s*workflow)\b/i, /\bconfigure\b.*\bapproval\b/i, /\bapproval\s*(chain|flow|setup)\b/i, /\bmanage\b.*\bapproval\s*workflow\b/i],
+    steps: [
+      '1. Go to Workflow Admin.',
+      '2. Select the module (leave, exit, reimbursement, etc.).',
+      '3. Define the approval chain, escalation rules, and SLA.',
+    ],
+    route: '/workflow-admin',
+    auth: { mode: 'page_code', pageCode: 'WORKFLOW_ADMIN' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Workflow Admin.',
+  },
+  {
+    code: 'company_calendar',
+    title: 'View company calendar and events',
+    aliases: [/\bcompany\s*calendar\b/i, /\b(events?|holiday)\s*calendar\b/i, /\bcalendar\b/i, /\bcompany\s*events?\b/i, /\bholiday\s*list\b/i, /\bevents?\s*(?:and\s*)?holiday/i],
+    steps: [
+      '1. Go to Calendar.',
+      '2. See all company events, holidays, payroll dates, and important deadlines.',
+    ],
+    route: '/calendar',
+    auth: { mode: 'static_roles', roles: [], citation: 'src/config/routes/platform.routes.tsx (ProtectedRoute with no roles on /calendar — any employee)' },
+    status: 'verified',
+    deniedExplanation: 'Every employee can view the company calendar.',
+  },
+  {
+    code: 'benefits_claims',
+    title: 'View or claim employee benefits',
+    aliases: [/\b(employee\s*)?benefits?\b/i, /\b(claim|view|apply)\b.*\bbenefit\b/i, /\binsurance\s*(claim|benefit)\b/i],
+    steps: [
+      '1. Go to Benefits.',
+      '2. See your eligible benefits (insurance, wellness, meal allowance, etc.).',
+      '3. Click Claim to submit a benefit claim with supporting documents.',
+    ],
+    route: '/benefits',
+    auth: { mode: 'page_code', pageCode: 'BENEFITS' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to the Benefits page.',
+  },
+  {
+    code: 'grievance_command_center',
+    title: 'View or handle employee grievances',
+    aliases: [/\bgrievances?\b/i, /\bcomplaint\s*(management|center|handle)\b/i, /\bhr\s*grievance\b/i, /\b(handle|view|manage)\b.*\b(grievance|complaint)\b/i, /\b(grievance|complaint)\b.*\b(center|manage|handle|view)\b/i],
+    steps: [
+      '1. Go to Support → Grievance Command Center.',
+      '2. See all open grievances by category, severity, and SLA.',
+      '3. Assign, respond, or escalate grievances from here.',
+    ],
+    route: '/support/grievance-command-center',
+    auth: { mode: 'page_code', pageCode: 'GRIEVANCE_COMMAND_CENTER' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to the Grievance Command Center.',
+  },
+  {
+    code: 'process_config',
+    title: 'Configure processes and LOBs',
+    aliases: [/\bprocess\s*config(uration)?\b/i, /\blob\s*(config|setup|add)\b/i, /\b(add|create|edit)\b.*\bprocess\b.*\blob\b/i, /\bconfigure\b.*\bprocess\b/i, /\bnew\s*process\b/i, /\badd\b.*\blob\b/i],
+    steps: [
+      '1. Go to Process Config.',
+      '2. Add or edit processes, LOBs, and their branch/client mapping.',
+      '3. Set headcount targets and billing configurations per process.',
+    ],
+    route: '/process-config',
+    auth: { mode: 'page_code', pageCode: 'PROCESS_CONFIG' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Process Configuration.',
+  },
+  {
+    code: 'client_master',
+    title: 'Manage client master data',
+    aliases: [/\bclient\s*master\b/i, /\bclient\s*(onboard|setup|config)\b/i, /\b(add|create)\b.*\bnew\s*client\b/i, /\bonboard\b.*\bclient\b/i],
+    steps: [
+      '1. Go to Client Master.',
+      '2. Add or edit client details, SLA agreements, billing rates, and process mapping.',
+    ],
+    route: '/client-master',
+    auth: { mode: 'page_code', pageCode: 'CLIENT_MASTER' },
+    status: 'verified',
+    deniedExplanation: 'Your role does not have access to Client Master.',
+  },
+  {
+    code: 'notifications_view',
+    title: 'View notifications',
+    aliases: [/\bnotifications?\b/i, /\balerts?\b/i, /\b(view|check|see)\b.*\b(notification|alert|message)\b/i],
+    steps: ['1. Click the bell icon at the top right of any page.', '2. Or go to Notifications for the full list.'],
+    route: '/notifications',
+    auth: { mode: 'static_roles', roles: [], citation: 'src/config/routes/platform.routes.tsx (ProtectedRoute with no roles on /notifications — any employee)' },
+    status: 'verified',
+    deniedExplanation: 'Every employee can view their notifications.',
   },
 ];

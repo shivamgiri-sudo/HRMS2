@@ -47,11 +47,17 @@ export interface HowToAnswerResult {
 const HOWTO_TRIGGERS: RegExp[] = [
   /\bhow\s+to\b/i,
   /\bhow\s+(do|can|would|should)\s+i\b/i,
-  /\bhow\s+i\s+(?:can|do|would|should)\b/i, // reversed word order ("how I can approve...") — same class as the "where I can" reversal below, missed on the first pass and hit live
+  /\bhow\s+i\s+(?:can|do|would|should)\b/i,
   /\bwhere\s+(do|can|is|are)\s+i\b/i,
-  /\bwhere\s+i\s+can\b/i, // reversed word order ("...from where I can approve...")
+  /\bwhere\s+i\s+can\b/i,
+  /\bwhere\s+(is|are)\b/i,               // "where is the roster page" / "where are the reports"
+  /\bwhere\s+to\b/i,                      // "where to see/find/go"
   /\b(the\s+)?path\s+(to|for|from)\b/i,
   /\bwhich\s+(page|screen|tab|menu)\b/i,
+  /\btell\s+me\s+(where|how)\b/i,         // "tell me where to see"
+  /\bshow\s+me\b/i,                        // "show me statutory status"
+  /\bhow\s+many\b/i,                       // "how many leave days"
+  /\bI\s+(want|need)\s+to\b/i,            // "I want to resign / I need to upload"
   /\b(don'?t|doesn'?t|do\s+not|does\s+not)\s+know\s+(how|where)\s+to\b/i,
   /\b(don'?t|doesn'?t|do\s+not|does\s+not)\s+know\s+the\s+(path|way)\b/i,
   /\bnot\s+sure\s+how\s+to\b/i,
