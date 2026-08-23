@@ -58,18 +58,25 @@ export function ImprestManagerPanel() {
   const [draft, setDraft] = useState(EMPTY);
   const [showForm, setShowForm] = useState(false);
   const [includeInactive, setIncludeInactive] = useState(false);
-
-  const managersQuery = useQuery({
-    queryKey: ["imprest-managers-master", includeInactive],
-    queryFn: async () =>
-      unwrap<Manager>(
-        await hrmsApi.get<any>(`/api/finance/imprest/managers${includeInactive ? "?includeInactive=1" : ""}`),
-      ),
-  });
+  const [filterBranch, setFilterBranch] = useState("");
 
   const branchesQuery = useQuery({
     queryKey: ["imprest-manager-branches"],
     queryFn: async () => unwrap<Branch>(await hrmsApi.get<any>("/api/org/branches?limit=200")),
+  });
+  const allBranches = branchesQuery.data ?? [];
+
+  const managersQuery = useQuery({
+    queryKey: ["imprest-managers-master", includeInactive, filterBranch],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (includeInactive) params.set("includeInactive", "1");
+      if (filterBranch) params.set("branchId", filterBranch);
+      const queryString = params.toString();
+      return unwrap<Manager>(
+        await hrmsApi.get<any>(`/api/finance/imprest/managers${queryString ? `?${queryString}` : ""}`),
+      );
+    },
   });
 
   // Only employees who can actually operate a float: active, at this branch, with a login.
@@ -148,6 +155,18 @@ export function ImprestManagerPanel() {
           description="Who holds each branch's cash float, and for what period."
           action={
             <div className="flex items-center gap-1">
+              <GrnSelect
+                small
+                value={filterBranch}
+                onChange={(e) => setFilterBranch(e.target.value)}
+                aria-label="Filter by branch"
+                className="w-[180px]"
+              >
+                <option value="">All branches</option>
+                {allBranches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.branch_name}</option>
+                ))}
+              </GrnSelect>
               <GrnChip active={includeInactive} onClick={() => setIncludeInactive((v) => !v)}>
                 {includeInactive ? "Showing past" : "Live only"}
               </GrnChip>

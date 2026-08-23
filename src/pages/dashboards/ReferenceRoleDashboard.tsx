@@ -200,7 +200,7 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     queryFn: async () => dashboardSummarySchema.parse(
       unwrap(await hrmsApi.get<unknown>(`/api/dashboards/${code}/summary${params}`)),
     ),
-    enabled: accessGranted && variant !== "employee",
+    enabled: !roleLoading && variant !== "employee",
     staleTime: 30_000,
     retry: 1,
   });

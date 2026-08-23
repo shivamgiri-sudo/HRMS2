@@ -209,13 +209,19 @@ function DayCell({
         </div>
       )}
 
-      {!isOff && !isHoliday && !leave && assignment?.shift_name && (
+      {!isOff && !isHoliday && !leave && assignment && (
         <>
-          <span className="text-xs font-black text-slate-800 truncate">{assignment.shift_name}</span>
-          <span className="text-xs text-slate-500 flex items-center gap-1">
-            <Clock className="h-3 w-3 shrink-0" />
-            {fmtTime(assignment.start_time)} – {fmtTime(assignment.end_time)}
-          </span>
+          {assignment.shift_name && (
+            <span className="text-xs font-black text-slate-800 truncate">{assignment.shift_name}</span>
+          )}
+          {(assignment.start_time || assignment.end_time) ? (
+            <span className="text-xs text-slate-500 flex items-center gap-1">
+              <Clock className="h-3 w-3 shrink-0" />
+              {fmtTime(assignment.start_time)} – {fmtTime(assignment.end_time)}
+            </span>
+          ) : !assignment.shift_name ? (
+            <span className="text-xs text-slate-400 italic">Shift day</span>
+          ) : null}
         </>
       )}
 

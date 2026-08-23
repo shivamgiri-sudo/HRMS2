@@ -747,7 +747,7 @@ export default function RosterImportPage() {
                     </Button>
                   )}
                   <Button
-                    onClick={() => commitMutation.mutate(false)}
+                    onClick={() => commitMutation.mutate((batch.warning_rows ?? 0) > 0)}
                     disabled={!canCommit}
                     className="gap-2"
                   >

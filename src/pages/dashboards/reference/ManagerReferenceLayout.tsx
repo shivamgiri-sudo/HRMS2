@@ -130,7 +130,10 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
           <div className="max-h-[240px] divide-y divide-[#edf1f6] overflow-y-auto">
             {teamRows.length ? teamRows.slice(0, 8).map((row, index) => (
               <ReferenceListRow key={String(row.id ?? index)} icon={Users} title={String(row.employee_name ?? row.full_name ?? row.name ?? `Team Member ${index + 1}`)} subtitle={String(row.designation_name ?? row.designation ?? row.role ?? "Employee")} value={String(row.status ?? row.attendance_status ?? "—")} tone={String(row.status ?? row.attendance_status).toLowerCase().includes("present") ? "green" : String(row.status ?? row.attendance_status).toLowerCase().includes("leave") ? "amber" : "red"} />
-            )) : <div className="px-4 py-12 text-center text-xs text-[#94a3b8]">Team roster is unavailable</div>}
+            )) : <div className="px-4 py-8 text-center">
+              <p className="text-xs text-[#94a3b8] mb-2">Team roster data not loaded</p>
+              <a href="/wfm/roster-view" className="text-xs font-semibold text-[#0b63e5] hover:underline">View Full Roster →</a>
+            </div>}
           </div>
         </ReferencePanel>
       </div>
