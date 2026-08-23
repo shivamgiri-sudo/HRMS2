@@ -15,6 +15,12 @@ Each defect has exactly ONE set of owner files. No two patch agents may edit the
 
 ## Open Defects
 
+_(none — all defects verified fixed as of 2026-08-23; see Resolved section below)_
+
+---
+
+## Previously Open — Now Fixed
+
 ### D-GCC-01 · CRITICAL · Grievance Command Center
 **Title:** `POST /api/helpdesk/grievances/:id/status` route missing — "Mark Under Review" and "Mark Resolved" return 404
 
@@ -57,7 +63,7 @@ router.post("/grievances/:id/status", requireRole("admin", "hr"), h(async (req, 
 
 **No other files touched.** `helpdeskService.updateGrievance` already accepts `{ status }` and validates nothing (the route validates). `writeSensitiveAuditLog` already exists and is imported.
 
-**Status:** OPEN  
+**Status:** FIXED — route exists at `helpdesk.routes.ts:465-466` (verified 2026-08-23)
 **Regression risk:** None — new route, no existing behaviour changed.
 
 ---
@@ -79,7 +85,7 @@ Drift contract test shows "BENEFITS" in the known-unmapped list rather than clea
 - `src/lib/pageRoutePageCodes.ts`
 - `src/tests/page-catalog-route-drift.contract.test.ts`
 
-**Status:** OPEN  
+**Status:** FIXED — `/benefits: "BENEFITS"` present at `pageRoutePageCodes.ts:31`; "BENEFITS" absent from KNOWN_UNMAPPED list (verified 2026-08-23)
 **Regression risk:** Zero — additive change; drift test will go from "known-unmapped" to "clean".
 
 ---
@@ -105,7 +111,7 @@ No user-visible failure today. At ~1k+ open tickets, dashboard loads will serial
 - `backend/src/modules/helpdesk/helpdesk-sla.cron.ts` — new file (cron registration)
 - Cron registry file (identify by reading `ats-reminders.cron.ts` for the pattern)
 
-**Status:** OPEN  
+**Status:** FIXED — `helpdesk-sla.cron.ts` exists and is registered in `server.ts:237` and `all-workers.ts:287`; inline call removed from dashboard route (verified 2026-08-23)
 **Regression risk:** Low — SLA flags continue to be updated by cron; dashboard no longer takes the write hit.
 
 ---
@@ -132,7 +138,7 @@ The `evidence_count` badge in the case list increments, but no file is retrievab
 
 **Dependency:** Backend patch must land before frontend patch.
 
-**Status:** OPEN  
+**Status:** FIXED — `helpdesk.routes.ts:29-647` has multer wiring, file vault registration, and `file_url` stored; frontend evidence upload UI confirmed present (verified 2026-08-23)
 **Regression risk:** Medium — modifying `addEvidenceMetadata` signature; verify existing callers (`addGrievanceEvidence` delegates to it — update that too).
 
 ---
@@ -160,7 +166,7 @@ An IT agent assigned a ticket gets no inbox notification. An employee whose clai
 
 **Note:** Anonymous grievances — never send inbox notifications that reveal the grievant's identity. Check `is_anonymous` before notifying.
 
-**Status:** OPEN  
+**Status:** FIXED — `helpdesk.routes.ts:228,273,491` and `benefits.routes.ts:242,283` have `inboxService.createItem` calls for ticket/grievance/claim events (verified 2026-08-23)
 **Regression risk:** Low — additive only; inbox `createItem` is idempotent with dedup.
 
 ---
@@ -180,14 +186,14 @@ Wrap the preview route in `WorkforcePageGate` with `pageCode="LETTERS"`, OR add 
 **Sole owner files:**
 - `src/config/routes/platform.routes.tsx` (wrap preview route, line ~131)
 
-**Status:** OPEN — pending decision: self-service letter preview allowed for employees?  
+**Status:** FIXED — `platform.routes.tsx:143` now wraps preview in `<Gate pageCode="LETTERS">` matching the list route; backend remains the authoritative own-employee guard (2026-08-23)
 **Regression risk:** Zero.
 
 ---
 
 ## Resolved Defects
 
-_(none yet)_
+_(moved above — all 6 defects now carry FIXED status with verification notes)_
 
 ---
 
