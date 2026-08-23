@@ -42,31 +42,55 @@ async function main() {
     console.log('  Without cost_centre_id:', before[0].no_cost_centre);
     console.log('  Without branch_id:', before[0].no_branch);
 
-    // Step 1: Backfill process_id from cost_centre
+    // Step 1: Backfill process_id from cost_centre (row-by-row to avoid deadlocks)
     console.log('\n--- Step 1: Backfill process_id from cost_centre ---');
-    const [backfillResult] = await conn.execute(`
-      UPDATE employees e
+    const [toFixProcess] = await conn.execute(`
+      SELECT e.id, cc.process_id
+      FROM employees e
       JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-      SET e.process_id = cc.process_id,
-          e.updated_at = NOW()
       WHERE e.active_status=1
         AND e.process_id IS NULL
         AND cc.process_id IS NOT NULL
     `);
-    console.log('  Backfilled process_id for', backfillResult.affectedRows, 'employees');
+    let processFixed = 0;
+    for (const row of toFixProcess) {
+      try {
+        await conn.execute(`UPDATE employees SET process_id=?, updated_at=NOW() WHERE id=?`, [row.process_id, row.id]);
+        processFixed++;
+      } catch (e) {
+        if (e.code === 'ER_LOCK_DEADLOCK') {
+          await new Promise(r => setTimeout(r, 100));
+          await conn.execute(`UPDATE employees SET process_id=?, updated_at=NOW() WHERE id=?`, [row.process_id, row.id]);
+          processFixed++;
+        } else throw e;
+      }
+    }
+    console.log('  Backfilled process_id for', processFixed, 'employees');
 
-    // Step 2: Backfill branch_id from cost_centre (if any missing)
+    // Step 2: Backfill branch_id from cost_centre (row-by-row)
     console.log('\n--- Step 2: Backfill branch_id from cost_centre ---');
-    const [branchResult] = await conn.execute(`
-      UPDATE employees e
+    const [toFixBranch] = await conn.execute(`
+      SELECT e.id, cc.branch_id
+      FROM employees e
       JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-      SET e.branch_id = cc.branch_id,
-          e.updated_at = NOW()
       WHERE e.active_status=1
         AND e.branch_id IS NULL
         AND cc.branch_id IS NOT NULL
     `);
-    console.log('  Backfilled branch_id for', branchResult.affectedRows, 'employees');
+    let branchFixed = 0;
+    for (const row of toFixBranch) {
+      try {
+        await conn.execute(`UPDATE employees SET branch_id=?, updated_at=NOW() WHERE id=?`, [row.branch_id, row.id]);
+        branchFixed++;
+      } catch (e) {
+        if (e.code === 'ER_LOCK_DEADLOCK') {
+          await new Promise(r => setTimeout(r, 100));
+          await conn.execute(`UPDATE employees SET branch_id=?, updated_at=NOW() WHERE id=?`, [row.branch_id, row.id]);
+          branchFixed++;
+        } else throw e;
+      }
+    }
+    console.log('  Backfilled branch_id for', branchFixed, 'employees');
 
     // After state
     const [after] = await conn.execute(`
