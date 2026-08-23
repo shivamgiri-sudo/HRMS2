@@ -22,6 +22,7 @@ export const createEmployeeSchema = z.object({
   departmentId: z.string().uuid().nullable().optional(),
   processId: z.string().uuid().nullable().optional(),
   designationId: z.string().uuid().nullable().optional(),
+  costCentreId: z.string().uuid({ message: 'Cost Centre is required' }),
   reportingManagerId: z.string().uuid().nullable().optional(),
   // Optional: auto-assign salary at creation
   structureId: z.string().uuid().optional(),

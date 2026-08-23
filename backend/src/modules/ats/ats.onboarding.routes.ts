@@ -15,6 +15,7 @@ import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2';
 import { atsService } from './ats.service.js';
 import { resolveRecruiterForActor } from '../ats-full-parity/recruiterInterview.service.js';
+import { z } from 'zod';
 
 const router = Router();
 
@@ -136,6 +137,11 @@ router.post(
   requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr'),
   h(async (req: AuthenticatedRequest, res) => {
     const { submit, ...offerData } = req.body;
+    // Require cost_centre when submitting (not just saving draft)
+    if (submit && !offerData.cost_centre) {
+      res.status(400).json({ ok: false, error: 'Cost Centre is required to submit an offer' });
+      return;
+    }
     const result = await saveOffer(req.params!.id, offerData, req.authUser!.id, Boolean(submit));
     res.json({ ok: true, ...result });
   }),

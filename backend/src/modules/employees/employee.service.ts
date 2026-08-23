@@ -179,7 +179,7 @@ export const employeeService = {
     // Resolve branch_id and process_id from cost_centre if not explicitly provided
     let resolvedBranchId = input.branchId ?? null;
     let resolvedProcessId = input.processId ?? null;
-    const costCentreId = (input as any).costCentreId ?? null;
+    const costCentreId = input.costCentreId;
     if (costCentreId && (!resolvedBranchId || !resolvedProcessId)) {
       const [ccRows] = await db.execute<RowDataPacket[]>(
         `SELECT branch_id, process_id FROM cost_centre_master WHERE id = ? LIMIT 1`,
@@ -220,8 +220,8 @@ export const employeeService = {
         input.departmentId ?? null,
         resolvedProcessId,
         input.designationId ?? null,
-        (input as any).costCentreId ?? null,
-        (input as any).costCentreId ?? null,
+        costCentreId,
+        costCentreId,
         input.reportingManagerId ?? null,
       ]
     );
@@ -543,11 +543,11 @@ export const employeeService = {
     if (input.branchId          !== undefined) { sets.push("branch_id = ?");            params.push(input.branchId ?? null); }
     if (input.departmentId      !== undefined) { sets.push("department_id = ?");        params.push(input.departmentId ?? null); }
     if (input.processId         !== undefined) { sets.push("process_id = ?");           params.push(input.processId ?? null); }
-    if ((input as any).costCentreId !== undefined) {
+    if (input.costCentreId !== undefined) {
       sets.push("cost_centre_id = ?");
-      params.push((input as any).costCentreId ?? null);
+      params.push(input.costCentreId ?? null);
       sets.push("cost_center_code = (SELECT cost_centre_code FROM cost_centre_master WHERE id = ? LIMIT 1)");
-      params.push((input as any).costCentreId ?? null);
+      params.push(input.costCentreId ?? null);
     }
     if (input.designationId     !== undefined) { sets.push("designation_id = ?");       params.push(input.designationId ?? null); }
     if (input.reportingManagerId !== undefined) { sets.push("reporting_manager_id = ?"); params.push(input.reportingManagerId ?? null); }
