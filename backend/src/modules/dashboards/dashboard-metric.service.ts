@@ -1187,8 +1187,10 @@ export async function getSalaryComponentMetrics(scope: DashboardScope): Promise<
          COUNT(DISTINCT c.employee_id) AS employees,
          SUM(CASE WHEN c.component_type = 'earning' THEN 1 ELSE 0 END) AS earningLines,
          SUM(CASE WHEN c.component_type = 'deduction' THEN 1 ELSE 0 END) AS deductionLines,
+         SUM(CASE WHEN c.component_type = 'employer_cost' THEN 1 ELSE 0 END) AS employerCostLines,
          ROUND(SUM(CASE WHEN c.component_type = 'earning' THEN c.amount ELSE 0 END), 2) AS earningTotal,
          ROUND(SUM(CASE WHEN c.component_type = 'deduction' THEN c.amount ELSE 0 END), 2) AS deductionTotal,
+         ROUND(SUM(CASE WHEN c.component_type = 'employer_cost' THEN c.amount ELSE 0 END), 2) AS employerCostTotal,
          SUM(CASE WHEN c.taxable = 1 THEN 1 ELSE 0 END) AS taxableLines
        FROM salary_prep_line_component c
        -- Anchor on the parent line, not just run_id. salary_prep_line_component carries
@@ -1211,6 +1213,7 @@ export async function getSalaryComponentMetrics(scope: DashboardScope): Promise<
     const componentCodes = Number(r.componentCodes ?? 0);
     const earningTotal = Number(r.earningTotal ?? 0);
     const deductionTotal = Number(r.deductionTotal ?? 0);
+    const employerCostTotal = Number(r.employerCostTotal ?? 0);
 
     // Deductions exceeding earnings on a run is arithmetically impossible for a payable
     // register and indicates a component-mapping fault, so it is surfaced, not smoothed.
@@ -1225,8 +1228,10 @@ export async function getSalaryComponentMetrics(scope: DashboardScope): Promise<
         employees: Number(r.employees ?? 0),
         earningLines: Number(r.earningLines ?? 0),
         deductionLines: Number(r.deductionLines ?? 0),
+        employerCostLines: Number(r.employerCostLines ?? 0),
         earningTotal,
         deductionTotal,
+        employerCostTotal,
         taxableLines: Number(r.taxableLines ?? 0),
       },
       status,

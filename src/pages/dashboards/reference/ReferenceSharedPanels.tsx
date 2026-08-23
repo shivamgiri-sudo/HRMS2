@@ -429,6 +429,7 @@ export function SalaryComponentPanel({ data }: { data: ReferenceDashboardData })
   const reason = metricUnavailableReason(m, "salaryComponents");
   const earnings = metricDetail(m, "salaryComponents", "earningTotal");
   const deductions = metricDetail(m, "salaryComponents", "deductionTotal");
+  const employerCost = metricDetail(m, "salaryComponents", "employerCostTotal");
   const codes = metricDetail(m, "salaryComponents", "componentCodes");
 
   return (
@@ -445,7 +446,7 @@ export function SalaryComponentPanel({ data }: { data: ReferenceDashboardData })
         <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">{reason}</p>
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-lg border border-[#d7f0df] bg-[#f2fbf5] p-4">
               <p className="text-xs font-bold text-[#16a34a]">Earnings</p>
               <p className="mt-2 text-[22px] font-extrabold leading-none text-[#0b1f44]">{formatValue(earnings)}</p>
@@ -456,11 +457,16 @@ export function SalaryComponentPanel({ data }: { data: ReferenceDashboardData })
               <p className="mt-2 text-[22px] font-extrabold leading-none text-[#0b1f44]">{formatValue(deductions)}</p>
               <p className="mt-2 text-xs text-[#71809a]">{formatValue(metricDetail(m, "salaryComponents", "deductionLines"))} component lines</p>
             </div>
+            <div className="rounded-lg border border-[#dbe6f6] bg-[#f4f8fd] p-4">
+              <p className="text-xs font-bold text-[#2563eb]">Employer Cost</p>
+              <p className="mt-2 text-[22px] font-extrabold leading-none text-[#0b1f44]">{formatValue(employerCost)}</p>
+              <p className="mt-2 text-xs text-[#71809a]">{formatValue(metricDetail(m, "salaryComponents", "employerCostLines"))} component lines</p>
+            </div>
           </div>
           <p className="mt-3 text-xs text-[#71809a]">
             {earnings !== null && deductions !== null && deductions > earnings
               ? "Deductions exceed earnings on this run — that is not possible for a payable register and indicates a component-mapping fault."
-              : `Covering ${formatValue(metricDetail(m, "salaryComponents", "employees"))} employees; ${formatValue(metricDetail(m, "salaryComponents", "taxableLines"))} lines are taxable.`}
+              : `Covering ${formatValue(metricDetail(m, "salaryComponents", "employees"))} employees; ${formatValue(metricDetail(m, "salaryComponents", "taxableLines"))} lines are taxable. Employer cost (PF/ESI employer share, etc.) is the company's own outlay and is separate from the employee's earnings and deductions above.`}
           </p>
         </>
       )}
