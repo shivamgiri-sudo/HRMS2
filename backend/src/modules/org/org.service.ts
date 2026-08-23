@@ -682,8 +682,9 @@ export const costCentreService = {
     const id = randomUUID();
     await db.execute(
       `INSERT INTO cost_centre_master
-         (id, cost_centre_code, cost_centre_name, client_id, lob_id, branch_id, process_id, department_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, cost_centre_code, cost_centre_name, client_id, lob_id, branch_id, process_id, department_id,
+          current_mandate, working_days_per_week, billing_days_per_month, hours_per_fte_per_day, billing_type)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         data.cost_centre_code,
@@ -693,6 +694,11 @@ export const costCentreService = {
         data.branch_id.trim(),
         data.process_id.trim(),
         data.department_id?.trim() || null,
+        data.current_mandate ?? 0,
+        data.working_days_per_week ?? 6,
+        data.billing_days_per_month ?? 26,
+        data.hours_per_fte_per_day ?? 8.00,
+        data.billing_type ?? "seat",
       ]
     );
     await syncCostCentreRelatedTables({
@@ -712,6 +718,11 @@ export const costCentreService = {
     branch_id?: string;
     process_id?: string;
     department_id?: string;
+    current_mandate?: number;
+    working_days_per_week?: number;
+    billing_days_per_month?: number;
+    hours_per_fte_per_day?: number;
+    billing_type?: string;
   }, actor?: OrgActor) {
     // Snapshot before the write so the audit row can record what actually changed. This is the
     // path that silently renamed four cost centres on 2026-08-19 with no trace of who or where.
@@ -724,6 +735,11 @@ export const costCentreService = {
          branch_id = COALESCE(NULLIF(?, ''), branch_id),
          process_id = COALESCE(NULLIF(?, ''), process_id),
          department_id = COALESCE(NULLIF(?, ''), department_id),
+         current_mandate = COALESCE(?, current_mandate),
+         working_days_per_week = COALESCE(?, working_days_per_week),
+         billing_days_per_month = COALESCE(?, billing_days_per_month),
+         hours_per_fte_per_day = COALESCE(?, hours_per_fte_per_day),
+         billing_type = COALESCE(NULLIF(?, ''), billing_type),
          updated_at = NOW()
        WHERE id = ?`,
       [
@@ -733,6 +749,11 @@ export const costCentreService = {
         data.branch_id ?? null,
         data.process_id ?? null,
         data.department_id ?? null,
+        data.current_mandate ?? null,
+        data.working_days_per_week ?? null,
+        data.billing_days_per_month ?? null,
+        data.hours_per_fte_per_day ?? null,
+        data.billing_type ?? null,
         id,
       ]
     );

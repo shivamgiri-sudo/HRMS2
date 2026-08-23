@@ -790,6 +790,11 @@ interface CostCentreRecord {
   process_name: string | null;
   needs_migration: number;
   active_status: number;
+  current_mandate: number | null;
+  working_days_per_week: number | null;
+  billing_days_per_month: number | null;
+  hours_per_fte_per_day: number | null;
+  billing_type: string | null;
 }
 
 interface CostCentreFormData {
@@ -799,6 +804,11 @@ interface CostCentreFormData {
   lob_id: string;
   branch_id: string;
   process_id: string;
+  current_mandate: string;
+  working_days_per_week: string;
+  billing_days_per_month: string;
+  hours_per_fte_per_day: string;
+  billing_type: string;
 }
 
 const emptyCostCentreForm = (): CostCentreFormData => ({
@@ -808,6 +818,11 @@ const emptyCostCentreForm = (): CostCentreFormData => ({
   lob_id: "",
   branch_id: "",
   process_id: "",
+  current_mandate: "0",
+  working_days_per_week: "6",
+  billing_days_per_month: "26",
+  hours_per_fte_per_day: "8",
+  billing_type: "seat",
 });
 
 function ProcessFormModal({
@@ -1433,6 +1448,55 @@ function CostCentreFormModal({
               </div>
             </div>
           </div>
+
+          <div className="border-t pt-4">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Billing Config (Optional)</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Current Mandate (Seats)</label>
+                <input
+                  type="number"
+                  value={form.current_mandate}
+                  onChange={(e) => onChange("current_mandate", e.target.value)}
+                  placeholder="0"
+                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Working Days/Week</label>
+                <select
+                  value={form.working_days_per_week}
+                  onChange={(e) => {
+                    onChange("working_days_per_week", e.target.value);
+                    onChange("billing_days_per_month", e.target.value === "7" ? "25" : "26");
+                  }}
+                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors bg-white"
+                >
+                  <option value="6">6 days</option>
+                  <option value="7">7 days</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Billing Days/Month</label>
+                <input
+                  type="number"
+                  value={form.billing_days_per_month}
+                  onChange={(e) => onChange("billing_days_per_month", e.target.value)}
+                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Hours/FTE/Day</label>
+                <input
+                  type="number"
+                  step="0.5"
+                  value={form.hours_per_fte_per_day}
+                  onChange={(e) => onChange("hours_per_fte_per_day", e.target.value)}
+                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
+                />
+              </div>
+            </div>
+          </div>
         </div>
         <div className="flex gap-3 border-t p-6 sticky bottom-0 bg-white">
           <button
@@ -1565,6 +1629,11 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
       lob_id: rec.lob_id ?? "",
       branch_id: rec.branch_id ?? "",
       process_id: rec.process_id ?? "",
+      current_mandate: String(rec.current_mandate ?? 0),
+      working_days_per_week: String(rec.working_days_per_week ?? 6),
+      billing_days_per_month: String(rec.billing_days_per_month ?? 26),
+      hours_per_fte_per_day: String(rec.hours_per_fte_per_day ?? 8),
+      billing_type: rec.billing_type ?? "seat",
     });
     setEditRecord(rec);
   };
