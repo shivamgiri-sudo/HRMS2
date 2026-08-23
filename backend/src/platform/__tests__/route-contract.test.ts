@@ -97,6 +97,23 @@ const KNOWN_GAPS: Record<string, string> = {
   "POST /api/lms-integration/assign":
     "NOT REACHABLE: NativeTNIAnalysis.tsx is untracked and unmounted. When the page is wired up, the LMS integration assign endpoint (Package 6 charter) must be built. Do not stub — needs real LMS integration scaffolding. 2026-08-22.",
 
+  // ── WFM intelligence pages added 2026-08-23 — pages are mounted and reachable;
+  // backend endpoints are not yet built. Live defects pending backend implementation.
+  "GET /api/roster-compliance/summary":
+    "REACHABLE but backend not built. RosterComplianceMonitor.tsx is mounted at /wfm/roster-compliance. Needs roster-compliance.routes.ts with summary/violations/trend endpoints. Added 2026-08-23.",
+  "GET /api/roster-compliance/violations":
+    "REACHABLE but backend not built. RosterComplianceMonitor.tsx is mounted at /wfm/roster-compliance. Same route file as /summary. Added 2026-08-23.",
+  "GET /api/roster-compliance/trend":
+    "REACHABLE but backend not built. RosterComplianceMonitor.tsx is mounted at /wfm/roster-compliance. Same route file as /summary. Added 2026-08-23.",
+  "GET /api/analytics/interventions/summary":
+    "REACHABLE but backend not built. RosterInterventionDashboard.tsx is mounted at /wfm/roster-interventions. Needs analytics/intervention-recommendation.service.ts + routes. Added 2026-08-23.",
+  "GET /api/analytics/interventions/pending":
+    "REACHABLE but backend not built. RosterInterventionDashboard.tsx is mounted at /wfm/roster-interventions. Needs analytics interventions routes (GET pending, POST action). Added 2026-08-23.",
+  "POST /api/analytics/interventions/:p/action":
+    "REACHABLE but backend not built. RosterInterventionDashboard.tsx is mounted at /wfm/roster-interventions. Parameterised action endpoint; needs intervention-recommendation service. Added 2026-08-23.",
+  "GET /api/workforce-mandate/hiring-demand":
+    "REACHABLE but backend not built. WFMCapacityDashboard.tsx is mounted at /wfm/capacity-dashboard. Needs hiring-demand endpoint in workforce-mandate routes (BPO HC formula output). Added 2026-08-23.",
+
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
