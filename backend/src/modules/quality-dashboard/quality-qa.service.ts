@@ -113,15 +113,22 @@ export class QualityQAService {
         params
       );
 
-      // Calculate historical baseline for trend detection
+      // Calculate historical baseline for trend detection. Must be the PRECEDING
+      // window, not the same one -- using the same `daysBack` filter as anomalyRows
+      // above made baseline_quality algebraically identical to current_quality for
+      // every agent (same rows, same GROUP BY), so `deviation` was always ~0 and the
+      // "quality_drop" anomaly type never fired. The baseline window is now the
+      // daysBack-sized period immediately BEFORE the current one (e.g. days 8-14 back
+      // when daysBack=7), giving a real prior period to compare against.
       const [baselineRows] = await conn.execute<RowDataPacket[]>(
         `SELECT
            cqa.User as agent_code,
            ROUND(AVG(cqa.quality_percentage), 2) as baseline_quality
          FROM db_audit.call_quality_assessment cqa
-         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)${processFilter}
+         WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
+           AND cqa.CallDate < DATE_SUB(NOW(), INTERVAL ? DAY)${processFilter}
          GROUP BY cqa.User`,
-        [...params]
+        process ? [daysBack * 2, daysBack, `${process}%`] : [daysBack * 2, daysBack]
       );
 
       const baselineMap = new Map((baselineRows || []).map((r: any) => [r.agent_code, r.baseline_quality]));
