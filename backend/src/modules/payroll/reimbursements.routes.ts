@@ -27,11 +27,12 @@ const h =
   };
 
 // ---------------------------------------------------------------------------
-// Ensure table exists
+// Ensure table exists (with retry for database locks)
 // ---------------------------------------------------------------------------
-async function ensureTable(): Promise<void> {
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS employee_reimbursement_claim (
+async function ensureTable(attempt = 1): Promise<void> {
+  try {
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS employee_reimbursement_claim (
       id               CHAR(36)                                                    NOT NULL,
       employee_id      VARCHAR(36)                                                 NOT NULL,
       claim_type       ENUM('LTA','MEDICAL','INTERNET','PHONE','FUEL','OTHER')     NOT NULL,
@@ -61,11 +62,19 @@ async function ensureTable(): Promise<void> {
     -- ER_CANT_AGGREGATE_2COLLATIONS and every reimbursements endpoint 500s. Migration 1038
     -- converts the table that was already created without it.
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  `);
+    `);
+  } catch (err: any) {
+    if ((err?.code === 'ER_LOCK_WAIT_TIMEOUT' || err?.code === 'ER_LOCK_DEADLOCK') && attempt < 5) {
+      console.log(`[reimbursements] Table ensure retry ${attempt}/5 after lock timeout`);
+      await new Promise(r => setTimeout(r, 1000 * attempt));
+      return ensureTable(attempt + 1);
+    }
+    throw err;
+  }
 }
 
 void ensureTable().catch((err) =>
-  console.error("[reimbursements] Table ensure failed:", err)
+  console.error("[reimbursements] Table ensure failed after retries:", err)
 );
 
 // ---------------------------------------------------------------------------

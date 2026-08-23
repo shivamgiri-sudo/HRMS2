@@ -25,30 +25,39 @@ const h =
   };
 
 // ---------------------------------------------------------------------------
-// Ensure table exists on module load
+// Ensure table exists on module load (with retry for database locks)
 // ---------------------------------------------------------------------------
-async function ensureTable(): Promise<void> {
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS salary_certificate_request (
-      id           CHAR(36)                             NOT NULL,
-      employee_id  VARCHAR(36)                          NOT NULL,
-      template     ENUM('salary','employment','ctc')    NOT NULL DEFAULT 'salary',
-      period_from  VARCHAR(7)                           NULL,
-      period_to    VARCHAR(7)                           NULL,
-      addressee    VARCHAR(255)                         NULL,
-      purpose      VARCHAR(255)                         NULL,
-      generated_by VARCHAR(36)                          NOT NULL,
-      generated_at DATETIME                             NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      certificate_data_json MEDIUMTEXT                  NULL,
-      PRIMARY KEY (id),
-      KEY idx_scr_emp (employee_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-  `);
+async function ensureTable(attempt = 1): Promise<void> {
+  try {
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS salary_certificate_request (
+        id           CHAR(36)                             NOT NULL,
+        employee_id  VARCHAR(36)                          NOT NULL,
+        template     ENUM('salary','employment','ctc')    NOT NULL DEFAULT 'salary',
+        period_from  VARCHAR(7)                           NULL,
+        period_to    VARCHAR(7)                           NULL,
+        addressee    VARCHAR(255)                         NULL,
+        purpose      VARCHAR(255)                         NULL,
+        generated_by VARCHAR(36)                          NOT NULL,
+        generated_at DATETIME                             NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        certificate_data_json MEDIUMTEXT                  NULL,
+        PRIMARY KEY (id),
+        KEY idx_scr_emp (employee_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } catch (err: any) {
+    if ((err?.code === 'ER_LOCK_WAIT_TIMEOUT' || err?.code === 'ER_LOCK_DEADLOCK') && attempt < 5) {
+      console.log(`[payroll-certificates] Table ensure retry ${attempt}/5 after lock timeout`);
+      await new Promise(r => setTimeout(r, 1000 * attempt));
+      return ensureTable(attempt + 1);
+    }
+    throw err;
+  }
 }
 
 // Fire-and-forget at startup
 void ensureTable().catch((err) =>
-  console.error("[payroll-certificates] Table ensure failed:", err)
+  console.error("[payroll-certificates] Table ensure failed after retries:", err)
 );
 
 // ---------------------------------------------------------------------------
