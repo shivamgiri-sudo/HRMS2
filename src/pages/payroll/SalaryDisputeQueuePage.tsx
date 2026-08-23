@@ -53,6 +53,22 @@ function ReviewDialog({
   const [remarks, setRemarks] = useState("");
   const [differential, setDifferential] = useState<string>("");
   const [correctiveSummary, setCorrectiveSummary] = useState("");
+  const [disputedDays, setDisputedDays] = useState<string>(
+    dispute.affected_dates?.length?.toString() || "1"
+  );
+
+  // Fetch salary details for WFM review
+  const { data: salaryRaw } = useQuery({
+    queryKey: ["dispute-salary", dispute.id],
+    queryFn: () => hrmsApi.get(`/api/salary-disputes/${dispute.id}/salary-details`),
+    enabled: role === "wfm",
+    staleTime: 60_000,
+  });
+  const salary = (salaryRaw as any)?.data?.data ?? (salaryRaw as any)?.data ?? null;
+
+  const suggestedDifferential = salary?.perDayRate && disputedDays
+    ? Math.round(salary.perDayRate * parseInt(disputedDays || "0"))
+    : 0;
 
   const endpoint = role === "wfm"
     ? `/api/salary-disputes/${dispute.id}/wfm-review`
@@ -118,7 +134,33 @@ function ReviewDialog({
           <div>
             <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Dispute Details</p>
             <p className="text-sm text-slate-700 bg-amber-50 rounded-xl p-3 border border-amber-100">{dispute.description}</p>
+            {dispute.affected_dates?.length > 0 && (
+              <p className="text-xs text-slate-500 mt-2">
+                Affected dates: {dispute.affected_dates.map((d: string) => new Date(d).getDate()).join(", ")}
+              </p>
+            )}
           </div>
+
+          {/* ── Section: Salary Details (WFM only) ── */}
+          {role === "wfm" && salary && (
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">Salary Details ({dispute.run_month})</p>
+              <div className="rounded-xl bg-blue-50 border border-blue-100 p-3 space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Gross Salary</span>
+                  <span className="font-bold">₹{salary.gross.toLocaleString("en-IN")}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Working Days</span>
+                  <span className="font-medium">{salary.workingDays}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Per Day Rate</span>
+                  <span className="font-bold text-blue-700">₹{salary.perDayRate.toLocaleString("en-IN")}</span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* WFM: show previous remarks if payroll head reviewing */}
           {role === "payroll_head" && dispute.wfm_remarks && (
@@ -155,7 +197,44 @@ function ReviewDialog({
 
             {/* WFM: differential entry on approve */}
             {role === "wfm" && action === "approve" && (
-              <div className="space-y-2 mt-3">
+              <div className="space-y-3 mt-3">
+                {isAttendanceBased && salary && (
+                  <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-600 mb-2">Auto-Calculate</p>
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1">
+                        <label className="text-xs text-slate-600">Disputed Days</label>
+                        <Input
+                          type="number"
+                          min="1"
+                          max="31"
+                          value={disputedDays}
+                          onChange={e => setDisputedDays(e.target.value)}
+                          className="mt-1"
+                        />
+                      </div>
+                      <div className="text-center text-slate-400">×</div>
+                      <div className="flex-1">
+                        <label className="text-xs text-slate-600">Per Day Rate</label>
+                        <p className="mt-1 py-2 px-3 bg-white rounded-md border text-sm font-bold">
+                          ₹{salary.perDayRate.toLocaleString("en-IN")}
+                        </p>
+                      </div>
+                      <div className="text-center text-slate-400">=</div>
+                      <div className="flex-1">
+                        <label className="text-xs text-slate-600">Suggested</label>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-1 w-full border-emerald-300 text-emerald-700 hover:bg-emerald-100"
+                          onClick={() => setDifferential(suggestedDifferential.toString())}
+                        >
+                          ₹{suggestedDifferential.toLocaleString("en-IN")}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div>
                   <label className="text-xs font-semibold text-slate-600">Differential Amount (₹) *</label>
                   <Input
@@ -166,11 +245,6 @@ function ReviewDialog({
                     placeholder="Enter corrected amount difference"
                     className="mt-1"
                   />
-                  {isAttendanceBased && (
-                    <p className="text-[10px] text-slate-400 mt-1 font-mono bg-slate-50 rounded px-2 py-1 border">
-                      Formula: Gross ÷ Working Days × Disputed Days
-                    </p>
-                  )}
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-slate-600">Corrective Summary *</label>

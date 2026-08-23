@@ -89,3 +89,42 @@ salaryDisputeRouter.post("/:id/payroll-head-review", requireRole("payroll_head",
     res.json({ success: true, data: dispute });
   })
 );
+
+// Get salary details for a dispute (for WFM review)
+salaryDisputeRouter.get("/:id/salary-details", requireRole("wfm", "payroll_hr", "payroll", "payroll_head", "super_admin"),
+  h(async (req, res) => {
+    const dispute = await salaryDisputeService.get(req.params.id);
+    if (!dispute) return res.status(404).json({ success: false, message: "Dispute not found." });
+
+    const details = await salaryDisputeService.getSalaryDetails(dispute.employee_id, dispute.run_month);
+    if (!details) return res.status(404).json({ success: false, message: "Salary data not found." });
+
+    res.json({ success: true, data: details });
+  })
+);
+
+// Calculate suggested differential
+salaryDisputeRouter.post("/calculate-differential", requireRole("wfm", "payroll_hr", "payroll", "super_admin"),
+  h(async (req, res) => {
+    const { perDayRate, disputedDays } = req.body;
+    if (!perDayRate || !disputedDays) {
+      return res.status(400).json({ success: false, message: "perDayRate and disputedDays required" });
+    }
+    const differential = salaryDisputeService.calculateDifferential(Number(perDayRate), Number(disputedDays));
+    res.json({ success: true, data: { differential } });
+  })
+);
+
+// Withdraw dispute (employee only, pending_wfm status only)
+salaryDisputeRouter.post("/:id/withdraw", h(async (req, res) => {
+  const employeeId = await getEmployeeIdForUser(req.authUser!.id);
+  if (!employeeId) return res.status(400).json({ success: false, message: "No employee linked." });
+
+  const dispute = await salaryDisputeService.get(req.params.id);
+  if (!dispute) return res.status(404).json({ success: false, message: "Dispute not found." });
+  if (dispute.employee_id !== employeeId) return res.status(403).json({ success: false, message: "Not your dispute." });
+  if (dispute.status !== "pending_wfm") return res.status(400).json({ success: false, message: "Can only withdraw disputes pending WFM review." });
+
+  await db.execute(`UPDATE salary_dispute SET status = 'closed' WHERE id = ?`, [req.params.id]);
+  res.json({ success: true, message: "Dispute withdrawn." });
+}));

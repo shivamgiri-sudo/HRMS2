@@ -128,12 +128,13 @@ function RaiseDisputeForm({ onSuccess }: { onSuccess: () => void }) {
   const [step, setStep] = useState(1);
   const [runMonth, setRunMonth] = useState("");
   const [disputeType, setDisputeType] = useState<DisputeType | "">("");
+  const [affectedDates, setAffectedDates] = useState<string[]>([]);
   const [description, setDescription] = useState("");
 
   const mutation = useMutation({
     mutationFn: () =>
       hrmsApi.post("/api/salary-disputes", {
-        runMonth, disputeType, affectedDates: [], description,
+        runMonth, disputeType, affectedDates, description,
       }),
     onSuccess: () => {
       toast.success("Dispute raised successfully. WFM has been notified.");
@@ -142,6 +143,19 @@ function RaiseDisputeForm({ onSuccess }: { onSuccess: () => void }) {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  const datesInMonth = runMonth ? Array.from({ length: 31 }, (_, i) => {
+    const d = new Date(`${runMonth}-01`);
+    d.setDate(i + 1);
+    if (d.getMonth() + 1 !== parseInt(runMonth.split("-")[1])) return null;
+    return d.toISOString().split("T")[0];
+  }).filter(Boolean) as string[] : [];
+
+  const toggleDate = (date: string) => {
+    setAffectedDates(prev =>
+      prev.includes(date) ? prev.filter(d => d !== date) : [...prev, date]
+    );
+  };
 
   if (step === 1) return (
     <div className="space-y-4">
@@ -194,6 +208,40 @@ function RaiseDisputeForm({ onSuccess }: { onSuccess: () => void }) {
     </div>
   );
 
+  if (step === 3) return (
+    <div className="space-y-3">
+      <p className="text-sm font-medium text-slate-700">Select affected dates <span className="text-slate-400 font-normal">(optional)</span></p>
+      <div className="grid grid-cols-7 gap-1">
+        {datesInMonth.map(date => {
+          const day = new Date(date).getDate();
+          const isSelected = affectedDates.includes(date);
+          return (
+            <button
+              key={date}
+              onClick={() => toggleDate(date)}
+              className={`p-2 text-xs rounded-lg border transition-colors ${
+                isSelected
+                  ? "bg-red-500 text-white border-red-500"
+                  : "border-slate-200 hover:border-slate-300 hover:bg-slate-50"
+              }`}
+            >
+              {day}
+            </button>
+          );
+        })}
+      </div>
+      {affectedDates.length > 0 && (
+        <p className="text-xs text-slate-500">{affectedDates.length} date(s) selected</p>
+      )}
+      <div className="flex gap-2">
+        <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
+        <Button className="flex-1" onClick={() => setStep(4)}>
+          Next <ChevronRight className="ml-1 h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       <div>
@@ -210,7 +258,7 @@ function RaiseDisputeForm({ onSuccess }: { onSuccess: () => void }) {
         <p className="text-xs text-slate-400 mt-1 text-right">{description.length} / 20 min</p>
       </div>
       <div className="flex gap-2">
-        <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
+        <Button variant="outline" onClick={() => setStep(3)}>Back</Button>
         <Button
           className="flex-1 bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-700 hover:to-rose-700 shadow-lg shadow-red-500/30"
           disabled={description.trim().length < 20 || mutation.isPending}
@@ -225,6 +273,7 @@ function RaiseDisputeForm({ onSuccess }: { onSuccess: () => void }) {
 
 export default function SalaryDisputePage() {
   const [showRaise, setShowRaise] = useState(false);
+  const qc = useQueryClient();
 
   const { data: raw, isLoading } = useQuery({
     queryKey: ["my-salary-disputes"],
@@ -232,6 +281,15 @@ export default function SalaryDisputePage() {
     staleTime: 30_000,
   });
   const disputes = unwrap<any[]>(raw) ?? [];
+
+  const withdrawMutation = useMutation({
+    mutationFn: (id: string) => hrmsApi.post(`/api/salary-disputes/${id}/withdraw`),
+    onSuccess: () => {
+      toast.success("Dispute withdrawn.");
+      qc.invalidateQueries({ queryKey: ["my-salary-disputes"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
 
   return (
     <DashboardLayout>
@@ -317,6 +375,24 @@ export default function SalaryDisputePage() {
                       <p className="text-[10px] text-emerald-600 font-medium mt-2">
                         Arrear will be paid in {d.arrear_run_month} salary
                       </p>
+                    )}
+                    {d.status === "pending_wfm" && (
+                      <div className="mt-3 pt-3 border-t flex justify-end">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="text-xs text-red-600 border-red-200 hover:bg-red-50"
+                          disabled={withdrawMutation.isPending}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm("Withdraw this dispute? This cannot be undone.")) {
+                              withdrawMutation.mutate(d.id);
+                            }
+                          }}
+                        >
+                          Withdraw
+                        </Button>
+                      </div>
                     )}
                   </CardContent>
                 </Card>

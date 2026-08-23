@@ -120,8 +120,6 @@ export const salaryDisputeService = {
 
     if (description.trim().length < 20)
       throw new Error("Description must be at least 20 characters.");
-    if (!affectedDates.length)
-      throw new Error("At least one affected date is required.");
 
     // Get employee details
     const [[emp]] = await db.execute<RowDataPacket[]>(
@@ -131,6 +129,26 @@ export const salaryDisputeService = {
       [employeeId]
     );
     if (!emp) throw new Error("Employee not found.");
+
+    // Validate employee has salary for that month
+    const [[salaryCheck]] = await db.execute<RowDataPacket[]>(
+      `SELECT spl.id, spl.gross_salary, spl.working_days
+         FROM salary_prep_line spl
+         JOIN salary_prep_run spr ON spr.id = spl.run_id
+        WHERE spl.employee_id = ? AND spr.run_month = ?
+        LIMIT 1`,
+      [employeeId, runMonth]
+    );
+    if (!salaryCheck) throw new Error(`No salary record found for ${runMonth}. Cannot raise dispute.`);
+
+    // Check for duplicate dispute
+    const [[existingDispute]] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM salary_dispute
+        WHERE employee_id = ? AND run_month = ? AND status NOT IN ('rejected','closed')
+        LIMIT 1`,
+      [employeeId, runMonth]
+    );
+    if (existingDispute) throw new Error(`You already have an open dispute for ${runMonth}.`);
 
     const id = randomUUID();
     await db.execute(
@@ -287,34 +305,37 @@ export const salaryDisputeService = {
     const dispute = await getById(disputeId);
     if (!dispute || !dispute.differential_amount) return;
 
-    // Find next open run for employee's branch (draft or processing)
+    // Find next open run that includes this employee (draft or processing, matching branch)
     const [[run]] = await db.execute<RowDataPacket[]>(
       `SELECT spr.id, spr.run_month
          FROM salary_prep_run spr
+         JOIN salary_prep_line spl ON spl.run_id = spr.id AND spl.employee_id = ?
         WHERE spr.status IN ('draft','processing')
           AND spr.run_month > ?
         ORDER BY spr.run_month ASC
         LIMIT 1`,
-      [dispute.run_month]
+      [dispute.employee_id, dispute.run_month]
     );
 
-    const arrearRunMonth = run ? String((run as any).run_month) : null;
-
-    // Insert ARREAR component if run exists
+    let arrearRunMonth: string | null = null;
     let arrearLineId: string | null = null;
+
     if (run) {
-      // Find employee's salary_prep_line in that run
+      arrearRunMonth = String((run as any).run_month);
+
+      // Get the line ID for this employee in that run
       const [[line]] = await db.execute<RowDataPacket[]>(
         `SELECT id FROM salary_prep_line WHERE run_id = ? AND employee_id = ? LIMIT 1`,
         [(run as any).id, dispute.employee_id]
       );
+
       if (line) {
         arrearLineId = randomUUID();
         await db.execute(
           `INSERT INTO salary_prep_line_component (id, line_id, component_code, component_name, amount, component_type, notes)
-           VALUES (?, ?, 'ARREAR', 'Salary Dispute Arrear', ?, 'earning', ?)`,
+           VALUES (?, ?, 'DISPUTE_ARREAR', 'Salary Dispute Arrear', ?, 'earning', ?)`,
           [arrearLineId, (line as any).id, dispute.differential_amount,
-           `Dispute #${dispute.id.substring(0, 8)} — ${dispute.dispute_type}`]
+           `Dispute #${dispute.id.substring(0, 8)} — ${dispute.dispute_type} for ${dispute.run_month}`]
         );
         // Update line gross/net
         await db.execute(
@@ -327,8 +348,9 @@ export const salaryDisputeService = {
       }
     }
 
+    // Update dispute with arrear info
     await db.execute(
-      `UPDATE salary_dispute SET arrear_run_month = ?, arrear_line_id = ? WHERE id = ?`,
+      `UPDATE salary_dispute SET arrear_run_month = ?, arrear_line_id = ?, status = 'closed' WHERE id = ?`,
       [arrearRunMonth, arrearLineId, disputeId]
     );
 
@@ -336,9 +358,9 @@ export const salaryDisputeService = {
     await salaryDisputeService._notifyEmployee(
       dispute.employee_id, disputeId,
       `Salary dispute approved — ₹${dispute.differential_amount} arrear`,
-      arrearRunMonth
+      arrearRunMonth && arrearLineId
         ? `Your dispute for ${dispute.run_month} has been approved. ₹${dispute.differential_amount} will be added as arrear in your ${arrearRunMonth} salary.`
-        : `Your dispute for ${dispute.run_month} has been approved. ₹${dispute.differential_amount} arrear will be applied in your next payroll run.`
+        : `Your dispute for ${dispute.run_month} has been approved. ₹${dispute.differential_amount} arrear will be applied when your next salary is processed.`
     );
   },
 
@@ -359,20 +381,69 @@ export const salaryDisputeService = {
   },
 
   async listManagerTeam(managerId: string): Promise<SalaryDispute[]> {
+    // First get the manager's employee_id from user_id
+    const [[mgrEmp]] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employees WHERE user_id = ? LIMIT 1`,
+      [managerId]
+    );
+    if (!mgrEmp) return [];
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT sd.*, e.full_name AS employee_name
          FROM salary_dispute sd
          JOIN employees e ON e.id = sd.employee_id
-        WHERE e.reporting_manager_id = (
-          SELECT id FROM employees WHERE id = (
-            SELECT employee_id FROM user_roles WHERE user_id = ? LIMIT 1
-          ) LIMIT 1
-        )
+        WHERE e.reporting_manager_id = ?
         ORDER BY sd.created_at DESC
         LIMIT 50`,
-      [managerId]
+      [(mgrEmp as any).id]
     );
     return (rows as Record<string, unknown>[]).map(mapRow);
+  },
+
+  async getSalaryDetails(employeeId: string, runMonth: string): Promise<{
+    gross: number;
+    net: number;
+    workingDays: number;
+    perDayRate: number;
+    components: Array<{ code: string; name: string; amount: number; type: string }>;
+  } | null> {
+    const [[line]] = await db.execute<RowDataPacket[]>(
+      `SELECT spl.id, spl.gross_salary, spl.net_salary, spl.working_days
+         FROM salary_prep_line spl
+         JOIN salary_prep_run spr ON spr.id = spl.run_id
+        WHERE spl.employee_id = ? AND spr.run_month = ?
+        LIMIT 1`,
+      [employeeId, runMonth]
+    );
+    if (!line) return null;
+
+    const [components] = await db.execute<RowDataPacket[]>(
+      `SELECT component_code AS code, component_name AS name, amount, component_type AS type
+         FROM salary_prep_line_component
+        WHERE line_id = ?
+        ORDER BY component_type, amount DESC`,
+      [(line as any).id]
+    );
+
+    const gross = Number((line as any).gross_salary) || 0;
+    const workingDays = Number((line as any).working_days) || 26;
+
+    return {
+      gross,
+      net: Number((line as any).net_salary) || 0,
+      workingDays,
+      perDayRate: Math.round(gross / workingDays),
+      components: (components as any[]).map(c => ({
+        code: c.code,
+        name: c.name,
+        amount: Number(c.amount),
+        type: c.type,
+      })),
+    };
+  },
+
+  calculateDifferential(perDayRate: number, disputedDays: number): number {
+    return Math.round(perDayRate * disputedDays);
   },
 
   async _notifyEmployee(employeeId: string, disputeId: string, title: string, description: string): Promise<void> {
