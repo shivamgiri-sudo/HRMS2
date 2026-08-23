@@ -984,7 +984,7 @@ export async function neftTransferFile(
             */
            '033005005852' AS debit_ac_no,
            COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS beneficiary_name,
-           COALESCE(spl.net_salary,0) AS amt,
+           MAX(COALESCE(spl.net_salary,0)) AS amt,
            CASE WHEN UPPER(LEFT(COALESCE(ebd.ifsc_code, e.ifsc_code, ''),4)) = 'ICIC' THEN 'Y' ELSE 'N' END AS pay_mod,
            UPPER(DATE_FORMAT(LAST_DAY(STR_TO_DATE(CONCAT(spr.run_month,'-01'),'%Y-%m-%d')), '%d-%b-%Y')) AS transfer_date,
            e.mobile AS bene_mobile_no,
