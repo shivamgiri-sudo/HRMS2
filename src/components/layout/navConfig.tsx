@@ -7,7 +7,7 @@ import {
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
   Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail, Share2,
-  Video, PenLine, Workflow, Layers3, CalendarOff, MessageSquare, AlertCircle
+  Video, PenLine, Workflow, Layers3, CalendarOff, MessageSquare, AlertCircle, Trophy, History
 } from "lucide-react";
 import type { NavGroup } from "./SidebarNav";
 
@@ -197,14 +197,25 @@ export const navGroups: NavGroup[] = [
       {
         label: "WFM & Roster",  href: "/wfm/roster", icon: ic(Clock), pageCode: "WFM_ROSTER", description: "Workforce management",
         children: [
-          { label: "Roster Planning",        href: "/wfm/roster",                icon: ic(Clock),         pageCode: "WFM_ROSTER",      description: "Roster" },
+          // "Roster Planning" removed — duplicate of group header "/wfm/roster"
           { label: "Roster Workspace",       href: "/wfm/roster-workspace",      icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "Weekly shift grid and acknowledgement tracker" },
           { label: "Roster Import",          href: "/wfm/roster-import",         icon: ic(Upload),        pageCode: "WFM_ROSTER",      description: "Upload Excel roster — auto-detect headers, 12h/24h, night shifts" },
           { label: "Roster",                 href: "/wfm/roster-view",           icon: ic(CalendarDays),  pageCode: "WFM_ROSTER",      description: "See who is working what — filter by branch, process or person" },
+          { label: "Roster Analytics",       href: "/wfm/roster-analytics",      icon: ic(BarChart3),     pageCode: "WFM_ROSTER",      description: "Shrinkage intelligence, quality correlation, cost impact, forecasting" },
+          { label: "Roster Command Center", href: "/wfm/roster-command-center", icon: ic(Activity),      pageCode: "WFM_ROSTER",      description: "Real-time attendance monitoring, manager effectiveness, live alerts" },
+          { label: "Roster Interventions",  href: "/wfm/roster-interventions",  icon: ic(ShieldAlert),   pageCode: "WFM_ROSTER",      description: "Track and manage retention interventions for at-risk employees" },
+          { label: "Roster Compliance",     href: "/wfm/roster-compliance",     icon: ic(ShieldCheck),   pageCode: "WFM_ROSTER",      description: "WFM rule violations — rest policy, consecutive days, week-off fairness" },
+          { label: "Shift Effectiveness",   href: "/wfm/shift-effectiveness",   icon: ic(BarChart3),     pageCode: "WFM_ROSTER",      description: "Shift performance, break compliance, and optimization recommendations" },
+          { label: "Capacity Dashboard",    href: "/wfm/capacity-dashboard",    icon: ic(Users),         pageCode: "WFM_ROSTER",      description: "Headcount vs mandate, gap analysis, hiring demand projections" },
+          { label: "Team Comparison",       href: "/wfm/team-comparison",       icon: ic(Trophy),        pageCode: "WFM_ROSTER",      description: "Compare adherence across managers, processes, and branches" },
+          { label: "Roster Audit Trail",    href: "/wfm/roster-audit",          icon: ic(History),       pageCode: "WFM_ROSTER",      description: "Track who changed what roster, when, and why for compliance" },
+          { label: "Notification Hub",      href: "/wfm/notification-hub",      icon: ic(Bell),          pageCode: "WFM_ROSTER",      description: "Configure roster alerts — manager digest, unplanned absence, compliance" },
+          { label: "Mobile Dashboard",      href: "/wfm/mobile-roster",         icon: ic(Users),         pageCode: "WFM_ROSTER",      description: "PWA-optimized team roster view for managers on the floor" },
           { label: "Roster Builder",         href: "/wfm/roster-builder",        icon: ic(CalendarDays),  pageCode: "WFM_ROSTER_BUILDER", description: "Build and publish a process's weekly roster — grid or bulk upload" },
           { label: "Roster Requests",        href: "/wfm/roster-requests",       icon: ic(ClipboardList), pageCode: "WFM_ROSTER",      description: "Review roster disputes and the week-offs employees have rejected" },
           { label: "Roster Rules",           href: "/wfm/roster-rules",          icon: ic(Settings2),     pageCode: "WFM_ROSTER",      description: "Capacity, week-offs, minimum rest, demand, planning rules and approvers" },
-          { label: "Roster Insights",        href: "/wfm/roster-insights",       icon: ic(BarChart3),     pageCode: "WFM_ROSTER",      description: "Coverage, gaps and week-off fairness — read-only" },
+          // Roster Insights superseded by: Roster Analytics, Capacity Dashboard, Week-off Fairness
+          // { label: "Roster Insights",        href: "/wfm/roster-insights",       icon: ic(BarChart3),     pageCode: "WFM_ROSTER",      description: "Coverage, gaps and week-off fairness — read-only" },
           // Hidden — volume-based / superseded by import engine. Re-enable per-process when planning_mode=VOLUME_BASED:
           // { label: "Roster Pipeline",        href: "/wfm/roster-pipeline",       icon: ic(Workflow),      pageCode: "WFM_ROSTER",      description: "End-to-end roster planning wizard" },
           // { label: "Auto Roster",            href: "/wfm/auto-roster",           icon: ic(Calendar),      pageCode: "WFM_AUTO_ROSTER", description: "Auto roster" },

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Loader2, Play, X, CheckCircle2, Clock, ArrowRight } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, Play, X, CheckCircle2, Clock, ArrowRight, Activity, History, ShieldCheck, BarChart3 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 
@@ -161,9 +162,27 @@ export default function NativeWFMRoster() {
 
   return <DashboardLayout><div className="space-y-6">
     <header className="rounded-3xl bg-slate-950 p-6 text-white">
-      <p className="text-xs font-black uppercase tracking-[.22em] text-blue-300">WFM · Roster Governance</p>
-      <h1 className="mt-2 text-3xl font-black">Weekly Roster & Shift Control</h1>
-      <p className="mt-2 text-sm text-slate-300">Process Manager and WFM jointly own draft-to-publish planning in their mapped process. TL/AM manage exceptions, not published roster truth.</p>
+      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[.22em] text-blue-300">WFM · Roster Governance</p>
+          <h1 className="mt-2 text-3xl font-black">Weekly Roster & Shift Control</h1>
+          <p className="mt-2 text-sm text-slate-300">Process Manager and WFM jointly own draft-to-publish planning in their mapped process. TL/AM manage exceptions, not published roster truth.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link to="/wfm/roster-command-center" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors">
+            <Activity className="w-3.5 h-3.5" /> Command Center
+          </Link>
+          <Link to="/wfm/roster-analytics" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors">
+            <BarChart3 className="w-3.5 h-3.5" /> Analytics
+          </Link>
+          <Link to="/wfm/roster-compliance" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors">
+            <ShieldCheck className="w-3.5 h-3.5" /> Compliance
+          </Link>
+          <Link to="/wfm/roster-audit" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-xs text-white hover:bg-white/20 transition-colors">
+            <History className="w-3.5 h-3.5" /> Audit Trail
+          </Link>
+        </div>
+      </div>
     </header>
     {notice && <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-800">{notice}</div>}
     <section className="rounded-3xl border bg-white p-5">

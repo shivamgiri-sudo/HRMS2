@@ -55,6 +55,18 @@ const RosterViewPage               = lazy(() => import("@/pages/wfm/RosterViewPa
 const RosterInsightsPage           = lazy(() => import("@/pages/wfm/RosterInsightsPage"));
 const RosterRequestsPage           = lazy(() => import("@/pages/wfm/RosterRequestsPage"));
 const RosterBuilderPage            = lazy(() => import("@/pages/wfm/RosterBuilderPage"));
+const RosterAnalyticsDashboard     = lazy(() => import("@/pages/wfm/RosterAnalyticsDashboard"));
+const RosterCommandCenter          = lazy(() => import("@/pages/wfm/RosterCommandCenter"));
+const RosterInterventionDashboard  = lazy(() => import("@/pages/wfm/RosterInterventionDashboard"));
+const EmployeeRosterProfile        = lazy(() => import("@/pages/wfm/EmployeeRosterProfile"));
+const RosterComplianceMonitor      = lazy(() => import("@/pages/wfm/RosterComplianceMonitor"));
+const ShiftEffectivenessDashboard  = lazy(() => import("@/pages/wfm/ShiftEffectivenessDashboard"));
+const WFMCapacityDashboard         = lazy(() => import("@/pages/wfm/WFMCapacityDashboard"));
+const TeamRosterComparison         = lazy(() => import("@/pages/wfm/TeamRosterComparison"));
+const RosterAuditTrail             = lazy(() => import("@/pages/wfm/RosterAuditTrail"));
+const RosterNotificationHub        = lazy(() => import("@/pages/wfm/RosterNotificationHub"));
+const MobileRosterDashboard        = lazy(() => import("@/pages/wfm/MobileRosterDashboard"));
+const MobileTeamAttendance         = lazy(() => import("@/pages/wfm/MobileTeamAttendance"));
 
 export const workforceRouteElements = (
   <>
@@ -108,7 +120,8 @@ export const workforceRouteElements = (
       <Route path="/wfm/roster-workspace" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterWorkspace /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-import"    element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterImportPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-builder"    element={<ProtectedRoute><Gate pageCode="WFM_ROSTER_BUILDER"><RosterBuilderPage /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/roster-pipeline"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterPipelinePage /></Gate></ProtectedRoute>} />
+      {/* Superseded by RosterImportPage — redirect */}
+      <Route path="/wfm/roster-pipeline"   element={<Navigate to="/wfm/roster-import" replace />} />
       {/*
         Roster Requests — the approval/exception inbox.
 
@@ -132,6 +145,19 @@ export const workforceRouteElements = (
       <Route path="/wfm/roster-requests"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterRequestsPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-insights"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterInsightsPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-view"       element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterViewPage /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-analytics"  element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAnalyticsDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-command-center" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterCommandCenter /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-interventions" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterInterventionDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/employee-roster/:employeeId" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><EmployeeRosterProfile /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-compliance" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterComplianceMonitor /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/shift-effectiveness" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><ShiftEffectivenessDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/capacity-dashboard" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><WFMCapacityDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/team-comparison" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><TeamRosterComparison /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-audit" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAuditTrail /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/notification-hub" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterNotificationHub /></Gate></ProtectedRoute>} />
+      {/* Mobile PWA optimized views for managers */}
+      <Route path="/wfm/mobile-roster" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><MobileRosterDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/mobile-attendance" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><MobileTeamAttendance /></Gate></ProtectedRoute>} />
       {/*
         Roster Rules — the seven roster configuration screens as one tabbed page.
 
@@ -149,7 +175,8 @@ export const workforceRouteElements = (
       <Route path="/wfm-manager-approvals" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeWFMManagerApproval /></Gate></ProtectedRoute>} />
       <Route path="/wfm/planning-rules"  element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_PLANNING_RULES"><NativeWFMPlanningRules /></Gate></ProtectedRoute>} />
       <Route path="/wfm/slot-requirements" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_SLOT_REQUIREMENTS"><NativeSlotRequirementBuilder /></Gate></ProtectedRoute>} />
-      <Route path="/wfm/auto-roster"   element={<ProtectedRoute><Gate pageCode="WFM_AUTO_ROSTER"><NativeWFMAutoRoster /></Gate></ProtectedRoute>} />
+      {/* Superseded by RosterBuilderPage — redirect */}
+      <Route path="/wfm/auto-roster"   element={<Navigate to="/wfm/roster-builder" replace />} />
       <Route path="/wfm/weekoff-day-rules" element={<ProtectedRoute roles={['super_admin','admin','wfm']}><Gate pageCode="WFM_WEEKOFF_DAY_RULES"><NativeWeekOffDayRuleConfig /></Gate></ProtectedRoute>} />
       {/* No Gate pageCode here (unlike siblings above): canViewPage() fails closed for any
           pageCode absent from the page-access catalog, and adding one is a production data
@@ -188,7 +215,8 @@ export const workforceRouteElements = (
       <Route path="/my-roster"              element={<ProtectedRoute><NativeMyRoster /></ProtectedRoute>} />
       <Route path="/roster-preference"      element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><NativeRosterPreference /></Gate></ProtectedRoute>} />
       <Route path="/week-off-preferences"   element={<ProtectedRoute><NativeWeekOffPreferences /></ProtectedRoute>} />
-      <Route path="/roster-master-builder"  element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><NativeRosterMasterBuilder /></Gate></ProtectedRoute>} />
+      {/* Superseded by RosterBuilderPage — redirect */}
+      <Route path="/roster-master-builder"  element={<Navigate to="/wfm/roster-builder" replace />} />
       <Route path="/roster-capacity-config" element={<ProtectedRoute><Gate pageCode="ROSTER_MASTER"><NativeRosterCapacityConfig /></Gate></ProtectedRoute>} />
 
       {/* Live tracker / biometric */}

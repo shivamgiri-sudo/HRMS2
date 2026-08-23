@@ -138,6 +138,8 @@ import { cosecSyncRouter } from "./modules/wfm/cosec-sync.routes.js";
 import { biometricSummaryRouter } from "./modules/wfm/biometric-summary.routes.js";
 import { rosterImportRouter } from "./modules/wfm/roster-import.routes.js";
 import { rosterBuilderRouter } from "./modules/wfm/roster-builder.routes.js";
+import { rosterIntelligenceRouter } from "./modules/wfm/roster-intelligence.routes.js";
+import { rosterAnalyticsRouter } from "./modules/wfm/roster-analytics.routes.js";
 import shiftAliasRouter from "./modules/wfm/shift-alias.routes.js";
 import headerMappingProfileRouter from "./modules/wfm/header-mapping-profile.routes.js";
 import { planningModeRouter } from "./modules/wfm/planning-mode.routes.js";
@@ -233,6 +235,8 @@ import { imprestRouter } from "./modules/finance/imprest.routes.js";
 import { salaryVoucherRouter } from "./modules/finance/salary-voucher.routes.js";
 import { legacyReportsRouter } from "./modules/legacy-reports/legacy-reports.routes.js";
 import { costCentreManagementRouter } from "./modules/finance/cost-centre-management.routes.js";
+import { clientPaymentTrackingRouter } from "./modules/finance/client-payment-tracking.routes.js";
+import mandateSeatTrackingRouter from "./modules/finance/mandate-seat-tracking.routes.js";
 import { processPnlRouter } from "./modules/process-pnl/process-pnl.routes.js";
 import billabilityRouter from "./modules/process-pnl/billability.routes.js";
 import { annualBudgetSummaryRouter } from "./modules/process-pnl/annual-budget-summary.routes.js";
@@ -545,6 +549,8 @@ app.use("/api/finance/imprest", imprestRouter);
 app.use("/api/finance/payroll", salaryVoucherRouter);
 app.use("/api/legacy-reports", legacyReportsRouter);
 app.use("/api/finance/cost-centres", costCentreManagementRouter);
+app.use("/api/finance/client-payments", clientPaymentTrackingRouter);
+app.use("/api/finance/mandate-seats", mandateSeatTrackingRouter);
 app.use("/api/finance", processPnlRouter);
 // Mounted on its own base after processPnlRouter. Owning /api/finance/billability/* outright
 // protects it from a wildcard ROUTE on the shared /api/finance base — but not from a path-less
@@ -698,6 +704,27 @@ app.use("/api/push", pushRouter);
 app.use("/api/location", locationRouter);
 app.use("/api/social-feed", socialFeedRouter);
 app.use("/api/mcnmeet", mcnmeetRouter);
+
+// ── Workforce Analytics Intelligence Platform ─────────────────────────────────
+// Predictive attrition scoring, manager risk leaderboard, intervention recommendations,
+// attrition reason inference, employee 360 composite profile, WFM compliance analytics.
+import { predictiveAttritionRouter } from "./modules/analytics/predictive-attrition.routes.js";
+import { attritionReasonInferenceRouter } from "./modules/analytics/attrition-reason-inference.routes.js";
+import { managerRiskRouter } from "./modules/analytics/manager-risk.routes.js";
+import { employee360Router as analyticsEmployee360Router } from "./modules/analytics/employee-360.routes.js";
+import { interventionRecommendationRouter } from "./modules/analytics/intervention-recommendation.routes.js";
+import { wfmComplianceAnalyticsRouter } from "./modules/wfm/wfm-compliance-analytics.routes.js";
+
+app.use("/api/analytics/predictive-attrition", predictiveAttritionRouter);
+app.use("/api/analytics/attrition-reason-inference", attritionReasonInferenceRouter);
+app.use("/api/analytics/manager-risk", managerRiskRouter);
+app.use("/api/analytics/employee-360", analyticsEmployee360Router);
+app.use("/api/analytics/intervention-recommendations", interventionRecommendationRouter);
+app.use("/api/wfm/compliance", wfmComplianceAnalyticsRouter);
+app.use("/api/roster-intelligence", rosterIntelligenceRouter);
+app.use("/api/roster-analytics", rosterAnalyticsRouter);
+import { rosterAuditRouter } from "./modules/wfm/roster-audit.routes.js";
+app.use("/api/roster-audit", rosterAuditRouter);
 
 // social-feed and mcnmeet crons used to start HERE, at module scope, so they ran
 // on any import of app.ts — including tests and scripts — in the API process
