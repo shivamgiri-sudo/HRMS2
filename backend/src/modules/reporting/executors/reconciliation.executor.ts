@@ -79,7 +79,7 @@ export async function payrollPopulationReconciliation(
   appendFilterConditions(filters, clauses, params);
 
   // JOIN-condition params must precede WHERE params in positional binding.
-  const joinParams: unknown[] = [month, start, endExclusive, month, start, endExclusive];
+  const joinParams: unknown[] = [month, start, endExclusive];
 
   const base = `
     SELECT e.id AS _cursor,
@@ -129,16 +129,10 @@ export async function payrollPopulationReconciliation(
      WHERE ${clauses.join(" AND ")}
        -- Only rows that belong to at least one of the three populations. An employee who is
        -- inactive, unpaid and absent for the month is simply not part of this question.
-       AND (e.active_status = 1
-            OR EXISTS (SELECT 1 FROM salary_prep_line spl2
-                         JOIN salary_prep_run spr2 ON spr2.id = spl2.run_id
-                        WHERE spl2.employee_id = e.id AND spr2.run_month = ?)
-            OR EXISTS (SELECT 1 FROM attendance_daily_record adr2
-                        WHERE adr2.employee_id = e.id
-                          AND adr2.record_date >= ? AND adr2.record_date < ?))
+       AND (e.active_status = 1 OR pay.employee_id IS NOT NULL OR att.employee_id IS NOT NULL)
      ORDER BY population_gap = 'RECONCILED', e.employee_code`;
 
-  const allParams = [...joinParams.slice(0, 3), ...params, ...joinParams.slice(3)];
+  const allParams = [...joinParams, ...params];
   const total = options.includeTotal ? await count(base, allParams) : 0;
   const rows = await query(applyPagination(base, options), allParams) as Record<string, unknown>[];
   return finish(rows, total, options.includeTotal);

@@ -122,7 +122,8 @@ const REPORTS: Record<string, ReportDef> = {
     ],
     async query(f) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
-      const [mw, mv] = monthWhere("spr.run_month", f.month);
+      const month = f.month || new Date().toISOString().slice(0, 7);
+      const [mw, mv] = monthWhere("spr.run_month", month);
       const [ew, ev] = empWhere("spl.employee_code", f.employee_code);
       return q(`
         SELECT
@@ -193,8 +194,8 @@ const REPORTS: Record<string, ReportDef> = {
     async query(f) {
       const bCond = f.branch ? "AND branch_name = ?" : "";
       const eCond = f.employee_code ? "AND employee_code = ?" : "";
-      const dCond = f.from_date ? `AND att_date BETWEEN ? AND ?`
-        : f.month ? `AND DATE_FORMAT(att_date,'%Y-%m') = ?` : "";
+      const dCond = f.from_date ? `AND attend_date BETWEEN ? AND ?`
+        : f.month ? `AND DATE_FORMAT(attend_date,'%Y-%m') = ?` : "";
       const bv = f.branch ? [f.branch] : [];
       const ev = f.employee_code ? [f.employee_code] : [];
       const dv = f.from_date ? [f.from_date, f.to_date ?? "9999-12-31"]
@@ -205,15 +206,18 @@ const REPORTS: Record<string, ReportDef> = {
         : f.month ? `AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?` : "";
       return q(`
         SELECT employee_code, employee_name, branch_name, cost_center,
-               att_date, status, old_status, 'legacy' AS source
+               attend_date AS att_date, status, old_status, 'legacy' AS source
         FROM attendance_legacy_snapshot
         WHERE 1=1 ${bCond} ${eCond} ${dCond}
         UNION ALL
-        SELECT e.employee_code, e.full_name AS employee_name,
-               bm.branch_name, cc.cost_centre_code AS cost_center,
+        SELECT e.employee_code COLLATE utf8mb4_unicode_ci,
+               e.full_name COLLATE utf8mb4_unicode_ci AS employee_name,
+               bm.branch_name COLLATE utf8mb4_unicode_ci,
+               cc.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_center,
                adr.record_date AS att_date,
-               adr.attendance_status AS status,
-               NULL AS old_status, 'hrms' AS source
+               adr.attendance_status COLLATE utf8mb4_unicode_ci AS status,
+               NULL AS old_status,
+               'hrms' COLLATE utf8mb4_unicode_ci AS source
         FROM attendance_daily_record adr
         JOIN employees e ON e.id = adr.employee_id
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
@@ -252,10 +256,13 @@ const REPORTS: Record<string, ReportDef> = {
         FROM wfh_attendance_snapshot
         WHERE 1=1 ${bw} ${ew} ${dw}
         UNION ALL
-        SELECT e.employee_code, e.full_name AS employee_name,
-               bm.branch_name, cc.cost_centre_code AS cost_center,
+        SELECT e.employee_code COLLATE utf8mb4_unicode_ci,
+               e.full_name COLLATE utf8mb4_unicode_ci AS employee_name,
+               bm.branch_name COLLATE utf8mb4_unicode_ci,
+               cc.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_center,
                adr.record_date AS att_date,
-               adr.attendance_status AS status, NULL AS old_status
+               adr.attendance_status COLLATE utf8mb4_unicode_ci AS status,
+               NULL AS old_status
         FROM attendance_daily_record adr
         JOIN employees e ON e.id = adr.employee_id
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
@@ -282,14 +289,14 @@ const REPORTS: Record<string, ReportDef> = {
     async query(f) {
       const [bw, bv] = branchWhere("branch_name", f.branch);
       const [ew, ev] = empWhere("employee_code", f.employee_code);
-      const [dw, dv] = f.from_date ? dateRangeWhere("att_date", f.from_date, f.to_date)
-        : monthWhere("att_date", f.month);
+      const [dw, dv] = f.from_date ? dateRangeWhere("attend_date", f.from_date, f.to_date)
+        : monthWhere("attend_date", f.month);
       return q(`
         SELECT employee_code, employee_name, branch_name, cost_center,
-               att_date, status, old_status
+               attend_date AS att_date, status, old_status
         FROM field_attendance_snapshot
         WHERE 1=1 ${bw} ${ew} ${dw}
-        ORDER BY branch_name, employee_code, att_date
+        ORDER BY branch_name, employee_code, attend_date
         LIMIT 50000
       `, [...bv, ...ev, ...dv]);
     },
@@ -435,9 +442,12 @@ const REPORTS: Record<string, ReportDef> = {
         LEFT JOIN branch_master bm1 ON bm1.id = e1.branch_id
         WHERE 1=1 ${mCond} ${bw1} ${ew1}
         UNION ALL
-        SELECT spl.employee_code, e2.full_name AS employee_name,
-               bm2.branch_name, spr.run_month AS tax_month,
-               splc.amount AS tds_amount, 'hrms' AS source
+        SELECT spl.employee_code COLLATE utf8mb4_unicode_ci,
+               e2.full_name COLLATE utf8mb4_unicode_ci AS employee_name,
+               bm2.branch_name COLLATE utf8mb4_unicode_ci,
+               spr.run_month COLLATE utf8mb4_unicode_ci AS tax_month,
+               splc.amount AS tds_amount,
+               'hrms' COLLATE utf8mb4_unicode_ci AS source
         FROM salary_prep_line_component splc
         JOIN salary_prep_line spl ON spl.id = splc.line_id
         JOIN salary_prep_run spr ON spr.id = spl.run_id
@@ -547,13 +557,15 @@ const REPORTS: Record<string, ReportDef> = {
         FROM upload_deduction_snapshot
         WHERE 1=1 ${bw} ${ew} ${mw}
         UNION ALL
-        SELECT e.employee_code, e.full_name AS employee_name,
-               bm.branch_name, cc.cost_centre_code AS cost_center,
-               ede.run_month AS salary_month,
+        SELECT e.employee_code COLLATE utf8mb4_unicode_ci,
+               e.full_name COLLATE utf8mb4_unicode_ci AS employee_name,
+               bm.branch_name COLLATE utf8mb4_unicode_ci,
+               cc.cost_centre_code COLLATE utf8mb4_unicode_ci AS cost_center,
+               ede.run_month COLLATE utf8mb4_unicode_ci AS salary_month,
                0 AS mobile_deduction, 0 AS short_collection,
                0 AS asset_recovery, 0 AS insurance, 0 AS leave_deduction,
                SUM(ede.amount) AS others_deduction,
-               GROUP_CONCAT(ede.deduction_type_code SEPARATOR ', ') AS remarks
+               GROUP_CONCAT(ede.deduction_type_code SEPARATOR ', ') COLLATE utf8mb4_unicode_ci AS remarks
         FROM employee_deduction_entries ede
         JOIN employees e ON e.id = ede.employee_id
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
@@ -724,7 +736,7 @@ const REPORTS: Record<string, ReportDef> = {
     columns: [
       { key: "employee_code", label: "Emp Code", format: "text" },
       { key: "present",       label: "Present",  format: "number", align: "right" },
-      { key: "week_off",      label: "WO",       format: "number", align: "right" },
+      { key: "wo",            label: "WO",       format: "number", align: "right" },
       { key: "holiday",       label: "Holiday",  format: "number", align: "right" },
       { key: "half_day",      label: "Half Day", format: "number", align: "right" },
       { key: "compoff",       label: "Compoff",  format: "number", align: "right" },
@@ -742,7 +754,7 @@ const REPORTS: Record<string, ReportDef> = {
         : "";
       const mv = f.month ? [f.month] : [];
       return q(`
-        SELECT employee_code, present, week_off, holiday, half_day,
+        SELECT employee_code, present, wo, holiday, half_day,
                compoff, el, cl, sl, ot, sal_month, sal_year
         FROM qual_attendance_snapshot
         WHERE 1=1 ${ew} ${mCond}

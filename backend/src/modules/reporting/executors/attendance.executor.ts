@@ -463,17 +463,15 @@ export async function shiftAdherenceDetail(
              MAX(logout_time) AS latest_punch,
              SUM(total_login_minutes) AS total_login_minutes
         FROM wfm_attendance_session
-       WHERE session_date BETWEEN '${from}' AND '${to}'
+       WHERE session_date BETWEEN ? AND ?
        GROUP BY employee_id, session_date
     ) agg_ses ON agg_ses.employee_id = adr.employee_id AND agg_ses.session_date = adr.record_date
     LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
               WHERE ${clauses.join(" AND ")}
               ORDER BY adr.record_date DESC, adherence_status DESC, employee_name`;
 
-  // One execution, not two: the page and its total come from the same fetch wherever the result
-  // fits the probe. See fetchPageWithTotal — the COUNT wrapper it replaces re-ran the entire
-  // statement to learn a number the first run already knew.
-  const paged = await fetchPageWithTotal(base, params, options, query, count);
+  // subquery params (from, to) must precede WHERE params in positional binding
+  const paged = await fetchPageWithTotal(base, [from, to, ...params], options, query, count);
   const total = paged.total;
   const rows  = paged.rows as Record<string, unknown>[];
   return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length, nextCursor: null };
@@ -631,8 +629,11 @@ export async function lateArrivalSummary(
       LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
         AND wra.roster_date = adr.record_date
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
-      LEFT JOIN wfm_attendance_session was ON was.employee_id = adr.employee_id
-        AND was.session_date = adr.record_date
+      LEFT JOIN (
+        SELECT employee_id, session_date, MIN(login_time) AS login_time
+        FROM wfm_attendance_session
+        GROUP BY employee_id, session_date
+      ) was ON was.employee_id = adr.employee_id AND was.session_date = adr.record_date
       LEFT JOIN attendance_rule_config arc ON arc.id = adr.rule_config_id
       LEFT JOIN cost_centre_master rcc ON rcc.id = e.cost_centre_id
      WHERE ${clauses.join(" AND ")}
