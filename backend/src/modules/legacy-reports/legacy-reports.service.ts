@@ -311,12 +311,12 @@ const REPORTS: Record<string, ReportDef> = {
       { key: "manager_review_note", label: "Approved By",    format: "text" },
     ],
     async query(f) {
-      const [ew, ev] = empWhere("ar.employee_code", f.employee_code);
+      const [ew, ev] = empWhere("e.employee_code", f.employee_code);
       const [dw, dv] = f.from_date ? dateRangeWhere("ar.session_date", f.from_date, f.to_date)
         : monthWhere("ar.session_date", f.month);
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       return q(`
-        SELECT ar.employee_code, bm.branch_name,
+        SELECT e.employee_code, bm.branch_name,
                ar.session_date, ar.old_status, ar.new_status,
                ar.dispute_type, ar.reason, ar.status,
                ar.reviewed_at, ar.manager_review_note
@@ -324,7 +324,7 @@ const REPORTS: Record<string, ReportDef> = {
         JOIN employees e ON e.id = ar.employee_id
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
         WHERE ar.escalated_to LIKE 'BWAI:%' ${ew} ${dw} ${bw}
-        ORDER BY bm.branch_name, ar.employee_code, ar.session_date
+        ORDER BY bm.branch_name, e.employee_code, ar.session_date
         LIMIT 50000
       `, [...ev, ...dv, ...bv]);
     },
@@ -391,10 +391,10 @@ const REPORTS: Record<string, ReportDef> = {
       return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name, el.loan_type,
-               el.loan_amount, el.installment_amount, el.total_installments,
+               el.amount AS loan_amount, el.deduction_per_month AS installment_amount, el.installments AS total_installments,
                el.start_date, el.end_date,
-               el.total_deducted   AS deducted_amount,
-               el.outstanding_amount AS pending_amount,
+               el.deducted_amount,
+               el.pending_amount,
                el.status
         FROM employee_loans el
         JOIN employees e ON e.id = el.employee_id

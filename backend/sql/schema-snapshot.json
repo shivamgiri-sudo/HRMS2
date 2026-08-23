@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1003,
-  "columnCount": 14318,
+  "columnCount": 14326,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -6358,7 +6358,8 @@
       "effective_from",
       "effective_to",
       "active_status",
-      "created_at"
+      "created_at",
+      "updated_at"
     ],
     "employee_salary_assignment_backup_20260711": [
       "id",
@@ -10923,7 +10924,13 @@
       "updated_at",
       "salary_verification_done",
       "salary_verification_at",
-      "salary_verification_by"
+      "salary_verification_by",
+      "leave_finalized",
+      "leave_finalized_at",
+      "leave_finalized_by",
+      "regularization_complete",
+      "regularization_complete_at",
+      "regularization_complete_by"
     ],
     "payroll_calculation_audit": [
       "id",
@@ -13570,7 +13577,8 @@
       "source",
       "taxable",
       "created_at",
-      "reason"
+      "reason",
+      "notes"
     ],
     "salary_prep_line_component_archive_20260731": [
       "id",

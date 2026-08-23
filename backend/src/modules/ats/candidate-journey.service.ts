@@ -434,8 +434,8 @@ export async function getCandidateFullJourney(candidateId: string): Promise<Jour
                 phr.rejection_category, phr.rejection_reason_code, phr.rejection_remarks,
                 sca.basic, sca.hra, sca.conveyance, sca.special_allowance, sca.gross,
                 sca.net_estimate, sca.effective_date,
-                spm.name AS package_name, spm.band_code,
-                COALESCE(ra.full_name, ra.email) AS reviewed_by_name
+                spm.band_code AS package_name, spm.band_code,
+                ra.email AS reviewed_by_name
            FROM employee_payroll_head_review phr
            LEFT JOIN salary_component_assignments sca
                   ON sca.employee_id = phr.employee_id AND sca.status = 'active'
