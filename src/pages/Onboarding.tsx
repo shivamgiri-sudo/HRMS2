@@ -807,6 +807,22 @@ const Onboarding = () => {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {/* Deprecation notice — ATS onboarding is the preferred flow for new joiners */}
+        <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <svg className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+          <div>
+            <p className="font-semibold">Use the ATS onboarding flow for new joiners</p>
+            <p className="mt-0.5 text-amber-800">
+              This manual form is for direct employee additions only (re-hires, admin corrections).
+              For candidates coming through interviews, use{" "}
+              <a href="/ats/onboarding-requests" className="font-semibold underline hover:text-amber-950">
+                Onboarding Requests
+              </a>{" "}
+              instead — it handles offer approval, BGV, documents, and payroll setup automatically.
+            </p>
+          </div>
+        </div>
+
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="grid h-auto w-full grid-cols-1 gap-1 sm:h-10 sm:max-w-xl sm:grid-cols-3">
             <TabsTrigger value="add" className="w-full justify-center">

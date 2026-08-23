@@ -26,6 +26,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import {
   Server, Lock, CheckCircle, Clock, AlertTriangle, Search, XCircle,
   ShieldCheck, RefreshCw, Upload, Download, User, ChevronRight, Loader2,
@@ -928,6 +929,13 @@ export default function NativeITProvisioningTracker() {
   // ── Render ────────────────────────────────────────────────────────────────────
   return (
     <DashboardLayout>
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-700 via-slate-600 to-blue-700 text-white p-6 mb-5 shadow-lg">
+        <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
+        <p className="text-xs font-bold uppercase tracking-widest text-slate-300">IT / Admin / WFM</p>
+        <h1 className="mt-1 text-2xl font-bold text-white">Provisioning Tracker</h1>
+        <p className="mt-1 text-sm text-slate-200">Track IT setup, biometric enrollment, WFM alignment and appointment letter tasks.</p>
+      </div>
+      <OnboardingTabBar />
     <HrmsModernShell
       eyebrow="Provisioning"
       title={preset?.title ?? "IT Provisioning Tracker"}

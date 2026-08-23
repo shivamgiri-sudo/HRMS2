@@ -35,6 +35,7 @@ const NativeBGVAPIMonitor              = lazy(() => import("@/pages/NativeBGVAPI
 const NativeReconciliationDashboard    = lazy(() => import("@/pages/NativeReconciliationDashboard"));
 const NativePayrollHRValidation        = lazy(() => import("@/pages/NativePayrollHRValidation"));
 const NativeJoiningControlRoom         = lazy(() => import("@/pages/NativeJoiningControlRoom"));
+const NativeHROnboardingHub            = lazy(() => import("@/pages/NativeHROnboardingHub"));
 const NativeOfferLetterGeneration      = lazy(() => import("@/pages/NativeOfferLetterGeneration"));
 const ATSBulkImportPage                = lazy(() => import("@/pages/ATSBulkImportPage"));
 const NativeATSCandidateRegistration   = lazy(() => import("@/pages/NativeATSCandidateRegistration"));
@@ -78,6 +79,8 @@ export const recruitmentRouteElements = (
 
       {/* Onboarding bridge */}
       <Route path="/ats/onboarding-bridge"    element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_BRIDGE"><NativeATSOnboardingBridge /></Gate></ProtectedRoute>} />
+      {/* Unified onboarding hub — /ats/onboarding dispatches to the active tab */}
+      <Route path="/ats/onboarding" element={<ProtectedRoute><NativeHROnboardingHub /></ProtectedRoute>} />
       {/* CANONICAL onboarding requests: /ats/onboarding-requests */}
       <Route path="/ats/onboarding-requests"  element={<ProtectedRoute><Gate pageCode="ATS_ONBOARDING_REQUESTS"><NativeHROnboardingRequests /></Gate></ProtectedRoute>} />
       {/* Duplicate eliminated — redirect to canonical */}

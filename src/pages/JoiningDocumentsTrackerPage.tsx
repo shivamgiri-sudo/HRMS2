@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { FileCheck, Users, CheckCircle2, Clock, AlertTriangle, RefreshCw, Search, ListChecks, Bell, FilePlus, UserPlus, Calendar, Download, Loader2 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { HrmsModernShell, HrmsBentoTile } from "@/components/ui/hrms-modern";
+import { HrmsBentoTile } from "@/components/ui/hrms-modern";
+import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -231,23 +232,29 @@ export default function JoiningDocumentsTrackerPage() {
 
   return (
     <DashboardLayout>
-      <HrmsModernShell
-        eyebrow="Document Management"
-        title="Joining Documents Tracker"
-        description="Monitor joining document completion, e-sign status, and verification progress across all employees."
-        icon={<FileCheck className="h-6 w-6" />}
-        actions={
-          <Button
-            variant="outline"
-            onClick={() => refetch()}
-            disabled={isFetching}
-            className="gap-2 min-h-[44px]"
-          >
-            <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
-            Refresh
-          </Button>
-        }
-      >
+      <div>
+        {/* Gradient header */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-blue-600 via-indigo-600 to-cyan-600 text-white p-6 mb-5 shadow-lg">
+          <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-blue-200">HR · Document Management</p>
+              <h1 className="mt-1 text-2xl font-bold text-white">Joining Documents Tracker</h1>
+              <p className="mt-1 text-sm text-blue-100">Monitor joining document completion, e-sign status, and verification progress across all employees.</p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              className="gap-2 min-h-[44px] border-white/30 bg-white/10 text-white hover:bg-white/20"
+            >
+              <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
+        </div>
+        <OnboardingTabBar />
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <HrmsBentoTile
             icon={<Users className="h-5 w-5" />}
@@ -505,7 +512,7 @@ export default function JoiningDocumentsTrackerPage() {
             )}
           </CardContent>
         </Card>
-      </HrmsModernShell>
+      </div>
 
       {/* Send Reminders Modal */}
       <Dialog open={remindModalOpen} onOpenChange={setRemindModalOpen}>

@@ -13,6 +13,7 @@ import {
   Loader2, RefreshCw, ShieldAlert, Users, XCircle,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 
 type Blocker = { code: string; reason: string; severity: "critical" | "warning" };
 type QueueRow = {
@@ -149,6 +150,8 @@ export default function NativeAppointmentLetterQueue() {
             </button>
           </div>
         </div>
+
+        <OnboardingTabBar />
 
         {/* Alerts */}
         {error && (

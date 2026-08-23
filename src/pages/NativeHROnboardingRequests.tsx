@@ -5,6 +5,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { hrmsApi } from '@/lib/hrmsApi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWorkforceAccess } from '@/hooks/useUserRole';
+import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { Button } from '@/components/ui/button';
 import {
   AlertTriangle,
@@ -949,12 +950,15 @@ export default function NativeHROnboardingRequests() {
         {/* ── LIST VIEW ─────────────────────────────────────────────────── */}
         {!selected && (
           <div className="space-y-5">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-widest text-blue-600">HR · ATS Onboarding</p>
-                <h1 className="text-2xl font-bold text-slate-900">Onboarding Requests</h1>
-                <p className="text-sm text-slate-500">Review candidate profiles, push back corrections, and create offers.</p>
-              </div>
+            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-600 text-white p-6 mb-5 shadow-lg">
+              <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
+              <div className="absolute right-24 bottom-0 h-16 w-16 rounded-full bg-purple-300/20 blur-xl" />
+              <p className="text-xs font-bold uppercase tracking-widest text-purple-200">HR · ATS</p>
+              <h1 className="mt-1 text-2xl font-bold text-white">Onboarding Requests</h1>
+              <p className="mt-1 text-sm text-purple-100">Review candidate profiles, push back corrections, and create offers.</p>
+            </div>
+            <OnboardingTabBar />
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-end">
               {mainTab === 'onboarding' && (
                 <div className="relative w-full sm:w-72">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />

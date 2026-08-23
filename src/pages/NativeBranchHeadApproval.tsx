@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Loader2, CheckCircle2, XCircle, X, AlertCircle, RefreshCw, Users, History, Ban, Search } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { CandidateJourneyDrawer } from '@/components/ats/CandidateJourneyDrawer';
+import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 import { useSearchParams } from 'react-router-dom';
 import {
   Table,
@@ -392,19 +393,23 @@ export default function NativeBranchHeadApproval() {
   return (
     <DashboardLayout>
       <div className="space-y-5 p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Offer Approvals</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Salaries validated by Payroll HR, waiting on your decision. Select a row to see the
-              candidate's full journey.
-            </p>
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-emerald-600 via-teal-600 to-cyan-600 text-white p-6 mb-5 shadow-lg">
+          <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
+          <div className="absolute right-24 bottom-0 h-16 w-16 rounded-full bg-emerald-300/20 blur-xl" />
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-emerald-200">Branch Head · Approvals</p>
+              <h1 className="mt-1 text-2xl font-bold text-white">Offer Approvals</h1>
+              <p className="mt-1 text-sm text-emerald-100">Salaries validated by Payroll HR, waiting on your decision.</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={load} disabled={loading} aria-label="Refresh offer list"
+              className="min-h-[44px] cursor-pointer border-white/30 bg-white/10 text-white hover:bg-white/20">
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+              <span className="ml-2">Refresh</span>
+            </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={load} disabled={loading} aria-label="Refresh offer list" className="min-h-[44px] cursor-pointer">
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
-            <span className="ml-2">Refresh</span>
-          </Button>
         </div>
+        <OnboardingTabBar />
 
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList>
