@@ -281,12 +281,21 @@ async function drillPayrollReadiness(scope: DashboardScope): Promise<DrilldownRe
     const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     // Counts only, never per-employee bank/PAN/UAN values: this drilldown is reachable
     // from dashboards whose viewers are not payroll roles.
+    // Tenure grace window must match getPayrollReadinessMetrics exactly (bank/PAN: > 30
+    // days since joining; UAN: > 60 days) -- see that function's extensive comment on
+    // why a brand-new joiner's missing bank/PAN/UAN isn't a data-quality problem, just
+    // normal onboarding/EPFO lag. This drawer had no grace window at all, so it always
+    // showed a larger, noisier count than the tile it opens from (every employee ever
+    // missing a field, not just employees where the missing field is now overdue).
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT b.branch_name AS branchName,
               COUNT(*) AS total,
-              SUM(CASE WHEN COALESCE(TRIM(e.pan_number),'') = '' THEN 1 ELSE 0 END) AS missingPan,
-              SUM(CASE WHEN COALESCE(TRIM(e.uan_number),'') = '' THEN 1 ELSE 0 END) AS missingUan,
-              SUM(CASE WHEN COALESCE(TRIM(e.bank_account_number),'') = '' THEN 1 ELSE 0 END) AS missingBank
+              SUM(CASE WHEN COALESCE(TRIM(e.pan_number),'') = ''
+                        AND DATEDIFF(CURDATE(), e.date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingPan,
+              SUM(CASE WHEN COALESCE(TRIM(e.uan_number),'') = ''
+                        AND DATEDIFF(CURDATE(), e.date_of_joining) > 60 THEN 1 ELSE 0 END) AS missingUan,
+              SUM(CASE WHEN COALESCE(TRIM(e.bank_account_number),'') = ''
+                        AND DATEDIFF(CURDATE(), e.date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingBank
          FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
         WHERE e.active_status = 1 AND ${scopeSql}
@@ -552,16 +561,28 @@ async function drillDpdp(scope: DashboardScope): Promise<DrilldownResult> {
 // ─── APPOINTMENT_ESIGN ───────────────────────────────────────────────────────
 async function drillAppointmentEsign(scope: DashboardScope): Promise<DrilldownResult> {
   try {
-    const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
+    // Filter and scope must match getAppointmentEsignMetrics exactly. That tile reads
+    // current_state/candidate_esign_status/company_sign_status (OR'd) and scopes
+    // through the employee (employee_id is NOT NULL on every row). This drawer was
+    // reading a different column (`status`, a separate, simpler enum with its own
+    // vocabulary -- draft/sent_for_esign/candidate_signed/company_signed/completed/
+    // blocked, none of which match current_state's pending/override values) and
+    // scoping through the nullable candidate_id instead. Currently both give the
+    // same count only because production data hasn't yet produced a status/
+    // current_state combination where they'd diverge (verified live) -- fixed before
+    // that becomes a live mismatch.
+    const { sql: scopeSql, params } = buildScopeWhereEmployees(scope, "e");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT cand.full_name AS name,
-              alr.status AS status,
+      `SELECT COALESCE(e.full_name, CONCAT_WS(' ', e.first_name, e.last_name)) AS name,
+              alr.current_state AS status,
               alr.candidate_esign_status AS candidateEsignStatus,
               alr.company_sign_status AS companySignStatus,
               alr.created_at AS createdAt
          FROM appointment_letter_request alr
-         ${candidateScopeJoin("alr.candidate_id")}
-        WHERE COALESCE(alr.status,'pending') NOT IN ('completed','cancelled')
+         LEFT JOIN employees e ON e.id = alr.employee_id
+        WHERE (alr.current_state IN ('candidate_esign_pending','company_sign_pending','override_requested')
+               OR alr.candidate_esign_status = 'pending'
+               OR alr.company_sign_status = 'pending')
           AND ${scopeSql}
         ORDER BY alr.created_at ASC
         LIMIT 100`,
