@@ -92,22 +92,53 @@ joiningKitRouter.get("/:employeeId/joining-kit/preview", h(async (req, res) => {
   });
 }));
 
-/** Queue + dispatch in one call — HR thinks in terms of "send", not two steps. */
+/** Queue + dispatch in one call — HR thinks in terms of "send", not two steps.
+ *
+ * Respond immediately after queueing so the HTTP handler never holds a DB
+ * connection open while waiting on the external eSign provider. The provider
+ * call runs in the background; the UI polls GET /:employeeId/joining-kit for
+ * the resulting status (sent / failed / blocked).
+ */
 joiningKitRouter.post("/:employeeId/joining-kit/send", h(async (req: AuthenticatedRequest, res) => {
   const employeeId = String(req.params.employeeId);
+  const actorUserId = req.authUser?.id ?? null;
+
   const queued = await queueJoiningKit({
     employeeId,
     triggerSource: "hr_manual",
-    actorUserId: req.authUser?.id ?? null,
+    actorUserId,
   });
-  const outcome = await dispatchJoiningKit(queued.kitId, req.authUser?.id ?? null);
-  // A blocked kit is a normal, expected answer — not a server fault. 409 so the
-  // UI can show the reason without treating it as an error state.
-  const code = outcome.status === "sent" ? 200 : outcome.status === "failed" ? 502 : 409;
-  return res.status(code).json({
-    success: outcome.status === "sent",
-    message: outcome.message,
-    data: outcome,
+
+  // If the kit is already signed/sent, surface that immediately — no need to
+  // re-dispatch.
+  const [existing] = await db.execute<RowDataPacket[]>(
+    `SELECT status FROM employee_joining_esign_kit WHERE id = ? LIMIT 1`,
+    [queued.kitId],
+  );
+  const currentStatus = String((existing as RowDataPacket[])[0]?.status ?? "queued");
+  if (currentStatus === "sent" || currentStatus === "signed") {
+    return res.status(409).json({
+      success: false,
+      message: `This kit is already ${currentStatus}.`,
+      data: { kitId: queued.kitId, status: currentStatus },
+    });
+  }
+
+  // Respond before touching the provider — the provider call cannot stall the
+  // connection pool from this point on.
+  res.json({
+    success: true,
+    message: "Kit is being assembled and sent. Check status via GET joining-kit.",
+    data: { kitId: queued.kitId, status: "queued" },
+  });
+
+  // Fire-and-forget. Errors are logged; kit status moves to "failed" inside
+  // dispatchJoiningKit on any unhandled throw.
+  dispatchJoiningKit(queued.kitId, actorUserId).catch((err: unknown) => {
+    console.error(
+      "[joining-kit] background dispatch error:",
+      err instanceof Error ? err.message : err,
+    );
   });
 }));
 

@@ -281,14 +281,28 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
   let txStatus = "link_generated";
   let errorMessage: string | null = null;
 
+  // Hard timeout: if TrustHub does not respond in 30 s the DB connection that
+  // called this function is released rather than hanging indefinitely. The kit
+  // moves to "failed" below and HR can retry (a new clientTransactionId is
+  // generated on retry, so there is no double-billing risk from the timeout path).
+  const PROVIDER_TIMEOUT_MS = 30_000;
+
   try {
-    const r = await esignWithUrl({
-      filePath: kitPath,
-      clientTransactionId,
-      signedBy: String(kit.full_name ?? kit.employee_code ?? "Employee"),
-      location: String(kit.branch_name ?? "India"),
-      reason: `Joining Documents Kit (${assembled.items.length} documents)`,
-    });
+    const r = await Promise.race([
+      esignWithUrl({
+        filePath: kitPath,
+        clientTransactionId,
+        signedBy: String(kit.full_name ?? kit.employee_code ?? "Employee"),
+        location: String(kit.branch_name ?? "India"),
+        reason: `Joining Documents Kit (${assembled.items.length} documents)`,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`eSign provider timed out after ${PROVIDER_TIMEOUT_MS / 1000} s`)),
+          PROVIDER_TIMEOUT_MS,
+        )
+      ),
+    ]);
     // esignWithUrl returns providerUrl; verificationUrl is the raw client's shape.
     providerUrl = r.providerUrl ?? null;
     providerReferenceId = r.providerReferenceId ?? null;
