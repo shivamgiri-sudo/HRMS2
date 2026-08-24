@@ -61,6 +61,11 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 
 // Roles that can manage tickets (IT agents + existing admin/HR)
 const HELPDESK_ADMIN_ROLES = ["admin", "hr", "super_admin", "it", "branch_it", "it_admin"] as const;
+// Every status that still represents work in hand. 'resolved' is the only terminal state for
+// tickets (see the PATCH route's own note on 'closed'); 'cancelled' is terminal too and never
+// set by any live route. Matches the live enum, confirmed 2026-08-24:
+// enum('open','in_progress','pending_info','on_hold','resolved','closed','cancelled').
+const ACTIVE_TICKET_STATUSES = ["open", "in_progress", "pending_info", "on_hold"] as const;
 // The subset of HELPDESK_ADMIN_ROLES that is org-wide by design (unchanged).
 const HELPDESK_ORG_WIDE_ROLES = ["admin", "hr", "super_admin"] as const;
 // The subset that must be scoped to its own branch/process — previously treated
@@ -156,8 +161,18 @@ router.use(requireAuth);
 
 router.get("/command-center", requireRole("admin", "hr", "super_admin", "manager", "process_manager", "it", "branch_it", "it_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const scope = await resolveHelpdeskTicketScope(req.authUser);
-  const data = await getSupportCommandCenter(req.query as any, scope);
-  return res.json({ success: true, data });
+  // The queue ships inside this payload, under this route's own scope, because the page used
+  // to fetch it separately from GET /tickets — which is not gated by this route's role list.
+  // A manager or process_manager reaching /tickets falls past the HELPDESK_ADMIN_ROLES branch
+  // into getEmployeeForUser() and gets their OWN tickets back, which the page then rendered as
+  // "the support queue" directly beneath org-wide KPI tiles. One endpoint, one scope, one
+  // answer. ACTIVE_TICKET_STATUSES rather than status=open alone so the list and the tiles
+  // above it are counting the same tickets.
+  const [data, queue] = await Promise.all([
+    getSupportCommandCenter(req.query as any, scope),
+    helpdeskService.listTickets({ statuses: [...ACTIVE_TICKET_STATUSES] }, scope),
+  ]);
+  return res.json({ success: true, data: { ...data, queue } });
 }));
 
 router.get("/dashboard", requireRole("admin", "hr", "super_admin", "manager", "process_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -227,7 +242,13 @@ router.post("/tickets", h(async (req: AuthenticatedRequest, res: Response) => {
     employeeId = emp.id;
   }
 
-  const ticket = await helpdeskService.createTicket({ ...req.body, employee_id: employeeId });
+  // raised_by_user_id is the ACTING user, never req.body — on the admin path employeeId is
+  // who the ticket is about, and conflating the two would let the maker name themselves.
+  const ticket = await helpdeskService.createTicket({
+    ...req.body,
+    employee_id: employeeId,
+    raised_by_user_id: userId,
+  });
   await writeSensitiveAuditLog({
     actorUserId: userId,
     actionType: "TICKET_CREATED",
@@ -352,8 +373,50 @@ router.post("/tickets/:id/escalate", requireRole(...HELPDESK_ADMIN_ROLES), h(asy
 router.post("/tickets/:id/resolve", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   const { resolution_note, root_cause } = req.body;
   if (!resolution_note) return res.status(400).json({ error: "resolution_note required" });
-  if (!(await loadTicketInScope(req))) return res.status(404).json({ error: "Not found" });
-  const data = await helpdeskService.updateTicket(req.params.id, { status: "resolved", resolution_note, root_cause });
+  const ticket = await loadTicketInScope(req) as { raised_by_user_id?: string | null; assigned_to?: string | null } | null;
+  if (!ticket) return res.status(404).json({ error: "Not found" });
+
+  const resolverUserId = req.authUser!.id;
+
+  // ── Separation of duties (migration 1558) ───────────────────────────────────
+  // Until 2026-08-24 one holder of one HELPDESK_ADMIN_ROLES role could raise a ticket on
+  // behalf of an employee, self-assign it via /take, and resolve it — three endpoints, one
+  // pair of eyes, and nothing on the row afterwards able to show it. Every other governed
+  // module here (GRN, imprest, budget review, cost centre, payroll sign-off) refuses that.
+  //
+  // NULL raiser is NOT a refusal: the 4 rows predating this column have no recorded maker,
+  // and blocking them would invent a failure on data that was never at fault.
+  if (ticket.raised_by_user_id && ticket.raised_by_user_id === resolverUserId) {
+    return res.status(409).json({
+      success: false,
+      error: "You raised this ticket, so you cannot also resolve it. Assign it to another agent to close.",
+    });
+  }
+
+  // A ticket resolved while assigned to nobody is how TKT-004 reached status='resolved' with
+  // no assignee, no resolved_at and no resolution note. Resolving is an act by an owner.
+  if (!ticket.assigned_to) {
+    return res.status(409).json({
+      success: false,
+      error: "This ticket has no assignee. Take it or assign it before resolving.",
+    });
+  }
+
+  // The assignee closes their own work. An admin/super_admin may still close on their behalf
+  // (a supervisor closing for an agent who has left for the day is ordinary helpdesk practice,
+  // and refusing it would strand tickets) — but resolved_by_user_id records which of the two
+  // actually happened, so "who signed this off" is answerable from the row, not just the log.
+  if (ticket.assigned_to !== resolverUserId
+      && !(await hasRoleForRequest(req.authUser, "admin", "super_admin"))) {
+    return res.status(403).json({
+      success: false,
+      error: "Only the assigned agent, an admin or a super admin can resolve this ticket.",
+    });
+  }
+
+  const data = await helpdeskService.updateTicket(req.params.id, {
+    status: "resolved", resolution_note, root_cause, resolved_by_user_id: resolverUserId,
+  });
   await writeSensitiveAuditLog({
     actorUserId: req.authUser!.id,
     actionType: "TICKET_RESOLVED",

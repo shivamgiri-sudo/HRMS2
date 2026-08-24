@@ -101,6 +101,15 @@ export const helpdeskService = {
     filters: {
       employee_id?: string;
       status?: string;
+      /**
+       * Multi-status filter, for callers that want "everything still being worked" rather
+       * than one status. Support Command Center's queue needs this: it used to ask for
+       * status=open alone while the KPI tiles above it counted open + in_progress +
+       * pending_info + resolved, so the list and the totals disagreed by construction.
+       * Applied alongside `status`, not instead of it — passing both narrows to the
+       * intersection, which is what a caller passing both would mean.
+       */
+      statuses?: string[];
       category?: string;
       assigned_to?: string;
       priority?: string;
@@ -121,6 +130,10 @@ export const helpdeskService = {
     const params: unknown[] = [];
     if (filters.employee_id) { conds.push("t.employee_id = ?");  params.push(filters.employee_id); }
     if (filters.status)      { conds.push("t.status = ?");        params.push(filters.status); }
+    if (filters.statuses?.length) {
+      conds.push(`t.status IN (${filters.statuses.map(() => "?").join(",")})`);
+      params.push(...filters.statuses);
+    }
     if (filters.category)    { conds.push("t.category = ?");      params.push(filters.category); }
     if (filters.assigned_to) { conds.push("t.assigned_to = ?");   params.push(filters.assigned_to); }
     if (filters.priority)    { conds.push("t.priority = ?");      params.push(filters.priority); }
@@ -182,6 +195,14 @@ export const helpdeskService = {
     priority?: string;
     downtime_minutes?: number;
     affected_seats?: number;
+    /**
+     * auth_user.id of whoever actually called POST /tickets — the maker half of the
+     * separation-of-duties rule enforced at /resolve (migration 1558). Distinct from
+     * employee_id, which is who the ticket is ABOUT: on the admin path those are two
+     * different people, and before this column existed the acting user survived only
+     * inside sensitive_action_log's change_summary JSON.
+     */
+    raised_by_user_id?: string | null;
   }) {
     const id = randomUUID();
     const priority = data.priority ?? "medium";
@@ -191,21 +212,24 @@ export const helpdeskService = {
     // blocks ticket creation: a lookup failure here just leaves the ticket unassigned, the
     // same state every ticket was in before this existed.
     let assignedTo: string | null = null;
+    let autoRouteFailure: string | null = null;
     try {
       const [raiserRows] = await db.execute<RowDataPacket[]>(
         `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`, [data.employee_id]
       );
       const branchId = (raiserRows[0]?.branch_id as string | undefined) ?? null;
       assignedTo = await resolveAutoAssignee(data.category, branchId);
+      if (!assignedTo) autoRouteFailure = `no active holder of any owning role for category '${data.category}'`;
     } catch (e) {
+      autoRouteFailure = e instanceof Error ? e.message : String(e);
       console.error("[helpdesk] auto-routing lookup failed, ticket will be unassigned:", e);
     }
 
     await db.execute(
       `INSERT INTO helpdesk_ticket
          (id, ticket_code, employee_id, category, it_subcategory, subject, description,
-          priority, sla_due_at, downtime_minutes, affected_seats, assigned_to)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          priority, sla_due_at, downtime_minutes, affected_seats, assigned_to, raised_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id, ticketCode(), data.employee_id, data.category,
         data.it_subcategory ?? null,
@@ -213,9 +237,25 @@ export const helpdeskService = {
         data.downtime_minutes ?? 0,
         data.affected_seats ?? 1,
         assignedTo,
+        data.raised_by_user_id ?? null,
       ]
     );
     const ticket = await this.getTicket(id);
+
+    // An unassigned ticket used to be indistinguishable from one legitimately awaiting triage:
+    // both the thrown-error path and the no-owner-configured path ended at stderr, so a ticket
+    // that fell out of routing looked exactly like one nobody had picked up yet. Record it where
+    // someone will actually see it. Still never blocks creation — the ticket exists either way.
+    if (autoRouteFailure) {
+      await writeSensitiveAuditLog({
+        actorUserId: data.raised_by_user_id ?? data.employee_id,
+        actionType: "TICKET_AUTOROUTE_FAILED",
+        moduleKey: "HELPDESK",
+        entityType: "helpdesk_ticket",
+        entityId: id,
+        changeSummary: { category: data.category, reason: autoRouteFailure },
+      });
+    }
 
     // SMS — ticket created (fire-and-forget)
     try {
@@ -253,6 +293,8 @@ export const helpdeskService = {
     downtime_minutes?: number;
     affected_seats?: number;
     hold_reason?: string;
+    /** auth_user.id of whoever resolved it — the checker half (migration 1558). */
+    resolved_by_user_id?: string;
   }) {
     // Recalculate SLA if priority changes
     let slaDueAt: Date | null = null;
@@ -288,6 +330,7 @@ export const helpdeskService = {
          downtime_minutes    = COALESCE(?, downtime_minutes),
          affected_seats      = COALESCE(?, affected_seats),
          hold_reason         = COALESCE(?, hold_reason),
+         resolved_by_user_id = COALESCE(?, resolved_by_user_id),
          held_at             = CASE WHEN ? = 'on_hold' THEN COALESCE(held_at, NOW())
                                     WHEN ? IN ('open','in_progress') THEN NULL
                                     ELSE held_at END,
@@ -311,6 +354,7 @@ export const helpdeskService = {
         data.downtime_minutes ?? null,
         data.affected_seats ?? null,
         data.hold_reason ?? null,
+        data.resolved_by_user_id ?? null,
         data.status ?? "",
         data.status ?? "",
         ...(slaDueAt ? [slaDueAt] : []),
