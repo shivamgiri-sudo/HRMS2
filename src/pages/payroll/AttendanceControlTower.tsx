@@ -416,6 +416,18 @@ export default function AttendanceControlTower() {
                   Run <span className="font-semibold capitalize">{data.run.status}</span> &mdash; {numberValue(data.run.total_employees)} employees &mdash; Net ₹{numberValue(data.run.total_net)}
                 </p>
               )}
+              {(() => {
+                const [yr, mo] = runMonth.split("-").map(Number);
+                const lastDay = new Date(yr, mo, 0);
+                const diffDays = Math.ceil((lastDay.getTime() - Date.now()) / 86400000);
+                if (diffDays < 0) return <p className="mt-1 text-xs text-blue-200/50">Run month closed</p>;
+                if (diffDays === 0) return <p className="mt-1 text-xs font-semibold text-amber-200">Payroll cutoff today</p>;
+                return (
+                  <p className={`mt-1 text-xs font-medium ${diffDays <= 3 ? "text-amber-200" : "text-blue-200/70"}`}>
+                    {diffDays <= 3 ? "⚠ " : ""}{diffDays} days to payroll cutoff ({lastDay.toLocaleDateString("en-IN", { day: "numeric", month: "short" })})
+                  </p>
+                );
+              })()}
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:items-start">
               {data && (

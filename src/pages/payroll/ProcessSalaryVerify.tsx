@@ -235,17 +235,56 @@ export default function ProcessSalaryVerify() {
         {/* Summary tiles */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
-            { label: "Total",    val: summary?.total    ?? 0, color: "text-slate-700",  bg: "bg-slate-50 border-slate-200"   },
-            { label: "Verified", val: summary?.verified ?? 0, color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200" },
-            { label: "Flagged",  val: summary?.flagged  ?? 0, color: "text-amber-700",  bg: "bg-amber-50 border-amber-200"   },
-            { label: "Pending",  val: summary?.pending  ?? 0, color: "text-red-700",    bg: "bg-red-50 border-red-200"       },
+            { label: "Total",    val: summary?.total    ?? 0, color: "text-slate-700",   bg: "bg-slate-50 border-slate-200",    icon: "👥" },
+            { label: "Verified", val: summary?.verified ?? 0, color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-200", icon: "✓"  },
+            { label: "Flagged",  val: summary?.flagged  ?? 0, color: "text-amber-700",   bg: "bg-amber-50 border-amber-200",    icon: "⚑"  },
+            { label: "Pending",  val: summary?.pending  ?? 0, color: "text-red-700",     bg: "bg-red-50 border-red-200",        icon: "○"  },
           ].map(({ label, val, color, bg }) => (
-            <div key={label} className={`rounded-xl border ${bg} px-4 py-3`}>
+            <div key={label} className={`rounded-xl border ${bg} px-4 py-3 transition-all duration-150 hover:shadow-sm`}>
               <div className={`text-2xl font-bold ${color}`}>{val}</div>
               <div className="text-sm text-slate-500 mt-0.5">{label}</div>
             </div>
           ))}
         </div>
+
+        {/* Verification progress strip */}
+        {(summary?.total ?? 0) > 0 && (
+          <div className="rounded-2xl border border-slate-200 bg-white/95 px-5 py-4 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-700">Verification Progress</p>
+              <p className="text-sm font-bold text-slate-900">
+                {summary?.verified ?? 0} / {summary?.total ?? 0}
+                <span className="text-xs font-normal text-slate-500 ml-1">
+                  ({Math.round(((summary?.verified ?? 0) / Math.max(summary?.total ?? 1, 1)) * 100)}% complete)
+                </span>
+              </p>
+            </div>
+            <div className="h-2.5 rounded-full bg-slate-100 overflow-hidden flex">
+              {(summary?.verified ?? 0) > 0 && (
+                <div
+                  className="h-full bg-emerald-500 transition-all duration-700"
+                  style={{ width: `${Math.round(((summary?.verified ?? 0) / Math.max(summary?.total ?? 1, 1)) * 100)}%` }}
+                />
+              )}
+              {(summary?.flagged ?? 0) > 0 && (
+                <div
+                  className="h-full bg-amber-400 transition-all duration-700"
+                  style={{ width: `${Math.round(((summary?.flagged ?? 0) / Math.max(summary?.total ?? 1, 1)) * 100)}%` }}
+                />
+              )}
+            </div>
+            <div className="flex items-center gap-4 text-[11px] text-slate-500">
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" />Verified</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />Flagged</span>
+              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-200 inline-block" />Pending</span>
+              {summary?.salary_verification_done && (
+                <span className="ml-auto flex items-center gap-1 font-semibold text-emerald-700">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Ready for Sign-off
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Toolbar */}
         <div className="flex flex-wrap gap-3 items-center justify-between">
@@ -328,7 +367,13 @@ export default function ProcessSalaryVerify() {
               {filtered.map((row) => (
                 <TableRow
                   key={row.employee_id}
-                  className="cursor-pointer hover:bg-indigo-50/40 transition-colors"
+                  className={`cursor-pointer transition-colors ${
+                    row.verification_status === "flagged"
+                      ? "border-l-4 border-l-amber-400 hover:bg-amber-50/40"
+                      : row.verification_status === "verified"
+                        ? "border-l-4 border-l-emerald-400 hover:bg-emerald-50/20"
+                        : "border-l-4 border-l-transparent hover:bg-indigo-50/40"
+                  }`}
                   onClick={() => {
                     setSelectedEmployeeId(row.employee_id);
                     setSheetOpen(true);

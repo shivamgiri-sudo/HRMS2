@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Loader2, Search, RefreshCw, ShieldCheck, XCircle, Clock, AlertTriangle, ArrowRight, IndianRupee } from 'lucide-react';
+import { Loader2, Search, RefreshCw, ShieldCheck, XCircle, Clock, AlertTriangle, ArrowRight, IndianRupee, CheckCircle2 } from 'lucide-react';
 
 interface QueueRow {
   review_id: string;
@@ -98,20 +98,85 @@ export default function PayrollHeadSalaryReviewQueue() {
     return c != null ? `${base} (${c})` : base;
   };
 
+  // KPI aggregates
+  const pendingCount  = counts['pending_review'] ?? rows.filter(r => r.status === 'pending_review').length;
+  const approvedCount = counts['approved'] ?? 0;
+  const rejectedCount = counts['rejected'] ?? 0;
+  const overdueCount  = rows.filter(r => r.status === 'pending_review' && r.pending_hours >= 48).length;
+
   return (
     <DashboardLayout>
       <div className="p-6 space-y-5">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Salary Review Queue</h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Every new employee is blocked from payroll until reviewed and approved here.
-            </p>
+
+        {/* ── Gradient Header ──────────────────────────────────────────── */}
+        <div className="rounded-2xl bg-gradient-to-br from-indigo-600 via-violet-600 to-purple-700 text-white px-6 py-5 shadow-lg">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Salary Review Queue</h1>
+                <p className="text-indigo-200 text-sm mt-0.5">
+                  Every new employee is blocked from payroll until reviewed and approved here
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-white/30 bg-white/15 text-white hover:bg-white/25 min-h-[40px]"
+              onClick={() => void load()}
+              disabled={loading}
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={() => void load()} disabled={loading} className="min-h-[40px]">
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />Refresh
-          </Button>
+        </div>
+
+        {/* ── KPI tiles ────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="rounded-2xl border bg-gradient-to-br from-amber-50 to-orange-50 border-amber-200 p-4 shadow-sm">
+            <div className="flex items-start justify-between mb-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-600">Pending Review</p>
+              <div className="w-7 h-7 rounded-lg bg-amber-100 text-amber-600 flex items-center justify-center">
+                <Clock className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-amber-900">{pendingCount}</p>
+            <p className="text-xs mt-1 text-amber-600 opacity-80">awaiting decision</p>
+          </div>
+          <div className={`rounded-2xl border p-4 shadow-sm bg-gradient-to-br ${overdueCount > 0 ? 'from-red-50 to-rose-50 border-red-200' : 'from-slate-50 to-slate-100 border-slate-200'}`}>
+            <div className="flex items-start justify-between mb-3">
+              <p className={`text-xs font-semibold uppercase tracking-wide ${overdueCount > 0 ? 'text-red-600' : 'text-slate-500'}`}>Overdue (&gt;48h)</p>
+              <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${overdueCount > 0 ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-500'}`}>
+                <AlertTriangle className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <p className={`text-2xl font-bold ${overdueCount > 0 ? 'text-red-900' : 'text-slate-900'}`}>{overdueCount}</p>
+            <p className={`text-xs mt-1 opacity-80 ${overdueCount > 0 ? 'text-red-600' : 'text-slate-500'}`}>{overdueCount > 0 ? 'salary blocked' : 'all on time'}</p>
+          </div>
+          <div className="rounded-2xl border bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-200 p-4 shadow-sm">
+            <div className="flex items-start justify-between mb-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-600">Approved</p>
+              <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-emerald-900">{approvedCount}</p>
+            <p className="text-xs mt-1 text-emerald-600 opacity-80">cleared for payroll</p>
+          </div>
+          <div className="rounded-2xl border bg-gradient-to-br from-rose-50 to-pink-50 border-rose-200 p-4 shadow-sm">
+            <div className="flex items-start justify-between mb-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-rose-600">Rejected</p>
+              <div className="w-7 h-7 rounded-lg bg-rose-100 text-rose-600 flex items-center justify-center">
+                <XCircle className="w-3.5 h-3.5" />
+              </div>
+            </div>
+            <p className="text-2xl font-bold text-rose-900">{rejectedCount}</p>
+            <p className="text-xs mt-1 text-rose-600 opacity-80">requires correction</p>
+          </div>
         </div>
 
         {/* Filters */}
@@ -174,10 +239,18 @@ export default function PayrollHeadSalaryReviewQueue() {
                 {rows.map((row) => {
                   const cfg = STATUS_CFG[row.status];
                   const Icon = cfg.icon;
+                  const rowBorder =
+                    row.status === 'pending_review' && row.pending_hours >= 48
+                      ? 'border-l-4 border-l-red-400'
+                      : row.status === 'pending_review'
+                      ? 'border-l-4 border-l-amber-400'
+                      : row.status === 'approved'
+                      ? 'border-l-4 border-l-emerald-400'
+                      : 'border-l-4 border-l-rose-400';
                   return (
                     <TableRow
                       key={row.review_id}
-                      className="cursor-pointer hover:bg-slate-50 transition-colors border-slate-100"
+                      className={`cursor-pointer hover:bg-slate-50 transition-colors border-slate-100 ${rowBorder}`}
                       onClick={() => navigate(`/payroll/salary-review/${row.employee_id}`)}
                     >
                       <TableCell className="py-3">

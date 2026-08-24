@@ -2,17 +2,22 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
   CreditCard,
   Download,
   FileText,
   IndianRupee,
   Loader2,
+  Lock,
   Search,
   ShieldAlert,
+  Sparkles,
   TrendingUp,
   Users,
   Wallet,
   X,
+  Zap,
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -903,6 +908,13 @@ const Payroll = () => {
           }
         />
 
+        <PayrollJourneyStrip
+          runSummaries={runSummaries}
+          effectiveRunMonth={stats?.effectiveRunMonth ?? null}
+          processingLabel={processingLabel}
+          isLoadingHistory={isLoadingHistory}
+        />
+
         <div className="w-full">
           <KpiCardGrid>
             {payrollStats.map((stat) => (
@@ -1469,45 +1481,89 @@ function LifecyclePipelineCard() {
   const completedRuns = stageCounts["disbursed"];
   const activeRuns = totalRuns - completedRuns;
 
+  const completionPct = totalRuns > 0 ? Math.round((completedRuns / totalRuns) * 100) : 0;
+
+  const STAGE_META: Record<string, { bg: string; text: string; border: string; dot: string }> = {
+    draft:             { bg: "bg-slate-50",   text: "text-slate-600",  border: "border-slate-200",  dot: "bg-slate-400"  },
+    calculating:       { bg: "bg-blue-50",    text: "text-blue-700",   border: "border-blue-200",   dot: "bg-blue-500"   },
+    reviewed:          { bg: "bg-violet-50",  text: "text-violet-700", border: "border-violet-200", dot: "bg-violet-500" },
+    approved:          { bg: "bg-amber-50",   text: "text-amber-700",  border: "border-amber-200",  dot: "bg-amber-500"  },
+    locked:            { bg: "bg-orange-50",  text: "text-orange-700", border: "border-orange-200", dot: "bg-orange-500" },
+    "finance-approved":{ bg: "bg-indigo-50",  text: "text-indigo-700", border: "border-indigo-200", dot: "bg-indigo-500" },
+    disbursed:         { bg: "bg-emerald-50", text: "text-emerald-700",border: "border-emerald-200",dot: "bg-emerald-500"},
+  };
+
   return (
-    <div className="rounded-lg border bg-card p-4 space-y-4">
+    <div className="rounded-2xl border border-slate-200 bg-white/95 backdrop-blur-sm shadow-sm space-y-4 p-5">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-bold text-slate-900">Run Pipeline Board</h3>
+          <p className="text-xs text-slate-500 mt-0.5">All-time payroll run status across lifecycle stages</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2.5 py-0.5">
+            {completionPct}% complete
+          </span>
+        </div>
+      </div>
+
+      {/* Overall progress bar */}
       <div>
-        <h3 className="font-semibold text-base">Run Pipeline</h3>
-        <p className="text-xs text-muted-foreground mt-1">Payroll run lifecycle stages</p>
+        <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-blue-500 to-emerald-500 transition-all duration-700"
+            style={{ width: `${completionPct}%` }}
+          />
+        </div>
+        <div className="flex justify-between mt-1 text-[10px] text-slate-400">
+          <span>{totalRuns} total runs</span>
+          <span>{activeRuns} in progress · {completedRuns} disbursed</span>
+        </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 text-sm">
-        <div className="rounded-lg bg-slate-50 p-2 border"><p className="text-muted-foreground text-xs">Total Runs</p><p className="font-semibold">{totalRuns}</p></div>
-        <div className="rounded-lg bg-blue-50 p-2 border border-blue-200"><p className="text-blue-600 text-xs">In Progress</p><p className="font-semibold text-blue-700">{activeRuns}</p></div>
-        <div className="rounded-lg bg-green-50 p-2 border border-green-200"><p className="text-green-600 text-xs">Completed</p><p className="font-semibold text-green-700">{completedRuns}</p></div>
+      {/* Summary KPI tiles */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="rounded-xl bg-slate-50 border border-slate-200 px-3 py-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Total Runs</p>
+          <p className="text-xl font-bold text-slate-900 mt-0.5">{totalRuns}</p>
+        </div>
+        <div className="rounded-xl bg-blue-50 border border-blue-200 px-3 py-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-blue-500">In Progress</p>
+          <p className="text-xl font-bold text-blue-700 mt-0.5">{activeRuns}</p>
+        </div>
+        <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-600">Disbursed</p>
+          <p className="text-xl font-bold text-emerald-700 mt-0.5">{completedRuns}</p>
+        </div>
       </div>
 
-      <div className="flex items-center gap-1 overflow-x-auto pb-2">
-        {stages.map((stage, idx) => (
-          <div key={stage} className="flex items-center gap-1 flex-shrink-0">
+      {/* Stage cards grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-7 gap-2">
+        {stages.map((stage) => {
+          const meta  = STAGE_META[stage] ?? STAGE_META.draft;
+          const count = stageCounts[stage];
+          const hasRuns = count > 0;
+          return (
             <div
-              className={`rounded-lg border px-2 py-1.5 text-xs font-medium text-center min-w-20 ${getStageColor(stage)}`}
+              key={stage}
+              className={`rounded-xl border px-3 py-3 flex flex-col gap-1.5 transition-all duration-150 ${
+                hasRuns ? `${meta.bg} ${meta.border} shadow-sm` : "bg-slate-50 border-slate-100"
+              }`}
             >
-              <div className="text-[10px] capitalize font-semibold">{stage}</div>
-              <div className="text-xs font-bold">{stageCounts[stage]}</div>
+              <div className="flex items-center gap-1.5">
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${hasRuns ? meta.dot : "bg-slate-200"}`} />
+                <span className={`text-[10px] font-bold uppercase tracking-wide capitalize ${hasRuns ? meta.text : "text-slate-400"}`}>
+                  {stage.replace("-", " ")}
+                </span>
+              </div>
+              <p className={`text-2xl font-bold leading-none ${hasRuns ? meta.text : "text-slate-300"}`}>{count}</p>
+              <p className={`text-[10px] ${hasRuns ? meta.text : "text-slate-300"}`}>
+                {count === 1 ? "run" : "runs"}
+              </p>
             </div>
-            {idx < stages.length - 1 && <div className="text-muted-foreground text-lg">→</div>}
-          </div>
-        ))}
-      </div>
-
-      <div className="rounded-lg bg-muted/30 p-3">
-        <h4 className="font-medium text-xs mb-2">Stage Breakdown</h4>
-        <table className="w-full text-xs">
-          <tbody>
-            {stages.map((stage) => (
-              <tr key={stage} className="border-b last:border-0">
-                <td className="py-1 capitalize">{stage}</td>
-                <td className="py-1 text-right font-medium">{stageCounts[stage]} run{stageCounts[stage] !== 1 ? "s" : ""}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          );
+        })}
       </div>
     </div>
   );
@@ -2138,6 +2194,213 @@ function BranchBreakdownDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Payroll Journey Strip ────────────────────────────────────────────────────
+// Visual pipeline showing the active run's position in the full lifecycle.
+// Sits between the page header and KPI cards so the payroll head immediately
+// knows where this month stands without navigating to another page.
+
+interface RunSummaryShape {
+  id: string;
+  run_month: string;
+  status: string;
+  total_employees?: number;
+}
+
+const JOURNEY_STAGES: Array<{ key: string; label: string; shortLabel: string; actionLabel?: string; actionHref?: string }> = [
+  { key: "draft",            label: "Draft",           shortLabel: "Draft",    actionLabel: "Run Calculation",    actionHref: "#current" },
+  { key: "calculating",      label: "Calculating",     shortLabel: "Calc",     actionLabel: "View Progress" },
+  { key: "reviewed",         label: "Under Review",    shortLabel: "Review",   actionLabel: "Go to Validation",   actionHref: "/payroll/validation" },
+  { key: "approved",         label: "Approved",        shortLabel: "Approved", actionLabel: "Go to Sign-off",     actionHref: "/payroll/sign-off" },
+  { key: "locked",           label: "Locked",          shortLabel: "Locked",   actionLabel: "Finance Queue",      actionHref: "#signoff" },
+  { key: "finance-approved", label: "Finance Signed",  shortLabel: "Finance",  actionLabel: "Disburse",           actionHref: "/payroll/disbursal" },
+  { key: "disbursed",        label: "Disbursed",       shortLabel: "Paid" },
+];
+
+const STAGE_READINESS_LINKS: Record<string, { label: string; href: string; tone: string }[]> = {
+  draft: [
+    { label: "Check Branch Readiness", href: "/payroll/branch-readiness", tone: "blue" },
+    { label: "Attendance Gaps",        href: "/payroll/attendance-control-tower", tone: "amber" },
+    { label: "Salary Reviews",         href: "/payroll/salary-review", tone: "violet" },
+  ],
+  calculating: [
+    { label: "Recalculation Queue", href: "/payroll/recalculation-queue", tone: "blue" },
+    { label: "Salary Drift",        href: "/payroll/attendance-control-tower", tone: "amber" },
+  ],
+  reviewed: [
+    { label: "Verify Salaries",   href: "/payroll/salary-verification", tone: "blue" },
+    { label: "EPF Compliance",    href: "/payroll/epf-compliance",      tone: "violet" },
+  ],
+  approved: [
+    { label: "Bank Readiness",  href: "/payroll/bank-readiness", tone: "blue" },
+    { label: "Sign-off",        href: "/payroll/sign-off",       tone: "indigo" },
+  ],
+  locked: [
+    { label: "Finance Queue",  href: "#signoff",              tone: "indigo" },
+    { label: "Bulk Payslips",  href: "/payroll/bulk-outputs", tone: "blue" },
+  ],
+  "finance-approved": [
+    { label: "Disbursal",  href: "/payroll/disbursal",     tone: "emerald" },
+    { label: "NEFT File",  href: "/payroll/bank-readiness", tone: "blue" },
+  ],
+  disbursed: [
+    { label: "Payslip Center",    href: "/payroll/payslips",          tone: "blue" },
+    { label: "Statutory Filing",  href: "/payroll/statutory-filing",  tone: "violet" },
+    { label: "Audit Trail",       href: "/payroll/audit-trail",       tone: "slate" },
+  ],
+};
+
+const TONE_CLASSES: Record<string, string> = {
+  blue:    "bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100",
+  amber:   "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100",
+  violet:  "bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100",
+  indigo:  "bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100",
+  emerald: "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100",
+  slate:   "bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100",
+};
+
+function PayrollJourneyStrip({
+  runSummaries,
+  effectiveRunMonth,
+  processingLabel,
+  isLoadingHistory,
+}: {
+  runSummaries: RunSummaryShape[];
+  effectiveRunMonth: string | null;
+  processingLabel: string | null;
+  isLoadingHistory: boolean;
+}) {
+  const activeRun = effectiveRunMonth
+    ? runSummaries.find((r) => r.run_month === effectiveRunMonth)
+    : runSummaries[0] ?? null;
+
+  const currentStatus = activeRun?.status ?? "draft";
+  const currentIdx    = JOURNEY_STAGES.findIndex((s) => s.key === currentStatus);
+  const safeCurrent   = currentIdx === -1 ? 0 : currentIdx;
+  const isDisbursed   = currentStatus === "disbursed";
+  const readinessLinks = STAGE_READINESS_LINKS[currentStatus] ?? [];
+
+  if (isLoadingHistory) {
+    return (
+      <div className="h-28 rounded-2xl bg-slate-100 animate-pulse" />
+    );
+  }
+
+  if (!activeRun && runSummaries.length === 0) {
+    return (
+      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-5 py-4 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center">
+          <Zap className="w-4 h-4 text-slate-400" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold text-slate-700">No active payroll run</p>
+          <p className="text-xs text-slate-500 mt-0.5">Generate payroll to begin the run lifecycle.</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl overflow-hidden shadow-sm border border-blue-200/60">
+      {/* Gradient header row */}
+      <div className="bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 px-5 py-3 flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
+            <Sparkles className="w-4 h-4 text-white" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-blue-100 text-[10px] font-bold uppercase tracking-wider">Active Payroll Run</p>
+            <p className="text-white font-bold text-sm truncate">
+              {processingLabel ?? (activeRun?.run_month ?? "—")}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {activeRun?.total_employees != null && (
+            <span className="text-[11px] font-semibold bg-white/20 text-white border border-white/30 rounded-full px-2.5 py-0.5">
+              {activeRun.total_employees.toLocaleString("en-IN")} employees
+            </span>
+          )}
+          {isDisbursed && (
+            <span className="flex items-center gap-1 text-[11px] font-bold bg-emerald-400/30 text-white border border-emerald-300/40 rounded-full px-2.5 py-0.5">
+              <CheckCircle2 className="w-3 h-3" /> Complete
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Stage pipeline */}
+      <div className="bg-white px-4 py-3">
+        <div className="flex items-center gap-0 overflow-x-auto">
+          {JOURNEY_STAGES.map((stage, idx) => {
+            const isCompleted = safeCurrent > idx;
+            const isCurrent   = safeCurrent === idx;
+            const isPending   = safeCurrent < idx;
+
+            return (
+              <div key={stage.key} className="flex items-center flex-shrink-0">
+                <div
+                  className={`
+                    flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 whitespace-nowrap
+                    ${isCompleted ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : ""}
+                    ${isCurrent   ? "bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-200 ring-2 ring-blue-300/50" : ""}
+                    ${isPending   ? "bg-slate-50 text-slate-400 border border-slate-200" : ""}
+                  `}
+                >
+                  {isCompleted && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
+                  {isCurrent   && <Zap className="w-3 h-3 text-white" />}
+                  {isPending   && <Lock className="w-3 h-3 text-slate-300" />}
+                  <span>{stage.shortLabel}</span>
+                </div>
+                {idx < JOURNEY_STAGES.length - 1 && (
+                  <ArrowRight
+                    className={`w-3.5 h-3.5 mx-1 flex-shrink-0 transition-colors ${
+                      isCompleted ? "text-emerald-400" : isCurrent ? "text-blue-400" : "text-slate-200"
+                    }`}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Progress bar */}
+        <div className="mt-2.5 relative">
+          <div className="h-1 bg-slate-100 rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-blue-500 to-indigo-500 transition-all duration-700"
+              style={{ width: `${Math.round((Math.max(safeCurrent, 0) / (JOURNEY_STAGES.length - 1)) * 100)}%` }}
+            />
+          </div>
+          <div className="flex justify-between mt-1">
+            <span className="text-[10px] text-slate-400">Started</span>
+            <span className="text-[10px] font-semibold text-blue-600">
+              {isDisbursed ? "100% Complete" : `Step ${safeCurrent + 1} of ${JOURNEY_STAGES.length}`}
+            </span>
+            <span className="text-[10px] text-slate-400">Disbursed</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Quick action links for current stage */}
+      {readinessLinks.length > 0 && (
+        <div className="bg-slate-50 border-t border-slate-100 px-4 py-2.5 flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400 mr-1">Next steps:</span>
+          {readinessLinks.map((link) => (
+            <a
+              key={link.href}
+              href={link.href}
+              className={`inline-flex items-center gap-1 text-[11px] font-semibold border rounded-full px-2.5 py-0.5 transition-colors duration-150 ${TONE_CLASSES[link.tone] ?? TONE_CLASSES.slate}`}
+            >
+              {link.label}
+              <ArrowRight className="w-2.5 h-2.5" />
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

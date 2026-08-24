@@ -1627,10 +1627,12 @@ function HOView({ month }: { month: string }) {
     return { total, ready, inProgress, blocked, notStarted, avgScore };
   }, [branches]);
 
-  const notFrozenCount     = branches.filter((b) => !b.attendance_frozen).length;
-  const notReadyCount      = branches.filter((b) => !b.attendance_data_ready).length;
-  const allBranchesReady   = stats.total > 0 && stats.ready === stats.total;
-  const majorityReady      = stats.total > 0 && stats.ready >= Math.ceil(stats.total * 0.8);
+  const notFrozenCount       = branches.filter((b) => !b.attendance_frozen).length;
+  const notReadyCount        = branches.filter((b) => !b.attendance_data_ready).length;
+  const signOffPendingCount  = branches.filter((b) => !b.branch_head_signoff).length;
+  const readinessPct         = stats.total > 0 ? Math.round((stats.ready / stats.total) * 100) : 0;
+  const allBranchesReady     = stats.total > 0 && stats.ready === stats.total;
+  const majorityReady        = stats.total > 0 && stats.ready >= Math.ceil(stats.total * 0.8);
 
   const startRunMutation = useMutation({
     mutationFn: async () => {
@@ -1727,18 +1729,48 @@ function HOView({ month }: { month: string }) {
         </div>
       )}
 
+      {/* Org Readiness Health Bar */}
+      {stats.total > 0 && (
+        <div className="rounded-2xl border border-teal-100 bg-teal-50/60 px-5 py-3.5 flex items-center gap-4">
+          <span className="text-sm font-semibold text-teal-800 whitespace-nowrap">Org Readiness</span>
+          <div className="flex-1 h-3 rounded-full bg-slate-200 overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-teal-400 to-emerald-500 rounded-full transition-all"
+              style={{ width: `${readinessPct}%` }}
+            />
+          </div>
+          <span className="text-sm font-bold text-teal-900 whitespace-nowrap">{stats.ready}/{stats.total} branches ready</span>
+          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${readinessPct >= 80 ? "bg-emerald-100 text-emerald-700" : readinessPct >= 50 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700"}`}>
+            {readinessPct}%
+          </span>
+        </div>
+      )}
+
       <GovernanceBanner governance={governance} />
       <PaymentReadinessBanner readiness={paymentReadiness ?? { status: "not_created" }} />
 
-      {/* Stats row */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <StatChip label="Total Branches" value={stats.total} accent="blue" />
-        <StatChip label="Ready" value={stats.ready} accent="green" />
-        <StatChip label="In Progress" value={stats.inProgress} accent="amber" />
+      {/* KPI strip */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <StatChip label="Branches Ready" value={stats.ready} accent="green" />
+        <StatChip label="Attendance Pending" value={notReadyCount} accent="amber" />
+        <StatChip label="Sign-off Pending" value={signOffPendingCount} accent="blue" />
         <StatChip label="Blocked" value={stats.blocked} accent="red" />
-        <StatChip label="Not Started" value={stats.notStarted} accent="slate" />
-        <StatChip label="Avg Score" value={`${stats.avgScore}%`} accent={stats.avgScore >= 80 ? "green" : stats.avgScore >= 60 ? "amber" : "red"} />
       </div>
+
+      {/* Blocker warning card — org-wide governance blockers */}
+      {governance.status === "checked" && governance.blockers > 0 && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <p className="font-semibold text-red-800 text-sm flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+            Payroll Blocked — {governance.blockers} org-wide blocker{governance.blockers === 1 ? "" : "s"}
+          </p>
+          {governance.issues.filter(i => i.severity === "blocker").map((b) => (
+            <p key={b.code} className="text-red-700 text-xs mt-0.5 ml-6">
+              <strong>{b.count}</strong> — {b.message}
+            </p>
+          ))}
+        </div>
+      )}
 
       {/* Branch cards */}
       {branches.length === 0 ? (
@@ -1747,7 +1779,7 @@ function HOView({ month }: { month: string }) {
           <p>No branches found for {month}.</p>
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
           {branches.map((branch) => (
             <BranchCard
               key={branch.branch_id}
@@ -1817,23 +1849,17 @@ export default function BranchPayrollReadiness() {
     <DashboardLayout>
       <div className="mx-auto max-w-7xl space-y-4 px-4 py-5 sm:px-5">
         {/* Hero Header */}
-        <div
-          className="relative overflow-hidden rounded-2xl p-5 sm:p-6"
-          style={{
-            background: "linear-gradient(135deg, #064e3b 0%, #065f46 50%, #047857 100%)",
-            boxShadow: "0 8px 32px rgba(6,78,59,0.30)",
-          }}
-        >
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-teal-600 via-cyan-600 to-blue-700 p-5 sm:p-6 shadow-lg">
           <div className="pointer-events-none absolute inset-0 opacity-10"
             style={{ backgroundImage: "radial-gradient(circle at 20% 50%, rgba(255,255,255,0.3) 0%, transparent 50%), radial-gradient(circle at 80% 20%, rgba(255,255,255,0.15) 0%, transparent 40%)" }} />
           <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <div className="flex items-center gap-2">
-                <TrendingUp className="h-5 w-5 text-emerald-200" />
-                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-200">Payroll Operations</span>
+                <TrendingUp className="h-5 w-5 text-teal-200" />
+                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-teal-200">Payroll Operations</span>
               </div>
               <h1 className="mt-1.5 text-2xl font-extrabold tracking-tight text-white sm:text-3xl">Branch Payroll Readiness</h1>
-              <p className="mt-1 text-sm text-emerald-100/80">Track payroll input completeness · attendance freeze · sign-off · projections</p>
+              <p className="mt-1 text-sm text-teal-100/80">Real-time readiness across all branches before payroll lock</p>
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
               <input

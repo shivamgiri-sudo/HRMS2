@@ -20,7 +20,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, CheckCircle2, Download, HelpCircle, Loader2, RefreshCw, ShieldAlert, Users,
+  AlertTriangle, CheckCircle2, Download, HelpCircle, Loader2, RefreshCw, ShieldAlert, Users, Landmark,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -193,24 +193,47 @@ export default function BankPaymentReadiness() {
   return (
     <DashboardLayout>
       <div className="p-6 space-y-6">
-        {/* ── Header ─────────────────────────────────────────────────────── */}
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <h1 className="text-2xl font-bold">Bank Payment Readiness</h1>
-            <p className="text-muted-foreground text-sm mt-1">
-              Every active payable employee, classified. As of {asOf} IST.
-            </p>
+        {/* ── Gradient Header ────────────────────────────────────────────── */}
+        <div className="rounded-2xl bg-gradient-to-br from-blue-700 via-sky-600 to-cyan-600 text-white px-6 py-5 shadow-lg">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                <Landmark className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Bank Payment Readiness</h1>
+                <p className="text-sky-200 text-sm mt-0.5">
+                  Every active payable employee, classified. As of {asOf} IST.
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {summary && (
+                <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-bold backdrop-blur-sm ${
+                  summary.gate_clear
+                    ? 'border-emerald-300/50 bg-emerald-500/20 text-emerald-100'
+                    : 'border-red-300/50 bg-red-500/20 text-red-100'
+                }`}>
+                  {summary.gate_clear
+                    ? <><CheckCircle2 className="w-3.5 h-3.5" /> Payment Gate Clear</>
+                    : <><AlertTriangle className="w-3.5 h-3.5" /> Gate Blocked — {summary.unresolved_count} unresolved</>
+                  }
+                </span>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-white/30 bg-white/15 text-white hover:bg-white/25"
+                onClick={() => {
+                  void qc.invalidateQueries({ queryKey: ["bank-readiness-summary"] });
+                  void qc.invalidateQueries({ queryKey: ["bank-readiness-exceptions"] });
+                  void qc.invalidateQueries({ queryKey: ["bank-readiness-remediation"] });
+                }}
+              >
+                <RefreshCw className="h-4 w-4 mr-2" /> Refresh
+              </Button>
+            </div>
           </div>
-          <Button
-            variant="outline"
-            onClick={() => {
-              void qc.invalidateQueries({ queryKey: ["bank-readiness-summary"] });
-              void qc.invalidateQueries({ queryKey: ["bank-readiness-exceptions"] });
-              void qc.invalidateQueries({ queryKey: ["bank-readiness-remediation"] });
-            }}
-          >
-            <RefreshCw className="h-4 w-4 mr-2" /> Refresh readiness
-          </Button>
         </div>
 
         {/* ── Verification-source banner ─────────────────────────────────── */}
