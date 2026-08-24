@@ -394,6 +394,7 @@ export default function NativeHROnboardingRequests() {
   const [previewGroupIndex, setPreviewGroupIndex] = useState(0);
   const [previewRotation, setPreviewRotation] = useState(0);
   const [previewBlurred, setPreviewBlurred] = useState(false);
+  const [screenshotWarning, setScreenshotWarning] = useState(false);
 
   // ── Offer / masters state
   const [bgv, setBgv] = useState<BgvData | null>(null);
@@ -494,6 +495,36 @@ export default function NativeHROnboardingRequests() {
     window.addEventListener('blur', onBlur);
     window.addEventListener('focus', onFocus);
     return () => { window.removeEventListener('blur', onBlur); window.removeEventListener('focus', onFocus); };
+  }, [documentPreview]);
+
+  // ── Detect PrintScreen key and show warning (can't prevent, but can deter + log)
+  useEffect(() => {
+    if (!documentPreview) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'PrintScreen') {
+        setScreenshotWarning(true);
+        setPreviewBlurred(true);
+        setTimeout(() => { setScreenshotWarning(false); setPreviewBlurred(false); }, 3000);
+        // Log the attempt (could be sent to backend for audit)
+        console.warn('[SECURITY] PrintScreen attempt detected:', user?.email, new Date().toISOString());
+      }
+    };
+    window.addEventListener('keyup', handler);
+    return () => window.removeEventListener('keyup', handler);
+  }, [documentPreview, user?.email]);
+
+  // ── Block printing via Ctrl+P
+  useEffect(() => {
+    if (!documentPreview) return;
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'p') {
+        e.preventDefault();
+        setScreenshotWarning(true);
+        setTimeout(() => setScreenshotWarning(false), 2000);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
   }, [documentPreview]);
 
   // ── Load list
@@ -2343,9 +2374,12 @@ export default function NativeHROnboardingRequests() {
         )}
 
         {/* ── SECURE DOCUMENT VIEWER ──────────────────────────────────────── */}
+        {/* Print blocking style */}
+        <style>{`@media print { .secure-doc-viewer, .secure-doc-viewer * { display: none !important; visibility: hidden !important; } }`}</style>
+
         {documentPreview && (
           <div
-            className="fixed inset-0 z-[60] flex flex-col bg-[#0f1117]"
+            className="secure-doc-viewer fixed inset-0 z-[60] flex flex-col bg-[#0f1117] print:hidden"
             onContextMenu={(e) => e.preventDefault()}
           >
             {/* Top toolbar */}
@@ -2606,12 +2640,29 @@ export default function NativeHROnboardingRequests() {
             </div>
 
             {/* Blur overlay when window loses focus */}
-            {previewBlurred && (
+            {previewBlurred && !screenshotWarning && (
               <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
                 <div className="text-center">
                   <Shield className="h-12 w-12 text-amber-400 mx-auto mb-3" />
                   <p className="text-lg font-semibold text-white">Document Protected</p>
                   <p className="text-sm text-slate-400 mt-1">Click here to view</p>
+                </div>
+              </div>
+            )}
+
+            {/* Screenshot attempt warning */}
+            {screenshotWarning && (
+              <div className="absolute inset-0 z-50 flex items-center justify-center bg-red-950/95 backdrop-blur-md">
+                <div className="text-center max-w-md px-6">
+                  <AlertTriangle className="h-16 w-16 text-red-400 mx-auto mb-4 animate-pulse" />
+                  <p className="text-xl font-bold text-white">Screenshot Detected</p>
+                  <p className="text-sm text-red-200 mt-2">
+                    This action has been logged. Unauthorized capture of confidential documents is prohibited.
+                  </p>
+                  <div className="mt-4 rounded-lg bg-red-900/50 px-4 py-2 text-xs font-mono text-red-300">
+                    User: {user?.email ?? '—'}<br />
+                    Time: {new Date().toLocaleString('en-IN')}
+                  </div>
                 </div>
               </div>
             )}
