@@ -641,8 +641,9 @@ router.post('/sla/bulk-waive', requireRole('admin', 'super_admin', 'hr'), h(asyn
   }
 
   await logSensitiveAction({
-    user_id: req.authUser!.id,
-    action: 'IT_PROV_BULK_WAIVE_SLA',
+    actor_user_id: req.authUser!.id,
+    action_type: 'it_bulk_waive_sla',
+    module_key: 'it_provisioning',
     entity_type: 'it_provisioning_request',
     entity_id: 'bulk',
     change_summary: { waived, reason: waiveReason, task_ids: idsToWaive.slice(0, 20) },
