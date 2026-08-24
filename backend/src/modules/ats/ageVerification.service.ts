@@ -92,9 +92,10 @@ export function extractDobFromText(text: string): string | null {
     const d = new Date(`${iso}T12:00:00+05:30`);
     if (Number.isNaN(d.getTime())) continue;
     const year = Number(iso.slice(0, 4));
-    // A plausible working-age DOB. Rejects OCR noise like an issue date of 2024
-    // or a garbled 1899.
-    if (year < 1930 || year > new Date().getFullYear() - 10) continue;
+    // A plausible working-age DOB. Rejects OCR noise like an issue date of 2024,
+    // a garbled 1899, or any year that would make the person < 15 (could never
+    // be a valid candidate DOB — only document issue/print dates land there).
+    if (year < 1930 || year > new Date().getFullYear() - 15) continue;
     return iso;
   }
   return null;
@@ -191,7 +192,12 @@ export async function assertEmployableAge(
   referenceDate?: Date | string | null,
 ): Promise<AgeVerification> {
   const v = await resolveVerifiedDob(candidateId, referenceDate);
-  if (v.isMinor) {
+  // Only hard-block when the DOB was confirmed by a verification provider.
+  // OCR extraction is too noisy (garbled scans, rotated images, issue dates
+  // misread as birth dates) to be a hard gate for the candidate. Self-declared
+  // typos also shouldn't stop submission. HR sees the age flag during review
+  // and can reject at the approval stage if the candidate is genuinely underage.
+  if (v.isMinor && v.verified) {
     throw Object.assign(
       new Error(
         `This candidate is ${v.age} years old. Employment below ${MINIMUM_EMPLOYMENT_AGE} is not permitted, so onboarding cannot continue.`,
