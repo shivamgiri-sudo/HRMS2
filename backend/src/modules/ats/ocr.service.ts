@@ -185,7 +185,7 @@ export async function crossValidateDocument(
     const alertId = randomUUID();
     await db.execute(
       `INSERT INTO candidate_fraud_alert (id, candidate_id, alert_type, severity, details)
-       VALUES (?, ?, ?, 'high', ?)`,
+       VALUES (?, ?, ?, 'medium', ?)`,
       [
         alertId,
         candidateId,
