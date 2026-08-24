@@ -183,6 +183,12 @@ function ReviewDrawer({
     hrmsApi.post(`/api/payroll-head-review/${employeeId}/approve`, {})
   );
 
+  const approveOfferedPackage = () => run(() =>
+    hrmsApi.post(`/api/payroll-head-review/${employeeId}/package/approve-offered`, {
+      effective_date: effectiveDate,
+    }), 'Offered package approved and assigned.'
+  );
+
   const onPackageBuilt = async (pkgId: string) => {
     if (!effectiveDate) { setError('Set effective date first.'); return; }
     await run(() =>
@@ -202,6 +208,7 @@ function ReviewDrawer({
   const review   = journey?.review;
   const employee = journey?.employee;
   const sc       = journey?.salary_components;
+  const os       = journey?.offered_salary; // Offered salary from Branch HR
   const status   = review?.status;
   const bgvCandidateId = journey?.bgv?.candidateId as string | null | undefined;
 
@@ -280,17 +287,72 @@ function ReviewDrawer({
                 </div>
               )}
 
-              {/* ── Salary Package ── */}
+              {/* ── Offered Salary from Branch HR ── */}
+              {os && (
+                <div className="rounded-xl border border-amber-200 overflow-hidden bg-amber-50/50">
+                  <div className="bg-gradient-to-r from-amber-500 to-orange-500 px-4 py-2.5 flex items-center gap-2">
+                    <Package className="h-3.5 w-3.5 text-white" />
+                    <p className="text-xs font-semibold text-white">Offered Salary (Branch HR)</p>
+                    <span className={`ml-auto text-[10px] font-semibold rounded-full px-2 py-0.5 ${
+                      os.offer_status === 'bh_approved' ? 'bg-emerald-100 text-emerald-700' : 'bg-white/20 text-white'
+                    }`}>{os.offer_status === 'bh_approved' ? 'BH Approved' : os.offer_status}</span>
+                  </div>
+                  <div className="p-3">
+                    <div className="grid grid-cols-2 gap-x-4">
+                      <div>
+                        <DrawerSalaryRow label="Basic" value={inr(os.basic)} />
+                        <DrawerSalaryRow label="HRA" value={inr(os.hra)} />
+                        <DrawerSalaryRow label="Conveyance" value={inr(os.conveyance)} />
+                        {Number(os.special_allowance) > 0 && <DrawerSalaryRow label="Special Allowance" value={inr(os.special_allowance)} />}
+                        {Number(os.bonus) > 0 && <DrawerSalaryRow label="Bonus" value={inr(os.bonus)} />}
+                        <DrawerSalaryRow label="Gross" value={inr(os.gross)} bold separator />
+                      </div>
+                      <div>
+                        <DrawerSalaryRow label="PF (Emp)" value={Number(os.pf_employee) > 0 ? `− ${inr(os.pf_employee)}` : '—'} />
+                        <DrawerSalaryRow label="ESIC (Emp)" value={Number(os.esic_employee) > 0 ? `− ${inr(os.esic_employee)}` : '—'} />
+                        <DrawerSalaryRow label="Net in Hand" value={inr(os.net_in_hand)} bold separator />
+                        <DrawerSalaryRow label="Offered CTC" value={inr(os.offered_ctc)} bold separator />
+                      </div>
+                    </div>
+                    {os.created_by_name && (
+                      <p className="text-[10px] text-amber-600 mt-2 flex items-center gap-1">
+                        <User className="h-3 w-3" />Created by {os.created_by_name} on {fmtDate(os.created_at)}
+                      </p>
+                    )}
+                    {/* One-click approve offered package */}
+                    {status === 'pending_review' && isReviewer && !sc && !review?.package_accepted && (
+                      <div className="mt-3 pt-3 border-t border-amber-200 flex items-end gap-2">
+                        <div className="flex-1">
+                          <Label className="text-[10px] font-medium mb-1 block text-amber-700">
+                            Effective Date <span className="text-red-500">*</span>
+                          </Label>
+                          <Input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)}
+                            className="w-[140px] h-8 text-xs rounded-lg border-amber-200" />
+                        </div>
+                        <Button size="sm" disabled={busy || !effectiveDate}
+                          onClick={() => void approveOfferedPackage()}
+                          className="h-8 text-xs cursor-pointer bg-emerald-600 hover:bg-emerald-700 rounded-lg px-3 gap-1.5">
+                          <CheckCircle2 className="h-3 w-3" />Approve This Package
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ── Salary Package (Payroll Head Assigned) ── */}
               <div className="rounded-xl border border-slate-100 overflow-hidden">
                 <div className="bg-gradient-to-r from-purple-600 to-violet-600 px-4 py-2.5 flex items-center gap-2">
                   <IndianRupee className="h-3.5 w-3.5 text-white" />
-                  <p className="text-xs font-semibold text-white">Salary Package</p>
+                  <p className="text-xs font-semibold text-white">Final Salary (Payroll Head)</p>
                   {review?.package_accepted ? (
                     <span className="ml-auto text-[10px] font-semibold text-emerald-300 bg-white/15 rounded-full px-2 py-0.5 flex items-center gap-1">
                       <CheckCircle2 className="h-2.5 w-2.5" />Accepted
                     </span>
                   ) : review?.salary_package_id ? (
                     <span className="ml-auto text-[10px] text-amber-300 bg-white/15 rounded-full px-2 py-0.5">Not accepted</span>
+                  ) : sc ? (
+                    <span className="ml-auto text-[10px] text-emerald-300 bg-white/15 rounded-full px-2 py-0.5">Assigned</span>
                   ) : (
                     <span className="ml-auto text-[10px] text-white/60 bg-white/15 rounded-full px-2 py-0.5">Not assigned</span>
                   )}
@@ -313,14 +375,21 @@ function ReviewDrawer({
                       </div>
                     </div>
                   ) : (
-                    <p className="text-xs text-amber-700 flex items-center gap-1.5 py-1">
-                      <AlertTriangle className="h-3.5 w-3.5" />No package assigned yet
+                    <p className="text-xs text-slate-500 flex items-center gap-1.5 py-1">
+                      {os ? (
+                        <>Use the offered package above, or assign a different one below.</>
+                      ) : (
+                        <><AlertTriangle className="h-3.5 w-3.5 text-amber-500" />No package assigned yet — assign one below</>
+                      )}
                     </p>
                   )}
 
-                  {/* Assign controls */}
+                  {/* Assign different package or build custom */}
                   {status === 'pending_review' && isReviewer && (
                     <div className="mt-3 pt-3 border-t border-slate-100 space-y-3">
+                      <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
+                        {os ? 'Or assign a different package' : 'Assign package'}
+                      </p>
                       <div className="flex items-end gap-2">
                         <div>
                           <Label className="text-[10px] font-medium mb-1 block text-slate-600">

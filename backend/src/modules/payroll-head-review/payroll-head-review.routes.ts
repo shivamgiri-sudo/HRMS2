@@ -72,6 +72,17 @@ router.post("/:employeeId/package/accept", requireAuth, requireWriteAccess, requ
   res.json({ success: true, data });
 }));
 
+// One-click approval: copies the offered salary (from ats_employment_offer set by Branch HR)
+// directly to salary_component_assignments without creating a catalog package.
+router.post("/:employeeId/package/approve-offered", requireAuth, requireWriteAccess, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
+  const { effective_date } = req.body as Record<string, unknown>;
+  if (!effective_date) {
+    return res.status(400).json({ success: false, message: "effective_date is required." });
+  }
+  const data = await svc.approveOfferedPackage(req.params.employeeId, String(effective_date), req.authUser!.id);
+  res.json({ success: true, data });
+}));
+
 router.post("/:employeeId/approve", requireAuth, requireWriteAccess, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
   const data = await svc.approve(req.params.employeeId, req.authUser!.id);
   res.json({ success: true, data });

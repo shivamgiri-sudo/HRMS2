@@ -149,6 +149,7 @@ export async function getEmployeeJourney(employeeId: string) {
     salaryAssignmentRows,
     componentRows,
     history,
+    offeredSalaryRows,
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT e.*, b.branch_name, b.state AS branch_state, dm.designation_name FROM employees e
@@ -202,6 +203,23 @@ export async function getEmployeeJourney(employeeId: string) {
       `SELECT * FROM employee_payroll_head_review_history WHERE employee_id = ? ORDER BY created_at DESC`,
       [employeeId]
     ).then(([r]) => r as RowDataPacket[]).catch(() => []),
+    // Fetch the SUGGESTED salary from ats_employment_offer via the review's candidate_id.
+    // This is the package Branch Payroll HR assigned during offer creation.
+    review.candidate_id ? db.execute<RowDataPacket[]>(
+      `SELECT eo.id, eo.candidate_id, eo.offered_ctc, eo.basic, eo.hra, eo.conveyance, eo.da,
+              eo.special_allowance, eo.other_allowance, eo.bonus, eo.gross, eo.pf_employee,
+              eo.pf_employer, eo.esic_employee, eo.esic_employer, eo.professional_tax,
+              eo.gratuity, eo.admin_charges, eo.net_in_hand, eo.pf_eligible, eo.esi_eligible,
+              eo.pf_opt_out, eo.esic_opt_out, eo.salary_band, eo.status AS offer_status,
+              eo.created_by, eo.created_at,
+              COALESCE(creator.full_name, au.email) AS created_by_name
+         FROM ats_employment_offer eo
+         LEFT JOIN auth_user au ON au.id = eo.created_by
+         LEFT JOIN employees creator ON creator.user_id = eo.created_by
+        WHERE eo.candidate_id = ?
+        ORDER BY eo.created_at DESC LIMIT 1`,
+      [review.candidate_id]
+    ).then(([r]) => r as RowDataPacket[]).catch(() => []) : Promise.resolve([]),
   ]);
 
   const employee = employeeRows[0] ?? null;
@@ -219,6 +237,7 @@ export async function getEmployeeJourney(employeeId: string) {
     joining_checklist: checklistRows,
     salary_assignment: salaryAssignmentRows[0] ?? null,
     salary_components: componentRows[0] ?? null,
+    offered_salary: offeredSalaryRows[0] ?? null,
     history,
   };
 }
@@ -321,6 +340,76 @@ export async function acceptPackage(employeeId: string, actorUserId: string) {
     [actorUserId, employeeId]
   );
   await audit(actorUserId, "PAYROLL_HEAD_PACKAGE_ACCEPTED", employeeId, { effective_from: review.package_effective_from });
+  return { review: await getReviewRow(employeeId) };
+}
+
+/**
+ * One-click approval: copies the offered salary from ats_employment_offer directly
+ * to salary_component_assignments without creating a new package in the catalog.
+ * This is the fast-path when Payroll Head accepts the Branch HR's suggested package as-is.
+ */
+export async function approveOfferedPackage(employeeId: string, effectiveDate: string, actorUserId: string) {
+  const review = await getReviewRow(employeeId);
+  if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
+  if (review.status !== "pending_review") {
+    throw httpError("Package can only be assigned while the review is pending.", 409, "NOT_PENDING");
+  }
+  if (!review.candidate_id) {
+    throw httpError("No candidate link found — cannot retrieve offered salary.", 400, "NO_CANDIDATE_LINK");
+  }
+
+  const [offerRows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM ats_employment_offer WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [review.candidate_id]
+  );
+  const offer = offerRows[0];
+  if (!offer) {
+    throw httpError("No employment offer found for this candidate.", 404, "NO_OFFER");
+  }
+
+  // Write directly to salary_component_assignments from offer values (no catalog package)
+  await db.execute(
+    `INSERT INTO salary_component_assignments
+       (id, employee_id, effective_date, package_id, basic, hra, conveyance,
+        special_allowance, gross, pf_applicable, esi_applicable, employer_pf,
+        employer_esi, ctc, net_estimate, assigned_by, assigned_at, approval_reference, status)
+     VALUES (UUID(), ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
+    [
+      employeeId, effectiveDate,
+      offer.basic ?? 0, offer.hra ?? 0, offer.conveyance ?? 0, offer.special_allowance ?? 0,
+      offer.gross ?? 0,
+      Number(offer.pf_employee) > 0 ? 1 : 0, Number(offer.esic_employee) > 0 ? 1 : 0,
+      offer.pf_employer ?? 0, offer.esic_employer ?? 0, offer.offered_ctc ?? 0, offer.net_in_hand ?? 0,
+      actorUserId, review.id,
+    ]
+  );
+
+  // Mark review as having an accepted package (skip the assign+accept two-step)
+  await db.execute(
+    `UPDATE employee_payroll_head_review
+        SET salary_package_id = NULL, package_accepted = 1, package_accepted_by = ?,
+            package_accepted_at = NOW(), package_effective_from = ?
+      WHERE employee_id = ?`,
+    [actorUserId, effectiveDate, employeeId]
+  );
+
+  // Sync employee_salary_assignment.ctc_annual
+  await db.execute(
+    `UPDATE employee_salary_assignment
+        SET ctc_annual = ?, effective_from = ?, updated_at = NOW()
+      WHERE employee_id = ? AND active_status = 1
+      LIMIT 1`,
+    [Number(offer.offered_ctc ?? 0) * 12, effectiveDate, employeeId]
+  ).catch((e) => console.warn('[payroll-head-review] could not sync ESA ctc_annual:', e));
+
+  await audit(actorUserId, "PAYROLL_HEAD_OFFERED_PACKAGE_APPROVED", employeeId, {
+    offer_id: offer.id,
+    effective_date: effectiveDate,
+    ctc: offer.offered_ctc,
+    gross: offer.gross,
+    net_in_hand: offer.net_in_hand,
+  });
+
   return { review: await getReviewRow(employeeId) };
 }
 
