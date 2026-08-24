@@ -87,3 +87,4 @@ Task 1: complete (commits 966ae8c5..7da40718, base 0fa44be3, review clean after 
 ## Tasks
 Task 1: complete (commit 65675a84, base d886f228, review clean — migration renumbered 1558->1604 due to concurrent sessions, sanctioned by brief, independently verified collation + preflight)
 Task 2: complete (commit 26fbc5fb, base a0fece05, review clean — spec compliant, Vitest adaptation preserved coverage, DB import path independently verified. 2 Important follow-ups logged: no per-employee error isolation in writeEmployeePerformanceSnapshots (fixing before Task 3), N+1 query fan-out ~295k queries/run (accepted for now, flagged for future batching)
+Task 2 fix: complete (commit 07797463, base ea351f48, re-review Approved — per-employee try/catch added, return type now { written, errors }, new failure-then-success test proves isolation, computeEmployeeSnapshot untouched)
