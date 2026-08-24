@@ -392,10 +392,12 @@ export const wfmService = {
     );
     if ((dupRows as RowDataPacket[]).length > 0) {
       const existingStatus = (dupRows[0] as any).status;
-      throw new Error(
+      const dupErr = new Error(
         `A regularization request for this date already exists with status: ${existingStatus}. ` +
         `It must be rejected or cancelled before a new request can be submitted.`
-      );
+      ) as Error & { statusCode: number };
+      dupErr.statusCode = 409;
+      throw dupErr;
     }
 
     // Validate reason_code if provided
@@ -404,11 +406,17 @@ export const wfmService = {
         `SELECT allowed_for FROM attendance_reason_master WHERE code = ? AND active = 1`,
         [input.reasonCode]
       );
-      if (!(rr as RowDataPacket[]).length) throw new Error('Invalid reason code');
+      if (!(rr as RowDataPacket[]).length) {
+        const e = new Error('Invalid reason code') as Error & { statusCode: number };
+        e.statusCode = 400;
+        throw e;
+      }
       const af = (rr[0] as any).allowed_for;
       const byType = input.requestedByType ?? 'employee';
       if (af !== 'both' && af !== byType) {
-        throw new Error(`Reason '${input.reasonCode}' is not allowed for ${byType}`);
+        const e = new Error(`Reason '${input.reasonCode}' is not allowed for ${byType}`) as Error & { statusCode: number };
+        e.statusCode = 400;
+        throw e;
       }
     }
 
