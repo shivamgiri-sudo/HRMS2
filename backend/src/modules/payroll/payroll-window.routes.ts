@@ -190,16 +190,9 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
     return res.status(409).json({ success: false, message: `Request already ${rec.status}` });
   }
 
-  // Block approval if penny drop shows name mismatch, unless Payroll HO explicitly overrides
-  if (decision === 'approved' && rec.penny_drop_status === 'name_mismatch' && !force_override) {
-    return res.status(422).json({
-      success: false,
-      message: `Penny drop name mismatch: bank returned "${rec.beneficiary_name_returned}" but employee is "${rec.employee_name_at_request}". Set force_override=true with a note to override this block.`,
-      penny_drop_status: 'name_mismatch',
-      beneficiary_name_returned: rec.beneficiary_name_returned,
-      employee_name: rec.employee_name_at_request,
-    });
-  }
+  // Name mismatch is a warning only — approval is always permitted.
+  // The mismatch is recorded in bank_penny_drop_log and the audit log so
+  // Payroll HO's override decision is fully traceable.
 
   // Never write a raw account number into an audit log — mask to last 4 digits,
   // same convention used for the pending-request submission's own audit entry

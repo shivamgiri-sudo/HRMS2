@@ -1045,29 +1045,15 @@ function BankChangeTab() {
   const rows: any[] = data?.data ?? [];
 
   const decideMutation = useMutation({
-    mutationFn: ({ id, decision, note, force_override }: any) =>
-      hrmsApi.patch(`/api/payroll/bank-change-requests/${id}`, {
-        decision,
-        note,
-        force_override: force_override ?? false,
-      }),
+    mutationFn: ({ id, decision, note }: any) =>
+      hrmsApi.patch(`/api/payroll/bank-change-requests/${id}`, { decision, note }),
     onSuccess: () => {
       toast({ title: "Bank change decision saved" });
       setSelected(null);
       void qc.invalidateQueries({ queryKey: ["bank-change-requests"] });
     },
-    onError: (e: any) => {
-      const body = e?.response?.data;
-      if (body?.penny_drop_status === "name_mismatch") {
-        toast({
-          title: "Name Mismatch — Override Required",
-          description: `Bank returned "${body.beneficiary_name_returned}" but employee is "${body.employee_name}". Add a note and re-submit with override to proceed.`,
-          variant: "destructive",
-        });
-      } else {
-        toast({ title: "Failed", description: e.message, variant: "destructive" });
-      }
-    },
+    onError: (e: Error) =>
+      toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
 
   return (
@@ -1225,15 +1211,7 @@ function BankChangeTab() {
           onClose={() => setSelected(null)}
           loading={decideMutation.isPending}
           onSubmit={(decision, note) =>
-            decideMutation.mutate({
-              id: selected.id,
-              decision,
-              note,
-              // Auto-pass force_override when approving a known mismatch so reviewer
-              // can override with a note — the backend still requires note to be non-empty
-              // for audit trail purposes.
-              force_override: decision === "approved" && selected.penny_drop_status === "name_mismatch",
-            })
+            decideMutation.mutate({ id: selected.id, decision, note })
           }
           extraFields={
             selected.penny_drop_status === "name_mismatch" ? (
