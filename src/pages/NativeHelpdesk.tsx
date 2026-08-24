@@ -8,6 +8,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 import { formatISTDate, formatIST } from "@/lib/utils";
+import { getSlaBreachTier } from "@/lib/slaBreachTier";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -324,15 +325,12 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function SlaBadge({ sla_due_at, sla_breached, status }: { sla_due_at?: string; sla_breached?: boolean; status: string }) {
-  if (!sla_due_at || ["resolved", "closed", "cancelled", "on_hold"].includes(status)) return null;
-  if (sla_breached) {
-    return <span className="rounded-full px-2.5 py-0.5 text-xs font-bold bg-red-50 text-red-700">SLA Breached</span>;
-  }
-  const due = new Date(sla_due_at);
-  const minsLeft = Math.floor((due.getTime() - Date.now()) / 60000);
-  if (minsLeft < 0) return <span className="rounded-full px-2.5 py-0.5 text-xs font-bold bg-red-50 text-red-700">Breached</span>;
-  if (minsLeft <= 60)  return <span className="rounded-full px-2.5 py-0.5 text-xs font-bold bg-amber-50 text-amber-700">Due &lt;1h</span>;
-  if (minsLeft <= 240) return <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-yellow-50 text-yellow-700">Due {Math.round(minsLeft / 60)}h</span>;
+  const result = getSlaBreachTier({ sla_due_at, sla_breached, status });
+  if (!result) return null;
+  const { tier, minutesLeft } = result;
+  if (tier === "breached")   return <span className="rounded-full px-2.5 py-0.5 text-xs font-bold bg-red-50 text-red-700">SLA Breached</span>;
+  if (tier === "due_lt_1h")  return <span className="rounded-full px-2.5 py-0.5 text-xs font-bold bg-amber-50 text-amber-700">Due &lt;1h</span>;
+  if (tier === "due_lt_4h")  return <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-yellow-50 text-yellow-700">Due {Math.round(minutesLeft / 60)}h</span>;
   return <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-emerald-50 text-emerald-700">On Time</span>;
 }
 

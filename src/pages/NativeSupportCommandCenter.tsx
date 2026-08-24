@@ -7,6 +7,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { DashboardLoading, FilterField, KpiTile, SelectFilter } from "@/components/command-center/CommandCenterUi";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTTime } from "@/lib/utils";
+import { getSlaBreachTier } from "@/lib/slaBreachTier";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -636,15 +637,12 @@ export default function NativeSupportCommandCenter() {
                 <tbody className="divide-y divide-gray-50">
                   {queueTickets.slice(0, 25).map(t => {
                     const isBusy = queueActionBusy === t.id;
-                    const slaBadge = (() => {
-                      if (t.sla_breached) return <span className="text-xs font-bold text-red-600">Breached</span>;
-                      if (!t.sla_due_at) return <span className="text-xs text-gray-300">—</span>;
-                      const minsLeft = Math.floor((new Date(t.sla_due_at).getTime() - Date.now()) / 60000);
-                      if (minsLeft < 0)   return <span className="text-xs font-bold text-red-600">Breached</span>;
-                      if (minsLeft <= 60) return <span className="text-xs font-semibold text-amber-600">&lt;1h</span>;
-                      if (minsLeft <= 240) return <span className="text-xs text-yellow-600">{Math.round(minsLeft / 60)}h</span>;
-                      return <span className="text-xs text-emerald-600">On Time</span>;
-                    })();
+                    const slaTier = getSlaBreachTier({ sla_due_at: t.sla_due_at, sla_breached: t.sla_breached, status: t.status });
+                    const slaBadge = !slaTier ? <span className="text-xs text-gray-300">—</span>
+                      : slaTier.tier === "breached"  ? <span className="text-xs font-bold text-red-600">Breached</span>
+                      : slaTier.tier === "due_lt_1h" ? <span className="text-xs font-semibold text-amber-600">&lt;1h</span>
+                      : slaTier.tier === "due_lt_4h" ? <span className="text-xs text-yellow-600">{Math.round(slaTier.minutesLeft / 60)}h</span>
+                      : <span className="text-xs text-emerald-600">On Time</span>;
                     return (
                       <tr key={t.id} className="hover:bg-gray-50/60 transition-colors">
                         <td className="py-2.5 pr-3">
