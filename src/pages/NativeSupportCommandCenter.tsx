@@ -234,20 +234,23 @@ export default function NativeSupportCommandCenter() {
 
   useEffect(() => { void loadItAnalysis(); }, [loadItAnalysis]);
 
-  const loadQueue = useCallback(async () => {
+  // Only the assign dropdown's agent list is fetched here now — the queue itself arrives with
+  // the rest of the dashboard. /agents is guarded by HELPDESK_ADMIN_ROLES, so for a read-only
+  // viewer this request could only ever 403; not sending it is why their dropdown used to
+  // render empty with no explanation. They get no dropdown at all instead.
+  const loadAgents = useCallback(async () => {
+    if (!canAct) { setQueueAgents([]); return; }
     setQueueLoading(true);
     try {
-      const [ticketRes, agentRes] = await Promise.all([
-        hrmsApi.get<{ data: QueueTicket[] }>("/api/helpdesk/tickets?status=open"),
-        hrmsApi.get<{ success: boolean; data: QueueAgent[] }>("/api/helpdesk/agents"),
-      ]);
-      setQueueTickets(ticketRes.data ?? []);
+      const agentRes = await hrmsApi.get<{ success: boolean; data: QueueAgent[] }>("/api/helpdesk/agents");
       setQueueAgents(agentRes.data ?? []);
-    } catch { /* non-fatal */ }
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to load the agent list");
+    }
     finally { setQueueLoading(false); }
-  }, []);
+  }, [canAct]);
 
-  useEffect(() => { void loadQueue(); }, [loadQueue]);
+  useEffect(() => { void loadAgents(); }, [loadAgents]);
 
   // Assign/take/escalate used to swallow every failure silently (catch { /* non-fatal */ }) -
   // the button just stopped spinning with nothing telling the agent it didn't work. Reuses
@@ -260,7 +263,7 @@ export default function NativeSupportCommandCenter() {
     setQueueActionBusy(ticketId);
     try {
       await hrmsApi.post(`/api/helpdesk/tickets/${ticketId}/assign`, { assigned_to: userId });
-      await loadQueue();
+      await load();
     } catch (e: any) {
       setError(e?.message ?? "Failed to assign ticket");
     } finally { setQueueActionBusy(null); }
@@ -270,7 +273,7 @@ export default function NativeSupportCommandCenter() {
     setQueueActionBusy(ticketId);
     try {
       await hrmsApi.post(`/api/helpdesk/tickets/${ticketId}/take`, {});
-      await loadQueue();
+      await load();
     } catch (e: any) {
       setError(e?.message ?? "Failed to take ticket");
     } finally { setQueueActionBusy(null); }
@@ -280,7 +283,7 @@ export default function NativeSupportCommandCenter() {
     setQueueActionBusy(ticketId);
     try {
       await hrmsApi.post(`/api/helpdesk/tickets/${ticketId}/escalate`, {});
-      await loadQueue();
+      await load();
     } catch (e: any) {
       setError(e?.message ?? "Failed to escalate ticket");
     } finally { setQueueActionBusy(null); }
@@ -616,19 +619,24 @@ export default function NativeSupportCommandCenter() {
         <div className="bg-white border border-gray-200 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
-              <Ticket size={16} className="text-indigo-500" /> Open Ticket Queue
+              <Ticket size={16} className="text-indigo-500" /> Active Ticket Queue
               {queueTickets.length > 0 && (
                 <span className="ml-1 rounded-full bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-0.5">
                   {queueTickets.length}
                 </span>
               )}
+              {!canAct && accessResolved && (
+                <span className="ml-1 rounded-full border border-gray-200 bg-gray-50 text-gray-500 text-[11px] font-medium px-2 py-0.5">
+                  View only
+                </span>
+              )}
             </h2>
             <button
-              onClick={() => void loadQueue()}
-              disabled={queueLoading}
-              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 cursor-pointer"
+              onClick={() => void load()}
+              disabled={loading || queueLoading}
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 cursor-pointer disabled:opacity-50"
             >
-              <RefreshCcw size={12} className={queueLoading ? "animate-spin" : ""} />
+              <RefreshCcw size={12} className={loading || queueLoading ? "animate-spin" : ""} />
               Refresh
             </button>
           </div>
@@ -650,7 +658,7 @@ export default function NativeSupportCommandCenter() {
                     <th className="pb-2 text-left font-semibold">Priority</th>
                     <th className="pb-2 text-left font-semibold">SLA</th>
                     <th className="pb-2 text-left font-semibold">Agent</th>
-                    <th className="pb-2 text-right font-semibold">Actions</th>
+                    {canAct && <th className="pb-2 text-right font-semibold">Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
@@ -683,6 +691,7 @@ export default function NativeSupportCommandCenter() {
                             : <span className="text-amber-600 font-semibold">Unassigned</span>
                           }
                         </td>
+                        {canAct && (
                         <td className="py-2.5">
                           <div className="flex items-center justify-end gap-2">
                             <select
@@ -710,6 +719,7 @@ export default function NativeSupportCommandCenter() {
                             </button>
                           </div>
                         </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -717,7 +727,7 @@ export default function NativeSupportCommandCenter() {
               </table>
               {queueTickets.length > 25 && (
                 <p className="text-xs text-gray-400 text-center pt-3">
-                  Showing 25 of {queueTickets.length} open tickets. Visit /helpdesk for full list.
+                  Showing 25 of {queueTickets.length} active tickets. Visit /helpdesk for full list.
                 </p>
               )}
             </div>
