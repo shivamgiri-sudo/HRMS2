@@ -647,7 +647,8 @@
     "migrations/1307_client_billing_cutover_missing_cost_centres.sql",
     "migrations/1308_client_billing_tally_fields.sql",
     "migrations/1309_client_billing_unmapped_legacy_cost_centre.sql",
-    "migrations/1558_helpdesk_ticket_raised_by.sql"
+    "migrations/1558_helpdesk_ticket_raised_by.sql",
+    "migrations/1601_bank_penny_drop_verification_token.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
