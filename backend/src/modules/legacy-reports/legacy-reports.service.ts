@@ -151,6 +151,10 @@ const REPORTS: Record<string, ReportDef> = {
       const [ew, ev] = empWhere("spl.employee_code", f.employee_code);
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const [pw, pv] = processWhere("pm", f.process);
+      // Use direct salary_prep_line columns for fields that exist there;
+      // only use component-pivot for fields not stored directly (CONV, OA, MA, BONUS,
+      // EXTRA_DAY_INC, ARREAR, MOBILE_DED, ASSET_REC, INS, ADMIN_CHG).
+      // LTA has no component code and no direct column — always 0.
       return q(`
         SELECT
           spl.employee_code,
@@ -161,32 +165,32 @@ const REPORTS: Record<string, ReportDef> = {
           dm.designation_name                                                    AS designation,
           spl.working_days,
           spl.present_days,
-          COALESCE(MAX(CASE WHEN c.component_code='BASIC'         THEN c.amount END),0) AS basic,
-          COALESCE(MAX(CASE WHEN c.component_code='HRA'           THEN c.amount END),0) AS hra,
+          spl.basic,
+          spl.hra,
           COALESCE(MAX(CASE WHEN c.component_code='CONV'          THEN c.amount END),0) AS conv,
-          COALESCE(MAX(CASE WHEN c.component_code='SPECIAL'       THEN c.amount END),0) AS special,
+          spl.special_allowance                                                  AS special,
           COALESCE(MAX(CASE WHEN c.component_code='OA'            THEN c.amount END),0) AS other_allow,
           COALESCE(MAX(CASE WHEN c.component_code='MA'            THEN c.amount END),0) AS medical,
           COALESCE(MAX(CASE WHEN c.component_code='BONUS'         THEN c.amount END),0) AS bonus,
-          COALESCE(MAX(CASE WHEN c.component_code='LTA'           THEN c.amount END),0) AS lta,
-          COALESCE(MAX(CASE WHEN c.component_code='INCENTIVE'     THEN c.amount END),0) AS incentive,
+          0                                                                      AS lta,
+          spl.incentive_total                                                    AS incentive,
           COALESCE(MAX(CASE WHEN c.component_code='EXTRA_DAY_INC' THEN c.amount END),0) AS extra_day_inc,
           COALESCE(MAX(CASE WHEN c.component_code='ARREAR'        THEN c.amount END),0) AS arrear,
           spl.gross_salary,
-          spl.net_salary,
-          COALESCE(MAX(CASE WHEN c.component_code='PF_EMP'        THEN c.amount END),0) AS pf_employee,
-          COALESCE(MAX(CASE WHEN c.component_code='ESIC_EMP'      THEN c.amount END),0) AS esic_employee,
-          COALESCE(MAX(CASE WHEN c.component_code='PT'            THEN c.amount END),0) AS pt,
-          COALESCE(MAX(CASE WHEN c.component_code='TDS'           THEN c.amount END),0) AS tds,
-          COALESCE(MAX(CASE WHEN c.component_code='LWP'           THEN c.amount END),0) AS lwp,
-          COALESCE(MAX(CASE WHEN c.component_code='LOAN'          THEN c.amount END),0) AS loan_ded,
-          COALESCE(MAX(CASE WHEN c.component_code='ADV'           THEN c.amount END),0) AS advance,
+          spl.pf_employee,
+          spl.esic_employee,
+          spl.professional_tax                                                   AS pt,
+          spl.tds,
+          spl.lwp_deduction                                                      AS lwp,
+          spl.loan_emi                                                           AS loan_ded,
+          spl.advance_recovery                                                   AS advance,
           COALESCE(MAX(CASE WHEN c.component_code='MOBILE_DED'    THEN c.amount END),0) AS mobile_ded,
           COALESCE(MAX(CASE WHEN c.component_code='ASSET_REC'     THEN c.amount END),0) AS asset_rec,
           COALESCE(MAX(CASE WHEN c.component_code='INS'           THEN c.amount END),0) AS insurance,
-          COALESCE(MAX(CASE WHEN c.component_code='OTHER_DED'     THEN c.amount END),0) AS other_ded,
-          COALESCE(MAX(CASE WHEN c.component_code='PF_EMP_CO'     THEN c.amount END),0) AS pf_employer,
-          COALESCE(MAX(CASE WHEN c.component_code='ESIC_EMP_CO'   THEN c.amount END),0) AS esic_employer,
+          spl.other_deductions                                                   AS other_ded,
+          spl.net_salary,
+          spl.pf_employer,
+          spl.esic_employer,
           COALESCE(MAX(CASE WHEN c.component_code='ADMIN_CHG'     THEN c.amount END),0) AS admin_charges
         FROM salary_prep_line spl
         JOIN salary_prep_run spr ON spr.id = spl.run_id
@@ -199,7 +203,12 @@ const REPORTS: Record<string, ReportDef> = {
         WHERE 1=1 ${bw} ${mw} ${ew} ${nw} ${pw}
         GROUP BY spl.id, spl.employee_code, e.full_name, bm.branch_name,
                  pm.process_name, cc.cost_centre_code, dm.designation_name,
-                 spl.working_days, spl.present_days, spl.gross_salary, spl.net_salary
+                 spl.working_days, spl.present_days,
+                 spl.basic, spl.hra, spl.special_allowance, spl.incentive_total,
+                 spl.gross_salary, spl.net_salary,
+                 spl.pf_employee, spl.esic_employee, spl.professional_tax, spl.tds,
+                 spl.lwp_deduction, spl.loan_emi, spl.advance_recovery,
+                 spl.other_deductions, spl.pf_employer, spl.esic_employer
         ORDER BY bm.branch_name, spl.employee_code
         LIMIT 10000
       `, [...bv, ...mv, ...ev, ...nv, ...pv]);
@@ -493,14 +502,13 @@ const REPORTS: Record<string, ReportDef> = {
                e2.full_name COLLATE utf8mb4_unicode_ci AS employee_name,
                bm2.branch_name COLLATE utf8mb4_unicode_ci,
                spr.run_month COLLATE utf8mb4_unicode_ci AS tax_month,
-               splc.amount AS tds_amount,
+               spl.tds AS tds_amount,
                'hrms' COLLATE utf8mb4_unicode_ci AS source
-        FROM salary_prep_line_component splc
-        JOIN salary_prep_line spl ON spl.id = splc.line_id
+        FROM salary_prep_line spl
         JOIN salary_prep_run spr ON spr.id = spl.run_id
         JOIN employees e2 ON e2.id = spl.employee_id
         LEFT JOIN branch_master bm2 ON bm2.id = e2.branch_id
-        WHERE splc.component_code = 'TDS' ${mCond2} ${bw2} ${ew2}
+        WHERE spl.tds > 0 ${mCond2} ${bw2} ${ew2}
         ORDER BY branch_name, employee_code, tax_month
         LIMIT ${f._limit ?? 50000}
       `, [...mv, ...bv1, ...ev1, ...mv, ...bv2, ...ev2]);
@@ -808,10 +816,14 @@ const REPORTS: Record<string, ReportDef> = {
     ],
     async query(f) {
       const [ew, ev] = empWhere("employee_code", f.employee_code);
-      const mCond = f.month
-        ? "AND CONCAT(sal_year, '-', LPAD(sal_month, 2, '0')) = ?"
-        : "";
-      const mv = f.month ? [f.month] : [];
+      // sal_month stored as 3-letter name ('Jan','Feb',...,'Dec'), sal_year as string ('2026')
+      const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      let mCond = ""; let mv: unknown[] = [];
+      if (f.month) {
+        const [yr, mo] = f.month.split('-');
+        mCond = "AND sal_month = ? AND sal_year = ?";
+        mv = [MONTH_NAMES[parseInt(mo, 10) - 1], yr];
+      }
       return q(`
         SELECT employee_code, present, wo, holiday, half_day,
                compoff, el, cl, sl, ot, sal_month, sal_year
@@ -837,10 +849,14 @@ const REPORTS: Record<string, ReportDef> = {
     ],
     async query(f) {
       const [ew, ev] = empWhere("employee_code", f.employee_code);
-      const mCond = f.month
-        ? "AND CONCAT(leave_year, '-', LPAD(leave_month, 2, '0')) = ?"
-        : "";
-      const mv = f.month ? [f.month] : [];
+      // leave_month stored as 3-letter name ('Jan','Feb',...,'Dec'), leave_year as string
+      const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      let mCond = ""; let mv: unknown[] = [];
+      if (f.month) {
+        const [yr, mo] = f.month.split('-');
+        mCond = "AND leave_month = ? AND leave_year = ?";
+        mv = [MONTH_NAMES[parseInt(mo, 10) - 1], yr];
+      }
       return q(`
         SELECT employee_code, pl, cl, sl, leave_status, leave_month, leave_year
         FROM qual_leave_snapshot
@@ -872,10 +888,14 @@ const REPORTS: Record<string, ReportDef> = {
     ],
     async query(f) {
       const [ew, ev] = empWhere("employee_code", f.employee_code);
-      const mCond = f.month
-        ? "AND CONCAT(sal_year, '-', LPAD(sal_month, 2, '0')) = ?"
-        : "";
-      const mv = f.month ? [f.month] : [];
+      // sal_month stored as 3-letter name ('Jan','Feb',...,'Dec'), sal_year as string
+      const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      let mCond = ""; let mv: unknown[] = [];
+      if (f.month) {
+        const [yr, mo] = f.month.split('-');
+        mCond = "AND sal_month = ? AND sal_year = ?";
+        mv = [MONTH_NAMES[parseInt(mo, 10) - 1], yr];
+      }
       return q(`
         SELECT employee_code, qual_emp_code, employee_name, designation,
                basic, hra, gross, pf, tds, esi, net_pay,
@@ -901,10 +921,14 @@ const REPORTS: Record<string, ReportDef> = {
     ],
     async query(f) {
       const [ew, ev] = empWhere("employee_code", f.employee_code);
-      const mCond = f.month
-        ? "AND CONCAT(sal_year, '-', LPAD(sal_month, 2, '0')) = ?"
-        : "";
-      const mv = f.month ? [f.month] : [];
+      // sal_month stored as 3-letter name ('Jan','Feb',...,'Dec'), sal_year as string
+      const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      let mCond = ""; let mv: unknown[] = [];
+      if (f.month) {
+        const [yr, mo] = f.month.split('-');
+        mCond = "AND sal_month = ? AND sal_year = ?";
+        mv = [MONTH_NAMES[parseInt(mo, 10) - 1], yr];
+      }
       return q(`
         SELECT employee_code, amount, sal_month, sal_year, remarks
         FROM qual_incentive_snapshot
