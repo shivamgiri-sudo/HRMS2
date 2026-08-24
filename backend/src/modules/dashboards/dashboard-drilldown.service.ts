@@ -2,6 +2,10 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { type DashboardScope, buildScopeWhere, buildScopeWhereEmployees } from "../../shared/dashboardScope.js";
 import { LATEST_COMPLETE_ATTENDANCE_DATE_SQL } from "../../shared/attendanceStatus.js";
+import {
+  drillAttendanceStatus, drillLatecoming, drillUnplannedLeave, drillPipStatus,
+  drillQualityBaseline, drillAttrition, drillShrinkage, drillRevenue,
+} from "./performance-scorecard-drilldown.js";
 
 export interface DrilldownResult {
   metricCode: string;
@@ -100,6 +104,22 @@ export async function getDrilldown(
       return drillLeaveApprovals(scope);
     case "RECRUITER_PIPELINE":
       return drillRecruiterPipeline(scope, filters);
+    case "ATTENDANCE_STATUS":
+      return drillAttendanceStatus(scope, filters);
+    case "LATECOMING":
+      return drillLatecoming(scope, filters);
+    case "UNPLANNED_LEAVE":
+      return drillUnplannedLeave(scope, filters);
+    case "PIP_STATUS":
+      return drillPipStatus(scope, filters);
+    case "QUALITY_BASELINE":
+      return drillQualityBaseline(scope, filters);
+    case "ATTRITION":
+      return drillAttrition(scope, filters);
+    case "SHRINKAGE":
+      return drillShrinkage(scope, filters);
+    case "REVENUE":
+      return drillRevenue(scope, filters);
     default:
       return {
         metricCode,
