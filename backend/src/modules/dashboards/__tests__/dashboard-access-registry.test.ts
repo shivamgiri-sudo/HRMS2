@@ -10,12 +10,12 @@ import {
 } from "../../../shared/dashboardAccessRegistry.js";
 
 describe("dashboard access registry", () => {
-  it("defines all twelve production dashboards with unique routes and page codes", () => {
+  it("defines all thirteen production dashboards with unique routes and page codes", () => {
     const definitions = Object.values(DASHBOARD_ACCESS_REGISTRY);
 
-    expect(definitions).toHaveLength(12);
-    expect(new Set(definitions.map((item) => item.route)).size).toBe(12);
-    expect(new Set(definitions.map((item) => item.pageCode)).size).toBe(12);
+    expect(definitions).toHaveLength(13);
+    expect(new Set(definitions.map((item) => item.route)).size).toBe(13);
+    expect(new Set(definitions.map((item) => item.pageCode)).size).toBe(13);
   });
 
   it("normalizes supported aliases before checking entitlement", () => {
@@ -48,8 +48,8 @@ describe("dashboard access registry", () => {
       branch_admin: ["EMPLOYEE_SELF_DASHBOARD"],
       interviewer: ["EMPLOYEE_SELF_DASHBOARD"],
       super_admin: Object.keys(DASHBOARD_ACCESS_REGISTRY),
-      ceo: ["CEO_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
-      hr: ["HR_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "RECRUITER_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      ceo: ["CEO_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD", "PERFORMANCE_SCORECARD"],
+      hr: ["HR_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "RECRUITER_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD", "PERFORMANCE_SCORECARD"],
       wfm: ["WFM_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       payroll: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       qa: ["QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
@@ -60,11 +60,11 @@ describe("dashboard access registry", () => {
       tq_head: ["QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       finance_head: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
       accounts_head: ["PAYROLL_HR_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
-      branch_head: ["QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      branch_head: ["QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD", "PERFORMANCE_SCORECARD"],
       // 2026-08-22: manager had no WFM_DASHBOARD grant at all and a deactivated
       // QUALITY_DASHBOARD grant (leftover from the 2026-07-25 RBAC cleanup) — neither was
       // deliberate, both fixed to match the parity manager already had on OPERATIONS_DASHBOARD.
-      manager: ["WFM_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD"],
+      manager: ["WFM_DASHBOARD", "QUALITY_DASHBOARD", "OPERATIONS_DASHBOARD", "MANAGEMENT_DASHBOARD", "EMPLOYEE_SELF_DASHBOARD", "PERFORMANCE_SCORECARD"],
       employee: ["EMPLOYEE_SELF_DASHBOARD"],
     };
 
