@@ -229,14 +229,21 @@ export default function NativeSupportCommandCenter() {
 
   useEffect(() => { void loadQueue(); }, [loadQueue]);
 
+  // Assign/take/escalate used to swallow every failure silently (catch { /* non-fatal */ }) -
+  // the button just stopped spinning with nothing telling the agent it didn't work. Reuses
+  // this file's own existing `error` banner (same one the main dashboard load already uses),
+  // matching the real pattern NativeHelpdesk.tsx already uses for its own action failures
+  // (a shared message state set on both success and failure) rather than introducing a new
+  // notification mechanism into this file.
   const doQueueAssign = async (ticketId: string, userId: string) => {
     if (!userId) return;
     setQueueActionBusy(ticketId);
     try {
       await hrmsApi.post(`/api/helpdesk/tickets/${ticketId}/assign`, { assigned_to: userId });
       await loadQueue();
-    } catch { /* non-fatal */ }
-    finally { setQueueActionBusy(null); }
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to assign ticket");
+    } finally { setQueueActionBusy(null); }
   };
 
   const doQueueTake = async (ticketId: string) => {
@@ -244,8 +251,9 @@ export default function NativeSupportCommandCenter() {
     try {
       await hrmsApi.post(`/api/helpdesk/tickets/${ticketId}/take`, {});
       await loadQueue();
-    } catch { /* non-fatal */ }
-    finally { setQueueActionBusy(null); }
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to take ticket");
+    } finally { setQueueActionBusy(null); }
   };
 
   const doQueueEscalate = async (ticketId: string) => {
@@ -253,8 +261,9 @@ export default function NativeSupportCommandCenter() {
     try {
       await hrmsApi.post(`/api/helpdesk/tickets/${ticketId}/escalate`, {});
       await loadQueue();
-    } catch { /* non-fatal */ }
-    finally { setQueueActionBusy(null); }
+    } catch (e: any) {
+      setError(e?.message ?? "Failed to escalate ticket");
+    } finally { setQueueActionBusy(null); }
   };
 
   return (
