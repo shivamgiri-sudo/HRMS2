@@ -64,49 +64,70 @@ export async function computeEmployeeSnapshot(
   };
 }
 
-export async function writeEmployeePerformanceSnapshots(date: string): Promise<{ written: number }> {
+/**
+ * Writes daily performance snapshots for all active employees.
+ *
+ * Each employee is processed independently: a failure computing or writing
+ * one employee's snapshot (bad data, FK issue, transient connection error)
+ * is caught, logged and recorded in `errors`, and processing continues with
+ * the remaining employees rather than aborting the whole batch.
+ */
+export async function writeEmployeePerformanceSnapshots(
+  date: string,
+): Promise<{ written: number; errors: Array<{ employeeId: string; error: string }> }> {
   const [rows] = (await db.execute(
     `SELECT id FROM employees WHERE active_status = 1`,
   )) as any;
 
   let written = 0;
+  const errors: Array<{ employeeId: string; error: string }> = [];
+
   for (const { id: employeeId } of rows as Array<{ id: string }>) {
-    const snapshot = await computeEmployeeSnapshot(employeeId, date);
-    await db.execute(
-      `INSERT INTO employee_performance_daily_snapshot
-         (id, employee_id, snapshot_date, attendance_status, late_by_minutes, unplanned_leave_flag,
-          pip_status, designation_id, quality_score, template_metrics,
-          team_attrition_pct, team_shrinkage_pct, team_revenue)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         attendance_status = VALUES(attendance_status),
-         late_by_minutes = VALUES(late_by_minutes),
-         unplanned_leave_flag = VALUES(unplanned_leave_flag),
-         pip_status = VALUES(pip_status),
-         designation_id = VALUES(designation_id),
-         quality_score = VALUES(quality_score),
-         template_metrics = VALUES(template_metrics),
-         team_attrition_pct = VALUES(team_attrition_pct),
-         team_shrinkage_pct = VALUES(team_shrinkage_pct),
-         team_revenue = VALUES(team_revenue),
-         updated_at = CURRENT_TIMESTAMP`,
-      [
-        randomUUID(),
-        snapshot.employeeId,
-        snapshot.snapshotDate,
-        snapshot.attendanceStatus,
-        snapshot.lateByMinutes,
-        snapshot.unplannedLeaveFlag ? 1 : 0,
-        snapshot.pipStatus,
-        snapshot.designationId,
-        snapshot.qualityScore,
-        snapshot.templateMetrics ? JSON.stringify(snapshot.templateMetrics) : null,
-        snapshot.teamAttritionPct,
-        snapshot.teamShrinkagePct,
-        snapshot.teamRevenue,
-      ],
-    );
-    written += 1;
+    try {
+      const snapshot = await computeEmployeeSnapshot(employeeId, date);
+      await db.execute(
+        `INSERT INTO employee_performance_daily_snapshot
+           (id, employee_id, snapshot_date, attendance_status, late_by_minutes, unplanned_leave_flag,
+            pip_status, designation_id, quality_score, template_metrics,
+            team_attrition_pct, team_shrinkage_pct, team_revenue)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           attendance_status = VALUES(attendance_status),
+           late_by_minutes = VALUES(late_by_minutes),
+           unplanned_leave_flag = VALUES(unplanned_leave_flag),
+           pip_status = VALUES(pip_status),
+           designation_id = VALUES(designation_id),
+           quality_score = VALUES(quality_score),
+           template_metrics = VALUES(template_metrics),
+           team_attrition_pct = VALUES(team_attrition_pct),
+           team_shrinkage_pct = VALUES(team_shrinkage_pct),
+           team_revenue = VALUES(team_revenue),
+           updated_at = CURRENT_TIMESTAMP`,
+        [
+          randomUUID(),
+          snapshot.employeeId,
+          snapshot.snapshotDate,
+          snapshot.attendanceStatus,
+          snapshot.lateByMinutes,
+          snapshot.unplannedLeaveFlag ? 1 : 0,
+          snapshot.pipStatus,
+          snapshot.designationId,
+          snapshot.qualityScore,
+          snapshot.templateMetrics ? JSON.stringify(snapshot.templateMetrics) : null,
+          snapshot.teamAttritionPct,
+          snapshot.teamShrinkagePct,
+          snapshot.teamRevenue,
+        ],
+      );
+      written += 1;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[performance-scorecard-snapshot] failed to write snapshot for employeeId=${employeeId}:`,
+        err,
+      );
+      errors.push({ employeeId, error: message });
+    }
   }
-  return { written };
+  return { written, errors };
 }
