@@ -1,0 +1,16 @@
+{
+  "name": "hrms-mcp-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP server exposing mas_hrms read-only query tools to Claude",
+  "main": "index.mjs",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "express": "^4.22.2",
+    "mysql2": "^3.11.5"
+  },
+  "scripts": {
+    "start": "node index.mjs",
+    "start:http": "node http-server.mjs"
+  }
+}
