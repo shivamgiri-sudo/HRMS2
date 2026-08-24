@@ -140,7 +140,9 @@ const REPORTS: Record<string, ReportDef> = {
     async query(f) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       const month = f.month || new Date().toISOString().slice(0, 7);
-      const [mw, mv] = monthWhere("spr.run_month", month);
+      // run_month is varchar(7) like '2026-07' — use direct equality, not DATE_FORMAT
+      const mw = "AND spr.run_month = ?";
+      const mv = [month];
       const [ew, ev] = empWhere("spl.employee_code", f.employee_code);
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const [pw, pv] = processWhere("pm", f.process);
@@ -475,7 +477,7 @@ const REPORTS: Record<string, ReportDef> = {
                bm1.branch_name, ils.tax_month,
                ils.income_tax AS tds_amount, 'legacy' AS source
         FROM incometax_legacy_snapshot ils
-        JOIN employees e1 ON e1.employee_code = ils.employee_code
+        JOIN employees e1 ON e1.employee_code = ils.employee_code COLLATE utf8mb4_0900_ai_ci
         LEFT JOIN branch_master bm1 ON bm1.id = e1.branch_id
         WHERE 1=1 ${mCond} ${bw1} ${ew1}
         UNION ALL
@@ -580,10 +582,12 @@ const REPORTS: Record<string, ReportDef> = {
     async query(f) {
       const [bw, bv] = branchWhere("branch_name", f.branch);
       const [ew, ev] = empWhere("employee_code", f.employee_code);
-      const [mw, mv] = monthWhere("salary_month", f.month);
-      // Historical snapshot UNION live employee_deduction_entries
+      // salary_month and run_month are varchar(YYYY-MM) — use direct equality
+      const mw  = f.month ? "AND salary_month = ?" : "";
+      const mv  = f.month ? [f.month] : [];
       const [ew2, ev2] = empWhere("e.employee_code", f.employee_code);
-      const [mw2, mv2] = monthWhere("ede.run_month", f.month);
+      const mw2 = f.month ? "AND ede.run_month = ?" : "";
+      const mv2 = f.month ? [f.month] : [];
       const bw2 = f.branch ? "AND bm.branch_name = ?" : "";
       const bv2 = f.branch ? [f.branch] : [];
       return q(`
@@ -902,7 +906,239 @@ const REPORTS: Record<string, ReportDef> = {
       `, [...ev, ...mv]);
     },
   },
+
+  // "leave-balance" — uses leave_balance_ledger
+  "leave-balance": {
+    label: "Leave Balance",
+    columns: [
+      { key: "employee_code", label: "Emp Code",      format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text" },
+      { key: "branch_name",   label: "Branch",        format: "text" },
+      { key: "leave_type",    label: "Leave Type",    format: "text" },
+      { key: "balance_year",  label: "Year",          format: "text" },
+      { key: "allocated",     label: "Allocated",     format: "number" },
+      { key: "used",          label: "Used",          format: "number" },
+      { key: "adjusted",      label: "Adjusted",      format: "number" },
+    ],
+    async query(f: LegacyFilter) {
+      const [nw, nv] = nameWhere("e.full_name", f.employee_name);
+      const pj = processJoin("pm", "e");
+      const [pw, pv] = processWhere("pm", f.process);
+      return q(`
+        SELECT e.employee_code, e.full_name AS employee_name,
+               bm.branch_name,
+               ltm.leave_name AS leave_type,
+               lbl.balance_year,
+               lbl.allocated_days AS allocated,
+               lbl.used_days AS used,
+               lbl.adjusted_days AS adjusted
+        FROM leave_balance_ledger lbl
+        JOIN employees e ON e.id = lbl.employee_id
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN leave_type_master ltm ON ltm.id = lbl.leave_type_id
+        ${pj}
+        WHERE e.active_status = 1 ${pw} ${nw}
+        ORDER BY bm.branch_name, e.employee_code, ltm.leave_name
+        LIMIT 50000
+      `, [...pv, ...nv]);
+    },
+  },
+
+  // "bank-account" stub — employee bank details
+  "bank-account": {
+    label: "Bank Account Register",
+    columns: [
+      { key: "employee_code",    label: "Emp Code",        format: "text" },
+      { key: "employee_name",    label: "Employee Name",   format: "text" },
+      { key: "branch_name",      label: "Branch",          format: "text" },
+      { key: "bank_name",        label: "Bank Name",       format: "text" },
+      { key: "account_number",   label: "Account Number",  format: "text" },
+      { key: "ifsc_code",        label: "IFSC Code",       format: "text" },
+      { key: "account_type",     label: "Account Type",    format: "text" },
+    ],
+    async query(f: LegacyFilter) {
+      const [nw, nv] = nameWhere("e.full_name", f.employee_name);
+      const pj = processJoin("pm", "e");
+      const [pw, pv] = processWhere("pm", f.process);
+      return q(`
+        SELECT e.employee_code, e.full_name AS employee_name,
+               bm.branch_name,
+               e.bank_name, e.bank_account_number AS account_number, e.ifsc_code, e.account_type
+        FROM employees e
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        ${pj}
+        WHERE e.active_status = 1 ${pw} ${nw}
+        ORDER BY bm.branch_name, e.employee_code
+        LIMIT 50000
+      `, [...pv, ...nv]);
+    },
+  },
+
+  // "nominee-details" stub
+  "nominee-details": {
+    label: "Nominee Details",
+    columns: [
+      { key: "employee_code",   label: "Emp Code",       format: "text" },
+      { key: "employee_name",   label: "Employee Name",  format: "text" },
+      { key: "nominee_name",    label: "Nominee Name",   format: "text" },
+      { key: "relationship",    label: "Relationship",   format: "text" },
+      { key: "dob",             label: "Date of Birth",  format: "date" },
+      { key: "share_pct",       label: "Share %",        format: "number" },
+    ],
+    async query(f: LegacyFilter) {
+      const [nw, nv] = nameWhere("e.full_name", f.employee_name);
+      return q(`
+        SELECT e.employee_code, e.full_name AS employee_name,
+               en.nominee_name, en.relationship, en.date_of_birth AS dob, en.share_percentage AS share_pct
+        FROM employee_nominee en
+        JOIN employees e ON e.id = en.employee_id
+        WHERE e.active_status = 1 ${nw}
+        ORDER BY e.employee_code, en.nominee_name
+        LIMIT 50000
+      `, [...nv]);
+    },
+  },
+
+  // "asset-details" — uses asset_assignment + asset_master
+  "asset-details": {
+    label: "Asset Details",
+    columns: [
+      { key: "employee_code",  label: "Emp Code",       format: "text" },
+      { key: "employee_name",  label: "Employee Name",  format: "text" },
+      { key: "asset_code",     label: "Asset Code",     format: "text" },
+      { key: "asset_name",     label: "Asset Name",     format: "text" },
+      { key: "asset_category", label: "Category",       format: "text" },
+      { key: "issue_date",     label: "Issue Date",     format: "date" },
+      { key: "return_date",    label: "Return Date",    format: "date" },
+    ],
+    async query(f: LegacyFilter) {
+      const [nw, nv] = nameWhere("e.full_name", f.employee_name);
+      const pj = processJoin("pm", "e");
+      const [pw, pv] = processWhere("pm", f.process);
+      return q(`
+        SELECT e.employee_code, e.full_name AS employee_name,
+               am.asset_code, am.asset_name, am.asset_category,
+               aa.assigned_date AS issue_date, aa.returned_date AS return_date
+        FROM asset_assignment aa
+        JOIN employees e ON e.id = aa.employee_id
+        JOIN asset_master am ON am.id = aa.asset_id
+        ${pj}
+        WHERE 1=1 ${pw} ${nw}
+        ORDER BY e.employee_code, am.asset_name
+        LIMIT 50000
+      `, [...pv, ...nv]);
+    },
+  },
+
+  // "resignation-tracker" — uses exit_request table
+  "resignation-tracker": {
+    label: "Resignation Tracker",
+    columns: [
+      { key: "employee_code",    label: "Emp Code",         format: "text" },
+      { key: "employee_name",    label: "Employee Name",    format: "text" },
+      { key: "branch_name",      label: "Branch",           format: "text" },
+      { key: "exit_type",        label: "Exit Type",        format: "text" },
+      { key: "reason",           label: "Reason",           format: "text" },
+      { key: "lwd_proposed",     label: "LWD Proposed",     format: "date" },
+      { key: "lwd_confirmed",    label: "LWD Confirmed",    format: "date" },
+      { key: "status",           label: "Status",           format: "text" },
+    ],
+    async query(f: LegacyFilter) {
+      const [nw, nv] = nameWhere("e.full_name", f.employee_name);
+      const pj = processJoin("pm", "e");
+      const [pw, pv] = processWhere("pm", f.process);
+      return q(`
+        SELECT e.employee_code, e.full_name AS employee_name,
+               bm.branch_name,
+               er.exit_type, er.exit_reason_category AS reason,
+               er.last_working_day_proposed AS lwd_proposed,
+               er.last_working_day_confirmed AS lwd_confirmed,
+               er.status
+        FROM exit_request er
+        JOIN employees e ON e.id = er.employee_id
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        ${pj}
+        WHERE er.exit_sub_type = 'resignation' ${pw} ${nw}
+        ORDER BY er.submitted_at DESC, e.employee_code
+        LIMIT 50000
+      `, [...pv, ...nv]);
+    },
+  },
+
+  // "exit-checklist" — uses exit_clearance_task
+  "exit-checklist": {
+    label: "Exit Clearance Checklist",
+    columns: [
+      { key: "employee_code",  label: "Emp Code",       format: "text" },
+      { key: "employee_name",  label: "Employee Name",  format: "text" },
+      { key: "branch_name",    label: "Branch",         format: "text" },
+      { key: "clearance_area", label: "Clearance Area", format: "text" },
+      { key: "task_title",     label: "Task",           format: "text" },
+      { key: "status",         label: "Status",         format: "text" },
+    ],
+    async query(f: LegacyFilter) {
+      const [nw, nv] = nameWhere("e.full_name", f.employee_name);
+      const pj = processJoin("pm", "e");
+      const [pw, pv] = processWhere("pm", f.process);
+      return q(`
+        SELECT e.employee_code, e.full_name AS employee_name,
+               bm.branch_name,
+               ect.clearance_area, ect.task_title, ect.status
+        FROM exit_clearance_task ect
+        JOIN employees e ON e.id = ect.employee_id
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        ${pj}
+        WHERE 1=1 ${pw} ${nw}
+        ORDER BY e.employee_code, ect.clearance_area, ect.task_title
+        LIMIT 50000
+      `, [...pv, ...nv]);
+    },
+  },
+
+  // "pf-esic-register" stub — uses employee_statutory_details
+  "pf-esic-register": {
+    label: "PF/ESIC Register",
+    columns: [
+      { key: "employee_code", label: "Emp Code",      format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text" },
+      { key: "branch_name",   label: "Branch",        format: "text" },
+      { key: "uan_number",    label: "UAN",           format: "text" },
+      { key: "pf_number",     label: "PF Number",     format: "text" },
+      { key: "esic_number",   label: "ESIC Number",   format: "text" },
+      { key: "epf_wages",     label: "EPF Wages",     format: "currency", align: "right" },
+      { key: "esic_wages",    label: "ESIC Wages",    format: "currency", align: "right" },
+      { key: "run_month",     label: "Month",         format: "text" },
+    ],
+    async query(f: LegacyFilter) {
+      const mCond = f.month ? "AND spr.run_month = ?" : "";
+      const mv    = f.month ? [f.month] : [];
+      const [nw, nv] = nameWhere("e.full_name", f.employee_name);
+      const pj = processJoin("pm", "e");
+      const [pw, pv] = processWhere("pm", f.process);
+      return q(`
+        SELECT e.employee_code, e.full_name AS employee_name,
+               bm.branch_name,
+               COALESCE(eu.uan, e.uan_number) AS uan_number,
+               e.epf_number AS pf_number,
+               e.esic_number,
+               spl.basic AS epf_wages, spl.gross_salary AS esic_wages,
+               spr.run_month
+        FROM salary_prep_line spl
+        JOIN salary_prep_run spr ON spr.id = spl.run_id
+        JOIN employees e ON e.id = spl.employee_id
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+        ${pj}
+        WHERE 1=1 ${mCond} ${pw} ${nw}
+        ORDER BY bm.branch_name, e.employee_code
+        LIMIT 50000
+      `, [...mv, ...pv, ...nv]);
+    },
+  },
 };
+
+// "employee-master" is an alias for "legacy-employee-master"
+(REPORTS as Record<string, unknown>)["employee-master"] = REPORTS["legacy-employee-master"];
 
 // ── public API ─────────────────────────────────────────────────────────────────
 
