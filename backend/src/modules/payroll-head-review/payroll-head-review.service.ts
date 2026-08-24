@@ -190,8 +190,10 @@ export async function getEmployeeJourney(employeeId: string) {
     ).then(([r]) => r as RowDataPacket[]),
     // Same query shape payrollCalculate.service.ts runs, so the reviewer sees
     // exactly what payroll will read once this employee is approved.
+    // net_estimate is the stored column name; net_in_hand alias keeps the frontend
+    // field consistent with salary_package_master which uses net_in_hand.
     db.execute<RowDataPacket[]>(
-      `SELECT * FROM salary_component_assignments
+      `SELECT *, net_estimate AS net_in_hand FROM salary_component_assignments
         WHERE employee_id = ? AND status = 'active'
         ORDER BY effective_date DESC LIMIT 1`,
       [employeeId]

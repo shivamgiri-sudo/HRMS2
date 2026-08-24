@@ -209,10 +209,12 @@ export function calcFromInHand(monthlyInHand: number, opts: PkgCalcOptions): Pkg
     }
     gross = r2(Math.max(0, gross));
   } else {
-    gross = monthlyInHand + ptFn(monthlyInHand) + PF_EMP_CAP;
+    // Maximum PF employee contribution = pfWageLimit × rate (capped basic × 12%).
+    const pfMaxContribution = (opts.pfWageLimit ?? DEFAULT_PF_WAGE_LIMIT) * PF_EMP_RATE;
+    gross = monthlyInHand + ptFn(monthlyInHand) + pfMaxContribution;
     for (let i = 0; i < 5; i++) {
       const b = gross * (basicPct / 100);
-      const pf = Math.min(b * PF_EMP_RATE, PF_EMP_CAP);
+      const pf = Math.min(b * PF_EMP_RATE, pfMaxContribution);
       const esic = includeEsic && gross <= ESIC_LIMIT ? gross * ESIC_EMP_RATE : 0;
       const pt = ptFn(gross);
       gross = monthlyInHand + pt + pf + esic;
