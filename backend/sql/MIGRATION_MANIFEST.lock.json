@@ -619,7 +619,10 @@
     "1555_attrition_record_inference_columns.sql",
     "1556_employee_retention_recommendation.sql",
     "migrations/1558_helpdesk_ticket_raised_by.sql",
-    "1557_branch_sal_code_from_db_bill.sql"
+    "1557_branch_sal_code_from_db_bill.sql",
+    "migrations/1601_bank_penny_drop_verification_token.sql",
+    "migrations/1602_payroll_loans_rbac_restore.sql",
+    "migrations/1603_loan_negative_pending_cleanup.sql"
   ],
   "approvedDeletions": [
     {
@@ -648,7 +651,9 @@
     "migrations/1308_client_billing_tally_fields.sql",
     "migrations/1309_client_billing_unmapped_legacy_cost_centre.sql",
     "migrations/1558_helpdesk_ticket_raised_by.sql",
-    "migrations/1601_bank_penny_drop_verification_token.sql"
+    "migrations/1601_bank_penny_drop_verification_token.sql",
+    "migrations/1602_payroll_loans_rbac_restore.sql",
+    "migrations/1603_loan_negative_pending_cleanup.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
@@ -817,6 +822,7 @@
     "add_missing_page_catalog_entries.sql",
     "add_missing_report_pages.sql",
     "ats_typing_passages_seed.sql",
+    "fix_noida_branch_head_assignment.sql",
     "review_only_cleanup_test_demo_hrms2.sql",
     "setup-dialer-kpi-metrics.sql",
     "verify_ats_fix.sql"
