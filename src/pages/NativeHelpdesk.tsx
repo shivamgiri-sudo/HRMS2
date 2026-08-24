@@ -11,19 +11,196 @@ import { formatISTDate, formatIST } from "@/lib/utils";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { useAuth } from "@/contexts/AuthContext";
 
-// ─── BPO IT sub-categories ────────────────────────────────────────────────────
+// ─── Support Request Categories & Sub-categories ──────────────────────────────
+// IT taxonomy supplied verbatim 2026-08-24 (6 groups, 28 issue types). The other 8
+// departments' lists were authored by Claude the same day — not given verbatim like IT's —
+// as a reasonable first cut for a BPO/call-centre HR platform; review and adjust before
+// treating any non-IT list as final.
+//
+// All of this is stored in one column, `helpdesk_ticket.it_subcategory` — a free-text VARCHAR
+// with no backend enum/whitelist (confirmed in helpdesk.service.ts), so nothing here required
+// a schema change. The column's IT-specific name is now a known naming debt: every category,
+// not just IT, writes its subcategory into a column called "it_subcategory". A proper fix is a
+// small additive migration renaming/aliasing it to a generic `subcategory` column — flagged,
+// not silently done, since it touches ~10 read/write sites across this file and the backend
+// service and deserves its own reviewed change rather than being folded into this one.
+//
+// Label is "Category — Issue" so the grouping stays visible in the flat <select> every call
+// site renders this into — no JSX/optgroup changes needed at any use site.
 
-const BPO_IT_SUBCATEGORIES = [
-  { value: "dialer_softphone",     label: "Dialer / Softphone Issue" },
-  { value: "network_connectivity", label: "Network / Connectivity" },
-  { value: "system_crash",         label: "System / PC Crash" },
-  { value: "crm_application",      label: "CRM Application Issue" },
-  { value: "headset_hardware",     label: "Headset / Hardware" },
-  { value: "vpn_remote_access",    label: "VPN / Remote Access" },
-  { value: "login_failure",        label: "Login Failure" },
-  { value: "browser_issue",        label: "Browser Issue" },
-  { value: "other_it",             label: "Other IT" },
-];
+const SUBCATEGORIES_BY_CATEGORY: Record<string, { value: string; label: string }[]> = {
+  it: [
+    // 1. Desktop Issue
+    { value: "it_desktop_internet_issue",           label: "Desktop Issue — Internet Issue" },
+    { value: "it_desktop_monitor_issue",            label: "Desktop Issue — Monitor Issue" },
+    { value: "it_desktop_auto_restart_shutdown",    label: "Desktop Issue — System Auto Restart / Shutdown" },
+    { value: "it_desktop_wont_start",               label: "Desktop Issue — Computer Won't Start" },
+    { value: "it_desktop_bitlocker_issue",          label: "Desktop Issue — BitLocker Issue" },
+    { value: "it_desktop_keyboard_issue",           label: "Desktop Issue — Keyboard Issue" },
+    { value: "it_desktop_mouse_issue",              label: "Desktop Issue — Mouse Issue" },
+    { value: "it_desktop_system_hang",              label: "Desktop Issue — System Hang" },
+    // 2. Computer Peripheral
+    { value: "it_peripheral_new_employee_device",   label: "Computer Peripheral — Laptop/Desktop Ordering – New Employee" },
+    { value: "it_peripheral_printer_issue",         label: "Computer Peripheral — Printer Issue" },
+    { value: "it_peripheral_new_headphones_order",  label: "Computer Peripheral — New Headphones Ordering" },
+    // 3. Telecom and Voice
+    { value: "it_telecom_headphone_not_working",    label: "Telecom and Voice — Headphone Not Working" },
+    { value: "it_telecom_voice_issue",              label: "Telecom and Voice — Voice Issue" },
+    { value: "it_telecom_sim_configuration_req",    label: "Telecom and Voice — SIM Configuration Required" },
+    { value: "it_telecom_dialer_issue",             label: "Telecom and Voice — Dialer Issue" },
+    { value: "it_telecom_new_sim_configuration",    label: "Telecom and Voice — New SIM Configuration" },
+    { value: "it_telecom_sim_gateway_testing",      label: "Telecom and Voice — SIM Required from Gateway for Testing" },
+    // 4. Password Reset / Changed
+    { value: "it_password_domain_change",           label: "Password Reset / Changed — Domain Password Change" },
+    { value: "it_password_email_change",            label: "Password Reset / Changed — Email Password Change" },
+    // 5. Seating Change Request
+    { value: "it_seating_change_request",           label: "Seating Change Request — Seating Change Request" },
+    // 6. Software
+    { value: "it_software_browser_issue",           label: "Software — Browser Issue" },
+    { value: "it_software_email_configuration",     label: "Software — Email Configuration" },
+    { value: "it_software_mail_issue",              label: "Software — Mail Issue" },
+    { value: "it_software_installation_required",   label: "Software — Software Installation Required" },
+    { value: "it_software_wfm_hardening",           label: "Software — WFM System Hardening / Un-hardening" },
+    { value: "it_software_windows_install_upgrade", label: "Software — Windows Installation / Upgrade" },
+    { value: "other_it",                            label: "Other IT" },
+  ],
+  hr: [
+    { value: "hr_records_personal_details_update",  label: "Employee Records — Personal Details Update" },
+    { value: "hr_records_employment_letter",        label: "Employee Records — Employment Letter Request" },
+    { value: "hr_records_experience_letter",        label: "Employee Records — Experience Letter Request" },
+    { value: "hr_records_id_card_issue_reissue",    label: "Employee Records — ID Card Issue / Reissue" },
+    { value: "hr_onboarding_document_submission",   label: "Onboarding & Documentation — Document Submission Issue" },
+    { value: "hr_onboarding_offer_letter_query",    label: "Onboarding & Documentation — Offer Letter Query" },
+    { value: "hr_onboarding_bgv_query",             label: "Onboarding & Documentation — Background Verification Query" },
+    { value: "hr_onboarding_joining_formalities",   label: "Onboarding & Documentation — Joining Formalities Issue" },
+    { value: "hr_policy_company_policy_query",      label: "Policy & Compliance — Company Policy Clarification" },
+    { value: "hr_policy_code_of_conduct_query",     label: "Policy & Compliance — Code of Conduct Query" },
+    { value: "hr_policy_compliance_doc_request",    label: "Policy & Compliance — Compliance Document Request" },
+    { value: "hr_benefits_insurance_medical_query",  label: "Benefits & Welfare — Insurance / Medical Benefit Query" },
+    { value: "hr_benefits_esic_card_issue",          label: "Benefits & Welfare — ESIC Card Issue" },
+    { value: "hr_benefits_gratuity_query",           label: "Benefits & Welfare — Gratuity Query" },
+    { value: "hr_benefits_engagement_query",         label: "Benefits & Welfare — Employee Engagement Query" },
+    { value: "hr_exit_resignation_process_query",   label: "Exit Formalities — Resignation Process Query" },
+    { value: "hr_exit_fnf_query",                   label: "Exit Formalities — Full & Final Settlement Query" },
+    { value: "hr_exit_relieving_letter_request",    label: "Exit Formalities — Relieving Letter Request" },
+    { value: "hr_exit_interview_scheduling",        label: "Exit Formalities — Exit Interview Scheduling" },
+    { value: "other_hr",                            label: "Other HR" },
+  ],
+  payroll: [
+    { value: "payroll_salary_not_credited",         label: "Salary Issues — Salary Not Credited" },
+    { value: "payroll_salary_discrepancy",          label: "Salary Issues — Salary Discrepancy" },
+    { value: "payroll_incorrect_deduction",         label: "Salary Issues — Incorrect Deduction" },
+    { value: "payroll_arrears_not_paid",            label: "Salary Issues — Arrears Not Paid" },
+    { value: "payroll_payslip_not_available",       label: "Payslip & Documents — Payslip Not Available" },
+    { value: "payroll_form16_request",              label: "Payslip & Documents — Form 16 Request" },
+    { value: "payroll_salary_certificate_request",  label: "Payslip & Documents — Salary Certificate Request" },
+    { value: "payroll_tds_certificate_query",       label: "Payslip & Documents — TDS Certificate Query" },
+    { value: "payroll_pf_withdrawal_query",         label: "Statutory Deductions — PF Withdrawal Query" },
+    { value: "payroll_pf_transfer_query",           label: "Statutory Deductions — PF Transfer Query" },
+    { value: "payroll_uan_activation_issue",        label: "Statutory Deductions — UAN Activation Issue" },
+    { value: "payroll_esic_deduction_query",        label: "Statutory Deductions — ESIC Deduction Query" },
+    { value: "payroll_professional_tax_query",      label: "Statutory Deductions — Professional Tax Query" },
+    { value: "payroll_travel_reimb_pending",        label: "Reimbursements — Travel Reimbursement Pending" },
+    { value: "payroll_medical_reimb_pending",       label: "Reimbursements — Medical Reimbursement Pending" },
+    { value: "payroll_reimb_rejected",              label: "Reimbursements — Reimbursement Rejected" },
+    { value: "payroll_bank_account_update",         label: "Bank & Payment — Bank Account Update" },
+    { value: "payroll_salary_account_not_linked",   label: "Bank & Payment — Salary Account Not Linked" },
+    { value: "payroll_neft_failure_query",          label: "Bank & Payment — NEFT Failure Query" },
+    { value: "other_payroll",                       label: "Other Payroll" },
+  ],
+  attendance: [
+    { value: "attendance_missed_punch",             label: "Punch Issues — Missed Punch" },
+    { value: "attendance_biometric_not_working",    label: "Punch Issues — Biometric Not Working" },
+    { value: "attendance_punch_not_reflecting",     label: "Punch Issues — Punch Not Reflecting" },
+    { value: "attendance_duplicate_punch",          label: "Punch Issues — Duplicate Punch" },
+    { value: "attendance_regularization_pending",   label: "Regularization — Regularization Request Pending" },
+    { value: "attendance_regularization_rejected",  label: "Regularization — Regularization Rejected" },
+    { value: "attendance_wfh_marking_issue",        label: "Regularization — WFH Marking Issue" },
+    { value: "attendance_leave_marked_absent",      label: "Leave-Attendance Mismatch — Leave Marked as Absent" },
+    { value: "attendance_approved_leave_missing",   label: "Leave-Attendance Mismatch — Approved Leave Not Reflecting" },
+    { value: "attendance_shift_not_assigned",       label: "Roster & Shift — Shift Not Assigned" },
+    { value: "attendance_roster_not_published",     label: "Roster & Shift — Roster Not Published" },
+    { value: "attendance_shift_change_request",     label: "Roster & Shift — Shift Change Request" },
+    { value: "attendance_ot_not_approved",          label: "Overtime — OT Not Approved" },
+    { value: "attendance_ot_not_reflecting",        label: "Overtime — OT Not Reflecting in Attendance" },
+    { value: "other_attendance",                    label: "Other Attendance" },
+  ],
+  leave: [
+    { value: "leave_not_approved",                  label: "Leave Application — Leave Not Approved" },
+    { value: "leave_application_error",             label: "Leave Application — Leave Application Error" },
+    { value: "leave_balance_incorrect",             label: "Leave Application — Leave Balance Incorrect" },
+    { value: "leave_casual_query",                  label: "Leave Types — Casual Leave Query" },
+    { value: "leave_sick_query",                    label: "Leave Types — Sick Leave Query" },
+    { value: "leave_earned_query",                  label: "Leave Types — Earned Leave Query" },
+    { value: "leave_maternity_paternity_query",     label: "Leave Types — Maternity / Paternity Leave Query" },
+    { value: "leave_comp_off_query",                label: "Leave Types — Comp-Off Query" },
+    { value: "leave_approver_not_responding",       label: "Approval Workflow — Approver Not Responding" },
+    { value: "leave_wrong_approver_assigned",       label: "Approval Workflow — Wrong Approver Assigned" },
+    { value: "leave_encashment_query",              label: "Leave Encashment — Leave Encashment Query" },
+    { value: "leave_carry_forward_query",           label: "Leave Encashment — Leave Carry Forward Query" },
+    { value: "other_leave",                         label: "Other Leave" },
+  ],
+  asset: [
+    { value: "asset_new_request",                   label: "Asset Issuance — New Asset Request" },
+    { value: "asset_not_received",                  label: "Asset Issuance — Asset Not Received" },
+    { value: "asset_handover_pending",              label: "Asset Issuance — Asset Handover Pending" },
+    { value: "asset_damaged",                       label: "Asset Issues — Asset Damaged" },
+    { value: "asset_malfunction",                   label: "Asset Issues — Asset Malfunction" },
+    { value: "asset_accessory_missing",             label: "Asset Issues — Accessory Missing" },
+    { value: "asset_return_pending",                label: "Asset Return / Exit — Asset Return Pending" },
+    { value: "asset_clearance_for_exit",            label: "Asset Return / Exit — Asset Clearance for Exit" },
+    { value: "asset_not_mapped_to_employee",        label: "Asset Records — Asset Not Mapped to Employee" },
+    { value: "asset_incorrect_details",             label: "Asset Records — Incorrect Asset Details" },
+    { value: "other_asset",                         label: "Other Asset" },
+  ],
+  admin: [
+    { value: "admin_ac_electrical_issue",           label: "Facility — AC / Electrical Issue" },
+    { value: "admin_furniture_issue",               label: "Facility — Furniture Issue" },
+    { value: "admin_housekeeping_issue",            label: "Facility — Housekeeping Issue" },
+    { value: "admin_pantry_cafeteria_issue",        label: "Facility — Pantry / Cafeteria Issue" },
+    { value: "admin_access_card_not_working",       label: "Access & Security — Access Card Not Working" },
+    { value: "admin_visitor_pass_request",          label: "Access & Security — Visitor Pass Request" },
+    { value: "admin_parking_access_request",        label: "Access & Security — Parking Access Request" },
+    { value: "admin_cab_booking_issue",             label: "Transport — Cab Booking Issue" },
+    { value: "admin_cab_not_arrived",               label: "Transport — Cab Not Arrived" },
+    { value: "admin_transport_route_query",         label: "Transport — Transport Route Query" },
+    { value: "admin_stationery_request",            label: "Stationery & Supplies — Stationery Request" },
+    { value: "admin_office_supplies_shortage",      label: "Stationery & Supplies — Office Supplies Shortage" },
+    { value: "admin_vendor_service_complaint",      label: "Vendor / Facility — Vendor Service Complaint" },
+    { value: "admin_facility_maintenance_request",  label: "Vendor / Facility — Facility Maintenance Request" },
+    { value: "other_admin",                         label: "Other Admin" },
+  ],
+  general: [
+    { value: "general_hr_query",                    label: "General Query — General HR Query" },
+    { value: "general_it_query",                    label: "General Query — General IT Query" },
+    { value: "general_query_other",                 label: "General Query — Other" },
+    { value: "general_process_improvement",         label: "Feedback & Suggestion — Process Improvement Suggestion" },
+    { value: "general_feedback_on_service",         label: "Feedback & Suggestion — Feedback on Service" },
+    { value: "general_miscellaneous_request",       label: "Miscellaneous — Miscellaneous Request" },
+    { value: "other_general",                       label: "Other" },
+  ],
+  other: [
+    { value: "other_not_listed_above",              label: "Other — Not Listed Above" },
+  ],
+};
+
+// Backward-compatible name for the IT list specifically — every existing call site in this
+// file that only ever handled IT tickets keeps working unchanged.
+const BPO_IT_SUBCATEGORIES = SUBCATEGORIES_BY_CATEGORY.it;
+
+// Flat list of every sub-category across every department, for label look-ups where the
+// relevant ticket's category isn't in scope at that point in the code — every `value` above is
+// globally unique (category-prefixed), so a single flattened search is safe regardless of which
+// department a given ticket actually belongs to.
+const ALL_SUBCATEGORIES = Object.values(SUBCATEGORIES_BY_CATEGORY).flat();
+
+/** Sub-category options for whatever category string a form/ticket currently holds (case- and
+ * whitespace-insensitive — this file mixes "IT"/"it" category casing between forms). Falls back
+ * to the "other" list for an unrecognized category rather than showing nothing. */
+function subcategoriesFor(category: string | undefined | null): { value: string; label: string }[] {
+  const key = (category ?? "").trim().toLowerCase();
+  return SUBCATEGORIES_BY_CATEGORY[key] ?? SUBCATEGORIES_BY_CATEGORY.other;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -551,7 +728,7 @@ export default function NativeHelpdesk() {
     return statusMatch && assignedMatch && (!q || text.includes(q));
   });
 
-  const subLabel = BPO_IT_SUBCATEGORIES.find(s => s.value === selectedTicket?.it_subcategory)?.label;
+  const subLabel = ALL_SUBCATEGORIES.find(s => s.value === selectedTicket?.it_subcategory)?.label;
   const isItTicket = selectedTicket?.category?.toLowerCase() === "it";
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -1058,7 +1235,7 @@ export default function NativeHelpdesk() {
                             <div>{t.category}</div>
                             {t.it_subcategory && (
                               <div className="text-xs text-slate-400">
-                                {BPO_IT_SUBCATEGORIES.find(s => s.value === t.it_subcategory)?.label ?? t.it_subcategory}
+                                {ALL_SUBCATEGORIES.find(s => s.value === t.it_subcategory)?.label ?? t.it_subcategory}
                               </div>
                             )}
                           </td>
@@ -1153,7 +1330,7 @@ export default function NativeHelpdesk() {
                     <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-blue-50 text-blue-700 capitalize">{selectedKbArticle.category}</span>
                     {selectedKbArticle.it_subcategory && (
                       <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-slate-100 text-slate-600">
-                        {BPO_IT_SUBCATEGORIES.find(s => s.value === selectedKbArticle.it_subcategory)?.label ?? selectedKbArticle.it_subcategory}
+                        {ALL_SUBCATEGORIES.find(s => s.value === selectedKbArticle.it_subcategory)?.label ?? selectedKbArticle.it_subcategory}
                       </span>
                     )}
                   </div>
@@ -1232,7 +1409,7 @@ export default function NativeHelpdesk() {
                           <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-blue-50 text-blue-700 capitalize">{a.category}</span>
                           {a.it_subcategory && (
                             <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-slate-100 text-slate-600">
-                              {BPO_IT_SUBCATEGORIES.find(s => s.value === a.it_subcategory)?.label ?? a.it_subcategory}
+                              {ALL_SUBCATEGORIES.find(s => s.value === a.it_subcategory)?.label ?? a.it_subcategory}
                             </span>
                           )}
                         </div>
@@ -1287,41 +1464,39 @@ export default function NativeHelpdesk() {
                 </Field>
               </div>
 
+              <Field label="Sub-Category">
+                <select
+                  value={ticketForm.it_subcategory}
+                  onChange={(e) => setTicketForm({ ...ticketForm, it_subcategory: e.target.value })}
+                  className={inputCls}
+                >
+                  <option value="">— Select sub-category —</option>
+                  {subcategoriesFor(ticketForm.category).map(s => (
+                    <option key={s.value} value={s.value}>{s.label}</option>
+                  ))}
+                </select>
+              </Field>
               {ticketForm.category.toLowerCase() === "it" && (
-                <>
-                  <Field label="IT Sub-Category">
-                    <select
-                      value={ticketForm.it_subcategory}
-                      onChange={(e) => setTicketForm({ ...ticketForm, it_subcategory: e.target.value })}
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Agent Downtime (min)">
+                    <input
+                      type="number"
+                      min={0}
+                      value={ticketForm.downtime_minutes}
+                      onChange={(e) => setTicketForm({ ...ticketForm, downtime_minutes: Math.max(0, Number(e.target.value)) })}
                       className={inputCls}
-                    >
-                      <option value="">— Select sub-category —</option>
-                      {BPO_IT_SUBCATEGORIES.map(s => (
-                        <option key={s.value} value={s.value}>{s.label}</option>
-                      ))}
-                    </select>
+                    />
                   </Field>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="Agent Downtime (min)">
-                      <input
-                        type="number"
-                        min={0}
-                        value={ticketForm.downtime_minutes}
-                        onChange={(e) => setTicketForm({ ...ticketForm, downtime_minutes: Math.max(0, Number(e.target.value)) })}
-                        className={inputCls}
-                      />
-                    </Field>
-                    <Field label="Affected Seats">
-                      <input
-                        type="number"
-                        min={1}
-                        value={ticketForm.affected_seats}
-                        onChange={(e) => setTicketForm({ ...ticketForm, affected_seats: Math.max(1, Number(e.target.value)) })}
-                        className={inputCls}
-                      />
-                    </Field>
-                  </div>
-                </>
+                  <Field label="Affected Seats">
+                    <input
+                      type="number"
+                      min={1}
+                      value={ticketForm.affected_seats}
+                      onChange={(e) => setTicketForm({ ...ticketForm, affected_seats: Math.max(1, Number(e.target.value)) })}
+                      className={inputCls}
+                    />
+                  </Field>
+                </div>
               )}
 
               <Field label="Subject *">
@@ -1416,17 +1591,15 @@ export default function NativeHelpdesk() {
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Category">
                   <select value={kbForm.category} onChange={e => setKbForm({ ...kbForm, category: e.target.value, it_subcategory: "" })} className={inputCls}>
-                    {["it", "hr", "payroll", "admin", "general"].map(c => <option key={c} value={c} className="capitalize">{c}</option>)}
+                    {["it", "hr", "payroll", "admin", "asset", "attendance", "leave", "general", "other"].map(c => <option key={c} value={c} className="capitalize">{c}</option>)}
                   </select>
                 </Field>
-                {kbForm.category === "it" && (
-                  <Field label="IT Sub-Category">
-                    <select value={kbForm.it_subcategory} onChange={e => setKbForm({ ...kbForm, it_subcategory: e.target.value })} className={inputCls}>
-                      <option value="">— None —</option>
-                      {BPO_IT_SUBCATEGORIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
-                    </select>
-                  </Field>
-                )}
+                <Field label="Sub-Category">
+                  <select value={kbForm.it_subcategory} onChange={e => setKbForm({ ...kbForm, it_subcategory: e.target.value })} className={inputCls}>
+                    <option value="">— None —</option>
+                    {subcategoriesFor(kbForm.category).map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                  </select>
+                </Field>
               </div>
               <Field label="Tags (comma-separated)">
                 <input value={kbForm.tags} onChange={e => setKbForm({ ...kbForm, tags: e.target.value })} placeholder="dialer, softphone, cisco" className={inputCls} />
