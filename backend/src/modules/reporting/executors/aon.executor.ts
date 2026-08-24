@@ -84,6 +84,19 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
 }
 
 /**
+ * AON reference join-date, corrected 2026-08-25.
+ *
+ * Was `e.date_of_joining` alone. `employees.salary_start_date` is populated on only 1,554 of
+ * 58,918 employees (2.6%, verified live) and its own type comment already documents it as
+ * "defaults to date_of_joining when null" (see running-salary.service.ts, which reads it the
+ * same way) — so COALESCE here is the existing convention for this column, not a new rule.
+ * Of the 1,554 populated rows only 19 actually differ from date_of_joining (6-41 day gaps, all
+ * recent joiners), so this is a safe substitution today and correctly future-proofed as more
+ * employees get a real salary_start_date set going forward.
+ */
+export const AON_REFERENCE_JOIN_DATE_SQL = "COALESCE(e.salary_start_date, e.date_of_joining)";
+
+/**
  * The bucket expression, parameterised only by the reference date.
  *
  * Written as day arithmetic rather than TIMESTAMPDIFF(MONTH, ...) — which is what
@@ -95,9 +108,9 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
  */
 function aonBucketSql(asOf: string): string {
   return `CASE
-             WHEN DATEDIFF(${asOf}, e.date_of_joining) <= 30 THEN '0-30'
-             WHEN DATEDIFF(${asOf}, e.date_of_joining) <= 60 THEN '31-60'
-             WHEN DATEDIFF(${asOf}, e.date_of_joining) <= 90 THEN '61-90'
+             WHEN DATEDIFF(${asOf}, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN '0-30'
+             WHEN DATEDIFF(${asOf}, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN '31-60'
+             WHEN DATEDIFF(${asOf}, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN '61-90'
              ELSE '90+'
            END`;
 }
@@ -111,9 +124,9 @@ function aonBucketSql(asOf: string): string {
  */
 function aonBucketOrderSql(asOf: string): string {
   return `CASE
-             WHEN DATEDIFF(${asOf}, e.date_of_joining) <= 30 THEN 1
-             WHEN DATEDIFF(${asOf}, e.date_of_joining) <= 60 THEN 2
-             WHEN DATEDIFF(${asOf}, e.date_of_joining) <= 90 THEN 3
+             WHEN DATEDIFF(${asOf}, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 1
+             WHEN DATEDIFF(${asOf}, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN 2
+             WHEN DATEDIFF(${asOf}, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN 3
              ELSE 4
            END`;
 }
@@ -200,8 +213,8 @@ export async function aonBucketHeadcount(
                ), 0),
              2
            ) AS pct_of_group,
-           MIN(DATEDIFF(CURDATE(), e.date_of_joining)) AS min_aon_days,
-           MAX(DATEDIFF(CURDATE(), e.date_of_joining)) AS max_aon_days
+           MIN(DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL})) AS min_aon_days,
+           MAX(DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL})) AS max_aon_days
       FROM employees e
       LEFT JOIN branch_master b       ON b.id  = e.branch_id
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
@@ -285,9 +298,9 @@ export async function aonBucketAttrition(
            COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
            ${bucket} AS aon_bucket,
            COUNT(*) AS exits,
-           ROUND(AVG(DATEDIFF(e.date_of_exit, e.date_of_joining)), 1) AS avg_tenure_days,
-           MIN(DATEDIFF(e.date_of_exit, e.date_of_joining)) AS min_tenure_days,
-           MAX(DATEDIFF(e.date_of_exit, e.date_of_joining)) AS max_tenure_days,
+           ROUND(AVG(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})), 1) AS avg_tenure_days,
+           MIN(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})) AS min_tenure_days,
+           MAX(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})) AS max_tenure_days,
            -- Share of the month's exits that fell in this bucket, within this group.
            ROUND(
              COUNT(*) * 100.0
@@ -499,7 +512,7 @@ export async function aonCohortSurvival(
   // month so no member of it is credited with more exposure than the youngest member has.
   const cohortAge = "DATEDIFF(CURDATE(), LAST_DAY(e.date_of_joining))";
   const leftBy = (d: number) =>
-    `SUM(e.date_of_exit IS NOT NULL AND DATEDIFF(e.date_of_exit, e.date_of_joining) <= ${d})`;
+    `SUM(e.date_of_exit IS NOT NULL AND DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) <= ${d})`;
   const survival = (d: number) => `
     CASE WHEN MIN(${cohortAge}) >= ${d}
          THEN ROUND(100.0 - (${leftBy(d)} * 100.0 / NULLIF(COUNT(*), 0)), 2)
@@ -525,7 +538,7 @@ export async function aonCohortSurvival(
            MIN(${cohortAge}) >= 60 AS is_mature_60,
            MIN(${cohortAge}) >= 90 AS is_mature_90,
            ROUND(AVG(CASE WHEN e.date_of_exit IS NOT NULL
-                          THEN DATEDIFF(e.date_of_exit, e.date_of_joining) END), 1)
+                          THEN DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) END), 1)
              AS avg_tenure_days_of_leavers
       FROM employees e
       LEFT JOIN branch_master b       ON b.id  = e.branch_id
@@ -726,7 +739,7 @@ export async function attritionDeepDive(
            ${dim.expr} AS dimension_value,
            ${bucket} AS aon_bucket,
            COUNT(*) AS exits,
-           ROUND(AVG(DATEDIFF(e.date_of_exit, e.date_of_joining)), 1) AS avg_tenure_days,
+           ROUND(AVG(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})), 1) AS avg_tenure_days,
            -- This bucket's share of all exits for this dimension value.
            ROUND(
              COUNT(*) * 100.0
@@ -743,7 +756,7 @@ export async function attritionDeepDive(
            -- expression would reference an ungrouped e.date_of_exit and fail outright
            -- under ONLY_FULL_GROUP_BY rather than degrade.
            ROUND(
-             SUM(SUM(CASE WHEN DATEDIFF(e.date_of_exit, e.date_of_joining) <= 30 THEN 1 ELSE 0 END))
+             SUM(SUM(CASE WHEN DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 1 ELSE 0 END))
                OVER (PARTITION BY ${dim.expr}) * 100.0
              / NULLIF(SUM(COUNT(*)) OVER (PARTITION BY ${dim.expr}), 0),
              2

@@ -55,6 +55,7 @@ import {
   fetchPageWithTotal,
   rethrowReportSchemaError,
 } from "./types.js";
+import { AON_REFERENCE_JOIN_DATE_SQL } from "./aon.executor.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
@@ -98,11 +99,11 @@ export async function attritionRiskScore(
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
            DATE_FORMAT(e.date_of_joining, '%Y-%m-%d')  AS date_of_joining,
-           DATEDIFF(CURDATE(), e.date_of_joining)      AS aon_days,
+           DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL})      AS aon_days,
            CASE
-             WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 30 THEN '0-30'
-             WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 60 THEN '31-60'
-             WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 90 THEN '61-90'
+             WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN '0-30'
+             WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN '31-60'
+             WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN '61-90'
              ELSE '90+'
            END AS aon_bucket,
            COALESCE(a.attendance_days, 0)              AS attendance_days,
@@ -114,9 +115,9 @@ export async function attritionRiskScore(
                 THEN ROUND(a.half_days     * 100.0 / a.attendance_days, 1) END AS half_day_rate_pct,
            -- Component columns, so the ranking can be argued with rather than trusted.
            CASE
-             WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 30 THEN 45
-             WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 60 THEN 30
-             WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 90 THEN 18
+             WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 45
+             WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN 30
+             WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN 18
              ELSE 6
            END AS tenure_points,
            CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
@@ -127,9 +128,9 @@ export async function attritionRiskScore(
                 THEN LEAST(10, ROUND(a.half_days    * 10.0 / a.attendance_days, 1)) ELSE 0 END AS half_day_points,
            LEAST(100,
              CASE
-               WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 30 THEN 45
-               WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 60 THEN 30
-               WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 90 THEN 18
+               WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 45
+               WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN 30
+               WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN 18
                ELSE 6
              END
              + CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
@@ -142,9 +143,9 @@ export async function attritionRiskScore(
            CASE
              WHEN LEAST(100,
                CASE
-                 WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 30 THEN 45
-                 WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 60 THEN 30
-                 WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 90 THEN 18
+                 WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 45
+                 WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN 30
+                 WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN 18
                  ELSE 6
                END
                + CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
@@ -156,9 +157,9 @@ export async function attritionRiskScore(
              ) >= 60 THEN 'High'
              WHEN LEAST(100,
                CASE
-                 WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 30 THEN 45
-                 WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 60 THEN 30
-                 WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 90 THEN 18
+                 WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 45
+                 WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN 30
+                 WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN 18
                  ELSE 6
                END
                + CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
