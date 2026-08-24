@@ -178,6 +178,7 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
         setDetailGrnId(null);
         void queryClient.invalidateQueries({ queryKey: ["grn-history"] });
       }}
+      onEditRequested={onEdit ? (id) => { setDetailGrnId(null); onEdit(id); } : undefined}
     />
     <GrnCard>
       <GrnCardHeader
@@ -293,7 +294,11 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
                 onClick={() => setDetailGrnId(row.id)}
               >
                 <GrnTd>
-                  <p className="font-grn-mono font-bold text-grn-brand">{row.grn_number}</p>
+                  {row.grn_number ? (
+                    <p className="font-grn-mono font-bold text-grn-brand">{row.grn_number}</p>
+                  ) : (
+                    <p className="font-grn-mono text-xs text-grn-ink-soft italic">Draft — not yet numbered</p>
+                  )}
                   <GrnCellSub className="uppercase tracking-[0.05em]">
                     {row.grn_type}
                     {row.source_type === "legacy" && (

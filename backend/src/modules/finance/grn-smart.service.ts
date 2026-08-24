@@ -2526,19 +2526,27 @@ export const grnSmartService = {
   },
 
   async reopen(grnId: string, actorUserId: string, actorRole: string, actorRoles: string[] = []) {
+    const REOPENABLE = new Set(["rejected", "returned_to_raiser", "returned_to_branch_head"]);
     const connection = await db.getConnection();
+    let previousStatus = "";
     try {
       await connection.beginTransaction();
       const grn = await lockGrn(connection, grnId);
-      if (String(grn.status) !== "rejected") {
-        throw new Error(`Only rejected GRNs can be reopened. Current status: ${grn.status}`);
+      if (!REOPENABLE.has(String(grn.status))) {
+        throw new Error(
+          `GRN cannot be reopened from status '${grn.status}'. ` +
+          `Only rejected or returned GRNs can be reopened for correction.`
+        );
       }
-      // Ownership check: only the original creator OR finance leadership can reopen.
-      // Check the full roles array — primary role alone misses multi-role users (e.g. admin+finance_head).
+      previousStatus = String(grn.status);
+      // Ownership check: original creator OR finance leadership.
+      // For returned_to_branch_head, also allow branch_head role.
       const allRoles = new Set([actorRole, ...actorRoles]);
       const isFinanceLeader = ["finance_head", "accounts_head", "super_admin", "admin"].some(r => allRoles.has(r));
-      if (!isFinanceLeader && String(grn.created_by) !== actorUserId) {
-        throw new Error("Only the GRN creator or Finance Head can reopen this GRN.");
+      const isBranchHead = allRoles.has("branch_head");
+      const isCreator = String(grn.created_by) === actorUserId;
+      if (!isFinanceLeader && !isCreator && !(previousStatus === "returned_to_branch_head" && isBranchHead)) {
+        throw new Error("Only the GRN creator, Branch Head (for returned GRNs) or Finance Head can reopen this GRN.");
       }
       // Finance-head rejections call releaseAllocations(), setting lifecycle_status = 'released'.
       // Restore them to 'draft' so the next save can proceed normally.
@@ -2558,7 +2566,7 @@ export const grnSmartService = {
                 reviewed_by = NULL, reviewed_at = NULL,
                 review_note = NULL,
                 submitted_at = NULL, submitted_by = NULL
-          WHERE id = ? AND status = 'rejected'`,
+          WHERE id = ? AND status IN ('rejected','returned_to_raiser','returned_to_branch_head')`,
         [grnId]
       );
       if (result.affectedRows !== 1) {
@@ -2571,7 +2579,7 @@ export const grnSmartService = {
     } finally {
       connection.release();
     }
-    await writeAudit("REOPEN", grnId, actorUserId, actorRole, { previous_status: "rejected" });
+    await writeAudit("REOPEN", grnId, actorUserId, actorRole, { previous_status: previousStatus });
     return { success: true, newStatus: "draft" as const };
   },
 

@@ -116,11 +116,14 @@ export function GrnDetailDrawer({
   grnId,
   onClose,
   onReopened,
+  onEditRequested,
 }: {
   grnId: string | null;
   onClose: () => void;
   /** Called after successful reopen so the list can refresh */
   onReopened?: () => void;
+  /** Called when the user wants to edit the GRN (opens create form) */
+  onEditRequested?: (grnId: string) => void;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -262,20 +265,41 @@ export function GrnDetailDrawer({
                 )}
                 {isReturned && (
                   <GrnAlert tone="warn">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="font-semibold">
-                          {grn.status === "returned_to_raiser"
-                            ? "Returned to you for correction"
-                            : "Returned to Branch Head"}
-                        </p>
-                        <p className="mt-0.5 text-xs text-grn-ink-soft">
-                          Review the timeline below for the reason, then resubmit.
-                        </p>
-                      </div>
+                    <p className="font-semibold">
+                      {grn.status === "returned_to_raiser"
+                        ? "Returned to you for correction"
+                        : "Returned to Branch Head for correction"}
+                    </p>
+                    <p className="mt-0.5 text-xs text-grn-ink-soft">
+                      Review the timeline below for the reason. You can edit fields and resubmit,
+                      or resubmit as-is if no changes are needed.
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {/* Reopen to draft first so the create-form can edit all fields */}
+                      {onEditRequested && (
+                        <GrnButton
+                          className="text-xs"
+                          disabled={reopenMutation.isPending || resubmitMutation.isPending}
+                          onClick={() =>
+                            reopenMutation.mutate(grn.id, {
+                              onSuccess: () => {
+                                onClose();
+                                onEditRequested(grn.id);
+                              },
+                            })
+                          }
+                        >
+                          {reopenMutation.isPending ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <RotateCcw className="h-3 w-3" />
+                          )}
+                          Edit &amp; Resubmit
+                        </GrnButton>
+                      )}
                       <GrnButton
-                        className="shrink-0 text-xs"
-                        disabled={resubmitMutation.isPending}
+                        className="text-xs"
+                        disabled={resubmitMutation.isPending || reopenMutation.isPending}
                         onClick={() => resubmitMutation.mutate(grn.id)}
                       >
                         {resubmitMutation.isPending ? (
@@ -283,7 +307,7 @@ export function GrnDetailDrawer({
                         ) : (
                           <Send className="h-3 w-3" />
                         )}
-                        Resubmit
+                        Resubmit As-Is
                       </GrnButton>
                     </div>
                   </GrnAlert>

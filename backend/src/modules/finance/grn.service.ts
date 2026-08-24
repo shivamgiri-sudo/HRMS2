@@ -300,12 +300,11 @@ async function createUnbudgetedDraft(
   const vendor = await resolveCanonicalVendor(payload.grnType, payload.vendorId, null);
 
   const id = randomUUID();
-  const numberFormat = await resolveGrnNumberFormat();
-  const grnNumber = numberFormat === "monthly_company"
-    ? await allocateMonthlyGrnNumber({ periodCode: accountingPeriod })
-    : await allocateGrnNumber(payload.branchId, financialYear);
   const dueDate = addDays(payload.billDate!, paymentTermsDays);
 
+  // GRN number is intentionally NOT allocated here — it is assigned at submission time only.
+  // Allocating at draft creation causes sequence gaps when drafts are abandoned, and Finance
+  // reconciles against submitted numbers, not draft-creation numbers.
   await db.execute(
     `INSERT INTO grn_request
      (id, grn_number, grn_type, branch_id, company_code, process_id, cost_centre_id, cost_class,
@@ -314,13 +313,12 @@ async function createUnbudgetedDraft(
       amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount,
       bill_date, accounting_period, payment_terms_days, due_date, description, remarks, status,
       financial_year, budget_id, budget_line_id, is_unbudgeted, created_by, created_at)
-     VALUES (?,?,?,?,?,NULL,?,'direct',?,?,?,?,?,'amount',0,
+     VALUES (?,NULL,?,?,?,NULL,?,'direct',?,?,?,?,?,'amount',0,
              'exclusive',0,'cgst_sgst',100,
              0,0,0,0,0,
              ?,?,?,?,?,?,'draft',?,NULL,NULL,1,?,NOW())`,
     [
       id,
-      grnNumber,
       payload.grnType,
       payload.branchId,
       payload.companyCode?.trim() || null,
@@ -352,7 +350,6 @@ async function createUnbudgetedDraft(
     actorUserId,
     actorRole,
     details: {
-      grnNumber,
       branchId: payload.branchId,
       budgetLineId: null,
       accountingPeriod,
@@ -360,7 +357,7 @@ async function createUnbudgetedDraft(
     },
   });
   await writeGrnAudit("CREATE_DRAFT_UNBUDGETED", id, actorUserId, actorRole, {
-    grn_number: grnNumber,
+    grn_number: null,
     is_unbudgeted: true,
     head,
     sub_head: subHead,
@@ -369,7 +366,7 @@ async function createUnbudgetedDraft(
     accounting_period: accountingPeriod,
     financial_year: financialYear,
   });
-  return { id, grnNumber };
+  return { id, grnNumber: null };
 }
 
 export const grnService = {
@@ -488,26 +485,11 @@ export const grnService = {
      * existed and were tested, but NOTHING read the flag, so flipping it did nothing at all.
      * Requirement 12 was built and unreachable.
      */
-    const numberFormat = await resolveGrnNumberFormat();
-    /*
-     * Resolved once and both NUMBERED and STORED from the same value.
-     *
-     * It used to be computed inline for the number only, and accounting_period was absent from
-     * the INSERT column list below — so the column was NULL on every GRN raised through this
-     * path. Two consequences: under 'monthly_company' numbering the allocated number's MM/YY
-     * could disagree with anything recorded on the row, and listGrns' accountingPeriod filter
-     * fell back to bill_date permanently, since its
-     *     COALESCE(g.accounting_period, DATE_FORMAT(g.bill_date, '%Y-%m'))
-     * never had a stored value to prefer. Confirmed in production: the column exists and is
-     * NULL on every row.
-     */
     const accountingPeriod = resolveAccountingPeriod({
       accountingPeriod: payload.accountingPeriod,
       billDate: payload.billDate,
     });
-    const grnNumber = numberFormat === "monthly_company"
-      ? await allocateMonthlyGrnNumber({ periodCode: accountingPeriod })
-      : await allocateGrnNumber(payload.branchId, financialYear);
+    // GRN number deferred to submission — see createUnbudgetedDraft for the rationale.
     const dueDate = addDays(payload.billDate, paymentTermsDays);
     const costClass: "direct" | "indirect" =
       budgetLine.process_id || budgetLine.cost_centre_id ? "direct" : "indirect";
@@ -520,10 +502,9 @@ export const grnService = {
         amount_without_tax, tax_amount, amount_with_tax, pnl_cost_amount, amount,
         bill_date, accounting_period, payment_terms_days, due_date, description, remarks, status,
         financial_year, budget_id, budget_line_id, created_by, created_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,NOW())`,
+       VALUES (?,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,NOW())`,
       [
         id,
-        grnNumber,
         payload.grnType,
         payload.branchId,
         payload.companyCode?.trim() || null,
@@ -570,14 +551,13 @@ export const grnService = {
       actorUserId,
       actorRole,
       details: {
-        grnNumber,
         branchId: payload.branchId,
         budgetLineId: budgetLine.id,
         unbudgeted: false,
       },
     });
     await writeGrnAudit("CREATE_DRAFT", id, actorUserId, actorRole, {
-      grn_number: grnNumber,
+      grn_number: null,
       budget_id: budgetLine.budget_id,
       budget_line_id: budgetLine.id,
       process_id: budgetLine.process_id ?? null,
@@ -590,7 +570,7 @@ export const grnService = {
       tax_amount: amounts.taxAmount,
       amount_with_tax: amounts.grossAmount,
     });
-    return { id, grnNumber };
+    return { id, grnNumber: null };
   },
 
   async submitForApproval(
@@ -617,14 +597,31 @@ export const grnService = {
       throw new Error("Invoice / supporting attachment is required before submission");
     }
 
+    // Allocate GRN number here (at submission), not at draft creation.
+    // Drafts that are abandoned never consume a sequence slot — Finance sees contiguous numbers.
+    // If a number was somehow already set (legacy migration rows, or a re-submit after reopen),
+    // keep it — only assign if NULL.
+    let grnNumber = grn.grn_number as string | null | undefined;
+    if (!grnNumber) {
+      const accountingPeriod = String(grn.accounting_period ?? "");
+      const financialYear = grn.financial_year
+        ? String(grn.financial_year)
+        : financialYearFromPeriod(accountingPeriod);
+      const numberFormat = await resolveGrnNumberFormat();
+      grnNumber = numberFormat === "monthly_company"
+        ? await allocateMonthlyGrnNumber({ periodCode: accountingPeriod })
+        : await allocateGrnNumber(String(grn.branch_id), financialYear);
+    }
+
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE grn_request
           SET status = 'submitted',
+              grn_number = COALESCE(grn_number, ?),
               submitted_by = ?,
               submitted_at = NOW(),
               remarks = COALESCE(?, remarks)
         WHERE id = ? AND status = 'draft'`,
-      [actorUserId, payload.remarks?.trim() || null, grnId]
+      [grnNumber, actorUserId, payload.remarks?.trim() || null, grnId]
     );
     if (result.affectedRows !== 1) {
       throw new Error("GRN status changed before submission; refresh and try again");
@@ -632,6 +629,7 @@ export const grnService = {
 
     await writeGrnAudit("SUBMIT", grnId, actorUserId, actorRole, {
       remarks: payload.remarks,
+      grn_number: grnNumber,
     });
     /*
      * Also recorded on the WORKFLOW trail, not only the security one.
@@ -652,9 +650,9 @@ export const grnService = {
       actorUserId,
       actorRole,
       remarks: payload.remarks?.trim() || null,
-      details: { grnNumber: String(grn.grn_number ?? ""), branchId: String(grn.branch_id ?? "") },
+      details: { grnNumber: String(grnNumber ?? ""), branchId: String(grn.branch_id ?? "") },
     });
-    return { success: true, newStatus: "submitted" as const };
+    return { success: true, newStatus: "submitted" as const, grnNumber };
   },
 
   async reviewGrn(
@@ -1987,18 +1985,29 @@ export const grnService = {
  * Ageing counts time in the CURRENT stage, not since the GRN was raised. Measuring from
  * creation buries a fast Finance turnaround inside a slow Branch Head one, which is the
  * opposite of what a pendency queue is for.
+ *
+ * LEGACY DATA HANDLING: GRNs migrated from db_bill (bill_source_id is not null) have
+ * timestamps from their original creation, which can show misleadingly large ageing days.
+ * For legacy data, we show ageing relative to the migration cutoff date or mark as "Legacy".
  */
 function decorateGrnPendency(row: RowDataPacket): RowDataPacket {
   const status = String(row.status ?? "");
   const pending = resolvePendingWith(status, "grn");
 
+  // Check if this is legacy data from db_bill
+  const isLegacyData = Boolean(row.bill_source_id);
+
   // The clock restarts at each hand-off, so it reads from the most recent one.
   const stageStartedAt =
     row.branch_head_reviewed_at ?? row.submitted_at ?? row.created_at ?? null;
-  const ageDays =
-    pending.isPending && stageStartedAt
-      ? Math.max(0, Math.floor((Date.now() - new Date(String(stageStartedAt)).getTime()) / 86_400_000))
-      : null;
+
+  let ageDays: number | null = null;
+  if (pending.isPending && stageStartedAt) {
+    const rawAgeDays = Math.max(0, Math.floor((Date.now() - new Date(String(stageStartedAt)).getTime()) / 86_400_000));
+    // For legacy data with timestamps older than 90 days, cap at a reasonable display value
+    // This handles migrated data where the original timestamps are years old
+    ageDays = isLegacyData && rawAgeDays > 90 ? -1 : rawAgeDays;
+  }
 
   return {
     ...row,
@@ -2007,6 +2016,7 @@ function decorateGrnPendency(row: RowDataPacket): RowDataPacket {
     is_pending: pending.isPending,
     pending_since: pending.isPending ? stageStartedAt : null,
     ageing_days: ageDays,
-    age_bucket: ageDays === null ? null : ageDays <= 2 ? "0-2" : ageDays <= 7 ? "3-7" : "7+",
+    age_bucket: ageDays === null ? null : ageDays === -1 ? "legacy" : ageDays <= 2 ? "0-2" : ageDays <= 7 ? "3-7" : "7+",
+    is_legacy: isLegacyData,
   } as RowDataPacket;
 }
