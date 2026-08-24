@@ -1294,9 +1294,9 @@ publicEmployeeDocumentRouter.post("/esign/webhook/luckpay", h(async (req, res) =
             );
             const result = await luckpayClient.downloadESignDocument({
               clientTransactionId: clientTxId,
-              providerReferenceId: String(txRows[0]?.provider_reference_id ?? ""),
+              transactionId: String(txRows[0]?.provider_reference_id ?? ""),
             });
-            if ((result as any).bytes?.length) pdfBytes = (result as any).bytes as Buffer;
+            if (result.buffer?.length) pdfBytes = result.buffer;
           } catch (dlErr) {
             console.warn("[appointment-webhook] PDF download failed:", dlErr instanceof Error ? dlErr.message : dlErr);
           }

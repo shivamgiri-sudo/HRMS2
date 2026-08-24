@@ -165,9 +165,9 @@ router.post("/appointment/by-candidate/:candidateId/hr-send", requireRole("admin
     try {
       const result = await luckpayClient.downloadESignDocument({
         clientTransactionId: String(tx.client_transaction_id),
-        providerReferenceId: String(tx.provider_reference_id ?? ""),
+        transactionId: String(tx.provider_reference_id ?? ""),
       });
-      if (result.bytes?.length) pdfBytes = result.bytes as Buffer;
+      if (result.buffer?.length) pdfBytes = result.buffer;
     } catch (err) {
       console.warn("[appointment-hr-send] Luckpay download failed, using source PDF fallback:", err instanceof Error ? err.message : err);
     }

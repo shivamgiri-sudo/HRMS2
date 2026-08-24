@@ -300,7 +300,7 @@ const REPORTS: Record<string, ReportDef> = {
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
         WHERE adr.work_mode = 'wfh' ${bw2} ${ew2} ${dw2}
         ORDER BY branch_name, employee_code, att_date
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...bv, ...ev, ...dv, ...bv2, ...ev2, ...dv]);
     },
   },
@@ -328,7 +328,7 @@ const REPORTS: Record<string, ReportDef> = {
         FROM field_attendance_snapshot
         WHERE 1=1 ${bw} ${ew} ${dw}
         ORDER BY branch_name, employee_code, attend_date
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...bv, ...ev, ...dv]);
     },
   },
@@ -369,7 +369,7 @@ const REPORTS: Record<string, ReportDef> = {
         ${processJoin("pm", "e")}
         WHERE ar.escalated_to LIKE 'BWAI:%' ${ew} ${nw} ${dw} ${bw} ${pw}
         ORDER BY bm.branch_name, e.employee_code, ar.session_date
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...ev, ...nv, ...dv, ...bv, ...pv]);
     },
   },
@@ -411,7 +411,7 @@ const REPORTS: Record<string, ReportDef> = {
         ${processJoin("pm", "e")}
         WHERE 1=1 ${bw} ${ew} ${nw} ${dw} ${pw}
         ORDER BY bm.branch_name, e.employee_code, lr.from_date
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...bv, ...ev, ...nv, ...dv, ...pv]);
     },
   },
@@ -502,7 +502,7 @@ const REPORTS: Record<string, ReportDef> = {
         LEFT JOIN branch_master bm2 ON bm2.id = e2.branch_id
         WHERE splc.component_code = 'TDS' ${mCond2} ${bw2} ${ew2}
         ORDER BY branch_name, employee_code, tax_month
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...mv, ...bv1, ...ev1, ...mv, ...bv2, ...ev2]);
     },
   },
@@ -564,7 +564,7 @@ const REPORTS: Record<string, ReportDef> = {
         FROM incentive_upload_snapshot
         WHERE 1=1 ${bw} ${ew} ${mw}
         ORDER BY branch_name, employee_code, salary_month
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...bv, ...ev, ...mv]);
     },
   },
@@ -623,7 +623,7 @@ const REPORTS: Record<string, ReportDef> = {
         GROUP BY e.employee_code, e.full_name, bm.branch_name,
                  cc.cost_centre_code, ede.run_month
         ORDER BY branch_name, employee_code, salary_month
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...bv, ...ev, ...mv, ...ev2, ...mv2, ...bv2]);
     },
   },
@@ -708,7 +708,7 @@ const REPORTS: Record<string, ReportDef> = {
         FROM doc_legacy_snapshot
         WHERE 1=1 ${oCond} ${dw}
         ORDER BY offer_no, doc_type
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...ov, ...dv]);
     },
   },
@@ -746,7 +746,7 @@ const REPORTS: Record<string, ReportDef> = {
         FROM legacy_salary_snapshot ls
         WHERE 1=1 ${bw} ${ew} ${nw} ${pw}
         ORDER BY ls.branch_name, ls.employee_code
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...bv, ...ev, ...nv, ...pv]);
     },
   },
@@ -784,7 +784,7 @@ const REPORTS: Record<string, ReportDef> = {
         ${processJoin("pm", "e")}
         WHERE esh.source = 'data_migration' ${ew} ${nw} ${bCond} ${pw}
         ORDER BY e.employee_code, esh.effective_from DESC
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...ev, ...nv, ...bv, ...pv]);
     },
   },
@@ -818,7 +818,7 @@ const REPORTS: Record<string, ReportDef> = {
         FROM qual_attendance_snapshot
         WHERE 1=1 ${ew} ${mCond}
         ORDER BY sal_year DESC, sal_month DESC, employee_code
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...ev, ...mv]);
     },
   },
@@ -846,7 +846,7 @@ const REPORTS: Record<string, ReportDef> = {
         FROM qual_leave_snapshot
         WHERE 1=1 ${ew} ${mCond}
         ORDER BY leave_year DESC, leave_month DESC, employee_code
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...ev, ...mv]);
     },
   },
@@ -883,7 +883,7 @@ const REPORTS: Record<string, ReportDef> = {
         FROM qual_salary_snapshot
         WHERE 1=1 ${ew} ${mCond}
         ORDER BY sal_year DESC, sal_month DESC, employee_code
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...ev, ...mv]);
     },
   },
@@ -910,7 +910,7 @@ const REPORTS: Record<string, ReportDef> = {
         FROM qual_incentive_snapshot
         WHERE 1=1 ${ew} ${mCond}
         ORDER BY sal_year DESC, sal_month DESC, employee_code
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...ev, ...mv]);
     },
   },
@@ -947,7 +947,7 @@ const REPORTS: Record<string, ReportDef> = {
         ${pj}
         WHERE e.active_status = 1 ${pw} ${nw}
         ORDER BY bm.branch_name, e.employee_code, ltm.leave_name
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...pv, ...nv]);
     },
   },
@@ -977,7 +977,7 @@ const REPORTS: Record<string, ReportDef> = {
         ${pj}
         WHERE e.active_status = 1 ${pw} ${nw}
         ORDER BY bm.branch_name, e.employee_code
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...pv, ...nv]);
     },
   },
@@ -1002,7 +1002,7 @@ const REPORTS: Record<string, ReportDef> = {
         JOIN employees e ON e.id = en.employee_id
         WHERE e.active_status = 1 ${nw}
         ORDER BY e.employee_code, en.nominee_name
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...nv]);
     },
   },
@@ -1033,7 +1033,7 @@ const REPORTS: Record<string, ReportDef> = {
         ${pj}
         WHERE 1=1 ${pw} ${nw}
         ORDER BY e.employee_code, am.asset_name
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...pv, ...nv]);
     },
   },
@@ -1068,7 +1068,7 @@ const REPORTS: Record<string, ReportDef> = {
         ${pj}
         WHERE er.exit_sub_type = 'resignation' ${pw} ${nw}
         ORDER BY er.submitted_at DESC, e.employee_code
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...pv, ...nv]);
     },
   },
@@ -1098,7 +1098,7 @@ const REPORTS: Record<string, ReportDef> = {
         ${pj}
         WHERE 1=1 ${pw} ${nw}
         ORDER BY e.employee_code, ect.clearance_area, ect.task_title
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...pv, ...nv]);
     },
   },
@@ -1139,7 +1139,7 @@ const REPORTS: Record<string, ReportDef> = {
         ${pj}
         WHERE 1=1 ${mCond} ${pw} ${nw}
         ORDER BY bm.branch_name, e.employee_code
-        LIMIT 50000
+        LIMIT ${f._limit ?? 50000}
       `, [...mv, ...pv, ...nv]);
     },
   },
@@ -1162,18 +1162,23 @@ export const legacyReportsService = {
   ): Promise<LegacyReportResult> {
     const def = REPORTS[code];
     if (!def) throw new Error(`Unknown legacy report: ${code}`);
+    const EXPORT_HARD_LIMIT = 200_000;
     const displayLimit = def.defaultDisplayLimit;
-    const effectiveLimit = options?.forExport ? 50000 : (displayLimit ?? 50000);
+    const effectiveLimit = options?.forExport ? EXPORT_HARD_LIMIT : (displayLimit ?? 50_000);
     const enriched: LegacyFilter = { ...filter, _limit: effectiveLimit };
     const rows = (await def.query(enriched)) as Record<string, unknown>[];
     const summary = def.sumCols ? numSum(rows, def.sumCols) : undefined;
-    const truncated = !options?.forExport && displayLimit != null && rows.length >= displayLimit;
+    // Truncated for display when capped by defaultDisplayLimit
+    const truncatedDisplay = !options?.forExport && displayLimit != null && rows.length >= displayLimit;
+    // Truncated for export when rows hit the hard cap
+    const truncatedExport  = options?.forExport && rows.length >= EXPORT_HARD_LIMIT;
     return {
       columns: def.columns,
       rows,
       total: rows.length,
       summary,
-      ...(truncated ? { truncated: true, displayLimit } : {}),
+      ...(truncatedDisplay ? { truncated: true, displayLimit } : {}),
+      ...(truncatedExport  ? { truncated: true, displayLimit: EXPORT_HARD_LIMIT } : {}),
     };
   },
 
@@ -1182,10 +1187,13 @@ export const legacyReportsService = {
       const s = String(v ?? "");
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
+    const warning = result.truncated && result.displayLimit
+      ? `"WARNING: Export capped at ${result.displayLimit.toLocaleString()} rows. Apply branch/date/employee filters and re-export to get the full dataset."\n`
+      : "";
     const header = result.columns.map(c => esc(c.label)).join(",");
     const body   = result.rows.map(r =>
       result.columns.map(c => esc(r[c.key])).join(",")
     ).join("\n");
-    return header + "\n" + body;
+    return warning + header + "\n" + body;
   },
 };
