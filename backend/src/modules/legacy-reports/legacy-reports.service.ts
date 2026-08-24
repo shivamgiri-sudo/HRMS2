@@ -18,6 +18,7 @@ export type LegacyFilter = {
   to_date?: string;     // 'YYYY-MM-DD'
   employee_code?: string;
   employee_name?: string; // partial name search
+  _limit?: number;      // internal — set by service, not by user input
 };
 
 export type LegacyColumn = {
@@ -32,6 +33,8 @@ export type LegacyReportResult = {
   rows: Record<string, unknown>[];
   total: number;
   summary?: Record<string, number>;
+  truncated?: boolean;   // true when rows are capped at displayLimit
+  displayLimit?: number; // the limit that was applied
 };
 
 // ── query helpers ────────────────────────────────────────────────────────────
@@ -43,7 +46,8 @@ function branchWhere(col: string, branch?: string): [string, unknown[]] {
 
 function monthWhere(col: string, month?: string): [string, unknown[]] {
   if (!month) return ["", []];
-  return [`AND DATE_FORMAT(${col}, '%Y-%m') = ?`, [month]];
+  const d = `${month}-01`;
+  return [`AND ${col} BETWEEN ? AND LAST_DAY(?)`, [d, d]];
 }
 
 function empWhere(col: string, emp?: string): [string, unknown[]] {
@@ -92,6 +96,7 @@ type ReportDef = {
   columns: LegacyColumn[];
   query: (f: LegacyFilter) => Promise<RowDataPacket[]>;
   sumCols?: string[];
+  defaultDisplayLimit?: number; // cap for UI display; export uses 50000
 };
 
 const REPORTS: Record<string, ReportDef> = {
@@ -204,6 +209,7 @@ const REPORTS: Record<string, ReportDef> = {
   // ── 2. Attendance Register ────────────────────────────────────────────────
   "attendance-register": {
     label: "Attendance Register",
+    defaultDisplayLimit: 3000,
     columns: [
       { key: "employee_code", label: "Emp Code",     format: "text" },
       { key: "employee_name", label: "Employee Name",format: "text" },
@@ -217,16 +223,18 @@ const REPORTS: Record<string, ReportDef> = {
     async query(f) {
       const bCond = f.branch ? "AND branch_name = ?" : "";
       const eCond = f.employee_code ? "AND employee_code = ?" : "";
+      // Use BETWEEN for month (avoids DATE_FORMAT full-scan on 2.2M-row snapshot)
+      const monthStart = f.month ? `${f.month}-01` : null;
       const dCond = f.from_date ? `AND attend_date BETWEEN ? AND ?`
-        : f.month ? `AND DATE_FORMAT(attend_date,'%Y-%m') = ?` : "";
+        : monthStart ? `AND attend_date BETWEEN ? AND LAST_DAY(?)` : "";
       const bv = f.branch ? [f.branch] : [];
       const ev = f.employee_code ? [f.employee_code] : [];
       const dv = f.from_date ? [f.from_date, f.to_date ?? "9999-12-31"]
-        : f.month ? [f.month] : [];
+        : monthStart ? [monthStart, monthStart] : [];
       const [bw2, bv2] = branchWhere("bm.branch_name", f.branch);
       const [ew2, ev2] = empWhere("e.employee_code", f.employee_code);
       const dCond2 = f.from_date ? `AND adr.record_date BETWEEN ? AND ?`
-        : f.month ? `AND DATE_FORMAT(adr.record_date,'%Y-%m') = ?` : "";
+        : monthStart ? `AND adr.record_date BETWEEN ? AND LAST_DAY(?)` : "";
       return q(`
         SELECT employee_code, employee_name, branch_name, cost_center,
                attend_date AS att_date, status, old_status, 'legacy' AS source
@@ -246,8 +254,8 @@ const REPORTS: Record<string, ReportDef> = {
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
         WHERE 1=1 ${bw2} ${ew2} ${dCond2}
-        ORDER BY branch_name, employee_code, att_date
-        LIMIT 50000
+        ${f._limit != null && f._limit <= 5000 ? "" : "ORDER BY branch_name, employee_code, att_date"}
+        LIMIT ${f._limit ?? 50000}
       `, [...bv, ...ev, ...dv, ...bv2, ...ev2, ...dv]);
     },
   },
@@ -1147,12 +1155,26 @@ export const legacyReportsService = {
     return Object.entries(REPORTS).map(([code, def]) => ({ code, label: def.label }));
   },
 
-  async run(code: string, filter: LegacyFilter): Promise<LegacyReportResult> {
+  async run(
+    code: string,
+    filter: LegacyFilter,
+    options?: { forExport?: boolean },
+  ): Promise<LegacyReportResult> {
     const def = REPORTS[code];
     if (!def) throw new Error(`Unknown legacy report: ${code}`);
-    const rows = (await def.query(filter)) as Record<string, unknown>[];
+    const displayLimit = def.defaultDisplayLimit;
+    const effectiveLimit = options?.forExport ? 50000 : (displayLimit ?? 50000);
+    const enriched: LegacyFilter = { ...filter, _limit: effectiveLimit };
+    const rows = (await def.query(enriched)) as Record<string, unknown>[];
     const summary = def.sumCols ? numSum(rows, def.sumCols) : undefined;
-    return { columns: def.columns, rows, total: rows.length, summary };
+    const truncated = !options?.forExport && displayLimit != null && rows.length >= displayLimit;
+    return {
+      columns: def.columns,
+      rows,
+      total: rows.length,
+      summary,
+      ...(truncated ? { truncated: true, displayLimit } : {}),
+    };
   },
 
   toCsv(result: LegacyReportResult): string {

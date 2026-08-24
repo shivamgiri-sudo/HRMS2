@@ -57,6 +57,7 @@ legacyReportsRouter.get(
     const result = await legacyReportsService.run(
       req.params.code,
       parseFilter(req.query as Record<string, unknown>),
+      { forExport: true },
     );
     const csv    = legacyReportsService.toCsv(result);
     const period = req.query.month ? `-${String(req.query.month)}` : "";

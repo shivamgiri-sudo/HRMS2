@@ -29,6 +29,8 @@ type LegacyResult = {
   rows: Record<string, unknown>[];
   total: number;
   summary?: Record<string, number>;
+  truncated?: boolean;
+  displayLimit?: number;
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -339,6 +341,21 @@ export default function LegacyHrmsReportsView() {
               {error && (
                 <div className="p-4 text-sm text-red-600">
                   Error: {(error as Error).message}
+                </div>
+              )}
+
+              {result?.truncated && (
+                <div className="px-4 py-2 bg-amber-50 border-b border-amber-200 text-xs text-amber-800 flex items-center gap-1.5">
+                  <span className="font-semibold">Note:</span>
+                  Showing first {result.displayLimit?.toLocaleString("en-IN")} rows.
+                  Apply branch or employee filters to narrow results, or use{" "}
+                  <button
+                    className="underline font-medium"
+                    onClick={handleExport}
+                  >
+                    Export CSV
+                  </button>{" "}
+                  for the full dataset.
                 </div>
               )}
 
