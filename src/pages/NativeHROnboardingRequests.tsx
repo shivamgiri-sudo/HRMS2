@@ -2461,19 +2461,26 @@ export default function NativeHROnboardingRequests() {
                       className="max-w-none rounded-lg shadow-2xl select-none"
                       style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
                     />
-                    {/* Watermark overlay for restricted docs */}
-                    {!documentPreview.downloadAllowed && (
-                      <div
-                        className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg overflow-hidden"
-                        style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 60px, rgba(255,255,255,0.03) 60px, rgba(255,255,255,0.03) 61px)' }}
-                      >
-                        <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-16 opacity-[0.07]">
-                          {Array.from({ length: 12 }).map((_, i) => (
-                            <span key={i} className="rotate-[-35deg] whitespace-nowrap text-lg font-bold text-white select-none">MAS CALLNET · CONFIDENTIAL</span>
-                          ))}
-                        </div>
+                    {/* Watermark overlay with viewer identity — makes screenshots traceable */}
+                    <div
+                      className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg overflow-hidden select-none"
+                      style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 80px, rgba(255,255,255,0.02) 80px, rgba(255,255,255,0.02) 81px)' }}
+                    >
+                      {/* Tiled identity watermarks */}
+                      <div className="absolute inset-0 flex flex-wrap content-center justify-center gap-x-24 gap-y-20 p-8 opacity-[0.09]">
+                        {Array.from({ length: 9 }).map((_, i) => (
+                          <div key={i} className="rotate-[-32deg] text-center">
+                            <div className="whitespace-nowrap text-base font-black text-white tracking-wide">MAS CALLNET · CONFIDENTIAL</div>
+                            <div className="whitespace-nowrap text-[11px] font-semibold text-white/80 mt-0.5">{user?.email ?? 'Unknown'}</div>
+                            <div className="whitespace-nowrap text-[10px] font-medium text-white/60">{new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
+                          </div>
+                        ))}
                       </div>
-                    )}
+                      {/* Corner identity stamp — always visible */}
+                      <div className="absolute bottom-3 right-3 rounded bg-black/40 px-2 py-1 text-[9px] font-mono text-white/50 backdrop-blur-sm">
+                        Viewed by {user?.email ?? '—'} · {new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </div>
                   </div>
                 </div>
               ) : (
@@ -2486,14 +2493,16 @@ export default function NativeHROnboardingRequests() {
                     sandbox="allow-scripts allow-same-origin"
                     style={{ transform: `scale(${previewZoom})`, transformOrigin: 'top left', width: `${100 / previewZoom}%`, height: `${100 / previewZoom}%` }}
                   />
-                  {/* Right-click / copy blocker overlay for non-downloadable PDFs */}
-                  {!documentPreview.downloadAllowed && (
-                    <div
-                      className="absolute inset-0 z-10"
-                      onContextMenu={(e) => e.preventDefault()}
-                      style={{ background: 'transparent', cursor: 'default' }}
-                    />
-                  )}
+                  {/* Identity watermark + right-click blocker overlay */}
+                  <div
+                    className="pointer-events-none absolute inset-0 z-10 select-none"
+                    onContextMenu={(e) => e.preventDefault()}
+                  >
+                    {/* Corner identity stamp — always visible on PDFs */}
+                    <div className="absolute bottom-3 right-3 rounded bg-black/50 px-2 py-1 text-[9px] font-mono text-white/60 backdrop-blur-sm pointer-events-none">
+                      Viewed by {user?.email ?? '—'} · {new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
