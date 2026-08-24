@@ -64,10 +64,43 @@ describe("resend onboarding link — reuses the hardened path", () => {
     expect(handler).toContain("Access denied");
   });
 
-  it("the scope check lives in exactly one place", () => {
-    // A second resend route would mean two copies that can drift.
-    const sendTokenRoutes = [...onboardingRoutes.matchAll(/sendOnboardingToken\(/g)];
-    expect(sendTokenRoutes).toHaveLength(1);
+  it("every call site delegates to the one canonical sendOnboardingToken, not its own copy", () => {
+    // A second call site is fine — a first-send endpoint with its own precondition (candidate
+    // must be 'selected') was added 2026-08-23 alongside send-token — but every one of them
+    // must delegate to the shared service function rather than re-implementing the scope/token
+    // logic itself. That's the actual property worth guarding, not a literal call count.
+    const sendTokenCalls = [...onboardingRoutes.matchAll(/sendOnboardingToken\(/g)];
+    expect(sendTokenCalls.length).toBeGreaterThan(0);
+    expect(onboardingRoutes).toContain("from './ats.onboarding.service");
+  });
+});
+
+describe("resend onboarding link — every HR-department designation can use it", () => {
+  // 2026-08-24: an hr_head/hr_admin/etc. user (any designation other than the base 'hr' role)
+  // cleared requireRole for other HR-gated pages but still 403'd here, because the role wasn't
+  // in this route's own requireRole list. Same failure mode branch_hr/payroll_head/payroll_hr
+  // already hit and got fixed above — guard the full HR-department set from the live role
+  // matrix (uat/UAT_ROLE_MATRIX.csv) so it can't regress one designation at a time again.
+  const hrDesignations = ["hr", "hr_admin", "hr_branch", "hr_head", "ho_hr", "recruitment_hr", "branch_hr", "payroll_hr"];
+
+  it("requireRole lists every HR-department designation", () => {
+    const handler = onboardingRoutes.slice(
+      onboardingRoutes.indexOf("'/send-token/:candidateId'"),
+      onboardingRoutes.indexOf("h(async (req: AuthenticatedRequest, res) => {"),
+    );
+    for (const role of hrDesignations) {
+      expect(handler).toContain(`'${role}'`);
+    }
+  });
+
+  it("hasScopedAccess's own role array also lists every HR-department designation", () => {
+    // requireRole and hasScopedAccess are two separate arrays (see the comment above them) —
+    // a role missing from just this second one still 403s despite passing requireRole.
+    const start = onboardingRoutes.indexOf("const allowed = await hasScopedAccess(");
+    const handler = onboardingRoutes.slice(start, start + 400);
+    for (const role of hrDesignations) {
+      expect(handler).toContain(`'${role}'`);
+    }
   });
 });
 

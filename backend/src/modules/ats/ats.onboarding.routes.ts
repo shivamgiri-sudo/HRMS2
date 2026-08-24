@@ -51,7 +51,12 @@ router.post(
   // their own branch's candidates, and payroll_head org-wide — previously neither role was
   // listed here even though branch_hr already held the ATS_ONBOARDING_REQUESTS page grant, so
   // the page loaded but every resend attempt 403'd.
-  requireRole('hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr', 'branch_hr', 'payroll_head'),
+  //
+  // hr_admin/hr_branch/hr_head/ho_hr/recruitment_hr added 2026-08-24 so every HR-department
+  // designation (per the live role matrix, uat/UAT_ROLE_MATRIX.csv) can resend the onboarding
+  // link, not just the base 'hr' role — previously an hr_head or hr_admin user, despite being
+  // HR, would 403 the same way branch_hr/payroll_head did before the fix above.
+  requireRole('hr', 'hr_admin', 'hr_branch', 'hr_head', 'ho_hr', 'recruitment_hr', 'recruiter', 'admin', 'super_admin', 'payroll_hr', 'branch_hr', 'payroll_head'),
   h(async (req: AuthenticatedRequest, res) => {
     const candidateId = req.params!.candidateId;
     const userId = req.authUser!.id;
@@ -69,9 +74,14 @@ router.post(
     // this array, so it was silently 403'd on every resend despite the route accepting the
     // role — its ATS_ONBOARDING_REQUESTS page grant was also found inactive in role_page_access,
     // reactivated in migration 1236.
+    //
+    // hr_admin/hr_branch/hr_head/ho_hr/recruitment_hr added 2026-08-24 alongside the
+    // requireRole change above — same reasoning: every HR-department designation must appear
+    // here as its own literal string, or a genuinely HR user who cleared requireRole would
+    // still be silently scope-denied right after.
     const allowed = await hasScopedAccess(
       userId,
-      ['hr', 'recruiter', 'branch_hr', 'payroll_head', 'payroll_hr'],
+      ['hr', 'hr_admin', 'hr_branch', 'hr_head', 'ho_hr', 'recruitment_hr', 'recruiter', 'branch_hr', 'payroll_head', 'payroll_hr'],
       { branchId: cand.applied_for_branch, processId: cand.applied_for_process },
       { allowAdminBypass: true },
     );
