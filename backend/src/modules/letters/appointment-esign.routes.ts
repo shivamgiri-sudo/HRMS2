@@ -1,9 +1,13 @@
 import { Router } from "express";
 import type { Response } from "express";
+import path from "path";
+import fs from "fs";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { appointmentEsignService } from "./appointment-esign.service.js";
+import type { RowDataPacket } from "mysql2";
+import { db } from "../../db/mysql.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -97,6 +101,42 @@ router.get("/appointment/:requestId", h(async (req: AuthenticatedRequest, res: R
 router.get("/appointment/:requestId/audit", requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const data = await appointmentEsignService.getAuditTrail(req.params.requestId);
   res.json({ data });
+}));
+
+// GET /appointment/by-candidate/:candidateId — HR: get e-sign status for a candidate's appointment letter
+router.get("/appointment/by-candidate/:candidateId", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, current_state, candidate_esign_status, company_sign_status,
+            candidate_esign_at, vault_path, esign_provider, candidate_esign_url, updated_at
+     FROM appointment_letter_request
+     WHERE candidate_id = ?
+     ORDER BY updated_at DESC LIMIT 1`,
+    [req.params.candidateId],
+  );
+  if (!rows[0]) return res.status(404).json({ error: "No appointment letter request found" });
+  res.json({ data: rows[0] });
+}));
+
+// GET /appointment/by-candidate/:candidateId/download — HR: download the signed appointment letter
+router.get("/appointment/by-candidate/:candidateId/download", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, current_state, vault_path FROM appointment_letter_request
+     WHERE candidate_id = ? ORDER BY updated_at DESC LIMIT 1`,
+    [req.params.candidateId],
+  );
+  const row = rows[0];
+  if (!row) return res.status(404).json({ error: "No appointment letter found" });
+  if (!row.vault_path) {
+    return res.status(404).json({ error: "Signed document not yet available", current_state: row.current_state });
+  }
+  const uploadRoot = process.env.UPLOAD_DIR ?? path.join(process.cwd(), "uploads");
+  const filePath = path.join(uploadRoot, row.vault_path);
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: "File not found on server", vault_path: row.vault_path });
+  }
+  res.setHeader("Content-Disposition", `attachment; filename="signed_appointment_letter.pdf"`);
+  res.setHeader("Content-Type", "application/pdf");
+  res.sendFile(filePath);
 }));
 
 export { router as appointmentEsignRouter };

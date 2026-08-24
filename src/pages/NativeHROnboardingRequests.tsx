@@ -1815,7 +1815,37 @@ export default function NativeHROnboardingRequests() {
                     <InfoRow label="BGV Consent" value={dp.bgv_consent ? 'Given' : 'Not given'} />
                     <InfoRow label="DigiLocker Status" value={digi.status} />
                     <InfoRow label="DigiLocker Provider" value={digi.provider} />
-                    <InfoRow label="eSign Status" value={esign.status} />
+                    {/* eSign status + download */}
+                    <div className="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
+                      <span className="text-xs text-slate-500 shrink-0">eSign Status</span>
+                      <div className="flex items-center gap-2">
+                        {esign.status === 'signed' ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 border border-green-200">
+                            ✓ Signed
+                          </span>
+                        ) : esign.status === 'override' ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2 py-0.5 text-xs font-medium text-purple-700 border border-purple-200">
+                            Override
+                          </span>
+                        ) : esign.status === 'pending' ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700 border border-amber-200">
+                            Pending
+                          </span>
+                        ) : (
+                          <span className="text-xs text-slate-400">{esign.status ?? '—'}</span>
+                        )}
+                        {esign.status === 'signed' && esign.request_id && (
+                          <a
+                            href={`/api/letters/appointment/by-candidate/${selected.candidate_id}/download`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                          >
+                            ↓ Download Signed Letter
+                          </a>
+                        )}
+                      </div>
+                    </div>
                     <InfoRow label="eSign Provider" value={esign.provider} />
                     {bgv && (
                       <>

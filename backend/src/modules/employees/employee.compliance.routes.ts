@@ -1241,15 +1241,45 @@ publicEmployeeDocumentRouter.post("/esign/webhook/luckpay", h(async (req, res) =
   if (!verifyLuckpayWebhookSecret(webhookSecret, configuredSecret)) {
     return res.status(401).json({ success: false, message: "Unauthorized webhook" });
   }
-  // handleJoiningDocumentEsignWebhook expects { payload, ipAddress, userAgent }.
-  // Passing req.body directly left input.payload undefined, so the handler saw
-  // an empty object, matched nothing, and returned 200 with matched:false —
-  // this authenticated route silently no-opped while the unsecured one worked.
+  const body = (req.body ?? {}) as Record<string, unknown>;
   const data = await handleJoiningDocumentEsignWebhook({
-    payload: (req.body ?? {}) as Record<string, unknown>,
+    payload: body,
     ipAddress: req.ip,
     userAgent: req.get("user-agent") ?? null,
   });
+
+  // Fallback: joining-document handler only looks in employee_document_esign_transaction.
+  // Appointment letter e-signs are tracked in appointment_letter_request instead —
+  // match by esign_transaction_id and complete the state machine if Luckpay reports signed.
+  if (!data.matched) {
+    const clientTxId = String(body.client_transaction_id ?? body.clientTransactionId ?? "").trim();
+    if (clientTxId) {
+      const [alRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, candidate_esign_status FROM appointment_letter_request WHERE esign_transaction_id = ? LIMIT 1`,
+        [clientTxId],
+      );
+      const alRow = alRows[0];
+      if (alRow && alRow.candidate_esign_status === "pending") {
+        const rawStatus = String(body.status ?? body.event ?? body.result ?? "").toLowerCase();
+        const isSigned = rawStatus.includes("sign") || rawStatus.includes("success") || rawStatus.includes("complete");
+        if (isSigned) {
+          await db.execute(
+            `UPDATE appointment_letter_request
+                SET current_state = 'candidate_signed', candidate_esign_status = 'signed', candidate_esign_at = NOW()
+              WHERE id = ?`,
+            [alRow.id],
+          );
+          await db.execute(
+            `INSERT INTO appointment_letter_audit (id, letter_request_id, action, from_state, to_state, performed_by, remarks, created_at)
+             VALUES (UUID(), ?, 'CANDIDATE_ESIGN_COMPLETE', 'candidate_esign_pending', 'candidate_signed', 'luckpay_webhook', 'Auto-completed via Luckpay webhook', NOW())`,
+            [alRow.id],
+          );
+          return res.json({ success: true, data: { matched: true, processed: true, source: "appointment_letter" } });
+        }
+      }
+    }
+  }
+
   return res.json({ success: true, data });
 }));
 
