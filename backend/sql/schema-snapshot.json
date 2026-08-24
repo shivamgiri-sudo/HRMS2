@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1003,
-  "columnCount": 14326,
+  "columnCount": 14327,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -2649,6 +2649,7 @@
     "branch_master": [
       "id",
       "branch_code",
+      "sal_branch_code",
       "branch_name",
       "city",
       "state",
