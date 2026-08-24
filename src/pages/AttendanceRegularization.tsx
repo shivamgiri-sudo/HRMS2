@@ -7,6 +7,7 @@ import { useGeoCapture } from "@/hooks/useGeoCapture";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useSearchParams } from "react-router-dom";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
+import { useBranches } from "@/hooks/useOrgMasters";
 import BulkBranchCorrection from "@/components/attendance/BulkBranchCorrection";
 import { useCanDiscard } from "@/hooks/useDiscard";
 import { DiscardDialog } from "@/components/discard/DiscardDialog";
@@ -39,6 +40,7 @@ type RequestStatus =
   | "submitted"
   | "pending_manager"
   | "pending_admin"
+  | "payroll_pending"
   | "approved"
   | "rejected"
   | "cancelled"
@@ -87,6 +89,7 @@ type EmployeeRequest = {
   request_id: string;
   request_no: string;
   employee_id: string | null;
+  employee_code: string | null;
   submitted_by: string | null;
   request_type_code: string;
   title: string;
@@ -290,6 +293,7 @@ const statusLabel: Record<string, string> = {
 function normalizeRegularizationStatus(status: string): RequestStatus {
   if (status === "pending") return "pending_manager";
   if (status === "manager_approved") return "pending_admin";
+  if (status === "payroll_pending") return "payroll_pending";
   if (["approved", "rejected", "cancelled", "discarded"].includes(status)) return status as RequestStatus;
   return "submitted";
 }
@@ -306,6 +310,7 @@ function normalizeRegularizationRow(row: WfmRegularizationRow): EmployeeRequest 
     request_id: row.id,
     request_no: `${row.employee_code ?? "REG"}-${attendanceDate || row.id.slice(0, 8)}`,
     employee_id: row.employee_id,
+    employee_code: row.employee_code ?? null,
     submitted_by: row.employee_name ?? row.employee_code ?? null,
     request_type_code: requestTypeCode,
     title: requestTypeCode === "exception"
@@ -454,6 +459,21 @@ export default function AttendanceRegularization() {
   // this stops the control being offered to someone who should never see it.
   const APPROVER_ROLES = ["super_admin", "admin", "hr", "hr_head", "manager", "branch_head", "process_manager", "wfm", "team_leader", "tl"];
   const canBulkApprove = roleKeys.some((role) => APPROVER_ROLES.includes(role));
+
+  // View tabs: "my_requests" shows only user's own, "pending_approval" shows team requests awaiting action
+  type ViewTab = "my_requests" | "pending_approval" | "all";
+  const [viewTab, setViewTab] = useState<ViewTab>(canBulkApprove ? "pending_approval" : "my_requests");
+
+  // Branches for BulkBranchCorrection
+  const { data: branchesData } = useBranches();
+  const branches = useMemo(() => {
+    if (!branchesData) return [];
+    return branchesData.map((b) => ({
+      id: b.id,
+      name: b.branch_name ?? b.name ?? b.branch_code ?? b.id,
+    }));
+  }, [branchesData]);
+
   const [requests, setRequests] = useState<EmployeeRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState("all");
@@ -516,7 +536,21 @@ export default function AttendanceRegularization() {
   const debouncedAttendanceDate = useDebounce(attendanceDate, 180);
 
   const filteredRequests = useMemo(() => {
+    // Normalized statuses that indicate pending approval action
+    const PENDING_APPROVAL_STATUSES = ["pending_manager", "pending_admin", "payroll_pending"];
+
     return requests.filter((item) => {
+      // Tab-based filtering
+      const isOwnRequest = currentEmployeeId && item.employee_id === currentEmployeeId;
+      const isPendingApproval = PENDING_APPROVAL_STATUSES.includes(item.current_status);
+
+      if (viewTab === "my_requests" && !isOwnRequest) return false;
+      if (viewTab === "pending_approval") {
+        // Show only non-own requests that are pending approval
+        if (isOwnRequest || !isPendingApproval) return false;
+      }
+      // "all" tab shows everything
+
       if (filterStatus !== "all" && item.current_status !== filterStatus) return false;
       const detail = item.regularization_request_detail?.[0];
       const date = detail?.attendance_date ?? "";
@@ -524,13 +558,28 @@ export default function AttendanceRegularization() {
       if (filterToDate && date && date > filterToDate) return false;
       return true;
     });
-  }, [requests, filterStatus, filterFromDate, filterToDate]);
+  }, [requests, filterStatus, filterFromDate, filterToDate, viewTab, currentEmployeeId]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRequests.length / TABLE_PAGE_SIZE));
   const pagedRequests = useMemo(() => {
     const start = (tablePage - 1) * TABLE_PAGE_SIZE;
     return filteredRequests.slice(start, start + TABLE_PAGE_SIZE);
   }, [filteredRequests, tablePage]);
+
+  // Tab counts for navigation badges
+  const tabCounts = useMemo(() => {
+    const PENDING_APPROVAL_STATUSES = ["pending_manager", "pending_admin", "payroll_pending"];
+    const myRequests = requests.filter((r) => currentEmployeeId && r.employee_id === currentEmployeeId);
+    const pendingApproval = requests.filter((r) =>
+      !(currentEmployeeId && r.employee_id === currentEmployeeId) &&
+      PENDING_APPROVAL_STATUSES.includes(r.current_status)
+    );
+    return {
+      myRequests: myRequests.length,
+      pendingApproval: pendingApproval.length,
+      all: requests.length,
+    };
+  }, [requests, currentEmployeeId]);
 
   const stats = useMemo(() => ({
     total: requests.length,
@@ -1433,19 +1482,80 @@ export default function AttendanceRegularization() {
                 Clear a device outage or a whole branch-month in one pass. Raises requests for approval; it does not edit attendance.
               </p>
             </div>
-            <BulkBranchCorrection />
+            <BulkBranchCorrection branches={branches} />
           </div>
         )}
 
         {/* Requests List */}
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-3">
-            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-950">My Requests</h2>
-                <p className="mt-0.5 text-xs text-slate-500">Track status, view approval stages and evidence. ({filteredRequests.length} of {requests.length})</p>
+            {/* View Tabs */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => { setViewTab("my_requests"); setTablePage(1); }}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-all",
+                    viewTab === "my_requests"
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  )}
+                >
+                  <ClipboardList className="h-3.5 w-3.5" />
+                  My Requests
+                  <span className={cn(
+                    "ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+                    viewTab === "my_requests" ? "bg-slate-100 text-slate-700" : "bg-slate-200/60 text-slate-500"
+                  )}>
+                    {tabCounts.myRequests}
+                  </span>
+                </button>
+                {canBulkApprove && (
+                  <button
+                    type="button"
+                    onClick={() => { setViewTab("pending_approval"); setTablePage(1); }}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-all",
+                      viewTab === "pending_approval"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Pending My Approval
+                    {tabCounts.pendingApproval > 0 && (
+                      <span className={cn(
+                        "ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+                        viewTab === "pending_approval" ? "bg-amber-100 text-amber-700" : "bg-amber-50 text-amber-600"
+                      )}>
+                        {tabCounts.pendingApproval}
+                      </span>
+                    )}
+                  </button>
+                )}
+                {canBulkApprove && (
+                  <button
+                    type="button"
+                    onClick={() => { setViewTab("all"); setTablePage(1); }}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-all",
+                      viewTab === "all"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-500 hover:text-slate-700"
+                    )}
+                  >
+                    All
+                    <span className={cn(
+                      "ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+                      viewTab === "all" ? "bg-slate-100 text-slate-700" : "bg-slate-200/60 text-slate-500"
+                    )}>
+                      {tabCounts.all}
+                    </span>
+                  </button>
+                )}
               </div>
-              {canBulkApprove && (
+              {canBulkApprove && viewTab === "pending_approval" && (
                 <Button
                   type="button"
                   variant="outline"
@@ -1459,6 +1569,13 @@ export default function AttendanceRegularization() {
                 </Button>
               )}
             </div>
+
+            {/* Tab description */}
+            <p className="text-xs text-slate-500">
+              {viewTab === "my_requests" && "Your own regularization requests and their status."}
+              {viewTab === "pending_approval" && "Team requests awaiting your approval action."}
+              {viewTab === "all" && `All requests in your scope. (${filteredRequests.length} shown)`}
+            </p>
             <div className="flex flex-wrap gap-2">
               <Select value={filterStatus} onValueChange={(v) => { setFilterStatus(v); setTablePage(1); }}>
                 <SelectTrigger className="h-9 w-40 bg-white !text-slate-900 text-sm [&>span]:!text-slate-900">
@@ -1468,6 +1585,7 @@ export default function AttendanceRegularization() {
                   <SelectItem value="all">All Status</SelectItem>
                   <SelectItem value="pending_manager">Pending Manager</SelectItem>
                   <SelectItem value="pending_admin">Pending WFM</SelectItem>
+                  <SelectItem value="payroll_pending">Pending Payroll</SelectItem>
                   <SelectItem value="approved">Approved</SelectItem>
                   <SelectItem value="rejected">Rejected</SelectItem>
                 </SelectContent>
@@ -1513,6 +1631,7 @@ export default function AttendanceRegularization() {
                     <tr>
                       <Th>Select</Th>
                       <Th>Request</Th>
+                      {viewTab !== "my_requests" && <Th>Employee</Th>}
                       <Th>Date</Th>
                       <Th>Type</Th>
                       <Th>Status</Th>
@@ -1545,9 +1664,21 @@ export default function AttendanceRegularization() {
                           </Td>
                           <Td>
                             <div className="font-semibold text-slate-950">{request.request_no}</div>
-                            {request.submitted_by && <div className="text-slate-500">{request.submitted_by}</div>}
                             <div className="mt-0.5 text-slate-400">{formatDateTime(request.created_at)}</div>
                           </Td>
+                          {viewTab !== "my_requests" && (
+                            <Td>
+                              <div className="font-medium text-slate-900">{request.submitted_by || "—"}</div>
+                              {request.employee_code && (
+                                <div className="text-slate-400">{request.employee_code}</div>
+                              )}
+                              {isOwnRequest && (
+                                <span className="mt-0.5 inline-block rounded bg-blue-50 px-1 py-0.5 text-[10px] font-semibold text-blue-600">
+                                  You
+                                </span>
+                              )}
+                            </Td>
+                          )}
                           <Td>{detail?.attendance_date || "—"}</Td>
                           <Td>
                             <span className={cn(
@@ -1574,7 +1705,7 @@ export default function AttendanceRegularization() {
                               >
                                 View
                               </button>
-                              {["pending_manager", "pending_admin"].includes(request.current_status) && !isOwnRequest && (
+                              {["pending_manager", "pending_admin", "payroll_pending"].includes(request.current_status) && !isOwnRequest && (
                                 <>
                                   <button
                                     onClick={() => reviewMutation.mutate({ id: request.id, status: "approved" })}
