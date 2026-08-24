@@ -35,6 +35,7 @@ export async function generateEmployeeCode(conn: PoolConnection, empType: string
   // codes never collide on the same number.
   const [maxRows] = await conn.execute<RowDataPacket[]>(
     `SELECT GREATEST(
+       IFNULL((SELECT MAX(current_sequence) FROM employee_code_sequence), 0),
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^MAS[0-9]+$'),0),
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,4) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^IDC[0-9]+$'),0),
        IFNULL((SELECT MAX(CAST(SUBSTRING(employee_code,1,CHAR_LENGTH(employee_code)-1) AS UNSIGNED)) FROM employees WHERE employee_code REGEXP '^[0-9]+C$'),0),
