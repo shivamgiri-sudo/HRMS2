@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   ChevronUp,
   Download,
   Eye,
@@ -24,6 +25,8 @@ import {
   ShieldAlert,
   ShieldCheck,
   X,
+  ZoomIn,
+  ZoomOut,
 } from 'lucide-react';
 
 // ── Interfaces ────────────────────────────────────────────────────────────────
@@ -383,6 +386,9 @@ export default function NativeHROnboardingRequests() {
   const [documentPreviewUrl, setDocumentPreviewUrl] = useState<string | null>(null);
   const [documentPreviewLoading, setDocumentPreviewLoading] = useState(false);
   const [documentPreviewError, setDocumentPreviewError] = useState<string | null>(null);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewGroup, setPreviewGroup] = useState<DocumentPreview[]>([]);
+  const [previewGroupIndex, setPreviewGroupIndex] = useState(0);
 
   // ── Offer / masters state
   const [bgv, setBgv] = useState<BgvData | null>(null);
@@ -456,6 +462,22 @@ export default function NativeHROnboardingRequests() {
   useEffect(() => () => {
     if (documentPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(documentPreviewUrl);
   }, [documentPreviewUrl]);
+
+  // ── Keyboard shortcuts for document viewer
+  useEffect(() => {
+    if (!documentPreview) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { closeDocumentPreview(); return; }
+      if (e.key === 'ArrowRight') { navigatePreview(1); return; }
+      if (e.key === 'ArrowLeft') { navigatePreview(-1); return; }
+      if (e.key === '+' || e.key === '=') { setPreviewZoom(z => Math.min(z + 0.25, 4)); return; }
+      if (e.key === '-') { setPreviewZoom(z => Math.max(z - 0.25, 0.25)); return; }
+      if (e.key === '0') { setPreviewZoom(1); return; }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentPreview, previewGroup, previewGroupIndex]);
 
   // ── Load list
   const load = useCallback(async () => {
@@ -862,12 +884,18 @@ export default function NativeHROnboardingRequests() {
     setDocumentPreviewUrl(null);
     setDocumentPreviewLoading(false);
     setDocumentPreviewError(null);
+    setPreviewZoom(1);
+    setPreviewGroup([]);
+    setPreviewGroupIndex(0);
   };
 
-  const openDocumentPreview = async (preview: DocumentPreview) => {
+  const openDocumentPreview = async (preview: DocumentPreview, group: DocumentPreview[] = [], index = 0) => {
     setDocumentPreview(preview);
     setDocumentPreviewError(null);
     setDocumentPreviewLoading(true);
+    setPreviewZoom(1);
+    setPreviewGroup(group.length > 0 ? group : [preview]);
+    setPreviewGroupIndex(index);
     try {
       const blob = await hrmsApi.getBlob(`/api/ats/onboarding-full/documents/preview/${preview.id}`);
       if (documentPreviewUrl?.startsWith('blob:')) URL.revokeObjectURL(documentPreviewUrl);
@@ -878,6 +906,14 @@ export default function NativeHROnboardingRequests() {
     } finally {
       setDocumentPreviewLoading(false);
     }
+  };
+
+  const navigatePreview = (direction: -1 | 1) => {
+    const newIndex = previewGroupIndex + direction;
+    if (newIndex < 0 || newIndex >= previewGroup.length) return;
+    const next = previewGroup[newIndex];
+    setPreviewGroupIndex(newIndex);
+    void openDocumentPreview(next, previewGroup, newIndex);
   };
 
   const downloadDocumentPreview = async () => {
@@ -1789,29 +1825,59 @@ export default function NativeHROnboardingRequests() {
                   <SectionCard n={4} label={STEP_LABELS[3]} complete={stepComplete[3]}>
                     {docs.length === 0 ? (
                       <p className="py-2 text-sm text-slate-400">No documents uploaded.</p>
-                    ) : docs.map((d) => (
-                      <div key={d.id} className="flex items-center justify-between gap-3 border-b border-slate-100 py-2 last:border-0">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-slate-700">{d.document_type || d.doc_type || d.doc_name || 'Document'}</p>
-                          <p className="text-xs text-slate-400">{d.file_original_name} {d.file_size_bytes ? `· ${Math.round(d.file_size_bytes / 1024)} KB` : ''}</p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void openDocumentPreview({
-                            id: d.id,
-                            title: d.document_type || d.doc_type || d.doc_name || d.file_original_name || 'Document',
-                            fileName: d.file_original_name || 'document',
-                            mimeType: d.mime_type,
-                            downloadAllowed: canDownloadDocs(role),
-                          })}
-                          className="min-h-[36px] gap-1 shrink-0"
-                        >
-                          <Eye className="h-3.5 w-3.5" /> Preview
-                        </Button>
-                      </div>
-                    ))}
+                    ) : (() => {
+                      // group docs by document_type so multi-page docs (e.g. Aadhaar front+back) are shown together
+                      const groups: Record<string, any[]> = {};
+                      docs.forEach((d) => {
+                        const key = d.document_type || d.doc_type || d.doc_name || 'Document';
+                        if (!groups[key]) groups[key] = [];
+                        groups[key].push(d);
+                      });
+                      return Object.entries(groups).map(([groupType, groupDocs]) => {
+                        const previewItems: DocumentPreview[] = groupDocs.map((d) => ({
+                          id: d.id,
+                          title: `${groupType}${groupDocs.length > 1 ? ` (${groupDocs.indexOf(d) + 1}/${groupDocs.length})` : ''}`,
+                          fileName: d.file_original_name || 'document',
+                          mimeType: d.mime_type,
+                          downloadAllowed: canDownloadDocs(role),
+                        }));
+                        return (
+                          <div key={groupType} className="border-b border-slate-100 py-2 last:border-0">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-semibold text-slate-700">{groupType}</p>
+                                <p className="text-xs text-slate-400">{groupDocs.length} file{groupDocs.length > 1 ? 's' : ''}</p>
+                              </div>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void openDocumentPreview(previewItems[0], previewItems, 0)}
+                                className="min-h-[36px] gap-1 shrink-0"
+                              >
+                                <Eye className="h-3.5 w-3.5" /> Preview{groupDocs.length > 1 ? ` (${groupDocs.length})` : ''}
+                              </Button>
+                            </div>
+                            {groupDocs.length > 1 && (
+                              <div className="mt-1.5 space-y-1 pl-2">
+                                {groupDocs.map((d, idx) => (
+                                  <div key={d.id} className="flex items-center justify-between gap-2 rounded bg-slate-50 px-2 py-1">
+                                    <p className="truncate text-xs text-slate-500">{d.file_original_name}{d.file_size_bytes ? ` · ${Math.round(d.file_size_bytes / 1024)} KB` : ''}</p>
+                                    <button
+                                      type="button"
+                                      onClick={() => void openDocumentPreview(previewItems[idx], previewItems, idx)}
+                                      className="shrink-0 text-xs text-blue-600 hover:underline"
+                                    >
+                                      View
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      });
+                    })()}
                   </SectionCard>
 
                   {/* 5 — BGV & Verification */}
@@ -2255,41 +2321,213 @@ export default function NativeHROnboardingRequests() {
           </div>
         )}
 
-        {/* ── DOCUMENT PREVIEW MODAL ────────────────────────────────────── */}
+        {/* ── SECURE DOCUMENT VIEWER ──────────────────────────────────────── */}
         {documentPreview && (
-          <div className="fixed inset-0 z-[60] flex bg-black/60 p-0 sm:p-6">
-            <div className="flex h-full w-full flex-col rounded-none bg-white shadow-2xl sm:rounded-2xl">
-              <div className="flex items-center justify-between border-b px-4 py-3">
-                <div>
-                  <p className="font-bold text-slate-900">{documentPreview.title}</p>
-                  <p className="text-xs text-slate-400">Secure preview</p>
+          <div
+            className="fixed inset-0 z-[60] flex flex-col bg-[#0f1117]"
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            {/* Top toolbar */}
+            <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-[#1a1d27] px-4">
+              {/* Left — doc info */}
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-600/20">
+                  <FileCheck className="h-4 w-4 text-blue-400" />
                 </div>
-                <div className="flex gap-2">
-                  {documentPreview.downloadAllowed && (
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-white leading-tight">{documentPreview.title}</p>
+                  <p className="text-[11px] text-slate-400 leading-tight flex items-center gap-1">
+                    <Shield className="h-3 w-3 text-emerald-400" />
+                    Secure Preview
+                    {!documentPreview.downloadAllowed && (
+                      <span className="ml-1 rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-red-400 uppercase tracking-wide">Protected</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              {/* Center — zoom + navigation controls */}
+              <div className="flex items-center gap-1">
+                {/* Zoom controls */}
+                <button
+                  type="button"
+                  onClick={() => setPreviewZoom(z => Math.max(z - 0.25, 0.25))}
+                  disabled={previewZoom <= 0.25}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-white/10 disabled:opacity-30 transition-colors"
+                  title="Zoom out (−)"
+                >
+                  <ZoomOut className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewZoom(1)}
+                  className="min-w-[52px] rounded-lg px-2 py-1 text-xs font-mono font-semibold text-slate-300 hover:bg-white/10 transition-colors"
+                  title="Reset zoom (0)"
+                >
+                  {Math.round(previewZoom * 100)}%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewZoom(z => Math.min(z + 0.25, 4))}
+                  disabled={previewZoom >= 4}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-white/10 disabled:opacity-30 transition-colors"
+                  title="Zoom in (+)"
+                >
+                  <ZoomIn className="h-4 w-4" />
+                </button>
+
+                {/* Separator */}
+                <div className="mx-2 h-5 w-px bg-white/10" />
+
+                {/* Group navigation */}
+                {previewGroup.length > 1 && (
+                  <>
                     <button
                       type="button"
-                      onClick={() => void downloadDocumentPreview()}
-                      className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border px-3 text-sm font-semibold text-slate-700"
+                      onClick={() => navigatePreview(-1)}
+                      disabled={previewGroupIndex === 0}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-white/10 disabled:opacity-30 transition-colors"
+                      title="Previous (←)"
                     >
-                      <Download className="h-4 w-4" /> Download
+                      <ChevronLeft className="h-4 w-4" />
                     </button>
-                  )}
-                  <button type="button" onClick={closeDocumentPreview} className="min-h-[44px] rounded-lg border px-3">
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-              </div>
-              <div className="flex-1 bg-slate-100 p-2">
-                {documentPreviewError ? (
-                  <ErrorBanner message={documentPreviewError} onRetry={() => void openDocumentPreview(documentPreview)} />
-                ) : documentPreviewLoading ? (
-                  <div className="flex h-full items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-slate-500" /></div>
-                ) : documentPreviewUrl && documentPreview.mimeType?.startsWith('image/') ? (
-                  <img src={documentPreviewUrl} alt={documentPreview.title} className="mx-auto h-full max-h-full object-contain" />
-                ) : (
-                  <iframe src={documentPreviewUrl ?? undefined} title={documentPreview.title} className="h-full w-full rounded-lg bg-white" />
+                    <span className="min-w-[48px] text-center text-xs font-medium text-slate-400">
+                      {previewGroupIndex + 1} / {previewGroup.length}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => navigatePreview(1)}
+                      disabled={previewGroupIndex === previewGroup.length - 1}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-white/10 disabled:opacity-30 transition-colors"
+                      title="Next (→)"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
+                    <div className="mx-2 h-5 w-px bg-white/10" />
+                  </>
                 )}
               </div>
+
+              {/* Right — download + close */}
+              <div className="flex items-center gap-2">
+                {documentPreview.downloadAllowed ? (
+                  <button
+                    type="button"
+                    onClick={() => void downloadDocumentPreview()}
+                    className="flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 transition-colors"
+                  >
+                    <Download className="h-3.5 w-3.5" /> Download
+                  </button>
+                ) : (
+                  <div className="flex h-8 items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 text-xs font-semibold text-red-400">
+                    <Shield className="h-3.5 w-3.5" /> Download Restricted
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={closeDocumentPreview}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-white/10 hover:text-white transition-colors"
+                  title="Close (Esc)"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Viewer area */}
+            <div className="relative flex-1 overflow-auto bg-[#0f1117]">
+              {documentPreviewError ? (
+                <div className="flex h-full items-center justify-center">
+                  <ErrorBanner message={documentPreviewError} onRetry={() => void openDocumentPreview(documentPreview, previewGroup, previewGroupIndex)} />
+                </div>
+              ) : documentPreviewLoading ? (
+                <div className="flex h-full flex-col items-center justify-center gap-3">
+                  <Loader2 className="h-8 w-8 animate-spin text-blue-400" />
+                  <p className="text-sm text-slate-400">Loading document…</p>
+                </div>
+              ) : documentPreviewUrl && documentPreview.mimeType?.startsWith('image/') ? (
+                /* IMAGE viewer */
+                <div
+                  className="flex min-h-full min-w-full items-center justify-center p-6"
+                  style={{ cursor: previewZoom > 1 ? 'grab' : 'default' }}
+                >
+                  <div className="relative" style={{ transform: `scale(${previewZoom})`, transformOrigin: 'center center', transition: 'transform 0.15s ease' }}>
+                    <img
+                      src={documentPreviewUrl}
+                      alt={documentPreview.title}
+                      draggable={false}
+                      onContextMenu={(e) => e.preventDefault()}
+                      onDragStart={(e) => e.preventDefault()}
+                      className="max-w-none rounded-lg shadow-2xl select-none"
+                      style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
+                    />
+                    {/* Watermark overlay for restricted docs */}
+                    {!documentPreview.downloadAllowed && (
+                      <div
+                        className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-lg overflow-hidden"
+                        style={{ background: 'repeating-linear-gradient(45deg, transparent, transparent 60px, rgba(255,255,255,0.03) 60px, rgba(255,255,255,0.03) 61px)' }}
+                      >
+                        <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-16 opacity-[0.07]">
+                          {Array.from({ length: 12 }).map((_, i) => (
+                            <span key={i} className="rotate-[-35deg] whitespace-nowrap text-lg font-bold text-white select-none">MAS CALLNET · CONFIDENTIAL</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* PDF / other — use iframe with blocking overlay */
+                <div className="relative h-full w-full">
+                  <iframe
+                    src={documentPreviewUrl ?? undefined}
+                    title={documentPreview.title}
+                    className="h-full w-full border-0"
+                    sandbox="allow-scripts allow-same-origin"
+                    style={{ transform: `scale(${previewZoom})`, transformOrigin: 'top left', width: `${100 / previewZoom}%`, height: `${100 / previewZoom}%` }}
+                  />
+                  {/* Right-click / copy blocker overlay for non-downloadable PDFs */}
+                  {!documentPreview.downloadAllowed && (
+                    <div
+                      className="absolute inset-0 z-10"
+                      onContextMenu={(e) => e.preventDefault()}
+                      style={{ background: 'transparent', cursor: 'default' }}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Bottom strip — thumbnails for multi-doc group */}
+            {previewGroup.length > 1 && (
+              <div className="flex h-16 shrink-0 items-center gap-2 overflow-x-auto border-t border-white/10 bg-[#1a1d27] px-4">
+                <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-slate-500">Pages</span>
+                {previewGroup.map((item, idx) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => void openDocumentPreview(item, previewGroup, idx)}
+                    className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
+                      idx === previewGroupIndex
+                        ? 'border-blue-500 bg-blue-600/20 text-blue-300'
+                        : 'border-white/10 text-slate-400 hover:border-white/30 hover:text-white'
+                    }`}
+                  >
+                    {idx + 1}
+                  </button>
+                ))}
+                <span className="ml-auto shrink-0 text-[11px] text-slate-500">
+                  {previewGroupIndex + 1} of {previewGroup.length}
+                </span>
+              </div>
+            )}
+
+            {/* Keyboard hint */}
+            <div className="flex h-7 shrink-0 items-center justify-center gap-4 border-t border-white/5 bg-[#13151f]">
+              <span className="text-[10px] text-slate-600">ESC close</span>
+              <span className="text-[10px] text-slate-600">← → navigate</span>
+              <span className="text-[10px] text-slate-600">+ − zoom</span>
+              <span className="text-[10px] text-slate-600">0 reset zoom</span>
             </div>
           </div>
         )}
