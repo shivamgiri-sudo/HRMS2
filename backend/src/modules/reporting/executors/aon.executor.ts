@@ -510,7 +510,7 @@ export async function aonCohortSurvival(
 
   // Days of observation available to the cohort, measured from the LAST day of the cohort
   // month so no member of it is credited with more exposure than the youngest member has.
-  const cohortAge = "DATEDIFF(CURDATE(), LAST_DAY(e.date_of_joining))";
+  const cohortAge = `DATEDIFF(CURDATE(), LAST_DAY(${AON_REFERENCE_JOIN_DATE_SQL}))`;
   const leftBy = (d: number) =>
     `SUM(e.date_of_exit IS NOT NULL AND DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) <= ${d})`;
   const survival = (d: number) => `

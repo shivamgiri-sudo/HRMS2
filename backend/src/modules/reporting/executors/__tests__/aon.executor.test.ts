@@ -5,7 +5,7 @@ vi.mock("../../../../db/mysql.js", () => ({
 }));
 
 import { db } from "../../../../db/mysql.js";
-import { aonBucketHeadcount, AON_REFERENCE_JOIN_DATE_SQL } from "../aon.executor.js";
+import { aonBucketHeadcount, aonCohortSurvival, AON_REFERENCE_JOIN_DATE_SQL } from "../aon.executor.js";
 import type { ExecScope, ExecOptions } from "../types.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
@@ -45,5 +45,16 @@ describe("AON reference date uses salary_start_date with date_of_joining fallbac
     // date_of_joining alone is still fine as the fallback INSIDE the COALESCE, so this
     // checks specifically that DATEDIFF is never called against date_of_joining directly.
     expect(sql).not.toMatch(/DATEDIFF\([^)]*,\s*e\.date_of_joining\)/);
+  });
+
+  it("aonCohortSurvival's SQL uses AON_REFERENCE_JOIN_DATE_SQL for cohort maturity and departure measures", async () => {
+    mockExecute.mockResolvedValueOnce([[], []]);
+    await aonCohortSurvival({}, SCOPE, OPTIONS);
+    const sql = String(mockExecute.mock.calls[0][0]);
+    // Must contain the COALESCE form in both leftBy (departure measure) and cohortAge (maturity measure)
+    expect(sql).toContain("COALESCE(e.salary_start_date, e.date_of_joining)");
+    // Must NOT contain bare DATEDIFF(..., e.date_of_joining) or LAST_DAY(e.date_of_joining)
+    expect(sql).not.toMatch(/DATEDIFF\([^)]*,\s*e\.date_of_joining\)/);
+    expect(sql).not.toMatch(/LAST_DAY\s*\(\s*e\.date_of_joining\s*\)/);
   });
 });
