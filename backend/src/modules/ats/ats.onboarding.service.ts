@@ -120,6 +120,18 @@ export async function sendOnboardingToken(
     [candidateId, rawToken, expiresAt, requestedBy],
   );
 
+  // Re-read the token from DB to ensure email uses whatever is actually saved.
+  // If a concurrent call overwrote our token, we send the email with THEIR token
+  // (which is valid) rather than ours (which was replaced and is now invalid).
+  const [bridgeRows] = await db.execute<RowDataPacket[]>(
+    `SELECT onboarding_token, onboarding_token_expires_at FROM ats_onboarding_bridge WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  const savedToken = bridgeRows[0]?.onboarding_token ?? rawToken;
+  const savedExpiry = bridgeRows[0]?.onboarding_token_expires_at
+    ? new Date(bridgeRows[0].onboarding_token_expires_at as string)
+    : expiresAt;
+
   await db.execute(
     `UPDATE ats_candidate SET profile_status = 'onboarding_sent' WHERE id = ?`,
     [candidateId],
@@ -132,7 +144,7 @@ export async function sendOnboardingToken(
   );
 
   const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
-  const onboardingLink = `${baseUrl}/onboard-full?token=${rawToken}`;
+  const onboardingLink = `${baseUrl}/onboard-full?token=${savedToken}`;
 
   if (cand.email) {
     try {
@@ -192,7 +204,7 @@ export async function sendOnboardingToken(
     }
   }
 
-  return { token: rawToken, expiresAt };
+  return { token: savedToken, expiresAt: savedExpiry };
 }
 
 // ── Token Validation ──────────────────────────────────────────────────────────
