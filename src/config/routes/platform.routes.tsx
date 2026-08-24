@@ -79,6 +79,7 @@ const NativeLeaderboard             = lazy(() => import("@/pages/NativeLeaderboa
 const ReportsHub                    = lazy(() => import("@/pages/ReportsHub"));
 const LiveLocationMap               = lazy(() => import("@/pages/LiveLocationMap"));
 const BulkUploadHub                 = lazy(() => import("@/pages/BulkUploadHub"));
+const BulkUploadApprovals           = lazy(() => import("@/pages/BulkUploadApprovals"));
 const Departments                   = lazy(() => import("@/pages/Departments"));
 const CompanyCalendar               = lazy(() => import("@/pages/CompanyCalendar"));
 const NotificationPreferences       = lazy(() => import("@/pages/NotificationPreferences"));
@@ -126,6 +127,7 @@ export const platformRouteElements = (
       <Route path="/modules"         element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
       <Route path="/changelog"       element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
       <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr']}><Gate pageCode="BULK_UPLOAD"><BulkUploadHub /></Gate></ProtectedRoute>} />
+      <Route path="/bulk-upload/approvals" element={<ProtectedRoute roles={['super_admin','admin','wfm','branch_head']}><Gate pageCode="BULK_UPLOAD"><BulkUploadApprovals /></Gate></ProtectedRoute>} />
       <Route path="/assets"          element={<ProtectedRoute><Assets /></ProtectedRoute>} />
       <Route path="/onboarding"      element={<ProtectedRoute roles={['admin','hr']}><Onboarding /></ProtectedRoute>} />
       <Route path="/onboarding-requests" element={<Navigate to="/onboarding?tab=requests" replace />} />

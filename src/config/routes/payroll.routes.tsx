@@ -50,6 +50,7 @@ const PfManagement              = lazy(() => import("@/pages/payroll/PfManagemen
 const PaymentDisbursalCenter    = lazy(() => import("@/pages/payroll/PaymentDisbursalCenter"));
 const PayrollReadinessDashboard = lazy(() => import("@/pages/payroll/PayrollReadinessDashboard"));
 const SalaryPackageManager      = lazy(() => import("@/pages/payroll/SalaryPackageManager"));
+const NativeSalaryPackageManager = lazy(() => import("@/pages/NativeSalaryPackageManager"));
 const StatutoryCenter           = lazy(() => import("@/pages/payroll/StatutoryCenter"));
 
 /**
@@ -104,6 +105,7 @@ export const payrollRouteElements = (
       <Route path="/payroll/masters"        element={<ProtectedRoute><Gate pageCode="PAYROLL_MASTERS"><NativePayrollMasters /></Gate></ProtectedRoute>} />
       {/* Salary Package Manager — merged page with tabs for packages + admin */}
       <Route path="/payroll/salary-packages" element={<ProtectedRoute><Gate pageCode="SALARY_PACKAGES"><SalaryPackageManager /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/salary-package-manager" element={<ProtectedRoute roles={['super_admin','admin','payroll','payroll_hr','hr']}><Gate pageCode="SALARY_PACKAGES"><NativeSalaryPackageManager /></Gate></ProtectedRoute>} />
       <Route path="/payroll/package-admin"  element={<Navigate to="/payroll/salary-packages?tab=admin" replace />} />
       <Route path="/payroll/incentives"     element={<ProtectedRoute><Gate pageCode="PAYROLL_INCENTIVES"><NativeIncentives /></Gate></ProtectedRoute>} />
       <Route path="/payroll/overtime"       element={<ProtectedRoute roles={['admin','super_admin','wfm','payroll','payroll_head']}><Gate pageCode="PAYROLL_OVERTIME"><PayrollOvertimeManagement /></Gate></ProtectedRoute>} />

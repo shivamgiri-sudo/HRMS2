@@ -56,6 +56,8 @@ const RosterInsightsPage           = lazy(() => import("@/pages/wfm/RosterInsigh
 const RosterRequestsPage           = lazy(() => import("@/pages/wfm/RosterRequestsPage"));
 const RosterBuilderPage            = lazy(() => import("@/pages/wfm/RosterBuilderPage"));
 const RosterAnalyticsDashboard     = lazy(() => import("@/pages/wfm/RosterAnalyticsDashboard"));
+const RosterAnalyticsPanel         = lazy(() => import("@/pages/wfm/RosterAnalyticsPanel"));
+const NativeTNIAnalysis            = lazy(() => import("@/pages/NativeTNIAnalysis"));
 const RosterCommandCenter          = lazy(() => import("@/pages/wfm/RosterCommandCenter"));
 const RosterInterventionDashboard  = lazy(() => import("@/pages/wfm/RosterInterventionDashboard"));
 const EmployeeRosterProfile        = lazy(() => import("@/pages/wfm/EmployeeRosterProfile"));
@@ -146,6 +148,8 @@ export const workforceRouteElements = (
       <Route path="/wfm/roster-insights"   element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterInsightsPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-view"       element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterViewPage /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-analytics"  element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAnalyticsDashboard /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/roster-analytics-panel" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterAnalyticsPanel /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/tni-analysis"      element={<ProtectedRoute roles={['super_admin','admin','wfm','quality','operations_manager']}><Gate pageCode="WFM_ROSTER"><NativeTNIAnalysis /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-command-center" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterCommandCenter /></Gate></ProtectedRoute>} />
       <Route path="/wfm/roster-interventions" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><RosterInterventionDashboard /></Gate></ProtectedRoute>} />
       <Route path="/wfm/employee-roster/:employeeId" element={<ProtectedRoute><Gate pageCode="WFM_ROSTER"><EmployeeRosterProfile /></Gate></ProtectedRoute>} />
