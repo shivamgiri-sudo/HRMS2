@@ -643,6 +643,16 @@ export const payrollService = {
       }
     }
 
+    // On disbursal: reconcile each employee's loan ledger against the loan_emi the
+    // calculator already put on their payslip. Isolated — a failure here must never
+    // fail the disbursal transition itself, since the money has already moved. See
+    // loans.service.ts for why this is hooked here and not at 'finalized'.
+    if (input.status === "disbursed") {
+      const { applyPayrollDeductions } = await import("./loans.service.js");
+      await applyPayrollDeductions(id, userId)
+        .catch((e: unknown) => console.error('[payroll-service] applyPayrollDeductions error:', e));
+    }
+
     return this.getRun(id);
   },
 
