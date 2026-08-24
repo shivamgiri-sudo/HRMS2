@@ -7,10 +7,13 @@
 
 import { Router } from "express";
 import type { Response, NextFunction } from "express";
+import type { RowDataPacket } from "mysql2";
+import { randomUUID } from "crypto";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { jobRequisitionService } from "./job-requisition.service.js";
+import { db } from "../../db/mysql.js";
 import type {
   CreateRequisitionInput,
   UpdateRequisitionInput,
@@ -610,6 +613,165 @@ jobRequisitionRouter.patch(
     );
 
     return res.json({ success: true, message: "Planned batch updated" });
+  })
+);
+
+// ─── Backfill Candidates by Mobile Number ────────────────────────────────────
+// Matches employees who joined (by mobile) with ats_candidate records
+// and creates job_requisition_candidate links for requisitions missing them.
+jobRequisitionRouter.post(
+  "/backfill-candidates",
+  requireAuth,
+  requireRole("super_admin", "hr"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { requisition_id } = req.body as { requisition_id?: string };
+
+    // Build condition - either specific requisition or all approved ones
+    const reqCondition = requisition_id
+      ? "jr.id = ?"
+      : "jr.approval_status IN ('approved', 'closed')";
+    const reqParams = requisition_id ? [requisition_id] : [];
+
+    // Find all requisitions with their employees that might need backfill
+    const [requisitions] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         jr.id AS requisition_id,
+         jr.requisition_code,
+         jr.branch_name,
+         jr.process_name,
+         jr.target_joining_date,
+         jr.requisition_validity,
+         jr.created_at,
+         jr.approved_at
+       FROM job_requisition jr
+       WHERE ${reqCondition}
+         AND jr.active_status = 1
+       ORDER BY jr.created_at DESC`,
+      reqParams
+    );
+
+    let totalLinked = 0;
+    let totalSkipped = 0;
+    const results: Array<{ requisition_code: string; linked: number; skipped: number; details: string[] }> = [];
+
+    for (const req of requisitions as RowDataPacket[]) {
+      const details: string[] = [];
+      let linked = 0;
+      let skipped = 0;
+
+      // Find employees who match this requisition by branch and have mobile numbers
+      // Join date should be within reasonable range of requisition dates
+      const startDate = req.approved_at ?? req.created_at;
+      const endDate = req.requisition_validity ?? new Date().toISOString().slice(0, 10);
+
+      const [employees] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           e.id AS employee_id,
+           e.employee_code,
+           e.full_name,
+           e.mobile,
+           e.date_of_joining,
+           b.branch_name
+         FROM employees e
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         WHERE e.mobile IS NOT NULL
+           AND e.mobile != ''
+           AND e.active_status = 1
+           AND LOWER(TRIM(b.branch_name)) = LOWER(TRIM(?))
+           AND e.date_of_joining >= DATE(?)
+           AND e.date_of_joining <= DATE(?)
+         ORDER BY e.date_of_joining ASC`,
+        [req.branch_name, startDate, endDate]
+      );
+
+      for (const emp of employees as RowDataPacket[]) {
+        // Normalize mobile: remove spaces, leading 0, +91 etc
+        const mobile = String(emp.mobile ?? "")
+          .replace(/[\s\-\+]/g, "")
+          .replace(/^0+/, "")
+          .replace(/^91/, "")
+          .slice(-10);
+
+        if (mobile.length !== 10) {
+          skipped++;
+          continue;
+        }
+
+        // Find matching candidate by mobile
+        const [candidates] = await db.execute<RowDataPacket[]>(
+          `SELECT id, full_name, mobile
+           FROM ats_candidate
+           WHERE (
+             RIGHT(REPLACE(REPLACE(REPLACE(mobile, ' ', ''), '-', ''), '+', ''), 10) = ?
+             OR RIGHT(REPLACE(REPLACE(REPLACE(mobile, ' ', ''), '-', ''), '+', ''), 10) = ?
+           )
+           ORDER BY created_at DESC
+           LIMIT 1`,
+          [mobile, `0${mobile}`]
+        );
+
+        if (!candidates[0]) {
+          skipped++;
+          continue;
+        }
+
+        const candidateId = candidates[0].id as string;
+
+        // Check if already linked
+        const [existing] = await db.execute<RowDataPacket[]>(
+          `SELECT id FROM job_requisition_candidate
+           WHERE requisition_id = ? AND candidate_id = ?
+           LIMIT 1`,
+          [req.requisition_id, candidateId]
+        );
+
+        if (existing[0]) {
+          skipped++;
+          details.push(`${emp.employee_code}: already linked`);
+          continue;
+        }
+
+        // Create the link
+        const linkId = randomUUID();
+        await db.execute(
+          `INSERT INTO job_requisition_candidate
+           (id, requisition_id, candidate_id, linked_by, link_source, outcome, outcome_at, remarks)
+           VALUES (?, ?, ?, ?, 'auto_match', 'selected', ?, ?)`,
+          [
+            linkId,
+            req.requisition_id,
+            candidateId,
+            null,
+            emp.date_of_joining,
+            `Backfill: matched employee ${emp.employee_code} by mobile`,
+          ]
+        );
+
+        linked++;
+        details.push(`${emp.employee_code} → ${candidates[0].full_name}`);
+      }
+
+      totalLinked += linked;
+      totalSkipped += skipped;
+
+      if (linked > 0 || details.length > 0) {
+        results.push({
+          requisition_code: req.requisition_code as string,
+          linked,
+          skipped,
+          details: details.slice(0, 20), // Limit details to first 20
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `Backfill complete: ${totalLinked} candidates linked, ${totalSkipped} skipped`,
+      total_linked: totalLinked,
+      total_skipped: totalSkipped,
+      requisitions_processed: requisitions.length,
+      results,
+    });
   })
 );
 
