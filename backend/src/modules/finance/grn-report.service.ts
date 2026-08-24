@@ -205,15 +205,21 @@ export const grnReportService = {
     const decorated = (rows as RowDataPacket[]).map((row) => {
       const pending = resolvePendingWith(String(row.status ?? ""), "grn");
       const stageStartedAt = row.branch_head_reviewed_at ?? row.submitted_at ?? row.grn_date ?? null;
+      const isLegacyData = Boolean(row.bill_source_id);
+      let ageDays: number | null = null;
+      if (pending.isPending && stageStartedAt) {
+        const rawAgeDays = Math.max(0, Math.floor((Date.now() - new Date(String(stageStartedAt)).getTime()) / 86_400_000));
+        ageDays = isLegacyData && rawAgeDays > 90 ? -1 : rawAgeDays;
+      }
       return {
         ...row,
         expense_mode: String(row.grn_type) === "imprest" ? "Imprest" : "Non Imprest",
         pending_with: pending.label,
         pending_with_role: pending.role,
         is_pending: pending.isPending,
-        ageing_days: pending.isPending && stageStartedAt
-          ? Math.max(0, Math.floor((Date.now() - new Date(String(stageStartedAt)).getTime()) / 86_400_000))
-          : null,
+        ageing_days: ageDays,
+        age_bucket: ageDays === null ? null : ageDays === -1 ? "legacy" : ageDays <= 2 ? "0-2" : ageDays <= 7 ? "3-7" : "7+",
+        is_legacy: isLegacyData,
       };
     });
 

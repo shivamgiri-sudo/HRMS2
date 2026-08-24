@@ -64,6 +64,7 @@ type ApprovalEvent = {
 
 /** Older than a week is the one that needs chasing, so it is the only one coloured. */
 function ageTone(bucket?: string | null) {
+  if (bucket === "legacy") return "neutral";
   return bucket === "7+" ? "crit" : bucket === "3-7" ? "warn" : "neutral";
 }
 
@@ -251,11 +252,15 @@ export function ImprestApprovalQueue() {
                   <GrnTd>{row.pending_with ?? "—"}</GrnTd>
                   <GrnTd>
                     <StatusStamp tone={ageTone(row.age_bucket)}>
-                      {row.ageing_days === null || row.ageing_days === undefined
-                        ? "—"
-                        : `${row.ageing_days}d`}
+                      {row.age_bucket === "legacy" || row.ageing_days === -1
+                        ? "Legacy"
+                        : row.ageing_days === null || row.ageing_days === undefined
+                          ? "—"
+                          : `${row.ageing_days}d`}
                     </StatusStamp>
-                    <GrnCellSub>since {dateLabel(row.pending_since)}</GrnCellSub>
+                    {row.age_bucket !== "legacy" && row.ageing_days !== -1 && (
+                      <GrnCellSub>since {dateLabel(row.pending_since)}</GrnCellSub>
+                    )}
                   </GrnTd>
                   <GrnTd>{row.created_by_name ?? "—"}</GrnTd>
                   {/* The voucher cell's sub-line is the BILL date, which reads as the raised date

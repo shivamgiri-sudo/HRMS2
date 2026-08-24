@@ -667,14 +667,20 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                     </GrnTd>
                   )}
                   <GrnTd align="right">
-                    {row.created_at ? (() => {
-                      const d = daysSince(row.created_at);
+                    {(() => {
+                      // Use server-computed ageing_days which handles legacy data correctly
+                      const d = (row as any).ageing_days ?? (row.created_at ? daysSince(row.created_at) : null);
+                      // Legacy data with -1 or "legacy" bucket shows "Legacy" instead of misleading day count
+                      if (d === -1 || (row as any).age_bucket === "legacy") {
+                        return <span className="font-grn-mono text-[10px] font-medium text-grn-ink-soft">Legacy</span>;
+                      }
+                      if (d === null) return <span className="text-grn-ink-soft">—</span>;
                       return (
                         <span className={`font-grn-mono text-[11px] font-semibold ${d > 3 ? "text-rose-600" : d > 1 ? "text-amber-600" : "text-grn-ink-soft"}`}>
                           {d}d
                         </span>
                       );
-                    })() : <span className="text-grn-ink-soft">—</span>}
+                    })()}
                   </GrnTd>
                   <GrnTd>
                     <StatusStamp tone={grnStatusTone(row.status)}>{labelStatus(row.status)}</StatusStamp>

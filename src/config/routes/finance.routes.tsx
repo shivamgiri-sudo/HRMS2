@@ -29,6 +29,7 @@ const FinanceQueue                 = lazy(() => import("@/pages/expenses/Finance
 const ExpenseReports               = lazy(() => import("@/pages/expenses/ExpenseReports"));
 const CostCentreManagementPage     = lazy(() => import("@/pages/finance/CostCentreManagementPage"));
 const ClientBillingWorkspacePage   = lazy(() => import("@/pages/finance/ClientBillingWorkspacePage"));
+const ClientPaymentManagementPage  = lazy(() => import("@/pages/finance/ClientPaymentManagementPage"));
 const FinanceMasterPage            = lazy(() => import("@/pages/finance/FinanceMasterPage"));
 
 const financeRoles = ['super_admin','admin','finance','finance_head','accounts_head','payroll_head'] as const;
@@ -75,6 +76,9 @@ export const financeRouteElements = (
       {/* Roles match ALLOWED_ROLES in client-billing.routes.ts and the grant in migration
           1303 exactly — the frontend gate must never show a page the API would 403 on. */}
       <Route path="/finance/client-billing"          element={<ProtectedRoute roles={clientBillingRoles}><Gate pageCode="FINANCE_CLIENT_BILLING"><ClientBillingWorkspacePage /></Gate></ProtectedRoute>} />
+      {/* Client Payment Management — Finance Head portal for tracking invoice payments and
+          collection trends. Roles match PAYMENT_READ/WRITE_ROLES in client-payment-tracking.routes.ts. */}
+      <Route path="/finance/client-payments"         element={<ProtectedRoute roles={clientBillingRoles}><Gate pageCode="FINANCE_CLIENT_PAYMENTS"><ClientPaymentManagementPage /></Gate></ProtectedRoute>} />
       {/* Roles here match the grant issued in migration 1064 exactly. If they drift, the page
           either 403s for someone who was granted it, or shows for someone the API will refuse. */}
       <Route path="/finance/billability"             element={<ProtectedRoute roles={billabilityRoles}><Gate pageCode="FINANCE_BILLABILITY_SEAT_COST"><BillabilitySeatCostPage /></Gate></ProtectedRoute>} />

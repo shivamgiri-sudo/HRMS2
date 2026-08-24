@@ -108,20 +108,24 @@ export const imprestService = {
   async saveManager(
     input: {
       id?: string;
-      branchId: string;
-      userId: string;
+      branchId?: string;
+      userId?: string;
       employeeId?: string | null;
       tallyName?: string | null;
-      effectiveFrom: string;
+      effectiveFrom?: string;
       effectiveTo?: string | null;
       activeStatus?: number;
     },
     actorUserId: string,
   ) {
-    if (!input.branchId) throw new Error("Branch is required");
-    if (!input.userId) throw new Error("A user is required to hold the float");
-    if (!input.effectiveFrom) throw new Error("An effective-from date is required");
-    if (input.effectiveTo && input.effectiveTo < input.effectiveFrom) {
+    // For updates (id present), only validate what's being changed
+    // For creates, require the full set
+    if (!input.id) {
+      if (!input.branchId) throw new Error("Branch is required");
+      if (!input.userId) throw new Error("A user is required to hold the float");
+      if (!input.effectiveFrom) throw new Error("An effective-from date is required");
+    }
+    if (input.effectiveTo && input.effectiveFrom && input.effectiveTo < input.effectiveFrom) {
       throw new Error("Effective-to cannot be before effective-from");
     }
 
@@ -148,18 +152,40 @@ export const imprestService = {
     try {
       await connection.beginTransaction();
 
+      // For updates, handle differently — we're typically just ending an appointment
+      if (input.id) {
+        // When ending an appointment (activeStatus = 0), no overlap check needed
+        await connection.execute(
+          `UPDATE imprest_manager
+              SET tally_name = COALESCE(?, tally_name),
+                  effective_to = COALESCE(?, effective_to),
+                  active_status = ?,
+                  updated_by = ?
+            WHERE id = ?`,
+          [
+            input.tallyName !== undefined ? input.tallyName : null,
+            input.effectiveTo ?? null,
+            input.activeStatus ?? 1,
+            actorUserId,
+            input.id,
+          ],
+        );
+        await connection.commit();
+        return this.getManager(input.id);
+      }
+
+      // For new appointments, check for overlaps
       const [clashes] = await connection.execute<RowDataPacket[]>(
         `SELECT id, user_id, effective_from, effective_to
            FROM imprest_manager
           WHERE branch_id = ?
             AND active_status = 1
-            AND id <> ?
             AND effective_from <= COALESCE(?, '9999-12-31')
             AND ? <= COALESCE(effective_to, '9999-12-31')
           FOR UPDATE`,
-        [input.branchId, input.id ?? "", input.effectiveTo ?? null, input.effectiveFrom],
+        [input.branchId, input.effectiveTo ?? null, input.effectiveFrom],
       );
-      if (clashes.length && (input.activeStatus ?? 1) === 1) {
+      if (clashes.length) {
         const clash = clashes[0];
         throw new Error(
           `This branch already has an imprest manager for that period `
@@ -167,17 +193,6 @@ export const imprestService = {
           + `${clash.effective_to ? String(clash.effective_to).slice(0, 10) : "open-ended"}). `
           + `End that appointment before starting another.`,
         );
-      }
-
-      if (input.id) {
-        await connection.execute(
-          `UPDATE imprest_manager
-              SET tally_name = ?, effective_to = ?, active_status = ?, updated_by = ?
-            WHERE id = ?`,
-          [input.tallyName ?? null, input.effectiveTo ?? null, input.activeStatus ?? 1, actorUserId, input.id],
-        );
-        await connection.commit();
-        return this.getManager(input.id);
       }
 
       const id = randomUUID();

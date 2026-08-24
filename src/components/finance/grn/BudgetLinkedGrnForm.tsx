@@ -3028,6 +3028,19 @@ export function BudgetLinkedGrnForm({
                     <p className="font-medium">Budget Exhausted</p>
                     <p className="text-sm text-amber-700">
                       Branch-wide budget for {form.head}/{form.subHead} is exhausted.
+                      {headroom.aggregateAvailable > 0 && ` Available: ${money(headroom.aggregateAvailable)}`}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ) : headroom.aggregateAvailable > 0 ? (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-800">
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0 text-emerald-500" />
+                  <div>
+                    <p className="font-medium">Budget Available: {money(headroom.aggregateAvailable)}</p>
+                    <p className="text-sm text-emerald-700">
+                      {form.head}/{form.subHead} has approved budget for this branch.
                     </p>
                   </div>
                 </div>
