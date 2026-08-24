@@ -758,11 +758,17 @@ export default function NativeITProvisioningTracker() {
   }
 
   // ── Data fetch ───────────────────────────────────────────────────────────────
+  // "Fresh start from today" (2026-08-24): IT/Admin/WFM provisioning only show requests
+  // created on or after today — not Appointment Letters, which keeps full history. Hides rows
+  // from the list view only; no it_provisioning_request row is deleted or modified.
+  const FRESH_START_PATHS = ["/provisioning/it", "/provisioning/admin", "/provisioning/wfm-alignment"];
+  const todayIso = new Date().toISOString().slice(0, 10);
   const queryParams = {
     ...(statusFilter !== "all" && { status: statusFilter }),
     ...(typeFilter   !== "all" && { request_type: typeFilter }),
     ...(roleFilter   !== "all" && { assigned_role: roleFilter }),
     ...(taskFilter   !== "all" && { task_code: taskFilter }),
+    ...(FRESH_START_PATHS.includes(location.pathname) && { created_from: todayIso }),
     page, limit: LIMIT,
   };
 
@@ -935,7 +941,7 @@ export default function NativeITProvisioningTracker() {
         <h1 className="mt-1 text-2xl font-bold text-white">Provisioning Tracker</h1>
         <p className="mt-1 text-sm text-slate-200">Track IT setup, biometric enrollment, WFM alignment and appointment letter tasks.</p>
       </div>
-      <OnboardingTabBar />
+      <OnboardingTabBar hideTabs={location.pathname === "/provisioning/it" ? ["Appointment Letters"] : []} />
     <HrmsModernShell
       eyebrow="Provisioning"
       title={preset?.title ?? "IT Provisioning Tracker"}

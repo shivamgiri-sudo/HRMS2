@@ -28,13 +28,16 @@ const TABS = [
   },
 ] as const;
 
-export function OnboardingTabBar() {
+export function OnboardingTabBar({ hideTabs = [] }: { hideTabs?: readonly string[] } = {}) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const visibleTabs = hideTabs.length
+    ? TABS.filter((tab) => !hideTabs.includes(tab.label))
+    : TABS;
 
   return (
     <div className="flex flex-wrap gap-2 mb-5">
-      {TABS.map(({ label, path, icon: Icon }) => {
+      {visibleTabs.map(({ label, path, icon: Icon }) => {
         const active = pathname === path || pathname.startsWith(path + "/");
         return (
           <button

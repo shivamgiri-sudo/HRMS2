@@ -802,6 +802,7 @@ export async function listProvisioningRequests(filters: {
   requestType?: string;
   taskCode?: string;
   employeeId?: string;
+  createdFrom?: string;
   page?: number;
   limit?: number;
 }): Promise<{ data: any[]; total: number }> {
@@ -828,6 +829,11 @@ export async function listProvisioningRequests(filters: {
   if (filters.requestType)  { conds.push('ipr.request_type = ?');  params.push(filters.requestType); }
   if (filters.taskCode)     { conds.push('ipr.task_code = ?');     params.push(filters.taskCode); }
   if (filters.employeeId)   { conds.push('ipr.employee_id = ?');   params.push(filters.employeeId); }
+  // "Fresh start" cutover for /provisioning/it,/admin,/wfm-alignment (2026-08-24): those three
+  // pages pass this so the queue only ever shows requests created on or after the cutover date,
+  // without touching or deleting any pre-cutover it_provisioning_request rows. Not sent by
+  // /provisioning/appointment-letter, which still shows full history.
+  if (filters.createdFrom) { conds.push('ipr.created_at >= ?'); params.push(filters.createdFrom); }
   if (filters.branchId) {
     conds.push('e.branch_id = ?');
     params.push(filters.branchId);

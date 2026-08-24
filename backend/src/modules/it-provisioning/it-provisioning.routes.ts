@@ -317,6 +317,7 @@ router.get(['/tasks', '/tasks/my'], requireRole(...PROVISIONING_ROLES), h(async 
     requestType: req.query.request_type as string | undefined,
     assignedRole: req.query.assigned_role as string | undefined,
     taskCode: req.query.task_code as string | undefined,
+    createdFrom: req.query.created_from as string | undefined,
     page: req.query.page ? Number(req.query.page) : 1,
     limit: req.query.limit ? Number(req.query.limit) : 50,
   };
