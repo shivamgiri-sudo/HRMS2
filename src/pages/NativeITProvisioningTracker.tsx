@@ -676,6 +676,25 @@ export default function NativeITProvisioningTracker() {
   const slaViolations: any[] = slaViolationsData ?? [];
   const slaSummary: any[] = slaSummaryData ?? [];
 
+  // ── Bulk-waive SLA violations
+  const [bulkWaiveOpen, setBulkWaiveOpen] = useState(false);
+  const [bulkWaiveReason, setBulkWaiveReason] = useState('');
+  const bulkWaiveMutation = useMutation({
+    mutationFn: (reason: string) =>
+      hrmsApi.post<{ success: boolean; waived: number; message: string }>(
+        '/api/it-provisioning/sla/bulk-waive',
+        { reason }
+      ),
+    onSuccess: (res: any) => {
+      toast.success(res?.message ?? 'SLA violations resolved');
+      setBulkWaiveOpen(false);
+      setBulkWaiveReason('');
+      queryClient.invalidateQueries({ queryKey: ['it-provisioning-sla-violations'] });
+      queryClient.invalidateQueries({ queryKey: ['it-provisioning-sla-summary'] });
+    },
+    onError: (err: any) => toast.error(err?.message ?? 'Failed to resolve violations'),
+  });
+
   // Dialogs
   const [actionDialog, setActionDialog] = useState<{ open: boolean; request: ProvisioningRequest | null; mode: "action" | "waive" | "confirm" }>({
     open: false, request: null, mode: "action",
@@ -978,13 +997,26 @@ export default function NativeITProvisioningTracker() {
           {slaViolations.length > 0 && (
             <Card className="rounded-xl border-red-200 bg-red-50 shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-bold text-red-800 flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4" />
-                  {slaViolations.length} SLA Violation{slaViolations.length > 1 ? 's' : ''} — Overdue &gt;24h
-                </CardTitle>
-                <CardDescription className="text-xs text-red-600">
-                  These employees have active but unresolved provisioning tasks past the 24-hour SLA deadline.
-                </CardDescription>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-sm font-bold text-red-800 flex items-center gap-2">
+                      <AlertCircle className="h-4 w-4" />
+                      {slaViolations.length} SLA Violation{slaViolations.length > 1 ? 's' : ''} — Overdue &gt;24h
+                    </CardTitle>
+                    <CardDescription className="text-xs text-red-600 mt-0.5">
+                      Active provisioning tasks past the 24-hour SLA deadline.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setBulkWaiveOpen(true)}
+                    className="shrink-0 border-red-300 text-red-700 hover:bg-red-100 text-xs"
+                  >
+                    <CheckCircle className="h-3.5 w-3.5 mr-1" />
+                    Resolve All ({slaViolations.length})
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
@@ -1021,6 +1053,47 @@ export default function NativeITProvisioningTracker() {
               </CardContent>
             </Card>
           )}
+
+          {/* Bulk-waive confirmation dialog */}
+          <Dialog open={bulkWaiveOpen} onOpenChange={setBulkWaiveOpen}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-red-700">
+                  <AlertCircle className="h-5 w-5" />
+                  Resolve {slaViolations.length} SLA Violation{slaViolations.length !== 1 ? 's' : ''}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 py-2">
+                <p className="text-sm text-slate-600">
+                  This will mark all <strong>{slaViolations.length}</strong> overdue provisioning tasks as <em>waived/resolved</em> with an audit record. The tasks will no longer appear in the SLA violations panel.
+                </p>
+                <div>
+                  <Label className="text-xs font-semibold text-slate-700 mb-1 block">Resolution Reason <span className="text-red-500">*</span></Label>
+                  <Textarea
+                    value={bulkWaiveReason}
+                    onChange={(e) => setBulkWaiveReason(e.target.value)}
+                    placeholder="e.g. Employees already onboarded manually — provisioning tasks not closed in system"
+                    rows={3}
+                    className="text-sm"
+                  />
+                </div>
+                <p className="text-xs text-slate-400">This action is audited and cannot be undone without re-raising individual tasks.</p>
+              </div>
+              <DialogFooter className="gap-2">
+                <Button variant="outline" size="sm" onClick={() => setBulkWaiveOpen(false)} disabled={bulkWaiveMutation.isPending}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  disabled={!bulkWaiveReason.trim() || bulkWaiveMutation.isPending}
+                  onClick={() => bulkWaiveMutation.mutate(bulkWaiveReason.trim())}
+                >
+                  {bulkWaiveMutation.isPending ? <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />Resolving…</> : `Resolve All ${slaViolations.length}`}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           {/* SLA Summary by Task Code */}
           {slaSummary.length > 0 && (

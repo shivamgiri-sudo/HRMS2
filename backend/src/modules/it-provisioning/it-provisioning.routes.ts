@@ -604,6 +604,53 @@ router.get('/sla/violations', requireRole('admin', 'super_admin', 'hr'), h(async
   return res.json({ success: true, data: violations, count: violations.length });
 }));
 
+// ── POST /api/it-provisioning/sla/bulk-waive ─────────────────────────────────
+// Bulk-waive all current SLA violations (or a filtered subset) with an audit reason.
+router.post('/sla/bulk-waive', requireRole('admin', 'super_admin', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { reason, task_ids } = req.body as { reason?: string; task_ids?: string[] };
+  const waiveReason = (reason ?? '').trim() || 'Bulk-resolved: employee already onboarded, task missed in system';
+
+  // If specific task IDs provided, waive those; otherwise waive all current violations
+  let idsToWaive: string[] = [];
+  if (Array.isArray(task_ids) && task_ids.length > 0) {
+    idsToWaive = task_ids;
+  } else {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT r.id
+       FROM it_provisioning_request r
+       JOIN employees e ON e.id = r.employee_id
+       WHERE r.sla_due_at IS NOT NULL
+         AND r.sla_due_at < NOW()
+         AND r.status IN ('pending', 'pending_unassigned', 'assigned', 'in_progress')
+         AND e.active_status = 1`,
+      []
+    );
+    idsToWaive = (rows as any[]).map(r => r.id);
+  }
+
+  if (idsToWaive.length === 0) {
+    return res.json({ success: true, waived: 0, message: 'No violations to waive' });
+  }
+
+  let waived = 0;
+  for (const id of idsToWaive) {
+    try {
+      await waiveProvisioningRequest({ requestId: id, actionedBy: req.authUser!.id, evidenceNote: waiveReason });
+      waived++;
+    } catch (_) { /* skip individual failures */ }
+  }
+
+  await logSensitiveAction({
+    user_id: req.authUser!.id,
+    action: 'IT_PROV_BULK_WAIVE_SLA',
+    entity_type: 'it_provisioning_request',
+    entity_id: 'bulk',
+    change_summary: { waived, reason: waiveReason, task_ids: idsToWaive.slice(0, 20) },
+  });
+
+  return res.json({ success: true, waived, message: `${waived} SLA violation${waived !== 1 ? 's' : ''} resolved` });
+}));
+
 router.get('/sla/summary', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm'), h(async (_req: AuthenticatedRequest, res: Response) => {
   const [summary] = await db.execute<RowDataPacket[]>(
     `SELECT
