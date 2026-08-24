@@ -10,7 +10,8 @@ export type DashboardCode =
   | "RECRUITER_DASHBOARD"
   | "IT_MANAGER_DASHBOARD"
   | "MANAGEMENT_DASHBOARD"
-  | "EMPLOYEE_SELF_DASHBOARD";
+  | "EMPLOYEE_SELF_DASHBOARD"
+  | "PERFORMANCE_SCORECARD";
 
 export type DashboardScopeType =
   | "ORGANISATION"
@@ -198,6 +199,17 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     scopeTypes: ["SELF"],
     sensitiveMetrics: ["attendance", "leave", "payroll", "performance"],
     permissions: { drilldown: true, export: false, filters: false },
+  }),
+  PERFORMANCE_SCORECARD: definition({
+    code: "PERFORMANCE_SCORECARD",
+    variant: "performance_scorecard",
+    displayName: "Performance Scorecard",
+    route: "/performance-scorecard/dashboard",
+    pageCode: "PERFORMANCE_SCORECARD",
+    allowedRoleKeys: ["employee", "agent", "trainee", "manager", "process_manager", "assistant_manager", "branch_head", "branch_manager", "team_leader", "tl", "hr", "hr_admin", "ho_hr", "branch_hr", "process_hr", "ceo", "coo", "management", "super_admin"],
+    scopeTypes: ["SELF", "TEAM", "BRANCH", "PROCESS"],
+    sensitiveMetrics: ["attendance", "performance", "attrition", "revenue"],
+    permissions: { drilldown: true, export: true, filters: true },
   }),
 });
 

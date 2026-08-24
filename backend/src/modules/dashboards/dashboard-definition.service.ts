@@ -23,6 +23,16 @@ import {
   getTrainingProgressMetrics,
   type MetricResult,
 } from "./dashboard-metric.service.js";
+import {
+  getAttendanceStatusMetric,
+  getLatecomingMetric,
+  getUnplannedLeaveMetric,
+  getPipStatusMetric,
+  getQualityBaselineMetric,
+  getAttritionMetric,
+  getShrinkageMetric,
+  getRevenueMetric,
+} from "./performance-scorecard-drilldown.js";
 
 type MetricKey =
   | "hc"
@@ -43,7 +53,15 @@ type MetricKey =
   | "salaryComponents"
   | "recruiterActivity"
   | "training"
-  | "leaveApprovals";
+  | "leaveApprovals"
+  | "attendanceStatus"
+  | "latecoming"
+  | "unplannedLeave"
+  | "pipStatus"
+  | "qualityBaseline"
+  | "attrition"
+  | "shrinkage"
+  | "revenue";
 
 type MetricDefinition = {
   code: string;
@@ -87,6 +105,14 @@ const METRICS: Readonly<Record<MetricKey, MetricDefinition>> = {
   recruiterActivity: { code: "RECRUITER_ACTIVITY", label: "Recruiter pipeline (30d)", unit: "leads", source: "Recruiter hiring activity", sourceTable: "ats_recruiter_hiring_activity", numeratorKey: "selected", denominatorKey: "leads", higherIsBetter: true, moduleCode: "ats", execute: getRecruiterActivityMetrics },
   training: { code: "TRAINING_PROGRESS", label: "Training completion rate", unit: "percent", source: "LMS progress snapshot", sourceTable: "lms_learning_progress_snapshot", numeratorKey: "completed", denominatorKey: "assignments", higherIsBetter: true, moduleCode: "lms", execute: getTrainingProgressMetrics },
   leaveApprovals: { code: "LEAVE_APPROVALS", label: "Pending leave approvals", unit: "requests", source: "Leave requests", sourceTable: "leave_request", higherIsBetter: false, moduleCode: "leave", execute: getLeaveApprovalMetrics },
+  attendanceStatus: { code: "ATTENDANCE_STATUS", label: "Attendance", unit: "days", source: "Attendance snapshot", sourceTable: "employee_performance_daily_snapshot", higherIsBetter: true, moduleCode: "performance-scorecard", execute: getAttendanceStatusMetric },
+  latecoming: { code: "LATECOMING", label: "Latecoming", unit: "minutes", source: "Attendance snapshot", sourceTable: "employee_performance_daily_snapshot", higherIsBetter: false, moduleCode: "performance-scorecard", execute: getLatecomingMetric },
+  unplannedLeave: { code: "UNPLANNED_LEAVE", label: "Unplanned Leave", unit: "days", source: "Attendance snapshot", sourceTable: "employee_performance_daily_snapshot", higherIsBetter: false, moduleCode: "performance-scorecard", execute: getUnplannedLeaveMetric },
+  pipStatus: { code: "PIP_STATUS", label: "PIP Status", unit: "status", source: "PIP records", sourceTable: "pip_record", higherIsBetter: true, moduleCode: "performance-scorecard", execute: getPipStatusMetric },
+  qualityBaseline: { code: "QUALITY_BASELINE", label: "Quality", unit: "score", source: "KPI daily actuals", sourceTable: "kpi_daily_actual", higherIsBetter: true, moduleCode: "performance-scorecard", execute: getQualityBaselineMetric },
+  attrition: { code: "ATTRITION", label: "Attrition", unit: "%", source: "Attrition analytics", sourceTable: "employee_performance_daily_snapshot", higherIsBetter: false, moduleCode: "performance-scorecard", execute: getAttritionMetric },
+  shrinkage: { code: "SHRINKAGE", label: "Shrinkage", unit: "%", source: "Shrinkage analytics", sourceTable: "employee_performance_daily_snapshot", higherIsBetter: false, moduleCode: "performance-scorecard", execute: getShrinkageMetric },
+  revenue: { code: "REVENUE", label: "Revenue", unit: "INR", source: "Finance/BI", sourceTable: "employee_performance_daily_snapshot", higherIsBetter: true, moduleCode: "performance-scorecard", execute: getRevenueMetric },
 };
 
 /**
@@ -138,6 +164,10 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   IT_MANAGER_DASHBOARD: ["hc", "onb", "resign"],
   MANAGEMENT_DASHBOARD: ["hc", "att", "tat", "training", "leaveApprovals"],
   EMPLOYEE_SELF_DASHBOARD: ["att", "leaveApprovals"],
+  PERFORMANCE_SCORECARD: [
+    "attendanceStatus", "latecoming", "unplannedLeave", "pipStatus",
+    "qualityBaseline", "attrition", "shrinkage", "revenue",
+  ],
 };
 
 function numberFromDetail(result: MetricResult, key?: string): number | null {
