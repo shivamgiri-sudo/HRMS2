@@ -546,8 +546,14 @@ export async function listExitPasses(actor: RequestingEmployee, actorRoles: stri
   params.push(actor.employeeId);
 
   if (!isOverride) {
-    clauses.push('(requestor_employee_id = ? OR branch_id = ?)');
-    params.push(actor.employeeId, actor.branchId ?? '');
+    if (actor.branchId) {
+      clauses.push('(requestor_employee_id = ? OR branch_id = ?)');
+      params.push(actor.employeeId, actor.branchId);
+    } else {
+      // No branch assigned — can only see own requests
+      clauses.push('requestor_employee_id = ?');
+      params.push(actor.employeeId);
+    }
   }
   if (filters.status) {
     clauses.push('status = ?');
@@ -597,9 +603,11 @@ export async function listPendingAdmin(actor: RequestingEmployee, actorRoles: st
   const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
   const isBranchAdmin = actorRoles.includes('branch_admin');
   if (!isOverride && !isBranchAdmin) return [];
+  // branch_admin with no branch assigned cannot approve any passes
+  if (!isOverride && !actor.branchId) return [];
 
   const where = isOverride ? `status = 'pending_admin_approval'` : `status = 'pending_admin_approval' AND epr.branch_id = ?`;
-  const params = isOverride ? [] : [actor.branchId ?? ''];
+  const params = isOverride ? [] : [actor.branchId];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT epr.*, req.full_name AS requestor_name, bm.branch_name
      FROM exit_pass_requests epr
