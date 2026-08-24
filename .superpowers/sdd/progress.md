@@ -66,3 +66,13 @@ Task 3: complete (commit 3bbf19a6, base f4e70b6e, review clean — 8 routes, rol
 Task 4: complete (commit 089d7862, base 3bbf19a6, review clean — 3-step wizard, hrmsApi, TanStack Query)
 Task 5: complete (commit 375a8cdc, base 089d7862, review clean — differential entry, min 10 char remarks enforced)
 Task 6: complete (commit 5d2d84cb, base 375a8cdc, review clean — 3 routes, 3 nav entries, manager read-only view, TypeScript clean, frontend build PASS)
+
+---
+
+# AON & Attrition Drill-Down (Plan 1 of 2) — SDD Progress Ledger
+# Started: 2026-08-25
+# Plan: docs/superpowers/plans/2026-08-25-aon-attrition-drilldown-plan.md
+# Working directly on main (this repo's established convention, no feature branches)
+
+## Tasks
+Task 1: complete (commits 966ae8c5..7da40718, base 0fa44be3, review clean after 1 fix round — missed DATEDIFF site in aonCohortSurvival's cohortAge, fixed + test added; 285 tests passing)

@@ -17,6 +17,9 @@ import {
   searchEmployeesForCarrier,
   resolveRequestingEmployee,
   getActorRoles,
+  listBranchHeadAssignments,
+  upsertBranchHeadAssignment,
+  deactivateBranchHeadAssignment,
   ExitPassError,
   type CreateExitPassInput,
 } from './exit-pass.service.js';
@@ -91,6 +94,52 @@ exitPassRouter.get('/pending/admin', h(async (req, res) => {
     const roles = await getActorRoles(req.authUser!.id);
     const data = await listPendingAdmin(requester, roles);
     return res.json({ success: true, data });
+  } catch (error) {
+    return fail(res, error);
+  }
+}));
+
+// ─── Branch Head Assignment admin (Super Admin / Admin / IT Head only) ─────────
+// Registered before /:id so Express doesn't swallow '/admin/branch-head-assignments'.
+exitPassRouter.get('/admin/branch-head-assignments', h(async (req, res) => {
+  try {
+    const roles = await getActorRoles(req.authUser!.id);
+    if (!roles.some((r) => ['super_admin', 'admin', 'it_head'].includes(r))) {
+      return res.status(403).json({ success: false, message: 'Super Admin or Admin required.' });
+    }
+    const data = await listBranchHeadAssignments();
+    return res.json({ success: true, data });
+  } catch (error) {
+    return fail(res, error);
+  }
+}));
+
+exitPassRouter.post('/admin/branch-head-assignments', h(async (req, res) => {
+  try {
+    const roles = await getActorRoles(req.authUser!.id);
+    if (!roles.some((r) => ['super_admin', 'admin'].includes(r))) {
+      return res.status(403).json({ success: false, message: 'Super Admin or Admin required.' });
+    }
+    const requester = await resolveRequestingEmployee(req.authUser!.id);
+    const { branch_name, branch_head_id } = req.body as { branch_name: string; branch_head_id: string };
+    if (!branch_name?.trim() || !branch_head_id?.trim()) {
+      return res.status(400).json({ success: false, message: 'branch_name and branch_head_id are required.' });
+    }
+    const result = await upsertBranchHeadAssignment(branch_name.trim(), branch_head_id.trim(), requester.employeeId);
+    return res.status(201).json({ success: true, data: result });
+  } catch (error) {
+    return fail(res, error);
+  }
+}));
+
+exitPassRouter.patch('/admin/branch-head-assignments/:id/deactivate', h(async (req, res) => {
+  try {
+    const roles = await getActorRoles(req.authUser!.id);
+    if (!roles.some((r) => ['super_admin', 'admin'].includes(r))) {
+      return res.status(403).json({ success: false, message: 'Super Admin or Admin required.' });
+    }
+    await deactivateBranchHeadAssignment(req.params.id);
+    return res.json({ success: true });
   } catch (error) {
     return fail(res, error);
   }

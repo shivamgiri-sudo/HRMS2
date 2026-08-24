@@ -660,3 +660,46 @@ export async function searchEmployeesForCarrier(q: string): Promise<RowDataPacke
   );
   return rows;
 }
+
+// ─── Branch Head Assignment admin (Super Admin / Admin only) ────────────────
+
+export async function listBranchHeadAssignments(): Promise<RowDataPacket[]> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT bha.*, e.full_name AS branch_head_name, e.employee_code AS branch_head_code
+     FROM branch_head_assignments bha
+     LEFT JOIN employees e ON e.id = bha.branch_head_id
+     ORDER BY bha.branch_name ASC, bha.is_active DESC, bha.assigned_at DESC`,
+  );
+  return rows;
+}
+
+export async function upsertBranchHeadAssignment(
+  branchName: string,
+  branchHeadId: string,
+  assignedBy: string,
+): Promise<{ id: string }> {
+  // Deactivate any existing active assignment for this branch first (only one active per branch).
+  await db.execute(
+    `UPDATE branch_head_assignments SET is_active = FALSE WHERE branch_name = ? AND is_active = TRUE`,
+    [branchName],
+  );
+  const id = randomUUID();
+  await db.execute(
+    `INSERT INTO branch_head_assignments (id, branch_name, branch_head_id, is_active, assigned_by)
+     VALUES (?, ?, ?, TRUE, ?)`,
+    [id, branchName, branchHeadId, assignedBy],
+  );
+  return { id };
+}
+
+export async function deactivateBranchHeadAssignment(assignmentId: string): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT id FROM branch_head_assignments WHERE id = ? LIMIT 1`,
+    [assignmentId],
+  );
+  if (!rows[0]) throw new ExitPassError(404, 'Assignment not found.');
+  await db.execute(
+    `UPDATE branch_head_assignments SET is_active = FALSE WHERE id = ?`,
+    [assignmentId],
+  );
+}

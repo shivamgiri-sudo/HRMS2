@@ -1,0 +1,418 @@
+=== git log (BASE..HEAD) ===
+7da40718 fix(reporting): Fix missed AON reference date in aonCohortSurvival cohortAge
+966ae8c5 fix(reporting): AON reference date uses salary_start_date, falling back to date_of_joining
+
+=== git diff --stat ===
+ .../executors/__tests__/aon.executor.test.ts       | 60 ++++++++++++++++++++++
+ .../modules/reporting/executors/aon.executor.ts    | 45 ++++++++++------
+ .../reporting/executors/attrition-risk.executor.ts | 33 ++++++------
+ 3 files changed, 106 insertions(+), 32 deletions(-)
+
+=== git diff -U10 (full) ===
+diff --git a/backend/src/modules/reporting/executors/__tests__/aon.executor.test.ts b/backend/src/modules/reporting/executors/__tests__/aon.executor.test.ts
+new file mode 100644
+index 00000000..0da30590
+--- /dev/null
++++ b/backend/src/modules/reporting/executors/__tests__/aon.executor.test.ts
+@@ -0,0 +1,60 @@
++import { describe, expect, it, vi } from "vitest";
++
++vi.mock("../../../../db/mysql.js", () => ({
++  db: { execute: vi.fn() },
++}));
++
++import { db } from "../../../../db/mysql.js";
++import { aonBucketHeadcount, aonCohortSurvival, AON_REFERENCE_JOIN_DATE_SQL } from "../aon.executor.js";
++import type { ExecScope, ExecOptions } from "../types.js";
++
++const mockExecute = db.execute as ReturnType<typeof vi.fn>;
++
++const SCOPE: ExecScope = {
++  companyId: "co-1",
++  isSuperAdmin: true,
++  branchScope: { mode: "all", ids: [] },
++  processScope: { mode: "all", ids: [] },
++  departmentScope: { mode: "all", ids: [] },
++  costCentreScope: { mode: "all", ids: [] },
++  canViewAllEmployees: true,
++  canViewSensitiveFields: true,
++  canExportSensitiveReports: true,
++  roles: ["super_admin"],
++};
++
++const OPTIONS: ExecOptions = {
++  limit: 100,
++  offset: 0,
++  cursor: null,
++  includeTotal: true,
++  mode: "preview",
++};
++
++describe("AON reference date uses salary_start_date with date_of_joining fallback", () => {
++  it("AON_REFERENCE_JOIN_DATE_SQL is the documented COALESCE expression", () => {
++    expect(AON_REFERENCE_JOIN_DATE_SQL).toBe("COALESCE(e.salary_start_date, e.date_of_joining)");
++  });
++
++  it("aonBucketHeadcount's SQL references salary_start_date, not date_of_joining alone", async () => {
++    mockExecute.mockResolvedValueOnce([[], []]);
++    await aonBucketHeadcount({}, SCOPE, OPTIONS);
++    const sql = String(mockExecute.mock.calls[0][0]);
++    expect(sql).toContain("COALESCE(e.salary_start_date, e.date_of_joining)");
++    // The old bare form must not appear anywhere in the bucket expression itself —
++    // date_of_joining alone is still fine as the fallback INSIDE the COALESCE, so this
++    // checks specifically that DATEDIFF is never called against date_of_joining directly.
++    expect(sql).not.toMatch(/DATEDIFF\([^)]*,\s*e\.date_of_joining\)/);
++  });
++
++  it("aonCohortSurvival's SQL uses AON_REFERENCE_JOIN_DATE_SQL for cohort maturity and departure measures", async () => {
++    mockExecute.mockResolvedValueOnce([[], []]);
++    await aonCohortSurvival({}, SCOPE, OPTIONS);
++    const sql = String(mockExecute.mock.calls[0][0]);
++    // Must contain the COALESCE form in both leftBy (departure measure) and cohortAge (maturity measure)
++    expect(sql).toContain("COALESCE(e.salary_start_date, e.date_of_joining)");
++    // Must NOT contain bare DATEDIFF(..., e.date_of_joining) or LAST_DAY(e.date_of_joining)
++    expect(sql).not.toMatch(/DATEDIFF\([^)]*,\s*e\.date_of_joining\)/);
++    expect(sql).not.toMatch(/LAST_DAY\s*\(\s*e\.date_of_joining\s*\)/);
++  });
++});
+diff --git a/backend/src/modules/reporting/executors/aon.executor.ts b/backend/src/modules/reporting/executors/aon.executor.ts
+index 4948abcc..d1b39efd 100644
+--- a/backend/src/modules/reporting/executors/aon.executor.ts
++++ b/backend/src/modules/reporting/executors/aon.executor.ts
+@@ -76,51 +76,64 @@ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
+ }
+ 
+ async function count(baseSql: string, params: unknown[]): Promise<number> {
+   const [rows] = await db.execute<RowDataPacket[]>(
+     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
+     params
+   );
+   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
+ }
+ 
++/**
++ * AON reference join-date, corrected 2026-08-25.
++ *
++ * Was `e.date_of_joining` alone. `employees.salary_start_date` is populated on only 1,554 of
++ * 58,918 employees (2.6%, verified live) and its own type comment already documents it as
++ * "defaults to date_of_joining when null" (see running-salary.service.ts, which reads it the
++ * same way) — so COALESCE here is the existing convention for this column, not a new rule.
++ * Of the 1,554 populated rows only 19 actually differ from date_of_joining (6-41 day gaps, all
++ * recent joiners), so this is a safe substitution today and correctly future-proofed as more
++ * employees get a real salary_start_date set going forward.
++ */
++export const AON_REFERENCE_JOIN_DATE_SQL = "COALESCE(e.salary_start_date, e.date_of_joining)";
++
+ /**
+  * The bucket expression, parameterised only by the reference date.
+  *
+  * Written as day arithmetic rather than TIMESTAMPDIFF(MONTH, ...) — which is what
+  * tenure-distribution uses — because the boundaries here are exact day counts and a
+  * month-based comparison does not land on day 30/60/90.
+  *
+  * Boundaries are inclusive-upper (<= 30, <= 60, <= 90) so the four buckets are disjoint
+  * and cover every non-null joining date. Day 0 (joined today) falls in 0-30.
+  */
+ function aonBucketSql(asOf: string): string {
+   return `CASE
+-             WHEN DATEDIFF(${asOf}, e.date_of_joining) <= 30 THEN '0-30'
+-             WHEN DATEDIFF(${asOf}, e.date_of_joining) <= 60 THEN '31-60'
+-             WHEN DATEDIFF(${asOf}, e.date_of_joining) <= 90 THEN '61-90'
++             WHEN DATEDIFF(${asOf}, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN '0-30'
++             WHEN DATEDIFF(${asOf}, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN '31-60'
++             WHEN DATEDIFF(${asOf}, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN '61-90'
+              ELSE '90+'
+            END`;
+ }
+ 
+ /**
+  * The ordering key for the four buckets.
+  *
+  * Sorting on the label alone puts '0-30' before '31-60' but '90+' before both, because it
+  * is a string sort. Every report here orders by this instead so the buckets read in
+  * tenure order on screen and in the exported workbook.
+  */
+ function aonBucketOrderSql(asOf: string): string {
+   return `CASE
+-             WHEN DATEDIFF(${asOf}, e.date_of_joining) <= 30 THEN 1
+-             WHEN DATEDIFF(${asOf}, e.date_of_joining) <= 60 THEN 2
+-             WHEN DATEDIFF(${asOf}, e.date_of_joining) <= 90 THEN 3
++             WHEN DATEDIFF(${asOf}, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 1
++             WHEN DATEDIFF(${asOf}, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN 2
++             WHEN DATEDIFF(${asOf}, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN 3
+              ELSE 4
+            END`;
+ }
+ 
+ /**
+  * The active-employee test.
+  *
+  * `active_status = 1` alone, deliberately. The superseded two-flag form also required
+  * LOWER(COALESCE(employment_status,'active')) = 'active', which returns 1,123 where the
+  * agreed definition returns 1,125 — employment_status is mixed-case free text
+@@ -193,22 +206,22 @@ export async function aonBucketHeadcount(
+            COALESCE(p.process_name, 'UNASSIGNED')     AS process_name,
+            ${aonBucketSql("CURDATE()")} AS aon_bucket,
+            COUNT(*) AS headcount,
+            ROUND(
+              COUNT(*) * 100.0
+              / NULLIF(SUM(COUNT(*)) OVER (
+                  PARTITION BY b.branch_name, cc.cost_centre_code, p.process_name
+                ), 0),
+              2
+            ) AS pct_of_group,
+-           MIN(DATEDIFF(CURDATE(), e.date_of_joining)) AS min_aon_days,
+-           MAX(DATEDIFF(CURDATE(), e.date_of_joining)) AS max_aon_days
++           MIN(DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL})) AS min_aon_days,
++           MAX(DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL})) AS max_aon_days
+       FROM employees e
+       LEFT JOIN branch_master b       ON b.id  = e.branch_id
+       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+       LEFT JOIN process_master p      ON p.id  = e.process_id
+      WHERE ${clauses.join(" AND ")}
+      GROUP BY b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name,
+               ${aonBucketSql("CURDATE()")}, ${aonBucketOrderSql("CURDATE()")}
+      ORDER BY b.branch_name, cc.cost_centre_code, p.process_name,
+               ${aonBucketOrderSql("CURDATE()")}`;
+ 
+@@ -278,23 +291,23 @@ export async function aonBucketAttrition(
+   const bucketOrder = aonBucketOrderSql("e.date_of_exit");
+ 
+   const base = `
+     SELECT DATE_FORMAT(e.date_of_exit, '%Y-%m')        AS month,
+            COALESCE(b.branch_name, 'UNASSIGNED')       AS branch_name,
+            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+            COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
+            ${bucket} AS aon_bucket,
+            COUNT(*) AS exits,
+-           ROUND(AVG(DATEDIFF(e.date_of_exit, e.date_of_joining)), 1) AS avg_tenure_days,
+-           MIN(DATEDIFF(e.date_of_exit, e.date_of_joining)) AS min_tenure_days,
+-           MAX(DATEDIFF(e.date_of_exit, e.date_of_joining)) AS max_tenure_days,
++           ROUND(AVG(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})), 1) AS avg_tenure_days,
++           MIN(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})) AS min_tenure_days,
++           MAX(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})) AS max_tenure_days,
+            -- Share of the month's exits that fell in this bucket, within this group.
+            ROUND(
+              COUNT(*) * 100.0
+              / NULLIF(SUM(COUNT(*)) OVER (
+                  PARTITION BY DATE_FORMAT(e.date_of_exit, '%Y-%m'),
+                               b.branch_name, cc.cost_centre_code, p.process_name
+                ), 0),
+              2
+            ) AS pct_of_month_exits,
+            -- How much of THIS row rests on a populated process_id. 272 of 2,796 recent
+@@ -490,23 +503,23 @@ export async function aonCohortSurvival(
+     // date would be counted as having left within 30 days of a cohort they were never in,
+     // understating that month's survival.
+     `(e.date_of_exit IS NULL OR ${POSSIBLE_TENURE})`,
+     "e.date_of_joining >= ?",
+     "e.date_of_joining <= ?"
+   );
+   params.push(from, to);
+ 
+   // Days of observation available to the cohort, measured from the LAST day of the cohort
+   // month so no member of it is credited with more exposure than the youngest member has.
+-  const cohortAge = "DATEDIFF(CURDATE(), LAST_DAY(e.date_of_joining))";
++  const cohortAge = `DATEDIFF(CURDATE(), LAST_DAY(${AON_REFERENCE_JOIN_DATE_SQL}))`;
+   const leftBy = (d: number) =>
+-    `SUM(e.date_of_exit IS NOT NULL AND DATEDIFF(e.date_of_exit, e.date_of_joining) <= ${d})`;
++    `SUM(e.date_of_exit IS NOT NULL AND DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) <= ${d})`;
+   const survival = (d: number) => `
+     CASE WHEN MIN(${cohortAge}) >= ${d}
+          THEN ROUND(100.0 - (${leftBy(d)} * 100.0 / NULLIF(COUNT(*), 0)), 2)
+          ELSE NULL END`;
+ 
+   const base = `
+     SELECT DATE_FORMAT(e.date_of_joining, '%Y-%m')      AS cohort_month,
+            COALESCE(b.branch_name, 'UNASSIGNED')        AS branch_name,
+            COALESCE(cc.cost_centre_code, 'UNASSIGNED')  AS cost_centre_code,
+            COALESCE(cc.cost_centre_name, 'UNASSIGNED')  AS cost_centre_name,
+@@ -518,21 +531,21 @@ export async function aonCohortSurvival(
+            ${leftBy(30)} AS left_by_30,
+            ${leftBy(60)} AS left_by_60,
+            ${leftBy(90)} AS left_by_90,
+            ${survival(30)} AS survival_30_pct,
+            ${survival(60)} AS survival_60_pct,
+            ${survival(90)} AS survival_90_pct,
+            MIN(${cohortAge}) >= 30 AS is_mature_30,
+            MIN(${cohortAge}) >= 60 AS is_mature_60,
+            MIN(${cohortAge}) >= 90 AS is_mature_90,
+            ROUND(AVG(CASE WHEN e.date_of_exit IS NOT NULL
+-                          THEN DATEDIFF(e.date_of_exit, e.date_of_joining) END), 1)
++                          THEN DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) END), 1)
+              AS avg_tenure_days_of_leavers
+       FROM employees e
+       LEFT JOIN branch_master b       ON b.id  = e.branch_id
+       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+       LEFT JOIN process_master p      ON p.id  = e.process_id
+      WHERE ${clauses.join(" AND ")}
+      GROUP BY DATE_FORMAT(e.date_of_joining, '%Y-%m'),
+               b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name
+      ORDER BY cohort_month DESC, b.branch_name, cc.cost_centre_code, p.process_name`;
+ 
+@@ -719,38 +732,38 @@ export async function attritionDeepDive(
+   ]
+     .filter(Boolean)
+     .join("\n      ");
+ 
+   const base = `
+     SELECT '${key}' AS dimension,
+            '${dim.label}' AS dimension_label,
+            ${dim.expr} AS dimension_value,
+            ${bucket} AS aon_bucket,
+            COUNT(*) AS exits,
+-           ROUND(AVG(DATEDIFF(e.date_of_exit, e.date_of_joining)), 1) AS avg_tenure_days,
++           ROUND(AVG(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})), 1) AS avg_tenure_days,
+            -- This bucket's share of all exits for this dimension value.
+            ROUND(
+              COUNT(*) * 100.0
+              / NULLIF(SUM(COUNT(*)) OVER (PARTITION BY ${dim.expr}), 0),
+              2
+            ) AS share_pct,
+            -- The headline: of everyone who left from this dimension value, what fraction
+            -- went inside 30 days. Constant across the value's four bucket rows by design,
+            -- so the value can be ranked on it without re-aggregating.
+            --
+            -- The window wraps an AGGREGATE, not a raw column. Writing it as
+            -- SUM(CASE WHEN DATEDIFF(...) <= 30 ...) OVER (...) reads naturally and is
+            -- invalid: window functions are evaluated after GROUP BY, so the inner
+            -- expression would reference an ungrouped e.date_of_exit and fail outright
+            -- under ONLY_FULL_GROUP_BY rather than degrade.
+            ROUND(
+-             SUM(SUM(CASE WHEN DATEDIFF(e.date_of_exit, e.date_of_joining) <= 30 THEN 1 ELSE 0 END))
++             SUM(SUM(CASE WHEN DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 1 ELSE 0 END))
+                OVER (PARTITION BY ${dim.expr}) * 100.0
+              / NULLIF(SUM(COUNT(*)) OVER (PARTITION BY ${dim.expr}), 0),
+              2
+            ) AS early_quit_rate,
+            -- Emitted so the missing reason data reads as a finding, not a blank column.
+            ROUND(
+              SUM(NULLIF(TRIM(COALESCE(er.exit_reason_category, er.resignation_reason, '')), '') IS NOT NULL)
+              * 100.0 / NULLIF(COUNT(*), 0),
+              2
+            ) AS reason_captured_pct
+diff --git a/backend/src/modules/reporting/executors/attrition-risk.executor.ts b/backend/src/modules/reporting/executors/attrition-risk.executor.ts
+index e30df19b..6ad4f1e6 100644
+--- a/backend/src/modules/reporting/executors/attrition-risk.executor.ts
++++ b/backend/src/modules/reporting/executors/attrition-risk.executor.ts
+@@ -48,20 +48,21 @@
+ import type { RowDataPacket } from "mysql2";
+ import { db } from "../../../db/mysql.js";
+ import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+ import {
+   appendScopeConditions,
+   appendFilterConditions,
+   dateParam,
+   fetchPageWithTotal,
+   rethrowReportSchemaError,
+ } from "./types.js";
++import { AON_REFERENCE_JOIN_DATE_SQL } from "./aon.executor.js";
+ 
+ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
+   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
+   return rows;
+ }
+ 
+ async function count(baseSql: string, params: unknown[]): Promise<number> {
+   const [rows] = await db.execute<RowDataPacket[]>(
+     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
+     params
+@@ -91,81 +92,81 @@ export async function attritionRiskScore(
+   // one row per employee. Doing it as correlated subqueries in the SELECT would re-scan
+   // attendance_daily_record once per employee per metric.
+   const base = `
+     SELECT e.employee_code,
+            COALESCE(NULLIF(TRIM(e.full_name),''),
+                     TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
+            COALESCE(b.branch_name, 'UNASSIGNED')       AS branch_name,
+            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+            COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
+            DATE_FORMAT(e.date_of_joining, '%Y-%m-%d')  AS date_of_joining,
+-           DATEDIFF(CURDATE(), e.date_of_joining)      AS aon_days,
++           DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL})      AS aon_days,
+            CASE
+-             WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 30 THEN '0-30'
+-             WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 60 THEN '31-60'
+-             WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 90 THEN '61-90'
++             WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN '0-30'
++             WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN '31-60'
++             WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN '61-90'
+              ELSE '90+'
+            END AS aon_bucket,
+            COALESCE(a.attendance_days, 0)              AS attendance_days,
+            CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                 THEN ROUND(a.absent_days   * 100.0 / a.attendance_days, 1) END AS absence_rate_pct,
+            CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                 THEN ROUND(a.missing_days  * 100.0 / a.attendance_days, 1) END AS missing_punch_rate_pct,
+            CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                 THEN ROUND(a.half_days     * 100.0 / a.attendance_days, 1) END AS half_day_rate_pct,
+            -- Component columns, so the ranking can be argued with rather than trusted.
+            CASE
+-             WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 30 THEN 45
+-             WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 60 THEN 30
+-             WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 90 THEN 18
++             WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 45
++             WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN 30
++             WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN 18
+              ELSE 6
+            END AS tenure_points,
+            CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                 THEN LEAST(25, ROUND(a.absent_days  * 25.0 / a.attendance_days, 1)) ELSE 0 END AS absence_points,
+            CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                 THEN LEAST(20, ROUND(a.missing_days * 20.0 / a.attendance_days, 1)) ELSE 0 END AS missing_punch_points,
+            CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                 THEN LEAST(10, ROUND(a.half_days    * 10.0 / a.attendance_days, 1)) ELSE 0 END AS half_day_points,
+            LEAST(100,
+              CASE
+-               WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 30 THEN 45
+-               WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 60 THEN 30
+-               WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 90 THEN 18
++               WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 45
++               WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN 30
++               WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN 18
+                ELSE 6
+              END
+              + CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                     THEN LEAST(25, a.absent_days  * 25.0 / a.attendance_days) ELSE 0 END
+              + CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                     THEN LEAST(20, a.missing_days * 20.0 / a.attendance_days) ELSE 0 END
+              + CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                     THEN LEAST(10, a.half_days    * 10.0 / a.attendance_days) ELSE 0 END
+            ) AS risk_score,
+            CASE
+              WHEN LEAST(100,
+                CASE
+-                 WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 30 THEN 45
+-                 WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 60 THEN 30
+-                 WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 90 THEN 18
++                 WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 45
++                 WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN 30
++                 WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN 18
+                  ELSE 6
+                END
+                + CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                       THEN LEAST(25, a.absent_days  * 25.0 / a.attendance_days) ELSE 0 END
+                + CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                       THEN LEAST(20, a.missing_days * 20.0 / a.attendance_days) ELSE 0 END
+                + CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                       THEN LEAST(10, a.half_days    * 10.0 / a.attendance_days) ELSE 0 END
+              ) >= 60 THEN 'High'
+              WHEN LEAST(100,
+                CASE
+-                 WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 30 THEN 45
+-                 WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 60 THEN 30
+-                 WHEN DATEDIFF(CURDATE(), e.date_of_joining) <= 90 THEN 18
++                 WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 45
++                 WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 60 THEN 30
++                 WHEN DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 90 THEN 18
+                  ELSE 6
+                END
+                + CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                       THEN LEAST(25, a.absent_days  * 25.0 / a.attendance_days) ELSE 0 END
+                + CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                       THEN LEAST(20, a.missing_days * 20.0 / a.attendance_days) ELSE 0 END
+                + CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                       THEN LEAST(10, a.half_days    * 10.0 / a.attendance_days) ELSE 0 END
+              ) >= 35 THEN 'Medium'
+              ELSE 'Low'

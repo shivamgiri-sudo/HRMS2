@@ -34,7 +34,7 @@ import { ManagerReferenceLayout } from "./reference/ManagerReferenceLayout";
 import { PayrollReferenceLayout } from "./reference/PayrollReferenceLayout";
 import { SuperAdminReferenceLayout } from "./reference/SuperAdminReferenceLayout";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import { QuickLinksWidget } from "@/components/dashboard/widgets/QuickLinksWidget";
+import { QuickLinksBar } from "@/components/dashboard/widgets/QuickLinksWidget";
 import { WfmAttendanceReferenceLayout } from "./reference/WfmAttendanceReferenceLayout";
 import { WfmReferenceLayout } from "./reference/WfmReferenceLayout";
 import { QualityReferenceLayout } from "./reference/QualityReferenceLayout";
@@ -589,9 +589,9 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   return (
     <DashboardLayout subheader={subheader}>
       <main className="role-dashboard-reference" aria-label={`${variant} dashboard`}>
-        {/* Quick Links widget - allows users to pin frequently visited pages */}
-        <div className="mb-5 max-w-md">
-          <QuickLinksWidget />
+        {/* Quick Links bar - thin horizontal row for quick page access */}
+        <div className="mb-3 -mt-2 border-b border-slate-100 bg-white/80 backdrop-blur-sm rounded-lg">
+          <QuickLinksBar />
         </div>
 
         {errorMessage ? <div className="mb-4"><ReferenceError message={errorMessage} onRetry={refreshAll} /></div> : null}

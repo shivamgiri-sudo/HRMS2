@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Package, Plus, Loader, RefreshCcw, X, CheckCircle2, XCircle, Undo2, Send, Printer, AlertTriangle, Ban } from "lucide-react";
+import { Package, Plus, Loader, RefreshCcw, X, CheckCircle2, XCircle, Undo2, Send, Printer, AlertTriangle, Ban, ChevronRight, Clock, User, MapPin, Truck, FileText, ClipboardList, Settings, Trash2 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { StatusBadge, normalizeStatus } from "@/components/ui/status-badge";
@@ -16,10 +16,22 @@ type ExitPassItem = {
   quantity: number;
   unit: string;
   condition_out?: string;
+  condition_in?: string;
+  has_damage?: boolean;
+  missing?: boolean;
   remarks?: string;
 };
 
-type ExitPass = {
+type ExitPassApproval = {
+  id: string;
+  stage: "branch_head" | "admin";
+  approver_name: string;
+  decision: string;
+  remarks?: string | null;
+  decided_at: string;
+};
+
+type ExitPassDetail = {
   id: string;
   pass_number: string | null;
   requestor_employee_id: string;
@@ -36,12 +48,30 @@ type ExitPass = {
   destination_address?: string;
   planned_exit_at: string;
   expected_return_at?: string;
+  carrier_type?: string;
+  carrier_name?: string;
+  carrier_mobile?: string;
+  carrier_company?: string;
+  vehicle_number?: string;
   status: string;
   submitted_at?: string;
   created_at: string;
+  exit_verified_at?: string;
+  exit_gate?: string;
   items?: ExitPassItem[];
+  approvals?: ExitPassApproval[];
+  letterhead?: {
+    branch_name: string;
+    branch_code?: string;
+    city?: string;
+    state?: string;
+    address?: string;
+    requestor_name: string;
+  } | null;
   is_overdue?: boolean | number;
 };
+
+type ExitPass = ExitPassDetail;
 
 const EMPTY_ITEM: ExitPassItem = { category: "", item_name: "", quantity: 1, unit: "Nos" };
 
@@ -106,21 +136,43 @@ const REASONS: Record<"IT" | "ADMIN", Array<{ code: string; label: string }>> = 
 
 type BranchOption = { id: string; branch_name: string; address?: string | null; city?: string | null; state?: string | null };
 type EmployeeHit = { id: string; employee_code: string; full_name: string; mobile?: string | null };
+type BranchHeadAssignment = {
+  id: string;
+  branch_name: string;
+  branch_head_id: string;
+  branch_head_name?: string;
+  branch_head_code?: string;
+  is_active: boolean;
+  assigned_at: string;
+};
 
 const INPUT_CLS = "w-full rounded-lg border border-slate-200 px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500";
+
+function fmtDate(val?: string | null): string {
+  if (!val) return "—";
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? val : d.toLocaleString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+function fmtShortDate(val?: string | null): string {
+  if (!val) return "—";
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? val : d.toLocaleDateString("en-IN", { day: "2-digit", month: "2-digit", year: "numeric" });
+}
 
 // --- Page ----------------------------------------------------------------
 
 export default function NativeExitPass() {
-  const [tab, setTab] = useState<"mine" | "pending_bh" | "pending_admin" | "outside">("mine");
+  const [tab, setTab] = useState<"mine" | "pending_bh" | "pending_admin" | "outside" | "bh_admin">("mine");
   const [passes, setPasses] = useState<ExitPass[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [decisionTarget, setDecisionTarget] = useState<{ pass: ExitPass; stage: "branch_head" | "admin" } | null>(null);
+  const [detailPassId, setDetailPassId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (tab === "bh_admin") return;
     setLoading(true);
     setError(null);
     setActionError(null);
@@ -180,125 +232,142 @@ export default function NativeExitPass() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 border-b border-slate-200">
+        <div className="flex gap-1 border-b border-slate-200 overflow-x-auto">
           {([
             ["mine", "My Requests"],
             ["pending_bh", "Pending Branch Head"],
             ["pending_admin", "Pending Admin"],
             ["outside", "Outside Premises"],
+            ["bh_admin", "Branch Head Setup"],
           ] as const).map(([key, label]) => (
             <button
               key={key}
               onClick={() => setTab(key)}
-              className={`px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors cursor-pointer ${
+              className={`px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                 tab === key ? "border-rose-600 text-rose-600" : "border-transparent text-slate-500 hover:text-slate-800"
               }`}
             >
+              {key === "bh_admin" && <Settings className="h-3.5 w-3.5" />}
               {label}
             </button>
           ))}
         </div>
 
-        {error && (
-          <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            <AlertTriangle className="h-4 w-4 shrink-0" /> {error}
-          </div>
-        )}
-        {actionError && (
-          <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            <AlertTriangle className="h-4 w-4 shrink-0" /> {actionError}
-            <button onClick={() => setActionError(null)} className="ml-auto text-rose-400 hover:text-rose-600 cursor-pointer"><X className="h-4 w-4" /></button>
-          </div>
-        )}
-
-        {loading ? (
-          <div className="flex items-center justify-center py-16 text-slate-400">
-            <Loader className="h-5 w-5 animate-spin mr-2" /> Loading...
-          </div>
-        ) : passes.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-slate-200 rounded-2xl bg-white">
-            <Package className="h-12 w-12 text-slate-300 mb-3" />
-            <h3 className="text-base font-bold text-slate-700">No exit passes here yet</h3>
-            <p className="mt-1 text-sm text-slate-500">
-              {tab === "mine" ? "Raise one with the button above." :
-                tab === "outside" ? "Nothing is currently checked out." :
-                "Nothing is waiting on your decision right now."}
-            </p>
-          </div>
+        {tab === "bh_admin" ? (
+          <BranchHeadAdmin />
         ) : (
-          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-100">
-                  <th className="text-left font-semibold px-4 py-3">Pass No.</th>
-                  <th className="text-left font-semibold px-4 py-3">Requestor</th>
-                  <th className="text-left font-semibold px-4 py-3">Branch</th>
-                  <th className="text-left font-semibold px-4 py-3">Dept</th>
-                  <th className="text-left font-semibold px-4 py-3">Movement</th>
-                  <th className="text-left font-semibold px-4 py-3">Exit</th>
-                  <th className="text-left font-semibold px-4 py-3">Status</th>
-                  <th className="text-right font-semibold px-4 py-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {passes.map((p) => (
-                  <tr key={p.id} className="hover:bg-slate-50/60 transition-colors">
-                    <td className="px-4 py-3 font-mono text-xs text-slate-700">{p.pass_number ?? <span className="text-slate-400">Draft</span>}</td>
-                    <td className="px-4 py-3 font-medium text-slate-800">{p.requestor_name ?? "-"}</td>
-                    <td className="px-4 py-3 text-slate-600">{p.branch_name ?? "-"}</td>
-                    <td className="px-4 py-3">
-                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${p.request_department === "IT" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>
-                        {p.request_department}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{p.movement_type === "returnable" ? "Returnable" : "Non-Returnable"}</td>
-                    <td className="px-4 py-3 text-slate-600">{p.planned_exit_at ? new Date(p.planned_exit_at).toLocaleDateString() : "-"}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-1.5">
-                        <StatusBadge status={normalizeStatus(p.status)} />
-                        {!!p.is_overdue && (
-                          <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-rose-600 text-white">Overdue</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        {tab === "mine" && p.status === "draft" && (
-                          <>
-                            <ActionBtn icon={Send} label="Submit" onAction={async () => {
-                              await hrmsApi.post(`/api/exit-passes/${p.id}/submit`);
-                              void load();
-                            }} onError={setActionError} />
-                            <ActionBtn icon={Ban} label="Cancel" variant="danger" onAction={async () => {
-                              if (!window.confirm("Cancel this draft exit pass?")) return;
-                              await hrmsApi.patch(`/api/exit-passes/${p.id}/cancel`);
-                              void load();
-                            }} onError={setActionError} />
-                          </>
-                        )}
-                        {tab === "pending_bh" && p.status === "pending_branch_head" && (
-                          <ActionBtn icon={CheckCircle2} label="Decide" onAction={() => { setDecisionTarget({ pass: p, stage: "branch_head" }); }} onError={setActionError} />
-                        )}
-                        {tab === "pending_admin" && p.status === "pending_admin_approval" && (
-                          <ActionBtn icon={CheckCircle2} label="Decide" onAction={() => { setDecisionTarget({ pass: p, stage: "admin" }); }} onError={setActionError} />
-                        )}
-                        {(p.status === "approved" || p.status === "outside_premises") && (
-                          <a
-                            href={`/it-admin/exit-pass/${p.id}/print`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 hover:text-rose-700 transition-colors cursor-pointer"
-                          >
-                            <Printer className="h-3.5 w-3.5" /> Print
-                          </a>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <>
+            {error && (
+              <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                <AlertTriangle className="h-4 w-4 shrink-0" /> {error}
+              </div>
+            )}
+            {actionError && (
+              <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                <AlertTriangle className="h-4 w-4 shrink-0" /> {actionError}
+                <button onClick={() => setActionError(null)} className="ml-auto text-rose-400 hover:text-rose-600 cursor-pointer"><X className="h-4 w-4" /></button>
+              </div>
+            )}
+
+            {loading ? (
+              <div className="flex items-center justify-center py-16 text-slate-400">
+                <Loader className="h-5 w-5 animate-spin mr-2" /> Loading...
+              </div>
+            ) : passes.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-slate-200 rounded-2xl bg-white">
+                <Package className="h-12 w-12 text-slate-300 mb-3" />
+                <h3 className="text-base font-bold text-slate-700">No exit passes here yet</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  {tab === "mine" ? "Raise one with the button above." :
+                    tab === "outside" ? "Nothing is currently checked out." :
+                    "Nothing is waiting on your decision right now."}
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-100">
+                      <th className="text-left font-semibold px-4 py-3">Pass No.</th>
+                      <th className="text-left font-semibold px-4 py-3">Requestor</th>
+                      <th className="text-left font-semibold px-4 py-3">Branch</th>
+                      <th className="text-left font-semibold px-4 py-3">Dept</th>
+                      <th className="text-left font-semibold px-4 py-3">Movement</th>
+                      <th className="text-left font-semibold px-4 py-3">Exit</th>
+                      <th className="text-left font-semibold px-4 py-3">Status</th>
+                      <th className="text-right font-semibold px-4 py-3">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {passes.map((p) => (
+                      <tr
+                        key={p.id}
+                        onClick={() => setDetailPassId(p.id)}
+                        className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
+                      >
+                        <td className="px-4 py-3 font-mono text-xs text-slate-700">
+                          <span className="flex items-center gap-1">
+                            {p.pass_number ?? <span className="text-slate-400">Draft</span>}
+                            <ChevronRight className="h-3.5 w-3.5 text-slate-300 group-hover:text-rose-400 transition-colors" />
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-medium text-slate-800">{p.requestor_name ?? "-"}</td>
+                        <td className="px-4 py-3 text-slate-600">{p.branch_name ?? "-"}</td>
+                        <td className="px-4 py-3">
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${p.request_department === "IT" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>
+                            {p.request_department}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-600">{p.movement_type === "returnable" ? "Returnable" : "Non-Returnable"}</td>
+                        <td className="px-4 py-3 text-slate-600">{p.planned_exit_at ? new Date(p.planned_exit_at).toLocaleDateString() : "-"}</td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-1.5">
+                            <StatusBadge status={normalizeStatus(p.status)} />
+                            {!!p.is_overdue && (
+                              <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-rose-600 text-white">Overdue</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-end gap-2">
+                            {tab === "mine" && p.status === "draft" && (
+                              <>
+                                <ActionBtn icon={Send} label="Submit" onAction={async () => {
+                                  await hrmsApi.post(`/api/exit-passes/${p.id}/submit`);
+                                  void load();
+                                }} onError={setActionError} />
+                                <ActionBtn icon={Ban} label="Cancel" variant="danger" onAction={async () => {
+                                  if (!window.confirm("Cancel this draft exit pass?")) return;
+                                  await hrmsApi.patch(`/api/exit-passes/${p.id}/cancel`);
+                                  void load();
+                                }} onError={setActionError} />
+                              </>
+                            )}
+                            {tab === "pending_bh" && p.status === "pending_branch_head" && (
+                              <ActionBtn icon={CheckCircle2} label="Decide" onAction={() => { setDecisionTarget({ pass: p, stage: "branch_head" }); }} onError={setActionError} />
+                            )}
+                            {tab === "pending_admin" && p.status === "pending_admin_approval" && (
+                              <ActionBtn icon={CheckCircle2} label="Decide" onAction={() => { setDecisionTarget({ pass: p, stage: "admin" }); }} onError={setActionError} />
+                            )}
+                            {(p.status === "approved" || p.status === "outside_premises") && (
+                              <a
+                                href={`/it-admin/exit-pass/${p.id}/print`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 hover:text-rose-700 transition-colors cursor-pointer"
+                              >
+                                <Printer className="h-3.5 w-3.5" /> Print
+                              </a>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -317,7 +386,523 @@ export default function NativeExitPass() {
           onDone={() => { setDecisionTarget(null); void load(); }}
         />
       )}
+
+      {detailPassId && (
+        <ExitPassDetailDrawer
+          passId={detailPassId}
+          onClose={() => setDetailPassId(null)}
+        />
+      )}
     </DashboardLayout>
+  );
+}
+
+// --- Detail Drawer -------------------------------------------------------
+
+function ExitPassDetailDrawer({ passId, onClose }: { passId: string; onClose: () => void }) {
+  const [detail, setDetail] = useState<ExitPassDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    hrmsApi.get<{ success: boolean; data: ExitPassDetail; message?: string }>(`/api/exit-passes/${passId}`)
+      .then((res) => {
+        if (!res?.success) throw new Error(res?.message ?? "Failed to load");
+        setDetail(res.data);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load details"))
+      .finally(() => setLoading(false));
+  }, [passId]);
+
+  const priorityColor = detail?.priority === "emergency" ? "bg-red-100 text-red-700" :
+    detail?.priority === "urgent" ? "bg-orange-100 text-orange-700" : "bg-slate-100 text-slate-600";
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      {/* Backdrop */}
+      <div className="flex-1 bg-slate-900/40" onClick={onClose} />
+
+      {/* Drawer */}
+      <div className="w-full max-w-2xl bg-white shadow-2xl flex flex-col h-full overflow-hidden animate-in slide-in-from-right duration-200">
+        {/* Drawer header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-rose-700 to-orange-600 shrink-0">
+          <div className="flex items-center gap-3">
+            <FileText className="h-5 w-5 text-white/80" />
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-rose-200">Exit Pass Detail</p>
+              <h2 className="text-base font-bold text-white">
+                {detail?.pass_number ?? (detail ? "Draft" : "Loading...")}
+              </h2>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {detail && (detail.status === "approved" || detail.status === "outside_premises") && (
+              <a
+                href={`/it-admin/exit-pass/${detail.id}/print`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white/15 hover:bg-white/25 text-white transition-colors"
+              >
+                <Printer className="h-3.5 w-3.5" /> Print
+              </a>
+            )}
+            <button onClick={onClose} className="text-white/70 hover:text-white cursor-pointer p-1">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {loading && (
+            <div className="flex items-center justify-center py-16 text-slate-400">
+              <Loader className="h-5 w-5 animate-spin mr-2" /> Loading details...
+            </div>
+          )}
+          {error && (
+            <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <AlertTriangle className="h-4 w-4 shrink-0" /> {error}
+            </div>
+          )}
+
+          {detail && (
+            <>
+              {/* Status + meta row */}
+              <div className="flex flex-wrap items-center gap-2">
+                <StatusBadge status={normalizeStatus(detail.status)} />
+                {!!detail.is_overdue && (
+                  <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-rose-600 text-white">Overdue</span>
+                )}
+                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${priorityColor}`}>
+                  {detail.priority} priority
+                </span>
+                <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${detail.request_department === "IT" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>
+                  {detail.request_department}
+                </span>
+                <span className="ml-auto text-xs text-slate-400">Created {fmtShortDate(detail.created_at)}</span>
+              </div>
+
+              {/* Pass Details */}
+              <section>
+                <SectionLabel icon={<ClipboardList className="h-3.5 w-3.5" />} title="Pass Details" />
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                  <DetailRow label="Requestor" value={detail.requestor_name} />
+                  <DetailRow label="Branch" value={detail.branch_name} />
+                  <DetailRow label="Movement Type" value={detail.movement_type === "returnable" ? "Returnable" : "Non-Returnable"} />
+                  <DetailRow label="Reason" value={detail.purpose_code?.replace(/_/g, " ")} />
+                  <DetailRow label="Planned Exit" value={fmtDate(detail.planned_exit_at)} />
+                  {detail.movement_type === "returnable" && (
+                    <DetailRow label="Expected Return" value={fmtDate(detail.expected_return_at)} />
+                  )}
+                  {detail.submitted_at && <DetailRow label="Submitted At" value={fmtDate(detail.submitted_at)} />}
+                  {detail.exit_verified_at && <DetailRow label="Exit Verified At" value={fmtDate(detail.exit_verified_at)} />}
+                  {detail.exit_gate && <DetailRow label="Exit Gate" value={detail.exit_gate} />}
+                </div>
+                <div className="mt-3 text-sm">
+                  <span className="block text-xs font-bold uppercase tracking-wide text-slate-400 mb-1">Purpose</span>
+                  <p className="text-slate-700 whitespace-pre-wrap">{detail.purpose_details || "—"}</p>
+                </div>
+              </section>
+
+              {/* Destination */}
+              <section>
+                <SectionLabel icon={<MapPin className="h-3.5 w-3.5" />} title="Destination" />
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                  <DetailRow label="Type" value={detail.destination_type} />
+                  <DetailRow label="Name" value={detail.destination_name} />
+                  {detail.destination_address && <DetailRow label="Address" value={detail.destination_address} />}
+                </div>
+              </section>
+
+              {/* Carrier */}
+              <section>
+                <SectionLabel icon={<Truck className="h-3.5 w-3.5" />} title="Carrier" />
+                <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
+                  <DetailRow label="Carried By" value={detail.carrier_type} />
+                  <DetailRow label="Name" value={detail.carrier_name} />
+                  <DetailRow label="Mobile" value={detail.carrier_mobile} />
+                  {detail.carrier_company && <DetailRow label="Company" value={detail.carrier_company} />}
+                  {detail.vehicle_number && <DetailRow label="Vehicle No." value={detail.vehicle_number} />}
+                </div>
+              </section>
+
+              {/* Items */}
+              <section>
+                <SectionLabel icon={<Package className="h-3.5 w-3.5" />} title={`Materials / Items (${detail.items?.length ?? 0})`} />
+                {!detail.items?.length ? (
+                  <p className="text-sm text-slate-400 italic">No items recorded.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded-xl border border-slate-100">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 text-slate-400 text-[10px] uppercase tracking-wide border-b border-slate-100">
+                          <th className="text-left font-semibold px-3 py-2">Category</th>
+                          <th className="text-left font-semibold px-3 py-2">Item</th>
+                          <th className="text-left font-semibold px-3 py-2">Asset ID</th>
+                          <th className="text-left font-semibold px-3 py-2">Serial No.</th>
+                          <th className="text-left font-semibold px-3 py-2">Make/Model</th>
+                          <th className="text-right font-semibold px-3 py-2">Qty</th>
+                          <th className="text-left font-semibold px-3 py-2">Unit</th>
+                          <th className="text-left font-semibold px-3 py-2">Condition Out</th>
+                          {detail.status === "closed" && <th className="text-left font-semibold px-3 py-2">Condition In</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {detail.items.map((item, idx) => (
+                          <tr key={item.id ?? idx} className="hover:bg-slate-50/60">
+                            <td className="px-3 py-2 text-slate-600">{item.category || "—"}</td>
+                            <td className="px-3 py-2 font-medium text-slate-800">{item.item_name}</td>
+                            <td className="px-3 py-2 font-mono text-slate-500">{item.asset_id || "—"}</td>
+                            <td className="px-3 py-2 font-mono text-slate-500">{item.serial_number || "—"}</td>
+                            <td className="px-3 py-2 text-slate-500">{item.make_model || "—"}</td>
+                            <td className="px-3 py-2 text-right text-slate-700 font-semibold">{item.quantity}</td>
+                            <td className="px-3 py-2 text-slate-500">{item.unit}</td>
+                            <td className="px-3 py-2 text-slate-500">{item.condition_out || "—"}</td>
+                            {detail.status === "closed" && (
+                              <td className="px-3 py-2">
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${item.has_damage ? "bg-red-100 text-red-700" : item.missing ? "bg-orange-100 text-orange-700" : "bg-emerald-50 text-emerald-700"}`}>
+                                  {item.missing ? "Missing" : item.has_damage ? "Damaged" : (item.condition_in || "OK")}
+                                </span>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+
+              {/* Approval Timeline */}
+              <section>
+                <SectionLabel icon={<CheckCircle2 className="h-3.5 w-3.5" />} title="Approval Timeline" />
+                {!detail.approvals?.length ? (
+                  <p className="text-sm text-slate-400 italic">No approval decisions recorded yet.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {detail.approvals.map((appr) => (
+                      <div key={appr.id} className="flex gap-3">
+                        <div className={`mt-0.5 h-8 w-8 shrink-0 rounded-full flex items-center justify-center text-white text-xs font-bold ${appr.decision === "approved" ? "bg-emerald-500" : appr.decision === "rejected" ? "bg-red-500" : "bg-orange-400"}`}>
+                          {appr.decision === "approved" ? "✓" : appr.decision === "rejected" ? "✗" : "↩"}
+                        </div>
+                        <div className="flex-1">
+                          <div className="flex items-baseline gap-2">
+                            <span className="text-sm font-semibold text-slate-800">{appr.approver_name}</span>
+                            <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">{appr.stage.replace("_", " ")}</span>
+                            <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${appr.decision === "approved" ? "bg-emerald-50 text-emerald-700" : appr.decision === "rejected" ? "bg-red-50 text-red-700" : "bg-orange-50 text-orange-700"}`}>
+                              {appr.decision}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-400 mt-0.5">{fmtDate(appr.decided_at)}</p>
+                          {appr.remarks && (
+                            <p className="mt-1 text-xs text-slate-600 bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                              {appr.remarks}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {/* Documents */}
+              <section>
+                <SectionLabel icon={<FileText className="h-3.5 w-3.5" />} title="Documents" />
+                <div className="rounded-xl border border-dashed border-slate-200 px-4 py-5 text-center text-sm text-slate-400">
+                  <FileText className="h-8 w-8 mx-auto mb-2 text-slate-200" />
+                  <p className="font-medium text-slate-500">No documents attached</p>
+                  <p className="text-xs mt-0.5">Gate pass prints are available once the pass is approved.</p>
+                  {(detail.status === "approved" || detail.status === "outside_premises") && (
+                    <a
+                      href={`/it-admin/exit-pass/${detail.id}/print`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 mt-3 px-3 py-1.5 text-xs font-semibold rounded-lg bg-rose-600 text-white hover:bg-rose-700 transition-colors"
+                    >
+                      <Printer className="h-3.5 w-3.5" /> Open Printable Gate Pass
+                    </a>
+                  )}
+                </div>
+              </section>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SectionLabel({ icon, title }: { icon: React.ReactNode; title: string }) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <span className="text-slate-400">{icon}</span>
+      <span className="text-xs font-bold uppercase tracking-wide text-slate-400">{title}</span>
+      <div className="flex-1 h-px bg-slate-100" />
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value?: string | null }) {
+  return (
+    <div>
+      <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-400">{label}</span>
+      <span className="text-slate-700">{value || "—"}</span>
+    </div>
+  );
+}
+
+// --- Branch Head Admin Tab -----------------------------------------------
+
+function BranchHeadAdmin() {
+  const [assignments, setAssignments] = useState<BranchHeadAssignment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await hrmsApi.get<{ success: boolean; data: BranchHeadAssignment[]; message?: string }>("/api/exit-passes/admin/branch-head-assignments");
+      if (!res?.success) throw new Error(res?.message ?? "Failed to load");
+      setAssignments(res.data ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load assignments");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const deactivate = async (id: string, branchName: string) => {
+    if (!window.confirm(`Deactivate the Branch Head assignment for "${branchName}"? Exit passes from this branch will be blocked until a new assignment is added.`)) return;
+    try {
+      await hrmsApi.patch(`/api/exit-passes/admin/branch-head-assignments/${id}/deactivate`);
+      setActionMsg("Assignment deactivated.");
+      void load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to deactivate");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-base font-bold text-slate-800">Branch Head Assignments</h3>
+          <p className="text-xs text-slate-500 mt-0.5">Controls who receives exit pass requests for each branch. Must be set before employees can submit passes.</p>
+        </div>
+        <button
+          onClick={() => setShowForm(true)}
+          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl bg-rose-600 text-white hover:bg-rose-700 transition-colors"
+        >
+          <Plus className="h-4 w-4" /> Assign Branch Head
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 flex gap-2">
+        <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+        <div>
+          <strong>Root cause of "No active Branch Head" errors:</strong> This table must have an active row for each branch.
+          If a branch shows an error when submitting, add the assignment here with the correct branch name and Branch Head employee.
+        </div>
+      </div>
+
+      {error && (
+        <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <AlertTriangle className="h-4 w-4 shrink-0" /> {error}
+        </div>
+      )}
+      {actionMsg && (
+        <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          <CheckCircle2 className="h-4 w-4 shrink-0" /> {actionMsg}
+          <button onClick={() => setActionMsg(null)} className="ml-auto cursor-pointer"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-10 text-slate-400">
+          <Loader className="h-5 w-5 animate-spin mr-2" /> Loading...
+        </div>
+      ) : assignments.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 text-center border border-dashed border-rose-200 rounded-2xl bg-rose-50/30">
+          <AlertTriangle className="h-10 w-10 text-rose-300 mb-3" />
+          <h3 className="text-base font-bold text-slate-700">No branch head assignments configured</h3>
+          <p className="mt-1 text-sm text-slate-500">All branches are currently blocked from submitting exit passes.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-100">
+                <th className="text-left font-semibold px-4 py-3">Branch Name</th>
+                <th className="text-left font-semibold px-4 py-3">Branch Head</th>
+                <th className="text-left font-semibold px-4 py-3">Employee Code</th>
+                <th className="text-left font-semibold px-4 py-3">Status</th>
+                <th className="text-left font-semibold px-4 py-3">Assigned</th>
+                <th className="text-right font-semibold px-4 py-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {assignments.map((a) => (
+                <tr key={a.id} className="hover:bg-slate-50/60">
+                  <td className="px-4 py-3 font-medium text-slate-800">{a.branch_name}</td>
+                  <td className="px-4 py-3 text-slate-700">
+                    <div className="flex items-center gap-2">
+                      <User className="h-3.5 w-3.5 text-slate-300" />
+                      {a.branch_head_name ?? "—"}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-slate-500">{a.branch_head_code ?? "—"}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${a.is_active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                      {a.is_active ? "Active" : "Inactive"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500 text-xs">{fmtShortDate(a.assigned_at)}</td>
+                  <td className="px-4 py-3 text-right">
+                    {a.is_active && (
+                      <button
+                        onClick={() => void deactivate(a.id, a.branch_name)}
+                        className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-red-600 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Deactivate
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {showForm && (
+        <AssignBranchHeadModal
+          onClose={() => setShowForm(false)}
+          onSaved={() => { setShowForm(false); setActionMsg("Branch Head assignment saved."); void load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+// --- Assign Branch Head Modal --------------------------------------------
+
+function AssignBranchHeadModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [branchName, setBranchName] = useState("");
+  const [empSearch, setEmpSearch] = useState("");
+  const [empResults, setEmpResults] = useState<EmployeeHit[]>([]);
+  const [empSearching, setEmpSearching] = useState(false);
+  const [selectedEmpId, setSelectedEmpId] = useState("");
+  const [selectedEmpName, setSelectedEmpName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    hrmsApi.get<{ data: BranchOption[] }>("/api/org/branches")
+      .then((res) => setBranches(res?.data ?? []))
+      .catch(() => setBranches([]));
+  }, []);
+
+  useEffect(() => {
+    if (empSearch.trim().length < 2) { setEmpResults([]); return; }
+    const t = setTimeout(async () => {
+      setEmpSearching(true);
+      try {
+        const res = await hrmsApi.get<{ data: EmployeeHit[] }>(`/api/exit-passes/employees/search?q=${encodeURIComponent(empSearch)}`);
+        setEmpResults(res?.data ?? []);
+      } catch { setEmpResults([]); }
+      finally { setEmpSearching(false); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [empSearch]);
+
+  const pickEmp = (hit: EmployeeHit) => {
+    setSelectedEmpId(hit.id);
+    setSelectedEmpName(hit.full_name);
+    setEmpSearch(`${hit.full_name} (${hit.employee_code})`);
+    setEmpResults([]);
+  };
+
+  const save = async () => {
+    if (!branchName) { setError("Select a branch."); return; }
+    if (!selectedEmpId) { setError("Search and select an employee as Branch Head."); return; }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await hrmsApi.post<{ success: boolean; message?: string }>("/api/exit-passes/admin/branch-head-assignments", {
+        branch_name: branchName,
+        branch_head_id: selectedEmpId,
+      });
+      if (!res?.success) throw new Error(res?.message ?? "Failed to save");
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to save");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-rose-600 to-orange-600 rounded-t-2xl">
+          <h2 className="text-lg font-bold text-white">Assign Branch Head</h2>
+          <button onClick={onClose} className="text-white/70 hover:text-white cursor-pointer"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          {error && (
+            <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <AlertTriangle className="h-4 w-4 shrink-0" /> {error}
+            </div>
+          )}
+          <Field label="Branch">
+            <select value={branchName} onChange={(e) => setBranchName(e.target.value)} className={INPUT_CLS}>
+              <option value="">Select branch...</option>
+              {branches.map((b) => <option key={b.id} value={b.branch_name}>{b.branch_name}</option>)}
+            </select>
+          </Field>
+          <div className="relative">
+            <Field label="Branch Head Employee (search by name or code)">
+              <input
+                value={empSearch}
+                onChange={(e) => { setEmpSearch(e.target.value); setSelectedEmpId(""); setSelectedEmpName(""); }}
+                className={INPUT_CLS}
+                placeholder="Type to search..."
+              />
+            </Field>
+            {empSearching && <div className="absolute right-3 top-9 text-xs text-slate-400">Searching...</div>}
+            {empResults.length > 0 && (
+              <div className="absolute z-10 mt-1 w-full max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                {empResults.map((hit) => (
+                  <button key={hit.id} type="button" onClick={() => pickEmp(hit)}
+                    className="block w-full text-left px-3 py-2 text-sm hover:bg-slate-50 cursor-pointer">
+                    {hit.full_name} <span className="text-slate-400">({hit.employee_code})</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {selectedEmpName && (
+              <p className="mt-1 text-xs text-emerald-600 font-semibold">Selected: {selectedEmpName}</p>
+            )}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
+          <button disabled={submitting} onClick={() => void save()}
+            className="px-4 py-2 text-sm font-semibold rounded-xl bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50 cursor-pointer transition-colors">
+            {submitting ? "Saving..." : "Save Assignment"}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

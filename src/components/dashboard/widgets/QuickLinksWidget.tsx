@@ -1,14 +1,16 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Star, Plus, Search, X, ExternalLink, Sparkles, ChevronRight,
-  Zap, ArrowRight, Trash2,
+  Star, Plus, Search, X, Zap, ArrowRight, Trash2, Sparkles,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from '@/components/ui/popover';
 import { useQuickLinks, type QuickLink } from '@/hooks/useQuickLinks';
 import { navGroups } from '@/components/layout/navConfig';
 import { cn } from '@/lib/utils';
@@ -54,37 +56,50 @@ function flattenNavItems(): NavItem[] {
 
 const ALL_PAGES = flattenNavItems();
 
-// Color palette for quick link cards
-const CARD_COLORS = [
-  { bg: 'from-blue-500 to-indigo-600', ring: 'ring-blue-200' },
-  { bg: 'from-purple-500 to-violet-600', ring: 'ring-purple-200' },
-  { bg: 'from-emerald-500 to-teal-600', ring: 'ring-emerald-200' },
-  { bg: 'from-amber-500 to-orange-600', ring: 'ring-amber-200' },
-  { bg: 'from-pink-500 to-rose-600', ring: 'ring-pink-200' },
-  { bg: 'from-cyan-500 to-blue-600', ring: 'ring-cyan-200' },
-  { bg: 'from-indigo-500 to-purple-600', ring: 'ring-indigo-200' },
-  { bg: 'from-teal-500 to-emerald-600', ring: 'ring-teal-200' },
+// Gradient colors for link chips
+const CHIP_COLORS = [
+  'from-blue-500 to-indigo-600',
+  'from-purple-500 to-violet-600',
+  'from-emerald-500 to-teal-600',
+  'from-amber-500 to-orange-600',
+  'from-pink-500 to-rose-600',
+  'from-cyan-500 to-blue-600',
+  'from-indigo-500 to-purple-600',
+  'from-teal-500 to-emerald-600',
 ];
 
-function getCardColor(index: number) {
-  return CARD_COLORS[index % CARD_COLORS.length];
+function getChipColor(index: number) {
+  return CHIP_COLORS[index % CHIP_COLORS.length];
 }
 
-export function QuickLinksWidget() {
-  const { links, addLink, removeLink, hasLink, maxLinks } = useQuickLinks();
-  const [dialogOpen, setDialogOpen] = useState(false);
+// Search dialog component (shared)
+function QuickLinksSearchDialog({
+  open,
+  onOpenChange,
+  links,
+  addLink,
+  removeLink,
+  hasLink,
+  maxLinks,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  links: QuickLink[];
+  addLink: (link: Omit<QuickLink, 'addedAt'>) => void;
+  removeLink: (href: string) => void;
+  hasLink: (href: string) => boolean;
+  maxLinks: number;
+}) {
   const [search, setSearch] = useState('');
-  const [hoveredLink, setHoveredLink] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Focus input when dialog opens
   useEffect(() => {
-    if (dialogOpen) {
+    if (open) {
       setTimeout(() => inputRef.current?.focus(), 100);
     } else {
       setSearch('');
     }
-  }, [dialogOpen]);
+  }, [open]);
 
   const filteredPages = useMemo(() => {
     if (!search.trim()) return ALL_PAGES.slice(0, 15);
@@ -97,13 +112,189 @@ export function QuickLinksWidget() {
     ).slice(0, 20);
   }, [search]);
 
-  const handleAdd = (page: NavItem) => {
-    addLink({
-      href: page.href,
-      label: page.label,
-      description: page.description,
-    });
-  };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-slate-900">
+            <Sparkles className="h-5 w-5 text-indigo-500" />
+            Add Quick Link
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3 pt-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+            <Input
+              ref={inputRef}
+              placeholder="Search pages..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9 h-10 rounded-xl"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <div className="max-h-[320px] overflow-y-auto space-y-1 pr-1">
+            {filteredPages.length === 0 ? (
+              <p className="text-sm text-slate-400 text-center py-8">
+                No pages found for "{search}"
+              </p>
+            ) : (
+              filteredPages.map((page) => {
+                const added = hasLink(page.href);
+                return (
+                  <div
+                    key={page.href}
+                    className={cn(
+                      'flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150',
+                      added
+                        ? 'bg-indigo-50 border border-indigo-200'
+                        : 'hover:bg-slate-50 border border-transparent'
+                    )}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-800 truncate">
+                        {page.label}
+                      </p>
+                      {page.description && (
+                        <p className="text-[11px] text-slate-500 truncate">
+                          {page.description}
+                        </p>
+                      )}
+                    </div>
+                    {added ? (
+                      <button
+                        onClick={() => removeLink(page.href)}
+                        className="flex items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-700 cursor-pointer px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                        Remove
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => addLink({
+                          href: page.href,
+                          label: page.label,
+                          description: page.description,
+                        })}
+                        disabled={links.length >= maxLinks}
+                        className={cn(
+                          'flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg transition-colors cursor-pointer',
+                          links.length >= maxLinks
+                            ? 'text-slate-400 cursor-not-allowed'
+                            : 'text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50'
+                        )}
+                      >
+                        <Plus className="h-3 w-3" />
+                        Add
+                      </button>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+          {links.length >= maxLinks && (
+            <p className="text-[11px] text-amber-600 text-center py-1">
+              Maximum {maxLinks} quick links reached. Remove one to add more.
+            </p>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Inline Quick Links Bar - thin horizontal row for header placement
+ * This is the PRIMARY component for dashboard headers
+ */
+export function QuickLinksBar() {
+  const { links, addLink, removeLink, hasLink, maxLinks } = useQuickLinks();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [hoveredLink, setHoveredLink] = useState<string | null>(null);
+
+  return (
+    <>
+      <div className="flex items-center gap-2 py-2 px-1 overflow-x-auto scrollbar-thin">
+        {/* Quick Links label */}
+        <div className="flex items-center gap-1.5 text-slate-500 shrink-0">
+          <Zap className="h-3.5 w-3.5" />
+          <span className="text-xs font-semibold">Quick Links</span>
+        </div>
+
+        {/* Divider */}
+        <div className="h-4 w-px bg-slate-200 shrink-0" />
+
+        {/* Link chips */}
+        {links.map((link, index) => (
+          <Link
+            key={link.href}
+            to={link.href}
+            onMouseEnter={() => setHoveredLink(link.href)}
+            onMouseLeave={() => setHoveredLink(null)}
+            className={cn(
+              'group relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all duration-200 cursor-pointer shrink-0',
+              'bg-gradient-to-r shadow-sm hover:shadow-md hover:scale-[1.02]',
+              getChipColor(index)
+            )}
+          >
+            {link.label}
+            <ArrowRight className="h-3 w-3 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
+
+            {/* Remove button on hover */}
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                removeLink(link.href);
+              }}
+              className={cn(
+                'absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white flex items-center justify-center transition-all cursor-pointer shadow-sm',
+                hoveredLink === link.href ? 'opacity-100 scale-100' : 'opacity-0 scale-75'
+              )}
+            >
+              <X className="h-2.5 w-2.5" />
+            </button>
+          </Link>
+        ))}
+
+        {/* Add button */}
+        <button
+          onClick={() => setDialogOpen(true)}
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-dashed border-slate-300 text-xs font-medium text-slate-500 hover:border-indigo-400 hover:text-indigo-600 hover:bg-indigo-50/50 transition-all cursor-pointer shrink-0"
+        >
+          <Plus className="h-3 w-3" />
+          Add
+        </button>
+      </div>
+
+      <QuickLinksSearchDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        links={links}
+        addLink={addLink}
+        removeLink={removeLink}
+        hasLink={hasLink}
+        maxLinks={maxLinks}
+      />
+    </>
+  );
+}
+
+/**
+ * Original card-style widget (kept for backwards compatibility)
+ */
+export function QuickLinksWidget() {
+  const { links, addLink, removeLink, hasLink, maxLinks } = useQuickLinks();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [hoveredLink, setHoveredLink] = useState<string | null>(null);
 
   const handleRemove = (e: React.MouseEvent, href: string) => {
     e.preventDefault();
@@ -124,107 +315,15 @@ export function QuickLinksWidget() {
             <p className="text-[10px] text-white/70">{links.length}/{maxLinks} shortcuts</p>
           </div>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs text-white/90 hover:text-white hover:bg-white/20 cursor-pointer gap-1 px-2"
-            >
-              <Plus className="h-3 w-3" />
-              Add
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-md">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-slate-900">
-                <Sparkles className="h-5 w-5 text-indigo-500" />
-                Add Quick Link
-              </DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3 pt-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                <Input
-                  ref={inputRef}
-                  placeholder="Search pages..."
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="pl-9 h-10 rounded-xl"
-                />
-                {search && (
-                  <button
-                    onClick={() => setSearch('')}
-                    className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-              <div className="max-h-[320px] overflow-y-auto space-y-1 pr-1">
-                {filteredPages.length === 0 ? (
-                  <p className="text-sm text-slate-400 text-center py-8">
-                    No pages found for "{search}"
-                  </p>
-                ) : (
-                  filteredPages.map((page) => {
-                    const added = hasLink(page.href);
-                    return (
-                      <div
-                        key={page.href}
-                        className={cn(
-                          'flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-150',
-                          added
-                            ? 'bg-indigo-50 border border-indigo-200'
-                            : 'hover:bg-slate-50 border border-transparent'
-                        )}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-800 truncate">
-                            {page.label}
-                          </p>
-                          {page.description && (
-                            <p className="text-[11px] text-slate-500 truncate">
-                              {page.description}
-                            </p>
-                          )}
-                        </div>
-                        {added ? (
-                          <button
-                            onClick={() => removeLink(page.href)}
-                            className="flex items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-700 cursor-pointer px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                            Remove
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleAdd(page)}
-                            disabled={links.length >= maxLinks}
-                            className={cn(
-                              'flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-lg transition-colors cursor-pointer',
-                              links.length >= maxLinks
-                                ? 'text-slate-400 cursor-not-allowed'
-                                : 'text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50'
-                            )}
-                          >
-                            <Plus className="h-3 w-3" />
-                            Add
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-              {links.length >= maxLinks && (
-                <p className="text-[11px] text-amber-600 text-center py-1">
-                  Maximum {maxLinks} quick links reached. Remove one to add more.
-                </p>
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setDialogOpen(true)}
+          className="h-7 text-xs text-white/90 hover:text-white hover:bg-white/20 cursor-pointer gap-1 px-2"
+        >
+          <Plus className="h-3 w-3" />
+          Add
+        </Button>
       </div>
 
       {/* Quick Links Grid */}
@@ -251,7 +350,6 @@ export function QuickLinksWidget() {
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {links.map((link, index) => {
-              const color = getCardColor(index);
               const isHovered = hoveredLink === link.href;
               return (
                 <Link
@@ -261,11 +359,10 @@ export function QuickLinksWidget() {
                   onMouseLeave={() => setHoveredLink(null)}
                   className={cn(
                     'group relative rounded-xl p-3 transition-all duration-200 cursor-pointer overflow-hidden',
-                    'bg-gradient-to-br', color.bg,
-                    'hover:shadow-lg hover:scale-[1.02] hover:ring-2', color.ring
+                    'bg-gradient-to-br hover:shadow-lg hover:scale-[1.02]',
+                    getChipColor(index)
                   )}
                 >
-                  {/* Remove button */}
                   <button
                     onClick={(e) => handleRemove(e, link.href)}
                     className={cn(
@@ -294,7 +391,6 @@ export function QuickLinksWidget() {
               );
             })}
 
-            {/* Add more button if space available */}
             {links.length < maxLinks && links.length < 8 && (
               <button
                 onClick={() => setDialogOpen(true)}
@@ -307,6 +403,16 @@ export function QuickLinksWidget() {
           </div>
         )}
       </div>
+
+      <QuickLinksSearchDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        links={links}
+        addLink={addLink}
+        removeLink={removeLink}
+        hasLink={hasLink}
+        maxLinks={maxLinks}
+      />
     </div>
   );
 }

@@ -206,6 +206,41 @@ Verify these in code before implementing changes:
 - F&F approval blocked when `is_ff_provisional=1` — requires authorised setProvisionalFalse() override with audit reason.
 - Never expose payroll/salary/tax/PF/UAN/bank data through Client Portal, management surfaces or any non-payroll endpoint.
 
+## Drill-Down Mandate — Non-Negotiable UI Rule
+
+Every table, list, or data grid in this platform **must** have a clickable row drill-down. This is mandatory with no exceptions.
+
+### What the drill-down must show
+1. **Full record detail** — every field stored in the database for that record, not just what fits in the table columns.
+2. **Related sub-records** — items, line-items, documents, attachments, linked entities.
+3. **Approval / workflow timeline** — all stage transitions with actor name, timestamp, decision, and remarks.
+4. **Documents** — any uploaded files or generated PDFs must be viewable inline with a "View" / "Download" button.
+5. **Audit trail** — if the record has an audit log table, show the last N audit entries.
+
+### Implementation rules
+- Row click opens a **right-side slide-over drawer** (not a new page, not a modal dialog), `max-w-2xl`, full viewport height, scrollable.
+- The drawer fetches the full detail record from a dedicated `GET /api/<module>/:id` endpoint — never reuse the list payload.
+- Drawer header shows: record number/ID, status badge, created date, and a close button.
+- Sections are visually separated with a label (`text-xs font-bold uppercase tracking-wide text-slate-400`).
+- All monetary values formatted with `₹` and Indian locale. All dates formatted as `DD/MM/YYYY HH:mm`.
+- If a section has no data (e.g. no documents, no audit entries), show a compact "None" placeholder — never hide the section entirely.
+- Print-eligible records show a "Print" link in the drawer header.
+
+### Applies to all modules
+This rule applies to every existing and future module: Exit Pass, ATS, Employees, Payroll, Leave, Attendance, WFM/Roster, Assets, Visitors, IT Provisioning, Documents, and all ERP modules. When you touch a page that lacks a drill-down, add it — even if it was not the original task scope.
+
+## Database Query Rule — Always Use Real MySQL, Never MCP
+
+**Never use the `mcp__hrms-db__*` MCP tools for database queries.** They time out and are unreliable.
+
+Always query `mas_hrms` directly via the MySQL CLI on the production server or localhost:
+
+```bash
+mysql -u root -p mas_hrms -e "SELECT ..."
+```
+
+Or via the backend's existing `db` pool in a one-off script. The MCP DB tools are read-only wrappers that frequently time out — use real MySQL every time.
+
 ## Continuous Build Permission
 - Build clean feature branches, additive MySQL migrations (unexecuted), APIs, UI and tests without stopping.
 - Stop ONLY for charter hard gates: live SQL execution, deployment, credential changes, live upstream DB/LMS access, payroll activation, destructive changes, unresolved PII/security exposure.

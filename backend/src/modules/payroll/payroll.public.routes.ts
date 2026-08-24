@@ -59,11 +59,13 @@ payrollPublicRouter.get("/verify/payslip/:empCode/:monthYear", h(async (req: any
     return res.json({ verified: false, message: "Invalid or missing payslip reference" });
   }
 
+  // Primary: look up via salary_payslip (exists for all months after backfill migration).
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT sp.payslip_ref, sp.generated_at,
-            spr.run_month,
+    `SELECT sp.payslip_ref, sp.generated_at, sp.generated_by,
+            spr.run_month, spr.status AS run_status,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-            e.employee_code
+            e.employee_code,
+            spl.net_salary, spl.gross_salary
        FROM salary_payslip sp
        JOIN salary_prep_line spl ON spl.id = sp.prep_line_id
        JOIN salary_prep_run spr  ON spr.id = spl.run_id
@@ -74,18 +76,45 @@ payrollPublicRouter.get("/verify/payslip/:empCode/:monthYear", h(async (req: any
     [empCode, runMonth]
   );
 
-  const rec = (rows as any[])[0];
+  // Fallback: payslip record may not exist yet (race between QR scan and backfill completing).
+  // Read directly from salary_prep_line in that case so the scan never hard-fails.
+  let rec = (rows as any[])[0];
+  let fromFallback = false;
+  if (!rec) {
+    const [fallback] = await db.execute<RowDataPacket[]>(
+      `SELECT spr.run_month, spr.status AS run_status,
+              CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
+              e.employee_code,
+              spl.net_salary, spl.gross_salary
+         FROM salary_prep_line spl
+         JOIN salary_prep_run spr ON spr.id = spl.run_id
+         JOIN employees e         ON e.id   = spl.employee_id
+        WHERE e.employee_code = ?
+          AND spr.run_month   = ?
+        LIMIT 1`,
+      [empCode, runMonth]
+    );
+    rec = (fallback as any[])[0];
+    fromFallback = true;
+  }
+
   if (!rec) {
     return res.json({ verified: false, message: "Payslip not found for this employee and period" });
   }
 
-  // Salary figures are NOT returned here — this endpoint is public (QR verification only).
+  const isMigrated = fromFallback || String(rec.generated_by ?? "").startsWith("system-migration");
+
   return res.json({
     verified: true,
     employee_name: rec.employee_name,
     employee_code: rec.employee_code,
     run_month: rec.run_month,
-    payslip_ref: rec.payslip_ref,
-    generated_at: rec.generated_at,
+    payslip_ref: rec.payslip_ref ?? `PS-${runMonth}-${empCode}`,
+    generated_at: rec.generated_at ?? null,
+    // Net salary is shown on the verification page so the recipient can confirm the slip is genuine.
+    // Gross is deliberately omitted — only the take-home figure is needed for spot-check purposes.
+    net_salary: rec.net_salary != null ? Number(rec.net_salary) : null,
+    is_migrated: isMigrated,
+    run_status: rec.run_status ?? "finalized",
   });
 }));

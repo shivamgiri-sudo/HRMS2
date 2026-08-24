@@ -2,7 +2,7 @@ import React, { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CalendarDays, RefreshCw } from "lucide-react";
-import { QuickLinksWidget } from "./widgets/QuickLinksWidget";
+import { QuickLinksBar } from "./widgets/QuickLinksWidget";
 
 export interface RoleDashboardShellProps {
   title: string;
@@ -76,8 +76,8 @@ export function RoleDashboardShell({
         ) : (
           <div className="relative z-10 space-y-5">
             {!hideQuickLinks && (
-              <div className="max-w-md">
-                <QuickLinksWidget />
+              <div className="-mt-3 mb-3 border-b border-slate-100 bg-white/80 backdrop-blur-sm rounded-lg">
+                <QuickLinksBar />
               </div>
             )}
             {children}
