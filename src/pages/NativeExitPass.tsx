@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Loader, RefreshCcw, X, CheckCircle2, XCircle, Undo2, Send, Printer } from "lucide-react";
+import { Package, Plus, Loader, RefreshCcw, X, CheckCircle2, XCircle, Undo2, Send, Printer, AlertTriangle, Ban } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { StatusBadge, normalizeStatus } from "@/components/ui/status-badge";
@@ -60,7 +60,6 @@ const CARRIER_TYPES: Array<{ value: string; label: string }> = [
   { value: "other", label: "Other" },
 ];
 
-// Category and reason lists mirror spec §11/§8 — IT vs Admin material and movement reasons.
 const CATEGORIES: Record<"IT" | "ADMIN", string[]> = {
   IT: [
     "Laptop", "Desktop", "Monitor", "CPU", "Keyboard", "Mouse", "Headset", "Switch", "Router",
@@ -117,12 +116,14 @@ export default function NativeExitPass() {
   const [passes, setPasses] = useState<ExitPass[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [decisionTarget, setDecisionTarget] = useState<{ pass: ExitPass; stage: "branch_head" | "admin" } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setActionError(null);
     try {
       const path =
         tab === "mine" ? "/api/exit-passes" :
@@ -144,32 +145,42 @@ export default function NativeExitPass() {
 
   return (
     <DashboardLayout>
-      <div className="p-6 max-w-6xl mx-auto">
-        <div className="flex items-center justify-between mb-1">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">Asset &amp; Material Exit Pass</h1>
-            <p className="text-sm text-slate-500 mt-1">
-              Raise, approve and print IT/Admin asset movement gate passes. The letterhead on print
-              uses your own branch, resolved from your employee record.
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => void load()}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50"
-            >
-              <RefreshCcw className="h-4 w-4" /> Refresh
-            </button>
-            <button
-              onClick={() => setShowCreate(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl bg-rose-600 text-white hover:bg-rose-700"
-            >
-              <Plus className="h-4 w-4" /> Raise Exit Pass
-            </button>
+      <div className="p-4 sm:p-6 max-w-6xl mx-auto space-y-5">
+
+        {/* Gradient header */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-rose-700 via-rose-600 to-orange-600 text-white p-6 shadow-lg">
+          <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
+          <div className="absolute right-24 bottom-0 h-16 w-16 rounded-full bg-orange-300/20 blur-xl" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/15">
+                <Package className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <p className="text-xs font-bold uppercase tracking-widest text-rose-200">IT · Admin · Assets</p>
+                <h1 className="mt-0.5 text-2xl font-bold text-white">Asset &amp; Material Exit Pass</h1>
+                <p className="mt-0.5 text-sm text-rose-100">Raise, approve and print IT/Admin asset movement gate passes.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => void load()}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold rounded-xl bg-white/15 hover:bg-white/25 text-white transition-colors"
+              >
+                <RefreshCcw className="h-4 w-4" /> Refresh
+              </button>
+              <button
+                onClick={() => setShowCreate(true)}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl bg-white text-rose-700 hover:bg-rose-50 transition-colors shadow"
+              >
+                <Plus className="h-4 w-4" /> Raise Exit Pass
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="flex gap-1 border-b border-slate-200 mt-6 mb-5">
+        {/* Tabs */}
+        <div className="flex gap-1 border-b border-slate-200">
           {([
             ["mine", "My Requests"],
             ["pending_bh", "Pending Branch Head"],
@@ -179,7 +190,7 @@ export default function NativeExitPass() {
             <button
               key={key}
               onClick={() => setTab(key)}
-              className={`px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors ${
+              className={`px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors cursor-pointer ${
                 tab === key ? "border-rose-600 text-rose-600" : "border-transparent text-slate-500 hover:text-slate-800"
               }`}
             >
@@ -189,7 +200,15 @@ export default function NativeExitPass() {
         </div>
 
         {error && (
-          <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
+          <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <AlertTriangle className="h-4 w-4 shrink-0" /> {error}
+          </div>
+        )}
+        {actionError && (
+          <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <AlertTriangle className="h-4 w-4 shrink-0" /> {actionError}
+            <button onClick={() => setActionError(null)} className="ml-auto text-rose-400 hover:text-rose-600 cursor-pointer"><X className="h-4 w-4" /></button>
+          </div>
         )}
 
         {loading ? (
@@ -197,7 +216,8 @@ export default function NativeExitPass() {
             <Loader className="h-5 w-5 animate-spin mr-2" /> Loading...
           </div>
         ) : passes.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-slate-200 rounded-2xl">
+          <div className="flex flex-col items-center justify-center py-16 text-center border border-dashed border-slate-200 rounded-2xl bg-white">
+            <Package className="h-12 w-12 text-slate-300 mb-3" />
             <h3 className="text-base font-bold text-slate-700">No exit passes here yet</h3>
             <p className="mt-1 text-sm text-slate-500">
               {tab === "mine" ? "Raise one with the button above." :
@@ -206,30 +226,34 @@ export default function NativeExitPass() {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto rounded-2xl border border-slate-200">
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
             <table className="w-full text-sm">
               <thead>
-                <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
-                  <th className="text-left font-semibold px-4 py-2.5">Pass No.</th>
-                  <th className="text-left font-semibold px-4 py-2.5">Requestor</th>
-                  <th className="text-left font-semibold px-4 py-2.5">Branch</th>
-                  <th className="text-left font-semibold px-4 py-2.5">Dept</th>
-                  <th className="text-left font-semibold px-4 py-2.5">Movement</th>
-                  <th className="text-left font-semibold px-4 py-2.5">Exit</th>
-                  <th className="text-left font-semibold px-4 py-2.5">Status</th>
-                  <th className="text-right font-semibold px-4 py-2.5">Actions</th>
+                <tr className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide border-b border-slate-100">
+                  <th className="text-left font-semibold px-4 py-3">Pass No.</th>
+                  <th className="text-left font-semibold px-4 py-3">Requestor</th>
+                  <th className="text-left font-semibold px-4 py-3">Branch</th>
+                  <th className="text-left font-semibold px-4 py-3">Dept</th>
+                  <th className="text-left font-semibold px-4 py-3">Movement</th>
+                  <th className="text-left font-semibold px-4 py-3">Exit</th>
+                  <th className="text-left font-semibold px-4 py-3">Status</th>
+                  <th className="text-right font-semibold px-4 py-3">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {passes.map((p) => (
-                  <tr key={p.id} className="hover:bg-slate-50/60">
-                    <td className="px-4 py-2.5 font-mono text-xs text-slate-700">{p.pass_number ?? "-"}</td>
-                    <td className="px-4 py-2.5">{p.requestor_name ?? "-"}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{p.branch_name ?? "-"}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{p.request_department}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{p.movement_type === "returnable" ? "Returnable" : "Non-Returnable"}</td>
-                    <td className="px-4 py-2.5 text-slate-600">{p.planned_exit_at ? new Date(p.planned_exit_at).toLocaleDateString() : "-"}</td>
-                    <td className="px-4 py-2.5">
+                  <tr key={p.id} className="hover:bg-slate-50/60 transition-colors">
+                    <td className="px-4 py-3 font-mono text-xs text-slate-700">{p.pass_number ?? <span className="text-slate-400">Draft</span>}</td>
+                    <td className="px-4 py-3 font-medium text-slate-800">{p.requestor_name ?? "-"}</td>
+                    <td className="px-4 py-3 text-slate-600">{p.branch_name ?? "-"}</td>
+                    <td className="px-4 py-3">
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${p.request_department === "IT" ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600"}`}>
+                        {p.request_department}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-slate-600">{p.movement_type === "returnable" ? "Returnable" : "Non-Returnable"}</td>
+                    <td className="px-4 py-3 text-slate-600">{p.planned_exit_at ? new Date(p.planned_exit_at).toLocaleDateString() : "-"}</td>
+                    <td className="px-4 py-3">
                       <div className="flex items-center gap-1.5">
                         <StatusBadge status={normalizeStatus(p.status)} />
                         {!!p.is_overdue && (
@@ -237,29 +261,38 @@ export default function NativeExitPass() {
                         )}
                       </div>
                     </td>
-                    <td className="px-4 py-2.5 text-right space-x-2">
-                      {tab === "mine" && p.status === "draft" && (
-                        <ActionBtn icon={Send} label="Submit" onClick={async () => {
-                          await hrmsApi.post(`/api/exit-passes/${p.id}/submit`);
-                          void load();
-                        }} />
-                      )}
-                      {tab === "pending_bh" && p.status === "pending_branch_head" && (
-                        <ActionBtn icon={CheckCircle2} label="Decide" onClick={() => setDecisionTarget({ pass: p, stage: "branch_head" })} />
-                      )}
-                      {tab === "pending_admin" && p.status === "pending_admin_approval" && (
-                        <ActionBtn icon={CheckCircle2} label="Decide" onClick={() => setDecisionTarget({ pass: p, stage: "admin" })} />
-                      )}
-                      {(p.status === "approved" || p.status === "exit_verified") && (
-                        <a
-                          href={`/it-admin/exit-pass/${p.id}/print`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 hover:text-rose-700"
-                        >
-                          <Printer className="h-3.5 w-3.5" /> Print
-                        </a>
-                      )}
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        {tab === "mine" && p.status === "draft" && (
+                          <>
+                            <ActionBtn icon={Send} label="Submit" onAction={async () => {
+                              await hrmsApi.post(`/api/exit-passes/${p.id}/submit`);
+                              void load();
+                            }} onError={setActionError} />
+                            <ActionBtn icon={Ban} label="Cancel" variant="danger" onAction={async () => {
+                              if (!window.confirm("Cancel this draft exit pass?")) return;
+                              await hrmsApi.patch(`/api/exit-passes/${p.id}/cancel`);
+                              void load();
+                            }} onError={setActionError} />
+                          </>
+                        )}
+                        {tab === "pending_bh" && p.status === "pending_branch_head" && (
+                          <ActionBtn icon={CheckCircle2} label="Decide" onAction={() => { setDecisionTarget({ pass: p, stage: "branch_head" }); }} onError={setActionError} />
+                        )}
+                        {tab === "pending_admin" && p.status === "pending_admin_approval" && (
+                          <ActionBtn icon={CheckCircle2} label="Decide" onAction={() => { setDecisionTarget({ pass: p, stage: "admin" }); }} onError={setActionError} />
+                        )}
+                        {(p.status === "approved" || p.status === "outside_premises") && (
+                          <a
+                            href={`/it-admin/exit-pass/${p.id}/print`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-rose-600 hover:text-rose-700 transition-colors cursor-pointer"
+                          >
+                            <Printer className="h-3.5 w-3.5" /> Print
+                          </a>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -288,13 +321,38 @@ export default function NativeExitPass() {
   );
 }
 
-function ActionBtn({ icon: Icon, label, onClick }: { icon: typeof Send; label: string; onClick: () => void | Promise<void> }) {
+function ActionBtn({
+  icon: Icon,
+  label,
+  onAction,
+  onError,
+  variant = "default",
+}: {
+  icon: typeof Send;
+  label: string;
+  onAction: () => void | Promise<void>;
+  onError: (msg: string) => void;
+  variant?: "default" | "danger";
+}) {
   const [busy, setBusy] = useState(false);
   return (
     <button
       disabled={busy}
-      onClick={async () => { setBusy(true); try { await onClick(); } finally { setBusy(false); } }}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await onAction();
+        } catch (e) {
+          onError(e instanceof Error ? e.message : "Action failed. Please try again.");
+        } finally {
+          setBusy(false);
+        }
+      }}
+      className={`inline-flex items-center gap-1.5 min-h-[36px] px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors cursor-pointer disabled:opacity-50 ${
+        variant === "danger"
+          ? "border-rose-200 text-rose-600 hover:bg-rose-50"
+          : "border-slate-200 text-slate-700 hover:bg-slate-50"
+      }`}
     >
       {busy ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <Icon className="h-3.5 w-3.5" />}
       {label}
@@ -320,7 +378,6 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Autofill sources ------------------------------------------------------
   const [branches, setBranches] = useState<BranchOption[]>([]);
   useEffect(() => {
     hrmsApi.get<{ data: BranchOption[] }>("/api/org/branches")
@@ -405,15 +462,19 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <h2 className="text-lg font-bold text-slate-900">Raise Exit Pass</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-rose-600 to-orange-600 rounded-t-2xl">
+          <h2 className="text-lg font-bold text-white">Raise Exit Pass</h2>
+          <button onClick={onClose} className="text-white/70 hover:text-white cursor-pointer"><X className="h-5 w-5" /></button>
         </div>
 
         <div className="p-6 space-y-5">
-          {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
+          {error && (
+            <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <AlertTriangle className="h-4 w-4 shrink-0" /> {error}
+            </div>
+          )}
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Request Type">
               <select
                 value={department}
@@ -485,7 +546,7 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
                 <input value={destinationName} onChange={(e) => setDestinationName(e.target.value)} className={INPUT_CLS} placeholder="e.g. Dell Service Centre" />
               </Field>
             )}
-            <Field label="Destination Address">
+            <Field label="Destination Address" >
               <input value={destinationAddress} onChange={(e) => setDestinationAddress(e.target.value)} className={INPUT_CLS} />
             </Field>
           </div>
@@ -494,7 +555,7 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
             <textarea value={purposeDetails} onChange={(e) => setPurposeDetails(e.target.value)} rows={2} className={INPUT_CLS} />
           </Field>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Carried By">
               <select
                 value={carrierType}
@@ -526,7 +587,7 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
                         key={hit.id}
                         type="button"
                         onClick={() => pickCarrierEmployee(hit)}
-                        className="block w-full text-left px-3 py-2 text-sm hover:bg-slate-50"
+                        className="block w-full text-left px-3 py-2 text-sm hover:bg-slate-50 cursor-pointer"
                       >
                         {hit.full_name} <span className="text-slate-400">({hit.employee_code})</span>
                       </button>
@@ -557,7 +618,7 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
               <span className="text-xs font-bold uppercase tracking-wide text-slate-400">Materials</span>
               <button
                 onClick={() => setItems((prev) => [...prev, { ...EMPTY_ITEM }])}
-                className="text-xs font-semibold text-rose-600 hover:text-rose-700"
+                className="text-xs font-semibold text-rose-600 hover:text-rose-700 cursor-pointer"
               >
                 + Add Item
               </button>
@@ -581,11 +642,11 @@ function CreateExitPassModal({ onClose, onCreated }: { onClose: () => void; onCr
         </div>
 
         <div className="flex justify-end gap-2 px-6 py-4 border-t border-slate-100">
-          <button onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50">Cancel</button>
+          <button onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 cursor-pointer">Cancel</button>
           <button
             disabled={submitting}
             onClick={() => void submit()}
-            className="px-4 py-2 text-sm font-semibold rounded-xl bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50"
+            className="px-4 py-2 text-sm font-semibold rounded-xl bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50 cursor-pointer transition-colors"
           >
             {submitting ? "Saving..." : "Save Draft"}
           </button>
@@ -633,16 +694,20 @@ function DecisionModal({
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <h2 className="text-lg font-bold text-slate-900">{stage === "branch_head" ? "Branch Head Decision" : "Admin Decision"}</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-700"><X className="h-5 w-5" /></button>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-gradient-to-r from-slate-700 to-slate-600 rounded-t-2xl">
+          <h2 className="text-lg font-bold text-white">{stage === "branch_head" ? "Branch Head Decision" : "Admin Decision"}</h2>
+          <button onClick={onClose} className="text-white/70 hover:text-white cursor-pointer"><X className="h-5 w-5" /></button>
         </div>
         <div className="p-6 space-y-4">
-          <div className="text-sm text-slate-600">
-            <div><span className="text-slate-400">Requestor:</span> {pass.requestor_name ?? "-"}</div>
-            <div><span className="text-slate-400">Purpose:</span> {pass.purpose_details}</div>
+          <div className="rounded-xl bg-slate-50 border border-slate-100 px-4 py-3 text-sm text-slate-700 space-y-1">
+            <div><span className="text-slate-400 text-xs font-semibold uppercase tracking-wide">Requestor</span><br />{pass.requestor_name ?? "-"}</div>
+            <div className="pt-1"><span className="text-slate-400 text-xs font-semibold uppercase tracking-wide">Purpose</span><br />{pass.purpose_details}</div>
           </div>
-          {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
+          {error && (
+            <div className="flex items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <AlertTriangle className="h-4 w-4 shrink-0" /> {error}
+            </div>
+          )}
           <Field label="Remarks (required for reject/return)">
             <textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={3} className={INPUT_CLS} />
           </Field>
@@ -652,7 +717,7 @@ function DecisionModal({
             <button
               disabled={!!busy}
               onClick={() => void decide("returned")}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 min-h-[44px] px-3 py-2 text-sm font-semibold rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50 cursor-pointer transition-colors"
             >
               <Undo2 className="h-4 w-4" /> Return
             </button>
@@ -660,14 +725,14 @@ function DecisionModal({
           <button
             disabled={!!busy}
             onClick={() => void decide("rejected")}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 min-h-[44px] px-3 py-2 text-sm font-semibold rounded-xl border border-rose-200 text-rose-600 hover:bg-rose-50 disabled:opacity-50 cursor-pointer transition-colors"
           >
             <XCircle className="h-4 w-4" /> Reject
           </button>
           <button
             disabled={!!busy}
             onClick={() => void decide("approved")}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 min-h-[44px] px-3 py-2 text-sm font-semibold rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 cursor-pointer transition-colors"
           >
             <CheckCircle2 className="h-4 w-4" /> Approve
           </button>

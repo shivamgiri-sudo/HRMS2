@@ -618,6 +618,18 @@ export async function getActorRoles(authUserId: string): Promise<string[]> {
  * would 403 for exactly the people raising most requests. Scoped to the same
  * role set already on this router instead of loosening hr-hub's RBAC.
  */
+export async function cancelExitPass(passId: string, requester: RequestingEmployee): Promise<void> {
+  const pass = await getPassRow(passId);
+  if (pass.requestor_employee_id !== requester.employeeId) {
+    throw new ExitPassError(403, 'Only the requestor can cancel this pass.');
+  }
+  if (!['draft', 'returned_for_correction'].includes(String(pass.status))) {
+    throw new ExitPassError(409, `Pass cannot be cancelled from status '${pass.status}'.`);
+  }
+  await db.execute(`UPDATE exit_pass_requests SET status = 'cancelled' WHERE id = ?`, [passId]);
+  await writeAudit(db, passId, requester.employeeId, 'cancelled', pass.status, 'cancelled');
+}
+
 export async function searchEmployeesForCarrier(q: string): Promise<RowDataPacket[]> {
   const term = `%${q.trim()}%`;
   const [rows] = await db.execute<RowDataPacket[]>(

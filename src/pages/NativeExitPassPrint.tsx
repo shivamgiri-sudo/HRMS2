@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { Printer, AlertTriangle } from "lucide-react";
-import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { useParams, Link } from "react-router-dom";
+import { Printer, AlertTriangle, ArrowLeft } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
 
 type Item = {
@@ -53,6 +52,17 @@ type PassDetail = {
   letterhead: Letterhead | null;
 };
 
+const PRINTABLE_STATUSES = new Set(["approved", "outside_premises", "closed"]);
+
+function statusLabel(status: string): string {
+  const map: Record<string, string> = {
+    approved: "Admin Approved",
+    outside_premises: "Outside Premises",
+    closed: "Closed / Returned",
+  };
+  return map[status] ?? status.replace(/_/g, " ");
+}
+
 function fmtAddress(l: Letterhead): string {
   if (l.address?.trim()) return l.address;
   const parts = [l.city, l.state].filter(Boolean);
@@ -82,19 +92,29 @@ export default function NativeExitPassPrint() {
 
   const branchHead = pass?.approvals.find((a) => a.stage === "branch_head" && a.decision === "approved");
   const admin = pass?.approvals.find((a) => a.stage === "admin" && a.decision === "approved");
-  const isPrintable = pass?.status === "approved" || pass?.status === "exit_verified";
+  const isPrintable = pass ? PRINTABLE_STATUSES.has(pass.status) : false;
 
   return (
-    <DashboardLayout>
+    <>
       <style>{`
         @media print {
-          body > *:not(#exit-pass-print-area) { display: none !important; }
-          #exit-pass-print-area { display: block !important; }
+          .no-print { display: none !important; }
           @page { size: A4; margin: 12mm; }
+          body { background: white; }
         }
       `}</style>
 
-      <div className="p-6 max-w-3xl mx-auto print:hidden">
+      {/* Screen-only chrome — hidden on print */}
+      <div className="no-print p-6 max-w-3xl mx-auto">
+        <div className="flex items-center gap-3 mb-4">
+          <Link
+            to="/it-admin/exit-pass"
+            className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
+          >
+            <ArrowLeft className="h-4 w-4" /> Back to Exit Passes
+          </Link>
+        </div>
+
         {loading && <div className="text-sm text-slate-400 py-16 text-center">Loading…</div>}
         {error && (
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 flex items-center gap-2">
@@ -104,14 +124,14 @@ export default function NativeExitPassPrint() {
         {pass && !isPrintable && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
             This pass is <strong>{pass.status.replace(/_/g, " ")}</strong> — printing is only available once it is
-            fully approved (spec §20: "Print button appears only after Admin approval").
+            fully approved (status must be approved, outside premises, or closed).
           </div>
         )}
         {pass && isPrintable && (
           <div className="flex justify-end mb-4">
             <button
               onClick={() => window.print()}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl bg-rose-600 text-white hover:bg-rose-700"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl bg-rose-600 text-white hover:bg-rose-700 cursor-pointer transition-colors"
             >
               <Printer className="h-4 w-4" /> Print / Save as PDF
             </button>
@@ -121,12 +141,13 @@ export default function NativeExitPassPrint() {
         {pass && isPrintable && <PrintablePass pass={pass} branchHead={branchHead} admin={admin} />}
       </div>
 
+      {/* Print-only area — invisible on screen, shows on print */}
       {pass && isPrintable && (
-        <div id="exit-pass-print-area" className="hidden print:block p-8">
+        <div className="hidden print:block p-8">
           <PrintablePass pass={pass} branchHead={branchHead} admin={admin} />
         </div>
       )}
-    </DashboardLayout>
+    </>
   );
 }
 
@@ -147,7 +168,7 @@ function PrintablePass({ pass, branchHead, admin }: { pass: PassDetail; branchHe
         </div>
         <div className="text-right">
           <div className="inline-block text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full px-2.5 py-0.5 mb-1.5">
-            {pass.status === "exit_verified" ? "Exit Verified" : "Admin Approved"}
+            {statusLabel(pass.status)}
           </div>
           <div className="font-mono text-sm font-semibold">{pass.pass_number}</div>
         </div>

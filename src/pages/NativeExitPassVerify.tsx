@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Search, CheckCircle2, XCircle, AlertTriangle, ShieldCheck, Loader, Undo2 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { Link } from "react-router-dom";
 
 type VerifyItem = { id: string; category: string; item_name: string; asset_id?: string | null; quantity: number };
 
@@ -78,7 +79,10 @@ export default function NativeExitPassVerify() {
       );
       if (!res?.success) throw new Error(res?.message ?? "Could not record exit");
       setSuccess(`Exit recorded for ${result.pass_number}.`);
-      setResult({ ...result, verdict: "already_used", status: "exit_verified" });
+      // Returnable items move to outside_premises (awaiting return); non-returnable close immediately.
+      const newVerdict = result.movement_type === "returnable" ? "valid_return" : "already_used";
+      const newStatus = result.movement_type === "returnable" ? "outside_premises" : "closed";
+      setResult({ ...result, verdict: newVerdict, status: newStatus });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not record exit");
     } finally {
@@ -111,16 +115,27 @@ export default function NativeExitPassVerify() {
 
   return (
     <DashboardLayout>
-      <div className="p-6 max-w-2xl mx-auto">
-        <div className="flex items-center gap-2 mb-1">
-          <ShieldCheck className="h-6 w-6 text-slate-700" />
-          <h1 className="text-2xl font-bold text-slate-900">Security — Gate Pass Verification</h1>
+      <div className="p-4 sm:p-6 max-w-2xl mx-auto space-y-5">
+        {/* Gradient header */}
+        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-800 via-slate-700 to-rose-800 text-white p-6 shadow-lg">
+          <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
+          <div className="absolute right-24 bottom-0 h-16 w-16 rounded-full bg-rose-400/20 blur-xl" />
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/15">
+              <ShieldCheck className="h-6 w-6 text-white" />
+            </div>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-slate-300">Security · Gate Control</p>
+              <h1 className="mt-0.5 text-2xl font-bold text-white">Gate Pass Verification</h1>
+              <p className="mt-0.5 text-sm text-slate-300">Verify exit or return of materials at the gate. Enter pass number or scan QR.</p>
+            </div>
+          </div>
+          <div className="mt-4 text-xs text-slate-400">
+            <Link to="/it-admin/exit-pass" className="text-rose-300 hover:text-white transition-colors">← Back to Exit Passes</Link>
+          </div>
         </div>
-        <p className="text-sm text-slate-500 mb-6">
-          Enter the Gate Pass number (or the number scanned from its QR) — on exit, or when the material comes back.
-        </p>
 
-        <div className="flex gap-2 mb-6">
+        <div className="flex gap-2">
           <input
             value={passNumber}
             onChange={(e) => setPassNumber(e.target.value.toUpperCase())}
@@ -137,8 +152,8 @@ export default function NativeExitPassVerify() {
           </button>
         </div>
 
-        {error && <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
-        {success && <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{success}</div>}
+        {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>}
+        {success && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{success}</div>}
 
         {result && verdict && VerdictIcon && (
           <div className="rounded-2xl border border-slate-200 overflow-hidden">

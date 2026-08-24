@@ -4,6 +4,7 @@ import { requireRole } from '../../middleware/requireRole.js';
 import {
   createExitPass,
   submitExitPass,
+  cancelExitPass,
   branchHeadDecision,
   adminDecision,
   getExitPass,
@@ -159,6 +160,16 @@ exitPassRouter.get('/:id', h(async (req, res) => {
     const roles = await getActorRoles(req.authUser!.id);
     const data = await getExitPass(req.params.id, requester, roles);
     return res.json({ success: true, data });
+  } catch (error) {
+    return fail(res, error);
+  }
+}));
+
+exitPassRouter.patch('/:id/cancel', h(async (req, res) => {
+  try {
+    const requester = await resolveRequestingEmployee(req.authUser!.id);
+    await cancelExitPass(req.params.id, requester);
+    return res.json({ success: true });
   } catch (error) {
     return fail(res, error);
   }
