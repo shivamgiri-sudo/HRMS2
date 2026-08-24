@@ -1045,18 +1045,29 @@ function BankChangeTab() {
   const rows: any[] = data?.data ?? [];
 
   const decideMutation = useMutation({
-    mutationFn: ({ id, decision, note }: any) =>
+    mutationFn: ({ id, decision, note, force_override }: any) =>
       hrmsApi.patch(`/api/payroll/bank-change-requests/${id}`, {
         decision,
         note,
+        force_override: force_override ?? false,
       }),
     onSuccess: () => {
       toast({ title: "Bank change decision saved" });
       setSelected(null);
       void qc.invalidateQueries({ queryKey: ["bank-change-requests"] });
     },
-    onError: (e: Error) =>
-      toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    onError: (e: any) => {
+      const body = e?.response?.data;
+      if (body?.penny_drop_status === "name_mismatch") {
+        toast({
+          title: "Name Mismatch — Override Required",
+          description: `Bank returned "${body.beneficiary_name_returned}" but employee is "${body.employee_name}". Add a note and re-submit with override to proceed.`,
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Failed", description: e.message, variant: "destructive" });
+      }
+    },
   });
 
   return (
@@ -1142,12 +1153,43 @@ function BankChangeTab() {
                     <TD className="font-mono">{newVals.ifsc_code ?? "—"}</TD>
                     <TD>{newVals.account_type ?? "—"}</TD>
                     <TD>
-                      <Badge
-                        variant="outline"
-                        className="rounded-full text-[10px]"
-                      >
-                        {r.penny_drop_status ?? "skipped"}
-                      </Badge>
+                      <div className="flex flex-col gap-1">
+                        <Badge
+                          variant="outline"
+                          className={`rounded-full text-[10px] font-semibold ${
+                            r.penny_drop_status === "success"
+                              ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                              : r.penny_drop_status === "name_mismatch"
+                              ? "border-red-300 bg-red-50 text-red-700"
+                              : r.penny_drop_status === "initiated"
+                              ? "border-amber-300 bg-amber-50 text-amber-700"
+                              : r.penny_drop_status === "failed"
+                              ? "border-orange-300 bg-orange-50 text-orange-700"
+                              : "border-slate-200 bg-slate-50 text-slate-500"
+                          }`}
+                        >
+                          {r.penny_drop_status === "success"
+                            ? "✓ Verified"
+                            : r.penny_drop_status === "name_mismatch"
+                            ? "⚠ Name Mismatch"
+                            : r.penny_drop_status === "initiated"
+                            ? "⏳ Pending"
+                            : r.penny_drop_status === "failed"
+                            ? "✗ Failed"
+                            : "Skipped"}
+                        </Badge>
+                        {r.name_match_tier && (
+                          <span className="text-[10px] text-slate-500">
+                            Match: <span className="font-medium capitalize">{r.name_match_tier}</span>
+                            {r.name_match_score != null ? ` (${r.name_match_score}%)` : ""}
+                          </span>
+                        )}
+                        {r.beneficiary_name_returned && (
+                          <span className="text-[10px] text-slate-400 truncate max-w-[120px]" title={r.beneficiary_name_returned}>
+                            Bank: {r.beneficiary_name_returned}
+                          </span>
+                        )}
+                      </div>
                     </TD>
                     <TD>{fmtDate(r.requested_at)}</TD>
                     <TD className="font-mono">
@@ -1178,14 +1220,43 @@ function BankChangeTab() {
 
       {selected && (
         <ApprovalDialog
-          title={`Bank Change — ${
-            selected.employee_name ?? selected.employee_id
-          }`}
+          title={`Bank Change — ${selected.employee_name ?? selected.employee_id}`}
           open
           onClose={() => setSelected(null)}
           loading={decideMutation.isPending}
           onSubmit={(decision, note) =>
-            decideMutation.mutate({ id: selected.id, decision, note })
+            decideMutation.mutate({
+              id: selected.id,
+              decision,
+              note,
+              // Auto-pass force_override when approving a known mismatch so reviewer
+              // can override with a note — the backend still requires note to be non-empty
+              // for audit trail purposes.
+              force_override: decision === "approved" && selected.penny_drop_status === "name_mismatch",
+            })
+          }
+          extraFields={
+            selected.penny_drop_status === "name_mismatch" ? (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 space-y-1">
+                <div className="font-semibold flex items-center gap-1.5">
+                  <span>⚠</span> Penny Drop — Name Mismatch
+                </div>
+                <div>Bank returned: <span className="font-mono font-semibold">{selected.beneficiary_name_returned}</span></div>
+                <div>Employee name: <span className="font-mono font-semibold">{selected.employee_name_at_request ?? selected.employee_name}</span></div>
+                <div className="text-red-600 mt-1">A note is required to override this block and approve.</div>
+              </div>
+            ) : selected.penny_drop_status === "success" ? (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-700">
+                <span className="font-semibold">✓ Penny Drop Verified</span>
+                {selected.beneficiary_name_returned && (
+                  <span className="ml-1.5">— Bank: {selected.beneficiary_name_returned} ({selected.name_match_tier})</span>
+                )}
+              </div>
+            ) : selected.penny_drop_status === "initiated" ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+                ⏳ Penny drop verification pending — Payroll Branch has been emailed a verification link.
+              </div>
+            ) : null
           }
         />
       )}

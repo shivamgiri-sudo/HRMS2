@@ -145,9 +145,13 @@ router.patch('/runs/:id/manual-tds/:employeeId', requireRole('payroll', 'super_a
 router.get('/bank-change-requests', requireRole('payroll', 'super_admin'), h(async (_req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT pua.*,
-            CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
+            e.full_name AS employee_name,
             e.employee_code,
-            bpdl.penny_drop_status, bpdl.beneficiary_name_returned
+            bpdl.penny_drop_status,
+            bpdl.beneficiary_name_returned,
+            bpdl.name_match_tier,
+            bpdl.name_match_score,
+            bpdl.employee_name_at_request
      FROM profile_update_approval pua
      JOIN employees e ON e.id = pua.employee_id
      LEFT JOIN bank_penny_drop_log bpdl ON bpdl.id = pua.penny_drop_log_id
@@ -169,14 +173,32 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
     return res.status(400).json({ success: false, message: 'decision must be approved or rejected' });
   }
 
+  const { force_override } = req.body as { decision: 'approved' | 'rejected'; note?: string; force_override?: boolean };
+
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, employee_id, old_values, new_values, status FROM profile_update_approval WHERE id = ? LIMIT 1`,
+    `SELECT pua.id, pua.employee_id, pua.old_values, pua.new_values, pua.status,
+            bpdl.penny_drop_status, bpdl.name_match_tier, bpdl.beneficiary_name_returned,
+            bpdl.employee_name_at_request
+     FROM profile_update_approval pua
+     LEFT JOIN bank_penny_drop_log bpdl ON bpdl.id = pua.penny_drop_log_id
+     WHERE pua.id = ? LIMIT 1`,
     [req.params.id]
   );
   const rec = (rows[0] as any);
   if (!rec) return res.status(404).json({ success: false, message: 'Request not found' });
   if (rec.status !== 'pending') {
     return res.status(409).json({ success: false, message: `Request already ${rec.status}` });
+  }
+
+  // Block approval if penny drop shows name mismatch, unless Payroll HO explicitly overrides
+  if (decision === 'approved' && rec.penny_drop_status === 'name_mismatch' && !force_override) {
+    return res.status(422).json({
+      success: false,
+      message: `Penny drop name mismatch: bank returned "${rec.beneficiary_name_returned}" but employee is "${rec.employee_name_at_request}". Set force_override=true with a note to override this block.`,
+      penny_drop_status: 'name_mismatch',
+      beneficiary_name_returned: rec.beneficiary_name_returned,
+      employee_name: rec.employee_name_at_request,
+    });
   }
 
   // Never write a raw account number into an audit log — mask to last 4 digits,
