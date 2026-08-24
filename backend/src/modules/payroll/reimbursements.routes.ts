@@ -463,7 +463,7 @@ reimbursementsRouter.get("/manager-queue", requireAuth, h(async (req, res) => {
 reimbursementsRouter.get("/branch-head-queue", requireAuth, requireRole("branch_head", "super_admin"), h(async (req, res) => {
   const [scopeRows] = await db.execute<RowDataPacket[]>(`SELECT DISTINCT COALESCE(uas.branch_id, e.branch_id) AS branch_id FROM user_roles ur LEFT JOIN user_assignment_scope uas ON uas.user_id = ur.user_id AND uas.active_status = 1 LEFT JOIN employees e ON e.user_id = ur.user_id WHERE ur.user_id = ? AND ur.role_key IN ('branch_head', 'super_admin') AND (uas.branch_id IS NOT NULL OR e.branch_id IS NOT NULL)`, [req.authUser!.id]);
   let branchIds = (scopeRows as RowDataPacket[]).map((r) => r.branch_id as string).filter(Boolean);
-  if (req.authUser!.role === "super_admin" && !branchIds.length) { const [all] = await db.execute<RowDataPacket[]>("SELECT id FROM branch_master WHERE is_active = 1"); branchIds = (all as RowDataPacket[]).map((r) => r.id as string); }
+  if (req.authUser!.role === "super_admin" && !branchIds.length) { const [all] = await db.execute<RowDataPacket[]>("SELECT id FROM branch_master WHERE active_status = 1"); branchIds = (all as RowDataPacket[]).map((r) => r.id as string); }
   const claims = await reimbursementService.getBranchHeadQueue(branchIds);
   return res.json({ success: true, data: claims });
 }));

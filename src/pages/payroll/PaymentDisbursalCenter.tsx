@@ -55,6 +55,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 // ── Bank Readiness types ───────────────────────────────────────────────────────
 
@@ -141,11 +142,17 @@ interface ExceptionRow {
   recoverable_from_db_bill: boolean;
   contactable: boolean;
   exception_owner: string | null;
+  exception_owner_user_id: string | null;
   workflow_status: string;
   notes: string | null;
   last_employee_action: string | null;
   last_employee_action_at: string | null;
   approval_status: string;
+}
+
+interface AssignableOwner {
+  id: string;
+  name: string;
 }
 
 interface RemediationRow {
@@ -216,8 +223,16 @@ function fmtDateTime(v: string | null | undefined): string {
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
+// Roles the disbursal write endpoints (disbursal.routes.ts requireRole) actually accept.
+// Kept as one constant so the frontend gate can never silently drift from the backend
+// again — the Bank Readiness tab's own roles stay broader, this only narrows the
+// Disbursal tab's write controls (Upload, Manual Entry, Mark as Disbursed).
+const DISBURSAL_WRITE_ROLES = ["payroll", "super_admin", "finance"];
+
 export default function PaymentDisbursalCenter() {
   const qc = useQueryClient();
+  const { roleKeys } = useWorkforceAccess();
+  const canManageDisbursal = roleKeys.some((r) => DISBURSAL_WRITE_ROLES.includes(r));
 
   // URL-based outer tab (bank | disbursal)
   const [searchParams, setSearchParams] = useSearchParams();
@@ -234,6 +249,7 @@ export default function PaymentDisbursalCenter() {
   const [editing, setEditing] = useState<ExceptionRow | null>(null);
   const [draftStatus, setDraftStatus] = useState("open");
   const [draftNotes, setDraftNotes] = useState("");
+  const [draftOwnerId, setDraftOwnerId] = useState<string>("");
 
   // ── Disbursal local state ──────────────────────────────────────────────────
   const [disbInnerTab, setDisbInnerTab] = useState("status");
@@ -302,17 +318,31 @@ export default function PaymentDisbursalCenter() {
     enabled: !!bankRunId && bankInnerTab === "export",
   });
 
+  // Owner picker for the Assign dialog — was accepted by the PATCH endpoint all along,
+  // just never sent, so payroll_bank_exception.owner_user_id was 0 rows, always.
+  const ownersQ = useQuery<{ data: AssignableOwner[] }>({
+    queryKey: ["bank-readiness-assignable-owners"],
+    queryFn: () =>
+      hrmsApi.get<{ data: AssignableOwner[] }>(
+        "/api/payroll/bank-readiness/assignable-owners"
+      ),
+    enabled: !!editing,
+  });
+  const assignableOwners = ownersQ.data?.data ?? [];
+
   const saveMutation = useMutation({
     mutationFn: (vars: {
       employeeId: string;
       workflow_status: string;
       notes: string;
+      owner_user_id: string;
     }) =>
       hrmsApi.patch(
         `/api/payroll/bank-readiness/exceptions/${vars.employeeId}`,
         {
           workflow_status: vars.workflow_status,
           notes: vars.notes || null,
+          owner_user_id: vars.owner_user_id || null,
         }
       ),
     onSuccess: () => {
@@ -351,18 +381,48 @@ export default function PaymentDisbursalCenter() {
     onError: (e: any) => toast.error(e?.message ?? "Upload failed"),
   });
 
+  const [showBreakGlass, setShowBreakGlass] = useState(false);
+  const [breakGlassReason, setBreakGlassReason] = useState("");
+
+  // Maps the backend's own well-named error codes (payroll.service.ts::updateRunStatus)
+  // to real explanations instead of a generic "Failed to mark disbursed" toast, which
+  // previously gave no indication the run needed to be locked first, or that finance
+  // sign-off / a break-glass reason was the actual missing step.
+  const DISBURSE_ERROR_MESSAGES: Record<string, string> = {
+    PAYROLL_CLOSE_NOT_AUTHORISED:
+      "Disbursing a run is reserved for Finance or Payroll heads.",
+    PAYROLL_BLOCKED_PT_STATE_UNKNOWN:
+      "This run has employees with no resolvable Professional Tax state — assign their branch and recalculate first.",
+    PAYROLL_SELF_APPROVAL:
+      "You prepared this run, so it must be approved by someone else first.",
+  };
+
   const markDisbursedMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (vars?: { breakGlassReason?: string }) =>
       hrmsApi.patch(`/api/payroll/runs/${selectedRunId}/status`, {
         status: "disbursed",
+        ...(vars?.breakGlassReason
+          ? { breakGlassReason: vars.breakGlassReason }
+          : {}),
       }),
     onSuccess: () => {
       toast.success("Run marked as disbursed");
       qc.invalidateQueries({ queryKey: ["payroll-runs-list"] });
       qc.invalidateQueries({ queryKey: ["disbursal", selectedRunId] });
+      setShowBreakGlass(false);
+      setBreakGlassReason("");
     },
-    onError: (e: any) =>
-      toast.error(e?.message ?? "Failed to mark disbursed"),
+    onError: (e: any) => {
+      if (e?.code === "PAYROLL_FINANCE_SIGNOFF_REQUIRED") {
+        setShowBreakGlass(true);
+        return;
+      }
+      toast.error(
+        DISBURSE_ERROR_MESSAGES[e?.code as string] ??
+          e?.message ??
+          "Failed to mark disbursed"
+      );
+    },
   });
 
   // ── Derived values ─────────────────────────────────────────────────────────
@@ -377,6 +437,7 @@ export default function PaymentDisbursalCenter() {
     setEditing(r);
     setDraftStatus(r.workflow_status || "open");
     setDraftNotes(r.notes ?? "");
+    setDraftOwnerId(r.exception_owner_user_id ?? "");
   }
 
   function handleCsvUpload() {
@@ -499,8 +560,19 @@ export default function PaymentDisbursalCenter() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="border-white/30 bg-white/15 text-white hover:bg-white/25"
-                  disabled={markDisbursedMutation.isPending}
+                  className="border-white/30 bg-white/15 text-white hover:bg-white/25 disabled:opacity-50"
+                  disabled={
+                    markDisbursedMutation.isPending ||
+                    !canManageDisbursal ||
+                    selectedRun?.status !== "locked"
+                  }
+                  title={
+                    !canManageDisbursal
+                      ? "Reserved for Payroll, Finance or Super Admin."
+                      : selectedRun?.status !== "locked"
+                        ? "This run must be locked first — see the Sign-Off page."
+                        : undefined
+                  }
                   onClick={() => {
                     if (
                       !window.confirm(
@@ -508,7 +580,7 @@ export default function PaymentDisbursalCenter() {
                       )
                     )
                       return;
-                    markDisbursedMutation.mutate();
+                    markDisbursedMutation.mutate(undefined);
                   }}
                 >
                   Mark Run as Disbursed
@@ -1129,6 +1201,16 @@ export default function PaymentDisbursalCenter() {
                 </Badge>
               )}
             </div>
+            {selectedRun &&
+              canManageDisbursal &&
+              selectedRun.status !== "locked" &&
+              selectedRun.status !== "disbursed" && (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                  This run is <strong>{selectedRun.status}</strong>, not locked
+                  — "Mark Run as Disbursed" stays disabled until it's locked.
+                  Lock it from the Sign-Off page first.
+                </p>
+              )}
 
             {selectedRunId ? (
               <Tabs value={disbInnerTab} onValueChange={setDisbInnerTab}>
@@ -1286,6 +1368,12 @@ export default function PaymentDisbursalCenter() {
 
                 {/* CSV Upload Tab */}
                 <TabsContent value="csv-upload" className="space-y-4 mt-3">
+                  {!canManageDisbursal && (
+                    <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                      Uploading disbursal records is reserved for Payroll,
+                      Finance or Super Admin.
+                    </p>
+                  )}
                   <div className="rounded-md border p-4 bg-muted/30 text-sm space-y-1">
                     <p className="font-medium">
                       Expected CSV columns (first row = header):
@@ -1309,7 +1397,7 @@ export default function PaymentDisbursalCenter() {
                   />
                   <Button
                     onClick={handleCsvUpload}
-                    disabled={uploadMutation.isPending}
+                    disabled={uploadMutation.isPending || !canManageDisbursal}
                   >
                     {uploadMutation.isPending ? "Uploading…" : "Upload CSV"}
                   </Button>
@@ -1323,6 +1411,12 @@ export default function PaymentDisbursalCenter() {
 
                 {/* Manual Entry Tab */}
                 <TabsContent value="manual" className="space-y-4 mt-3">
+                  {!canManageDisbursal && (
+                    <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                      Recording disbursal entries is reserved for Payroll,
+                      Finance or Super Admin.
+                    </p>
+                  )}
                   <div className="grid grid-cols-2 gap-4 max-w-xl">
                     <div className="space-y-1">
                       <label className="text-sm font-medium">
@@ -1419,7 +1513,7 @@ export default function PaymentDisbursalCenter() {
                   </div>
                   <Button
                     onClick={handleManualUpload}
-                    disabled={uploadMutation.isPending}
+                    disabled={uploadMutation.isPending || !canManageDisbursal}
                   >
                     {uploadMutation.isPending ? "Saving…" : "Save Entry"}
                   </Button>
@@ -1444,6 +1538,26 @@ export default function PaymentDisbursalCenter() {
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">{editing?.reason}</p>
+            <div>
+              <label className="text-sm font-medium">Owner</label>
+              <Select value={draftOwnerId} onValueChange={setDraftOwnerId}>
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Unassigned" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ownersQ.isLoading && (
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                      Loading…
+                    </div>
+                  )}
+                  {assignableOwners.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div>
               <label className="text-sm font-medium">Workflow status</label>
               <Select value={draftStatus} onValueChange={setDraftStatus}>
@@ -1482,10 +1596,78 @@ export default function PaymentDisbursalCenter() {
                   employeeId: editing.employee_id,
                   workflow_status: draftStatus,
                   notes: draftNotes,
+                  owner_user_id: draftOwnerId,
                 })
               }
             >
               {saveMutation.isPending ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Finance sign-off / break-glass dialog ────────────────────────────── */}
+      <Dialog
+        open={showBreakGlass}
+        onOpenChange={(o) => {
+          if (!o) {
+            setShowBreakGlass(false);
+            setBreakGlassReason("");
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Finance sign-off required</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              This run has not been finance-approved yet. You can obtain
+              sign-off on the Sign-Off page, or — for a genuine emergency
+              only — supply a break-glass reason below. Break-glass must be
+              invoked by someone who neither prepared nor approved this run.
+            </p>
+            <a
+              href="/payroll/sign-off"
+              className="text-sm font-medium text-sky-700 underline underline-offset-2"
+            >
+              Go to Sign-Off →
+            </a>
+            <div>
+              <label className="text-sm font-medium">
+                Break-glass reason
+              </label>
+              <Textarea
+                className="mt-1"
+                rows={3}
+                value={breakGlassReason}
+                onChange={(e) => setBreakGlassReason(e.target.value)}
+                placeholder="Why this run must be disbursed without sign-off, right now."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setShowBreakGlass(false);
+                setBreakGlassReason("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={
+                !breakGlassReason.trim() || markDisbursedMutation.isPending
+              }
+              onClick={() =>
+                markDisbursedMutation.mutate({ breakGlassReason })
+              }
+            >
+              {markDisbursedMutation.isPending
+                ? "Disbursing…"
+                : "Disburse with break-glass"}
             </Button>
           </DialogFooter>
         </DialogContent>

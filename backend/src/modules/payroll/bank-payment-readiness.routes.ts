@@ -443,6 +443,47 @@ bankPaymentReadinessRouter.patch(
   }),
 );
 
+// ─── GET /assignable-owners ──────────────────────────────────────────────────
+
+/**
+ * The Assign dialog's owner picker was unwired to anything — PATCH /exceptions/:employeeId
+ * has always accepted and validated owner_user_id, but the frontend only ever sent
+ * workflow_status/notes, so payroll_bank_exception.owner_user_id was 0 rows, always.
+ *
+ * Returns the realistic pool of people an exception could be assigned to: auth_user rows
+ * holding one of the roles that can manage exceptions at all (same list as MANAGE_ROLES,
+ * so nobody is offered as an assignee who couldn't act on the exception themselves).
+ * Same name resolution as loadOverlay() above — auth_user carries no display name, so it
+ * comes from the linked employees row, falling back to the login email.
+ */
+bankPaymentReadinessRouter.get(
+  "/assignable-owners",
+  requireRole(...MANAGE_ROLES),
+  h(async (req, res) => {
+    const search = String(req.query.search ?? "").trim();
+    const params: unknown[] = [];
+    let searchClause = "";
+    if (search) {
+      searchClause = `AND (oe.full_name LIKE ? OR u.email LIKE ?)`;
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT DISTINCT u.id,
+              COALESCE(NULLIF(TRIM(oe.full_name), ''), u.email) AS name
+         FROM auth_user u
+         JOIN user_roles ur ON ur.user_id = u.id AND ur.active_status = 1
+         LEFT JOIN employees oe ON oe.user_id = u.id
+        WHERE ur.role_key IN (${MANAGE_ROLES.map(() => "?").join(",")})
+          ${searchClause}
+        ORDER BY name
+        LIMIT 50`,
+      [...MANAGE_ROLES, ...params],
+    );
+    return res.json({ success: true, data: rows });
+  }),
+);
+
 // ─── GET /payment-file ───────────────────────────────────────────────────────
 
 /**

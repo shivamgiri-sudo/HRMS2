@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { CLOSED_RUN_STATUSES_SQL } from "./run-status.js";
 
 export interface NocRecord {
   id: string;
@@ -45,11 +46,22 @@ export async function nocRequired(employeeId: string): Promise<{ required: boole
     return { required: true, reason: "FNF settlement pending" };
   }
 
-  // Check pending salary run for this employee
+  // Check pending salary run for this employee.
+  //
+  // Was `status NOT IN ('disbursed', 'cancelled')` — over-triggered because no run in
+  // this database is ever marked 'disbursed' (0 of 103, live-verified 2026-08-25):
+  // the calculator settles runs in 'finalized', not 'disbursed'. That made every
+  // inactive employee tied to a finalized run look like they had salary pending —
+  // 21,127 employees, most of whom were almost certainly already paid.
+  //
+  // Reuses CLOSED_RUN_STATUSES_SQL (run-status.ts) — the single definition of "this
+  // run is settled" already fixed for the same reason in 5 other places (see that
+  // file's header) — instead of hand-rolling a 6th exclusion list that would drift
+  // the same way. LOWER() because the DB stores 'FINALIZED' uppercase in places.
   const [runRows] = await db.execute<RowDataPacket[]>(
     `SELECT spr.id, spr.run_month FROM salary_prep_run spr
      JOIN salary_prep_line spl ON spl.run_id = spr.id AND spl.employee_id = ?
-     WHERE spr.status NOT IN ('disbursed', 'cancelled')
+     WHERE LOWER(spr.status) NOT IN (${CLOSED_RUN_STATUSES_SQL}, 'cancelled')
      ORDER BY spr.run_month DESC LIMIT 1`,
     [employeeId]
   );
