@@ -101,7 +101,7 @@ export async function sendOnboardingToken(
   }
 
   const rawToken = randomUUID() + '-' + randomUUID();
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000);
 
   await db.execute(
     `INSERT INTO ats_onboarding_request (id, candidate_id, branch_id, requested_by, status)
@@ -180,7 +180,7 @@ export async function sendOnboardingToken(
     // DLT-regulated the way SMS is, and fixing its own separate reliability issues is out of
     // scope for this SMS-specific change.
     const waBody =
-      `Hi ${cand.full_name}, you have been selected! Complete your onboarding at: ${onboardingLink} (valid 7 days)`;
+      `Hi ${cand.full_name}, you have been selected! Complete your onboarding at: ${onboardingLink} (valid 15 days)`;
     try {
       const waProvider = providerFactory.getProvider('whatsapp');
       await withDeliveryTimeout(

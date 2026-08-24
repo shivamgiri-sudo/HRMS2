@@ -1782,9 +1782,22 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
     );
   }
   if (!profile.bgv_consent) {
-    throw Object.assign(
-      new Error("BGV consent is required before submission. Please go to the BGV & Verification step and grant consent for background verification."),
-      { statusCode: 400, code: "BGV_CONSENT_REQUIRED" }
+    // Fallback: the bgv_consent flag may have been set before the profile row was
+    // created (UPDATE matched 0 rows). Check the actual consent table and sync.
+    const [consentCheck] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM candidate_bgv_consent WHERE candidate_id = ? AND consent_status = 'granted' LIMIT 1`,
+      [candidateId]
+    );
+    if (!consentCheck.length) {
+      throw Object.assign(
+        new Error("BGV consent is required before submission. Please go to the BGV & Verification step and grant consent for background verification."),
+        { statusCode: 400, code: "BGV_CONSENT_REQUIRED" }
+      );
+    }
+    // Consent exists — sync the flag so subsequent reads are consistent.
+    await db.execute(
+      `UPDATE candidate_onboarding_profile SET bgv_consent = 1, updated_at = NOW() WHERE candidate_id = ?`,
+      [candidateId]
     );
   }
 

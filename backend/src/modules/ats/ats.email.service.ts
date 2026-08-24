@@ -189,7 +189,7 @@ export async function sendOnboardingTokenEmail(params: {
         <p style="margin-top:18px;color:#64748b;font-size:13px;line-height:1.6">If the button does not open, copy this link into your browser:<br><span style="word-break:break-all">${escapeHtml(params.onboardingLink)}</span></p>`,
       actionLabel: "Open Onboarding Form",
       actionUrl: params.onboardingLink,
-      note: "This secure link is valid for 7 days. If it expires, ask your recruiter or HR to resend it.",
+      note: "This secure link is valid for 15 days. If it expires, ask your recruiter or HR to resend it.",
     }),
     params.candidateId,
     'token_sent',
