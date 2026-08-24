@@ -56,14 +56,14 @@ export async function applyPayrollDeductions(runId: string, actorUserId: string)
       let remaining = Number(line.loan_emi);
       if (!remaining || Number.isNaN(remaining) || remaining <= 0) continue;
 
-      const [loans] = await conn.execute<ActiveLoanRow[]>(
+      const [loans] = await conn.execute(
         `SELECT id, deducted_amount, pending_amount, status
            FROM employee_loans
           WHERE employee_id = ? AND status = 'active'
           ORDER BY start_date ASC
           FOR UPDATE`,
         [line.employee_id]
-      );
+      ) as [ActiveLoanRow[], unknown];
 
       for (const loan of loans) {
         if (remaining <= 0) break;
@@ -77,7 +77,7 @@ export async function applyPayrollDeductions(runId: string, actorUserId: string)
         const newStatus = newPending <= 0 ? "completed" : loan.status;
         remaining -= applied;
 
-        await conn.execute<ResultSetHeader>(
+        await conn.execute(
           `UPDATE employee_loans SET deducted_amount = ?, pending_amount = ?, status = ? WHERE id = ?`,
           [newDeducted, newPending, newStatus, loan.id]
         );
