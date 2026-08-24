@@ -59,6 +59,9 @@
   "modules/performance-feedback/quality-upload.service.ts": [
     "quality_audit"
   ],
+  "modules/performance-scorecard/performance-scorecard-snapshot.service.ts": [
+    "employee_performance_daily_snapshot"
+  ],
   "modules/portal/client.service.ts": [
     "bulk_operation_jobs"
   ],
