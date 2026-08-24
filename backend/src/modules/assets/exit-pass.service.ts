@@ -542,21 +542,22 @@ export async function listExitPasses(actor: RequestingEmployee, actorRoles: stri
   const params: unknown[] = [];
 
   // Drafts are always private to their creator — even override roles cannot see another person's draft.
-  clauses.push('(status <> \'draft\' OR requestor_employee_id = ?)');
+  clauses.push('(epr.status <> \'draft\' OR epr.requestor_employee_id = ?)');
   params.push(actor.employeeId);
 
   if (!isOverride) {
     if (actor.branchId) {
-      clauses.push('(requestor_employee_id = ? OR branch_id = ?)');
+      // epr.branch_id must be qualified — employees also has branch_id, making the unaliased form ambiguous.
+      clauses.push('(epr.requestor_employee_id = ? OR epr.branch_id = ?)');
       params.push(actor.employeeId, actor.branchId);
     } else {
       // No branch assigned — can only see own requests
-      clauses.push('requestor_employee_id = ?');
+      clauses.push('epr.requestor_employee_id = ?');
       params.push(actor.employeeId);
     }
   }
   if (filters.status) {
-    clauses.push('status = ?');
+    clauses.push('epr.status = ?');
     params.push(filters.status);
   }
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
@@ -584,7 +585,7 @@ export async function listExitPasses(actor: RequestingEmployee, actorRoles: stri
 /** Pending-Branch-Head queue for the calling employee (their own assignments only, unless override). */
 export async function listPendingBranchHead(actor: RequestingEmployee, actorRoles: string[]) {
   const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
-  const where = isOverride ? `status = 'pending_branch_head'` : `status = 'pending_branch_head' AND branch_head_employee_id = ?`;
+  const where = isOverride ? `epr.status = 'pending_branch_head'` : `epr.status = 'pending_branch_head' AND epr.branch_head_employee_id = ?`;
   const params = isOverride ? [] : [actor.employeeId];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT epr.*, req.full_name AS requestor_name, bm.branch_name
@@ -606,7 +607,7 @@ export async function listPendingAdmin(actor: RequestingEmployee, actorRoles: st
   // branch_admin with no branch assigned cannot approve any passes
   if (!isOverride && !actor.branchId) return [];
 
-  const where = isOverride ? `status = 'pending_admin_approval'` : `status = 'pending_admin_approval' AND epr.branch_id = ?`;
+  const where = isOverride ? `epr.status = 'pending_admin_approval'` : `epr.status = 'pending_admin_approval' AND epr.branch_id = ?`;
   const params = isOverride ? [] : [actor.branchId];
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT epr.*, req.full_name AS requestor_name, bm.branch_name
