@@ -1893,12 +1893,40 @@ export const bpoPnlService = {
       });
     }
 
+    // Payroll draft indicator — if salary_prep_run exists for the period but none are finalized,
+    // people cost will show ₹0 and the UI must say so rather than presenting zero as final.
+    const period = bundle.filters.period ?? "";
+    if (period) {
+      const [payrollRuns] = await db.execute<RowDataPacket[]>(
+        `SELECT status FROM salary_prep_run WHERE run_month = ?`,
+        [period],
+      );
+      if (payrollRuns.length > 0) {
+        const FINALIZED = new Set(["approved", "paid", "disbursed", "finalized", "final", "completed"]);
+        const allFinalized = payrollRuns.every((r) => FINALIZED.has(String(r.status ?? "").toLowerCase()));
+        if (!allFinalized) {
+          alerts.push({
+            type: "warning",
+            code: "PAYROLL_RUN_DRAFT",
+            title: "Payroll not yet finalized",
+            detail: `The payroll run for ${period} is still in draft/pending state. Agent salary, DSC and BMC people-cost will show ₹0 until the run is approved and finalized.`,
+          });
+        }
+      }
+    }
+
     const severity = { critical: 0, warning: 1, info: 2 } as const;
     alerts.sort((left, right) => severity[left.type] - severity[right.type] || toNumber(right.impact) - toNumber(left.impact));
+
+    const payrollRunPending = (() => {
+      const a = alerts.find((al) => al.code === "PAYROLL_RUN_DRAFT");
+      return a != null;
+    })();
 
     return {
       period: bundle.filters.period,
       filters: bundle.filters,
+      payrollRunPending,
       kpis: {
         grossPotentialRevenue: sum(rows, "grossPotentialRevenue"),
         earnedRevenue: sum(rows, "earnedRevenue"),

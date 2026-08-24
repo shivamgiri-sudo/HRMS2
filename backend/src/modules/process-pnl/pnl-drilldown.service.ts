@@ -197,13 +197,13 @@ async function indirectDrilldownRows(period: string, scope: PnlDrilldownScope): 
   const cc = costCentreScopeSql(scope);
   if (await tableExists("grn_entry_line_snapshot")) {
     const [lineRows] = await db.execute<RowDataPacket[]>(
-      `SELECT l.bill_source_id, l.particular, l.entry_type, l.total, l.cost_centre_code, ccm.cost_centre_name
+      `SELECT l.bill_source_id, l.particular, l.entry_type, l.amount, l.cost_centre_code, ccm.cost_centre_name
          FROM grn_entry_line_snapshot l
          JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
          LEFT JOIN cost_centre_master ccm
                 ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci = l.cost_centre_code COLLATE utf8mb4_unicode_ci
         WHERE g.period_code = ? AND g.is_rejected = 0 AND ${cc.sql} AND ${OWN_COMPANY_SQL}
-        ORDER BY l.total DESC`,
+        ORDER BY l.amount DESC`,
       [period, cc.param],
     );
     for (const r of lineRows) {
@@ -211,7 +211,7 @@ async function indirectDrilldownRows(period: string, scope: PnlDrilldownScope): 
         id: `grn-${r.bill_source_id}`,
         label: r.particular ? String(r.particular) : (r.cost_centre_name ? String(r.cost_centre_name) : "GRN line"),
         detail: [r.entry_type, r.cost_centre_name].filter(Boolean).join(" · ") || null,
-        amount: n(r.total),
+        amount: n(r.amount),
         date: null,
       });
     }

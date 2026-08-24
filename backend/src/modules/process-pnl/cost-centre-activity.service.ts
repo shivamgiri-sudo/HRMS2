@@ -117,7 +117,7 @@ export async function getCostCentreActivity(endPeriod: string): Promise<CostCent
 
   if (await tableExists("grn_entry_line_snapshot")) {
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT l.cost_centre_code AS code, SUM(l.total) AS amount
+      `SELECT l.cost_centre_code AS code, SUM(l.amount) AS amount
          FROM grn_entry_line_snapshot l
          JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
         WHERE g.period_code IN (${placeholders}) AND g.is_rejected = 0

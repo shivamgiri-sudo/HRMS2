@@ -52,7 +52,7 @@ function mockDb(f: Fixture) {
     if (q.includes("salary_prep_line") && q.includes("zero_paid")) return [[{ zero_paid: 0 }], []];
     if (q.includes("salary_prep_line")) return [f.people ?? [], []];
     // The branch-overhead comparison asks for one scalar; spendByBranch groups by branch.
-    if (q.includes("grn_entry_line_snapshot") && q.includes("COALESCE(SUM(l.total), 0) AS a")) {
+    if (q.includes("grn_entry_line_snapshot") && q.includes("COALESCE(SUM(l.amount), 0) AS a")) {
       return [[{ a: f.branchGrn ?? (f.spend ?? []).reduce((t, r) => t + r.amount, 0) }], []];
     }
     if (q.includes("grn_entry_line_snapshot")) return [f.spend ?? [], []];

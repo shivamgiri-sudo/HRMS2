@@ -426,7 +426,7 @@ async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, n
     params.push(...s.processIds);
   }
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ccm.branch_id AS branch_id, SUM(l.total) AS amount
+    `SELECT ccm.branch_id AS branch_id, SUM(l.amount) AS amount
        FROM grn_entry_line_snapshot l
        JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
        LEFT JOIN cost_centre_master ccm
@@ -993,7 +993,7 @@ async function buildFocus(
     const branchId = codes[0]?.branch_id ? String(codes[0].branch_id) : null;
     if (branchId && totals.indirectCost > 0 && hasGrnSnap) {
       const [branchGrn] = await db.execute<RowDataPacket[]>(
-        `SELECT COALESCE(SUM(l.total), 0) AS a
+        `SELECT COALESCE(SUM(l.amount), 0) AS a
            FROM grn_entry_line_snapshot l
            JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
            LEFT JOIN cost_centre_master ccm
