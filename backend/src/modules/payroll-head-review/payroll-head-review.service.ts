@@ -267,7 +267,7 @@ async function writeComponentAssignment(
         SET ctc_annual = ?, effective_from = ?, updated_at = NOW()
       WHERE employee_id = ? AND active_status = 1
       LIMIT 1`,
-    [Number(pkg.package_amount ?? (pkg.ctc ?? 0)), effectiveDate, employeeId]
+    [Number(pkg.package_amount ?? (pkg.ctc ?? 0)) * 12, effectiveDate, employeeId]
   ).catch((e) => console.warn('[payroll-head-review] could not sync ESA ctc_annual:', e));
 }
 

@@ -100,6 +100,15 @@ export default function PayrollHeadSalaryReviewDetail() {
   const [effectiveDate, setEffectiveDate]       = useState('');
   const [pkgBuilderOpen, setPkgBuilderOpen]     = useState(false);
 
+  // Auto-fill effective date from joining date once journey loads
+  useEffect(() => {
+    if (!journey?.employee?.date_of_joining || effectiveDate) return;
+    const d = new Date(journey.employee.date_of_joining);
+    if (!isNaN(d.getTime())) {
+      setEffectiveDate(d.toISOString().slice(0, 10));
+    }
+  }, [journey]);
+
   const load = useCallback(async () => {
     if (!employeeId) return;
     setLoading(true);
@@ -287,9 +296,9 @@ export default function PayrollHeadSalaryReviewDetail() {
               <StatTile label="Date of Joining" value={fmtDate(employee?.date_of_joining)} />
               <StatTile label="Employment Type" value={employee?.employment_type ?? '—'} />
               <StatTile
-                label="Offer CTC"
-                value={sa?.ctc_annual ? `${inr(sa.ctc_annual / 12)}/mo` : '—'}
-                sub={sa?.ctc_annual ? `${inr(sa.ctc_annual)} p.a.` : undefined}
+                label={sc ? 'Gross /mo' : 'Offer CTC'}
+                value={sc ? `${inr(sc.gross_monthly ?? sc.gross)}/mo` : sa?.ctc_annual ? `${inr(sa.ctc_annual / 12)}/mo` : '—'}
+                sub={sc ? `Net: ${inr(sc.net_in_hand)}/mo` : sa?.ctc_annual ? `${inr(sa.ctc_annual)} p.a.` : undefined}
               />
               <StatTile
                 label="Package Status"
@@ -388,7 +397,7 @@ export default function PayrollHeadSalaryReviewDetail() {
                           ? <SelectItem value="__none__" disabled>No packages for this branch yet</SelectItem>
                           : packages.map((p) => (
                             <SelectItem key={p.id} value={p.id}>
-                              {p.name ?? `Band ${p.band_code}`} · {inr(p.package_amount / 12)}/mo
+                              {p.name ?? `Band ${p.band_code}`} · {inr(p.package_amount)}/mo
                             </SelectItem>
                           ))}
                       </SelectContent>
