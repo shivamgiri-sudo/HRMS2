@@ -8,6 +8,7 @@ import { DashboardLoading, FilterField, KpiTile, SelectFilter } from "@/componen
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTTime } from "@/lib/utils";
 import { getSlaBreachTier } from "@/lib/slaBreachTier";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -103,6 +104,12 @@ type SupportCommandCenterData = {
   owner_workload: OwnerRow[];
   aging: AgingBuckets;
   root_causes: RootCauseRow[];
+  /**
+   * The active ticket queue, scoped by the same rule as every other figure in this payload.
+   * Previously fetched separately from GET /tickets, which applies a different rule — see the
+   * comment on the /command-center route.
+   */
+  queue: QueueTicket[];
 };
 
 type QueueTicket = {
@@ -140,6 +147,15 @@ const PRIORITY_COLOR: Record<string, string> = {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function NativeSupportCommandCenter() {
+  // role_page_access grants manager and process_manager can_view=1, can_edit=0 on this page
+  // (migration 435) — read-only by design. Until 2026-08-24 this page had no way to ask for
+  // the second flag, so it rendered Assign/Take/Escalate for all 24 of those users and every
+  // click came back 403 from a route guarded by HELPDESK_ADMIN_ROLES, which they are not in.
+  // Gate on isResolved too: canEditPage returns false for every code until access loads, so
+  // gating on it alone would blank the controls for a render even for users who do hold it.
+  const { canEditPage, isResolved: accessResolved } = useWorkforceAccess();
+  const canAct = accessResolved && canEditPage("SUPPORT_COMMAND_CENTER");
+
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState("");
   const [stats, setStats]         = useState<DashboardStats | null>(null);
@@ -189,6 +205,9 @@ export default function NativeSupportCommandCenter() {
         setOwners(res.data.owner_workload ?? []);
         setAging(res.data.aging ?? null);
         setRootCauses(res.data.root_causes ?? []);
+        // Same payload, same scope as the tiles above it — so the list and the totals can no
+        // longer disagree about which tickets they are describing.
+        setQueueTickets(res.data.queue ?? []);
       }
       // formatISTTime returns "" for a falsy argument, so "last refreshed" was always blank.
       setLastRefresh(formatISTTime(new Date()));

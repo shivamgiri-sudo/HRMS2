@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle, CheckCircle2, ChevronDown, Clock,
   Download, FileText, Loader, RefreshCcw, Search, ShieldCheck, Trash2, Upload,
+  TrendingUp, IndianRupee, FolderCheck,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -106,6 +107,22 @@ function toNum(v: string): number {
   return isNaN(n) ? 0 : n;
 }
 
+// ─── Submission status badge ──────────────────────────────────────────────────
+
+function StatusBadge({ status }: { status: TaxDeclaration["submission_status"] }) {
+  const styles: Record<TaxDeclaration["submission_status"], string> = {
+    draft:     "bg-slate-100 text-slate-700 border border-slate-200",
+    submitted: "bg-blue-100 text-blue-700 border border-blue-200",
+    verified:  "bg-emerald-100 text-emerald-700 border border-emerald-200",
+    rejected:  "bg-red-100 text-red-700 border border-red-200",
+  };
+  return (
+    <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold capitalize ${styles[status] ?? styles.draft}`}>
+      {status}
+    </span>
+  );
+}
+
 // ─── HR Verification Panel ────────────────────────────────────────────────────
 
 function HrVerificationPanel({
@@ -141,30 +158,23 @@ function HrVerificationPanel({
     }
   };
 
-  const statusColor = declaration.submission_status === "verified"
-    ? "bg-emerald-100 text-emerald-700"
-    : declaration.submission_status === "rejected"
-    ? "bg-red-100 text-red-700"
-    : "bg-blue-100 text-blue-700";
-
   return (
-    <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
+    <div className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm overflow-hidden">
       <div className="border-b p-5 flex items-center gap-3">
-        <ShieldCheck className="h-5 w-5 text-slate-600" />
+        <div className="w-9 h-9 rounded-xl bg-violet-50 flex items-center justify-center">
+          <ShieldCheck className="h-5 w-5 text-violet-600" />
+        </div>
         <div>
           <h2 className="font-black text-slate-950">HR Verification</h2>
           <p className="text-sm text-slate-500">Review and verify this tax declaration</p>
         </div>
+        <div className="ml-auto">
+          <StatusBadge status={declaration.submission_status} />
+        </div>
       </div>
       <div className="p-6 space-y-4">
-        {/* Current status */}
+        {/* Current status detail */}
         <div className="flex flex-wrap gap-4 text-sm">
-          <div>
-            <span className="text-slate-500 mr-2">Status:</span>
-            <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold capitalize ${statusColor}`}>
-              {declaration.submission_status ?? "submitted"}
-            </span>
-          </div>
           {declaration.verified_by && (
             <div>
               <span className="text-slate-500 mr-2">Verified by:</span>
@@ -197,7 +207,7 @@ function HrVerificationPanel({
               onChange={(e) => setReviewNote(e.target.value)}
               placeholder="Add a review note (optional)..."
               rows={2}
-              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors resize-none"
+              className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-violet-400 transition-colors resize-none"
             />
             <div className="flex gap-3">
               <button
@@ -505,28 +515,42 @@ export default function NativeTaxDeclaration() {
 
   const MessageIcon = messageType === "success" ? CheckCircle2 : AlertTriangle;
 
+  // ── Derived KPI values ───────────────────────────────────────────────────────
+  const tdsProjected = declaration?.tds_projected ?? 0;
+  const totalInvested = declaration?.total_investment ?? toNum(form.total_investment);
+  const pendingDocs = documents.filter((d) => !d.verified).length;
+  const activeRegime = declaration?.regime ?? form.regime;
+
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-sm font-black uppercase tracking-[0.2em] text-blue-600">Payroll</p>
-            <h1 className="mt-2 text-3xl font-black text-slate-950">Tax Declaration</h1>
-            <p className="mt-2 max-w-4xl text-slate-600">
-              Submit and manage income tax investment declarations for the financial year.
-            </p>
+      <div className="space-y-5">
+
+        {/* ── Gradient Header ────────────────────────────────────────────────── */}
+        <div className="rounded-2xl bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-700 text-white px-6 py-5 shadow-lg">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0">
+                <ShieldCheck className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold tracking-tight">Tax Declaration</h1>
+                <p className="text-violet-200 text-sm mt-0.5">
+                  IT regime selection, investment declarations and TDS projection
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => void loadDeclaration()}
+              disabled={loadingDeclaration}
+              className="inline-flex items-center gap-2 rounded-xl border border-white/30 bg-white/10 hover:bg-white/20 px-4 py-2 text-sm font-semibold text-white transition-colors cursor-pointer disabled:opacity-50 self-start sm:self-auto"
+            >
+              <RefreshCcw className="h-4 w-4" />
+              Refresh
+            </button>
           </div>
-          <button
-            onClick={() => void loadDeclaration()}
-            disabled={loadingDeclaration}
-            className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCcw className="h-4 w-4" />
-            Refresh
-          </button>
         </div>
 
+        {/* ── Message Banner ─────────────────────────────────────────────────── */}
         {message && (
           <div className={`flex items-center gap-3 rounded-2xl border p-4 text-sm font-bold ${messageColors[messageType]}`}>
             <MessageIcon className="h-4 w-4 flex-shrink-0" />
@@ -534,8 +558,77 @@ export default function NativeTaxDeclaration() {
           </div>
         )}
 
-        {/* Mode + FY Selectors */}
-        <div className="rounded-3xl border bg-white p-5 shadow-sm space-y-4">
+        {/* ── KPI Tiles ──────────────────────────────────────────────────────── */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Projected TDS */}
+          <div className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm p-4">
+            <div className="flex items-start justify-between mb-3">
+              <div className="w-9 h-9 rounded-xl bg-violet-50 flex items-center justify-center">
+                <TrendingUp className="w-4 h-4 text-violet-600" />
+              </div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-violet-500 bg-violet-50 rounded-full px-2 py-0.5">
+                FY {selectedFY}
+              </span>
+            </div>
+            <p className="text-xs font-semibold text-slate-500 mb-0.5">Projected TDS</p>
+            <p className="text-xl font-black text-violet-700 font-mono">
+              {tdsProjected > 0 ? INR(tdsProjected) : "—"}
+            </p>
+            {tdsProjected > 0 && (
+              <p className="text-xs text-slate-400 mt-0.5">{INR(Math.round(tdsProjected / 12))}/mo</p>
+            )}
+          </div>
+
+          {/* Investments Declared */}
+          <div className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm p-4">
+            <div className="flex items-start justify-between mb-3">
+              <div className="w-9 h-9 rounded-xl bg-emerald-50 flex items-center justify-center">
+                <IndianRupee className="w-4 h-4 text-emerald-600" />
+              </div>
+            </div>
+            <p className="text-xs font-semibold text-slate-500 mb-0.5">Investments Declared</p>
+            <p className="text-xl font-black text-emerald-700 font-mono">
+              {totalInvested > 0 ? INR(totalInvested) : "—"}
+            </p>
+            <p className="text-xs text-slate-400 mt-0.5">Total for the year</p>
+          </div>
+
+          {/* Pending Verification */}
+          <div className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm p-4">
+            <div className="flex items-start justify-between mb-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-50 flex items-center justify-center">
+                <Clock className="w-4 h-4 text-amber-600" />
+              </div>
+            </div>
+            <p className="text-xs font-semibold text-slate-500 mb-0.5">Pending Verification</p>
+            <p className="text-xl font-black text-amber-700">
+              {documents.length > 0 ? `${pendingDocs} / ${documents.length}` : "—"}
+            </p>
+            <p className="text-xs text-slate-400 mt-0.5">Documents awaiting review</p>
+          </div>
+
+          {/* Regime */}
+          <div className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm p-4">
+            <div className="flex items-start justify-between mb-3">
+              <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center">
+                <FolderCheck className="w-4 h-4 text-blue-600" />
+              </div>
+              {declaration?.submission_status && (
+                <StatusBadge status={declaration.submission_status} />
+              )}
+            </div>
+            <p className="text-xs font-semibold text-slate-500 mb-0.5">Tax Regime</p>
+            <p className="text-xl font-black text-blue-700 capitalize">
+              {activeRegime} Regime
+            </p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {activeRegime === "new" ? "Default from FY 2024-25" : "With deductions"}
+            </p>
+          </div>
+        </div>
+
+        {/* ── Controls: Mode + FY + Employee ─────────────────────────────────── */}
+        <div className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm p-5 space-y-4">
           <div className="flex flex-wrap gap-4 items-center">
             {/* Mode Toggle */}
             <div className="flex items-center rounded-2xl border overflow-hidden text-sm font-semibold">
@@ -544,7 +637,7 @@ export default function NativeTaxDeclaration() {
                   key={m}
                   onClick={() => { setMode(m); setSelectedEmployeeId(""); setDeclaration(null); setForm(EMPTY_FORM); }}
                   className={`px-5 py-2.5 cursor-pointer transition-colors ${
-                    mode === m ? "bg-slate-950 text-white" : "bg-white text-slate-600 hover:bg-slate-50"
+                    mode === m ? "bg-violet-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50"
                   }`}
                 >
                   {m === "self" ? "Self Service" : "Admin View"}
@@ -559,7 +652,7 @@ export default function NativeTaxDeclaration() {
                 <select
                   value={selectedFY}
                   onChange={(e) => setSelectedFY(e.target.value)}
-                  className="appearance-none rounded-2xl border px-4 py-2.5 pr-9 text-sm font-semibold outline-none focus:border-blue-400 bg-slate-50"
+                  className="appearance-none rounded-2xl border px-4 py-2.5 pr-9 text-sm font-semibold outline-none focus:border-violet-400 bg-slate-50"
                 >
                   {FINANCIAL_YEARS.map((fy) => (
                     <option key={fy} value={fy}>{fy}</option>
@@ -581,7 +674,7 @@ export default function NativeTaxDeclaration() {
                     value={employeeSearch}
                     onChange={(e) => setEmployeeSearch(e.target.value)}
                     placeholder="Search employees…"
-                    className="h-11 w-full rounded-2xl border bg-slate-50 pl-10 pr-4 text-sm outline-none focus:border-blue-400 transition-colors"
+                    className="h-11 w-full rounded-2xl border bg-slate-50 pl-10 pr-4 text-sm outline-none focus:border-violet-400 transition-colors"
                   />
                 </div>
                 {loadingEmployees ? (
@@ -590,7 +683,7 @@ export default function NativeTaxDeclaration() {
                   <select
                     value={selectedEmployeeId}
                     onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                    className="rounded-2xl border px-4 py-2.5 text-sm font-semibold outline-none focus:border-blue-400 bg-slate-50 min-w-[220px]"
+                    className="rounded-2xl border px-4 py-2.5 text-sm font-semibold outline-none focus:border-violet-400 bg-slate-50 min-w-[220px]"
                   >
                     <option value="">Select employee…</option>
                     {filteredEmployees.map((e) => (
@@ -605,8 +698,8 @@ export default function NativeTaxDeclaration() {
           )}
         </div>
 
-        {/* Declaration Form */}
-        <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
+        {/* ── Declaration Form ───────────────────────────────────────────────── */}
+        <div className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm overflow-hidden">
           <div className="border-b p-5 flex items-center justify-between">
             <div>
               <h2 className="font-black text-slate-950">Tax Investment Declaration</h2>
@@ -622,46 +715,55 @@ export default function NativeTaxDeclaration() {
 
           {loadingDeclaration ? (
             <div className="flex items-center justify-center py-16">
-              <Loader className="h-8 w-8 animate-spin text-slate-400" />
+              <Loader className="h-8 w-8 animate-spin text-violet-400" />
             </div>
           ) : (
             <div className="p-6 space-y-6">
-              {/* Regime Toggle */}
+
+              {/* ── Regime Comparison Cards ──────────────────────────────────── */}
               <div>
-                <label className="block text-sm font-black text-slate-700 mb-3">
-                  Tax Regime
-                </label>
-                <div className="flex gap-4">
-                  {(["old", "new"] as const).map((r) => (
-                    <label
-                      key={r}
-                      className={`flex items-center gap-3 rounded-2xl border-2 px-5 py-4 cursor-pointer transition-all flex-1 max-w-[200px] ${
-                        form.regime === r
-                          ? "border-slate-950 bg-slate-950 text-white"
-                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="regime"
-                        value={r}
-                        checked={form.regime === r}
-                        onChange={() => setForm({ ...form, regime: r })}
-                        className="sr-only"
-                      />
-                      <ShieldCheck className="h-5 w-5 flex-shrink-0" />
-                      <div>
-                        <p className="font-bold capitalize">{r} Regime</p>
-                        <p className={`text-xs mt-0.5 ${form.regime === r ? "text-slate-300" : "text-slate-500"}`}>
-                          {r === "old" ? "Deductions allowed" : "Lower slabs, no deductions"}
-                        </p>
+                <label className="block text-sm font-black text-slate-700 mb-3">Tax Regime Selection</label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div
+                    className={`rounded-2xl p-4 border-2 cursor-pointer transition-all ${
+                      form.regime === "old"
+                        ? "border-violet-400 bg-violet-50"
+                        : "border-slate-200 bg-white hover:border-slate-300"
+                    }`}
+                    onClick={() => setForm((prev) => ({ ...prev, regime: "old" }))}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className={`h-4 w-4 ${form.regime === "old" ? "text-violet-600" : "text-slate-400"}`} />
+                        <span className="font-bold text-slate-800">Old Regime</span>
                       </div>
-                    </label>
-                  ))}
+                      {form.regime === "old" && <CheckCircle2 className="w-4 h-4 text-violet-600" />}
+                    </div>
+                    <p className="text-xs text-slate-500">Deductions under 80C, 80D, HRA, LTA etc. allowed</p>
+                    <p className="text-xs text-slate-500 mt-1">Best when total deductions {'>'} ₹3.5L</p>
+                  </div>
+                  <div
+                    className={`rounded-2xl p-4 border-2 cursor-pointer transition-all ${
+                      form.regime === "new"
+                        ? "border-emerald-400 bg-emerald-50"
+                        : "border-slate-200 bg-white hover:border-slate-300"
+                    }`}
+                    onClick={() => setForm((prev) => ({ ...prev, regime: "new" }))}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className={`h-4 w-4 ${form.regime === "new" ? "text-emerald-600" : "text-slate-400"}`} />
+                        <span className="font-bold text-slate-800">New Regime</span>
+                      </div>
+                      {form.regime === "new" && <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
+                    </div>
+                    <p className="text-xs text-slate-500">Lower tax slabs, most deductions not available</p>
+                    <p className="text-xs text-slate-500 mt-1">Default from FY 2024-25. Best for lower deductions.</p>
+                  </div>
                 </div>
               </div>
 
-              {/* Declaration Fields */}
+              {/* ── Declaration Fields ───────────────────────────────────────── */}
               <div className="grid gap-5 sm:grid-cols-2">
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">
@@ -673,7 +775,7 @@ export default function NativeTaxDeclaration() {
                     value={form.declared_hra}
                     onChange={(e) => setForm({ ...form, declared_hra: e.target.value })}
                     placeholder="0"
-                    className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                    className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-violet-400 transition-colors"
                   />
                   <p className="mt-1 text-xs text-slate-400">House Rent Allowance exemption</p>
                 </div>
@@ -688,7 +790,7 @@ export default function NativeTaxDeclaration() {
                     value={form.declared_80c}
                     onChange={(e) => setForm({ ...form, declared_80c: e.target.value })}
                     placeholder="0"
-                    className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                    className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-violet-400 transition-colors"
                   />
                   <p className="mt-1 text-xs text-slate-400">PPF, ELSS, LIC, EPF, NSC (max ₹1,50,000)</p>
                 </div>
@@ -703,7 +805,7 @@ export default function NativeTaxDeclaration() {
                     value={form.declared_80d}
                     onChange={(e) => setForm({ ...form, declared_80d: e.target.value })}
                     placeholder="0"
-                    className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                    className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-violet-400 transition-colors"
                   />
                   <p className="mt-1 text-xs text-slate-400">Medical insurance premiums (max ₹25,000)</p>
                 </div>
@@ -718,13 +820,42 @@ export default function NativeTaxDeclaration() {
                     value={form.total_investment}
                     onChange={(e) => setForm({ ...form, total_investment: e.target.value })}
                     placeholder="0"
-                    className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                    className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-violet-400 transition-colors"
                   />
                   <p className="mt-1 text-xs text-slate-400">Combined investment amount for FY</p>
                 </div>
               </div>
 
-              {/* Chapter VI-A & Other Deductions (Form 12BB extended fields) */}
+              {/* ── Declaration Coverage Progress Bars ───────────────────────── */}
+              <div className="rounded-2xl bg-slate-50 border p-4 space-y-3">
+                <p className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Declaration Coverage</p>
+                {[
+                  { label: "80C", limit: 150000, declared: toNum(form.declared_80c) },
+                  { label: "80D", limit: 25000,  declared: toNum(form.declared_80d) },
+                  { label: "NPS (80CCD1B)", limit: 50000, declared: toNum(form.declared_nps_80ccd1b) },
+                  { label: "HRA", limit: 100000, declared: toNum(form.declared_hra) },
+                ].map(({ label, limit, declared }) => {
+                  const pct = Math.min(100, declared > 0 ? (declared / limit) * 100 : 0);
+                  return (
+                    <div key={label} className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="font-medium text-slate-700">{label}</span>
+                        <span className="text-slate-500">
+                          {declared > 0 ? INR(declared) : "—"} / {INR(limit)}
+                        </span>
+                      </div>
+                      <div className="h-1.5 rounded-full bg-slate-200 overflow-hidden">
+                        <div
+                          className="h-full bg-violet-400 rounded-full transition-all duration-500"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* ── Chapter VI-A & Other Deductions ─────────────────────────── */}
               <div>
                 <div className="mb-3 flex items-center gap-2">
                   <div className="h-px flex-1 bg-slate-200" />
@@ -741,7 +872,7 @@ export default function NativeTaxDeclaration() {
                       value={form.declared_home_loan_interest}
                       onChange={(e) => setForm({ ...form, declared_home_loan_interest: e.target.value })}
                       placeholder="0"
-                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-violet-400 transition-colors"
                     />
                     <p className="mt-1 text-xs text-slate-400">Section 24(b) — max ₹2,00,000</p>
                   </div>
@@ -755,7 +886,7 @@ export default function NativeTaxDeclaration() {
                       value={form.declared_nps_80ccd1b}
                       onChange={(e) => setForm({ ...form, declared_nps_80ccd1b: e.target.value })}
                       placeholder="0"
-                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-violet-400 transition-colors"
                     />
                     <p className="mt-1 text-xs text-slate-400">NPS additional deduction — max ₹50,000</p>
                   </div>
@@ -769,7 +900,7 @@ export default function NativeTaxDeclaration() {
                       value={form.declared_ltc}
                       onChange={(e) => setForm({ ...form, declared_ltc: e.target.value })}
                       placeholder="0"
-                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-violet-400 transition-colors"
                     />
                     <p className="mt-1 text-xs text-slate-400">Leave Travel Concession exemption</p>
                   </div>
@@ -783,7 +914,7 @@ export default function NativeTaxDeclaration() {
                       value={form.declared_80e}
                       onChange={(e) => setForm({ ...form, declared_80e: e.target.value })}
                       placeholder="0"
-                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-violet-400 transition-colors"
                     />
                     <p className="mt-1 text-xs text-slate-400">Interest on education loan — no cap</p>
                   </div>
@@ -797,7 +928,7 @@ export default function NativeTaxDeclaration() {
                       value={form.declared_80g}
                       onChange={(e) => setForm({ ...form, declared_80g: e.target.value })}
                       placeholder="0"
-                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-violet-400 transition-colors"
                     />
                     <p className="mt-1 text-xs text-slate-400">Eligible charitable donations</p>
                   </div>
@@ -811,7 +942,7 @@ export default function NativeTaxDeclaration() {
                       value={form.declared_other_chapter_via}
                       onChange={(e) => setForm({ ...form, declared_other_chapter_via: e.target.value })}
                       placeholder="0"
-                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-violet-400 transition-colors"
                     />
                     <p className="mt-1 text-xs text-slate-400">80TTA, 80TTB, and other eligible deductions</p>
                   </div>
@@ -825,7 +956,7 @@ export default function NativeTaxDeclaration() {
                       value={form.other_income}
                       onChange={(e) => setForm({ ...form, other_income: e.target.value })}
                       placeholder="0"
-                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-blue-400 transition-colors"
+                      className="w-full rounded-2xl border px-4 py-3 text-sm font-mono outline-none focus:border-violet-400 transition-colors"
                     />
                     <p className="mt-1 text-xs text-slate-400">FD interest, rental income, other heads</p>
                   </div>
@@ -837,7 +968,7 @@ export default function NativeTaxDeclaration() {
                     type="checkbox"
                     checked={form.employee_consent}
                     onChange={(e) => setForm({ ...form, employee_consent: e.target.checked })}
-                    className="mt-0.5 h-4 w-4 rounded accent-slate-950"
+                    className="mt-0.5 h-4 w-4 rounded accent-violet-600"
                   />
                   <span className="text-sm text-slate-700">
                     I declare that the above investment and income details are true and correct to the best of my knowledge,
@@ -846,41 +977,31 @@ export default function NativeTaxDeclaration() {
                 </label>
               </div>
 
-              {/* submission_status badge */}
+              {/* ── Submission Status Badge ──────────────────────────────────── */}
               {declaration?.submission_status && (
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-semibold text-slate-500">Declaration status:</span>
-                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold capitalize ${
-                    declaration.submission_status === "verified"  ? "bg-emerald-100 text-emerald-700" :
-                    declaration.submission_status === "submitted" ? "bg-blue-100 text-blue-700" :
-                    declaration.submission_status === "rejected"  ? "bg-red-100 text-red-700" :
-                    "bg-slate-100 text-slate-500"
-                  }`}>
-                    {declaration.submission_status}
-                  </span>
+                  <StatusBadge status={declaration.submission_status} />
                 </div>
               )}
 
-              {/* TDS Projected (read-only) */}
+              {/* ── TDS Projection Highlight ─────────────────────────────────── */}
               {declaration?.tds_projected !== undefined && declaration.tds_projected > 0 && (
-                <div className="rounded-2xl bg-amber-50 border border-amber-200 p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <Clock className="h-5 w-5 text-amber-600" />
-                    <div>
-                      <p className="text-sm font-black text-amber-900">TDS Projected</p>
-                      <p className="text-xs text-amber-700 mt-0.5">Estimated tax deducted at source for FY {selectedFY}</p>
-                    </div>
-                  </div>
-                  <p className="text-xl font-black font-mono text-amber-900">{INR(declaration.tds_projected)}</p>
+                <div className="rounded-2xl bg-gradient-to-br from-violet-600 to-purple-600 text-white p-4 text-center">
+                  <p className="text-violet-200 text-xs font-semibold uppercase tracking-wide mb-1">Projected TDS</p>
+                  <p className="text-3xl font-bold">{INR(declaration.tds_projected)}</p>
+                  <p className="text-violet-200 text-xs mt-1">
+                    Monthly deduction: {INR(Math.round(declaration.tds_projected / 12))}
+                  </p>
                 </div>
               )}
 
-              {/* Submit */}
+              {/* ── Submit / Reset ───────────────────────────────────────────── */}
               <div className="pt-2 flex gap-3">
                 <button
                   onClick={submitDeclaration}
                   disabled={submitting}
-                  className="flex-1 max-w-xs cursor-pointer rounded-2xl bg-slate-950 py-3 text-sm font-bold text-white hover:bg-slate-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="flex-1 max-w-xs cursor-pointer rounded-2xl bg-violet-600 py-3 text-sm font-bold text-white hover:bg-violet-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {submitting ? (
                     <Loader className="h-4 w-4 animate-spin" />
@@ -900,8 +1021,8 @@ export default function NativeTaxDeclaration() {
           )}
         </div>
 
-        {/* Supporting Documents */}
-        <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
+        {/* ── Supporting Documents ───────────────────────────────────────────── */}
+        <div className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm overflow-hidden">
           <div className="border-b p-5 flex items-center justify-between">
             <div>
               <h2 className="font-black text-slate-950 flex items-center gap-2">
@@ -910,7 +1031,7 @@ export default function NativeTaxDeclaration() {
               </h2>
               <p className="text-sm text-slate-500">Upload proof for HRA, 80C, 80D investments</p>
             </div>
-            <label className="cursor-pointer inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors">
+            <label className="cursor-pointer inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-100 transition-colors">
               {uploading ? <Loader className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {uploading ? "Uploading..." : "Upload Document"}
               <input
@@ -926,7 +1047,7 @@ export default function NativeTaxDeclaration() {
 
           {loadingDocuments ? (
             <div className="flex items-center justify-center py-12">
-              <Loader className="h-8 w-8 animate-spin text-slate-400" />
+              <Loader className="h-8 w-8 animate-spin text-violet-400" />
             </div>
           ) : documents.length === 0 ? (
             <div className="py-12 text-center">
@@ -1002,7 +1123,7 @@ export default function NativeTaxDeclaration() {
           )}
         </div>
 
-        {/* HR Verification Panel — admin mode only */}
+        {/* ── HR Verification Panel — admin mode only ────────────────────────── */}
         {mode === "admin" && declaration && (
           <HrVerificationPanel
             declaration={declaration}
@@ -1012,12 +1133,12 @@ export default function NativeTaxDeclaration() {
           />
         )}
 
-        {/* Declaration History */}
+        {/* ── Declaration History ────────────────────────────────────────────── */}
         {history.length > 0 && (
-          <div className="rounded-3xl border bg-white shadow-sm overflow-hidden">
+          <div className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm overflow-hidden">
             <div className="border-b p-5">
               <h2 className="font-black text-slate-950">Declaration History</h2>
-              <p className="text-sm text-slate-500">{history.length} past submissions</p>
+              <p className="text-sm text-slate-500">{history.length} past submission{history.length !== 1 ? "s" : ""}</p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[700px] text-sm">
@@ -1034,7 +1155,7 @@ export default function NativeTaxDeclaration() {
                       <td className="p-4 font-bold text-slate-950">{h.financial_year}</td>
                       <td className="p-4">
                         <span className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${
-                          h.regime === "new" ? "bg-blue-50 text-blue-700" : "bg-violet-50 text-violet-700"
+                          h.regime === "new" ? "bg-emerald-50 text-emerald-700" : "bg-violet-50 text-violet-700"
                         }`}>
                           {h.regime}
                         </span>
@@ -1043,7 +1164,7 @@ export default function NativeTaxDeclaration() {
                       <td className="p-4 font-mono text-slate-700">{INR(h.declared_80c)}</td>
                       <td className="p-4 font-mono text-slate-700">{INR(h.declared_80d)}</td>
                       <td className="p-4 font-mono font-semibold text-slate-800">{INR(h.total_investment)}</td>
-                      <td className="p-4 font-mono text-amber-700">{INR(h.tds_projected)}</td>
+                      <td className="p-4 font-mono text-violet-700 font-semibold">{INR(h.tds_projected)}</td>
                       <td className="p-4 text-xs text-slate-400 font-mono">
                         {h.submitted_at ? formatISTDate(h.submitted_at) :
                          h.created_at ? formatISTDate(h.created_at) : "—"}
@@ -1055,6 +1176,7 @@ export default function NativeTaxDeclaration() {
             </div>
           </div>
         )}
+
       </div>
     </DashboardLayout>
   );

@@ -240,6 +240,17 @@ export const useWorkforceAccess = () => {
         .filter((permission) => permission.can_view)
         .map((permission) => permission.page_code),
     );
+    // role_page_access has carried can_edit since it was created, but nothing on this hook
+    // ever exposed it, so every page could only ask "may I be seen?" and none could ask "may
+    // this viewer write?". Support Command Center is what that cost: migration 435 grants
+    // manager/process_manager can_view=1, can_edit=0 — read-only on purpose — and the page,
+    // having no way to read the second flag, rendered Assign/Take/Escalate for all of them.
+    // 24 users got buttons the API is correct to refuse with a 403.
+    const editableSet = new Set(
+      (roleQuery.data?.pages ?? [])
+        .filter((permission) => permission.can_edit)
+        .map((permission) => permission.page_code),
+    );
     const roleKeys = expandRoleKeys(roleQuery.data?.roleKeys ?? []);
     const disabledPageSet = new Set(roleQuery.data?.disabledPageCodes ?? []);
 
@@ -254,6 +265,13 @@ export const useWorkforceAccess = () => {
        */
       isResolved: roleQuery.data !== undefined,
       canViewPage: (pageCode: string) => isSuperAdmin || (!disabledPageSet.has(pageCode) && pageSet.has(pageCode)),
+      /**
+       * Write permission for a page, from role_page_access.can_edit. Same shape and same
+       * caveat as canViewPage: it returns false for every code until `isResolved` is true,
+       * so gate a control on `isResolved && canEditPage(...)` — or the control flickers off
+       * for its first render for users who do hold the grant.
+       */
+      canEditPage: (pageCode: string) => isSuperAdmin || (!disabledPageSet.has(pageCode) && editableSet.has(pageCode)),
       visiblePageCodes: isSuperAdmin
         ? Array.from(pageSet)
         : Array.from(pageSet).filter((pageCode) => !disabledPageSet.has(pageCode)),
