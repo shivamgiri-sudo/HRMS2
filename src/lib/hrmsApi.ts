@@ -309,15 +309,34 @@ export function getAuthToken(): string | null {
   return null;
 }
 
-async function requestForm<T>(path: string, body: FormData): Promise<T> {
+async function requestForm<T>(path: string, body: FormData, timeoutMs = 60000): Promise<T> {
+  // Unlike request()/fetchOnce() above, this had no AbortController/timeout at all — a slow
+  // or hung server (e.g. under DB connection-pool pressure) left the upload spinner running
+  // forever with no error ever surfacing, because the fetch promise never settled. Mirrors
+  // fetchOnce()'s pattern; timeout is longer than the JSON default (60s vs 30s) because a
+  // document upload includes client-side image compression and a multipart body, and mobile
+  // uploads are the primary use case here (see compressImageForUpload.ts).
   const headers = getAuthHeader();
   const normalizedPath = normalizeRequestPath(path);
-  const res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
-    method: "POST",
-    credentials: "include",
-    headers, // No Content-Type — browser sets multipart boundary automatically
-    body,
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(`${HRMS_API_URL}${normalizedPath}`, {
+      method: "POST",
+      credentials: "include",
+      headers, // No Content-Type — browser sets multipart boundary automatically
+      body,
+      signal: controller.signal,
+    });
+  } catch (err: unknown) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(`Upload timed out after ${Math.round(timeoutMs / 1000)}s. Check your connection and try again — if the file was large, try a smaller photo.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   const payload = await parseResponse(res);
   if (!res.ok) {
     throw buildApiError(res.status, payload, `HTTP ${res.status}`);
