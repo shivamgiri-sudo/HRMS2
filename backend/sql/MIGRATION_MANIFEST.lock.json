@@ -610,12 +610,20 @@
     "1547_upload_deduction_qual_incentive_snapshots.sql",
     "1546_mira_action_audit_log.sql",
     "1548_unlinked_grn_review_page_access.sql",
-    "1549_manager_wfm_quality_dashboard_access.sql"
+    "1549_manager_wfm_quality_dashboard_access.sql",
+    "1550_budget_topup_cost_centre_split.sql",
+    "1551_payroll_branch_readiness_leave_regularization.sql",
+    "1552_employee_salary_assignment_updated_at.sql",
+    "1553_salary_prep_line_component_notes.sql",
+    "1554_workforce_mandate_alert_threshold.sql",
+    "1555_attrition_record_inference_columns.sql",
+    "1556_employee_retention_recommendation.sql",
+    "1557_branch_sal_code_from_db_bill.sql"
   ],
   "approvedDeletions": [
     {
       "filename": "1213_wfm_shift_master_immutability_trigger.sql",
-      "reason": "Removed from manifest because it requires MySQL SUPER privilege (or log_bin_trust_function_creators=1) to create a trigger with binary logging enabled. The production host (maslms user) has neither, causing a hard ER_SPECIFIC_ACCESS_DENIED_ERROR that blocks server startup entirely. The application-layer lock guard in wfm.service.ts provides equivalent protection \u00e2\u20ac\u201d it checks is_locked before every write and refuses edits on locked shift versions. File kept on disk per the no-deletion rule; moved to knownUnlisted so it cannot be accidentally re-scheduled.",
+      "reason": "Removed from manifest because it requires MySQL SUPER privilege (or log_bin_trust_function_creators=1) to create a trigger with binary logging enabled. The production host (maslms user) has neither, causing a hard ER_SPECIFIC_ACCESS_DENIED_ERROR that blocks server startup entirely. The application-layer lock guard in wfm.service.ts provides equivalent protection â€” it checks is_locked before every write and refuses edits on locked shift versions. File kept on disk per the no-deletion rule; moved to knownUnlisted so it cannot be accidentally re-scheduled.",
       "approvedBy": "shivam.giri@teammas.in"
     },
     {
@@ -630,14 +638,14 @@
     "migrations/1301_client_billing_approval_workflow.sql",
     "migrations/1302_client_billing_credit_notes.sql",
     "migrations/430_rbac_matrix_applied_grants.sql",
+    "migrations/435_rbac_11_super_admin_only_pages.sql",
     "migrations/1303_client_billing_page_access.sql",
     "migrations/1304_client_billing_cutover_schema.sql",
     "migrations/1305_client_billing_cutover_staging_fix.sql",
     "migrations/1306_client_billing_cutover_addendum_columns.sql",
     "migrations/1307_client_billing_cutover_missing_cost_centres.sql",
     "migrations/1308_client_billing_tally_fields.sql",
-    "migrations/1309_client_billing_unmapped_legacy_cost_centre.sql",
-    "migrations/435_rbac_11_super_admin_only_pages.sql"
+    "migrations/1309_client_billing_unmapped_legacy_cost_centre.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
