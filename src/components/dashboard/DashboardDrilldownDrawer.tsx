@@ -8,8 +8,9 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, X } from "lucide-react";
+import { AlertCircle, X, TrendingUp, TrendingDown, Users, Clock, CheckCircle2, XCircle } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { cn } from "@/lib/utils";
 
 export interface DashboardDrilldownDrawerProps {
   open: boolean;
@@ -157,42 +158,77 @@ export function DashboardDrilldownDrawer({
       ? Object.keys(data.records[0]).filter((col) => !isUuidColumn(col))
       : [];
 
+  const totalCount = data?.totalCount ?? data?.records?.length ?? 0;
+
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
-        <SheetHeader className="mb-4">
-          <SheetTitle className="text-lg font-semibold">{metricName}</SheetTitle>
-          <SheetDescription className="text-xs text-slate-400 uppercase tracking-wide">
-            {dashboardCode} / {metricCode}
-          </SheetDescription>
-        </SheetHeader>
+      <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
+        {/* Glassmorphism Header */}
+        <div className="mb-5 -mx-6 -mt-6 px-6 py-5 bg-gradient-to-r from-[#0b1f44] via-[#1e3a5f] to-[#0b63e5] rounded-b-2xl">
+          <SheetHeader>
+            <SheetTitle className="text-xl font-bold text-white flex items-center gap-2">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/20 backdrop-blur-sm">
+                <Users className="h-5 w-5 text-white" />
+              </span>
+              {metricName}
+            </SheetTitle>
+            <SheetDescription className="text-xs text-blue-200/80 uppercase tracking-wider mt-1">
+              {dashboardCode} / {metricCode}
+            </SheetDescription>
+          </SheetHeader>
+        </div>
 
-        {/* Summary header */}
-        {!loading && !error && data?.summary && (
+        {/* Summary Stats Row */}
+        {!loading && !error && (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
-            {Object.entries(data.summary).map(([key, val]) => (
-              <div key={key} className="rounded-lg border bg-slate-50 px-3 py-2">
-                <p className="text-xs text-slate-500 capitalize">{key.replace(/_/g, " ")}</p>
-                <p className="text-base font-semibold text-slate-900">{val ?? "—"}</p>
-              </div>
-            ))}
+            <div className="rounded-xl border border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50 px-4 py-3 shadow-sm">
+              <p className="text-[10px] font-bold text-blue-600/70 uppercase tracking-wide">Total Records</p>
+              <p className="text-xl font-extrabold text-[#0b63e5]">{totalCount.toLocaleString()}</p>
+            </div>
+            {data?.summary && Object.entries(data.summary).slice(0, 2).map(([key, val]) => {
+              const isPositive = typeof val === 'number' && val > 0;
+              return (
+                <div key={key} className={cn(
+                  "rounded-xl border px-4 py-3 shadow-sm",
+                  isPositive
+                    ? "border-emerald-200 bg-gradient-to-br from-emerald-50 to-green-50"
+                    : "border-slate-200 bg-gradient-to-br from-slate-50 to-gray-50"
+                )}>
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">{key.replace(/_/g, " ")}</p>
+                  <p className={cn("text-xl font-extrabold", isPositive ? "text-emerald-600" : "text-slate-700")}>
+                    {val ?? "—"}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         )}
 
         {/* Loading skeleton */}
         {loading && (
-          <div className="space-y-3">
-            {[...Array(5)].map((_, i) => (
-              <Skeleton key={i} className="h-10 w-full" />
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              {[...Array(3)].map((_, i) => (
+                <Skeleton key={i} className="h-20 rounded-xl" />
+              ))}
+            </div>
+            <Skeleton className="h-8 w-full rounded-lg" />
+            {[...Array(6)].map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full rounded-lg" />
             ))}
           </div>
         )}
 
         {/* Error state */}
         {!loading && error && (
-          <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            {error}
+          <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-gradient-to-r from-red-50 to-rose-50 p-4 shadow-sm">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-red-100">
+              <AlertCircle className="h-5 w-5 text-red-600" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-red-800">Failed to load data</p>
+              <p className="text-xs text-red-600">{error}</p>
+            </div>
           </div>
         )}
 
@@ -200,36 +236,57 @@ export function DashboardDrilldownDrawer({
         {!loading && !error && data && (
           <>
             {data.records.length === 0 ? (
-              <p className="text-sm text-slate-400 py-8 text-center">No records found.</p>
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="h-14 w-14 rounded-full bg-slate-100 flex items-center justify-center mb-3">
+                  <CheckCircle2 className="h-7 w-7 text-slate-400" />
+                </div>
+                <p className="text-sm font-medium text-slate-500">No records found</p>
+                <p className="text-xs text-slate-400 mt-1">Try adjusting your filters</p>
+              </div>
             ) : (
-              <div className="overflow-x-auto rounded-lg border">
+              <div className="overflow-x-auto rounded-xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm">
                 <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50 border-b">
+                  <thead className="bg-gradient-to-r from-slate-50 to-slate-100/80 border-b border-slate-200/70">
                     <tr>
                       {columns.map((col) => (
                         <th
                           key={col}
-                          className="px-3 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap"
+                          className="px-4 py-3 text-left text-[11px] font-bold text-slate-600 uppercase tracking-wider whitespace-nowrap"
                         >
                           {formatColumnLabel(col)}
                         </th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-slate-100">
                     {data.records.map((row, i) => (
                       <tr
                         key={i}
-                        className="border-b last:border-0 hover:bg-slate-50 transition-colors"
+                        className="hover:bg-blue-50/50 transition-colors duration-150"
                       >
-                        {columns.map((col) => (
-                          <td key={col} className="px-3 py-2 text-slate-700 whitespace-nowrap">
+                        {columns.map((col, colIdx) => (
+                          <td key={col} className={cn(
+                            "px-4 py-3 whitespace-nowrap",
+                            colIdx === 0 ? "font-semibold text-slate-800" : "text-slate-600"
+                          )}>
                             {(() => {
                               const v = row[col];
-                              if (v === null || v === undefined) return "—";
-                              if (typeof v === "boolean") return v ? "Yes" : "No";
+                              if (v === null || v === undefined) return <span className="text-slate-300">—</span>;
+                              if (typeof v === "boolean") return (
+                                <span className={cn(
+                                  "inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full",
+                                  v ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
+                                )}>
+                                  {v ? <CheckCircle2 className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
+                                  {v ? "Yes" : "No"}
+                                </span>
+                              );
                               const s = String(v);
-                              if (isUuidValue(s)) return "—";
+                              if (isUuidValue(s)) return <span className="text-slate-300">—</span>;
+                              // Format numbers with locale
+                              if (typeof v === "number") return (
+                                <span className="font-bold text-[#0b63e5]">{v.toLocaleString()}</span>
+                              );
                               return s;
                             })()}
                           </td>
@@ -241,18 +298,28 @@ export function DashboardDrilldownDrawer({
               </div>
             )}
             {data.totalCount !== undefined && data.totalCount !== null && (
-              <p className="mt-2 text-xs text-slate-400 text-right">
-                {data.records.length < data.totalCount
-                  ? `Showing ${data.records.length} of ${data.totalCount}`
-                  : `${data.totalCount} record${data.totalCount !== 1 ? "s" : ""}`}
-              </p>
+              <div className="mt-3 flex items-center justify-between text-xs">
+                <span className="text-slate-400">
+                  {data.records.length < data.totalCount
+                    ? `Showing ${data.records.length} of ${data.totalCount.toLocaleString()}`
+                    : `${data.totalCount.toLocaleString()} record${data.totalCount !== 1 ? "s" : ""}`}
+                </span>
+                {data.records.length < data.totalCount && (
+                  <span className="text-blue-500 font-medium">Scroll to load more</span>
+                )}
+              </div>
             )}
           </>
         )}
 
-        <div className="mt-6 flex justify-end">
-          <Button variant="outline" size="sm" onClick={onClose}>
-            <X className="h-4 w-4 mr-1" />
+        <div className="mt-6 flex justify-end gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onClose}
+            className="rounded-lg border-slate-200 hover:bg-slate-50 hover:border-slate-300 transition-all"
+          >
+            <X className="h-4 w-4 mr-1.5" />
             Close
           </Button>
         </div>

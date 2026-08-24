@@ -110,18 +110,27 @@ function DetailValue({
   label,
   value,
   status,
+  color = "slate",
 }: {
   label: string;
   value?: string | null;
   status?: VerificationStatus;
+  color?: "slate" | "blue" | "emerald" | "purple" | "amber";
 }) {
+  const colorStyles = {
+    slate: "border-slate-200 bg-gradient-to-br from-slate-50 to-gray-50",
+    blue: "border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50",
+    emerald: "border-emerald-200 bg-gradient-to-br from-emerald-50 to-teal-50",
+    purple: "border-purple-200 bg-gradient-to-br from-purple-50 to-violet-50",
+    amber: "border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50",
+  };
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+    <div className={`rounded-xl border p-4 ${colorStyles[color]}`}>
       <div className="flex items-start justify-between gap-3">
-        <p className="text-xs font-semibold text-slate-600">{label}</p>
+        <p className="text-xs font-bold text-gray-700 uppercase tracking-wide">{label}</p>
         {status ? <VerificationBadge status={status} /> : null}
       </div>
-      <p className="mt-3 truncate text-base font-bold tabular-nums text-slate-950">
+      <p className="mt-2 truncate text-lg font-black tabular-nums text-gray-900">
         {value || "Not provided"}
       </p>
     </div>
@@ -133,24 +142,35 @@ function SectionCard({
   title,
   description,
   children,
+  gradient = "blue",
 }: {
   icon: React.ReactNode;
   title: string;
   description: string;
   children: React.ReactNode;
+  gradient?: "blue" | "purple" | "emerald" | "amber";
 }) {
+  const gradients = {
+    blue: "from-blue-600 via-indigo-600 to-blue-700",
+    purple: "from-purple-600 via-violet-600 to-purple-700",
+    emerald: "from-emerald-600 via-teal-600 to-emerald-700",
+    amber: "from-amber-500 via-orange-500 to-amber-600",
+  };
   return (
-    <section className="rounded-3xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex items-start gap-3 border-b border-slate-100 px-6 py-5">
-        <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-[#e8f2fc] text-[#073f78]">
-          {icon}
-        </div>
-        <div>
-          <h2 className="text-balance text-lg font-bold text-slate-950">{title}</h2>
-          <p className="mt-1 text-pretty text-sm text-slate-700">{description}</p>
+    <section className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+      <div className={`bg-gradient-to-r ${gradients[gradient]} px-5 py-4 text-white relative`}>
+        <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 30% 50%, white, transparent 60%)' }} />
+        <div className="relative flex items-center gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/20 backdrop-blur-sm">
+            {icon}
+          </div>
+          <div>
+            <h2 className="text-base font-bold">{title}</h2>
+            <p className="text-xs text-white/80">{description}</p>
+          </div>
         </div>
       </div>
-      <div className="p-6">{children}</div>
+      <div className="p-5">{children}</div>
     </section>
   );
 }
@@ -236,14 +256,16 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
         icon={<Banknote className="size-5" />}
         title="Bank Account"
         description="Only the final four account digits are displayed. New submissions require verification."
+        gradient="blue"
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <DetailValue
             label="Account Number"
             value={bank?.masked_account_number}
             status={bank?.verification_status ?? "not_provided"}
+            color="blue"
           />
-          <DetailValue label="IFSC Code" value={bank?.ifsc_code} />
+          <DetailValue label="IFSC Code" value={bank?.ifsc_code} color="blue" />
         </div>
 
         {pendingBankRequest?.pending ? (
@@ -355,17 +377,20 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
         icon={<Landmark className="size-5" />}
         title="PF, UAN & Identity"
         description="PAN, PF, UAN and Aadhaar are always masked in your profile."
+        gradient="purple"
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <DetailValue
             label="PAN"
             value={statutory?.masked_pan_number}
             status={statutory?.pan_verification_status ?? "not_provided"}
+            color="purple"
           />
           <DetailValue
             label="Aadhaar"
             value={statutory?.masked_aadhaar_number}
             status={statutory?.aadhaar_verification_status ?? "not_provided"}
+            color="purple"
           />
           <DetailValue
             label="PF Member Number"
@@ -373,6 +398,7 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
             status={statutory?.masked_pf_number
               ? statutory.pf_uan_verification_status
               : "not_provided"}
+            color="purple"
           />
           <DetailValue
             label="UAN"
@@ -380,6 +406,7 @@ export function BankStatutoryDetails({ employee, allowStatutoryEdit = false }: {
             status={statutory?.masked_uan
               ? statutory.pf_uan_verification_status
               : "not_provided"}
+            color="purple"
           />
         </div>
 
@@ -557,6 +584,7 @@ export function EmergencyNomineeDetails({ employee }: { employee: SensitiveProfi
         icon={<PhoneCall className="size-5" />}
         title="Emergency Contact"
         description="The person HR should contact in an urgent situation."
+        gradient="amber"
       >
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
@@ -623,6 +651,7 @@ export function EmergencyNomineeDetails({ employee }: { employee: SensitiveProfi
         icon={<HeartHandshake className="size-5" />}
         title="Nominee Details"
         description="Primary nominee for general employee benefits and records."
+        gradient="emerald"
       >
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
