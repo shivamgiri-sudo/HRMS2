@@ -116,6 +116,14 @@ INSERT IGNORE INTO notification_event_config
 ('leave_balance_digest',   'leave','Monthly leave balance digest','int',0,
  '{"to":[{"kind":"employee"}]}',NULL);
 
+-- Enable all leave events live on fresh installs.
+-- INSERT IGNORE above takes table defaults (enabled=0, dispatch_mode='shadow'); this
+-- corrects them for the leave module. Re-running is safe: already-live rows are untouched.
+UPDATE notification_event_config
+SET enabled = 1, dispatch_mode = 'live'
+WHERE module = 'leave'
+  AND dispatch_mode != 'off';  -- preserve operator-explicit 'off' decisions
+
 -- 2.3 Attendance ------------------------------------------------------------
 INSERT IGNORE INTO notification_event_config
   (event_code, module, display_name, sensitivity, is_critical, recipient_spec, template_key) VALUES
