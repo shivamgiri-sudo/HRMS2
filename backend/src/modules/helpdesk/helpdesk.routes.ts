@@ -215,10 +215,12 @@ router.get("/tickets", h(async (req: AuthenticatedRequest, res: Response) => {
 router.post("/tickets", h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   let employeeId: string;
+  let onBehalfOf = false;
 
   if (await hasRoleForRequest(req.authUser, ...HELPDESK_ADMIN_ROLES)) {
     employeeId = req.body.employee_id;
     if (!employeeId) return res.status(400).json({ error: "employee_id required for admin/IT ticket creation on behalf of employee" });
+    onBehalfOf = true;
   } else {
     const emp = await getEmployeeForUser(userId);
     if (!emp) return res.status(403).json({ success: false, message: "No employee record linked to your account" });
@@ -226,6 +228,16 @@ router.post("/tickets", h(async (req: AuthenticatedRequest, res: Response) => {
   }
 
   const ticket = await helpdeskService.createTicket({ ...req.body, employee_id: employeeId });
+  await writeSensitiveAuditLog({
+    actorUserId: userId,
+    actionType: "TICKET_CREATED",
+    moduleKey: "HELPDESK",
+    entityType: "helpdesk_ticket",
+    entityId: (ticket as { id: string }).id,
+    changeSummary: { category: req.body.category, priority: req.body.priority ?? "medium", ...(onBehalfOf ? { on_behalf_of: employeeId } : {}) },
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
   res.status(201).json({ data: ticket });
 }));
 
@@ -264,7 +276,18 @@ async function loadTicketInScope(req: AuthenticatedRequest) {
 
 router.patch("/tickets/:id", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
   if (!(await loadTicketInScope(req))) return res.status(404).json({ error: "Not found" });
-  res.json({ data: await helpdeskService.updateTicket(req.params.id, req.body) });
+  const data = await helpdeskService.updateTicket(req.params.id, req.body);
+  await writeSensitiveAuditLog({
+    actorUserId: req.authUser!.id,
+    actionType: "TICKET_UPDATED",
+    moduleKey: "HELPDESK",
+    entityType: "helpdesk_ticket",
+    entityId: req.params.id,
+    changeSummary: req.body,
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
+  res.json({ data });
 }));
 
 router.post("/tickets/:id/assign", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -324,6 +347,16 @@ router.post("/tickets/:id/resolve", requireRole(...HELPDESK_ADMIN_ROLES), h(asyn
   if (!resolution_note) return res.status(400).json({ error: "resolution_note required" });
   if (!(await loadTicketInScope(req))) return res.status(404).json({ error: "Not found" });
   const data = await helpdeskService.updateTicket(req.params.id, { status: "resolved", resolution_note, root_cause });
+  await writeSensitiveAuditLog({
+    actorUserId: req.authUser!.id,
+    actionType: "TICKET_RESOLVED",
+    moduleKey: "HELPDESK",
+    entityType: "helpdesk_ticket",
+    entityId: req.params.id,
+    changeSummary: { resolution_note, root_cause },
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
   // Fire-and-forget: notify the ticket reporter
   try {
     const ticket = await helpdeskService.getTicket(req.params.id) as any;
@@ -404,6 +437,16 @@ router.post("/tickets/:id/comments", h(async (req: AuthenticatedRequest, res: Re
   }
 
   const id = await helpdeskService.addComment(req.params.id, userId, text, wantInternal);
+  await writeSensitiveAuditLog({
+    actorUserId: userId,
+    actionType: wantInternal ? "TICKET_INTERNAL_NOTE_ADDED" : "TICKET_COMMENT_ADDED",
+    moduleKey: "HELPDESK",
+    entityType: "helpdesk_ticket",
+    entityId: req.params.id,
+    changeSummary: { comment_id: id, is_internal: wantInternal },
+    ipAddress: req.ip,
+    userAgent: req.headers["user-agent"],
+  });
   res.status(201).json({ data: { id } });
 }));
 
