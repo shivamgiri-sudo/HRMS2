@@ -21,6 +21,7 @@ import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { extractFromDocument, crossValidateDocument, checkDuplicates } from "./ocr.service.js";
 import { assertEmployableAge, persistMinorFlag, resolveVerifiedDob } from "./ageVerification.service.js";
 import { toStoredName } from "../../shared/nameFormat.js";
+import { propagateIdentityVerification } from "../../shared/identityVerificationPropagation.js";
 // face-match loaded lazily so onboarding only loads it when needed
 let _faceMatchModule: typeof import("./face-match.service.js") | null = null;
 async function getFaceMatch() {
@@ -954,7 +955,7 @@ export async function loadAsyncBgvTriggerContext(
 /**
  * Store a successful BGV check result
  */
-async function storeBgvCheckResult(
+export async function storeBgvCheckResult(
   candidateId: string,
   checkType: string,
   result: { status: string; providerKey: string; providerRequestId: string; providerReferenceId: string; matchScore?: number | null; matchedName?: string | null; resultSummary: string; raw?: Record<string, unknown> },
@@ -996,6 +997,43 @@ async function storeBgvCheckResult(
         verifiedAt,
       ]
     );
+  }
+
+  /*
+   * BUG FIX (2026-08-25): this is the REAL async onboarding BGV path — the one that actually
+   * runs live (triggerRealBgvChecksAsync → storeBgvCheckResult for pan/bank/employment/
+   * aadhaar_offline). identityVerificationPropagation.ts was wired into
+   * bgv-verification.service.ts's createOrUpdateCheck() on 2026-08-12, but that function is
+   * only reached by a separate set of manually/API-triggered verify* entry points — NOT by
+   * this one. Result: live DB check, 2026-08-25 — 32 pan and 33 aadhaar checks reached
+   * status='verified' (some as recently as yesterday), 9 and 8 of them respectively have a
+   * resolvable employee via ats_onboarding_bridge, and employees.pan_verified_on /
+   * aadhaar_verified_on were STILL 0 of 58,918 populated. The propagation call was on the
+   * wrong copy of the write path.
+   *
+   * Same non-fatal, idempotent, no-invented-dates contract as the other call site: a failure
+   * here must not roll back a BGV check that genuinely passed, and is logged loudly rather
+   * than swallowed silently (see identityVerificationPropagation.ts's own doc comment for why
+   * that swallow is exactly how the original gap stayed invisible for so long).
+   *
+   * Does NOT help the ~58,900 employees migrated from legacy systems with no
+   * ats_onboarding_bridge row at all (only 15 of 58,918 employees have one) — those employees
+   * were never run through this digital BGV pipeline, so there is no genuine verification
+   * event to propagate. That is a data-coverage gap, not a wiring bug, and per this file's own
+   * design intent must not be papered over with a fabricated verification date.
+   */
+  if (verifiedAt) {
+    try {
+      const r = await propagateIdentityVerification(candidateId, checkType, verifiedAt);
+      if (r.updated) {
+        console.log(`[bgv] ${checkType} verified — stamped employees.${r.column} for ${r.employeeId}`);
+      }
+    } catch (err) {
+      console.error(
+        `[bgv] could not propagate ${checkType} verification for candidate ${candidateId} ` +
+        `to the employee record:`, err instanceof Error ? err.message : err,
+      );
+    }
   }
 }
 
