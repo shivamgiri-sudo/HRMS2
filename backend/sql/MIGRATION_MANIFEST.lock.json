@@ -618,6 +618,7 @@
     "1554_workforce_mandate_alert_threshold.sql",
     "1555_attrition_record_inference_columns.sql",
     "1556_employee_retention_recommendation.sql",
+    "migrations/1558_helpdesk_ticket_raised_by.sql",
     "1557_branch_sal_code_from_db_bill.sql"
   ],
   "approvedDeletions": [
@@ -645,7 +646,8 @@
     "migrations/1306_client_billing_cutover_addendum_columns.sql",
     "migrations/1307_client_billing_cutover_missing_cost_centres.sql",
     "migrations/1308_client_billing_tally_fields.sql",
-    "migrations/1309_client_billing_unmapped_legacy_cost_centre.sql"
+    "migrations/1309_client_billing_unmapped_legacy_cost_centre.sql",
+    "migrations/1558_helpdesk_ticket_raised_by.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
