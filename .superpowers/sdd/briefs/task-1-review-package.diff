@@ -1,0 +1,199 @@
+diff --git a/backend/src/modules/inbox/inbox.routes.ts b/backend/src/modules/inbox/inbox.routes.ts
+index 9f504c6f..b4e3005f 100644
+--- a/backend/src/modules/inbox/inbox.routes.ts
++++ b/backend/src/modules/inbox/inbox.routes.ts
+@@ -1,16 +1,16 @@
+ import { Router } from "express";
+ import type { Response } from "express";
+ import { requireAuth } from "../../middleware/authMiddleware.js";
+ import { requireRole } from "../../middleware/requireRole.js";
+ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+-import { inboxService, getMyPending, getTimeline } from "./inbox.service.js";
++import { inboxService, getMyPending, getTimeline, bulkActioned } from "./inbox.service.js";
+ import { generateFixDraftForWorkItem } from "../ai/mira-fix-draft-generate.service.js";
+ import { listFixDraftsForWorkItem } from "../ai/mira-fix-draft.service.js";
+ import { deployFixDraft } from "../ai/mira-fix-deploy.service.js";
+ 
+ const router = Router();
+ // eslint-disable-next-line @typescript-eslint/no-explicit-any
+ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+ 
+ router.use(requireAuth);
+ 
+@@ -63,20 +63,48 @@ router.patch("/:id/read", h(async (req: AuthenticatedRequest, res: Response) =>
+   return res.json({ success: true });
+ }));
+ 
+ // PATCH /:id/actioned — mark item as actioned (caller's own items only)
+ router.patch("/:id/actioned", h(async (req: AuthenticatedRequest, res: Response) => {
+   const userId = req.authUser!.id;
+   await inboxService.markActioned(req.params.id, userId);
+   return res.json({ success: true });
+ }));
+ 
++// POST /bulk-actioned — mark a batch of items as actioned in one call
++router.post("/bulk-actioned", h(async (req: AuthenticatedRequest, res: Response) => {
++  const userId = req.authUser!.id;
++  const { ids, source, remarks } = req.body as {
++    ids?: unknown;
++    source?: unknown;
++    remarks?: unknown;
++  };
++
++  if (!Array.isArray(ids) || ids.length === 0) {
++    return res.status(400).json({ success: false, error: "ids must be a non-empty array" });
++  }
++  if (!["inbox", "tat", "work_item"].includes(String(source ?? ""))) {
++    return res.status(400).json({ success: false, error: "source must be inbox | tat | work_item" });
++  }
++  if (ids.length > 500) {
++    return res.status(400).json({ success: false, error: "Maximum 500 ids per call" });
++  }
++
++  const result = await bulkActioned(
++    userId,
++    ids.map(String),
++    source as "inbox" | "tat" | "work_item",
++    typeof remarks === "string" ? remarks : undefined,
++  );
++  return res.json({ success: true, ...result });
++}));
++
+ // PATCH /mark-all-read — mark all unread items as read for caller
+ router.patch("/mark-all-read", h(async (req: AuthenticatedRequest, res: Response) => {
+   const userId = req.authUser!.id;
+   await inboxService.markAllRead(userId);
+   return res.json({ success: true });
+ }));
+ 
+ // GET /mira-fix-draft/:workItemId — every draft ever attempted for a triaged complaint,
+ // most recent first (rejected attempts stay visible as history, not hidden). super_admin
+ // only — this is the same audience Mira feedback items are assigned to.
+diff --git a/backend/src/modules/inbox/inbox.service.ts b/backend/src/modules/inbox/inbox.service.ts
+index a1ab658e..6c4880c2 100644
+--- a/backend/src/modules/inbox/inbox.service.ts
++++ b/backend/src/modules/inbox/inbox.service.ts
+@@ -199,20 +199,123 @@ export const inboxService = {
+       ]
+     );
+     const [rows] = await db.execute<RowDataPacket[]>(
+       "SELECT * FROM work_inbox_item WHERE id = ? LIMIT 1",
+       [id]
+     );
+     return (rows as RowDataPacket[])[0];
+   },
+ };
+ 
++export interface BulkFailure {
++  id: string;
++  reason: "not_found" | "already_actioned" | "wrong_source" | "access_denied";
++}
++
++export async function bulkActioned(
++  userId: string,
++  ids: string[],
++  source: "inbox" | "tat" | "work_item",
++  remarks?: string,
++): Promise<{ actioned: number; failed: BulkFailure[] }> {
++  if (!ids.length) return { actioned: 0, failed: [] };
++  if (ids.length > 500) {
++    return { actioned: 0, failed: ids.map((id) => ({ id, reason: "wrong_source" as const })) };
++  }
++
++  const failed: BulkFailure[] = [];
++  let actioned = 0;
++
++  if (source === "inbox") {
++    const placeholders = ids.map(() => "?").join(",");
++    const [owned] = await db.execute<RowDataPacket[]>(
++      `SELECT id, is_actioned FROM work_inbox_item WHERE id IN (${placeholders}) AND user_id = ?`,
++      [...ids, userId],
++    );
++    const ownedMap = new Map<string, boolean>(
++      (owned as RowDataPacket[]).map((r) => [String(r.id), Boolean(r.is_actioned)]),
++    );
++    for (const id of ids) {
++      if (!ownedMap.has(id)) { failed.push({ id, reason: "access_denied" }); continue; }
++      if (ownedMap.get(id))  { failed.push({ id, reason: "already_actioned" }); continue; }
++    }
++    const actionable = ids.filter((id) => ownedMap.has(id) && !ownedMap.get(id));
++    if (actionable.length) {
++      const ph = actionable.map(() => "?").join(",");
++      await db.execute(
++        `UPDATE work_inbox_item SET is_actioned = 1, is_read = 1 WHERE id IN (${ph}) AND user_id = ?`,
++        [...actionable, userId],
++      );
++      actioned = actionable.length;
++    }
++    return { actioned, failed };
++  }
++
++  if (source === "tat") {
++    for (const id of ids) {
++      try {
++        const [rows] = await db.execute<RowDataPacket[]>(
++          "SELECT id, status FROM task_tat_instance WHERE id = ? AND (assigned_to = ? OR owner_user_id = ?)",
++          [id, userId, userId],
++        );
++        const row = (rows as RowDataPacket[])[0];
++        if (!row) { failed.push({ id, reason: "access_denied" }); continue; }
++        if (["completed", "cancelled"].includes(String(row.status ?? ""))) {
++          failed.push({ id, reason: "already_actioned" }); continue;
++        }
++        await db.execute(
++          "INSERT INTO tat_task_completions (task_id, completed_by, remarks, completed_at) VALUES (?, ?, ?, NOW())",
++          [id, userId, remarks ?? null],
++        );
++        await db.execute(
++          "UPDATE task_tat_instance SET status = 'completed' WHERE id = ?",
++          [id],
++        );
++        actioned++;
++      } catch {
++        failed.push({ id, reason: "not_found" });
++      }
++    }
++    return { actioned, failed };
++  }
++
++  if (source === "work_item") {
++    for (const id of ids) {
++      try {
++        const [rows] = await db.execute<RowDataPacket[]>(
++          "SELECT id, status FROM work_item WHERE id = ? AND (assigned_to_user_id = ? OR created_by = ?)",
++          [id, userId, userId],
++        );
++        const row = (rows as RowDataPacket[])[0];
++        if (!row) { failed.push({ id, reason: "access_denied" }); continue; }
++        if (["completed", "cancelled"].includes(String(row.status ?? ""))) {
++          failed.push({ id, reason: "already_actioned" }); continue;
++        }
++        await db.execute(
++          "UPDATE work_item SET status = 'completed', completed_at = NOW() WHERE id = ?",
++          [id],
++        );
++        await db.execute(
++          "INSERT INTO work_item_audit_log (work_item_id, action, remarks, performed_by, performed_at) VALUES (?, 'bulk_completed', ?, ?, NOW())",
++          [id, remarks ?? "Bulk acknowledged", userId],
++        );
++        actioned++;
++      } catch {
++        failed.push({ id, reason: "not_found" });
++      }
++    }
++    return { actioned, failed };
++  }
++
++  return { actioned: 0, failed: ids.map((id) => ({ id, reason: "wrong_source" as const })) };
++}
++
+ // ── Platform-wide pending task queue ─────────────────────────────────────────
+ 
+ export interface PendingTask {
+   id: string;
+   /**
+    * "work_item" is its own source (not folded into "inbox") specifically so the frontend
+    * can route its completion action to POST /api/work-inbox/:id/complete (work_item table)
+    * instead of PATCH /api/inbox/:id/actioned (work_inbox_item table) — the two were
+    * previously both tagged "inbox", so completing a work_item-sourced task silently
+    * updated zero rows in the wrong table and the item reappeared on next load. Reported

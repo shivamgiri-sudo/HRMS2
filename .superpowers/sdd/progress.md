@@ -51,3 +51,18 @@ Real-file testing (2026-08-20, commit ca0ee175): tested the roster import agains
 Live verification (2026-08-20, read-only, GETs only — no roster/inbox row was written): ran the REAL rosterBuilderRouter with the REAL requireAuth/requireRole against the production DB via tsx. Results: anonymous -> 401; an employee-only account -> 403 ("Access denied. Required: wfm or admin or super_admin"); a wfm-role account whose employees row is employment_status='inactive' -> 401 (account revocation working as designed); an active admin -> 200 with 1,090 rows = 163 employees x 7 dates, 953 carrying a shift template, 137 week-offs; missing cycleId -> 400. That closes plan step 11.5 at the API level and the READ half of 11.4. NOTE: a first attempt at this through vitest was meaningless and was discarded — tests/setup.ts mocks src/db/mysql.js globally, so every query returned empty and the role resolver fell back to 'employee', making a valid wfm user look like a 403. Anything calling itself a live check in this repo must not run under vitest.
 Migration 1510 verified against the live schema before merge (read-only): page_catalog (249 rows) and role_page_access (1,512 rows) both exist and carry the column names the migration uses; id and active_status have DEFAULTs so the omitted columns are fine; and both target uniques exist — page_catalog.page_code and uq_role_page(role_key, page_code) — so its INSERT IGNOREs are genuinely idempotent, not merely intended to be. Not yet applied (branch unmerged); prod has already applied 1511 and 1512, so 1510 will land out of numeric order — harmless, the runner keys on filename. Also: only 5 active unblocked users hold the wfm role today, so grant coverage is worth a look before this page is announced.
 STILL NOT DONE: the write half of plan step 11.4 — assign a cell, confirm cycle_id lands, publish, confirm the ROSTER_ACK_PENDING work_inbox_item row. Every part of that writes to production, which the plan itself scopes to a local/staging DB, and no such environment exists. It needs a human on a real login.
+
+---
+
+# Salary Dispute Module — SDD Progress Ledger
+# Started: 2026-08-23
+# Plan: docs/superpowers/plans/2026-08-23-salary-dispute.md
+# Branch start commit: 09f9bfdc
+
+## Tasks
+Task 1: complete (commit 79f04616, base 09f9bfdc, review clean — spec compliant, all 24 columns, all indexes, MySQL8 compatible)
+Task 2: complete (commit f4e70b6e, base c70ef53d, review clean — spec compliant, inbox API corrected to createWorkItem camelCase)
+Task 3: complete (commit 3bbf19a6, base f4e70b6e, review clean — 8 routes, role guards correct, getEmployeeIdForUser helper inline)
+Task 4: complete (commit 089d7862, base 3bbf19a6, review clean — 3-step wizard, hrmsApi, TanStack Query)
+Task 5: complete (commit 375a8cdc, base 089d7862, review clean — differential entry, min 10 char remarks enforced)
+Task 6: complete (commit 5d2d84cb, base 375a8cdc, review clean — 3 routes, 3 nav entries, manager read-only view, TypeScript clean, frontend build PASS)

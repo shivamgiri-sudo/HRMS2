@@ -1,148 +1,108 @@
-# Task 1 Brief: Backend reopen() service method + POST /:id/reopen route
+# Task 1: Database Migration — salary_dispute table
 
-## What you are building
+## Context
+This is the first task of the Salary Dispute Module for MAS PeopleOS HRMS.
+You are creating the database migration that other tasks depend on.
 
-Add a `reopen()` method to `grnSmartService` and a `POST /:id/reopen` route so that a
-rejected GRN can be moved back to `draft` status for correction and resubmission.
+## Your Job
+Create and apply migration file `backend/sql/migrations/434_salary_dispute.sql`.
 
-## Files to modify
+## Exact SQL to write
 
-- `backend/src/modules/finance/grn-smart.service.ts`
-- `backend/src/modules/finance/grn-smart.routes.ts`
+```sql
+-- backend/sql/migrations/434_salary_dispute.sql
+CREATE TABLE IF NOT EXISTS salary_dispute (
+  id                        CHAR(36)      NOT NULL DEFAULT (UUID()),
+  employee_id               CHAR(36)      NOT NULL,
+  employee_code             VARCHAR(50)   NOT NULL,
+  run_month                 VARCHAR(7)    NOT NULL COMMENT 'YYYY-MM of disputed payroll',
+  dispute_type              ENUM(
+    'MISSING_OT','INCORRECT_ATTENDANCE','REGULARIZATION_NOT_APPLIED',
+    'LEAVE_NOT_ASSIGNED','INCENTIVE_MISSING','WRONG_DEDUCTION',
+    'WRONG_COMPONENT_AMOUNT','SHIFT_ALLOWANCE_MISSING',
+    'DOUBLE_DEDUCTION','WRONG_LWP_COUNT','OTHER'
+  ) NOT NULL,
+  affected_dates            JSON          NOT NULL COMMENT 'Array of YYYY-MM-DD strings',
+  description               TEXT          NOT NULL,
+  status                    ENUM(
+    'draft','pending_wfm','pending_payroll_head','approved','rejected','closed'
+  ) NOT NULL DEFAULT 'pending_wfm',
+  manager_id                CHAR(36)      NULL COMMENT 'Reporting manager at raise time (view-only)',
+  branch_id                 CHAR(36)      NOT NULL,
+  process_id                CHAR(36)      NULL,
+  wfm_corrective_json       JSON          NULL COMMENT 'Corrective details entered by WFM',
+  differential_amount       DECIMAL(10,2) NULL,
+  differential_basis        TEXT          NULL COMMENT 'How differential was calculated',
+  wfm_remarks               TEXT          NULL,
+  wfm_reviewed_at           DATETIME      NULL,
+  wfm_reviewed_by           CHAR(36)      NULL,
+  payroll_head_remarks      TEXT          NULL,
+  payroll_head_reviewed_at  DATETIME      NULL,
+  payroll_head_reviewed_by  CHAR(36)      NULL,
+  arrear_run_month          VARCHAR(7)    NULL COMMENT 'Month arrear will be/was paid',
+  arrear_line_id            CHAR(36)      NULL COMMENT 'FK to salary_prep_line_component.id',
+  created_at                DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at                DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
-## Context you need
-
-### Service file layout
-- `grnSmartService` is an object exported from `grn-smart.service.ts`
-- Methods: `hasAllocations`, `reverseConsumption`, `saveAllocations`, `saveComponentAllocations`,
-  `registerDocuments`, `analyzeDocument`, `confirmExtraction`, `revalidate`, `submit`, `review`,
-  `cancel`, `getWorkspace`
-- `cancel()` is the last method before `getWorkspace()` — insert `reopen()` between them
-- `lockGrn(connection, grnId)` — acquires a FOR UPDATE lock and returns the GRN row
-- `releaseAllocations(connection, allocations)` — sets `lifecycle_status = 'released'`
-  (used by finance_head rejection path; you need to REVERSE this on reopen)
-- `writeAudit(action, grnId, actorUserId, actorRole, changes)` — inserts an audit row
-- `ResultSetHeader` is already imported from mysql2
-- `db` is already imported — `await db.getConnection()` for transactions
-
-### Status flow you are implementing
-```
-rejected  →  reopen()  →  draft
-```
-- Branch-head rejection: allocations were never reserved (lifecycle_status stays 'draft')
-- Finance-head rejection: `releaseAllocations()` was called, so lifecycle_status = 'released'
-  → reopen must restore them to 'draft'
-
-### Route file layout
-- `SMART_WRITE_ROLES` = `["accounts_head","finance_head","super_admin","admin","branch_head","branch_admin"]`
-- Pattern for a cancel-like route (already in file):
-  ```typescript
-  smartGrnRouter.post(
-    "/:id/cancel",
-    requireWriteAccess,
-    requireRole(...SMART_WRITE_ROLES),
-    authorizeGrn,
-    onlyWhenSmart,
-    async (req: SmartRequest, res) => { ... }
-  );
-  ```
-- Add `POST /:id/reopen` immediately after the cancel route, using identical middleware chain
-
-## Exact implementation
-
-### reopen() method (insert after cancel()'s closing `},`)
-
-```typescript
-  async reopen(grnId: string, actorUserId: string, actorRole: string) {
-    const connection = await db.getConnection();
-    try {
-      await connection.beginTransaction();
-      const grn = await lockGrn(connection, grnId);
-      if (String(grn.status) !== "rejected") {
-        throw new Error(`Only rejected GRNs can be reopened. Current status: ${grn.status}`);
-      }
-      // Finance-head rejections call releaseAllocations(), setting lifecycle_status = 'released'.
-      // Restore them to 'draft' so the next save can proceed normally.
-      await connection.execute(
-        `UPDATE grn_cost_allocation SET lifecycle_status = 'draft', updated_at = NOW()
-           WHERE grn_request_id = ? AND lifecycle_status = 'released'`,
-        [grnId]
-      );
-      const [result] = await connection.execute<ResultSetHeader>(
-        `UPDATE grn_request
-            SET status = 'draft',
-                rejection_reason = NULL,
-                branch_head_reviewed_by = NULL, branch_head_reviewed_at = NULL,
-                branch_head_review_note = NULL,
-                finance_head_reviewed_by = NULL, finance_head_reviewed_at = NULL,
-                finance_head_review_note = NULL,
-                reviewed_by = NULL, reviewed_at = NULL,
-                review_note = NULL,
-                submitted_at = NULL, submitted_by = NULL
-          WHERE id = ? AND status = 'rejected'`,
-        [grnId]
-      );
-      if (result.affectedRows !== 1) {
-        throw new Error("GRN status changed before reopen; refresh and try again");
-      }
-      await connection.commit();
-    } catch (error) {
-      await connection.rollback();
-      throw error;
-    } finally {
-      connection.release();
-    }
-    await writeAudit("REOPEN", grnId, actorUserId, actorRole, { previous_status: "rejected" });
-    return { success: true, newStatus: "draft" as const };
-  },
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_emp_month_type (employee_id, run_month, dispute_type),
+  KEY idx_employee   (employee_id),
+  KEY idx_status     (status),
+  KEY idx_branch     (branch_id),
+  KEY idx_run_month  (run_month),
+  KEY idx_manager    (manager_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
 
-### Route (insert after POST /:id/cancel block)
+## Steps
 
-```typescript
-smartGrnRouter.post(
-  "/:id/reopen",
-  requireWriteAccess,
-  requireRole(...SMART_WRITE_ROLES),
-  authorizeGrn,
-  onlyWhenSmart,
-  async (req: SmartRequest, res) => {
-    try {
-      const user = actor(req);
-      const data = await grnSmartService.reopen(req.params.id, user.id, user.role);
-      res.json(data);
-    } catch (error) {
-      res.status(400).json({
-        success: false,
-        error: error instanceof Error ? error.message : "Unable to reopen GRN",
-      });
-    }
-  }
-);
-```
+1. Create the file `backend/sql/migrations/434_salary_dispute.sql` with the exact SQL above.
 
-## Verification
-
-After implementing, run:
+2. Apply it to the dev database:
 ```bash
-cd /c/Users/ADMIN/Desktop/HRMS2-latest/backend && npx tsc --noEmit
+cd c:/Users/ADMIN/Desktop/HRMS2-latest/backend
+node -e "
+const mysql = require('mysql2/promise');
+const fs = require('fs');
+const path = require('path');
+function fromEnv(k) {
+  const e = fs.readFileSync('.env','utf8');
+  return e.match(new RegExp('^'+k+'=(.*)$','m'))?.[1]?.replace(/^[\"']|[\"']$/g,'').trim()??null;
+}
+(async()=>{
+  const sql = fs.readFileSync('sql/migrations/434_salary_dispute.sql','utf8');
+  const c = await mysql.createConnection({ host: fromEnv('DB_HOST')||'192.168.10.6', port:3306, user: fromEnv('DB_USER'), password: fromEnv('DB_PASSWORD'), database:'mas_hrms', multipleStatements:true });
+  await c.query(sql);
+  console.log('Migration 434 applied OK');
+  await c.end();
+})().catch(e=>{console.error(e.message);process.exit(1)});
+" 2>&1
 ```
-Must exit 0 with no output.
+Expected output: `Migration 434 applied OK`
 
-## Commit
-
+3. Verify the table exists:
 ```bash
-git add backend/src/modules/finance/grn-smart.service.ts \
-        backend/src/modules/finance/grn-smart.routes.ts
-git commit -m "feat(grn): POST /grns/:id/reopen — moves rejected → draft, restores released allocations"
+node -e "
+const mysql = require('mysql2/promise');
+const fs = require('fs');
+function fromEnv(k) { const e=fs.readFileSync('.env','utf8'); return e.match(new RegExp('^'+k+'=(.*)$','m'))?.[1]?.replace(/^[\"']|[\"']$/g,'').trim()??null; }
+(async()=>{
+  const c = await mysql.createConnection({ host:fromEnv('DB_HOST')||'192.168.10.6',port:3306,user:fromEnv('DB_USER'),password:fromEnv('DB_PASSWORD'),database:'mas_hrms' });
+  const [[r]] = await c.query('SELECT COUNT(*) n FROM information_schema.columns WHERE table_schema=\"mas_hrms\" AND table_name=\"salary_dispute\"');
+  console.log('salary_dispute columns:', r.n);
+  await c.end();
+})().catch(e=>{console.error(e.message);process.exit(1)});
+" 2>&1
+```
+Expected: `salary_dispute columns: 24` (or similar count, just verify > 0)
+
+4. Commit:
+```bash
+git add backend/sql/migrations/434_salary_dispute.sql
+git commit -m "feat(salary-dispute): migration 434 — salary_dispute table"
 ```
 
 ## Report
-
-Write your report to: `.superpowers/sdd/briefs/task-1-report.md`
-
-Include:
-- Status: DONE | DONE_WITH_CONCERNS | NEEDS_CONTEXT | BLOCKED
-- Commits made (short SHA)
-- tsc output (confirm exit 0)
-- Any concerns
+Write your report to: `c:/Users/ADMIN/Desktop/HRMS2-latest/.superpowers/sdd/briefs/task-1-report.md`
+Include: status (DONE/BLOCKED), commit hash, column count from verification.
+Return: status, commit hash, one-line summary.

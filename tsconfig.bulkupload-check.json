@@ -1,0 +1,18 @@
+{
+  // Typecheck for the bulk-upload approval feature (/bulk-upload, /bulk-upload-approvals).
+  //
+  // `npm run typecheck` runs against the root tsconfig, which declares `"files": []` plus
+  // project references — it compiles nothing and exits 0 no matter what is broken. Use this
+  // instead when touching these pages:
+  //
+  //     npx tsc -p tsconfig.bulkupload-check.json
+  //
+  // Scoped rather than repo-wide because `tsc -p tsconfig.app.json` reports a few hundred
+  // pre-existing errors from other modules, which would bury anything introduced here.
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/BulkUploadApprovals.tsx",
+    "src/pages/BulkUploadHub.tsx",
+    "src/vite-env.d.ts"
+  ]
+}
