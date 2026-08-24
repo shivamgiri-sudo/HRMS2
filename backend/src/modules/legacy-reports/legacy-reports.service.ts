@@ -104,111 +104,229 @@ const REPORTS: Record<string, ReportDef> = {
   // ── 1. Legacy Salary Register ─────────────────────────────────────────────
   "salary-register": {
     label: "Salary Register",
-    sumCols: ["gross_salary", "net_salary", "pf_employee", "esic_employee", "pf_employer", "esic_employer", "tds"],
+    sumCols: ["gross_salary","net_salary","pf_employee","esic_employee","pf_employer","esic_employer","tds","incentive_total","total_deduction"],
     columns: [
-      { key: "employee_code", label: "Emp Code",      format: "text" },
-      { key: "employee_name", label: "Employee Name", format: "text" },
-      { key: "branch_name",   label: "Branch",        format: "text" },
-      { key: "process_name",  label: "Process",       format: "text" },
-      { key: "cost_centre",   label: "Cost Centre",   format: "text" },
-      { key: "designation",   label: "Designation",   format: "text" },
-      { key: "working_days",  label: "Working Days",  format: "number",   align: "right" },
-      { key: "present_days",  label: "Earned Days",   format: "number",   align: "right" },
-      { key: "basic",         label: "Basic",         format: "currency", align: "right" },
-      { key: "hra",           label: "HRA",           format: "currency", align: "right" },
-      { key: "conv",          label: "Conv",          format: "currency", align: "right" },
-      { key: "special",       label: "Special Allow", format: "currency", align: "right" },
-      { key: "other_allow",   label: "Other Allow",   format: "currency", align: "right" },
-      { key: "medical",       label: "Medical",       format: "currency", align: "right" },
-      { key: "bonus",         label: "Bonus",         format: "currency", align: "right" },
-      { key: "lta",           label: "LTA",           format: "currency", align: "right" },
-      { key: "incentive",     label: "Incentive",     format: "currency", align: "right" },
-      { key: "extra_day_inc", label: "Extra Day Inc", format: "currency", align: "right" },
-      { key: "arrear",        label: "Arrear",        format: "currency", align: "right" },
-      { key: "gross_salary",  label: "Gross",         format: "currency", align: "right" },
-      { key: "pf_employee",   label: "EPF",           format: "currency", align: "right" },
-      { key: "esic_employee", label: "ESIC",          format: "currency", align: "right" },
-      { key: "pt",            label: "Prof Tax",      format: "currency", align: "right" },
-      { key: "tds",           label: "Income Tax",    format: "currency", align: "right" },
-      { key: "lwp",           label: "Leave Ded",     format: "currency", align: "right" },
-      { key: "loan_ded",      label: "Loan Ded",      format: "currency", align: "right" },
-      { key: "advance",       label: "Adv Paid",      format: "currency", align: "right" },
-      { key: "mobile_ded",    label: "Mobile Ded",    format: "currency", align: "right" },
-      { key: "asset_rec",     label: "Asset Rec",     format: "currency", align: "right" },
-      { key: "insurance",     label: "Insurance",     format: "currency", align: "right" },
-      { key: "other_ded",     label: "Other Ded",     format: "currency", align: "right" },
-      { key: "net_salary",    label: "Net Salary",    format: "currency", align: "right" },
-      { key: "pf_employer",   label: "EPF Co",        format: "currency", align: "right" },
-      { key: "esic_employer", label: "ESIC Co",       format: "currency", align: "right" },
-      { key: "admin_charges", label: "Admin Chg",     format: "currency", align: "right" },
+      { key: "employee_code",    label: "Emp Code",           format: "text" },
+      { key: "employee_name",    label: "Employee Name",       format: "text" },
+      { key: "cost_centre",      label: "Cost Centre",         format: "text" },
+      { key: "process_name",     label: "Process Name",        format: "text" },
+      { key: "department",       label: "Department",          format: "text" },
+      { key: "designation",      label: "Designation",         format: "text" },
+      { key: "profile",          label: "Profile",             format: "text" },
+      { key: "emp_for",          label: "Employee For",        format: "text" },
+      { key: "billable",         label: "Billable",            format: "text" },
+      { key: "branch_name",      label: "Branch",              format: "text" },
+      { key: "basic",            label: "Basic",               format: "currency", align: "right" },
+      { key: "hra",              label: "HRA",                 format: "currency", align: "right" },
+      { key: "bonus",            label: "Bonus",               format: "currency", align: "right" },
+      { key: "conv",             label: "Conv",                format: "currency", align: "right" },
+      { key: "portfolio",        label: "Portfolio",           format: "currency", align: "right" },
+      { key: "medical",          label: "Medical Allow",       format: "currency", align: "right" },
+      { key: "lta",              label: "LTA",                 format: "currency", align: "right" },
+      { key: "special",          label: "Special Allow",       format: "currency", align: "right" },
+      { key: "other_allow",      label: "Other Allow",         format: "currency", align: "right" },
+      { key: "pli1",             label: "PLI1",                format: "currency", align: "right" },
+      { key: "gross_salary",     label: "Gross",               format: "currency", align: "right" },
+      { key: "working_days",     label: "Working Days",        format: "number",   align: "right" },
+      { key: "ctc_offered",      label: "CTC Offered",         format: "currency", align: "right" },
+      { key: "current_ctc",      label: "Current CTC",         format: "currency", align: "right" },
+      { key: "present_days",     label: "Earned Days",         format: "number",   align: "right" },
+      { key: "actual_days",      label: "Actual Days",         format: "number",   align: "right" },
+      { key: "extra_day",        label: "Extra Day",           format: "number",   align: "right" },
+      { key: "leave_days",       label: "Leave",               format: "number",   align: "right" },
+      { key: "basic1",           label: "Basic1",              format: "currency", align: "right" },
+      { key: "hra1",             label: "HRA1",                format: "currency", align: "right" },
+      { key: "bonus1",           label: "Bonus1",              format: "currency", align: "right" },
+      { key: "conv1",            label: "Conv1",               format: "currency", align: "right" },
+      { key: "portfolio1",       label: "Portfolio1",          format: "currency", align: "right" },
+      { key: "special1",         label: "Special Allow1",      format: "currency", align: "right" },
+      { key: "other_allow1",     label: "Other Allow1",        format: "currency", align: "right" },
+      { key: "medical1",         label: "Medical1",            format: "currency", align: "right" },
+      { key: "gross1",           label: "Gross1",              format: "currency", align: "right" },
+      { key: "esi_elig",         label: "ESI Elig",            format: "text" },
+      { key: "pf_elig",          label: "PF Elig",             format: "text" },
+      { key: "esic_employee",    label: "ESIC",                format: "currency", align: "right" },
+      { key: "pf_employee",      label: "EPF",                 format: "currency", align: "right" },
+      { key: "tds",              label: "Income Tax",          format: "currency", align: "right" },
+      { key: "adv_taken",        label: "Adv Taken",           format: "currency", align: "right" },
+      { key: "advance_recovery", label: "Adv Paid",            format: "currency", align: "right" },
+      { key: "loan_taken",       label: "Loan Taken",          format: "currency", align: "right" },
+      { key: "loan_ded",         label: "Loan Ded",            format: "currency", align: "right" },
+      { key: "incentive_total",  label: "Incentive",           format: "currency", align: "right" },
+      { key: "extra_day_inc",    label: "Extra Day Inc",       format: "currency", align: "right" },
+      { key: "arrear",           label: "Arrear",              format: "currency", align: "right" },
+      { key: "pli",              label: "PLI",                 format: "currency", align: "right" },
+      { key: "net_salary",       label: "Net Salary",          format: "currency", align: "right" },
+      { key: "esic_employer",    label: "ESIC Co",             format: "currency", align: "right" },
+      { key: "pf_employer",      label: "EPF Co",              format: "currency", align: "right" },
+      { key: "admin_charges",    label: "Admin Chg",           format: "currency", align: "right" },
+      { key: "ctc",              label: "CTC",                 format: "currency", align: "right" },
+      { key: "shsh",             label: "SHSH",                format: "currency", align: "right" },
+      { key: "mobile_ded",       label: "Mobile Ded",          format: "currency", align: "right" },
+      { key: "short_collection", label: "Short Collection",    format: "currency", align: "right" },
+      { key: "asset_rec",        label: "Asset Recovery",      format: "currency", align: "right" },
+      { key: "insurance",        label: "Insurance",           format: "currency", align: "right" },
+      { key: "pt",               label: "Prof Tax",            format: "currency", align: "right" },
+      { key: "lwp_deduction",    label: "Leave Ded",           format: "currency", align: "right" },
+      { key: "other_deductions", label: "Other Ded",           format: "currency", align: "right" },
+      { key: "other_ded_remarks",label: "Other Ded Remarks",   format: "text" },
+      { key: "total_deduction",  label: "Total Deduction",     format: "currency", align: "right" },
+      { key: "sal_date",         label: "Sal Date",            format: "date" },
+      { key: "uan",              label: "UAN",                 format: "text" },
+      { key: "epf_no",           label: "EPF No",              format: "text" },
+      { key: "esic_no",          label: "ESIC No",             format: "text" },
+      { key: "cheque_no",        label: "Cheque No",           format: "text" },
+      { key: "cheque_date",      label: "Cheque Date",         format: "text" },
+      { key: "print_date",       label: "Print Date",          format: "text" },
+      { key: "left_status",      label: "Left Status",         format: "text" },
+      { key: "tax_total_gross",  label: "Tax Total Gross",     format: "currency", align: "right" },
+      { key: "tax_section10",    label: "Tax Section 10",      format: "currency", align: "right" },
+      { key: "tax_balance",      label: "Tax Balance",         format: "currency", align: "right" },
+      { key: "tax_under_hd",     label: "Tax Under Hd",        format: "currency", align: "right" },
+      { key: "deduction_under24",label: "Dedn Under 24",       format: "currency", align: "right" },
+      { key: "tax_gross_total",  label: "Tax Gross Total",     format: "currency", align: "right" },
+      { key: "tax_agg_chapter6", label: "Tax Agg Ch6",         format: "currency", align: "right" },
+      { key: "total_income",     label: "Total Income",        format: "currency", align: "right" },
+      { key: "tax_on_total",     label: "Tax on Income",       format: "currency", align: "right" },
+      { key: "edu_cess",         label: "Edu Cess",            format: "currency", align: "right" },
+      { key: "tax_pay_edu_cess", label: "Tax+Edu Cess",        format: "currency", align: "right" },
+      { key: "tax_deducted_prev",label: "Tax Prev Month",      format: "currency", align: "right" },
+      { key: "balance_tax",      label: "Balance Tax",         format: "currency", align: "right" },
+      { key: "salary_pay_mode",  label: "Pay Mode",            format: "text" },
+      { key: "ac_no",            label: "Account No",          format: "text" },
+      { key: "ifsc_code",        label: "IFSC Code",           format: "text" },
+      { key: "ac_bank",          label: "Bank Name",           format: "text" },
+      { key: "ac_branch",        label: "Bank Branch",         format: "text" },
     ],
     async query(f) {
       const [bw, bv] = branchWhere("bm.branch_name", f.branch);
       const month = f.month || new Date().toISOString().slice(0, 7);
-      // run_month is varchar(7) like '2026-07' — use direct equality, not DATE_FORMAT
       const mw = "AND spr.run_month = ?";
       const mv = [month];
       const [ew, ev] = empWhere("spl.employee_code", f.employee_code);
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const [pw, pv] = processWhere("pm", f.process);
-      // Use direct salary_prep_line columns for fields that exist there;
-      // only use component-pivot for fields not stored directly (CONV, OA, MA, BONUS,
-      // EXTRA_DAY_INC, ARREAR, MOBILE_DED, ASSET_REC, INS, ADMIN_CHG).
-      // LTA has no component code and no direct column — always 0.
       return q(`
         SELECT
           spl.employee_code,
-          e.full_name                                                            AS employee_name,
+          e.full_name                                                                AS employee_name,
+          cc.cost_centre_code                                                        AS cost_centre,
+          COALESCE(pm.process_name, 'UNASSIGNED')                                   AS process_name,
+          COALESCE(dpm.dept_name, '')                                                AS department,
+          dm.designation_name                                                        AS designation,
+          COALESCE(e.profile_type, '')                                               AS profile,
+          COALESCE(e.emp_type, '')                                                   AS emp_for,
+          COALESCE(e.billable_status, 'No')                                          AS billable,
           bm.branch_name,
-          COALESCE(pm.process_name, 'UNASSIGNED')                               AS process_name,
-          cc.cost_centre_code                                                    AS cost_centre,
-          dm.designation_name                                                    AS designation,
-          spl.working_days,
-          spl.present_days,
           spl.basic,
           spl.hra,
-          COALESCE(MAX(CASE WHEN c.component_code='CONV'          THEN c.amount END),0) AS conv,
-          spl.special_allowance                                                  AS special,
-          COALESCE(MAX(CASE WHEN c.component_code='OA'            THEN c.amount END),0) AS other_allow,
-          COALESCE(MAX(CASE WHEN c.component_code='MA'            THEN c.amount END),0) AS medical,
           COALESCE(MAX(CASE WHEN c.component_code='BONUS'         THEN c.amount END),0) AS bonus,
-          0                                                                      AS lta,
-          spl.incentive_total                                                    AS incentive,
+          COALESCE(MAX(CASE WHEN c.component_code='CONV'          THEN c.amount END),0) AS conv,
+          COALESCE(MAX(CASE WHEN c.component_code='PORTFOLIO'     THEN c.amount END),0) AS portfolio,
+          COALESCE(MAX(CASE WHEN c.component_code='MA'            THEN c.amount END),0) AS medical,
+          0                                                                          AS lta,
+          spl.special_allowance                                                      AS special,
+          COALESCE(MAX(CASE WHEN c.component_code='OA'            THEN c.amount END),0) AS other_allow,
+          0                                                                          AS pli1,
+          spl.gross_salary,
+          spl.working_days,
+          e.ctc                                                                      AS ctc_offered,
+          ROUND(spl.gross_salary + spl.pf_employer + spl.esic_employer
+                + COALESCE(MAX(CASE WHEN c.component_code='ADMIN_CHG' THEN c.amount END),0), 2) AS current_ctc,
+          spl.present_days,
+          COALESCE(spl.active_calendar_days, 0)                                      AS actual_days,
+          0                                                                          AS extra_day,
+          COALESCE(spl.leave_days, 0)                                                AS leave_days,
+          ROUND(spl.basic * spl.present_days / NULLIF(spl.working_days,0), 0)       AS basic1,
+          ROUND(spl.hra   * spl.present_days / NULLIF(spl.working_days,0), 0)       AS hra1,
+          ROUND(COALESCE(MAX(CASE WHEN c.component_code='BONUS'     THEN c.amount END),0)
+                         * spl.present_days / NULLIF(spl.working_days,0), 0)        AS bonus1,
+          ROUND(COALESCE(MAX(CASE WHEN c.component_code='CONV'      THEN c.amount END),0)
+                         * spl.present_days / NULLIF(spl.working_days,0), 0)        AS conv1,
+          ROUND(COALESCE(MAX(CASE WHEN c.component_code='PORTFOLIO' THEN c.amount END),0)
+                         * spl.present_days / NULLIF(spl.working_days,0), 0)        AS portfolio1,
+          ROUND(spl.special_allowance * spl.present_days / NULLIF(spl.working_days,0), 0) AS special1,
+          ROUND(COALESCE(MAX(CASE WHEN c.component_code='OA'        THEN c.amount END),0)
+                         * spl.present_days / NULLIF(spl.working_days,0), 0)        AS other_allow1,
+          ROUND(COALESCE(MAX(CASE WHEN c.component_code='MA'        THEN c.amount END),0)
+                         * spl.present_days / NULLIF(spl.working_days,0), 0)        AS medical1,
+          ROUND(spl.gross_salary * spl.present_days / NULLIF(spl.working_days,0), 0) AS gross1,
+          IF(spl.esic_employee > 0, 'YES', 'NO')                                    AS esi_elig,
+          IF(spl.pf_employee   > 0, 'YES', 'NO')                                    AS pf_elig,
+          spl.esic_employee,
+          spl.pf_employee,
+          COALESCE(spl.tds, MAX(CASE WHEN c.component_code='TDS'  THEN c.amount END), 0) AS tds,
+          0                                                                          AS adv_taken,
+          COALESCE(spl.advance_recovery, MAX(CASE WHEN c.component_code='ADV'  THEN c.amount END), 0) AS advance_recovery,
+          0                                                                          AS loan_taken,
+          COALESCE(spl.loan_emi, MAX(CASE WHEN c.component_code='LOAN' THEN c.amount END), 0) AS loan_ded,
+          spl.incentive_total,
           COALESCE(MAX(CASE WHEN c.component_code='EXTRA_DAY_INC' THEN c.amount END),0) AS extra_day_inc,
           COALESCE(MAX(CASE WHEN c.component_code='ARREAR'        THEN c.amount END),0) AS arrear,
-          spl.gross_salary,
-          spl.pf_employee,
-          spl.esic_employee,
-          spl.professional_tax                                                   AS pt,
-          spl.tds,
-          spl.lwp_deduction                                                      AS lwp,
-          spl.loan_emi                                                           AS loan_ded,
-          spl.advance_recovery                                                   AS advance,
+          0                                                                          AS pli,
+          spl.net_salary,
+          spl.esic_employer,
+          spl.pf_employer,
+          COALESCE(MAX(CASE WHEN c.component_code='ADMIN_CHG'     THEN c.amount END),0) AS admin_charges,
+          ROUND(spl.gross_salary + spl.pf_employer + spl.esic_employer
+                + COALESCE(MAX(CASE WHEN c.component_code='ADMIN_CHG' THEN c.amount END),0), 2) AS ctc,
+          0                                                                          AS shsh,
           COALESCE(MAX(CASE WHEN c.component_code='MOBILE_DED'    THEN c.amount END),0) AS mobile_ded,
+          0                                                                          AS short_collection,
           COALESCE(MAX(CASE WHEN c.component_code='ASSET_REC'     THEN c.amount END),0) AS asset_rec,
           COALESCE(MAX(CASE WHEN c.component_code='INS'           THEN c.amount END),0) AS insurance,
-          spl.other_deductions                                                   AS other_ded,
-          spl.net_salary,
-          spl.pf_employer,
-          spl.esic_employer,
-          COALESCE(MAX(CASE WHEN c.component_code='ADMIN_CHG'     THEN c.amount END),0) AS admin_charges
+          COALESCE(spl.professional_tax, MAX(CASE WHEN c.component_code='PT'  THEN c.amount END), 0) AS pt,
+          COALESCE(spl.lwp_deduction,    MAX(CASE WHEN c.component_code='LWP' THEN c.amount END), 0) AS lwp_deduction,
+          COALESCE(spl.other_deductions, MAX(CASE WHEN c.component_code='OTHER_DED' THEN c.amount END), 0) AS other_deductions,
+          COALESCE(spl.remarks, '')                                                  AS other_ded_remarks,
+          ROUND(
+            spl.pf_employee + spl.esic_employee
+            + COALESCE(spl.tds, MAX(CASE WHEN c.component_code='TDS' THEN c.amount END), 0)
+            + COALESCE(spl.professional_tax, MAX(CASE WHEN c.component_code='PT' THEN c.amount END), 0)
+            + COALESCE(spl.lwp_deduction, MAX(CASE WHEN c.component_code='LWP' THEN c.amount END), 0)
+            + COALESCE(spl.loan_emi, MAX(CASE WHEN c.component_code='LOAN' THEN c.amount END), 0)
+            + COALESCE(spl.advance_recovery, MAX(CASE WHEN c.component_code='ADV' THEN c.amount END), 0)
+            + COALESCE(spl.other_deductions, MAX(CASE WHEN c.component_code='OTHER_DED' THEN c.amount END), 0)
+            + COALESCE(MAX(CASE WHEN c.component_code='MOBILE_DED' THEN c.amount END), 0)
+            + COALESCE(MAX(CASE WHEN c.component_code='ASSET_REC'  THEN c.amount END), 0)
+            + COALESCE(MAX(CASE WHEN c.component_code='INS'        THEN c.amount END), 0)
+          , 2)                                                                       AS total_deduction,
+          DATE_FORMAT(LAST_DAY(CONCAT(spr.run_month,'-01')), '%Y-%m-%d')            AS sal_date,
+          COALESCE(e.uan_number, '')                                                 AS uan,
+          COALESCE(e.epf_number, '')                                                 AS epf_no,
+          COALESCE(e.esic_number, '')                                                AS esic_no,
+          NULL AS cheque_no, NULL AS cheque_date, NULL AS print_date,
+          IF(e.active_status = 1, '', 'LEFT')                                        AS left_status,
+          NULL AS tax_total_gross, NULL AS tax_section10, NULL AS tax_balance,
+          NULL AS tax_under_hd, NULL AS deduction_under24, NULL AS tax_gross_total,
+          NULL AS tax_agg_chapter6, NULL AS total_income, NULL AS tax_on_total,
+          NULL AS edu_cess, NULL AS tax_pay_edu_cess,
+          NULL AS tax_deducted_prev, NULL AS balance_tax,
+          COALESCE(e.account_type, '')                                               AS salary_pay_mode,
+          COALESCE(e.bank_account_number, '')                                        AS ac_no,
+          COALESCE(e.ifsc_code, '')                                                  AS ifsc_code,
+          COALESCE(e.bank_name, '')                                                  AS ac_bank,
+          COALESCE(e.bank_branch, '')                                                AS ac_branch
         FROM salary_prep_line spl
         JOIN salary_prep_run spr ON spr.id = spl.run_id
         JOIN employees e ON e.id = spl.employee_id
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
         LEFT JOIN designation_master dm ON dm.id = e.designation_id
+        LEFT JOIN department_master dpm ON dpm.id = e.department_id
         LEFT JOIN salary_prep_line_component c ON c.line_id = spl.id
         ${processJoin("pm", "e")}
         WHERE 1=1 ${bw} ${mw} ${ew} ${nw} ${pw}
         GROUP BY spl.id, spl.employee_code, e.full_name, bm.branch_name,
                  pm.process_name, cc.cost_centre_code, dm.designation_name,
-                 spl.working_days, spl.present_days,
+                 dpm.dept_name, e.profile_type, e.emp_type, e.billable_status,
+                 spl.working_days, spl.present_days, spl.active_calendar_days, spl.leave_days,
                  spl.basic, spl.hra, spl.special_allowance, spl.incentive_total,
-                 spl.gross_salary, spl.net_salary,
-                 spl.pf_employee, spl.esic_employee, spl.professional_tax, spl.tds,
-                 spl.lwp_deduction, spl.loan_emi, spl.advance_recovery,
-                 spl.other_deductions, spl.pf_employer, spl.esic_employer
+                 spl.gross_salary, spl.net_salary, spl.pf_employee, spl.esic_employee,
+                 spl.professional_tax, spl.tds, spl.lwp_deduction, spl.loan_emi,
+                 spl.advance_recovery, spl.other_deductions, spl.pf_employer, spl.esic_employer,
+                 spl.remarks, e.ctc, e.active_status, e.uan_number, e.epf_number, e.esic_number,
+                 e.bank_account_number, e.ifsc_code, e.bank_name, e.bank_branch, e.account_type
         ORDER BY bm.branch_name, spl.employee_code
         LIMIT 10000
       `, [...bv, ...mv, ...ev, ...nv, ...pv]);
@@ -411,8 +529,9 @@ const REPORTS: Record<string, ReportDef> = {
                bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
                cc.cost_centre_code AS cost_center,
                lr.from_date, lr.to_date, lr.total_days,
-               lr.leave_type_code AS leave_type,
-               lr.status, lr.reason
+               COALESCE(lr.leave_type_code, '') AS leave_type,
+               CONCAT(UPPER(SUBSTRING(lr.status,1,1)), LOWER(SUBSTRING(lr.status,2))) AS status,
+               TRIM(REPLACE(lr.reason, 'Full Day ? ', '')) AS reason
         FROM leave_request lr
         JOIN employees e ON e.id = lr.employee_id
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
@@ -737,8 +856,8 @@ const REPORTS: Record<string, ReportDef> = {
       { key: "gross",          label: "Gross",       format: "currency", align: "right" },
       { key: "ctc_monthly",    label: "CTC/Month",   format: "currency", align: "right" },
       { key: "net_salary",     label: "Net In Hand", format: "currency", align: "right" },
-      { key: "pf_eligible",    label: "PF Eligible", format: "boolean" },
-      { key: "esic_eligible",  label: "ESI Eligible",format: "boolean" },
+      { key: "pf_eligible",    label: "PF Eligible", format: "text" },
+      { key: "esic_eligible",  label: "ESI Eligible",format: "text" },
     ],
     async query(f) {
       const [bw, bv] = branchWhere("ls.branch_name", f.branch);
@@ -750,7 +869,8 @@ const REPORTS: Record<string, ReportDef> = {
         SELECT ls.employee_code, ls.employee_name, ls.branch_name,
                ls.process, ls.designation, ls.doj, ls.dol,
                ls.basic, ls.hra, ls.gross, ls.ctc_monthly, ls.net_salary,
-               ls.pf_eligible, ls.esic_eligible
+               IF(ls.pf_eligible, 'YES', 'NO') AS pf_eligible,
+               IF(ls.esic_eligible, 'YES', 'NO') AS esic_eligible
         FROM legacy_salary_snapshot ls
         WHERE 1=1 ${bw} ${ew} ${nw} ${pw}
         ORDER BY ls.branch_name, ls.employee_code
@@ -954,6 +1074,8 @@ const REPORTS: Record<string, ReportDef> = {
     ],
     async query(f: LegacyFilter) {
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
+      const [bw, bv] = branchWhere("bm.branch_name", f.branch);
+      const [ew, ev] = empWhere("e.employee_code", f.employee_code);
       const pj = processJoin("pm", "e");
       const [pw, pv] = processWhere("pm", f.process);
       return q(`
@@ -969,14 +1091,14 @@ const REPORTS: Record<string, ReportDef> = {
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
         LEFT JOIN leave_type_master ltm ON ltm.id = lbl.leave_type_id
         ${pj}
-        WHERE e.active_status = 1 ${pw} ${nw}
+        WHERE e.active_status = 1 ${bw} ${ew} ${pw} ${nw}
         ORDER BY bm.branch_name, e.employee_code, ltm.leave_name
         LIMIT ${f._limit ?? 50000}
-      `, [...pv, ...nv]);
+      `, [...bv, ...ev, ...pv, ...nv]);
     },
   },
 
-  // "bank-account" stub — employee bank details
+  // "bank-account" — employee bank details with optional salary join
   "bank-account": {
     label: "Bank Account Register",
     columns: [
@@ -987,22 +1109,42 @@ const REPORTS: Record<string, ReportDef> = {
       { key: "account_number",   label: "Account Number",  format: "text" },
       { key: "ifsc_code",        label: "IFSC Code",       format: "text" },
       { key: "account_type",     label: "Account Type",    format: "text" },
+      { key: "net_amount",       label: "Net Amount",      format: "currency", align: "right" },
+      { key: "salary_month",     label: "Month",           format: "text" },
     ],
     async query(f: LegacyFilter) {
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
       const pj = processJoin("pm", "e");
       const [pw, pv] = processWhere("pm", f.process);
+      const [bw, bv] = branchWhere("bm.branch_name", f.branch);
+      if (f.month) {
+        return q(`
+          SELECT e.employee_code, e.full_name AS employee_name,
+                 bm.branch_name,
+                 e.bank_name, e.bank_account_number AS account_number, e.ifsc_code, e.account_type,
+                 spl.net_salary AS net_amount, spr.run_month AS salary_month
+          FROM salary_prep_line spl
+          JOIN salary_prep_run spr ON spr.id = spl.run_id AND spr.run_month = ?
+          JOIN employees e ON e.id = spl.employee_id
+          LEFT JOIN branch_master bm ON bm.id = e.branch_id
+          ${pj}
+          WHERE 1=1 ${bw} ${pw} ${nw}
+          ORDER BY bm.branch_name, e.employee_code
+          LIMIT ${f._limit ?? 50000}
+        `, [f.month, ...bv, ...pv, ...nv]);
+      }
       return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name,
-               e.bank_name, e.bank_account_number AS account_number, e.ifsc_code, e.account_type
+               e.bank_name, e.bank_account_number AS account_number, e.ifsc_code, e.account_type,
+               NULL AS net_amount, NULL AS salary_month
         FROM employees e
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
         ${pj}
-        WHERE e.active_status = 1 ${pw} ${nw}
+        WHERE e.active_status = 1 ${bw} ${pw} ${nw}
         ORDER BY bm.branch_name, e.employee_code
         LIMIT ${f._limit ?? 50000}
-      `, [...pv, ...nv]);
+      `, [...bv, ...pv, ...nv]);
     },
   },
 
@@ -1137,8 +1279,10 @@ const REPORTS: Record<string, ReportDef> = {
       { key: "uan_number",    label: "UAN",           format: "text" },
       { key: "pf_number",     label: "PF Number",     format: "text" },
       { key: "esic_number",   label: "ESIC Number",   format: "text" },
-      { key: "epf_wages",     label: "EPF Wages",     format: "currency", align: "right" },
+      { key: "epf_wages",     label: "PF Wage",       format: "currency", align: "right" },
       { key: "esic_wages",    label: "ESIC Wages",    format: "currency", align: "right" },
+      { key: "total_pf",      label: "Total PF",      format: "currency", align: "right" },
+      { key: "total_esic",    label: "Total ESIC",    format: "currency", align: "right" },
       { key: "run_month",     label: "Month",         format: "text" },
     ],
     async query(f: LegacyFilter) {
@@ -1154,6 +1298,8 @@ const REPORTS: Record<string, ReportDef> = {
                e.epf_number AS pf_number,
                e.esic_number,
                spl.basic AS epf_wages, spl.gross_salary AS esic_wages,
+               spl.pf_employee + spl.pf_employer AS total_pf,
+               spl.esic_employee + spl.esic_employer AS total_esic,
                spr.run_month
         FROM salary_prep_line spl
         JOIN salary_prep_run spr ON spr.id = spl.run_id
@@ -1167,6 +1313,482 @@ const REPORTS: Record<string, ReportDef> = {
       `, [...mv, ...pv, ...nv]);
     },
   },
+  // ── New Joiners ───────────────────────────────────────────────────────────
+  "new-joiners": {
+    label: "New Joiners",
+    columns: [
+      { key: "employee_code", label: "Emp Code",       format: "text" },
+      { key: "employee_name", label: "Employee Name",  format: "text" },
+      { key: "branch_name",   label: "Branch",         format: "text" },
+      { key: "cost_centre",   label: "Cost Centre",    format: "text" },
+      { key: "department",    label: "Department",     format: "text" },
+      { key: "designation",   label: "Designation",    format: "text" },
+      { key: "doj",           label: "DOJ",            format: "date" },
+      { key: "source",        label: "Source",         format: "text" },
+      { key: "sub_source",    label: "Sub Source",     format: "text" },
+      { key: "mobile",        label: "Mobile No",      format: "text" },
+      { key: "net_inhand",    label: "Net In Hand",    format: "currency", align: "right" },
+      { key: "ctc_offered",   label: "Offered CTC",    format: "currency", align: "right" },
+    ],
+    async query(f: LegacyFilter) {
+      const [bw, bv] = branchWhere("bm.branch_name", f.branch);
+      const [dw, dv] = f.from_date ? dateRangeWhere("e.date_of_joining", f.from_date, f.to_date)
+        : monthWhere("e.date_of_joining", f.month);
+      return q(`
+        SELECT e.employee_code, e.full_name AS employee_name,
+               bm.branch_name, cc.cost_centre_code AS cost_centre,
+               COALESCE(dpm.dept_name,'') AS department,
+               dm.designation_name AS designation,
+               e.date_of_joining AS doj,
+               COALESCE(e.source,'') AS source, COALESCE(e.sub_source,'') AS sub_source,
+               e.mobile, e.net_inhand, e.ctc AS ctc_offered
+        FROM employees e
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+        LEFT JOIN designation_master dm ON dm.id = e.designation_id
+        LEFT JOIN department_master dpm ON dpm.id = e.department_id
+        WHERE 1=1 ${bw} ${dw}
+        ORDER BY bm.branch_name, e.date_of_joining DESC
+        LIMIT ${f._limit ?? 50000}
+      `, [...bv, ...dv]);
+    },
+  },
+
+  // ── Left Employees ────────────────────────────────────────────────────────
+  "left-employees": {
+    label: "Left Employees",
+    columns: [
+      { key: "employee_code", label: "Emp Code",      format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text" },
+      { key: "department",    label: "Department",    format: "text" },
+      { key: "designation",   label: "Designation",   format: "text" },
+      { key: "branch_name",   label: "Branch",        format: "text" },
+      { key: "cost_centre",   label: "Cost Centre",   format: "text" },
+      { key: "mobile",        label: "Mobile No",     format: "text" },
+      { key: "doj",           label: "DOJ",           format: "date" },
+      { key: "dol",           label: "Left Date",     format: "date" },
+      { key: "left_remarks",  label: "Left Remarks",  format: "text" },
+      { key: "source",        label: "Source",        format: "text" },
+      { key: "sub_source",    label: "Sub Source",    format: "text" },
+      { key: "net_inhand",    label: "Net In Hand",   format: "currency", align: "right" },
+      { key: "ctc_offered",   label: "Offered CTC",   format: "currency", align: "right" },
+    ],
+    async query(f: LegacyFilter) {
+      const [bw, bv] = branchWhere("bm.branch_name", f.branch);
+      const [dw, dv] = f.from_date ? dateRangeWhere("e.date_of_leaving", f.from_date, f.to_date)
+        : monthWhere("e.date_of_leaving", f.month);
+      return q(`
+        SELECT e.employee_code, e.full_name AS employee_name,
+               COALESCE(dpm.dept_name,'') AS department,
+               dm.designation_name AS designation,
+               bm.branch_name, cc.cost_centre_code AS cost_centre,
+               e.mobile, e.date_of_joining AS doj, e.date_of_leaving AS dol,
+               COALESCE(er.exit_reason_category,'') AS left_remarks,
+               COALESCE(e.source,'') AS source, COALESCE(e.sub_source,'') AS sub_source,
+               e.net_inhand, e.ctc AS ctc_offered
+        FROM employees e
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+        LEFT JOIN designation_master dm ON dm.id = e.designation_id
+        LEFT JOIN department_master dpm ON dpm.id = e.department_id
+        LEFT JOIN exit_request er ON er.employee_id = e.id
+        WHERE (e.active_status = 0 OR e.date_of_leaving IS NOT NULL) ${bw} ${dw}
+        ORDER BY bm.branch_name, e.date_of_leaving DESC
+        LIMIT ${f._limit ?? 50000}
+      `, [...bv, ...dv]);
+    },
+  },
+
+  // ── Professional Tax Register ─────────────────────────────────────────────
+  "professional-tax": {
+    label: "Professional Tax Register",
+    sumCols: ["pt_amount"],
+    columns: [
+      { key: "employee_code", label: "Emp Code",      format: "text" },
+      { key: "employee_name", label: "Employee Name", format: "text" },
+      { key: "branch_name",   label: "Branch",        format: "text" },
+      { key: "process_name",  label: "Process",       format: "text" },
+      { key: "run_month",     label: "Month",         format: "text" },
+      { key: "pt_amount",     label: "PT Amount",     format: "currency", align: "right" },
+      { key: "gross_salary",  label: "Gross Salary",  format: "currency", align: "right" },
+      { key: "pt_state",      label: "PT State",      format: "text" },
+    ],
+    async query(f: LegacyFilter) {
+      const [bw, bv] = branchWhere("bm.branch_name", f.branch);
+      const mw  = f.month ? "AND spr.run_month = ?" : "";
+      const mv  = f.month ? [f.month] : [];
+      const [ew, ev] = empWhere("spl.employee_code", f.employee_code);
+      const [pw, pv] = processWhere("pm", f.process);
+      return q(`
+        SELECT spl.employee_code, e.full_name AS employee_name,
+               bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
+               spr.run_month,
+               COALESCE(spl.professional_tax, MAX(CASE WHEN c.component_code='PT' THEN c.amount END), 0) AS pt_amount,
+               spl.gross_salary,
+               '' AS pt_state
+        FROM salary_prep_line spl
+        JOIN salary_prep_run spr ON spr.id = spl.run_id
+        JOIN employees e ON e.id = spl.employee_id
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN salary_prep_line_component c ON c.line_id = spl.id AND c.component_code = 'PT'
+        ${processJoin("pm", "e")}
+        WHERE 1=1 ${bw} ${mw} ${ew} ${pw}
+        GROUP BY spl.id, spl.employee_code, e.full_name, bm.branch_name,
+                 pm.process_name, spr.run_month, spl.professional_tax, spl.gross_salary
+        HAVING pt_amount > 0
+        ORDER BY bm.branch_name, spl.employee_code
+        LIMIT ${f._limit ?? 50000}
+      `, [...bv, ...mv, ...ev, ...pv]);
+    },
+  },
+
+  // ── PF ECR Export ─────────────────────────────────────────────────────────
+  "pf-ecr": {
+    label: "PF ECR Export",
+    sumCols: ["epf_employee", "eps_employer"],
+    columns: [
+      { key: "employee_code", label: "Emp Code",    format: "text" },
+      { key: "uan",           label: "UAN",         format: "text" },
+      { key: "member_name",   label: "Member Name", format: "text" },
+      { key: "pf_wages",      label: "PF Wages",    format: "currency", align: "right" },
+      { key: "epf_employee",  label: "EPF Employee",format: "currency", align: "right" },
+      { key: "eps_employer",  label: "EPS Employer",format: "currency", align: "right" },
+      { key: "run_month",     label: "Month",       format: "text" },
+    ],
+    async query(f: LegacyFilter) {
+      const mw  = f.month ? "AND spr.run_month = ?" : "";
+      const mv  = f.month ? [f.month] : [];
+      const [bw, bv] = branchWhere("bm.branch_name", f.branch);
+      return q(`
+        SELECT spl.employee_code,
+               COALESCE(e.uan_number, '') AS uan,
+               e.full_name AS member_name,
+               spl.basic AS pf_wages,
+               spl.pf_employee AS epf_employee,
+               spl.pf_employer AS eps_employer,
+               spr.run_month
+        FROM salary_prep_line spl
+        JOIN salary_prep_run spr ON spr.id = spl.run_id
+        JOIN employees e ON e.id = spl.employee_id
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        WHERE spl.pf_employee > 0 ${bw} ${mw}
+        ORDER BY bm.branch_name, spl.employee_code
+        LIMIT ${f._limit ?? 50000}
+      `, [...bv, ...mv]);
+    },
+  },
+
+  // ── Payroll Cost Summary ──────────────────────────────────────────────────
+  "payroll-cost-summary": {
+    label: "Payroll Cost Summary",
+    sumCols: ["employee_count","total_gross","total_pf_employer","total_esic_employer","total_ctc","total_net"],
+    columns: [
+      { key: "branch_name",        label: "Branch",         format: "text" },
+      { key: "process_name",       label: "Process",        format: "text" },
+      { key: "department_name",    label: "Department",     format: "text" },
+      { key: "run_month",          label: "Month",          format: "text" },
+      { key: "employee_count",     label: "Head Count",     format: "number", align: "right" },
+      { key: "total_gross",        label: "Total Gross",    format: "currency", align: "right" },
+      { key: "total_pf_employer",  label: "EPF Co",         format: "currency", align: "right" },
+      { key: "total_esic_employer",label: "ESIC Co",        format: "currency", align: "right" },
+      { key: "total_ctc",          label: "Total CTC",      format: "currency", align: "right" },
+      { key: "total_net",          label: "Total Net",      format: "currency", align: "right" },
+    ],
+    async query(f: LegacyFilter) {
+      const [bw, bv] = branchWhere("bm.branch_name", f.branch);
+      const mw = f.month ? "AND spr.run_month = ?" : "";
+      const mv = f.month ? [f.month] : [];
+      const [pw, pv] = processWhere("pm", f.process);
+      return q(`
+        SELECT bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
+               COALESCE(dpm.dept_name,'') AS department_name,
+               spr.run_month,
+               COUNT(DISTINCT spl.employee_code) AS employee_count,
+               ROUND(SUM(spl.gross_salary),2) AS total_gross,
+               ROUND(SUM(spl.pf_employer),2) AS total_pf_employer,
+               ROUND(SUM(spl.esic_employer),2) AS total_esic_employer,
+               ROUND(SUM(spl.gross_salary + spl.pf_employer + spl.esic_employer
+                         + COALESCE(admin.amt,0)),2) AS total_ctc,
+               ROUND(SUM(spl.net_salary),2) AS total_net
+        FROM salary_prep_line spl
+        JOIN salary_prep_run spr ON spr.id = spl.run_id
+        JOIN employees e ON e.id = spl.employee_id
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN department_master dpm ON dpm.id = e.department_id
+        LEFT JOIN process_master pm ON pm.id = e.process_id
+        LEFT JOIN (
+          SELECT line_id, SUM(amount) AS amt
+          FROM salary_prep_line_component WHERE component_code='ADMIN_CHG'
+          GROUP BY line_id
+        ) admin ON admin.line_id = spl.id
+        WHERE 1=1 ${bw} ${mw} ${pw}
+        GROUP BY bm.branch_name, pm.process_name, dpm.dept_name, spr.run_month
+        ORDER BY bm.branch_name, pm.process_name
+        LIMIT 5000
+      `, [...bv, ...mv, ...pv]);
+    },
+  },
+
+  // ── Payroll Reconciliation ────────────────────────────────────────────────
+  "payroll-reconciliation": {
+    label: "Payroll Reconciliation",
+    sumCols: ["employee_count","total_gross","total_deductions","total_net","total_pf_employee","total_esic_employee","total_tds","total_lwp_deduction"],
+    columns: [
+      { key: "branch_name",          label: "Branch",          format: "text" },
+      { key: "process_name",         label: "Process",         format: "text" },
+      { key: "run_month",            label: "Month",           format: "text" },
+      { key: "employee_count",       label: "Head Count",      format: "number", align: "right" },
+      { key: "total_gross",          label: "Total Gross",     format: "currency", align: "right" },
+      { key: "total_deductions",     label: "Total Deductions",format: "currency", align: "right" },
+      { key: "total_net",            label: "Total Net",       format: "currency", align: "right" },
+      { key: "total_pf_employee",    label: "Total EPF",       format: "currency", align: "right" },
+      { key: "total_esic_employee",  label: "Total ESIC",      format: "currency", align: "right" },
+      { key: "total_tds",            label: "Total TDS",       format: "currency", align: "right" },
+      { key: "total_lwp_deduction",  label: "Total LWP Ded",   format: "currency", align: "right" },
+    ],
+    async query(f: LegacyFilter) {
+      const [bw, bv] = branchWhere("bm.branch_name", f.branch);
+      const mw = f.month ? "AND spr.run_month = ?" : "";
+      const mv = f.month ? [f.month] : [];
+      const [pw, pv] = processWhere("pm", f.process);
+      return q(`
+        SELECT bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
+               spr.run_month,
+               COUNT(DISTINCT spl.employee_code) AS employee_count,
+               ROUND(SUM(spl.gross_salary),2) AS total_gross,
+               ROUND(SUM(spl.total_deductions),2) AS total_deductions,
+               ROUND(SUM(spl.net_salary),2) AS total_net,
+               ROUND(SUM(spl.pf_employee),2) AS total_pf_employee,
+               ROUND(SUM(spl.esic_employee),2) AS total_esic_employee,
+               ROUND(SUM(COALESCE(spl.tds,0)),2) AS total_tds,
+               ROUND(SUM(COALESCE(spl.lwp_deduction,0)),2) AS total_lwp_deduction
+        FROM salary_prep_line spl
+        JOIN salary_prep_run spr ON spr.id = spl.run_id
+        JOIN employees e ON e.id = spl.employee_id
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN process_master pm ON pm.id = e.process_id
+        WHERE 1=1 ${bw} ${mw} ${pw}
+        GROUP BY bm.branch_name, pm.process_name, spr.run_month
+        ORDER BY bm.branch_name, spr.run_month
+        LIMIT 5000
+      `, [...bv, ...mv, ...pv]);
+    },
+  },
+
+  // ── Payroll Variance ──────────────────────────────────────────────────────
+  "payroll-variance": {
+    label: "Payroll Variance Report",
+    columns: [
+      { key: "employee_code",   label: "Emp Code",       format: "text" },
+      { key: "employee_name",   label: "Employee Name",  format: "text" },
+      { key: "branch_name",     label: "Branch",         format: "text" },
+      { key: "process_name",    label: "Process",        format: "text" },
+      { key: "department_name", label: "Department",     format: "text" },
+      { key: "run_month",       label: "Month",          format: "text" },
+      { key: "current_gross",   label: "Current Gross",  format: "currency", align: "right" },
+      { key: "previous_gross",  label: "Previous Gross", format: "currency", align: "right" },
+      { key: "variance_gross",  label: "Variance Gross", format: "currency", align: "right" },
+      { key: "current_net",     label: "Current Net",    format: "currency", align: "right" },
+      { key: "previous_net",    label: "Previous Net",   format: "currency", align: "right" },
+      { key: "variance_net",    label: "Variance Net",   format: "currency", align: "right" },
+      { key: "variance_flag",   label: "Flag",           format: "status" },
+    ],
+    async query(f: LegacyFilter) {
+      const month = f.month || new Date().toISOString().slice(0, 7);
+      const [bw, bv] = branchWhere("bm.branch_name", f.branch);
+      const [pw, pv] = processWhere("pm", f.process);
+      return q(`
+        SELECT cur.employee_code, e.full_name AS employee_name,
+               bm.branch_name, COALESCE(pm.process_name,'UNASSIGNED') AS process_name,
+               COALESCE(dpm.dept_name,'') AS department_name,
+               ? AS run_month,
+               COALESCE(cur.gross_salary,0) AS current_gross,
+               COALESCE(prv.gross_salary,0) AS previous_gross,
+               ROUND(COALESCE(cur.gross_salary,0) - COALESCE(prv.gross_salary,0), 2) AS variance_gross,
+               COALESCE(cur.net_salary,0) AS current_net,
+               COALESCE(prv.net_salary,0) AS previous_net,
+               ROUND(COALESCE(cur.net_salary,0) - COALESCE(prv.net_salary,0), 2) AS variance_net,
+               IF(ABS(COALESCE(cur.gross_salary,0) - COALESCE(prv.gross_salary,0)) > 0.01, 'VARIANCE', 'NORMAL') AS variance_flag
+        FROM (
+          SELECT spl.employee_id, spl.employee_code, spl.gross_salary, spl.net_salary
+          FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id=spl.run_id WHERE spr.run_month=?
+        ) cur
+        LEFT JOIN (
+          SELECT spl.employee_id, spl.gross_salary, spl.net_salary
+          FROM salary_prep_line spl JOIN salary_prep_run spr ON spr.id=spl.run_id
+          WHERE spr.run_month = DATE_FORMAT(DATE_SUB(CONCAT(?, '-01'), INTERVAL 1 MONTH),'%Y-%m')
+        ) prv ON prv.employee_id = cur.employee_id
+        JOIN employees e ON e.id = cur.employee_id
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN department_master dpm ON dpm.id = e.department_id
+        LEFT JOIN process_master pm ON pm.id = e.process_id
+        WHERE 1=1 ${bw} ${pw}
+        ORDER BY bm.branch_name, cur.employee_code
+        LIMIT ${f._limit ?? 50000}
+      `, [month, month, month, ...bv, ...pv]);
+    },
+  },
+
+  // ── 35. Tally Invoice Data Report ─────────────────────────────────────────
+  "tally-invoice": {
+    label: "Tally Invoice Data",
+    sumCols: ["total_amt", "tax_amt", "grand_total"],
+    columns: [
+      { key: "bill_no",           label: "Bill No",        format: "text" },
+      { key: "payment_status",    label: "Pending",        format: "text" },
+      { key: "cost_centre_code",  label: "Process Code",   format: "text" },
+      { key: "bill_branch",       label: "Branch",         format: "text" },
+      { key: "bill_client",       label: "Client",         format: "text" },
+      { key: "finance_year",      label: "Financial Year", format: "text" },
+      { key: "month_label",       label: "Month",          format: "text" },
+      { key: "po_no",             label: "PO No",          format: "text" },
+      { key: "grn",               label: "GRN No",         format: "text" },
+      { key: "invoice_date",      label: "Invoice Date",   format: "text" },
+      { key: "total_amt",         label: "Amount",         format: "currency", align: "right" },
+      { key: "igst",              label: "IGST",           format: "currency", align: "right" },
+      { key: "cgst",              label: "CGST",           format: "currency", align: "right" },
+      { key: "sgst",              label: "SGST",           format: "currency", align: "right" },
+      { key: "grand_total",       label: "G Total",        format: "currency", align: "right" },
+      { key: "invoice_type",      label: "Type",           format: "text" },
+      { key: "category",          label: "Category",       format: "text" },
+    ],
+    async query(f: LegacyFilter) {
+      const bCond = f.branch ? "AND bill_branch = ?" : "";
+      const bv    = f.branch ? [f.branch] : [];
+      const mCond = f.month  ? "AND month_label LIKE ?" : "";
+      const mv    = f.month  ? [`%${f.month.split('-')[1]}%`] : [];
+      const fyCond = f.from_date ? "AND finance_year = ?" : "";
+      const fyv    = f.from_date ? [f.from_date] : [];
+      return q(`
+        SELECT bill_no,
+               IF(payment_status='paid','Paid','Pending') AS payment_status,
+               cost_centre_code, bill_branch, bill_client,
+               finance_year, month_label, po_no, grn,
+               invoice_date,
+               COALESCE(total_amt,0) AS total_amt,
+               COALESCE(igst,0) AS igst,
+               COALESCE(cgst,0) AS cgst,
+               COALESCE(sgst,0) AS sgst,
+               COALESCE(grand_total,0) AS grand_total,
+               invoice_type, category
+        FROM billing_invoice_snapshot
+        WHERE 1=1 ${bCond} ${mCond} ${fyCond}
+        ORDER BY finance_year DESC, month_label, bill_no
+        LIMIT ${f._limit ?? 50000}
+      `, [...bv, ...mv, ...fyv]);
+    },
+  },
+
+  // ── 36. Bank Transfer File ────────────────────────────────────────────────
+  "bank-transfer": {
+    label: "Bank Transfer File",
+    sumCols: ["net_salary"],
+    columns: [
+      { key: "employee_code",  label: "Emp Code",       format: "text" },
+      { key: "employee_name",  label: "Employee Name",  format: "text" },
+      { key: "branch_name",    label: "Branch",         format: "text" },
+      { key: "bank_name",      label: "Bank Name",      format: "text" },
+      { key: "account_number", label: "Account No",     format: "text" },
+      { key: "ifsc_code",      label: "IFSC Code",      format: "text" },
+      { key: "net_salary",     label: "Net Amount",     format: "currency", align: "right" },
+      { key: "pay_mode",       label: "Pay Mode",       format: "text" },
+      { key: "salary_month",   label: "Month",          format: "text" },
+    ],
+    async query(f: LegacyFilter) {
+      const [bw, bv] = branchWhere("bm.branch_name", f.branch);
+      const [ew, ev] = empWhere("e.employee_code", f.employee_code);
+      const month = f.month || new Date().toISOString().slice(0, 7);
+      return q(`
+        SELECT e.employee_code, e.full_name AS employee_name,
+               bm.branch_name,
+               COALESCE(ebd.bank_name, e.bank_name) AS bank_name,
+               COALESCE(ebd.account_number, e.bank_account_number) AS account_number,
+               COALESCE(ebd.ifsc_code, e.ifsc_code) AS ifsc_code,
+               spl.net_salary,
+               COALESCE(ebd.account_type, e.account_type, 'NEFT') AS pay_mode,
+               spr.run_month AS salary_month
+        FROM salary_prep_line spl
+        JOIN salary_prep_run spr ON spr.id = spl.run_id
+        JOIN employees e ON e.id = spl.employee_id
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN employee_bank_detail ebd ON ebd.employee_id = e.id AND ebd.is_primary = 1 AND ebd.active_status = 1
+        WHERE spr.run_month = ? ${bw} ${ew}
+          AND (ebd.account_number IS NOT NULL OR e.bank_account_number IS NOT NULL)
+        ORDER BY bm.branch_name, e.employee_code
+        LIMIT ${f._limit ?? 50000}
+      `, [month, ...bv, ...ev]);
+    },
+  },
+
+  // ── 37. TDS Summary Report ─────────────────────────────────────────────────
+  "tds-summary": {
+    label: "TDS Summary",
+    sumCols: ["total_tds"],
+    columns: [
+      { key: "employee_code",  label: "Emp Code",      format: "text" },
+      { key: "employee_name",  label: "Employee Name", format: "text" },
+      { key: "branch_name",    label: "Branch",        format: "text" },
+      { key: "tax_month",      label: "Tax Month",     format: "text" },
+      { key: "total_tds",      label: "Income Tax",    format: "currency", align: "right" },
+    ],
+    async query(f: LegacyFilter) {
+      const bCond = f.branch ? "AND branch_name = ?" : "";
+      const bv    = f.branch ? [f.branch] : [];
+      const [ew, ev] = empWhere("employee_code", f.employee_code);
+      const mCond = f.month  ? "AND tax_month = ?" : "";
+      const mv    = f.month  ? [f.month] : [];
+      return q(`
+        SELECT employee_code, employee_name, branch_name,
+               tax_month, income_tax AS total_tds
+        FROM incometax_legacy_snapshot
+        WHERE 1=1 ${bCond} ${ew} ${mCond}
+        ORDER BY branch_name, employee_code, tax_month DESC
+        LIMIT ${f._limit ?? 50000}
+      `, [...bv, ...ev, ...mv]);
+    },
+  },
+
+  // ── 38. Gratuity Liability Report ─────────────────────────────────────────
+  "gratuity-liability": {
+    label: "Gratuity Liability",
+    sumCols: ["gratuity_liability"],
+    columns: [
+      { key: "employee_code",      label: "Emp Code",       format: "text" },
+      { key: "employee_name",      label: "Employee Name",  format: "text" },
+      { key: "branch_name",        label: "Branch",         format: "text" },
+      { key: "date_of_joining",    label: "DOJ",            format: "date" },
+      { key: "years_of_service",   label: "Years",          format: "number", align: "right" },
+      { key: "last_basic",         label: "Last Basic",     format: "currency", align: "right" },
+      { key: "gratuity_liability", label: "Gratuity",       format: "currency", align: "right" },
+      { key: "eligible",           label: "Eligible",       format: "text" },
+    ],
+    async query(f: LegacyFilter) {
+      const [bw, bv] = branchWhere("bm.branch_name", f.branch);
+      const [ew, ev] = empWhere("e.employee_code", f.employee_code);
+      return q(`
+        SELECT e.employee_code, e.full_name AS employee_name,
+               bm.branch_name,
+               e.date_of_joining,
+               TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) AS years_of_service,
+               COALESCE(MAX(sca.basic), 0) AS last_basic,
+               ROUND(
+                 IF(TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) >= 5,
+                    COALESCE(MAX(sca.basic), 0) * 15 / 26 * TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()),
+                    0), 2
+               ) AS gratuity_liability,
+               IF(TIMESTAMPDIFF(YEAR, e.date_of_joining, CURDATE()) >= 5, 'YES', 'NO') AS eligible
+        FROM employees e
+        LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN salary_component_assignments sca ON sca.employee_id = e.id
+          AND sca.status = 'active'
+        WHERE e.active_status = 1 ${bw} ${ew}
+        GROUP BY e.id, e.employee_code, e.full_name, bm.branch_name, e.date_of_joining
+        ORDER BY gratuity_liability DESC, bm.branch_name
+        LIMIT ${f._limit ?? 50000}
+      `, [...bv, ...ev]);
+    },
+  },
+
 };
 
 // "employee-master" is an alias for "legacy-employee-master"
