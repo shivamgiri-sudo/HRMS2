@@ -132,6 +132,7 @@ import {
   aonBucketShrinkage,
   aonCohortSurvival,
   attritionDeepDive,
+  overallAttritionRate,
 } from "./aon.executor.js";
 
 // ─── Attrition risk ranking & leave reconciliation ───────────────────────────
@@ -325,6 +326,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "aon-bucket-shrinkage":      aonBucketShrinkage,
   "aon-cohort-survival":       aonCohortSurvival,
   "attrition-deep-dive":       attritionDeepDive,
+  "aon-overall-attrition-rate": overallAttritionRate,
   "attrition-risk-score":      attritionRiskScore,
   "leave-attendance-reconciliation": leaveAttendanceReconciliation,
 

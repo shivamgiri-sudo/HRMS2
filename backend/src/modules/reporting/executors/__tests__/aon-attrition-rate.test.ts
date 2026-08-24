@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../../db/mysql.js", () => ({
   db: { execute: vi.fn() },
@@ -26,6 +26,13 @@ const SCOPE: ExecScope = {
 const OPTIONS: ExecOptions = { limit: 100, offset: 0, cursor: null, includeTotal: true, mode: "preview" };
 
 describe("AON Attrition Rate", () => {
+  // Without this, mockExecute's call history accumulates across tests in this file (vitest
+  // does not clear mocks between tests by default) and `mock.calls[0]` in the second test
+  // would silently re-inspect the FIRST test's query instead of its own.
+  beforeEach(() => {
+    mockExecute.mockClear();
+  });
+
   it("aonBucketAttrition's SQL selects aon_attrition_rate_pct and at_risk_population_avg", async () => {
     mockExecute.mockResolvedValueOnce([[], []]);
     await aonBucketAttrition({}, SCOPE, OPTIONS);

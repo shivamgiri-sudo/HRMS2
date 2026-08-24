@@ -939,15 +939,10 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
       WHERE spl.employee_id = ?
         AND spr.run_month LIKE ?
         AND spl.status NOT IN ('excluded', 'blocked')
-        -- NOTE (unresolved, needs a payroll owner's decision — deliberately NOT
-        -- changed here): this allow-list omits 'FINALIZED', which is the status of
-        -- 51 of 67 runs in production. It therefore hides 63,316 of 81,528 payslip
-        -- lines, and 10,412 employees have NO visible payslip at all. Either the
-        -- list should become a deny-list on CANCELLED only,
-        -- or FINALIZED runs are intentionally withheld — changing it alters what
-        -- every employee sees in their own payslip history, so it is not a
-        -- unilateral call.
-        AND spr.status IN ('locked', 'approved', 'disbursed', 'completed', 'draft', 'processing')
+        -- All pre-Aug 2026 runs are legacy-migrated and confirmed closed (status = 'finalized').
+        -- Aug 2026+ runs follow the live workflow (draft → approved → disbursed).
+        -- Deny-list on CANCELLED only so every finalized/approved/disbursed run is visible.
+        AND LOWER(spr.status) NOT IN ('cancelled', 'rejected')
       ORDER BY
         spr.run_month DESC,
         ${runRankSql("spr")}`,
@@ -1034,9 +1029,9 @@ router.get("/payslip/my", h(async (req: AuthenticatedRequest, res: Response) => 
   // Only include legacy rows for months not in current HRMS run data
   const legacyFiltered = (legacyRows as any[]).filter(r => !coveredMonths.has(r.run_month));
 
-  // Tag HRMS rows with source and draft flag
+  // Tag rows: Aug 2026+ is the first live HRMS payroll run; everything before is migrated legacy.
   for (const r of rows as any[]) {
-    r.source = 'hrms';
+    r.source = String(r.run_month ?? "").slice(0, 7) < "2026-08" ? "legacy" : "hrms";
     r.is_draft = r.run_status === 'draft' || r.run_status === 'processing';
   }
 

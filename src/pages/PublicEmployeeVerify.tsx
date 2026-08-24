@@ -28,6 +28,7 @@ interface PayslipVerifyData {
   payslip_ref?: string;
   generated_at?: string;
   verified_at?: string;
+  is_migrated?: boolean;
 }
 
 const MONTH_NAMES = ["", "January", "February", "March", "April", "May", "June",
@@ -191,15 +192,16 @@ export function PublicPayslipVerify() {
       .then((r) => r.json())
       .then((json) => {
         if (json.verified) {
-          // Map new flat response shape to the existing PayslipVerifyData shape
           setData({
             full_name: json.employee_name ?? "",
             employee_code: json.employee_code ?? "",
             month: Number((json.run_month ?? "").split("-")[1] ?? 0),
             year: Number((json.run_month ?? "").split("-")[0] ?? 0),
             net_salary: json.net_salary ?? 0,
+            net_pay: json.net_salary ?? 0,
             payslip_ref: json.payslip_ref ?? "",
             generated_at: json.generated_at ?? "",
+            is_migrated: json.is_migrated ?? false,
           } as PayslipVerifyData);
         } else {
           setError(json.message ?? "Payslip not found.");
@@ -256,10 +258,19 @@ export function PublicPayslipVerify() {
                   <p className="text-xs text-slate-400 font-medium uppercase tracking-wide">Net Pay</p>
                   <p className="text-2xl font-black text-slate-900 mt-0.5">{INR(data.net_pay ?? data.net_salary ?? 0)}</p>
                 </div>
-                <span className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase ${
-                  data.status === "acknowledged" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"
-                }`}>{data.status}</span>
+                {data.is_migrated ? (
+                  <span className="px-3 py-1.5 rounded-full text-xs font-bold uppercase bg-amber-100 text-amber-700">Legacy Record</span>
+                ) : (
+                  <span className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase ${
+                    data.status === "acknowledged" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"
+                  }`}>{data.status ?? "Verified"}</span>
+                )}
               </div>
+              {data.is_migrated && (
+                <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-800">
+                  This payslip is from a period processed in the legacy payroll system and migrated to PeopleOS. It is authentic and verified.
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                 <p className="text-xs text-slate-500">This payslip is authentic and was issued by Mas Callnet India Pvt. Ltd.</p>

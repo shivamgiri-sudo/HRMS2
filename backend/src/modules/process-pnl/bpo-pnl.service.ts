@@ -1893,10 +1893,10 @@ export const bpoPnlService = {
       });
     }
 
-    // Payroll draft indicator — if salary_prep_run exists for the period but none are finalized,
-    // people cost will show ₹0 and the UI must say so rather than presenting zero as final.
+    // Payroll draft indicator — only relevant for Aug 2026+ (first live HRMS payroll run).
+    // Pre-Aug 2026 data is legacy-migrated and confirmed finalized; no alert needed there.
     const period = bundle.filters.period ?? "";
-    if (period) {
+    if (period >= "2026-08") {
       const [payrollRuns] = await db.execute<RowDataPacket[]>(
         `SELECT status FROM salary_prep_run WHERE run_month = ?`,
         [period],
