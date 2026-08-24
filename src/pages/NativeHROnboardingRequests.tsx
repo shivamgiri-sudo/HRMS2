@@ -2374,12 +2374,9 @@ export default function NativeHROnboardingRequests() {
         )}
 
         {/* ── SECURE DOCUMENT VIEWER ──────────────────────────────────────── */}
-        {/* Print blocking style */}
-        <style>{`@media print { .secure-doc-viewer, .secure-doc-viewer * { display: none !important; visibility: hidden !important; } }`}</style>
-
         {documentPreview && (
           <div
-            className="secure-doc-viewer fixed inset-0 z-[60] flex flex-col bg-[#0f1117] print:hidden"
+            className="fixed inset-0 z-[60] flex flex-col bg-[#0f1117] print:invisible print:opacity-0"
             onContextMenu={(e) => e.preventDefault()}
           >
             {/* Top toolbar */}
@@ -2558,7 +2555,6 @@ export default function NativeHROnboardingRequests() {
                       onContextMenu={(e) => e.preventDefault()}
                       onDragStart={(e) => e.preventDefault()}
                       className="max-w-none rounded-lg shadow-2xl select-none"
-                      style={{ WebkitUserDrag: 'none' } as React.CSSProperties}
                     />
                     {/* Watermark overlay with viewer identity — makes screenshots traceable */}
                     <div
