@@ -264,7 +264,12 @@ export const helpdeskService = {
       if (t) slaDueAt = calculateSlaDueAt(data.priority, String(t.category), new Date(t.created_at as string));
     }
 
-    const isClosingStatus = data.status === "resolved" || data.status === "closed";
+    // 'closed' removed as a live ticket status (2026-08-24): confirmed live, no route ever
+    // set it (only grievances, a separate table/workflow, ever use 'closed') — 'resolved' is
+    // now the only terminal state for tickets. PATCH /tickets/:id rejects 'closed' outright
+    // (see routes.ts); this simplification just stops treating it as a second closing status
+    // in case it's ever passed some other way.
+    const isClosingStatus = data.status === "resolved";
 
     await db.execute(
       `UPDATE helpdesk_ticket SET
@@ -287,7 +292,7 @@ export const helpdeskService = {
                                     WHEN ? IN ('open','in_progress') THEN NULL
                                     ELSE held_at END,
          ${slaDueAt ? "sla_due_at = ?," : ""}
-         resolved_at         = IF(? IN ('resolved','closed'), COALESCE(resolved_at, NOW()), resolved_at),
+         resolved_at         = IF(? = 'resolved', COALESCE(resolved_at, NOW()), resolved_at),
          updated_at          = NOW()
        WHERE id = ?`,
       [

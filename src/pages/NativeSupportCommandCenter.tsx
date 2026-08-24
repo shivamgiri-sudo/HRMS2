@@ -294,8 +294,9 @@ export default function NativeSupportCommandCenter() {
             options={["hr","payroll","it","general","asset","attendance","admin","leave","other"]} />
           <SelectFilter label="Priority" value={priority} onChange={setPriority}
             options={["urgent","high","medium","low"]} />
+          {/* 'closed' removed 2026-08-24 - 'resolved' is the only terminal ticket status now */}
           <SelectFilter label="Status" value={status} onChange={setStatus}
-            options={["open","in_progress","pending_info","resolved","closed"]} />
+            options={["open","in_progress","pending_info","resolved"]} />
         </div>
 
         {loading ? (

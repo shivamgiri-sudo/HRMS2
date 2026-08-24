@@ -353,6 +353,10 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 type Tab = "tickets" | "grievances" | "kb";
 
+// 'closed' removed as a filter option (2026-08-24) — 'resolved' is now the only terminal
+// status for tickets, confirmed live: no ticket has ever been in 'closed' status. The "closed"
+// value stays in the Ticket type below for safety reading old/unexpected data, just isn't
+// offered as something to filter by anymore.
 const STATUS_FILTER_TABS = [
   { key: "all",          label: "All" },
   { key: "open",         label: "Open" },
@@ -360,7 +364,6 @@ const STATUS_FILTER_TABS = [
   { key: "pending_info", label: "Pending Info" },
   { key: "on_hold",      label: "On Hold" },
   { key: "resolved",     label: "Resolved" },
-  { key: "closed",       label: "Closed" },
 ];
 
 export default function NativeHelpdesk() {

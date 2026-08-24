@@ -275,6 +275,13 @@ async function loadTicketInScope(req: AuthenticatedRequest) {
 }
 
 router.patch("/tickets/:id", requireRole(...HELPDESK_ADMIN_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  // 'closed' removed as a live ticket status (2026-08-24) — 'resolved' is the only terminal
+  // state for tickets now (grievances are unaffected, they keep their own separate
+  // resolve-then-close workflow via /grievances/:id/close). Confirmed live: no ticket has ever
+  // been in 'closed' status, and no route ever set it.
+  if (req.body?.status === "closed") {
+    return res.status(400).json({ error: "'closed' is not a valid ticket status — use 'resolved' instead. Resolved is the only terminal state for tickets." });
+  }
   if (!(await loadTicketInScope(req))) return res.status(404).json({ error: "Not found" });
   const data = await helpdeskService.updateTicket(req.params.id, req.body);
   await writeSensitiveAuditLog({
