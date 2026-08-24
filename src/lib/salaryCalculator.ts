@@ -18,6 +18,8 @@ export interface PkgCalcOptions {
    * reads from statutory_config via payrollCalculate.service.ts.
    */
   pfWageLimit?: number;
+  /** Include 8.33% statutory bonus in gross. Defaults to false for simple packages. */
+  includeBonus?: boolean;
 }
 
 export interface PkgComponents {
@@ -141,13 +143,14 @@ export function getProfessionalTax(gross: number, state?: string): number {
 }
 
 function deriveComponents(gross: number, opts: PkgCalcOptions): PkgComponents {
-  const { includePf, includeEsic, basicPct, hraPct, state } = opts;
+  const { includePf, includeEsic, basicPct, hraPct, state, includeBonus } = opts;
   const pfCap = opts.pfWageLimit ?? DEFAULT_PF_WAGE_LIMIT;
 
   const basic = r2(gross * (basicPct / 100));
   const hra = r2(basic * (hraPct / 100));
-  const special_allowance = Math.max(0, r2(gross - basic - hra - CONV));
-  const bonus = r2(basic * 0.0833);
+  // Only include bonus in gross breakdown if explicitly enabled
+  const bonus = includeBonus ? r2(basic * 0.0833) : 0;
+  const special_allowance = Math.max(0, r2(gross - basic - hra - CONV - bonus));
 
   const pfBase = Math.min(basic, pfCap);
   const epf_employee = includePf ? r2(pfBase * PF_EMP_RATE) : 0;

@@ -86,6 +86,7 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
   const [inHandInput, setInHand]        = useState('');
   const [includePf, setIncludePf]       = useState(true);
   const [includeEsic, setIncludeEsic]   = useState(true);
+  const [includeBonus, setIncludeBonus] = useState(false);
   const [basicPct, setBasicPct]         = useState(40);
   const [hraPct, setHraPct]             = useState(40);
   const [lockBasic, setLockBasic]       = useState(false);
@@ -144,8 +145,8 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
   // ── Calculation helpers ───────────────────────────────────────────────────
 
   const getOpts = useCallback((): PkgCalcOptions => ({
-    includePf, includeEsic, basicPct, hraPct, state: resolvedState,
-  }), [includePf, includeEsic, basicPct, hraPct, resolvedState]);
+    includePf, includeEsic, includeBonus, basicPct, hraPct, state: resolvedState,
+  }), [includePf, includeEsic, includeBonus, basicPct, hraPct, resolvedState]);
 
   const deriveFromGross = useCallback((d: Draft): Draft => {
     const o = getOpts();
@@ -192,7 +193,7 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctcInput, inHandInput, includePf, includeEsic, basicPct, hraPct, mode, resolvedState]);
+  }, [ctcInput, inHandInput, includePf, includeEsic, includeBonus, basicPct, hraPct, mode, resolvedState]);
 
   // ── Component edit handler ────────────────────────────────────────────────
 
@@ -357,6 +358,10 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
               <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium select-none">
                 <input type="checkbox" className="h-4 w-4 accent-blue-600" checked={includeEsic} onChange={e => setIncludeEsic(e.target.checked)} />
                 Include ESIC
+              </label>
+              <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium select-none">
+                <input type="checkbox" className="h-4 w-4 accent-green-600" checked={includeBonus} onChange={e => setIncludeBonus(e.target.checked)} />
+                Include Bonus (8.33%)
               </label>
               <div className="flex items-center gap-1.5">
                 <Label className="text-xs whitespace-nowrap">Basic%</Label>
