@@ -1566,7 +1566,16 @@ export const jobRequisitionService = {
   },
 
   /**
-   * Get joined employees for a specific requisition
+   * Get joined employees for a specific requisition.
+   *
+   * Two paths lead a candidate to a requisition:
+   *  1. ats_candidate.requisition_id — set at application time (most candidates)
+   *  2. job_requisition_candidate junction row — added when a recruiter manually
+   *     links an existing candidate to a different or additional requisition
+   *
+   * The original query only covered path 2, so candidates hired through path 1
+   * (the majority) were invisible in the Eye → Onboarded tab even after their
+   * employee code was generated. The UNION covers both without duplicating rows.
    */
   async getJoinedEmployees(requisitionId: string): Promise<JoinedEmployee[]> {
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -1575,9 +1584,24 @@ export const jobRequisitionService = {
          COALESCE(e.full_name, c.full_name) AS full_name,
          e.employee_code AS employee_code,
          COALESCE(e.date_of_joining, ob.joining_date) AS date_of_joining,
-         -- Aliased, not renamed: the column is status on ats_onboarding_bridge, but the
-         -- response key stays bridge_status because JobRequisitionTypes and the frontend
-         -- both read it under that name.
+         ob.status       AS bridge_status,
+         c.id            AS candidate_id,
+         c.full_name     AS candidate_name,
+         (lm.id IS NOT NULL) AS lms_enrolled
+       FROM ats_candidate c
+       JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
+            AND ob.employee_id IS NOT NULL
+       LEFT JOIN employees e          ON e.id = ob.employee_id
+       LEFT JOIN lms_employee_mapping lm ON lm.employee_id = e.id
+       WHERE c.requisition_id = ?
+
+       UNION
+
+       SELECT
+         COALESCE(e.id, ob.employee_id) AS employee_id,
+         COALESCE(e.full_name, c.full_name) AS full_name,
+         e.employee_code AS employee_code,
+         COALESCE(e.date_of_joining, ob.joining_date) AS date_of_joining,
          ob.status       AS bridge_status,
          c.id            AS candidate_id,
          c.full_name     AS candidate_name,
@@ -1586,11 +1610,12 @@ export const jobRequisitionService = {
        JOIN ats_candidate c          ON c.id = jrc.candidate_id
        JOIN ats_onboarding_bridge ob ON ob.candidate_id = c.id
             AND ob.employee_id IS NOT NULL
-       LEFT JOIN employees e         ON e.id = ob.employee_id
+       LEFT JOIN employees e          ON e.id = ob.employee_id
        LEFT JOIN lms_employee_mapping lm ON lm.employee_id = e.id
        WHERE jrc.requisition_id = ?
-       ORDER BY COALESCE(e.date_of_joining, ob.bridge_date) ASC`,
-      [requisitionId]
+
+       ORDER BY date_of_joining ASC`,
+      [requisitionId, requisitionId]
     );
     return (rows as RowDataPacket[]).map(r => ({
       employee_id:    r.employee_id as string,
