@@ -107,9 +107,18 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
   }
 
   const employee = empRows[0];
-  const candidateId = employee.candidate_id;
+  let candidateId = employee.candidate_id ?? null;
 
-  // If no candidate linked, return early
+  // Fallback: employees created via ATS may link via ats_onboarding_bridge instead
+  if (!candidateId) {
+    const [bridgeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT candidate_id FROM ats_onboarding_bridge WHERE employee_id = ? LIMIT 1`,
+      [employeeId]
+    ).catch(() => [[] as RowDataPacket[]]);
+    candidateId = (bridgeRows as RowDataPacket[])[0]?.candidate_id ?? null;
+  }
+
+  // If no candidate linked anywhere, return early
   if (!candidateId) {
     return {
       employeeId: employee.employee_id,

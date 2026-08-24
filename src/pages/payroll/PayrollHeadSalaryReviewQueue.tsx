@@ -120,6 +120,7 @@ function ReviewDrawer({
   const [rejectRemarks, setRejectRemarks]   = useState('');
 
   const [packages, setPackages]           = useState<any[]>([]);
+  const [selectedGrade, setSelectedGrade] = useState('');
   const [selectedPkgId, setSelectedPkgId] = useState('');
   const [effectiveDate, setEffectiveDate] = useState('');
   const [pkgBuilderOpen, setPkgBuilderOpen] = useState(false);
@@ -329,21 +330,51 @@ function ReviewDrawer({
                             className="w-[140px] h-8 text-xs rounded-lg" />
                         </div>
                       </div>
+                      {/* Grade selector — filter packages by band */}
+                      {packages.length > 0 && (() => {
+                        const grades = [...new Set(packages.map((p) => p.band_code).filter(Boolean))].sort();
+                        return grades.length > 1 ? (
+                          <div>
+                            <Label className="text-[10px] font-medium mb-1 block text-slate-600">Grade / Band</Label>
+                            <Select value={selectedGrade} onValueChange={(v) => { setSelectedGrade(v); setSelectedPkgId(''); }}>
+                              <SelectTrigger className="w-full h-8 text-xs rounded-lg">
+                                <SelectValue placeholder="Select grade…" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__all__" className="text-xs">All grades</SelectItem>
+                                {grades.map((g) => (
+                                  <SelectItem key={g} value={g} className="text-xs">
+                                    Grade {g} · {packages.filter((p) => p.band_code === g).length} package{packages.filter((p) => p.band_code === g).length !== 1 ? 's' : ''}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : null;
+                      })()}
                       <div className="flex items-center gap-2">
-                        <Select value={selectedPkgId} onValueChange={setSelectedPkgId}>
-                          <SelectTrigger className="flex-1 h-8 text-xs rounded-lg">
-                            <SelectValue placeholder="Choose package…" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {packages.length === 0
-                              ? <SelectItem value="__none__" disabled>No packages for this branch</SelectItem>
-                              : packages.map((p) => (
-                                <SelectItem key={p.id} value={p.id} className="text-xs">
-                                  {p.name ?? `Band ${p.band_code}`} · {inr(p.package_amount)}/mo
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
+                        {(() => {
+                          const filtered = selectedGrade && selectedGrade !== '__all__'
+                            ? packages.filter((p) => p.band_code === selectedGrade)
+                            : packages;
+                          return (
+                            <Select value={selectedPkgId} onValueChange={setSelectedPkgId}>
+                              <SelectTrigger className="flex-1 h-8 text-xs rounded-lg">
+                                <SelectValue placeholder={filtered.length === 0 ? 'No packages for selected grade' : 'Choose package…'} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {filtered.length === 0
+                                  ? <SelectItem value="__none__" disabled>No packages for this grade</SelectItem>
+                                  : filtered.map((p) => (
+                                    <SelectItem key={p.id} value={p.id} className="text-xs">
+                                      {p.name ?? `Band ${p.band_code}`} · {inr(p.package_amount)}/mo
+                                    </SelectItem>
+                                  ))}
+                              </SelectContent>
+                            </Select>
+                          );
+                        })()}
+
                         <Button size="sm" disabled={busy || !selectedPkgId || !effectiveDate}
                           onClick={() => void assignExisting()}
                           className="h-8 text-xs cursor-pointer bg-purple-600 hover:bg-purple-700 rounded-lg px-3 shrink-0">

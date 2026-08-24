@@ -19,6 +19,9 @@ import {
   Eye,
   FileCheck,
   Loader2,
+  Maximize2,
+  RotateCcw,
+  RotateCw,
   Search,
   Send,
   Shield,
@@ -389,6 +392,8 @@ export default function NativeHROnboardingRequests() {
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewGroup, setPreviewGroup] = useState<DocumentPreview[]>([]);
   const [previewGroupIndex, setPreviewGroupIndex] = useState(0);
+  const [previewRotation, setPreviewRotation] = useState(0);
+  const [previewBlurred, setPreviewBlurred] = useState(false);
 
   // ── Offer / masters state
   const [bgv, setBgv] = useState<BgvData | null>(null);
@@ -472,12 +477,24 @@ export default function NativeHROnboardingRequests() {
       if (e.key === 'ArrowLeft') { navigatePreview(-1); return; }
       if (e.key === '+' || e.key === '=') { setPreviewZoom(z => Math.min(z + 0.25, 4)); return; }
       if (e.key === '-') { setPreviewZoom(z => Math.max(z - 0.25, 0.25)); return; }
-      if (e.key === '0') { setPreviewZoom(1); return; }
+      if (e.key === '0') { setPreviewZoom(1); setPreviewRotation(0); return; }
+      if (e.key === 'r' || e.key === 'R') { setPreviewRotation(r => (r + (e.shiftKey ? -90 : 90)) % 360); return; }
+      if (e.key === 'f' || e.key === 'F') { setPreviewZoom(1); return; } // fit to screen
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentPreview, previewGroup, previewGroupIndex]);
+
+  // ── Blur document when window loses focus (anti-screenshot measure)
+  useEffect(() => {
+    if (!documentPreview) return;
+    const onBlur = () => setPreviewBlurred(true);
+    const onFocus = () => setPreviewBlurred(false);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('focus', onFocus);
+    return () => { window.removeEventListener('blur', onBlur); window.removeEventListener('focus', onFocus); };
+  }, [documentPreview]);
 
   // ── Load list
   const load = useCallback(async () => {
@@ -885,6 +902,8 @@ export default function NativeHROnboardingRequests() {
     setDocumentPreviewLoading(false);
     setDocumentPreviewError(null);
     setPreviewZoom(1);
+    setPreviewRotation(0);
+    setPreviewBlurred(false);
     setPreviewGroup([]);
     setPreviewGroupIndex(0);
   };
@@ -894,6 +913,8 @@ export default function NativeHROnboardingRequests() {
     setDocumentPreviewError(null);
     setDocumentPreviewLoading(true);
     setPreviewZoom(1);
+    setPreviewRotation(0);
+    setPreviewBlurred(false);
     setPreviewGroup(group.length > 0 ? group : [preview]);
     setPreviewGroupIndex(index);
     try {
@@ -2379,6 +2400,43 @@ export default function NativeHROnboardingRequests() {
                 {/* Separator */}
                 <div className="mx-2 h-5 w-px bg-white/10" />
 
+                {/* Rotation controls */}
+                <button
+                  type="button"
+                  onClick={() => setPreviewRotation(r => (r - 90 + 360) % 360)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-white/10 transition-colors"
+                  title="Rotate left (Shift+R)"
+                >
+                  <RotateCcw className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewRotation(r => (r + 90) % 360)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-300 hover:bg-white/10 transition-colors"
+                  title="Rotate right (R)"
+                >
+                  <RotateCw className="h-4 w-4" />
+                </button>
+                {previewRotation !== 0 && (
+                  <span className="text-[10px] font-mono text-slate-500">{previewRotation}°</span>
+                )}
+
+                {/* Separator */}
+                <div className="mx-2 h-5 w-px bg-white/10" />
+
+                {/* Fit to screen */}
+                <button
+                  type="button"
+                  onClick={() => { setPreviewZoom(1); setPreviewRotation(0); }}
+                  className="flex h-8 items-center gap-1 rounded-lg px-2 text-slate-300 hover:bg-white/10 transition-colors text-xs"
+                  title="Reset view (0)"
+                >
+                  <Maximize2 className="h-3.5 w-3.5" /> Fit
+                </button>
+
+                {/* Separator */}
+                <div className="mx-2 h-5 w-px bg-white/10" />
+
                 {/* Group navigation */}
                 {previewGroup.length > 1 && (
                   <>
@@ -2448,10 +2506,17 @@ export default function NativeHROnboardingRequests() {
               ) : documentPreviewUrl && documentPreview.mimeType?.startsWith('image/') ? (
                 /* IMAGE viewer */
                 <div
-                  className="flex min-h-full min-w-full items-center justify-center p-6"
+                  className={`flex min-h-full min-w-full items-center justify-center p-6 transition-all duration-300 ${previewBlurred ? 'blur-xl' : ''}`}
                   style={{ cursor: previewZoom > 1 ? 'grab' : 'default' }}
                 >
-                  <div className="relative" style={{ transform: `scale(${previewZoom})`, transformOrigin: 'center center', transition: 'transform 0.15s ease' }}>
+                  <div
+                    className="relative"
+                    style={{
+                      transform: `scale(${previewZoom}) rotate(${previewRotation}deg)`,
+                      transformOrigin: 'center center',
+                      transition: 'transform 0.2s ease',
+                    }}
+                  >
                     <img
                       src={documentPreviewUrl}
                       alt={documentPreview.title}
@@ -2485,7 +2550,7 @@ export default function NativeHROnboardingRequests() {
                 </div>
               ) : (
                 /* PDF / other — use iframe with blocking overlay */
-                <div className="relative h-full w-full">
+                <div className={`relative h-full w-full transition-all duration-300 ${previewBlurred ? 'blur-xl' : ''}`}>
                   <iframe
                     src={documentPreviewUrl ?? undefined}
                     title={documentPreview.title}
@@ -2536,8 +2601,20 @@ export default function NativeHROnboardingRequests() {
               <span className="text-[10px] text-slate-600">ESC close</span>
               <span className="text-[10px] text-slate-600">← → navigate</span>
               <span className="text-[10px] text-slate-600">+ − zoom</span>
-              <span className="text-[10px] text-slate-600">0 reset zoom</span>
+              <span className="text-[10px] text-slate-600">R rotate</span>
+              <span className="text-[10px] text-slate-600">0 reset</span>
             </div>
+
+            {/* Blur overlay when window loses focus */}
+            {previewBlurred && (
+              <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+                <div className="text-center">
+                  <Shield className="h-12 w-12 text-amber-400 mx-auto mb-3" />
+                  <p className="text-lg font-semibold text-white">Document Protected</p>
+                  <p className="text-sm text-slate-400 mt-1">Click here to view</p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
