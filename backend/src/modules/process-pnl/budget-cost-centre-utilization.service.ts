@@ -59,6 +59,15 @@ export type BudgetCostCentreRow = {
   heads: BudgetCostCentreHeadRow[];
 };
 
+/** Budget lines planned at branch level (cost_centre_id IS NULL) with no allocation rows in
+ *  finance_budget_line_allocation. Their budgeted amounts cannot be attributed to any cost centre
+ *  and are therefore invisible in the per-CC view. Returned as metadata so the UI can surface a
+ *  warning rather than silently under-reporting the branch's total budget. */
+export type UnallocatedBranchLineSummary = {
+  lineCount: number;
+  totalBudget: number;
+};
+
 const num = (value: unknown) => Number(value ?? 0);
 
 /** Head + sub-head identity. Sub-head is nullable, and "" is a distinct value from NULL in the
@@ -81,7 +90,7 @@ export const budgetCostCentreUtilizationService = {
     return String(rows[0].branch_id);
   },
 
-  async get(budgetId: string): Promise<BudgetCostCentreRow[]> {
+  async get(budgetId: string): Promise<{ rows: BudgetCostCentreRow[]; unallocated: UnallocatedBranchLineSummary }> {
     // Budgeted, at (cost centre, head, sub-head) grain. `line_id` rides along so lineCount can be
     // a DISTINCT count — an allocated line appears once per cost centre it touches, and counting
     // rows instead of lines would inflate every branch-level budget's line count.
@@ -115,8 +124,47 @@ export const budgetCostCentreUtilizationService = {
       [budgetId]
     );
 
+    // Simple GRNs: budget lines that are pinned to a specific cost centre but whose spend was
+    // tracked ONLY in finance_budget_line.reserved_amount / consumed_amount (the simple GRN path
+    // via budgetConsumptionService) with NO grn_cost_allocation rows written. Without this, the
+    // CC tab's consumed column reads zero for those lines while the variance tab correctly shows
+    // the line's consumed_amount, producing a visible discrepancy for direct-CC budget lines.
+    const [simpleGrnRows] = await db.query<RowDataPacket[]>(
+      `SELECT l.cost_centre_id, l.head, l.sub_head,
+              l.reserved_amount AS reserved,
+              l.consumed_amount AS consumed
+         FROM finance_budget_line l
+        WHERE l.budget_id = ?
+          AND l.cost_centre_id IS NOT NULL
+          AND (l.reserved_amount > 0 OR l.consumed_amount > 0)
+          AND NOT EXISTS (
+            SELECT 1 FROM grn_cost_allocation g
+             WHERE g.budget_line_id = l.id
+               AND g.lifecycle_status IN ('reserved', 'consumed')
+          )`,
+      [budgetId]
+    );
+
+    // How much branch-level budget is completely invisible in this per-CC view because no
+    // finance_budget_line_allocation rows were written for it.
+    const [unallocatedRows] = await db.query<RowDataPacket[]>(
+      `SELECT COUNT(*) AS cnt, COALESCE(SUM(l.gross_amount), 0) AS total_budget
+         FROM finance_budget_line l
+        WHERE l.budget_id = ?
+          AND l.cost_centre_id IS NULL
+          AND l.gross_amount > 0
+          AND NOT EXISTS (
+            SELECT 1 FROM finance_budget_line_allocation a WHERE a.budget_line_id = l.id
+          )`,
+      [budgetId]
+    );
+    const unallocated: UnallocatedBranchLineSummary = {
+      lineCount: Number(unallocatedRows[0]?.cnt ?? 0),
+      totalBudget: Number(unallocatedRows[0]?.total_budget ?? 0),
+    };
+
     const centreIds = new Set<string>();
-    for (const row of [...budgetRows, ...spendRows]) {
+    for (const row of [...budgetRows, ...spendRows, ...simpleGrnRows]) {
       if (row.cost_centre_id != null) centreIds.add(String(row.cost_centre_id));
     }
 
@@ -201,9 +249,25 @@ export const budgetCostCentreUtilizationService = {
       headRow.consumed += consumed;
     }
 
+    // Simple GRN fallback: direct-CC lines whose spend is only in the budget line columns.
+    // These are NOT double-counted with spendRows: the EXISTS NOT check in the query above
+    // guarantees a line is in simpleGrnRows only when spendRows has zero rows for it.
+    for (const row of simpleGrnRows) {
+      const centre = centreFor(row.cost_centre_id);
+      const head = String(row.head ?? "");
+      const subHead = row.sub_head == null ? null : String(row.sub_head);
+      const reserved = num(row.reserved);
+      const consumed = num(row.consumed);
+      centre.reserved += reserved;
+      centre.consumed += consumed;
+      const headRow = headFor(centre, head, subHead);
+      headRow.reserved += reserved;
+      headRow.consumed += consumed;
+    }
+
     const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
-    return [...centres.values()]
+    const rows = [...centres.values()]
       .map((centre) => {
         const heads = [...centre._heads.values()]
           .map((head) => ({
@@ -233,5 +297,6 @@ export const budgetCostCentreUtilizationService = {
         if (a.isUnattributed !== b.isUnattributed) return a.isUnattributed ? 1 : -1;
         return b.budgeted - a.budgeted || a.costCentreName.localeCompare(b.costCentreName);
       });
+    return { rows, unallocated };
   },
 };

@@ -801,15 +801,18 @@ export default function BranchBudgetManagementWorkspace() {
   const costCentreUtilizationQuery = useQuery({
     queryKey: ["budget-cost-centre-utilization", detailId],
     queryFn: async () => {
-      if (!detailId) return [];
-      const response = await hrmsApi.get<{ success: boolean; data: CostCentreUtilizationRow[] }>(
-        `/api/finance/pnl/budgets/${detailId}/cost-centre-utilization`
-      );
-      return response.data ?? [];
+      if (!detailId) return { data: [], meta: null };
+      const response = await hrmsApi.get<{
+        success: boolean;
+        data: CostCentreUtilizationRow[];
+        meta?: { unallocated?: { lineCount: number; totalBudget: number } };
+      }>(`/api/finance/pnl/budgets/${detailId}/cost-centre-utilization`);
+      return { data: response.data ?? [], meta: response.meta ?? null };
     },
     enabled: Boolean(detailId),
   });
-  const utilizationByCostCentre = costCentreUtilizationQuery.data ?? [];
+  const utilizationByCostCentre = costCentreUtilizationQuery.data?.data ?? [];
+  const ccUtilMeta = costCentreUtilizationQuery.data?.meta ?? null;
 
   /** Monthly business-case close/reopen status per (head, sub-head) for the open budget — item 11
    *  (owner requirement, 2026-08-21). One row per head/sub-head the budget has a line under;
@@ -938,6 +941,19 @@ export default function BranchBudgetManagementWorkspace() {
       { budgeted: 0, reserved: 0, consumed: 0, available: 0 }
     );
   }, [detailQuery.data?.lines]);
+  /** Data-quality signals surfaced as warning banners in both tabs.
+   *  consumptionDrift: variance tab consumed exceeds CC tab total consumed — simple GRNs that
+   *  previously had no allocation rows may show a residual until they are re-queried post-fix.
+   *  unattributedSpend: GRN spend whose cost_centre_id was NULL at booking time.
+   *  unallocatedBranchLines: branch-level budget lines with no CC allocation rows — their
+   *  budgeted amounts are invisible in the per-CC view. */
+  const consumptionDrift = Math.round(varianceTotals.consumed - ccTotals.consumed);
+  const unattributedRow = utilizationByCostCentre.find((cc) => cc.isUnattributed);
+  const unattributedSpend = unattributedRow
+    ? unattributedRow.reserved + unattributedRow.consumed
+    : 0;
+  const unallocatedBranchMeta = ccUtilMeta?.unallocated ?? null;
+
   /** Which cost centres are drilled open into their head / sub-head detail. */
   const [expandedCostCentres, setExpandedCostCentres] = useState<Set<string>>(new Set());
   const toggleCostCentre = (key: string) =>
@@ -2771,6 +2787,37 @@ export default function BranchBudgetManagementWorkspace() {
                     <p className="py-8 text-center text-slate-500">Select a branch and period to view variance data.</p>
                   ) : (
                     <div className="space-y-2">
+                    {/* Data-quality banners — shown whenever there is a known gap in this view */}
+                    {unallocatedBranchMeta && unallocatedBranchMeta.lineCount > 0 && (
+                      <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] text-amber-800">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          <strong>{unallocatedBranchMeta.lineCount} branch-level budget line{unallocatedBranchMeta.lineCount > 1 ? "s" : ""}</strong> (totalling{" "}
+                          <strong>{money(unallocatedBranchMeta.totalBudget)}</strong>) have no cost-centre allocation — their budgeted
+                          amounts will not appear in the Cost Centre tab. Open the Allocation Matrix to split them.
+                        </span>
+                      </div>
+                    )}
+                    {unattributedSpend > 0 && (
+                      <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] text-amber-800">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          <strong>{money(unattributedSpend)}</strong> of GRN spend has no cost centre recorded — it shows as "Unattributed"
+                          in the Cost Centre tab and is excluded from all per-CC variance calculations.
+                        </span>
+                      </div>
+                    )}
+                    {consumptionDrift > 1 && (
+                      <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-[11px] text-rose-800">
+                        <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span>
+                          Consumed total here (<strong>{money(varianceTotals.consumed)}</strong>) exceeds
+                          the Cost Centre tab total (<strong>{money(ccTotals.consumed)}</strong>) by{" "}
+                          <strong>{money(consumptionDrift)}</strong> — some GRN consumption may be
+                          recorded without a cost-centre attribution. Check the Unattributed row in the Cost Centre tab.
+                        </span>
+                      </div>
+                    )}
                     {capabilities?.canCloseBusinessCase && (
                       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-2.5">
                         <p className="text-[11px] text-slate-500">
@@ -3044,6 +3091,26 @@ export default function BranchBudgetManagementWorkspace() {
                   </p>
                 </CardHeader>
                 <CardContent>
+                  {/* Data-quality banners for CC tab */}
+                  {detailId && unallocatedBranchMeta && unallocatedBranchMeta.lineCount > 0 && (
+                    <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] text-amber-800">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        <strong>{unallocatedBranchMeta.lineCount} branch-level line{unallocatedBranchMeta.lineCount > 1 ? "s" : ""}</strong> ({money(unallocatedBranchMeta.totalBudget)}) have
+                        no cost-centre split — their budgeted amounts are <strong>not reflected</strong> in the figures below.
+                        Open the Allocation Matrix tab to assign them to specific cost centres.
+                      </span>
+                    </div>
+                  )}
+                  {detailId && unattributedSpend > 0 && (
+                    <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] text-amber-800">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      <span>
+                        <strong>{money(unattributedSpend)}</strong> of spend has no cost centre — shown in the Unattributed row below.
+                        Edit the affected GRNs to assign a cost centre.
+                      </span>
+                    </div>
+                  )}
                   {costCentreUtilizationQuery.isLoading ? (
                     <p className="py-8 text-center text-slate-500">Loading cost centre utilization…</p>
                   ) : costCentreUtilizationQuery.isError ? (

@@ -1292,12 +1292,44 @@ export const grnService = {
       params.push(filters.vendorId);
     }
     if (filters.head) {
-      conditions.push("g.head = ?");
-      params.push(filters.head);
+      // For split GRNs the smart flow overwrites grn_request.head with the last component's value,
+      // so a plain equality misses GRNs where this head was one of several components. When a cost
+      // centre filter is also active, check through grn_cost_allocation → finance_budget_line too.
+      if (filters.costCentreId) {
+        conditions.push(`(
+          g.head = ?
+          OR EXISTS (
+            SELECT 1 FROM grn_cost_allocation gca_h
+            JOIN finance_budget_line bl_h ON bl_h.id = gca_h.budget_line_id
+            WHERE gca_h.grn_request_id = g.id
+              AND gca_h.lifecycle_status IN ('reserved', 'consumed')
+              AND bl_h.head = ?
+          )
+        )`);
+        params.push(filters.head, filters.head);
+      } else {
+        conditions.push("g.head = ?");
+        params.push(filters.head);
+      }
     }
     if (filters.subHead) {
-      conditions.push("g.sub_head = ?");
-      params.push(filters.subHead);
+      // Same split-GRN problem as head above: check both grn_request.sub_head and alloc rows.
+      if (filters.costCentreId) {
+        conditions.push(`(
+          g.sub_head = ?
+          OR EXISTS (
+            SELECT 1 FROM grn_cost_allocation gca_s
+            JOIN finance_budget_line bl_s ON bl_s.id = gca_s.budget_line_id
+            WHERE gca_s.grn_request_id = g.id
+              AND gca_s.lifecycle_status IN ('reserved', 'consumed')
+              AND bl_s.sub_head = ?
+          )
+        )`);
+        params.push(filters.subHead, filters.subHead);
+      } else {
+        conditions.push("g.sub_head = ?");
+        params.push(filters.subHead);
+      }
     }
     if (filters.billingCycleStatus) {
       // 'UNCLASSIFIED' is how the UI asks for historical rows, which are NULL because the

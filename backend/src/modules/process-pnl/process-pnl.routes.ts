@@ -535,8 +535,8 @@ router.get(
       userRoles: user.roles,
       recordBranchId: branchId,
     });
-    const data = await budgetCostCentreUtilizationService.get(req.params.id);
-    res.json({ success: true, data });
+    const { rows, unallocated } = await budgetCostCentreUtilizationService.get(req.params.id);
+    res.json({ success: true, data: rows, meta: { unallocated } });
   })
 );
 
