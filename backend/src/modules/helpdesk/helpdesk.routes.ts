@@ -9,7 +9,8 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { getEmployeeForUser, hasRoleForRequest } from "../../shared/accessGuard.js";
 import { resolveUserBusinessScope, buildProcessScopeCondition } from "../../shared/enterpriseScope.js";
-import { helpdeskService, writeSensitiveAuditLog } from "./helpdesk.service.js";
+import { getUserRoleKeys } from "../../shared/scopeAccess.js";
+import { helpdeskService, writeSensitiveAuditLog, CATEGORY_OWNER_ROLES } from "./helpdesk.service.js";
 import {
   getHelpdeskDashboard,
   getHelpdeskSlaSummary,
@@ -68,25 +69,85 @@ const HELPDESK_ORG_WIDE_ROLES = ["admin", "hr", "super_admin"] as const;
 // IJP fix closed for job postings).
 const HELPDESK_SCOPED_IT_ROLES = ["it", "branch_it", "it_admin"] as const;
 
+// Reverse of CATEGORY_OWNER_ROLES (helpdesk.service.ts) — role -> categories it owns. Derived,
+// not hand-duplicated, so routing (who a ticket auto-assigns to) and visibility (who can see
+// it) can never silently disagree about which roles own which category.
+const ROLE_OWNED_CATEGORIES: Record<string, string[]> = {};
+for (const [category, roles] of Object.entries(CATEGORY_OWNER_ROLES)) {
+  for (const role of roles) {
+    (ROLE_OWNED_CATEGORIES[role] ??= []).push(category);
+  }
+}
+
 /**
  * Row-scope condition for a caller reaching a HELPDESK_ADMIN_ROLES-gated route.
- * "1=1" (unrestricted) for admin/hr/super_admin — unchanged behavior. A real
- * branch/process condition for it/branch_it/it_admin, resolved the same way
- * job-requisition.service.ts and ijp.service.ts already do for their own
- * manager-tier roles: org-wide if the assignment says "all", branch/process-
- * scoped if a real user_assignment_scope row exists, fail-closed (1=0) if the
- * caller has none configured yet — consistent with how every other under-
- * provisioned manager-tier role in this codebase already behaves, not a
- * special case invented here.
+ *
+ * "1=1" (fully unrestricted, branch AND category) only for super_admin.
+ *
+ * admin/hr/it/branch_it/it_admin (2026-08-24): each now also gets a category restriction on
+ * top of its existing branch/process rule — previously admin/hr saw every category (including
+ * IT tickets) org-wide, and it/branch_it/it_admin's own branch/process scope carried no
+ * category restriction either. Uses getUserRoleKeys() (not hasRoleForRequest/hasRole — both
+ * have "admin/super_admin passes any role check" baked in deliberately elsewhere in this
+ * codebase, which would silently defeat a category check keyed off role membership) to read
+ * the caller's REAL held roles, then unions the categories owned by every HELPDESK_ADMIN_ROLES
+ * role they hold — so someone holding two of these roles isn't wrongly narrowed to just one.
+ *
+ * branch/process scoping itself (job-requisition.service.ts/ijp.service.ts's own pattern: org-
+ * wide if scope_type='all', branch/process-scoped if a real user_assignment_scope row exists,
+ * fail-closed if none configured) is unchanged — admin/hr stay branch-unrestricted the same as
+ * before, it/branch_it/it_admin stay branch/process-scoped the same as before (delta-audit
+ * 2026-08-14 fix). Category is a second, independent restriction added alongside it, not a
+ * replacement for it.
+ *
+ * Roles outside HELPDESK_ADMIN_ROLES (manager, process_manager — allowed on some read-only
+ * dashboards by their own separate requireRole lists) are unaffected: they already only get
+ * the branch/process-scoped fallback below with no category dimension, and weren't part of
+ * the confirmed category-ownership mapping, so their behavior isn't touched here.
  */
 async function resolveHelpdeskTicketScope(
   user: AuthenticatedRequest["authUser"]
 ): Promise<{ sql: string; params: unknown[] }> {
-  if (await hasRoleForRequest(user, ...HELPDESK_ORG_WIDE_ROLES)) {
+  if (await hasRoleForRequest(user, "super_admin")) {
     return { sql: "1=1", params: [] };
   }
-  const scope = await resolveUserBusinessScope(user as { id: string });
-  return buildProcessScopeCondition(scope, { branchId: "e.branch_id", processId: "e.process_id" });
+
+  const heldRoles = user?.id ? await getUserRoleKeys(user.id) : [];
+  const ownedCategories = [...new Set(
+    heldRoles
+      .filter((role) => HELPDESK_ADMIN_ROLES.includes(role as (typeof HELPDESK_ADMIN_ROLES)[number]))
+      .flatMap((role) => ROLE_OWNED_CATEGORIES[role] ?? [])
+  )];
+
+  let branchScope: { sql: string; params: unknown[] };
+  if (await hasRoleForRequest(user, ...HELPDESK_ORG_WIDE_ROLES)) {
+    branchScope = { sql: "1=1", params: [] };
+  } else {
+    const scope = await resolveUserBusinessScope(user as { id: string });
+    branchScope = buildProcessScopeCondition(scope, { branchId: "e.branch_id", processId: "e.process_id" });
+  }
+
+  // A HELPDESK_ADMIN_ROLES member holding none of the mapped roles (shouldn't happen given
+  // the current mapping covers every role in HELPDESK_ADMIN_ROLES, but fail closed rather than
+  // silently falling through to "sees everything" if the mapping is ever narrowed later).
+  if (!ownedCategories.length) {
+    return { sql: "1=0", params: [] };
+  }
+
+  // Already unconditionally false (e.g. a scoped IT role with no user_assignment_scope row) —
+  // stays exactly 1=0, no need to layer a category condition onto an already-failed scope.
+  if (branchScope.sql === "1=0") {
+    return branchScope;
+  }
+
+  const categorySql = `t.category IN (${ownedCategories.map(() => "?").join(",")})`;
+  if (branchScope.sql === "1=1") {
+    return { sql: categorySql, params: ownedCategories };
+  }
+  return {
+    sql: `(${branchScope.sql}) AND ${categorySql}`,
+    params: [...branchScope.params, ...ownedCategories],
+  };
 }
 
 router.use(requireAuth);

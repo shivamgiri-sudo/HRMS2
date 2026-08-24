@@ -4,9 +4,48 @@ import { db } from "../../db/mysql.js";
 import { calculateSlaDueAt } from "./helpdesk-sla.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { sendSMS } from "../communication/sms.helper.js";
+import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
 
 function ticketCode(): string {
   return `TKT-${Date.now().toString(36).toUpperCase()}`;
+}
+
+// ── Auto-routing (2026-08-24) ───────────────────────────────────────────────────
+// Tickets used to sit unassigned until a human manually called /assign or /take — confirmed
+// live, no code path ever set assigned_to at creation. Same department clusters as the
+// HELPDESK category-RBAC fix (routes.ts CATEGORY_OWNER_ROLES): it/branch_it/it_admin own IT,
+// hr owns hr/leave/payroll, admin owns everything else. Kept in one place so routing and
+// visibility can never silently disagree about which roles own which category.
+export const CATEGORY_OWNER_ROLES: Record<string, string[]> = {
+  it:         ["it", "branch_it", "it_admin"],
+  hr:         ["hr"],
+  leave:      ["hr"],
+  payroll:    ["hr"],
+  attendance: ["admin"],
+  admin:      ["admin"],
+  asset:      ["admin"],
+  general:    ["admin"],
+  other:      ["admin"],
+};
+
+/**
+ * First-cut assignee selection: the first active role-holder in the ticket-raiser's own
+ * branch, falling back to any org-wide holder of the same role, trying each role in the
+ * category's owner list in order. Deterministic (roleScopeRows orders by employee_code), not
+ * true round-robin/least-loaded load-balancing — flagged as a known simplification, not
+ * silently presented as fair distribution. Reuses recipient-resolver.ts's already-proven
+ * role+branch resolution (used elsewhere for notification routing) rather than a new query.
+ * Returns null (ticket stays unassigned, same as today) only if truly nobody anywhere holds
+ * any owning role for the category — the IT manager (or any HELPDESK_ADMIN_ROLES member) can
+ * still assign manually via the existing /assign endpoint, unchanged.
+ */
+export async function resolveAutoAssignee(category: string, branchId: string | null): Promise<string | null> {
+  const roles = CATEGORY_OWNER_ROLES[category.trim().toLowerCase()] ?? CATEGORY_OWNER_ROLES.other;
+  for (const role of roles) {
+    const ids = await resolveRoleHolderUserIds(role, branchId);
+    if (ids.length) return ids[0];
+  }
+  return null;
 }
 
 function grievanceCode(): string {
@@ -148,17 +187,32 @@ export const helpdeskService = {
     const priority = data.priority ?? "medium";
     const slaDueAt = calculateSlaDueAt(priority, data.category, new Date());
 
+    // Auto-route to a branch/department SPOC — see resolveAutoAssignee's own comment. Never
+    // blocks ticket creation: a lookup failure here just leaves the ticket unassigned, the
+    // same state every ticket was in before this existed.
+    let assignedTo: string | null = null;
+    try {
+      const [raiserRows] = await db.execute<RowDataPacket[]>(
+        `SELECT branch_id FROM employees WHERE id = ? LIMIT 1`, [data.employee_id]
+      );
+      const branchId = (raiserRows[0]?.branch_id as string | undefined) ?? null;
+      assignedTo = await resolveAutoAssignee(data.category, branchId);
+    } catch (e) {
+      console.error("[helpdesk] auto-routing lookup failed, ticket will be unassigned:", e);
+    }
+
     await db.execute(
       `INSERT INTO helpdesk_ticket
          (id, ticket_code, employee_id, category, it_subcategory, subject, description,
-          priority, sla_due_at, downtime_minutes, affected_seats)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          priority, sla_due_at, downtime_minutes, affected_seats, assigned_to)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id, ticketCode(), data.employee_id, data.category,
         data.it_subcategory ?? null,
         data.subject, data.description, priority, slaDueAt,
         data.downtime_minutes ?? 0,
         data.affected_seats ?? 1,
+        assignedTo,
       ]
     );
     const ticket = await this.getTicket(id);
