@@ -454,6 +454,15 @@ export async function overallAttritionRate(
   const from = dateParam(filters.from, iso(twelveMonthsAgo));
   const to = dateParam(filters.to, iso(today));
 
+  // The month_seq generator below builds each month as
+  // DATE_ADD(<seed>, INTERVAL n MONTH) .. < DATE_ADD(<seed>, INTERVAL n+1 MONTH). If <seed>
+  // is `from` verbatim (e.g. a 25th-of-the-month date), every "month" window runs 25th-to-25th
+  // and DATE_FORMAT(month_start, '%Y-%m') mislabels it — verified live 2026-08-25: the row
+  // labelled '2026-06' actually covered 2026-06-25..2026-07-25 and produced 221 exits, while a
+  // plain COUNT(*) for the true calendar month of June 2026 gives 301. Truncating the seed to
+  // the first of its month fixes this without changing the rest of the shape.
+  const fromMonthStart = `${from.slice(0, 7)}-01`;
+
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
@@ -461,51 +470,71 @@ export async function overallAttritionRate(
   clauses.push(`${AON_REFERENCE_JOIN_DATE_SQL} IS NOT NULL`, RELIABLE_POPULATION);
   const scopeSql = clauses.join(" AND ");
 
-  // Each of the 3 uses of `scopeSql` below is a SEPARATE correlated subquery — the exits
-  // count, the at-period-start headcount, and the at-period-end headcount each need their
-  // own copy of the scope/filter params, because each is bound to its own set of `?`
-  // placeholders in the final statement. That is 3 x params.length scope/filter
-  // placeholders, plus 3 date placeholders (the DATE(?) seed and its two comparisons in
-  // the month_seq generator) = 3*params.length + 3 placeholders total — matched below by
-  // building finalParams as 3 copies of params followed by [from, from, to].
+  /*
+   * Rewritten 2026-08-25 to fix a real performance bug found by review and confirmed live:
+   * the original shape ran 3 independent correlated subqueries (exits, headcount@start,
+   * headcount@end) PER ROW of the 12-row month_seq — 3 x 12 = 36 full scoped scans of
+   * `employees`. Timed live at 25.7s for a 2-month window; extrapolated to this function's
+   * own 12-month default (also the frontend page's default range), that lands past this
+   * codebase's 120s API gateway limit — the exact failure mode aon-bucket-shrinkage already
+   * documents in its own header (65s/3mo, >120s/12mo).
+   *
+   * A lazy-load deferral (aon-bucket-shrinkage's fix for that same failure mode) is wrong
+   * here specifically: this function IS the headline number a CEO glances at first, per its
+   * own docstring — gating it behind a click defeats the point.
+   *
+   * Fixed by scanning `employees` exactly ONCE, cross-joined against the 12-row month_seq,
+   * with each month's exits/headcount computed via conditional SUM(CASE ...) rather than a
+   * separate correlated COUNT(*) subquery per month per metric. The scope/filter clause now
+   * appears exactly once in the SQL text (one copy of `params`), not three.
+   *
+   * Live-timed 2026-08-25 for the full 12-month default window (unscoped, worst case): see
+   * task-2-report.md for the measured elapsed time.
+   */
   const base = `
     SELECT DATE_FORMAT(m.month_start, '%Y-%m') AS month,
            m.exits,
            m.avg_total_headcount,
            ROUND(m.exits * 100.0 / NULLIF(m.avg_total_headcount, 0), 2) AS attrition_rate_pct
       FROM (
-        SELECT month_start,
-               (SELECT COUNT(*) FROM employees e
-                 WHERE ${scopeSql}
-                   AND e.date_of_exit IS NOT NULL AND e.date_of_exit >= month_start
-                   AND e.date_of_exit < DATE_ADD(month_start, INTERVAL 1 MONTH)
+        SELECT ms.month_start,
+               SUM(
+                 CASE WHEN e.date_of_exit IS NOT NULL
+                           AND e.date_of_exit >= ms.month_start
+                           AND e.date_of_exit < DATE_ADD(ms.month_start, INTERVAL 1 MONTH)
+                      THEN 1 ELSE 0 END
                ) AS exits,
                (
-                 (SELECT COUNT(*) FROM employees e
-                   WHERE ${scopeSql}
-                     AND ${AON_REFERENCE_JOIN_DATE_SQL} <= month_start
-                     AND (e.date_of_exit IS NULL OR e.date_of_exit >= month_start)
-                 ) +
-                 (SELECT COUNT(*) FROM employees e
-                   WHERE ${scopeSql}
-                     AND ${AON_REFERENCE_JOIN_DATE_SQL} <= LAST_DAY(month_start)
-                     AND (e.date_of_exit IS NULL OR e.date_of_exit >= LAST_DAY(month_start))
+                 SUM(
+                   CASE WHEN ${AON_REFERENCE_JOIN_DATE_SQL} <= ms.month_start
+                             AND (e.date_of_exit IS NULL OR e.date_of_exit >= ms.month_start)
+                        THEN 1 ELSE 0 END
+                 )
+                 +
+                 SUM(
+                   CASE WHEN ${AON_REFERENCE_JOIN_DATE_SQL} <= LAST_DAY(ms.month_start)
+                             AND (e.date_of_exit IS NULL OR e.date_of_exit >= LAST_DAY(ms.month_start))
+                        THEN 1 ELSE 0 END
                  )
                ) / 2.0 AS avg_total_headcount
-          FROM (
+          FROM employees e
+          CROSS JOIN (
             SELECT DATE_ADD(DATE(?), INTERVAL n MONTH) AS month_start
               FROM (SELECT 0 AS n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
                     UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9
                     UNION SELECT 10 UNION SELECT 11) months
              WHERE DATE_ADD(DATE(?), INTERVAL n MONTH) <= DATE(?)
-          ) month_seq
+          ) ms
+         WHERE ${scopeSql}
+         GROUP BY ms.month_start
       ) m
      ORDER BY month`;
 
-  // 3 copies of the scope/filter params (one per correlated subquery above) followed by
-  // the 3 date params the month_seq generator binds (?, ?, ?) — verified by counting
-  // placeholders: `(base.match(/\?/g) ?? []).length === finalParams.length` below.
-  const finalParams = [...params, ...params, ...params, from, from, to];
+  // The month_seq generator's 3 placeholders (DATE(?) seed, then the WHERE comparison's two
+  // more) are textually FIRST in this query (inside the CROSS JOIN's derived table), so they
+  // bind first; the scope/filter params appear exactly once now, after them. The seed uses
+  // fromMonthStart (not raw `from`) so month windows land on calendar-month boundaries.
+  const finalParams = [fromMonthStart, fromMonthStart, to, ...params];
 
   try {
     const rows = await query(base, finalParams);
