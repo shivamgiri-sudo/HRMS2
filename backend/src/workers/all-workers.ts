@@ -68,6 +68,8 @@ import { startAutoRosterSchedulerWorker, stopAutoRosterSchedulerWorker } from ".
 import { startUatJobRunner, stopUatJobRunner } from "../modules/uat-pipeline/uat-job-runner.js";
 import { registerUatJobHandlers } from "../modules/uat-pipeline/uat-jobs.handlers.js";
 import { startMiraTriageScheduler } from "../modules/ai/mira-triage-scheduler.js";
+import { startHcGapAlertScheduler, stopHcGapAlertScheduler } from "../modules/workforce-mandate/hc-gap-alert.cron.js";
+import { registerRosterIntelligenceCrons } from "../modules/wfm/roster-intelligence.cron.js";
 import { clearAllTimers } from "./worker-utils.js";
 
 const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
@@ -360,6 +362,20 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "mira-triage",
     start: () => { startMiraTriageScheduler(); return Promise.resolve(); },
   },
+  {
+    // Daily at 06:30 IST: checks workforce mandates where coverage_pct < alert_threshold_pct
+    // and fires push notifications to HR Admin + Branch Head. Deduplicates via audit_log
+    // (same scope alerted in last 24h is skipped).
+    name: "hc-gap-alert",
+    start: () => { startHcGapAlertScheduler(); return Promise.resolve(); },
+  },
+  {
+    // Roster Intelligence: Manager daily digest (7 AM), branch dashboard (8 AM), and
+    // unplanned absence alerts (every 30 min 8 AM - 8 PM). Controlled via
+    // ROSTER_INTELLIGENCE_CRON env var (default enabled).
+    name: "roster-intelligence",
+    start: () => { registerRosterIntelligenceCrons(); return Promise.resolve(); },
+  },
 ];
 
 async function startAllWorkers(): Promise<void> {
@@ -443,6 +459,7 @@ function shutdown(): void {
   stopReportSubscriptionWorker();
   stopAutoRosterSchedulerWorker();
   stopUatJobRunner();
+  stopHcGapAlertScheduler();
   clearAllTimers();
   console.log("[workers] Clean shutdown complete.");
   process.exit(0);

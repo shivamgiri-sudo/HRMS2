@@ -297,6 +297,7 @@ rosterImportRouter.get(
 // ── GET /api/wfm/roster-imports/view ──────────────────────────────────────
 // The roster as a table: one row per employee, dates across, with the context needed to read it
 // (reporting manager, process, branch, cost centre) and filters for branch / process / cost centre.
+// Pass includeAdherence=true for color-coded adherence status per cell (GREEN/AMBER/RED/BROWN).
 rosterImportRouter.get('/view/table', requireRole(...WFM_ROLES), async (req, res) => {
   try {
     const { getRosterView } = await import('./roster-view.service.js');
@@ -314,11 +315,27 @@ rosterImportRouter.get('/view/table', requireRole(...WFM_ROLES), async (req, res
       search: q.search || undefined,
       limit: q.limit ? parseInt(q.limit, 10) : undefined,
       offset: q.offset ? parseInt(q.offset, 10) : undefined,
+      includeAdherence: q.includeAdherence === 'true',
     });
     res.json(result);
   } catch (err: any) {
     console.error('[roster-view] error:', err);
     res.status(500).json({ error: `Roster view failed: ${err?.message ?? 'unknown error'}` });
+  }
+});
+
+// ── GET /api/wfm/roster-imports/adherence-trend/:employeeId ───────────────
+// Historical adherence trend for a single employee over past N months.
+rosterImportRouter.get('/adherence-trend/:employeeId', requireRole(...WFM_ROLES), async (req, res) => {
+  try {
+    const { getEmployeeAdherenceTrend } = await import('./roster-view.service.js');
+    const { employeeId } = req.params;
+    const months = req.query.months ? parseInt(String(req.query.months), 10) : 6;
+    const result = await getEmployeeAdherenceTrend(employeeId, Math.min(Math.max(months, 1), 12));
+    res.json(result);
+  } catch (err: any) {
+    console.error('[adherence-trend] error:', err);
+    res.status(500).json({ error: `Adherence trend failed: ${err?.message ?? 'unknown error'}` });
   }
 });
 
