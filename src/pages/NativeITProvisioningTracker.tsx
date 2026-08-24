@@ -1074,6 +1074,7 @@ export default function NativeITProvisioningTracker() {
                 <SelectContent>
                   <SelectItem value="all">All Status</SelectItem>
                   <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="pending_unassigned">Unassigned</SelectItem>
                   <SelectItem value="actioned">Actioned</SelectItem>
                   <SelectItem value="confirmed">Confirmed</SelectItem>
                   <SelectItem value="waived">Waived</SelectItem>
