@@ -320,3 +320,35 @@ Invoke `/frontend-design` whenever making aesthetic or layout choices: new page 
 
 ### 5. Caveman Mode — Token Efficiency
 Invoke `/caveman` when responses are getting verbose or when the user asks for brevity. Use it for terse status updates, quick summaries, and any context where token efficiency matters over prose.
+
+### 6. Mandatory Verification Before Handover — NON-NEGOTIABLE
+
+**Before reporting any task as complete or handing it to the user, you MUST verify both backend and frontend end-to-end. No exceptions.**
+
+#### Backend Verification (run every time)
+```bash
+# 1. Hit the actual API endpoint on production or local:
+curl -s -H "Authorization: Bearer <token>" https://mcnhrms.teammas.in/api/<endpoint> | jq .
+
+# 2. Confirm the response shape matches what the frontend expects.
+# 3. For DB changes: query the table directly to confirm rows/columns exist.
+mysql -u shivam_user -p'qwersdfg!@#hjk' -h 122.184.128.90 mas_hrms -e "SELECT ..."
+```
+
+#### Frontend Verification (run every time)
+```bash
+# 1. Build must pass with zero errors:
+npm run build 2>&1 | tail -5
+
+# 2. Backend TypeScript must pass with zero errors:
+cd backend && npx tsc --noEmit 2>&1 | head -10
+```
+
+#### What "verified" means before handover
+- [ ] `npm run build` completed with no TypeScript errors
+- [ ] `cd backend && npx tsc --noEmit` returned no errors
+- [ ] The actual API endpoint was called and returned expected data (not just "route exists")
+- [ ] Any new DB columns/tables confirmed to exist via MySQL query
+- [ ] UI change visually confirmed in browser OR explicitly stated it cannot be tested and why
+
+**If you skip any of these, you are not done. Do not say "done", "pushed", or "complete" until all boxes above are checked.**
