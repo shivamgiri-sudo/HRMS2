@@ -75,13 +75,13 @@ describe("resend onboarding link — reuses the hardened path", () => {
   });
 });
 
-describe("resend onboarding link — every HR-department designation can use it", () => {
+describe("resend onboarding link — every HR-department designation can use it, org-wide", () => {
   // 2026-08-24: an hr_head/hr_admin/etc. user (any designation other than the base 'hr' role)
   // cleared requireRole for other HR-gated pages but still 403'd here, because the role wasn't
   // in this route's own requireRole list. Same failure mode branch_hr/payroll_head/payroll_hr
   // already hit and got fixed above — guard the full HR-department set from the live role
   // matrix (uat/UAT_ROLE_MATRIX.csv) so it can't regress one designation at a time again.
-  const hrDesignations = ["hr", "hr_admin", "hr_branch", "hr_head", "ho_hr", "recruitment_hr", "branch_hr", "payroll_hr"];
+  const hrDesignations = ["hr", "hr_admin", "hr_branch", "hr_head", "ho_hr", "recruitment_hr"];
 
   it("requireRole lists every HR-department designation", () => {
     const handler = onboardingRoutes.slice(
@@ -93,13 +93,32 @@ describe("resend onboarding link — every HR-department designation can use it"
     }
   });
 
-  it("hasScopedAccess's own role array also lists every HR-department designation", () => {
-    // requireRole and hasScopedAccess are two separate arrays (see the comment above them) —
-    // a role missing from just this second one still 403s despite passing requireRole.
-    const start = onboardingRoutes.indexOf("const allowed = await hasScopedAccess(");
-    const handler = onboardingRoutes.slice(start, start + 400);
+  it("every HR-department designation bypasses the branch/process scope check entirely", () => {
+    // Real incident, 2026-08-24: sofiya.sultan@teammas.co.in (role 'hr', correctly scoped to
+    // her own branch) could only resend for the ~15% of candidates in that one branch — the
+    // other ~85% span 6+ branches she has no scope row for. HR resending an onboarding link is
+    // an org-wide function, not a branch one, so this must be an unconditional bypass (like
+    // super_admin/admin already get), never routed through the branch-scoped hasScopedAccess
+    // check at all.
+    const start = onboardingRoutes.indexOf("const isHrDepartment = await hasAnyRole(");
+    const handler = onboardingRoutes.slice(start, start + 250);
     for (const role of hrDesignations) {
       expect(handler).toContain(`'${role}'`);
+    }
+    expect(onboardingRoutes).toContain("const allowed = isHrDepartment || await hasScopedAccess(");
+  });
+
+  it("non-HR-department roles stay properly branch/process-scoped", () => {
+    // The org-wide bypass is deliberately narrower than requireRole's full list — recruiter/
+    // branch_hr/payroll_head/payroll_hr are NOT HR-department designations and must still go
+    // through the row-scope check.
+    const start = onboardingRoutes.indexOf("const allowed = isHrDepartment || await hasScopedAccess(");
+    const handler = onboardingRoutes.slice(start, start + 300);
+    for (const role of ["recruiter", "branch_hr", "payroll_head", "payroll_hr"]) {
+      expect(handler).toContain(`'${role}'`);
+    }
+    for (const role of hrDesignations) {
+      expect(handler).not.toContain(`'${role}'`);
     }
   });
 });

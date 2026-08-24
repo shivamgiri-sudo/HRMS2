@@ -10,7 +10,7 @@ import {
   markCandidateNotJoining, clearCandidateNotJoining,
 } from './ats.onboarding.service.js';
 import { calculateSalary } from './salary.calculator.js';
-import { buildScopeWhereClause, hasScopedAccess } from '../../shared/scopeAccess.js';
+import { buildScopeWhereClause, hasScopedAccess, hasAnyRole } from '../../shared/scopeAccess.js';
 import { db } from '../../db/mysql.js';
 import { RowDataPacket } from 'mysql2';
 import { atsService } from './ats.service.js';
@@ -67,6 +67,18 @@ router.post(
       res.status(404).json({ ok: false, error: 'Candidate not found' });
       return;
     }
+    // Every HR-department designation gets org-wide access to resend onboarding links,
+    // regardless of their own branch scope in user_assignment_scope — added 2026-08-24 after
+    // sofiya.sultan@teammas.co.in (role 'hr', correctly scoped to her own branch, NOIDA-2)
+    // could only resend for the ~15% of candidates in that one branch; the other ~85% span 6+
+    // other branches she (like any single-branch HR user) has no scope row for. HR resending a
+    // link is treated the same way this file already treats super_admin/admin — an
+    // unconditional bypass — not a branch-scoped decision the way most other row-scope checks
+    // in this codebase are, because onboarding is a company-wide HR function, not a branch one.
+    const isHrDepartment = await hasAnyRole(
+      userId, 'hr', 'hr_admin', 'hr_branch', 'hr_head', 'ho_hr', 'recruitment_hr',
+    );
+
     // hasScopedAccess does a raw role_key match (no legacy-alias normalization, unlike
     // requireRole above) — 'branch_hr' must be the literal string here, not 'hr_admin', or a
     // branch_hr user would pass requireRole and then be silently scope-denied anyway.
@@ -75,13 +87,12 @@ router.post(
     // role — its ATS_ONBOARDING_REQUESTS page grant was also found inactive in role_page_access,
     // reactivated in migration 1236.
     //
-    // hr_admin/hr_branch/hr_head/ho_hr/recruitment_hr added 2026-08-24 alongside the
-    // requireRole change above — same reasoning: every HR-department designation must appear
-    // here as its own literal string, or a genuinely HR user who cleared requireRole would
-    // still be silently scope-denied right after.
-    const allowed = await hasScopedAccess(
+    // Non-HR-department roles (recruiter/branch_hr/payroll_head/payroll_hr) stay properly
+    // branch/process-scoped below — the org-wide bypass above is deliberately narrower than
+    // requireRole's full list.
+    const allowed = isHrDepartment || await hasScopedAccess(
       userId,
-      ['hr', 'hr_admin', 'hr_branch', 'hr_head', 'ho_hr', 'recruitment_hr', 'recruiter', 'branch_hr', 'payroll_head', 'payroll_hr'],
+      ['recruiter', 'branch_hr', 'payroll_head', 'payroll_hr'],
       { branchId: cand.applied_for_branch, processId: cand.applied_for_process },
       { allowAdminBypass: true },
     );
