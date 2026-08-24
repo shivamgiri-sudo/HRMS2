@@ -451,13 +451,79 @@ export async function getItDepthAnalysis(filters: { from?: string; to?: string; 
 }
 
 // Sync sla_breached flag for open tickets (called on dashboard fetch)
+/**
+ * SLA-breach escalation (2026-08-24). Before this, the WHERE clause's own `sla_breached = 0`
+ * meant this only ever flipped the flag once per ticket — confirmed live, the cron
+ * (helpdesk-sla.cron.ts) called nothing else, so a breach only ever changed a passive dashboard
+ * badge. Nobody was notified, nothing escalated. That same one-shot condition is reused here as
+ * the trigger: select the tickets about to transition, THEN update them, so escalation fires
+ * exactly once per ticket the moment it first breaches, not on every 5-minute poll after.
+ *
+ * Imports logSensitiveAction directly (not helpdesk.service.ts's writeSensitiveAuditLog wrapper
+ * around it) and inbox.service.ts directly, deliberately avoiding any import from
+ * helpdesk.service.ts — that file already imports calculateSlaDueAt from this one, so importing
+ * back would create a circular module dependency.
+ */
 export async function refreshSlaBreachFlags() {
-  await db.execute(
-    `UPDATE helpdesk_ticket
-        SET sla_breached = 1
+  const [newlyBreached] = await db.execute<RowDataPacket[]>(
+    `SELECT id, ticket_code, subject, category, assigned_to, escalation_level
+       FROM helpdesk_ticket
       WHERE sla_due_at IS NOT NULL
         AND sla_due_at < NOW()
         AND status NOT IN ('resolved','closed','cancelled','on_hold')
         AND sla_breached = 0`
   );
+  const tickets = newlyBreached as RowDataPacket[];
+  if (!tickets.length) return;
+
+  const ids = tickets.map((t) => t.id as string);
+  await db.execute(
+    `UPDATE helpdesk_ticket
+        SET sla_breached = 1,
+            escalation_level = escalation_level + 1
+      WHERE id IN (${ids.map(() => "?").join(",")})`,
+    ids
+  );
+
+  const { logSensitiveAction } = await import("../../shared/auditLog.js");
+  const { inboxService } = await import("../inbox/inbox.service.js");
+
+  for (const t of tickets) {
+    const ticketId = t.id as string;
+    const assignedTo = t.assigned_to as string | null;
+
+    try {
+      await logSensitiveAction({
+        actor_user_id: "system",
+        action_type: "TICKET_SLA_BREACHED",
+        module_key: "HELPDESK",
+        entity_type: "helpdesk_ticket",
+        entity_id: ticketId,
+        change_summary: { category: t.category, escalation_level: Number(t.escalation_level ?? 0) + 1 },
+      });
+    } catch (e) {
+      console.error(`[helpdesk-sla] audit log failed for breached ticket ${ticketId}:`, e);
+    }
+
+    // Notify whoever is currently assigned — this cron doesn't re-route an already-assigned
+    // ticket (that's auto-routing's job, at creation, and /assign's job after). An unassigned
+    // ticket breaching SLA has no one to notify here; it stays visible via the dashboard badge
+    // and sla-summary/aging endpoints, same as before this existed.
+    if (assignedTo) {
+      try {
+        await inboxService.createItem({
+          user_id: assignedTo,
+          type: "helpdesk_ticket_sla_breached",
+          title: "Ticket breached its SLA",
+          description: `Ticket ${t.ticket_code}: ${t.subject}`,
+          entity_type: "helpdesk_ticket",
+          entity_id: ticketId,
+          action_url: `/helpdesk`,
+          priority: "urgent",
+        });
+      } catch (e) {
+        console.error(`[helpdesk-sla] breach notification failed for ticket ${ticketId}:`, e);
+      }
+    }
+  }
 }
