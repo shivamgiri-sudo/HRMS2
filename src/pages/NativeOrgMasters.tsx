@@ -43,8 +43,10 @@ interface TabConfig {
 interface FieldConfig {
   key: string;
   label: string;
-  type: "text" | "textarea";
+  type: "text" | "textarea" | "select" | "date";
   required?: boolean;
+  options?: { value: string; label: string }[];
+  placeholder?: string;
 }
 
 // ── Tab definitions ─────────────────────────────────────────────────────────
@@ -56,14 +58,26 @@ const TABS: TabConfig[] = [
     icon: <Building2 className="h-4 w-4" />,
     apiPath: "/api/org/branches",
     fields: [
-      { key: "branch_name", label: "Branch Name", type: "text", required: true },
-      { key: "branch_code", label: "Branch Code", type: "text", required: true },
-      { key: "address", label: "Full Address", type: "textarea" },
-      { key: "city", label: "City", type: "text" },
-      { key: "state", label: "State", type: "text" },
-      { key: "hr_contact", label: "HR Contact (Email / Phone)", type: "text" },
-      { key: "latitude",   label: "Latitude (for live map)",  type: "text" },
-      { key: "longitude",  label: "Longitude (for live map)", type: "text" },
+      { key: "branch_name",     label: "Branch Name",                   type: "text",   required: true },
+      { key: "branch_code",     label: "Branch Code",                   type: "text",   required: true, placeholder: "e.g. NOI, DEL, AHM" },
+      { key: "sal_branch_code", label: "Salary / Establishment Code",   type: "text",   placeholder: "e.g. NOI-2 (from payroll system)" },
+      { key: "company_name",    label: "Legal Entity",                  type: "select",
+        options: [
+          { value: "Mas Callnet India Pvt Ltd",  label: "Mas Callnet India Pvt Ltd" },
+          { value: "IDC",                         label: "IDC (Ispark Dataconnect Pvt Ltd)" },
+          { value: "Pikquick Pvt. Ltd.",          label: "Pikquick Pvt. Ltd." },
+        ],
+      },
+      { key: "address",         label: "Full Address",                  type: "textarea" },
+      { key: "city",            label: "City",                          type: "text" },
+      { key: "state",           label: "State",                         type: "text" },
+      { key: "pincode",         label: "Pincode",                       type: "text",   placeholder: "6-digit PIN" },
+      { key: "gstin",           label: "GSTIN",                         type: "text",   placeholder: "e.g. 09AAACM5866H1ZR" },
+      { key: "gst_state_code",  label: "GST State Code",                type: "text",   placeholder: "2-digit, e.g. 09" },
+      { key: "hr_contact",      label: "HR Contact (Email / Phone)",    type: "text" },
+      { key: "close_date",      label: "Close Date (if closed)",        type: "date" },
+      { key: "latitude",        label: "Latitude (for live map)",       type: "text" },
+      { key: "longitude",       label: "Longitude (for live map)",      type: "text" },
     ],
   },
   {
@@ -198,35 +212,49 @@ function FormModal({
           </button>
         </div>
         <div className="space-y-4 p-6">
-          {fields.map((field) =>
-            field.type === "textarea" ? (
-              <div key={field.key}>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                  {field.label}
-                </label>
+          {fields.map((field) => (
+            <div key={field.key}>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+                {field.label}
+                {field.required && <span className="text-rose-500 ml-1">*</span>}
+              </label>
+              {field.type === "textarea" ? (
                 <textarea
                   value={values[field.key] ?? ""}
                   onChange={(e) => onChange(field.key, e.target.value)}
                   rows={3}
+                  placeholder={field.placeholder}
                   className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 resize-none transition-colors"
                 />
-                {renderAfterField?.[field.key]}
-              </div>
-            ) : (
-              <div key={field.key}>
-                <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-                  {field.label}
-                  {field.required && <span className="text-rose-500 ml-1">*</span>}
-                </label>
+              ) : field.type === "select" ? (
+                <select
+                  value={values[field.key] ?? ""}
+                  onChange={(e) => onChange(field.key, e.target.value)}
+                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors bg-white"
+                >
+                  <option value="">— Select —</option>
+                  {field.options?.map((o) => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              ) : field.type === "date" ? (
                 <input
+                  type="date"
                   value={values[field.key] ?? ""}
                   onChange={(e) => onChange(field.key, e.target.value)}
                   className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
                 />
-                {renderAfterField?.[field.key]}
-              </div>
-            )
-          )}
+              ) : (
+                <input
+                  value={values[field.key] ?? ""}
+                  onChange={(e) => onChange(field.key, e.target.value)}
+                  placeholder={field.placeholder}
+                  className="w-full rounded-2xl border px-4 py-3 text-sm outline-none focus:border-blue-400 transition-colors"
+                />
+              )}
+              {renderAfterField?.[field.key]}
+            </div>
+          ))}
         </div>
         <div className="flex gap-3 border-t p-6">
           <button

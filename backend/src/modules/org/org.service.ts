@@ -242,18 +242,63 @@ export const branchService = {
   },
   getById: (id: string) => getById("branch_master", id),
   setStatus: (id: string, status: number) => setStatus("branch_master", id, status),
-  async create(data: { branch_code: string; branch_name: string; city?: string; state?: string; address?: string; hr_contact?: string; latitude?: number | string; longitude?: number | string }) {
+  async create(data: {
+    branch_code: string; branch_name: string; sal_branch_code?: string; city?: string; state?: string;
+    address?: string; pincode?: string; hr_contact?: string; company_name?: string;
+    gstin?: string; gst_state_code?: string; close_date?: string;
+    latitude?: number | string; longitude?: number | string;
+  }) {
     const id = randomUUID();
     await db.execute(
-      "INSERT INTO branch_master (id, branch_code, branch_name, city, state, address, hr_contact, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      [id, data.branch_code, data.branch_name, data.city ?? null, data.state ?? null, data.address ?? null, data.hr_contact ?? null, data.latitude ? Number(data.latitude) : null, data.longitude ? Number(data.longitude) : null]
+      `INSERT INTO branch_master
+         (id, branch_code, sal_branch_code, branch_name, city, state, address, pincode,
+          hr_contact, company_name, gstin, gst_state_code, close_date, latitude, longitude)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id, data.branch_code, data.sal_branch_code ?? null, data.branch_name,
+        data.city ?? null, data.state ?? null, data.address ?? null, data.pincode ?? null,
+        data.hr_contact ?? null, data.company_name ?? null,
+        data.gstin ?? null, data.gst_state_code ?? null, data.close_date ?? null,
+        data.latitude ? Number(data.latitude) : null, data.longitude ? Number(data.longitude) : null,
+      ]
     );
     return getById("branch_master", id);
   },
-  async update(id: string, data: { branch_name?: string; city?: string; state?: string; address?: string; hr_contact?: string; latitude?: number | string; longitude?: number | string }) {
+  async update(id: string, data: {
+    branch_name?: string; sal_branch_code?: string; city?: string; state?: string;
+    address?: string; pincode?: string; hr_contact?: string; company_name?: string;
+    gstin?: string; gst_state_code?: string; close_date?: string;
+    latitude?: number | string; longitude?: number | string;
+  }) {
     await db.execute(
-      "UPDATE branch_master SET branch_name = COALESCE(?, branch_name), city = COALESCE(?, city), state = COALESCE(?, state), address = COALESCE(?, address), hr_contact = COALESCE(?, hr_contact), latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude), updated_at = NOW() WHERE id = ?",
-      [data.branch_name ?? null, data.city ?? null, data.state ?? null, data.address ?? null, data.hr_contact ?? null, data.latitude ? Number(data.latitude) : null, data.longitude ? Number(data.longitude) : null, id]
+      `UPDATE branch_master SET
+         branch_name     = COALESCE(?, branch_name),
+         sal_branch_code = ?,
+         city            = COALESCE(?, city),
+         state           = COALESCE(?, state),
+         address         = COALESCE(?, address),
+         pincode         = ?,
+         hr_contact      = COALESCE(?, hr_contact),
+         company_name    = ?,
+         gstin           = ?,
+         gst_state_code  = ?,
+         close_date      = ?,
+         latitude        = COALESCE(?, latitude),
+         longitude       = COALESCE(?, longitude),
+         updated_at      = NOW()
+       WHERE id = ?`,
+      [
+        data.branch_name ?? null,
+        data.sal_branch_code ?? null,
+        data.city ?? null, data.state ?? null, data.address ?? null,
+        data.pincode ?? null,
+        data.hr_contact ?? null,
+        data.company_name ?? null,
+        data.gstin ?? null, data.gst_state_code ?? null,
+        data.close_date ?? null,
+        data.latitude ? Number(data.latitude) : null, data.longitude ? Number(data.longitude) : null,
+        id,
+      ]
     );
     // branchAddress.service.ts caches resolved letterhead (incl. hr_contact) per branch id for
     // the life of the process and is never otherwise invalidated — without this, offer/appointment
