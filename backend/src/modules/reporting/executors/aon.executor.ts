@@ -317,25 +317,40 @@ export async function aonBucketAttrition(
    * matching (`=` against NULL is never true in SQL).
    *
    * ── Why exit_groups is a separate CTE, not one flat aggregate query ─────────────
-   * The at-risk correlated subqueries need each output row's own group key (branch_id,
-   * process_id, cost_centre_id, aon_bucket, month) as plain values to correlate against.
-   * Referencing the raw `e.date_of_exit`-derived expressions for that (e.g.
-   * `LAST_DAY(e.date_of_exit)`) INSIDE a correlated subquery, from a query that GROUPs BY
-   * only the month/bucket text of that same column, trips MySQL's ONLY_FULL_GROUP_BY
-   * check even when the two expressions are textually identical — verified live against
-   * mas_hrms (ER_WRONG_FIELD_WITH_GROUP on `e.date_of_exit` and again on `e.process_id`
-   * once the first was worked around). Aggregating once into `exit_groups`, then
-   * correlating the at-risk subqueries against ITS OWN grouped columns (g.branch_id,
-   * g.aon_bucket, ...) rather than raw employee columns, is not a stylistic choice — it is
-   * the only shape that runs.
+   * (unchanged from the first pass, still true): the at-risk computation needs each output
+   * row's own group key (branch_id, process_id, cost_centre_id, aon_bucket, month) as plain
+   * values, and referencing raw `e.date_of_exit`-derived expressions for that trips MySQL's
+   * ONLY_FULL_GROUP_BY check even when textually identical to a GROUP BY expression —
+   * verified live against mas_hrms. Aggregating once into `exit_groups` avoids that.
    *
-   * ── Hand-verified against live mas_hrms 2026-08-25 ──────────────────────────────
+   * ── Second pass, 2026-08-25: correlated subquery PER OUTPUT ROW was still O(rows) ──
+   * The first pass (still present in git history) ran 2 correlated `SELECT COUNT(*) FROM
+   * at_risk WHERE ...` subqueries once per row of exit_groups. exit_groups can have
+   * thousands of rows for the unscoped 12-month default (branch x cost-centre x process x
+   * bucket x month), each subquery re-scanning/re-filtering all of `at_risk` (~58,918
+   * rows) — the exact same failure class as overallAttritionRate's original 3x12 re-scan,
+   * just with a finer-grained multiplier. Confirmed live: the real unscoped, no-filter,
+   * 12-month-default call ran past 150s and had to be killed.
+   *
+   * Fixed the same way overallAttritionRate was fixed in spirit (scan `at_risk` ONCE per
+   * period endpoint, not once per exit_groups row) but NOT by crossing at_risk against just
+   * the (<=12) distinct months: that first attempt was tried live and timed at over 249s
+   * for the at-risk half alone, because grouping by (month, branch, process, cost_centre,
+   * bucket) after a blind CROSS JOIN is bounded by the org's FULL combinatorial
+   * branch/process/cost-centre space, not by which combinations actually had an exit.
+   * `distinct_groups` instead carries the exact (month, branch, process, cost_centre)
+   * combinations exit_groups actually needs (545 rows measured live, unscoped 12-month
+   * default) and at_risk is JOINed to THAT, bounding both the join and the GROUP BY output
+   * to what the report can use — two passes total (`at_risk_start`, `at_risk_end`), not one
+   * per exit_groups row and not one per org-wide combination either.
+   *
+   * ── Hand-verified against live mas_hrms 2026-08-25 (both passes) ────────────────
    * Branch NOIDA-2, process Onfido, cost centre 0339a406-..., bucket 0-30, June 2026:
    * a direct COUNT(*) against `employees` for this exact (branch, process, cost_centre)
-   * combination returned 28 at-risk on 2026-06-01 and 41 on 2026-06-30 (avg 34.5) — this
-   * query's at_risk_population_avg for that exact row was 34.5, an exact match. The
-   * branch-wide bucket total for 0-30 also matched: 86 exits, reconciling to the plain
-   * COUNT(*) of exits in that bucket/branch/month with no process/cost-centre split.
+   * combination returned 28 at-risk on 2026-06-01 and 41 on 2026-06-30 (avg 34.5). Both the
+   * original correlated-subquery version AND this set-based rewrite produced 34.5 for that
+   * exact row — the rewrite changed only the query shape, not the answer. The branch-wide
+   * bucket total for 0-30 also matched: 86 exits, reconciling to a plain COUNT(*).
    */
   const atRiskCte = `
     at_risk AS (
@@ -346,25 +361,14 @@ export async function aonBucketAttrition(
          AND (e.date_of_exit IS NULL OR ${POSSIBLE_TENURE})
     )`;
 
-  const periodStart = "STR_TO_DATE(CONCAT(g.month, '-01'), '%Y-%m-%d')";
+  // Period boundaries as expressions of `dg.month` (a plain grouped column of the
+  // distinct_groups/at_risk_start/at_risk_end derived tables below) rather than of any
+  // exit_groups/employees column — this is what keeps the GROUP BY in those two CTEs legal
+  // in the same way exit_groups' own GROUP BY is legal.
+  const periodStart = "STR_TO_DATE(CONCAT(dg.month, '-01'), '%Y-%m-%d')";
   const periodEnd = `LAST_DAY(${periodStart})`;
-
-  function atRiskCountSql(asOf: string): string {
-    return `(
-      SELECT COUNT(*) FROM at_risk ar
-       WHERE ar.join_date <= ${asOf}
-         AND (ar.date_of_exit IS NULL OR ar.date_of_exit >= ${asOf})
-         AND (ar.branch_id <=> g.branch_id)
-         AND (ar.process_id <=> g.process_id)
-         AND (ar.cost_centre_id <=> g.cost_centre_id)
-         AND ${atRiskBucketSql(asOf, "ar.join_date")} = g.aon_bucket
-    )`;
-  }
-
-  // Repeated (not computed once) because MySQL has no scalar `WITH x AS (expr)` for a
-  // single value — this is the average-of-endpoints formula from the approved spec,
-  // referenced twice: once to display it, once as aon_attrition_rate_pct's denominator.
-  const atRiskAvg = `((${atRiskCountSql(periodStart)} + ${atRiskCountSql(periodEnd)}) / 2.0)`;
+  const atRiskBucketAtStart = atRiskBucketSql(periodStart, "ar.join_date");
+  const atRiskBucketAtEnd = atRiskBucketSql(periodEnd, "ar.join_date");
 
   const base = `
     WITH ${atRiskCte},
@@ -396,6 +400,48 @@ export async function aonBucketAttrition(
        GROUP BY DATE_FORMAT(e.date_of_exit, '%Y-%m'), e.branch_id, b.branch_name,
                 e.cost_centre_id, cc.cost_centre_code, cc.cost_centre_name,
                 e.process_id, p.process_name, ${bucket}, ${bucketOrder}
+    ),
+    -- Only the (month, branch, process, cost_centre) combinations that ACTUALLY appear in
+    -- exit_groups -- bounded by exit_groups' own row count (545 measured live for the
+    -- unscoped 12-month default), not by the full org's branch x process x cost-centre
+    -- matrix. A first attempt CROSS JOINed at_risk against just the 12 distinct months
+    -- (dropping the group key) and grouped the ~700K resulting rows straight down to
+    -- (month, branch, process, cost_centre, bucket) -- timed live at over 120s (had to be
+    -- killed) for the unscoped default, because that GROUP BY's cardinality is bounded by
+    -- the org's FULL combinatorial branch/process/cost-centre space, not by which of those
+    -- combinations actually had an exit. Restricting the join target to distinct_groups
+    -- (this table) keeps the same "single set-based pass" principle while bounding the
+    -- output to what exit_groups can actually use.
+    distinct_groups AS (
+      SELECT DISTINCT month, branch_id, process_id, cost_centre_id FROM exit_groups
+    ),
+    -- One pass over at_risk joined to distinct_groups, grouped down to
+    -- (month, branch, process, cost_centre, bucket) -- NOT one correlated COUNT(*) per
+    -- exit_groups row, and not a blind cross-join against every org combination either.
+    -- Two of these total (start, end).
+    at_risk_start AS (
+      SELECT dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id,
+             ${atRiskBucketAtStart} AS aon_bucket,
+             COUNT(*) AS at_risk_count
+        FROM at_risk ar
+        JOIN distinct_groups dg
+          ON (ar.branch_id <=> dg.branch_id) AND (ar.process_id <=> dg.process_id)
+         AND (ar.cost_centre_id <=> dg.cost_centre_id)
+       WHERE ar.join_date <= ${periodStart}
+         AND (ar.date_of_exit IS NULL OR ar.date_of_exit >= ${periodStart})
+       GROUP BY dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, ${atRiskBucketAtStart}
+    ),
+    at_risk_end AS (
+      SELECT dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id,
+             ${atRiskBucketAtEnd} AS aon_bucket,
+             COUNT(*) AS at_risk_count
+        FROM at_risk ar
+        JOIN distinct_groups dg
+          ON (ar.branch_id <=> dg.branch_id) AND (ar.process_id <=> dg.process_id)
+         AND (ar.cost_centre_id <=> dg.cost_centre_id)
+       WHERE ar.join_date <= ${periodEnd}
+         AND (ar.date_of_exit IS NULL OR ar.date_of_exit >= ${periodEnd})
+       GROUP BY dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, ${atRiskBucketAtEnd}
     )
     SELECT g.month, g.branch_name, g.cost_centre_code, g.cost_centre_name, g.process_name,
            g.aon_bucket, g.exits, g.avg_tenure_days, g.min_tenure_days, g.max_tenure_days,
@@ -412,9 +458,23 @@ export async function aonBucketAttrition(
            g.process_coverage_pct,
            -- New: at-risk population and AON Attrition Rate for this exact bucket/group,
            -- per approved spec §2: exits / avg(at-risk at period start, at period end) x 100.
-           ROUND(${atRiskAvg}, 1) AS at_risk_population_avg,
-           ROUND(g.exits * 100.0 / NULLIF(${atRiskAvg}, 0), 2) AS aon_attrition_rate_pct
+           -- Sourced from the pre-aggregated at_risk_start/at_risk_end CTEs via a NULL-safe
+           -- equality join on the group key, not a per-row correlated subquery.
+           ROUND(
+             (COALESCE(s.at_risk_count, 0) + COALESCE(en.at_risk_count, 0)) / 2.0, 1
+           ) AS at_risk_population_avg,
+           ROUND(
+             g.exits * 100.0
+             / NULLIF((COALESCE(s.at_risk_count, 0) + COALESCE(en.at_risk_count, 0)) / 2.0, 0),
+             2
+           ) AS aon_attrition_rate_pct
       FROM exit_groups g
+      LEFT JOIN at_risk_start s ON s.month = g.month
+        AND (s.branch_id <=> g.branch_id) AND (s.process_id <=> g.process_id)
+        AND (s.cost_centre_id <=> g.cost_centre_id) AND s.aon_bucket = g.aon_bucket
+      LEFT JOIN at_risk_end en ON en.month = g.month
+        AND (en.branch_id <=> g.branch_id) AND (en.process_id <=> g.process_id)
+        AND (en.cost_centre_id <=> g.cost_centre_id) AND en.aon_bucket = g.aon_bucket
      ORDER BY g.month DESC, g.branch_name, g.cost_centre_code, g.process_name, g.bucket_order`;
 
   try {
