@@ -114,6 +114,10 @@ const KNOWN_GAPS: Record<string, string> = {
   "GET /api/workforce-mandate/hiring-demand":
     "REACHABLE but backend not built. WFMCapacityDashboard.tsx is mounted at /wfm/capacity-dashboard. Needs hiring-demand endpoint in workforce-mandate routes (BPO HC formula output). Added 2026-08-23.",
 
+  // ── Pre-existing legacy call — unrelated to 2026-08-25 regularization fix
+  "GET /api/branches":
+    "Legacy call in LegacyHrmsReportsView.tsx:111 — a deprecated reports tab that predates the org-master migration. Active pages use /api/org/branches. This path was never served and is not reachable from any current navigation. Delete or migrate LegacyHrmsReportsView when the reports module is rebuilt. Added 2026-08-25.",
+
 };
 
 function collectSourceFiles(dir: string, acc: string[] = []): string[] {
