@@ -30,3 +30,5 @@ export type { ExportButtonProps } from "./ExportButton";
 
 export { DashboardActionStrip, DashboardCard } from "./DashboardPolish";
 export type { ActionStripItem } from "./DashboardPolish";
+
+export { QuickLinksWidget, QuickLinksCompact } from "./widgets/QuickLinksWidget";

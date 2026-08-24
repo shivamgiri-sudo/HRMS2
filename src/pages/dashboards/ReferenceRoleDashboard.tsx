@@ -34,6 +34,7 @@ import { ManagerReferenceLayout } from "./reference/ManagerReferenceLayout";
 import { PayrollReferenceLayout } from "./reference/PayrollReferenceLayout";
 import { SuperAdminReferenceLayout } from "./reference/SuperAdminReferenceLayout";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { QuickLinksWidget } from "@/components/dashboard/widgets/QuickLinksWidget";
 import { WfmAttendanceReferenceLayout } from "./reference/WfmAttendanceReferenceLayout";
 import { WfmReferenceLayout } from "./reference/WfmReferenceLayout";
 import { QualityReferenceLayout } from "./reference/QualityReferenceLayout";
@@ -588,6 +589,11 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
   return (
     <DashboardLayout subheader={subheader}>
       <main className="role-dashboard-reference" aria-label={`${variant} dashboard`}>
+        {/* Quick Links widget - allows users to pin frequently visited pages */}
+        <div className="mb-5 max-w-md">
+          <QuickLinksWidget />
+        </div>
+
         {errorMessage ? <div className="mb-4"><ReferenceError message={errorMessage} onRetry={refreshAll} /></div> : null}
         {variant === "employee" ? <EmployeeReferenceLayout data={data} employeeName={employeeName} /> : null}
         {variant === "wfm" ? <WfmReferenceLayout data={data} filters={filterControl} /> : null}

@@ -2,6 +2,7 @@ import React, { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CalendarDays, RefreshCw } from "lucide-react";
+import { QuickLinksWidget } from "./widgets/QuickLinksWidget";
 
 export interface RoleDashboardShellProps {
   title: string;
@@ -10,6 +11,8 @@ export interface RoleDashboardShellProps {
   children: ReactNode;
   headerActions?: ReactNode;
   loading?: boolean;
+  /** Hide the Quick Links widget (default: shown) */
+  hideQuickLinks?: boolean;
 }
 
 export function RoleDashboardShell({
@@ -19,6 +22,7 @@ export function RoleDashboardShell({
   children,
   headerActions,
   loading = false,
+  hideQuickLinks = false,
 }: RoleDashboardShellProps) {
   const today = new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
@@ -70,7 +74,14 @@ export function RoleDashboardShell({
             <Skeleton className="h-64 rounded-2xl w-full" />
           </div>
         ) : (
-          <div className="relative z-10">{children}</div>
+          <div className="relative z-10 space-y-5">
+            {!hideQuickLinks && (
+              <div className="max-w-md">
+                <QuickLinksWidget />
+              </div>
+            )}
+            {children}
+          </div>
         )}
       </main>
     </div>
