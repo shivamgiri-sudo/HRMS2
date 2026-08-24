@@ -71,7 +71,15 @@ export function PnlReconciliationPanel({
     { label: "Accrued top-up", value: money(data.totals.revenueAccrual) },
     { label: "Payroll cost", value: money(data.totals.payrollCost) },
     { label: "GRN actual", value: money(data.totals.grnActual) },
-    { label: "Operating profit", value: money(data.totals.operatingProfit), danger: data.totals.operatingProfit < 0 },
+    {
+      // BUG-7: this reconciliation view computes OP as recognisedRevenue - payrollCost - grnActual,
+      // a simplified 3-line check with no DSC/BMC/overhead split or allocation layer. It is a
+      // quick sanity check, not the full waterfall the Statement tab produces — label it as such
+      // so it isn't mistaken for the authoritative Operating Profit figure.
+      label: "Indicative OP (simplified)",
+      value: money(data.totals.operatingProfit),
+      danger: data.totals.operatingProfit < 0,
+    },
     { label: "Margin", value: percent(data.totals.marginPct), danger: (data.totals.marginPct ?? 0) < 0 },
     { label: "Active cost centres", value: String(data.totals.activeCostCentres) },
   ];
@@ -144,7 +152,7 @@ export function PnlReconciliationPanel({
                   <th className="px-3 py-2 text-right">Revenue</th>
                   <th className="px-3 py-2 text-right">Payroll</th>
                   <th className="px-3 py-2 text-right">GRN</th>
-                  <th className="px-3 py-2 text-right">OP</th>
+                  <th className="px-3 py-2 text-right" title="Indicative OP (simplified) — Revenue minus payroll minus GRN only; no DSC/BMC/overhead split">OP*</th>
                 </tr>
               </thead>
               <tbody>
@@ -182,7 +190,7 @@ export function PnlReconciliationPanel({
                   <th className="px-3 py-2 text-right">Payroll</th>
                   <th className="px-3 py-2 text-right">GRN</th>
                   <th className="px-3 py-2 text-right">Budget</th>
-                  <th className="px-3 py-2 text-right">OP</th>
+                  <th className="px-3 py-2 text-right" title="Indicative OP (simplified) — Revenue minus payroll minus GRN only; no DSC/BMC/overhead split">OP*</th>
                   <th className="px-3 py-2">Issues</th>
                 </tr>
               </thead>

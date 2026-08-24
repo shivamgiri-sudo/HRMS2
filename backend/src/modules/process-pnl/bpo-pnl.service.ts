@@ -621,6 +621,9 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
 
   const salaryColumns = await listColumns("salary_prep_line");
   const employeeColumns = await listColumns("employees");
+  const costCentreColumns = (await tableExists("cost_centre_master"))
+    ? await listColumns("cost_centre_master")
+    : new Set<string>();
   const designationExists = await tableExists("designation_master");
   const departmentExists = await tableExists("department_master");
   const departmentColumns = departmentExists ? await listColumns("department_master") : new Set<string>();
@@ -633,7 +636,24 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
     : salaryColumns.has("basic")
     ? "COALESCE(spl.basic, 0) * 0.0481"
     : "0";
-  const processExpr = employeeColumns.has("process_id") ? "e.process_id" : "NULL";
+  /*
+   * Process resolved via two sources in order:
+   *   1. employees.process_id — set directly on the employee (most agents and DSC staff)
+   *   2. cost_centre_master.process_id — the process that owns this employee's cost centre
+   *
+   * Every employee has a cost_centre_id set (100% mapped per production data). The cost_centre
+   * carries process_id. COALESCE ensures BMC/support staff whose employees.process_id is NULL
+   * are resolved to a process via their cost centre rather than falling to the branch pool.
+   * Without this, those employees could not be allocated to any process (allocation policies
+   * table is empty) and their salary was silently excluded from the canonical P&L.
+   */
+  const hasCostCentreId = employeeColumns.has("cost_centre_id") && costCentreColumns.has("process_id");
+  const ccJoin = hasCostCentreId
+    ? "LEFT JOIN cost_centre_master ccm ON ccm.id = e.cost_centre_id"
+    : "";
+  const processExpr = employeeColumns.has("process_id")
+    ? (hasCostCentreId ? "COALESCE(e.process_id, ccm.process_id)" : "e.process_id")
+    : "NULL";
   const branchExpr = employeeColumns.has("branch_id") ? "e.branch_id" : "NULL";
   const designationIdExpr = employeeColumns.has("designation_id") ? "e.designation_id" : "NULL";
   const departmentIdExpr = employeeColumns.has("department_id") ? "e.department_id" : "NULL";
@@ -665,6 +685,7 @@ async function getPayrollPeople(period: string): Promise<PayrollPersonRow[]> {
         SUM(${grossExpr} + ${pfExpr} + ${esicExpr} + ${gratuityExpr}) AS loaded_cost
        FROM salary_prep_line spl
        JOIN employees e ON e.id = spl.employee_id
+       ${ccJoin}
        ${designationJoin}
        ${departmentJoin}
       WHERE spl.run_id IN (${runIds.map(() => "?").join(", ")})
@@ -1408,7 +1429,7 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
    * cost — leaving Rs 241.97 lakh of cost against no revenue and an EBITDA of MINUS Rs 242 lakh.
    * A plausible-looking catastrophe is worse than an obvious blank.
    */
-  const [rulesMap, deliveryMap, componentsMap, plans, people, costComponents, budgets, grnActuals, costCentres, invoiced, rpByProcess] = await Promise.all([
+  const [rulesMap, deliveryMap, componentsMap, plans, people, costComponents, budgets, grnActuals, costCentres, invoiced, rpByProcess, actualPeople] = await Promise.all([
     getRevenueRules(processIds, normalized.period),
     getDeliveryActuals(processIds, normalized.period),
     getRevenueComponents(processIds, normalized.period),
@@ -1420,6 +1441,25 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
     getCostCentres(processIds),
     getInvoicedRevenueActuals(normalized.period ?? ""),
     getRewardPenaltyForPeriod(normalized.period ?? ""),
+    /*
+     * Direct salary_prep_line read as a safety net for the canonical engine.
+     *
+     * getPeopleCosts() builds processMap through cost_centre_master.process_id. In production
+     * most cost centres carry NULL for that column, so the payroll pool ends up in branchPool
+     * and never flows to processMap (allocation policies table is empty, so allocateBranchPools
+     * is a no-op). The fallback below was base.directPeopleCost from processPnlService, which
+     * is also 0 because process_delivery_actual / process_revenue_rule are empty in production.
+     *
+     * Result: agentSalary = 0 on every BpoPnlRow → Overview, Matrix, CEO tabs show phantom
+     * EBITDA = Revenue (Rs 200–240 lakh/month of people cost simply not appearing).
+     *
+     * getActualPeopleCost() groups salary_prep_line by (branchId, processId) from both the
+     * salary_prep_line.process_id column AND cost_centre_master.process_id (via LEFT JOIN),
+     * then aggregates into byProcess and byBranch. It finds payroll even when cost_centre
+     * mapping is incomplete. The statement layer already uses this path; now the canonical
+     * engine does too.
+     */
+    getActualPeopleCost(normalized.period ?? ""),
   ]);
 
   const rows: BpoPnlRow[] = baseRows.map((base) => {
@@ -1427,14 +1467,39 @@ async function buildRows(filters: Partial<PnlQueryFilters>) {
     const deliveryRows = deliveryMap.get(base.processId) ?? [];
     const componentRows = componentsMap.get(base.processId) ?? [];
     const plan = plans.get(base.processId);
+    /*
+     * Safety net: read actual payroll from getActualPeopleCost() which accumulates by process
+     * and branch. byProcess is used here rather than byBranch because:
+     *
+     *   - processMap from getPeopleCosts() correctly handles agents and DSC staff (those with
+     *     employees.process_id set, bucket != bmc_people). It misses BMC people because they
+     *     go to branchPool and can only be allocated with allocation policies (empty in production).
+     *
+     *   - actualPeople.byProcess.get(processId) includes ALL buckets (agent+DSC+BMC) for the
+     *     same process_id, so the fallback correctly covers BMC workers who have a process_id.
+     *
+     *   - byBranch is intentionally NOT used here. BMC employees have process_id = NULL, so they
+     *     are only in byBranch (not byProcess for any process). Using byBranch as a per-process
+     *     fallback would assign the entire branch BMC pool to every process in the branch,
+     *     multiplying it by the number of processes (e.g., 5 processes × Rs 10L = Rs 50L shown
+     *     vs Rs 10L actual). The statement service avoids this by only using byBranch when there
+     *     is a single-grain "view by branch" column.
+     *
+     * Result: processes where all agents have process_id set → correct. Processes with no
+     * process_id mapping anywhere (edge case) → agent cost = 0, same as before this fix. BMC
+     * allocation for those employees still requires allocation policies to be configured.
+     */
+    const fromActual = base.processId ? actualPeople.byProcess.get(base.processId) : undefined;
     const peopleMeta = people.processMap.get(base.processId) ?? {
-      agentSalary: base.directPeopleCost,
-      dscPeople: 0,
+      agentSalary: fromActual?.agent_salary ?? base.directPeopleCost,
+      dscPeople:   fromActual?.dsc_people   ?? 0,
       agentHeadcount: Math.max(1, base.activeHc),
       dscHeadcount: 0,
       unclassifiedPeopleCost: 0,
     };
-    const bmcPeople = people.bmcPeopleByProcess.get(base.processId) ?? 0;
+    const bmcPeople = people.bmcPeopleByProcess.get(base.processId)
+      ?? fromActual?.bmc_people
+      ?? 0;
     const otherCosts = costComponents.get(base.processId) ?? emptyCostComponent();
     const budget = budgets.get(base.processId) ?? { approvedBudget: 0, reservedBudget: 0, consumedBudget: 0 };
     const grn = grnActuals.get(base.processId) ?? { directActual: 0, bmcAllocatedActual: 0, itemCount: 0 };

@@ -249,7 +249,7 @@ async function readGrn(period: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (!(await tableExists("grn_entry_line_snapshot"))) return out;
   const [rows] = await db.execute<MoneyRow[]>(
-    `SELECT ccm.id AS cost_centre_id, SUM(l.total) AS amount
+    `SELECT ccm.id AS cost_centre_id, SUM(l.amount) AS amount
        FROM grn_entry_line_snapshot l
        JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
        LEFT JOIN cost_centre_master ccm

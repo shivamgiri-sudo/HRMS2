@@ -218,15 +218,27 @@ function enrichColumn(
   const plannedRevenue = pick(revenue);
   const invoiced = pick(invoicedRevenue);
   const existingRevenue = n(out.recognizedRevenue);
-  const recognizedRevenue = existingRevenue > 0
-    ? existingRevenue
-    : (!periodOpen && invoiced > 0 ? invoiced : plannedRevenue);
+  /*
+   * Priority for a CLOSED period: actual invoiced amount.
+   *
+   * existingRevenue comes from the canonical row. When process_revenue_rule is populated (future)
+   * it is a rule-computed estimate; when empty (production today) it IS the invoiced figure from
+   * getInvoicedRevenueActuals(). Regardless, a closed month's canonical answer is the invoice —
+   * the comment above documents this and the fix enforces it:
+   *
+   *   closed + invoiced > 0  →  invoiced   (actual billing)
+   *   closed + invoiced = 0  →  existingRevenue or plannedRevenue (no invoice data yet)
+   *   open                   →  existingRevenue or plannedRevenue (billing lag during live month)
+   */
+  const recognizedRevenue = (!periodOpen && invoiced > 0)
+    ? invoiced
+    : (existingRevenue > 0 ? existingRevenue : plannedRevenue);
   out.recognizedRevenue = recognizedRevenue;
   out.plannedRevenue = plannedRevenue;
   out.invoicedRevenue = invoiced;
-  out.revenueBasis = existingRevenue > 0
-    ? "row"
-    : (!periodOpen && invoiced > 0 ? "invoiced" : "planned");
+  out.revenueBasis = (!periodOpen && invoiced > 0)
+    ? "invoiced"
+    : (existingRevenue > 0 ? "row" : "planned");
 
   /*
    * Seat revenue: what the billable people actually on the floor are worth, as against the

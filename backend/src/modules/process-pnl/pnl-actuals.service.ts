@@ -145,10 +145,12 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
    * and looked correct while doing it because zero is a plausible-looking number.
    *
    * Read at LINE level: grn_entry_line_snapshot carries the cost centre, which the header
-   * does not, so this is the only path that can attribute spend below branch. Its `total`
-   * includes tax, matching amount_without_tax semantics above closely enough for indirect
-   * cost — the net/gross difference is noted rather than silently mixed, see `total` vs
-   * `amount` in 1070.
+   * does not, so this is the only path that can attribute spend below branch.
+   *
+   * Uses l.amount (net-of-tax) — NOT l.total. l.total = l.amount + l.tax (GST). GST on
+   * business purchases is ITC-recoverable and is not a P&L expense; including it overstates
+   * IDC by the GST rate (~18%) on each GRN line. grn_request above uses amount_without_tax
+   * for the same reason. See column definitions in migration 1070.
    *
    * Guarded by tableExists so an installation without the mirror keeps its previous
    * behaviour rather than throwing.
@@ -162,7 +164,7 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
       // branch_source_id (db_bill's integer id) and a branch_name the sync leaves null, and
       // neither is a mas_hrms branch_master id, which is what every other P&L key is.
       `SELECT ccm.branch_id AS branch_id, ccm.id AS cost_centre_id,
-              pc.process_id AS process_id, SUM(l.total) AS amount
+              pc.process_id AS process_id, SUM(l.amount) AS amount
          FROM grn_entry_line_snapshot l
          JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
          LEFT JOIN cost_centre_master ccm
@@ -225,7 +227,9 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
   //   Monthly billing confirmation per cost centre — 7,350 rows covering every actively-billed
   //   cost centre for all historical periods. provision_amt is the estimate; billing_amt is the
   //   confirmed billing (use billing_amt when > 0, otherwise fall back to provision_amt).
-  //   Amounts are stored as integer PAISE — divide by 100 to get rupees.
+  //   Amounts are stored as integer RUPEES (BIGINT). db_bill.provision_master stores rupee
+  //   figures; sync-db-bill-snapshot.mjs copies them via safeInt() without conversion.
+  //   No /100 division is needed here.
   //   Used only for cost centres that have NO particular lines for the period (NOT EXISTS guard
   //   prevents double-counting).
   //
@@ -263,6 +267,24 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
         WHERE ps.period_code = ? AND ps.revenue_active = 1 AND ${OWN_COMPANY_SQL}
         GROUP BY ps.cost_centre_code COLLATE utf8mb4_unicode_ci, ccm.branch_id, ccm.id, pc.process_id
+     ),
+     /*
+      * BUG-4 fix: invoice_actual is grouped by (cost_centre_code, branch_id, cost_centre_id,
+      * process_id) — a cost centre that PROCESS_BY_COST_CENTRE maps to more than one process_id
+      * produces multiple invoice_actual rows for the same cost_centre_code. The old dedup JOIN
+      * below matched provision_actual to invoice_actual on all four columns including process_id,
+      * so a process_id mismatch (data timing, or a genuinely multi-process cost centre) made the
+      * JOIN miss entirely — the provision row then contributed its FULL amount on top of the
+      * invoice that already covered the same cost centre, double-counting revenue.
+      *
+      * Deduplication only needs to happen at cost_centre_code grain (that's the real-world unit
+      * a client bills against), so aggregate invoice_actual down to one row per cost_centre_code
+      * before joining.
+      */
+     invoice_by_cc AS (
+       SELECT cost_centre_code, SUM(invoice_amount) AS invoice_amount
+         FROM invoice_actual
+        GROUP BY cost_centre_code
      )
      SELECT branch_id, cost_centre_id, process_id, SUM(amount) AS amount FROM (
         SELECT branch_id, cost_centre_id, process_id, invoice_amount AS amount
@@ -271,11 +293,8 @@ export async function getInvoicedRevenueActuals(periodCode: string): Promise<Act
         SELECT p.branch_id, p.cost_centre_id, p.process_id,
                GREATEST(p.provision_amount - COALESCE(i.invoice_amount, 0), 0) AS amount
           FROM provision_actual p
-          LEFT JOIN invoice_actual i
+          LEFT JOIN invoice_by_cc i
                  ON i.cost_centre_code = p.cost_centre_code
-                AND COALESCE(i.branch_id, '') = COALESCE(p.branch_id, '')
-                AND COALESCE(i.cost_centre_id, '') = COALESCE(p.cost_centre_id, '')
-                AND COALESCE(i.process_id, '') = COALESCE(p.process_id, '')
         UNION ALL
         SELECT ccm.branch_id, ccm.id, pc.process_id, -cn.total_amt
           FROM billing_credit_note_snapshot cn

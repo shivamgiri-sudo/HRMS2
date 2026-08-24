@@ -207,7 +207,9 @@ const OWN_COMPANY_SQL = `REPLACE(REPLACE(REPLACE(LOWER(COALESCE(ccm.company_name
  *   SOURCE A — billing_invoice_particular_snapshot: detailed per-invoice lines (~540 rows FY2026-27)
  *   SOURCE B — billing_provision_snapshot: monthly billing confirmation per cost centre (7,350 rows)
  *              Used only where SOURCE A has no lines, preventing double-counting.
- *              Amounts are integer paise — divided by 100 to produce rupees.
+ *              Amounts are in RUPEES (stored as BIGINT integers by the sync script).
+ *              db_bill.provision_master stores rupee figures; sync-db-bill-snapshot.mjs copies
+ *              them verbatim via safeInt(). No /100 conversion is needed here.
  *
  * Only billing_provision_snapshot uses utf8mb4_0900_ai_ci — billing_invoice_particular_snapshot
  * and cost_centre_master both already use utf8mb4_unicode_ci (verified via information_schema,
