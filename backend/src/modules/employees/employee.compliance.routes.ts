@@ -1249,13 +1249,18 @@ publicEmployeeDocumentRouter.post("/esign/webhook/luckpay", h(async (req, res) =
   });
 
   // Fallback: joining-document handler only looks in employee_document_esign_transaction.
-  // Appointment letter e-signs are tracked in appointment_letter_request instead —
-  // match by esign_transaction_id and complete the state machine if Luckpay reports signed.
+  // Appointment letter e-signs are tracked in appointment_letter_request instead.
+  // On signed callback: auto-complete the full chain (candidate_signed → company_signed →
+  // completed) without DSC, download the signed PDF from Luckpay, save to vault, email candidate.
   if (!data.matched) {
     const clientTxId = String(body.client_transaction_id ?? body.clientTransactionId ?? "").trim();
     if (clientTxId) {
       const [alRows] = await db.execute<RowDataPacket[]>(
-        `SELECT id, candidate_esign_status FROM appointment_letter_request WHERE esign_transaction_id = ? LIMIT 1`,
+        `SELECT alr.id, alr.candidate_esign_status, alr.candidate_id,
+                c.full_name, c.email
+           FROM appointment_letter_request alr
+           JOIN ats_candidate c ON c.id = alr.candidate_id
+          WHERE alr.esign_transaction_id = ? LIMIT 1`,
         [clientTxId],
       );
       const alRow = alRows[0];
@@ -1263,18 +1268,102 @@ publicEmployeeDocumentRouter.post("/esign/webhook/luckpay", h(async (req, res) =
         const rawStatus = String(body.status ?? body.event ?? body.result ?? "").toLowerCase();
         const isSigned = rawStatus.includes("sign") || rawStatus.includes("success") || rawStatus.includes("complete");
         if (isSigned) {
+          // Step 1: mark candidate signed
           await db.execute(
             `UPDATE appointment_letter_request
                 SET current_state = 'candidate_signed', candidate_esign_status = 'signed', candidate_esign_at = NOW()
               WHERE id = ?`,
             [alRow.id],
           );
+
+          // Step 2: auto company-sign (no DSC) + finalize
+          const uploadRoot = process.env.UPLOAD_DIR ?? path.join(process.cwd(), "uploads");
+          const vaultDir = path.join(uploadRoot, "vault", "appointment-letters", String(alRow.id));
+          const vaultFile = path.join(vaultDir, "signed_appointment_letter.pdf");
+          const vaultRelPath = `vault/appointment-letters/${alRow.id}/signed_appointment_letter.pdf`;
+
+          // Download signed PDF from Luckpay
+          let pdfBytes: Buffer | null = null;
+          try {
+            const { luckpayClient } = await import("../integrations/luckpay/luckpay.client.js");
+            const [txRows] = await db.execute<RowDataPacket[]>(
+              `SELECT provider_reference_id FROM ats_provider_transaction_log
+               WHERE candidate_id = ? AND provider = 'luckpay' AND service_type = 'esign'
+               ORDER BY updated_at DESC LIMIT 1`,
+              [alRow.candidate_id],
+            );
+            const result = await luckpayClient.downloadESignDocument({
+              clientTransactionId: clientTxId,
+              providerReferenceId: String(txRows[0]?.provider_reference_id ?? ""),
+            });
+            if ((result as any).bytes?.length) pdfBytes = (result as any).bytes as Buffer;
+          } catch (dlErr) {
+            console.warn("[appointment-webhook] PDF download failed:", dlErr instanceof Error ? dlErr.message : dlErr);
+          }
+
+          // Fallback to offer letter PDF if download failed
+          if (!pdfBytes) {
+            const [offerRows] = await db.execute<RowDataPacket[]>(
+              `SELECT pdf_path FROM ats_offer_letters WHERE candidate_id = ? AND pdf_path IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+              [alRow.candidate_id],
+            );
+            const srcPath = offerRows[0]?.pdf_path ? path.join(uploadRoot, String(offerRows[0].pdf_path)) : null;
+            if (srcPath && fs.existsSync(srcPath)) pdfBytes = fs.readFileSync(srcPath);
+          }
+
+          if (pdfBytes) {
+            fs.mkdirSync(vaultDir, { recursive: true });
+            fs.writeFileSync(vaultFile, pdfBytes);
+          }
+
+          // Finalize in DB
+          await db.execute(
+            `UPDATE appointment_letter_request
+                SET current_state = 'completed', company_sign_status = 'signed',
+                    company_sign_at = NOW(), company_signed_by = 'system_auto',
+                    pdf_locked = 1, pdf_locked_at = NOW(), vault_path = ?
+              WHERE id = ?`,
+            [vaultRelPath, alRow.id],
+          );
+          const [existingVault] = await db.execute<RowDataPacket[]>(
+            `SELECT id FROM employee_document_vault WHERE source_entity_id = ? LIMIT 1`, [alRow.id],
+          );
+          if (!existingVault[0]) {
+            await db.execute(
+              `INSERT INTO employee_document_vault
+                 (id, candidate_id, document_type, document_name, file_path, is_locked, locked_at, locked_by, source_module, source_entity_id, uploaded_at, uploaded_by)
+               VALUES (?, ?, 'APPOINTMENT_LETTER', 'Signed Appointment Letter', ?, 1, NOW(), 'system_auto', 'letters', ?, NOW(), 'system_auto')`,
+              [randomUUID(), alRow.candidate_id, vaultRelPath, alRow.id],
+            );
+          }
           await db.execute(
             `INSERT INTO appointment_letter_audit (id, letter_request_id, action, from_state, to_state, performed_by, remarks, created_at)
-             VALUES (UUID(), ?, 'CANDIDATE_ESIGN_COMPLETE', 'candidate_esign_pending', 'candidate_signed', 'luckpay_webhook', 'Auto-completed via Luckpay webhook', NOW())`,
+             VALUES (UUID(), ?, 'AUTO_COMPLETE_AND_SEND', 'candidate_esign_pending', 'completed', 'system_auto', 'Auto-finalized and emailed via Luckpay webhook', NOW())`,
             [alRow.id],
           );
-          return res.json({ success: true, data: { matched: true, processed: true, source: "appointment_letter" } });
+
+          // Step 3: email candidate
+          const candidateEmail = String(alRow.email ?? "");
+          if (candidateEmail.includes("@")) {
+            try {
+              const { emailService } = await import("../communication/email.service.js");
+              const frontendBase = process.env.FRONTEND_URL ?? process.env.APP_URL ?? "https://mcnhrms.teammas.in";
+              const downloadUrl = `${frontendBase}/api/letters/appointment/by-candidate/${alRow.candidate_id}/download`;
+              await emailService.send({
+                to: candidateEmail,
+                subject: "Your Appointment Letter — MAS Callnet",
+                html: `<p>Dear ${String(alRow.full_name ?? "")},</p>
+                       <p>Your appointment letter is ready. Please download it using the link below:</p>
+                       <p><a href="${downloadUrl}" style="background:#2563eb;color:#fff;padding:8px 16px;border-radius:4px;text-decoration:none;">Download Appointment Letter</a></p>
+                       <p>Regards,<br/>MAS Callnet HR Team</p>`,
+                attachments: pdfBytes ? [{ filename: "Appointment_Letter.pdf", content: pdfBytes }] : undefined,
+              });
+            } catch (mailErr) {
+              console.warn("[appointment-webhook] Email failed:", mailErr instanceof Error ? mailErr.message : mailErr);
+            }
+          }
+
+          return res.json({ success: true, data: { matched: true, processed: true, source: "appointment_letter", auto_sent: true } });
         }
       }
     }

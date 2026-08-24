@@ -359,6 +359,10 @@ export default function NativeHROnboardingRequests() {
   // ── Send progress reminder state
   const [reminderSendingId, setReminderSendingId] = useState<string | null>(null);
   const [reminderResult, setReminderResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
+
+  // ── Send appointment letter state
+  const [sendLetterLoading, setSendLetterLoading] = useState(false);
+  const [sendLetterResult, setSendLetterResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [notJoiningId, setNotJoiningId] = useState<string | null>(null);
   const [notJoiningResult, setNotJoiningResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
 
@@ -1834,18 +1838,43 @@ export default function NativeHROnboardingRequests() {
                         ) : (
                           <span className="text-xs text-slate-400">{esign.status ?? '—'}</span>
                         )}
-                        {esign.status === 'signed' && esign.request_id && (
-                          <a
-                            href={`/api/letters/appointment/by-candidate/${selected.candidate_id}/download`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-                          >
-                            ↓ Download Signed Letter
-                          </a>
+                        {esign.status === 'signed' && (
+                          <div className="flex items-center gap-1.5">
+                            <a
+                              href={`/api/letters/appointment/by-candidate/${selected.candidate_id}/download`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                            >
+                              ↓ Download
+                            </a>
+                            <button
+                              type="button"
+                              disabled={sendLetterLoading}
+                              onClick={async () => {
+                                setSendLetterLoading(true);
+                                setSendLetterResult(null);
+                                try {
+                                  await hrmsApi.post(`/api/letters/appointment/by-candidate/${selected.candidate_id}/hr-send`, {});
+                                  setSendLetterResult({ ok: true, msg: 'Appointment letter sent to employee email.' });
+                                  setTimeout(() => setSendLetterResult(null), 6000);
+                                } catch (e: any) {
+                                  setSendLetterResult({ ok: false, msg: e?.message ?? 'Failed to send' });
+                                } finally {
+                                  setSendLetterLoading(false);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200 disabled:opacity-50 transition-colors"
+                            >
+                              {sendLetterLoading ? '…' : '✉ Resend Email'}
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
+                    {sendLetterResult && (
+                      <p className={`text-xs mt-1 ${sendLetterResult.ok ? 'text-green-600' : 'text-red-500'}`}>{sendLetterResult.msg}</p>
+                    )}
                     <InfoRow label="eSign Provider" value={esign.provider} />
                     {bgv && (
                       <>
