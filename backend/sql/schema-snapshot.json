@@ -2301,7 +2301,12 @@
       "beneficiary_name_returned",
       "initiated_at",
       "settled_at",
-      "provider_response_json"
+      "provider_response_json",
+      "verification_token",
+      "verification_token_expires_at",
+      "employee_name_at_request",
+      "name_match_tier",
+      "name_match_score"
     ],
     "benefit_enrollment": [
       "id",
@@ -8506,7 +8511,9 @@
       "downtime_minutes",
       "affected_seats",
       "hold_reason",
-      "held_at"
+      "held_at",
+      "raised_by_user_id",
+      "resolved_by_user_id"
     ],
     "helpdesk_ticket_comment": [
       "id",
