@@ -1,11 +1,13 @@
 import { BarChart3, FileCheck2, FileClock, FileText, GitBranch, Search, Wallet } from "lucide-react";
 import { useState } from "react";
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { BudgetLinkedGrnForm } from "@/components/finance/grn/BudgetLinkedGrnForm";
 import { GrnHistoryTable } from "@/components/finance/grn/GrnHistoryTable";
 import { GrnSearchWorkspace } from "@/components/finance/grn/GrnSearchWorkspace";
 import { FinanceReportsWorkspace } from "@/components/finance/grn/FinanceReportsWorkspace";
 import { ImprestWorkspace } from "@/components/finance/grn/imprest/ImprestWorkspace";
+import { ImprestHolderDashboard } from "@/components/finance/grn/imprest/ImprestHolderDashboard";
 import { GrnLobAttributionQueue } from "@/components/finance/grn/GrnLobAttributionQueue";
 import { SmartGrnApprovalQueue } from "@/components/finance/grn/SmartGrnApprovalQueue";
 import { money } from "@/components/finance/grn/grn-format";
@@ -19,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useCanAttributeGrnLob, useGrnNeedsLobCount, useGrnSummary } from "@/hooks/useGrnSummary";
 import { useHasRole } from "@/hooks/useUserRole";
+import { hrmsApi } from "@/lib/hrmsApi";
 
 function HeaderStat({ value, label }: { value: React.ReactNode; label: string }) {
   return (
@@ -75,6 +78,21 @@ export default function NativeGRNManagement() {
     "accounts_head",
     "branch_head",
     "branch_admin"
+  );
+
+  // Check if the current user holds an active imprest float. Anyone with an active
+  // imprest_manager record should see "My Float" regardless of their primary role.
+  const myImprestQuery = useQuery({
+    queryKey: ["imprest-my-check"],
+    queryFn: async () => {
+      const res = await hrmsApi.get<any>("/api/finance/imprest/my");
+      return res?.data ?? null;
+    },
+    staleTime: 5 * 60_000,
+  });
+  const isImprestHolder = Boolean(
+    myImprestQuery.data &&
+      (Array.isArray(myImprestQuery.data) ? myImprestQuery.data.length > 0 : true)
   );
 
   const summaryQuery = useGrnSummary();
@@ -156,6 +174,11 @@ export default function NativeGRNManagement() {
                   <Wallet className="h-3.5 w-3.5" />Imprest
                 </TabsTrigger>
               )}
+              {isImprestHolder && (
+                <TabsTrigger value="my-float" className={GRN_TAB_TRIGGER}>
+                  <Wallet className="h-3.5 w-3.5" />My Float
+                </TabsTrigger>
+              )}
               <TabsTrigger value="search" className={GRN_TAB_TRIGGER}>
                 <Search className="h-3.5 w-3.5" />Search
               </TabsTrigger>
@@ -181,6 +204,11 @@ export default function NativeGRNManagement() {
           {canReview && (
             <TabsContent value="queue" className="mt-4">
               <SmartGrnApprovalQueue onReopenForEdit={handleReopenForEdit} />
+            </TabsContent>
+          )}
+          {isImprestHolder && (
+            <TabsContent value="my-float" className="mt-4">
+              <ImprestHolderDashboard />
             </TabsContent>
           )}
           {/* Search sits beside History rather than replacing it: History is a status-chip

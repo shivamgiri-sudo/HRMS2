@@ -323,7 +323,7 @@ export async function generateEmployeeCode(companyPrefix: 'MAS' | 'IDC', isOffro
 
     // Lock row and get next sequence
     const [rows] = await connection.execute<RowDataPacket[]>(
-      `SELECT last_sequence_number FROM employee_code_sequence
+      `SELECT current_sequence FROM employee_code_sequence
        WHERE company_prefix = ? FOR UPDATE`,
       [companyPrefix]
     );
@@ -332,14 +332,14 @@ export async function generateEmployeeCode(companyPrefix: 'MAS' | 'IDC', isOffro
       throw new Error(`Sequence not found for company ${companyPrefix}`);
     }
 
-    const nextSequence = rows[0].last_sequence_number + 1;
+    const nextSequence = rows[0].current_sequence + 1;
 
     // Update sequence
     await connection.execute(
       `UPDATE employee_code_sequence
-       SET last_sequence_number = ?
+       SET current_sequence = ?, last_generated_code = ?, last_generated_at = NOW()
        WHERE company_prefix = ?`,
-      [nextSequence, companyPrefix]
+      [nextSequence, isOffrole ? `${companyPrefix}${nextSequence}C` : `${companyPrefix}${nextSequence}`, companyPrefix]
     );
 
     // Generate employee code

@@ -104,6 +104,51 @@ const fail = (res: any, error: unknown, fallback: string) =>
 
 imprestRouter.use(requireAuth);
 
+// ── Self-service: the calling user's own float (no role gate — scoped to self) ──
+
+imprestRouter.get(
+  "/my",
+  h(async (req, res) => {
+    const userId = req.authUser?.id;
+    if (!userId) return res.status(401).json({ success: false, error: "Not authenticated" });
+
+    // Resolve the caller's active imprest_manager record(s). A user can only ever have
+    // one active appointment per branch, but they could hold floats at multiple branches.
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT im.id, im.branch_id, im.user_id, im.employee_id,
+              im.tally_name, im.effective_from, im.effective_to, im.active_status,
+              b.branch_name,
+              CONCAT(e.first_name, ' ', e.last_name) AS employee_name
+         FROM imprest_manager im
+         LEFT JOIN branch_master b ON b.id = im.branch_id
+         LEFT JOIN employees e ON e.id = im.employee_id
+        WHERE im.user_id = ?
+          AND im.active_status = 1
+          AND (im.effective_to IS NULL OR im.effective_to >= CURDATE())
+        ORDER BY im.effective_from DESC`,
+      [userId],
+    );
+
+    if (!rows.length) {
+      return res.json({ success: true, data: null });
+    }
+
+    // For each manager record, fetch current closing balance
+    const withBalance = await Promise.all(
+      (rows as RowDataPacket[]).map(async (m) => {
+        const currentBalance = await imprestLedgerService.getBalance(String(m.id));
+        return { ...m, current_balance: currentBalance };
+      }),
+    );
+
+    // Return single record if one float, array if multiple
+    res.json({
+      success: true,
+      data: withBalance.length === 1 ? withBalance[0] : withBalance,
+    });
+  }),
+);
+
 // ── Manager master (Requirement 8) ─────────────────────────────────────────────
 
 imprestRouter.get(
@@ -112,6 +157,7 @@ imprestRouter.get(
   h(async (req, res) => {
     const data = await imprestService.listManagers({
       branchScope: await scopeOf(req),
+      branchId: req.query.branchId ? String(req.query.branchId) : undefined,
       activeOnly: req.query.includeInactive === "1" ? false : undefined,
     });
     res.json({ success: true, data });

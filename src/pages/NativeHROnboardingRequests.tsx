@@ -657,14 +657,10 @@ export default function NativeHROnboardingRequests() {
     }
     if (filterStatus === 'pending_offer') list = list.filter((r) => r.profile_status === 'profile_submitted' && !r.offer_status);
     if (filterStatus === 'offered') list = list.filter((r) => !!r.offer_status);
-    // 'onboarded' used to check r.status === 'onboarded' — ats_onboarding_request.status
-    // never actually holds that value in production (checked live: pending/
-    // profile_submitted/rejected/approved/hr_approved/offer_submitted/hr_pushback are the
-    // only values in use), so this filter silently always returned zero rows. "Onboarded"
-    // actually lives on the candidate/employee side.
     if (filterStatus === 'onboarded') list = list.filter((r) => r.profile_status === 'onboarded' || !!r.employee_id);
     if (filterStatus === 'initiated') list = list.filter((r) => resolveDisplayStatus(r) === 'initiated');
     if (filterStatus === 'profile_submitted') list = list.filter((r) => r.profile_status === 'profile_submitted');
+    if (filterStatus === 'not_filled') list = list.filter((r) => r.profile_status === 'onboarding_sent' && (!r.form_step || !FORM_IN_PROGRESS_STEPS.has(r.form_step)));
     if (filterStatus === 'joining_document_pending') list = list.filter((r) => resolveDisplayStatus(r) === 'joining_document_pending');
     if (filterStatus === 'not_joining') list = list.filter((r) => r.candidate_status === 'not_joining');
     if (filterBranch) list = list.filter((r) => r.branch_name === filterBranch);
@@ -992,15 +988,47 @@ export default function NativeHROnboardingRequests() {
 
             {mainTab === 'onboarding' && (
             <div className="flex flex-wrap gap-2 items-center">
+              {/* Quick-filter tabs */}
+              {([
+                { value: '',                 label: 'All',              color: 'slate' },
+                { value: 'initiated',        label: 'Initiated',        color: 'blue' },
+                { value: 'not_filled',       label: 'Not Filled Yet',   color: 'orange' },
+                { value: 'profile_submitted',label: 'Profile Submitted',color: 'amber' },
+                { value: 'not_joining',      label: 'Will Not Join',    color: 'red' },
+              ] as const).map(({ value, label, color }) => {
+                const count = value === ''
+                  ? rows.length
+                  : value === 'initiated'       ? rows.filter(r => resolveDisplayStatus(r) === 'initiated').length
+                  : value === 'not_filled'      ? rows.filter(r => r.profile_status === 'onboarding_sent' && (!r.form_step || !FORM_IN_PROGRESS_STEPS.has(r.form_step))).length
+                  : value === 'profile_submitted'? rows.filter(r => r.profile_status === 'profile_submitted').length
+                  : value === 'not_joining'     ? rows.filter(r => r.candidate_status === 'not_joining').length
+                  : 0;
+                const active = filterStatus === value;
+                const base = 'flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors cursor-pointer select-none';
+                const styles: Record<string, string> = {
+                  slate:  active ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400',
+                  blue:   active ? 'bg-blue-600 text-white border-blue-600'   : 'bg-white text-blue-600 border-blue-200 hover:border-blue-400',
+                  orange: active ? 'bg-orange-500 text-white border-orange-500': 'bg-white text-orange-600 border-orange-200 hover:border-orange-400',
+                  amber:  active ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-amber-600 border-amber-200 hover:border-amber-400',
+                  red:    active ? 'bg-red-600 text-white border-red-600'     : 'bg-white text-red-600 border-red-200 hover:border-red-400',
+                };
+                return (
+                  <button key={value} type="button" className={`${base} ${styles[color]}`} onClick={() => setFilterStatus(value)}>
+                    {label}
+                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${active ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'}`}>{count}</span>
+                  </button>
+                );
+              })}
               <select className={`${SEL} w-auto min-w-[160px]`} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
                 <option value="">All Statuses</option>
                 <option value="initiated">Initiated</option>
+                <option value="not_filled">Not Filled Yet</option>
                 <option value="profile_submitted">Submitted Profile</option>
+                <option value="not_joining">Will Not Join</option>
                 <option value="pending_offer">Pending Offer</option>
                 <option value="offered">Offered</option>
                 <option value="onboarded">Onboarded</option>
                 <option value="joining_document_pending">Joining Documents Pending</option>
-                <option value="not_joining">Not Joining (Dropped Out)</option>
               </select>
               <select className={`${SEL} w-auto min-w-[160px]`} value={filterBranch} onChange={(e) => setFilterBranch(e.target.value)}>
                 <option value="">All Branches</option>

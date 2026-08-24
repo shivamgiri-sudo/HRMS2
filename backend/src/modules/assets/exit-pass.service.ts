@@ -356,7 +356,11 @@ export async function adminDecision(
   }
 }
 
-async function assertCanView(passBranchId: string, requestorEmployeeId: string, actor: RequestingEmployee, actorRoles: string[]): Promise<void> {
+async function assertCanView(passBranchId: string, requestorEmployeeId: string, passStatus: string, actor: RequestingEmployee, actorRoles: string[]): Promise<void> {
+  // Drafts are always private to their creator, regardless of role.
+  if (passStatus === 'draft' && actor.employeeId !== requestorEmployeeId) {
+    throw new ExitPassError(403, 'You do not have access to this exit pass.');
+  }
   const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
   if (isOverride) return;
   if (actor.employeeId === requestorEmployeeId) return;
@@ -366,7 +370,7 @@ async function assertCanView(passBranchId: string, requestorEmployeeId: string, 
 
 export async function getExitPass(passId: string, actor: RequestingEmployee, actorRoles: string[]) {
   const pass = await getPassRow(passId);
-  await assertCanView(pass.branch_id, pass.requestor_employee_id, actor, actorRoles);
+  await assertCanView(pass.branch_id, pass.requestor_employee_id, pass.status, actor, actorRoles);
 
   // Letterhead fields for the printable pass: falls back to city/state when
   // address is unset — verified live 2026-08-21 that only 4 of 45 branch_master
@@ -536,6 +540,10 @@ export async function listExitPasses(actor: RequestingEmployee, actorRoles: stri
   const isOverride = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r));
   const clauses: string[] = [];
   const params: unknown[] = [];
+
+  // Drafts are always private to their creator — even override roles cannot see another person's draft.
+  clauses.push('(status <> \'draft\' OR requestor_employee_id = ?)');
+  params.push(actor.employeeId);
 
   if (!isOverride) {
     clauses.push('(requestor_employee_id = ? OR branch_id = ?)');
