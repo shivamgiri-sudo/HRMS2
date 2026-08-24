@@ -101,7 +101,7 @@ router.get("/appointment-letters/:issueId/download", requireRole(...VIEW_ROLES),
  * Uses real employee data where available; falls back to placeholder salary if
  * salary_component_assignments has no record yet.
  */
-router.get("/appointment-letters/:employeeId/preview-pdf", requireRole(...VIEW_ROLES), h(async (req, res) => {
+router.get("/appointment-letters/preview/:employeeId", requireRole(...VIEW_ROLES), h(async (req, res) => {
   const { employeeId } = req.params;
   const [empRows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id, e.employee_code, e.full_name, e.date_of_joining,
@@ -115,10 +115,12 @@ router.get("/appointment-letters/:employeeId/preview-pdf", requireRole(...VIEW_R
   if (!emp) return res.status(404).json({ success: false, message: "Employee not found" });
 
   // Resolve letterhead — falls back to city/state if no full address
+  const { EMPTY_LETTERHEAD } = await import("../org/branchAddress.service.js");
   const letterhead = await resolveEmployeeLetterhead(employeeId).then(assertPrintableLetterhead).catch(() => ({
+    ...EMPTY_LETTERHEAD,
     branchName: "Head Office",
     addressLines: ["MAS Callnet India Pvt. Ltd.", "Noida, Uttar Pradesh"],
-    gstin: null, cin: null,
+    hasAddress: true,
   }));
 
   // Resolve salary — use real data or placeholder

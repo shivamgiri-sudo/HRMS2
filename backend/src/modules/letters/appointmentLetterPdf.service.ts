@@ -156,6 +156,9 @@ function salaryTable(doc: Doc, s: AppointmentLetterSalary) {
       .lineWidth(0.3).strokeColor("#E5E7EB").stroke();
   }
   doc.moveDown(0.6);
+  // The two-column .text() calls above leave doc.x at the right amount column.
+  // Reset to the left margin so every subsequent body() call uses the full width.
+  doc.x = PAGE.margin;
 }
 
 /**
@@ -194,26 +197,30 @@ function signaturePage(doc: Doc, input: AppointmentLetterInput) {
     y += 12;
   }
   doc.fontSize(7).fillColor(MUTED).text(`Verify: ${input.verificationUrl}`, left, y, { width: 340 });
+  // Capture bottom of company block before drawing the eSign box (which resets doc.y to box coords).
+  const companyBlockBottom = doc.y + 6;
+
+  // Aadhaar eSign box — fixed position matching the provider's stamp rect [425,100,545,160].
+  const boxTop = 94;
+  const boxHeight = 78;
+  doc.rect(420, boxTop, 130, boxHeight).lineWidth(0.8).strokeColor("#CBD5E1").stroke();
+  doc.fontSize(6.5).fillColor(MUTED)
+    .text("Aadhaar eSign area", 426, boxTop + boxHeight - 14, { width: 120 });
 
   if (input.qrPngDataUrl) {
     try {
       const b64 = input.qrPngDataUrl.replace(/^data:image\/png;base64,/, "");
-      doc.image(Buffer.from(b64, "base64"), doc.page.width - PAGE.margin - 78, doc.y - 92, { width: 78, height: 78 });
+      doc.image(Buffer.from(b64, "base64"), doc.page.width - PAGE.margin - 78, boxTop - 6, { width: 78, height: 78 });
     } catch { /* a missing QR must never stop issuance */ }
   }
 
-  // Employee acceptance. Left empty for the provider's stamp; the labelled box
-  // sits exactly where the widget lands so the two agree visually.
-  const boxY = 88;
+  // Employee acceptance block — below whichever ends lower: company block or eSign box.
+  const acceptY = Math.max(companyBlockBottom, boxTop + boxHeight + 14);
   doc.font("Helvetica-Bold").fontSize(9.5).fillColor(INK)
-    .text("Accepted by the employee", left, boxY + 96, { width: 320 });
+    .text("Accepted by the employee", left, acceptY, { width: 320 });
   doc.font("Helvetica").fontSize(8).fillColor(MUTED)
-    .text(`${input.employeeName} (${input.employeeCode})`, left, boxY + 110, { width: 320 })
-    .text("Signed electronically under Aadhaar eSign.", left, boxY + 122, { width: 320 });
-
-  doc.rect(420, boxY + 6, 130, 78).lineWidth(0.8).strokeColor("#CBD5E1").stroke();
-  doc.fontSize(6.5).fillColor(MUTED)
-    .text("Aadhaar eSign area", 426, boxY + 70, { width: 120 });
+    .text(`${input.employeeName} (${input.employeeCode})`, left, acceptY + 14, { width: 320 })
+    .text("Signed electronically under Aadhaar eSign.", left, acceptY + 26, { width: 320 });
 
   if (input.selfSignedNotice) {
     doc.font("Helvetica-Bold").fontSize(6.5).fillColor("#B45309")
@@ -325,6 +332,9 @@ export async function renderAppointmentLetterPdf(input: AppointmentLetterInput):
     body(doc, "The terms of this offer shall be kept strictly confidential. You shall execute all the documents indicated in Annexure-I so as to give effect to this offer.");
     body(doc, "Please return the duplicate copy of this letter duly signed in token of your having accepted the offer, and initial each page in acceptance of the terms and conditions set out herein, within 10 days of the issuance of this letter, failing which this offer stands automatically withdrawn.");
     body(doc, `We welcome you and wish you every success in your career with ${COMPANY_NAME}`);
+    // Keep the closing block together — ensureRoom for both lines prevents
+    // "Sincerely," landing alone at the bottom with "Date of Joining:" orphaned on the next page.
+    ensureRoom(doc, 60);
     doc.moveDown(0.4);
     body(doc, "Sincerely,");
     body(doc, `Date of Joining: ${istDisplayDate(input.dateOfJoining)}`);
