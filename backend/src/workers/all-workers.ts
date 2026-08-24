@@ -39,6 +39,10 @@ import { startEmployeeLifecycleWorker, stopEmployeeLifecycleWorker } from "./emp
 // ats-reminders when it lived in one file only.
 import { initBusinessActionSyncJobs, stopBusinessActionSyncJobs } from "../cron/business-action-sync.cron.js";
 import { startDashboardSnapshotScheduler, stopDashboardSnapshotScheduler } from "../modules/dashboards/dashboard-snapshot.cron.js";
+import {
+  startPerformanceScorecardSnapshotScheduler,
+  stopPerformanceScorecardSnapshotScheduler,
+} from "../modules/performance-scorecard/performance-scorecard-snapshot.cron.js";
 import { startAttendanceReconciliationWorker, stopAttendanceReconciliationWorker } from "../modules/wfm/attendance-reconciliation.worker.js";
 // D-1 Daily Manager Intelligence Briefing Engine — dual-registered here AND in
 // server.ts (see the "These five were registered in server.ts ONLY" note above for
@@ -240,6 +244,10 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     start: () => { startDashboardSnapshotScheduler(); return Promise.resolve(); },
   },
   {
+    name: "performance-scorecard-snapshot",
+    start: () => { startPerformanceScorecardSnapshotScheduler(); return Promise.resolve(); },
+  },
+  {
     name: "privacy-retention",
     start: () => { startRetentionCron(); return Promise.resolve(); },
   },
@@ -412,6 +420,7 @@ function shutdown(): void {
   // no stop function, so they are not listed — their timers die with the process.
   stopBusinessActionSyncJobs();
   stopDashboardSnapshotScheduler();
+  stopPerformanceScorecardSnapshotScheduler();
   stopAttendanceReconciliationWorker();
   stopManagerDailyBriefScheduler();
   stopAccessExpiryScheduler();

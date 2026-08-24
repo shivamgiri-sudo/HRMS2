@@ -19,6 +19,7 @@ import { migrateLegacyIntegrationSecrets } from "./modules/external-db/external-
 import { startITProvisioningLockScheduler } from "./modules/it-provisioning/it-provisioning.cron.js";
 import { startPayrollWindowClosureScheduler } from "./modules/payroll/payroll-window.cron.js";
 import { startDashboardSnapshotScheduler } from "./modules/dashboards/dashboard-snapshot.cron.js";
+import { startPerformanceScorecardSnapshotScheduler } from "./modules/performance-scorecard/performance-scorecard-snapshot.cron.js";
 import { startPerformanceIngestionScheduler, stopPerformanceIngestionScheduler } from "./modules/performance-ingestion/performance-scheduler.service.js";
 import { startAttendanceEngineScheduler } from "./modules/wfm/attendance-engine.cron.js";
 import { startAttendanceReconciliationWorker } from "./modules/wfm/attendance-reconciliation.worker.js";
@@ -230,6 +231,7 @@ function startServer() {
         startPayrollWindowClosureScheduler();
         // Records the daily metric baseline every dashboard trend arrow compares against.
         startDashboardSnapshotScheduler();
+        startPerformanceScorecardSnapshotScheduler();
         startPerformanceIngestionScheduler();
         initBusinessActionSyncJobs();
         startBreachSlaCron();
