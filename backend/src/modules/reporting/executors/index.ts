@@ -135,6 +135,9 @@ import {
   overallAttritionRate,
 } from "./aon.executor.js";
 
+// ─── AON Drill-Down — employee-level rows for the Employee List panel ────────
+import { aonDrilldownEmployees } from "./aon-drilldown.executor.js";
+
 // ─── Attrition risk ranking & leave reconciliation ───────────────────────────
 import {
   attritionRiskScore,
@@ -327,6 +330,7 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "aon-cohort-survival":       aonCohortSurvival,
   "attrition-deep-dive":       attritionDeepDive,
   "aon-overall-attrition-rate": overallAttritionRate,
+  "aon-drilldown-employees":   aonDrilldownEmployees,
   "attrition-risk-score":      attritionRiskScore,
   "leave-attendance-reconciliation": leaveAttendanceReconciliation,
 
