@@ -108,7 +108,7 @@ export default function LegacyHrmsReportsView() {
   // ── branch list for dropdown ──────────────────────────────────────────────
   const { data: branchRaw } = useQuery({
     queryKey: ["branch-master-list"],
-    queryFn: () => hrmsApi.get("/api/branches"),
+    queryFn: () => hrmsApi.get("/api/org/branches"),
     staleTime: 300_000,
   });
   const branchOptions: string[] = (() => {

@@ -76,3 +76,13 @@ Task 6: complete (commit 5d2d84cb, base 375a8cdc, review clean — 3 routes, 3 n
 
 ## Tasks
 Task 1: complete (commits 966ae8c5..7da40718, base 0fa44be3, review clean after 1 fix round — missed DATEDIFF site in aonCohortSurvival's cohortAge, fixed + test added; 285 tests passing)
+
+---
+
+# Employee Performance Scorecard — SDD Progress Ledger
+# Started: 2026-08-25
+# Plan: docs/superpowers/plans/2026-08-25-employee-performance-scorecard.md
+# Working directly on main (this repo's established convention, no feature branches)
+
+## Tasks
+Task 1: complete (commit 65675a84, base d886f228, review clean — migration renumbered 1558->1604 due to concurrent sessions, sanctioned by brief, independently verified collation + preflight)
