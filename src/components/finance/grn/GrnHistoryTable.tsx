@@ -29,6 +29,7 @@ import {
 // Same pattern BudgetLinkedGrnForm uses for its vendor picker: vendor_master holds ~1.8k rows,
 // so it is searched server-side rather than dumped into the DOM as a plain <select>.
 import { SearchableSelect } from "@/components/ui/searchable-select";
+import { GrnDetailDrawer } from "@/components/finance/grn/GrnDetailDrawer";
 
 function unwrapList<T>(response: any): T[] {
   return (response?.data?.data ?? response?.data ?? response ?? []) as T[];
@@ -60,12 +61,16 @@ type GrnHistoryRow = {
 };
 
 /** Longer than the redesign mock's six chips on purpose: every entry past "Rejected" is a real
- *  backend status, and dropping one removes the only way to filter for it. */
+ *  backend status, and dropping one removes the only way to filter for it.
+ *  returned_to_* are written by the backend but omitted from the GrnStatus union type; they appear
+ *  here so they can be isolated and acted on. */
 const STATUS_TABS = [
   ["_all", "All"],
   ["draft", "Draft"],
   ["submitted", "Branch Head Queue"],
   ["branch_head_approved", "Finance Head Queue"],
+  ["returned_to_raiser", "Returned to You"],
+  ["returned_to_branch_head", "Returned to BH"],
   ["pending_accounts_payment", "Accounts Payment"],
   ["payment_scheduled", "Payment Scheduled"],
   ["partially_paid", "Partially Paid"],
@@ -110,6 +115,7 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
   const [billDateTo, setBillDateTo] = useState("");
   const [vendorId, setVendorId] = useState("");
   const [vendorSearch, setVendorSearch] = useState("");
+  const [detailGrnId, setDetailGrnId] = useState<string | null>(null);
 
   // Server-side searched, same endpoint and pattern as the GRN creation form's vendor picker.
   const { data: vendorResponse, isFetching: vendorsLoading } = useQuery({
@@ -164,6 +170,15 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
   }
 
   return (
+    <>
+    <GrnDetailDrawer
+      grnId={detailGrnId}
+      onClose={() => setDetailGrnId(null)}
+      onReopened={() => {
+        setDetailGrnId(null);
+        void queryClient.invalidateQueries({ queryKey: ["grn-history"] });
+      }}
+    />
     <GrnCard>
       <GrnCardHeader
         title="GRN History"
@@ -272,7 +287,11 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.id} className={GRN_TR}>
+              <tr
+                key={row.id}
+                className={`${GRN_TR} cursor-pointer`}
+                onClick={() => setDetailGrnId(row.id)}
+              >
                 <GrnTd>
                   <p className="font-grn-mono font-bold text-grn-brand">{row.grn_number}</p>
                   <GrnCellSub className="uppercase tracking-[0.05em]">
@@ -329,7 +348,7 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
                 </GrnTd>
                 {(onEdit || rows.some(canDelete)) && (
                   <GrnTd>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       {onEdit && row.status === "draft" && (
                         <GrnIconButton
                           title="Edit this GRN"
@@ -358,5 +377,6 @@ export function GrnHistoryTable({ onEdit }: { onEdit?: (grnId: string) => void }
         </GrnTable>
       )}
     </GrnCard>
+    </>
   );
 }
