@@ -799,7 +799,7 @@ export function useOnboardingFull(token: string) {
   // visibility and focus listeners cover coming back from another tab.
   useEffect(() => {
     const sessionState = String(status?.digilocker?.status ?? "");
-    const started = Boolean(sessionState) && !["completed", "not_started"].includes(sessionState);
+    const started = Boolean(sessionState) && !["completed", "not_started", "documents_received"].includes(sessionState);
     if (!started) return;
     void syncDigilocker();
     const onReturn = () => { if (document.visibilityState === "visible") void syncDigilocker(); };
