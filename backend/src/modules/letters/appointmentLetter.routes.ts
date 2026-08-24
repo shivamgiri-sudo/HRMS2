@@ -16,6 +16,9 @@ import {
   evaluateAppointmentLetterEligibility, listAppointmentLetterQueue,
 } from "./appointmentLetterEligibility.service.js";
 import { issueAppointmentLetter, revokeAppointmentLetter } from "./appointmentLetterIssue.service.js";
+import { renderAppointmentLetterPdf } from "./appointmentLetterPdf.service.js";
+import { resolveEmployeeLetterhead, assertPrintableLetterhead } from "../org/branchAddress.service.js";
+import { resolveAppointmentLetterSalary } from "./appointmentLetterData.service.js";
 
 const router = Router();
 type AsyncHandler = (req: AuthenticatedRequest, res: Response) => Promise<unknown>;
@@ -91,6 +94,68 @@ router.get("/appointment-letters/:issueId/download", requireRole(...VIEW_ROLES),
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename="${r.letter_number}.pdf"`);
   return fs.createReadStream(p).pipe(res);
+}));
+
+/**
+ * Preview the appointment letter as a PDF — no saving, no signing, no DB writes.
+ * Uses real employee data where available; falls back to placeholder salary if
+ * salary_component_assignments has no record yet.
+ */
+router.get("/appointment-letters/:employeeId/preview-pdf", requireRole(...VIEW_ROLES), h(async (req, res) => {
+  const { employeeId } = req.params;
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT e.id, e.employee_code, e.full_name, e.date_of_joining,
+            d.name AS designation_name
+       FROM employees e
+       LEFT JOIN designation_master d ON d.id = e.designation_id
+      WHERE e.id = ? LIMIT 1`,
+    [employeeId],
+  );
+  const emp = (empRows as RowDataPacket[])[0];
+  if (!emp) return res.status(404).json({ success: false, message: "Employee not found" });
+
+  // Resolve letterhead — falls back to city/state if no full address
+  const letterhead = await resolveEmployeeLetterhead(employeeId).then(assertPrintableLetterhead).catch(() => ({
+    branchName: "Head Office",
+    addressLines: ["MAS Callnet India Pvt. Ltd.", "Noida, Uttar Pradesh"],
+    gstin: null, cin: null,
+  }));
+
+  // Resolve salary — use real data or placeholder
+  let salary: Awaited<ReturnType<typeof resolveAppointmentLetterSalary>>;
+  try {
+    salary = await resolveAppointmentLetterSalary(employeeId);
+  } catch {
+    salary = {
+      basic: 0, hra: 0, lta: 0, conveyance: 0, otherAllowance: 0,
+      specialAllowance: 0, bonus: 0, medicalAllowance: 0, portfolio: 0,
+      pli: 0, gross: 0, esicEmployee: 0, epfEmployee: 0, netSalary: 0,
+      esicEmployer: 0, epfEmployer: 0, adminCharges: 0, ctc: 0,
+      source: "salary_component_assignments", sourceRef: null,
+      pfApplicable: false, esicApplicable: false,
+      unavailableLines: ["Salary not yet assigned — placeholder values shown"],
+    };
+  }
+
+  const pdfBytes = await renderAppointmentLetterPdf({
+    employeeName: String(emp.full_name ?? ""),
+    employeeCode: String(emp.employee_code ?? ""),
+    designation: String(emp.designation_name ?? ""),
+    dateOfJoining: emp.date_of_joining ?? null,
+    issueDate: new Date(),
+    letterNumber: "PREVIEW-DRAFT",
+    verificationUrl: "https://mcnhrms.teammas.in/verify/appointment/PREVIEW",
+    qrPngDataUrl: null,
+    letterhead,
+    salary,
+    signerName: "Authorised Signatory",
+    signerDesignation: "Director",
+    selfSignedNotice: null,
+  });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `inline; filename="appointment-letter-preview-${emp.employee_code}.pdf"`);
+  res.send(pdfBytes);
 }));
 
 router.post("/appointment-letters/:issueId/revoke", requireRole("super_admin", "admin", "payroll_head"), h(async (req, res) => {
