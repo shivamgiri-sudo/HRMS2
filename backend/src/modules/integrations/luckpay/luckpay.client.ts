@@ -144,8 +144,14 @@ function decodeBase64(value: string | null): Buffer | null {
  *                            wrapper {file_in_base64, size_in_bytes, file_name,
  *                            file_type}, so the bytes need decoding twice.
  */
-/** Wraps a document the provider returned as a raw body rather than a JSON envelope. */
-function rawDocumentResult(buffer: Buffer, contentType: string | null): LuckpayDocumentResult {
+/**
+ * Wraps a document the provider returned as a raw body rather than a JSON
+ * envelope. `namePrefix` distinguishes which download this came from —
+ * this used to be hardcoded to "esign-document" for every raw-body
+ * response, including DigiLocker KYC downloads, which mislabeled every
+ * DigiLocker Aadhaar/PAN file as an e-sign artifact.
+ */
+function rawDocumentResult(buffer: Buffer, contentType: string | null, namePrefix: string): LuckpayDocumentResult {
   const ext = contentType?.includes("pdf") ? "pdf"
     : contentType?.includes("zip") ? "zip"
     : contentType?.includes("png") ? "png"
@@ -154,7 +160,7 @@ function rawDocumentResult(buffer: Buffer, contentType: string | null): LuckpayD
   return {
     buffer,
     url: null,
-    fileName: `esign-document.${ext}`,
+    fileName: `${namePrefix}.${ext}`,
     contentType: contentType ?? "application/pdf",
     sanitized: { binaryBody: true, bytes: buffer.length, contentType },
   };
@@ -291,7 +297,7 @@ export const luckpayClient = {
   async downloadKycDocument(payload: LuckpayTransactionRef) {
     const cfg = await digilockerConfig();
     const { binary, contentType, response } = await luckpayPostBinaryOrJson(cfg, "/downloadKycDocument", payload);
-    if (binary) return rawDocumentResult(binary, contentType);
+    if (binary) return rawDocumentResult(binary, contentType, "digilocker-kyc-document");
     return toDocumentResult(response!);
   },
 
@@ -312,7 +318,7 @@ export const luckpayClient = {
   async downloadESignDocument(payload: LuckpayTransactionRef) {
     const cfg = await digilockerConfig();
     const { binary, contentType, response } = await luckpayPostBinaryOrJson(cfg, "/downloadESignDocument", payload);
-    if (binary) return rawDocumentResult(binary, contentType);
+    if (binary) return rawDocumentResult(binary, contentType, "esign-document");
     return toDocumentResult(response!);
   },
 

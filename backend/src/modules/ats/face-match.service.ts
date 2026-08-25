@@ -84,9 +84,21 @@ export async function compareFaces(
 
     if (!photoDesc || !idDesc) {
       const status = "no_face_detected";
+      // ON DUPLICATE KEY UPDATE against uq_candidate_face_match_pair — see
+      // 444_candidate_face_match_unique_constraint.sql. compareFaces() is
+      // triggered separately from both the selfie-upload and ID-doc-upload
+      // paths, so the same (photo_document_id, id_document_id) pair is
+      // re-scored more than once; this refreshes that pair's row in place
+      // instead of stacking up duplicate rows (including stale
+      // "no_face_detected" rows a later successful run should replace).
       await db.execute(
         `INSERT INTO candidate_face_match (id, candidate_id, photo_document_id, id_document_id, match_score, match_status, details)
-         VALUES (?, ?, ?, ?, NULL, ?, ?)`,
+         VALUES (?, ?, ?, ?, NULL, ?, ?) AS new_match
+         ON DUPLICATE KEY UPDATE
+           match_score = NULL,
+           match_status = new_match.match_status,
+           details = new_match.details,
+           created_at = NOW()`,
         [id, candidateId, photoDocId ?? null, idDocId ?? null, status, JSON.stringify({ reason: "Could not detect face in one or both images" })]
       );
       return { score: 0, matched: false, status };
@@ -99,7 +111,12 @@ export async function compareFaces(
     const matchStatus = matched ? "matched" : "mismatch";
     await db.execute(
       `INSERT INTO candidate_face_match (id, candidate_id, photo_document_id, id_document_id, match_score, match_status, details)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?) AS new_match
+       ON DUPLICATE KEY UPDATE
+         match_score = new_match.match_score,
+         match_status = new_match.match_status,
+         details = new_match.details,
+         created_at = NOW()`,
       [id, candidateId, photoDocId ?? null, idDocId ?? null, score, matchStatus, JSON.stringify({ euclidean_distance: distance })]
     );
 
@@ -128,7 +145,12 @@ export async function compareFaces(
   } catch (error: any) {
     await db.execute(
       `INSERT INTO candidate_face_match (id, candidate_id, photo_document_id, id_document_id, match_status, details)
-       VALUES (?, ?, ?, ?, 'failed', ?)`,
+       VALUES (?, ?, ?, ?, 'failed', ?) AS new_match
+       ON DUPLICATE KEY UPDATE
+         match_score = NULL,
+         match_status = new_match.match_status,
+         details = new_match.details,
+         created_at = NOW()`,
       [id, candidateId, photoDocId ?? null, idDocId ?? null, JSON.stringify({ error: error.message })]
     );
     return { score: 0, matched: false, status: "failed" };

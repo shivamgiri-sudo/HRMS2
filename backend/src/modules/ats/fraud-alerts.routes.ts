@@ -1,3 +1,4 @@
+import fsSync from "fs";
 import { Router } from "express";
 import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
@@ -8,6 +9,7 @@ import type { RowDataPacket } from "mysql2";
 import { detectFaceBbox } from "./face-match.service.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { recalculateNameMatch } from "./name-consistency.routes.js";
+import { getLatestDigilockerFile } from "../integrations/luckpay/luckpay-status.service.js";
 
 const router = Router();
 
@@ -97,7 +99,7 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
     );
   }
 
-  const [[alerts], [faceMatches], [docs], [profileRows], [bgvNames], [nameSummaryRows], [nameDetails], [bankPennyRows]] = await Promise.all([
+  const [[alerts], [faceMatches], [docs], [profileRows], [bgvNames], [nameSummaryRows], [nameDetails], [bankPennyRows], digilockerFile] = await Promise.all([
     db.execute<RowDataPacket[]>(
       // matched_candidate_name joined in (same as the GET / list endpoint) so
       // the comparison panel can show which candidate a duplicate-identity
@@ -168,6 +170,12 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
         WHERE candidate_id = ? ORDER BY initiated_at DESC LIMIT 1`,
       [candidateId]
     ),
+    // DigiLocker never writes to candidate_onboarding_document — the
+    // downloaded KYC file's path only ever lands in
+    // candidate_digilocker_session.returned_documents_json, which nothing
+    // here read before. Without this, the panel could never show a
+    // DigiLocker photo even for a candidate who completed it successfully.
+    getLatestDigilockerFile(candidateId),
   ]);
 
   res.json({
@@ -179,6 +187,9 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
     nameSummary: nameSummaryRows[0] ?? null,
     nameDetails,
     bankPennyDrop: bankPennyRows[0] ?? null,
+    digilocker: digilockerFile
+      ? { fileName: digilockerFile.fileName, contentType: digilockerFile.contentType, updatedAt: digilockerFile.updatedAt }
+      : null,
   });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -201,6 +212,46 @@ router.get("/documents/face-detect/:documentId", requireAuth, requireRole("super
     if (!doc) return res.status(404).json({ error: "Document not found" });
 
     const resolvedPath = resolveOnboardingDocumentFile(doc.file_path);
+    if (!resolvedPath) return res.json({ bbox: null });
+    const bbox = await detectFaceBbox(resolvedPath).catch(() => null);
+    res.json({ bbox });
+  } catch (err: unknown) {
+    res.json({ bbox: null });
+  }
+});
+
+// Streams the single downloaded DigiLocker KYC file for a candidate — same
+// storage root as candidate_onboarding_document, but it never gets a row
+// there (see getLatestDigilockerFile), so it needs its own preview route
+// rather than reusing /documents/preview/:documentId.
+router.get("/documents/digilocker-preview/:candidateId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const file = await getLatestDigilockerFile(req.params.candidateId);
+    if (!file) return res.status(404).json({ error: "No DigiLocker document on file" });
+
+    const resolvedPath = resolveOnboardingDocumentFile(file.filePath);
+    if (!resolvedPath) return res.status(404).json({ error: "File not found on disk" });
+
+    res.setHeader("Content-Type", file.contentType || "application/octet-stream");
+    res.setHeader("Content-Disposition", `inline; filename="${file.fileName.replace(/[\r\n"]/g, "_")}"`);
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    fsSync.createReadStream(resolvedPath).pipe(res);
+  } catch (err: unknown) {
+    res.status(500).json({ error: "Could not load DigiLocker document" });
+  }
+});
+
+// Face bbox for the DigiLocker file — only meaningful when it is an image.
+// The KYC download is a PDF far more often than not (see digilocker-kyc-document
+// naming in luckpay.client.ts), which detectFaceBbox cannot read, so this is
+// short-circuited rather than left to fail silently like the generic route above.
+router.get("/documents/digilocker-face-detect/:candidateId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const file = await getLatestDigilockerFile(req.params.candidateId);
+    if (!file || !file.contentType.startsWith("image/")) return res.json({ bbox: null, isPdf: file?.contentType === "application/pdf" });
+
+    const resolvedPath = resolveOnboardingDocumentFile(file.filePath);
     if (!resolvedPath) return res.json({ bbox: null });
     const bbox = await detectFaceBbox(resolvedPath).catch(() => null);
     res.json({ bbox });

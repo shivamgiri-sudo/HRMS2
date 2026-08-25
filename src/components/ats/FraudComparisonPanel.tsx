@@ -23,12 +23,14 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
+  FileText,
   Loader2,
   ShieldAlert,
   ShieldCheck,
   ShieldX,
   User,
   X,
+  ZoomIn,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -106,6 +108,8 @@ interface ComparisonData {
   nameSummary: { overall_status?: string; mismatch_sources?: string | unknown; blocks_employee_code?: number } | null;
   nameDetails: NameDetail[];
   bankPennyDrop: { entered_name?: string | null; bank_name?: string | null; name_match_score?: number | null; status?: string | null } | null;
+  /** The single downloaded DigiLocker KYC file, if the candidate completed DigiLocker. Null when they never did. */
+  digilocker: { fileName: string; contentType: string; updatedAt?: string | null } | null;
 }
 
 interface FaceBbox {
@@ -145,37 +149,111 @@ const SEVERITY_BORDER: Record<string, string> = {
 
 // ── Face Photo Cell with canvas-based face alignment ─────────────────────────
 
+/**
+ * Full-size click-to-zoom viewer. Reuses the already-fetched blob URL from
+ * the cell that opened it — no re-fetch. `kind: "pdf"` renders an iframe
+ * (browsers paginate/zoom PDFs natively there) instead of an <img>, since a
+ * DigiLocker download is a PDF far more often than not and cannot be drawn
+ * onto a face-crop canvas the way an image can.
+ */
+function Lightbox({ src, kind, label, onClose }: { src: string; kind: "image" | "pdf"; label: string; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-6"
+      onClick={onClose}
+    >
+      <div className="absolute top-4 right-4 flex items-center gap-3">
+        {kind === "pdf" && (
+          <a
+            href={src}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-white/90 hover:text-white text-xs font-semibold bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-full"
+          >
+            Open in new tab
+          </a>
+        )}
+        <button
+          onClick={onClose}
+          className="text-white/90 hover:text-white bg-white/10 hover:bg-white/20 rounded-full p-1.5"
+          aria-label="Close"
+        >
+          <X className="h-5 w-5" />
+        </button>
+      </div>
+      <div className="text-center max-w-5xl w-full max-h-full flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+        {kind === "pdf" ? (
+          <iframe src={src} title={label} className="w-full h-[80vh] bg-white rounded-lg shadow-2xl" />
+        ) : (
+          <img src={src} alt={label} className="max-w-full max-h-[80vh] rounded-lg shadow-2xl object-contain" />
+        )}
+        <p className="text-white/80 text-xs font-medium">{label}</p>
+      </div>
+    </div>
+  );
+}
+
 interface FacePhotoCellProps {
   documentId: string | null | undefined;
   label: string;
   subLabel?: string;
   isTrusted?: boolean;
   noFaceText?: string;
+  /** Overrides the default onboarding-document preview/face-detect URLs — used for the DigiLocker file, which has no candidate_onboarding_document row. */
+  previewUrl?: string;
+  faceDetectUrl?: string;
+  /** The source is a PDF: skip face-cropping entirely and show a document tile instead. */
+  isPdf?: boolean;
 }
 
-function FacePhotoCell({ documentId, label, subLabel, isTrusted, noFaceText }: FacePhotoCellProps) {
+function FacePhotoCell({ documentId, label, subLabel, isTrusted, noFaceText, previewUrl, faceDetectUrl, isPdf }: FacePhotoCellProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasImage, setHasImage] = useState(false);
+  const [fullBlobUrl, setFullBlobUrl] = useState<string | null>(null);
+  const [zoomOpen, setZoomOpen] = useState(false);
+
+  const src = previewUrl ?? (documentId ? `/api/ats/onboarding-full/documents/preview/${documentId}` : null);
 
   useEffect(() => {
-    if (!documentId) { setError(noFaceText ?? "No document"); return; }
+    if (!src) { setError(noFaceText ?? "No document"); return; }
 
     let blobUrl: string | null = null;
+    let cancelled = false;
     setLoading(true);
     setError(null);
     setHasImage(false);
 
+    if (isPdf) {
+      hrmsApi.getBlob(src).then((blob) => {
+        if (cancelled) return;
+        blobUrl = URL.createObjectURL(blob);
+        setFullBlobUrl(blobUrl);
+        setHasImage(true);
+        setLoading(false);
+      }).catch(() => {
+        if (!cancelled) { setError("Failed to load"); setLoading(false); }
+      });
+      return () => { cancelled = true; if (blobUrl) URL.revokeObjectURL(blobUrl); };
+    }
+
+    const detectUrl = faceDetectUrl ?? (documentId ? `/api/ats/fraud-alerts/documents/face-detect/${documentId}` : null);
+
     // Load blob + bbox in parallel
     Promise.all([
-      hrmsApi.getBlob(`/api/ats/onboarding-full/documents/preview/${documentId}`),
-      hrmsApi.get<{ bbox: FaceBbox | null }>(`/api/ats/fraud-alerts/documents/face-detect/${documentId}`)
-        .catch(() => ({ bbox: null as FaceBbox | null })),
+      hrmsApi.getBlob(src),
+      detectUrl
+        ? hrmsApi.get<{ bbox: FaceBbox | null }>(detectUrl).catch(() => ({ bbox: null as FaceBbox | null }))
+        : Promise.resolve({ bbox: null as FaceBbox | null }),
     ]).then(([blob, { bbox }]) => {
+      if (cancelled) return;
       blobUrl = URL.createObjectURL(blob);
+      setFullBlobUrl(blobUrl);
       const img = new Image();
       img.onload = () => {
+        if (cancelled) return;
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext("2d");
@@ -202,20 +280,24 @@ function FacePhotoCell({ documentId, label, subLabel, isTrusted, noFaceText }: F
         setHasImage(true);
         setLoading(false);
       };
-      img.onerror = () => { setError("Cannot render image"); setLoading(false); };
+      img.onerror = () => { if (!cancelled) { setError("Cannot render image"); setLoading(false); } };
       img.src = blobUrl!;
     }).catch(() => {
-      setError("Failed to load");
-      setLoading(false);
+      if (!cancelled) { setError("Failed to load"); setLoading(false); }
     });
 
-    return () => { if (blobUrl) URL.revokeObjectURL(blobUrl); };
-  }, [documentId, noFaceText]);
+    return () => { cancelled = true; if (blobUrl) URL.revokeObjectURL(blobUrl); };
+  }, [src, faceDetectUrl, documentId, noFaceText, isPdf]);
+
+  const canZoom = hasImage && !loading && !!fullBlobUrl;
 
   return (
     <div className="flex flex-col items-center gap-2">
       {/* Photo frame */}
-      <div className="relative rounded-xl overflow-hidden border-2 border-slate-200 bg-slate-100 w-[160px] h-[200px] flex items-center justify-center shadow-sm">
+      <div
+        className={`relative rounded-xl overflow-hidden border-2 border-slate-200 bg-slate-100 w-[160px] h-[200px] flex items-center justify-center shadow-sm group ${canZoom ? "cursor-zoom-in" : ""}`}
+        onClick={() => canZoom && setZoomOpen(true)}
+      >
         {loading && (
           <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
             <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
@@ -227,7 +309,21 @@ function FacePhotoCell({ documentId, label, subLabel, isTrusted, noFaceText }: F
             <span className="text-[11px]">{error}</span>
           </div>
         )}
-        <canvas ref={canvasRef} className={`w-full h-full object-cover ${hasImage ? "block" : "hidden"}`} />
+        {isPdf ? (
+          hasImage && (
+            <div className="flex flex-col items-center gap-1.5 text-slate-500">
+              <FileText className="h-12 w-12" />
+              <span className="text-[11px] font-semibold">PDF document</span>
+            </div>
+          )
+        ) : (
+          <canvas ref={canvasRef} className={`w-full h-full object-cover ${hasImage ? "block" : "hidden"}`} />
+        )}
+        {canZoom && (
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+            <ZoomIn className="h-6 w-6 text-white drop-shadow" />
+          </div>
+        )}
         {isTrusted && (
           <div className="absolute top-2 left-2 bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5 shadow">
             <ShieldCheck className="h-2.5 w-2.5" /> GOVT VERIFIED
@@ -239,6 +335,9 @@ function FacePhotoCell({ documentId, label, subLabel, isTrusted, noFaceText }: F
         <p className="text-xs font-bold text-slate-800">{label}</p>
         {subLabel && <p className="text-[11px] text-slate-500 mt-0.5">{subLabel}</p>}
       </div>
+      {zoomOpen && fullBlobUrl && (
+        <Lightbox src={fullBlobUrl} kind={isPdf ? "pdf" : "image"} label={label} onClose={() => setZoomOpen(false)} />
+      )}
     </div>
   );
 }
@@ -412,6 +511,21 @@ export function FraudComparisonPanel({
   const panDigi       = docs.find(d => /digilocker.*pan|pan.*digilocker/i.test(d.doc_type ?? ""));
   const panManual     = docs.find(d => /^pan/i.test(d.doc_type ?? "") && d !== panDigi);
 
+  // DigiLocker's completion download is ONE file total (Luckpay hands back a
+  // single document, not a set — see digilocker-evidence.ts), stored outside
+  // candidate_onboarding_document entirely, so it can never be matched by the
+  // doc_type lookups above. Both the Aadhaar and PAN comparison rows point at
+  // this same file — there's no way to tell which of the two it actually is
+  // once it comes back as a generic PDF.
+  const digilockerFile = data.digilocker;
+  const digilockerUrls = digilockerFile
+    ? {
+        previewUrl: `/api/ats/fraud-alerts/documents/digilocker-preview/${candidateId}`,
+        faceDetectUrl: `/api/ats/fraud-alerts/documents/digilocker-face-detect/${candidateId}`,
+        isPdf: digilockerFile.contentType === "application/pdf",
+      }
+    : null;
+
   // Primary face match (selfie vs DigiLocker preferred, else vs any ID doc)
   const primaryMatch = faceMatches.find(m =>
     m.photo_document_id === selfieDoc?.id && m.id_document_id === aadhaarDigi?.id
@@ -565,8 +679,11 @@ export function FraudComparisonPanel({
                 </div>
                 <FacePhotoCell
                   documentId={aadhaarDigi?.id}
+                  previewUrl={digilockerUrls?.previewUrl}
+                  faceDetectUrl={digilockerUrls?.faceDetectUrl}
+                  isPdf={digilockerUrls?.isPdf}
                   label="DigiLocker Aadhaar"
-                  subLabel="Govt-verified · ground truth"
+                  subLabel={digilockerFile ? "Govt-verified · single KYC file" : "Govt-verified · ground truth"}
                   isTrusted
                   noFaceText="DigiLocker not completed"
                 />
@@ -583,7 +700,7 @@ export function FraudComparisonPanel({
             </div>
 
             {/* PAN comparison if PAN docs exist */}
-            {(panDigi?.id || panManual?.id) && (
+            {(panDigi?.id || panManual?.id || digilockerFile) && (
               <div className="border-t border-slate-100 pt-4">
                 <SectionHeader>PAN face comparison</SectionHeader>
                 <div className="flex flex-wrap gap-6 justify-start">
@@ -604,8 +721,11 @@ export function FraudComparisonPanel({
                   </div>
                   <FacePhotoCell
                     documentId={panDigi?.id}
+                    previewUrl={digilockerUrls?.previewUrl}
+                    faceDetectUrl={digilockerUrls?.faceDetectUrl}
+                    isPdf={digilockerUrls?.isPdf}
                     label="DigiLocker PAN"
-                    subLabel="Govt-verified"
+                    subLabel={digilockerFile ? "Govt-verified · same file as Aadhaar" : "Govt-verified"}
                     isTrusted
                     noFaceText="PAN not in DigiLocker"
                   />

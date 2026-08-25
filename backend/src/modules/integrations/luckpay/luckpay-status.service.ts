@@ -21,7 +21,7 @@ import { withProviderFailureLogged, writeBgvApiLog } from "../../ats/bgv-api-log
 import { syncBridgeDigilockerStatus } from "../../ats/onboarding-bridge-status.js";
 
 /** Same private (never web-served) location the onboarding uploader writes to. */
-const STORAGE_DIR = path.resolve(process.cwd(), "private-storage/onboarding-documents");
+export const STORAGE_DIR = path.resolve(process.cwd(), "private-storage/onboarding-documents");
 
 export type SyncOutcome = {
   state: LuckpayStatusResult["state"] | "not_started";
@@ -342,6 +342,56 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
     storedFiles,
     changed: true,
   };
+}
+
+export type DigilockerFile = {
+  filePath: string;
+  fileName: string;
+  contentType: string;
+  sessionStatus: string;
+  updatedAt: Date | string | null;
+};
+
+/**
+ * The single downloaded DigiLocker KYC file for a candidate, if one was
+ * stored — used by the fraud-comparison panel, which previously had no way
+ * to see this at all: DigiLocker completion only ever wrote the file path
+ * into candidate_digilocker_session.returned_documents_json, never into
+ * candidate_onboarding_document, so nothing downstream could find it.
+ *
+ * Picks the most recent COMPLETED session with a file actually recorded —
+ * a session can be 'completed' with no file (see syncDigilockerStatus's
+ * documentMeta.downloadError branch), which this treats the same as no
+ * session at all.
+ */
+export async function getLatestDigilockerFile(candidateId: string): Promise<DigilockerFile | null> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT session_status, returned_documents_json, updated_at
+       FROM candidate_digilocker_session
+      WHERE candidate_id = ? AND session_status = 'completed' AND returned_documents_json IS NOT NULL
+      ORDER BY updated_at DESC
+      LIMIT 1`,
+    [candidateId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+
+  try {
+    const meta = typeof row.returned_documents_json === "string"
+      ? JSON.parse(row.returned_documents_json)
+      : row.returned_documents_json;
+    const filePath = Array.isArray(meta?.files) ? meta.files[0] : null;
+    if (!filePath) return null;
+    return {
+      filePath,
+      fileName: typeof meta.fileName === "string" ? meta.fileName : "digilocker-document",
+      contentType: typeof meta.contentType === "string" ? meta.contentType : "application/octet-stream",
+      sessionStatus: row.session_status,
+      updatedAt: row.updated_at,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
