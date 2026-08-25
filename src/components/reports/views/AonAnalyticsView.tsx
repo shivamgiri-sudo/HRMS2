@@ -89,6 +89,15 @@ const GROUP_BY = [
 ] as const;
 type GroupBy = (typeof GROUP_BY)[number]["value"];
 
+/** The raw FK id column matching each display-name `groupBy` dimension -- aon-bucket-headcount /
+ *  -attrition / -shrinkage all now select both (Task 8 review fix: the display name is not a
+ *  valid filter value downstream, only the id is). */
+const GROUP_BY_ID_FIELD: Record<GroupBy, string> = {
+  branch_name: "branch_id",
+  cost_centre_name: "cost_centre_id",
+  process_name: "process_id",
+};
+
 type Row = Record<string, unknown>;
 const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const s = (v: unknown) => (v == null ? "" : String(v));
@@ -200,8 +209,8 @@ function GapBanner({ items }: { items: Array<{ label: string; detail: string }> 
  * Dive wiring in a future plan, where narrowing happens one dimension at a time.
  */
 function DrillCell({
-  value, max, metric, groupBy, groupKey, bucket,
-}: { value: number; max: number; metric: "headcount" | "exits" | "shrinkage"; groupBy: GroupBy; groupKey: string; bucket: Bucket }) {
+  value, max, metric, groupBy, groupKey, groupId, bucket,
+}: { value: number; max: number; metric: "headcount" | "exits" | "shrinkage"; groupBy: GroupBy; groupKey: string; groupId: string; bucket: Bucket }) {
   const { pushChip, openEmployeeList } = useDrillDown();
   const dimension = groupBy === "cost_centre_name" ? "costCentre" : groupBy === "process_name" ? "process" : "branch";
 
@@ -209,7 +218,10 @@ function DrillCell({
     <button
       type="button"
       onClick={() => {
-        pushChip({ dimension, value: groupKey, label: groupKey });
+        // The chip's VALUE must be the real FK id (aon-drilldown-employees filters
+        // e.branch_id / e.cost_centre_id / e.process_id, actual UUID comparisons) --
+        // groupKey is only the human-readable display name, used for the chip's LABEL.
+        pushChip({ dimension, value: groupId, label: groupKey });
         pushChip({ dimension: "aonBucket", value: bucket, label: `${bucket}d` });
         openEmployeeList();
       }}
@@ -300,11 +312,14 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
   /* The heatmap: one row per group, one column per bucket, for the chosen metric. */
   const grid = useMemo(() => {
     const src = metric === "headcount" ? hc.data : metric === "exits" ? at.data : sh.data;
+    const idField = GROUP_BY_ID_FIELD[groupBy];
     const map = new Map<string, Record<string, { value: number; days: number; worked: number }>>();
+    const ids = new Map<string, string>();
     for (const r of src ?? []) {
       const key = s(r[groupBy]) || "UNASSIGNED";
       const b = s(r.aon_bucket);
       if (!map.has(key)) map.set(key, {});
+      if (!ids.has(key)) ids.set(key, s(r[idField]));
       const cell = map.get(key)!;
       const prev = cell[b] ?? { value: 0, days: 0, worked: 0 };
       cell[b] = {
@@ -327,7 +342,10 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
             return d ? ((d - w) / d) * 100 : null;
           })()
         : vals.reduce<number>((a, v) => a + (v ?? 0), 0);
-      return { key, vals, total };
+      // The real FK id backing this row's display name -- UNASSIGNED (and any group whose
+      // master-table join was NULL) carries an empty id, which is an inherent, pre-existing
+      // limit (there is no single id to filter by), not a new bug.
+      return { key, id: ids.get(key) ?? "", vals, total };
     });
     // Rank by magnitude so the worst offenders are at the top rather than alphabetical.
     return rows.sort((a, b) => (b.total ?? 0) - (a.total ?? 0)).slice(0, 25);
@@ -513,6 +531,7 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
                               metric={metric}
                               groupBy={groupBy}
                               groupKey={row.key}
+                              groupId={row.id}
                               bucket={BUCKETS[i]}
                             />
                           )}
