@@ -1066,7 +1066,7 @@ export async function attritionDeepDive(
            -- This bucket's share of all exits for this dimension value.
            ROUND(
              COUNT(*) * 100.0
-             / NULLIF(SUM(COUNT(*)) OVER (PARTITION BY ${dim.expr}), 0),
+             / NULLIF(SUM(COUNT(*)) OVER (PARTITION BY ${dim.expr}, ${dimensionIdExpr}), 0),
              2
            ) AS share_pct,
            -- The headline: of everyone who left from this dimension value, what fraction
@@ -1080,8 +1080,8 @@ export async function attritionDeepDive(
            -- under ONLY_FULL_GROUP_BY rather than degrade.
            ROUND(
              SUM(SUM(CASE WHEN DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30 THEN 1 ELSE 0 END))
-               OVER (PARTITION BY ${dim.expr}) * 100.0
-             / NULLIF(SUM(COUNT(*)) OVER (PARTITION BY ${dim.expr}), 0),
+               OVER (PARTITION BY ${dim.expr}, ${dimensionIdExpr}) * 100.0
+             / NULLIF(SUM(COUNT(*)) OVER (PARTITION BY ${dim.expr}, ${dimensionIdExpr}), 0),
              2
            ) AS early_quit_rate,
            -- Emitted so the missing reason data reads as a finding, not a blank column.
