@@ -602,8 +602,8 @@ export default function PayrollHeadSalaryReviewDetail() {
                         ? <SelectItem value="__none__" disabled>No packages for this branch yet</SelectItem>
                         : packages.map((p) => (
                           <SelectItem key={p.id} value={p.id}>
-                            {p.name ?? `Band ${p.band_code}`} · {inr(p.package_amount)}/mo
-                            {p.band_code ? ` · Grade ${p.band_code}` : ''}
+                            {p.name ?? p.band_name ?? `Band ${p.band_code}`} · {inr(p.package_amount)}/mo
+                            {p.slab_from != null ? ` · ₹${Number(p.slab_from).toLocaleString('en-IN')}–₹${Number(p.slab_to).toLocaleString('en-IN')}` : p.band_code ? ` · Band ${p.band_code}` : ''}
                           </SelectItem>
                         ))}
                     </SelectContent>

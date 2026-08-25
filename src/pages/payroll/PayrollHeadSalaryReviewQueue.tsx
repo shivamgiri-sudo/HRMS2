@@ -360,7 +360,8 @@ export function FinalSalarySection({
                         ? <SelectItem value="__none__" disabled>No packages for this grade</SelectItem>
                         : filtered.map((p) => (
                           <SelectItem key={p.id} value={p.id} className="text-xs">
-                            {p.name ?? `Band ${p.band_code}`} · {inr(p.package_amount)}/mo
+                            {p.name ?? p.band_name ?? `Band ${p.band_code}`} · {inr(p.package_amount)}/mo
+                            {p.slab_from != null ? ` · ₹${Number(p.slab_from).toLocaleString('en-IN')}–₹${Number(p.slab_to).toLocaleString('en-IN')}` : ''}
                           </SelectItem>
                         ))}
                     </SelectContent>

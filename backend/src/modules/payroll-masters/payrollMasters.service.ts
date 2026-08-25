@@ -130,8 +130,10 @@ export async function listPackages(filters: {
   band?: string; branch?: string; costCentre?: string;
 } = {}) {
   let sql = `
-    SELECT spm.*
+    SELECT spm.*,
+           sbm.slab_from, sbm.slab_to, sbm.band_name
     FROM salary_package_master spm
+    LEFT JOIN salary_band_master sbm ON sbm.band_code = spm.band_code AND sbm.active_status = 1
     WHERE 1=1`;
   const params: unknown[] = [];
   // salary_package_master's own table comment: "Lookup: branch + CC + band →
