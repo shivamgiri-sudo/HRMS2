@@ -539,8 +539,8 @@ function PackageMatrixTab() {
                 <div className="flex items-center gap-2 text-sm text-red-600"><AlertTriangle className="h-4 w-4" />Failed to load bands</div>
               ) : (
                 <Select value={selectedGradeId} onValueChange={setSelectedGradeId}>
-                  <SelectTrigger><SelectValue placeholder="Select a band" /></SelectTrigger>
-                  <SelectContent>
+                  <SelectTrigger className="bg-white"><SelectValue placeholder="Select a band" /></SelectTrigger>
+                  <SelectContent className="bg-white border border-slate-200 shadow-md">
                     {gradeBands.map((b) => (
                       <SelectItem key={String(b.id)} value={String(b.id)}>{b.name}{b.code ? ` (${b.code})` : ""}</SelectItem>
                     ))}
@@ -606,7 +606,7 @@ function PackageMatrixTab() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function AdminTab() {
-  const [adminTab, setAdminTab] = useState<"bands" | "packages" | "cost-centres">("bands");
+  const [adminTab, setAdminTab] = useState<"bands" | "packages">("bands");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
@@ -615,8 +615,6 @@ function AdminTab() {
   const [editBand, setEditBand] = useState<Partial<GradeBand> | null>(null);
 
   const [costCentres, setCostCentres] = useState<CostCentre[]>([]);
-  const [ccFilter, setCcFilter] = useState("");
-  const [editCC, setEditCC] = useState<Partial<CostCentre> | null>(null);
 
   const [packages, setPackages] = useState<AdminPackage[]>([]);
   const [pkgBranch, setPkgBranch] = useState("");
@@ -697,18 +695,6 @@ function AdminTab() {
     finally { setSaving(false); }
   };
 
-  const saveCC = async () => {
-    if (!editCC?.cost_centre_code || !editCC?.branch_name) return;
-    setSaving(true); setMsg("");
-    try {
-      await hrmsApi.post("/api/payroll-masters/cost-centres", editCC);
-      setEditCC(null);
-      await loadCostCentres();
-      setMsg("Cost centre saved");
-    } catch (e: any) { setMsg(e?.message || "Failed"); }
-    finally { setSaving(false); }
-  };
-
   const savePkg = async () => {
     if (!editPkg?.branch_name || !editPkg?.band_code || !editPkg?.package_amount) return;
     setSaving(true); setMsg("");
@@ -739,9 +725,8 @@ function AdminTab() {
       )}
 
       <Tabs value={adminTab} onValueChange={(v) => setAdminTab(v as any)}>
-        <TabsList className="grid w-full max-w-lg grid-cols-3">
+        <TabsList className="grid w-full max-w-sm grid-cols-2">
           <TabsTrigger value="bands" className="gap-1.5"><Layers className="h-3.5 w-3.5" /> Bands</TabsTrigger>
-          <TabsTrigger value="cost-centres" className="gap-1.5"><Building2 className="h-3.5 w-3.5" /> Cost Centres</TabsTrigger>
           <TabsTrigger value="packages" className="gap-1.5"><IndianRupee className="h-3.5 w-3.5" /> Packages</TabsTrigger>
         </TabsList>
 
@@ -785,43 +770,6 @@ function AdminTab() {
           </Card>
         </TabsContent>
 
-        <TabsContent value="cost-centres">
-          <Card>
-            <CardHeader className="flex-row items-center justify-between">
-              <div><CardTitle className="text-lg">Cost Centres</CardTitle><CardDescription>Branch-wise cost centres.</CardDescription></div>
-              <Button size="sm" onClick={() => setEditCC({ cost_centre_code: "", branch_name: "", display_name: "", category: "" })}><Plus className="h-3.5 w-3.5 mr-1" /> Add</Button>
-            </CardHeader>
-            <CardContent>
-              <Input placeholder="Filter…" value={ccFilter} onChange={(e) => setCcFilter(e.target.value)} className="h-9 max-w-sm mb-4" />
-              {editCC && (
-                <div className="rounded-xl border-2 border-blue-200 bg-blue-50/50 p-4 mb-4 grid gap-3 sm:grid-cols-4 items-end">
-                  <div><Label className="text-xs">Code *</Label><Input className="h-9" value={editCC.cost_centre_code ?? ""} onChange={(e) => setEditCC((p) => ({ ...p!, cost_centre_code: e.target.value }))} /></div>
-                  <div><Label className="text-xs">Branch *</Label><Input className="h-9" value={editCC.branch_name ?? ""} onChange={(e) => setEditCC((p) => ({ ...p!, branch_name: e.target.value }))} /></div>
-                  <div><Label className="text-xs">Display Name</Label><Input className="h-9" value={editCC.display_name ?? ""} onChange={(e) => setEditCC((p) => ({ ...p!, display_name: e.target.value }))} /></div>
-                  <div className="flex gap-2">
-                    <Button size="sm" onClick={saveCC} disabled={saving}><Save className="h-3.5 w-3.5 mr-1" />{saving ? "…" : "Save"}</Button>
-                    <Button size="sm" variant="ghost" onClick={() => setEditCC(null)}><X className="h-4 w-4" /></Button>
-                  </div>
-                </div>
-              )}
-              <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
-                <table className="w-full text-sm">
-                  <thead className="sticky top-0 bg-white"><tr className="bg-slate-50 border-b">{["Code", "Branch", "Display Name", "Status"].map((h) => <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-slate-600">{h}</th>)}</tr></thead>
-                  <tbody className="divide-y">
-                    {costCentres.filter((c) => !ccFilter || c.cost_centre_code.toLowerCase().includes(ccFilter.toLowerCase()) || c.branch_name.toLowerCase().includes(ccFilter.toLowerCase())).map((c) => (
-                      <tr key={c.id} className="hover:bg-slate-50">
-                        <td className="px-3 py-2 font-mono text-xs">{c.cost_centre_code}</td>
-                        <td className="px-3 py-2 font-medium">{c.branch_name}</td>
-                        <td className="px-3 py-2 text-slate-600">{c.display_name || c.process_name || "—"}</td>
-                        <td className="px-3 py-2"><Badge variant={c.active_status ? "default" : "secondary"} className="text-xs">{c.active_status ? "Active" : "Inactive"}</Badge></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
 
         <TabsContent value="packages">
           <Card>
