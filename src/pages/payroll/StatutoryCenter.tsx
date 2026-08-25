@@ -6,6 +6,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
@@ -290,7 +291,19 @@ function FilingTab() {
               <TooltipContent side="bottom"><p>{filedCount} of {totalCount} obligations filed this month</p></TooltipContent>
             </Tooltip>
           )}
-          <Input type="month" value={month} onChange={e => setMonth(e.target.value)} className="w-40" />
+          <Select value={month} onValueChange={setMonth}>
+            <SelectTrigger className="w-44 bg-white border border-slate-200">
+              <SelectValue placeholder="Select month" />
+            </SelectTrigger>
+            <SelectContent className="bg-white border border-slate-200 shadow-md">
+              {Array.from({ length: 13 }, (_, i) => {
+                const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+                const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+                const label = d.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+                return <SelectItem key={val} value={val}>{label}</SelectItem>;
+              })}
+            </SelectContent>
+          </Select>
           <Button variant="outline" size="sm" onClick={() => refetch()}><RefreshCw className="w-4 h-4" /></Button>
           <Button size="sm" onClick={() => initMut.mutate()} disabled={initMut.isPending} className="bg-violet-600 hover:bg-violet-700 text-white">
             <Plus className="w-4 h-4 mr-1" /> Initialize Month
