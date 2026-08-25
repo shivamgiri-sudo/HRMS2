@@ -4,6 +4,7 @@ import { hrmsApi, getHrmsApiErrorStatus, type HrmsEnvelope } from "@/lib/hrmsApi
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "@/components/ui/table";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip";
 import { DashboardDrilldownDrawer } from "@/components/dashboard/DashboardDrilldownDrawer";
 import { BASELINE_COLUMNS, TEMPLATE_COLUMNS, type ScorecardRow } from "./performanceScorecardColumns";
 import { Button } from "@/components/ui/button";
@@ -45,11 +46,18 @@ export default function PerformanceScorecardTable({ dateFrom, dateTo }: Performa
   // can't be resolved — surface this distinctly, don't let it look like an empty table.
   if (error) {
     const status = getHrmsApiErrorStatus(error);
+    // 403 is an intentional, correctly-enforced role restriction (not a bug) —
+    // render it as a calm informational state, not an alarming red error box.
+    if (status === 403) {
+      return (
+        <div className="p-6 text-sm text-slate-500 bg-slate-50 rounded-2xl border border-slate-200">
+          Performance Scorecard isn't available for your role — contact your administrator if you believe this is incorrect.
+        </div>
+      );
+    }
     return (
       <div className="p-6 text-sm text-red-600 bg-red-50 rounded-2xl border border-red-200">
-        {status === 403
-          ? "You don't have access to view this scorecard, or your team scope could not be resolved. Contact HR/IT if you believe this is an error."
-          : "Failed to load the performance scorecard. Please try again."}
+        Failed to load the performance scorecard. Please try again.
       </div>
     );
   }
@@ -84,21 +92,38 @@ export default function PerformanceScorecardTable({ dateFrom, dateTo }: Performa
                   <span className="font-semibold text-gray-800">{row.employeeName}</span>
                 </div>
               </TableCell>
-              {columns.map((col) => (
-                <TableCell
-                  key={col.key}
-                  className="cursor-pointer hover:underline"
-                  onClick={() => setDrilldown({ employeeId: row.employeeId, metricCode: col.metricCode, metricName: col.label })}
-                >
-                  {col.key === "pipStatus" ? (
-                    <Badge variant={row.pipStatus === "off_track" ? "destructive" : row.pipStatus === "at_risk" ? "secondary" : "outline"}>
-                      {col.format(row)}
-                    </Badge>
-                  ) : (
-                    col.format(row)
-                  )}
-                </TableCell>
-              ))}
+              {columns.map((col) =>
+                col.available === false ? (
+                  <TableCell key={col.key} className="text-gray-400">
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Badge variant="outline" className="cursor-default border-dashed text-gray-400 font-normal">
+                            Not yet available
+                          </Badge>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          This metric isn't computed by the backend yet — coming in a future release.
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </TableCell>
+                ) : (
+                  <TableCell
+                    key={col.key}
+                    className="cursor-pointer hover:underline"
+                    onClick={() => setDrilldown({ employeeId: row.employeeId, metricCode: col.metricCode, metricName: col.label })}
+                  >
+                    {col.key === "pipStatus" ? (
+                      <Badge variant={row.pipStatus === "off_track" ? "destructive" : row.pipStatus === "at_risk" ? "secondary" : "outline"}>
+                        {col.format(row)}
+                      </Badge>
+                    ) : (
+                      col.format(row)
+                    )}
+                  </TableCell>
+                ),
+              )}
               <TableCell>
                 <Button
                   variant="outline"
