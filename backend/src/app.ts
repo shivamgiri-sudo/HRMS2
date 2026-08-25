@@ -350,6 +350,9 @@ app.use("/uploads", (req, res, _next) => {
 
 app.get("/", (_req, res) => res.json({ success: true, service: "MCN HRMS Backend API", version: "1.0.0" }));
 
+// TEMP TEST ROUTE - REMOVE AFTER TESTING
+app.use("/test-daily-report", atsPublicTestRouter);
+
 app.use("/api/auth", authRouter);
 app.use("/api/auth", passwordResetRouter);
 app.use("/api/break-desk", breakDeskRouter);
@@ -441,7 +444,6 @@ app.use("/api/public/verify", employeeVerifyRouter); // public QR code verificat
 app.use("/api/public/login-info", loginInfoRouter);  // public login page stats (no auth, aggregate only)
 app.use("/api/ats/bgv", bgvVerificationRouter); // BGV token-driven routes (consent, verify, digilocker) — mount BEFORE requireAuth
 app.use("/api/ats", atsPublicRouter); // PUBLIC: candidate file uploads (no auth, 1-hour window)
-app.use("/api/public/daily-report", atsPublicTestRouter); // TEMP TEST ROUTE - REMOVE AFTER TESTING
 app.use("/api/visitor/public", visitorPublicRouter); // PUBLIC: token-scoped visitor registration and status only
 app.use("/api/ats", atsRouter);
 app.use("/api/ats/queue", queueRouter);
