@@ -63,7 +63,7 @@ async function audit(actorUserId: string, actionType: string, employeeId: string
 async function writeHistory(params: {
   employeeId: string;
   reviewId: string;
-  action: "approved" | "rejected" | "resubmitted" | "reopened";
+  action: "approved" | "rejected" | "resubmitted" | "reopened" | "salary_start_date_updated";
   actorUserId: string;
   rejectionCategory?: ReasonCategory | null;
   rejectionReasonCode?: string | null;
@@ -150,6 +150,7 @@ export async function getEmployeeJourney(employeeId: string) {
     componentRows,
     history,
     offeredSalaryRows,
+    payrollHrValidationRows,
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT e.*, b.branch_name, b.state AS branch_state, dm.designation_name FROM employees e
@@ -220,6 +221,11 @@ export async function getEmployeeJourney(employeeId: string) {
         ORDER BY eo.created_at DESC LIMIT 1`,
       [review.candidate_id]
     ).then(([r]) => r as RowDataPacket[]).catch(() => []) : Promise.resolve([]),
+    review.candidate_id ? db.execute<RowDataPacket[]>(
+      `SELECT salary_start_date FROM ats_payroll_hr_validation
+        WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+      [review.candidate_id]
+    ).then(([r]) => r as RowDataPacket[]).catch(() => []) : Promise.resolve([]),
   ]);
 
   const employee = employeeRows[0] ?? null;
@@ -238,8 +244,54 @@ export async function getEmployeeJourney(employeeId: string) {
     salary_assignment: salaryAssignmentRows[0] ?? null,
     salary_components: componentRows[0] ?? null,
     offered_salary: offeredSalaryRows[0] ?? null,
+    payroll_hr_validation: payrollHrValidationRows[0]
+      ? { salary_start_date: (payrollHrValidationRows[0].salary_start_date as string) || null }
+      : null,
     history,
   };
+}
+
+export async function updateSalaryStartDate(
+  employeeId: string,
+  newDate: string,
+  actorUserId: string
+): Promise<{ salary_start_date: string }> {
+  const review = await getReviewRow(employeeId);
+  if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
+
+  if (!review.candidate_id) {
+    throw httpError("No candidate linked to this employee — cannot update salary start date.", 400, "NO_CANDIDATE");
+  }
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT date_of_joining FROM employees WHERE id = ? LIMIT 1`,
+    [employeeId]
+  );
+  const doj = empRows[0]?.date_of_joining as string | null;
+  if (doj && new Date(newDate) < new Date(doj)) {
+    throw httpError("Salary start date cannot be before date of joining.", 400, "INVALID_DATE");
+  }
+
+  const [oldRows] = await db.execute<RowDataPacket[]>(
+    `SELECT salary_start_date FROM ats_payroll_hr_validation WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [review.candidate_id]
+  );
+  const oldDate = (oldRows[0]?.salary_start_date as string) || null;
+
+  await db.execute(
+    `UPDATE ats_payroll_hr_validation SET salary_start_date = ? WHERE candidate_id = ?`,
+    [newDate, review.candidate_id]
+  );
+
+  await writeHistory({
+    employeeId,
+    reviewId: review.id as string,
+    action: "salary_start_date_updated",
+    actorUserId,
+    rejectionRemarks: JSON.stringify({ old_date: oldDate, new_date: newDate }),
+  });
+
+  return { salary_start_date: newDate };
 }
 
 // ── Salary package actions ──────────────────────────────────────────────────

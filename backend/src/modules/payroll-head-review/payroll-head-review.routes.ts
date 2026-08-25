@@ -119,4 +119,13 @@ router.post("/:employeeId/reopen", requireAuth, requireWriteAccess, requireRole(
   res.json({ success: true, data });
 }));
 
+router.patch("/:employeeId/salary-start-date", requireAuth, requireWriteAccess, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
+  const { salary_start_date } = req.body as Record<string, unknown>;
+  if (!salary_start_date || typeof salary_start_date !== "string") {
+    return res.status(400).json({ success: false, message: "salary_start_date (YYYY-MM-DD) is required." });
+  }
+  const data = await svc.updateSalaryStartDate(req.params.employeeId, salary_start_date, req.authUser!.id);
+  res.json({ success: true, data });
+}));
+
 export const payrollHeadReviewRouter = router;
