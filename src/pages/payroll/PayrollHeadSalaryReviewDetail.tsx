@@ -158,6 +158,13 @@ export default function PayrollHeadSalaryReviewDetail() {
   const [loadedSalaryStartDate, setLoadedSalaryStartDate] = useState<string>('');
   const [pkgBuilderOpen, setPkgBuilderOpen]     = useState(false);
 
+  const [confirmDateDialog, setConfirmDateDialog] = useState<{
+    newDate: string;
+    oldDate: string;
+  } | null>(null);
+  const [confirmDateReason, setConfirmDateReason] = useState('');
+  const [confirmDateBusy, setConfirmDateBusy] = useState(false);
+
   useEffect(() => {
     if (effectiveDate) return;
     const preferred = journey?.payroll_hr_validation?.salary_start_date
@@ -544,15 +551,26 @@ export default function PayrollHeadSalaryReviewDetail() {
                       onBlur={async (e) => {
                         const newDate = e.target.value;
                         if (!newDate || newDate === loadedSalaryStartDate) return;
-                        try {
-                          await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/salary-start-date`, {
-                            salary_start_date: newDate,
+
+                        const hasLiveAssignment = !!journey?.salary_assignment?.effective_from;
+
+                        if (hasLiveAssignment) {
+                          setConfirmDateDialog({
+                            newDate,
+                            oldDate: journey.salary_assignment.effective_from,
                           });
-                          setLoadedSalaryStartDate(newDate);
-                          setNotice('Salary start date updated.');
-                          setTimeout(() => setNotice(null), 3000);
-                        } catch {
-                          setError('Failed to update salary start date.');
+                          setConfirmDateReason('');
+                        } else {
+                          try {
+                            await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/salary-start-date`, {
+                              salary_start_date: newDate,
+                            });
+                            setLoadedSalaryStartDate(newDate);
+                            setNotice('Salary start date updated.');
+                            setTimeout(() => setNotice(null), 3000);
+                          } catch {
+                            setError('Failed to update salary start date.');
+                          }
                         }
                       }}
                       className="w-[160px] rounded-xl"
@@ -957,6 +975,77 @@ export default function PayrollHeadSalaryReviewDetail() {
             <Button variant="destructive" disabled={busy || !reopenReason.trim()}
               onClick={() => void submitReopen()} className="cursor-pointer rounded-xl">
               Reopen Review
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirm effective date change for live salary assignment */}
+      <Dialog open={!!confirmDateDialog} onOpenChange={(v) => { if (!v) { setConfirmDateDialog(null); setConfirmDateReason(''); } }}>
+        <DialogContent className="max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold">Update Salary Effective Date</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-slate-600">
+              This will update the live salary assignment for this employee.
+            </p>
+            <div className="flex items-center gap-3 bg-slate-50 rounded-xl px-4 py-3 text-sm font-medium">
+              <span className="text-slate-500">
+                {confirmDateDialog?.oldDate
+                  ? new Date(confirmDateDialog.oldDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                  : '—'}
+              </span>
+              <span className="text-blue-500">→</span>
+              <span className="text-blue-700 font-semibold">
+                {confirmDateDialog?.newDate
+                  ? new Date(confirmDateDialog.newDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                  : '—'}
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Reason <span className="text-red-500">*</span>
+              </Label>
+              <Textarea
+                value={confirmDateReason}
+                onChange={(e) => setConfirmDateReason(e.target.value)}
+                placeholder="Why is this date being changed? (min 5 characters)"
+                rows={3}
+                className="rounded-xl resize-none text-sm"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="rounded-xl"
+              onClick={() => { setConfirmDateDialog(null); setConfirmDateReason(''); }}>
+              Cancel
+            </Button>
+            <Button
+              disabled={confirmDateBusy || confirmDateReason.trim().length < 5}
+              className="rounded-xl bg-blue-600 hover:bg-blue-700"
+              onClick={async () => {
+                if (!confirmDateDialog) return;
+                setConfirmDateBusy(true);
+                try {
+                  await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/assignment-effective-date`, {
+                    effective_date: confirmDateDialog.newDate,
+                    reason: confirmDateReason.trim(),
+                  });
+                  setLoadedSalaryStartDate(confirmDateDialog.newDate);
+                  setConfirmDateDialog(null);
+                  setConfirmDateReason('');
+                  setNotice('Salary effective date updated.');
+                  setTimeout(() => setNotice(null), 3000);
+                  await load();
+                } catch (e: any) {
+                  setError(e?.message ?? 'Failed to update effective date.');
+                } finally {
+                  setConfirmDateBusy(false);
+                }
+              }}
+            >
+              {confirmDateBusy ? 'Updating…' : 'Confirm Update'}
             </Button>
           </DialogFooter>
         </DialogContent>

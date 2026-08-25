@@ -25,14 +25,14 @@ import { SalaryRevisionDrawer } from '@/pages/payroll/SalaryRevisionDrawer';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface QueueRowSummary {
+export interface QueueRowSummary {
   offered: { status: string | null; ctc: number | null };
   final: { accepted: boolean; assigned: boolean; ctc: number | null };
   bgv: any;
   bank: any;
 }
 
-interface QueueRow {
+export interface QueueRow {
   review_id: string;
   employee_id: string;
   status: 'pending_review' | 'approved' | 'rejected';
@@ -73,8 +73,8 @@ interface RevisionRequest {
   created_at: string;
 }
 
-type SectionKey = 'offered' | 'final' | 'bgv' | 'bank';
-const SECTION_META: Record<SectionKey, { label: string; icon: any; category: 'salary' | 'bgv' | 'bank' }> = {
+export type SectionKey = 'offered' | 'final' | 'bgv' | 'bank';
+export const SECTION_META: Record<SectionKey, { label: string; icon: any; category: 'salary' | 'bgv' | 'bank' }> = {
   offered: { label: 'Offered Salary',  icon: Package,      category: 'salary' },
   final:   { label: 'Final Salary',    icon: IndianRupee,  category: 'salary' },
   bgv:     { label: 'BGV',             icon: ShieldCheck,  category: 'bgv' },
@@ -85,24 +85,24 @@ const SECTION_META: Record<SectionKey, { label: string; icon: any; category: 'sa
 
 const REVIEWER_ROLES = ['payroll_head', 'admin', 'super_admin'];
 const FIXER_ROLES = ['payroll_hr', 'branch_head', 'hr', 'payroll_head', 'admin', 'super_admin'];
-const STATUS_CFG = {
+export const STATUS_CFG = {
   pending_review: { label: 'Pending Review', chip: 'bg-amber-50 text-amber-700 border-amber-200', icon: Clock },
   approved:       { label: 'Approved',       chip: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: BadgeCheck },
   rejected:       { label: 'Rejected',       chip: 'bg-rose-50 text-rose-700 border-rose-200', icon: XCircle },
 } as const;
 
-const inr = (n: number | null | undefined) =>
+export const inr = (n: number | null | undefined) =>
   n == null ? '—' : `₹${Math.round(Number(n)).toLocaleString('en-IN')}`;
 
-const inrMo = (annual: number | null | undefined) =>
+export const inrMo = (annual: number | null | undefined) =>
   annual == null ? '—' : `₹${Math.round(Number(annual) / 12).toLocaleString('en-IN')}/mo`;
 
-const fmtDate = (d: string | null | undefined) =>
+export const fmtDate = (d: string | null | undefined) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function AgingChip({ hours, status }: { hours: number; status: string }) {
+export function AgingChip({ hours, status }: { hours: number; status: string }) {
   if (status !== 'pending_review') return null;
   if (hours >= 48) return (
     <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">
@@ -136,7 +136,7 @@ function DrawerSalaryRow({ label, value, bold, separator }: {
 // Extracted from ReviewDrawer so the exact same markup/logic renders both inside the full
 // drawer (unchanged) and inside the new per-section popups — one implementation, two places.
 
-function OfferedSalarySection({
+export function OfferedSalarySection({
   os, sc, review, status, isReviewer, effectiveDate, setEffectiveDate, busy, onApprove, payrollHrValidation, onEffectiveDateBlur,
 }: {
   os: any; sc: any; review: any; status: string | undefined; isReviewer: boolean;
@@ -226,7 +226,7 @@ function OfferedSalarySection({
   );
 }
 
-function FinalSalarySection({
+export function FinalSalarySection({
   sc, os, review, status, isReviewer, effectiveDate, setEffectiveDate, busy,
   packages, selectedGrade, setSelectedGrade, selectedPkgId, setSelectedPkgId,
   assignExisting, acceptPackage, onBuildPackage, onEffectiveDateBlur, salaryStartDateHint,
@@ -377,7 +377,7 @@ function FinalSalarySection({
   );
 }
 
-function BgvSection({
+export function BgvSection({
   bgv, bgvOverall, isReviewer, bgvCandidateId, bgvManual, bgvWaive,
 }: {
   bgv: any; bgvOverall: string | undefined; isReviewer: boolean; bgvCandidateId: string | null | undefined;
@@ -441,7 +441,7 @@ function BgvSection({
   );
 }
 
-function BankSection({ bank }: { bank: any }) {
+export function BankSection({ bank }: { bank: any }) {
   return (
     <div className="rounded-xl border border-slate-100 overflow-hidden">
       <div className="bg-gradient-to-r from-blue-600 to-cyan-600 px-4 py-2.5 flex items-center gap-2">
@@ -482,7 +482,7 @@ function BankSection({ bank }: { bank: any }) {
 // Fill the space between employee info and the salary/status columns that used to sit mostly
 // empty — one glanceable tile per section, each opening a focused popup on click.
 
-function sectionStatus(section: SectionKey, row: QueueRow): { text: string; tone: 'good' | 'warn' | 'bad' | 'neutral' } {
+export function sectionStatus(section: SectionKey, row: QueueRow): { text: string; tone: 'good' | 'warn' | 'bad' | 'neutral' } {
   const s = row.summary;
   if (!s) return { text: 'Loading…', tone: 'neutral' };
   switch (section) {
@@ -517,7 +517,7 @@ const TONE_CLASSES: Record<string, { border: string; text: string; dot: string }
   neutral: { border: 'border-slate-150 bg-slate-50/50',     text: 'text-slate-500',   dot: 'bg-slate-300'   },
 };
 
-function SectionCard({ section, row, onClick }: { section: SectionKey; row: QueueRow; onClick: () => void }) {
+export function SectionCard({ section, row, onClick }: { section: SectionKey; row: QueueRow; onClick: () => void }) {
   const meta = SECTION_META[section];
   const Icon = meta.icon;
   const { text, tone } = sectionStatus(section, row);
@@ -570,6 +570,13 @@ function SectionPopup({
   const [effectiveDate, setEffectiveDate] = useState('');
   const [loadedSalaryStartDate, setLoadedSalaryStartDate] = useState<string>('');
   const [pkgBuilderOpen, setPkgBuilderOpen] = useState(false);
+
+  const [confirmDateDialog, setConfirmDateDialog] = useState<{
+    newDate: string;
+    oldDate: string;
+  } | null>(null);
+  const [confirmDateReason, setConfirmDateReason] = useState('');
+  const [confirmDateBusy, setConfirmDateBusy] = useState(false);
 
   const loadJourney = useCallback(async () => {
     if (!employeeId) return;
@@ -627,15 +634,26 @@ function SectionPopup({
 
   const handleEffectiveDateBlur = async (newDate: string) => {
     if (!newDate || newDate === loadedSalaryStartDate) return;
-    try {
-      await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/salary-start-date`, {
-        salary_start_date: newDate,
+
+    const hasLiveAssignment = !!journey?.salary_assignment?.effective_from;
+
+    if (hasLiveAssignment) {
+      setConfirmDateDialog({
+        newDate,
+        oldDate: journey.salary_assignment.effective_from,
       });
-      setLoadedSalaryStartDate(newDate);
-      setNotice('Salary start date updated.');
-      setTimeout(() => setNotice(null), 3000);
-    } catch {
-      setError('Failed to update salary start date.');
+      setConfirmDateReason('');
+    } else {
+      try {
+        await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/salary-start-date`, {
+          salary_start_date: newDate,
+        });
+        setLoadedSalaryStartDate(newDate);
+        setNotice('Salary start date updated.');
+        setTimeout(() => setNotice(null), 3000);
+      } catch {
+        setError('Failed to update salary start date.');
+      }
     }
   };
 
@@ -816,6 +834,77 @@ function SectionPopup({
         defaultBranch={journey?.employee?.branch_name ?? ''}
         onPackageCreated={(pkgId) => void onPackageBuilt(pkgId)}
       />
+
+      {/* Confirm effective date change for live salary assignment */}
+      <Dialog open={!!confirmDateDialog} onOpenChange={(v) => { if (!v) { setConfirmDateDialog(null); setConfirmDateReason(''); } }}>
+        <DialogContent className="max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold">Update Salary Effective Date</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-slate-600">
+              This will update the live salary assignment for this employee.
+            </p>
+            <div className="flex items-center gap-3 bg-slate-50 rounded-xl px-4 py-3 text-sm font-medium">
+              <span className="text-slate-500">
+                {confirmDateDialog?.oldDate
+                  ? new Date(confirmDateDialog.oldDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                  : '—'}
+              </span>
+              <span className="text-blue-500">→</span>
+              <span className="text-blue-700 font-semibold">
+                {confirmDateDialog?.newDate
+                  ? new Date(confirmDateDialog.newDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                  : '—'}
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Reason <span className="text-red-500">*</span>
+              </Label>
+              <Textarea
+                value={confirmDateReason}
+                onChange={(e) => setConfirmDateReason(e.target.value)}
+                placeholder="Why is this date being changed? (min 5 characters)"
+                rows={3}
+                className="rounded-xl resize-none text-sm"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="rounded-xl"
+              onClick={() => { setConfirmDateDialog(null); setConfirmDateReason(''); }}>
+              Cancel
+            </Button>
+            <Button
+              disabled={confirmDateBusy || confirmDateReason.trim().length < 5}
+              className="rounded-xl bg-blue-600 hover:bg-blue-700"
+              onClick={async () => {
+                if (!confirmDateDialog) return;
+                setConfirmDateBusy(true);
+                try {
+                  await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/assignment-effective-date`, {
+                    effective_date: confirmDateDialog.newDate,
+                    reason: confirmDateReason.trim(),
+                  });
+                  setLoadedSalaryStartDate(confirmDateDialog.newDate);
+                  setConfirmDateDialog(null);
+                  setConfirmDateReason('');
+                  setNotice('Salary effective date updated.');
+                  setTimeout(() => setNotice(null), 3000);
+                  await loadJourney();
+                } catch (e: any) {
+                  setError(e?.message ?? 'Failed to update effective date.');
+                } finally {
+                  setConfirmDateBusy(false);
+                }
+              }}
+            >
+              {confirmDateBusy ? 'Updating…' : 'Confirm Update'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -850,6 +939,13 @@ function ReviewDrawer({
   const [effectiveDate, setEffectiveDate] = useState('');
   const [loadedSalaryStartDate, setLoadedSalaryStartDate] = useState<string>('');
   const [pkgBuilderOpen, setPkgBuilderOpen] = useState(false);
+
+  const [confirmDateDialog, setConfirmDateDialog] = useState<{
+    newDate: string;
+    oldDate: string;
+  } | null>(null);
+  const [confirmDateReason, setConfirmDateReason] = useState('');
+  const [confirmDateBusy, setConfirmDateBusy] = useState(false);
 
   const loadJourney = useCallback(async () => {
     if (!employeeId) return;
@@ -905,15 +1001,26 @@ function ReviewDrawer({
 
   const handleEffectiveDateBlur = async (newDate: string) => {
     if (!newDate || newDate === loadedSalaryStartDate) return;
-    try {
-      await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/salary-start-date`, {
-        salary_start_date: newDate,
+
+    const hasLiveAssignment = !!journey?.salary_assignment?.effective_from;
+
+    if (hasLiveAssignment) {
+      setConfirmDateDialog({
+        newDate,
+        oldDate: journey.salary_assignment.effective_from,
       });
-      setLoadedSalaryStartDate(newDate);
-      setNotice('Salary start date updated.');
-      setTimeout(() => setNotice(null), 3000);
-    } catch {
-      setError('Failed to update salary start date.');
+      setConfirmDateReason('');
+    } else {
+      try {
+        await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/salary-start-date`, {
+          salary_start_date: newDate,
+        });
+        setLoadedSalaryStartDate(newDate);
+        setNotice('Salary start date updated.');
+        setTimeout(() => setNotice(null), 3000);
+      } catch {
+        setError('Failed to update salary start date.');
+      }
     }
   };
 
@@ -1195,6 +1302,77 @@ function ReviewDrawer({
         defaultBranch={journey?.employee?.branch_name ?? ''}
         onPackageCreated={(pkgId) => void onPackageBuilt(pkgId)}
       />
+
+      {/* Confirm effective date change for live salary assignment */}
+      <Dialog open={!!confirmDateDialog} onOpenChange={(v) => { if (!v) { setConfirmDateDialog(null); setConfirmDateReason(''); } }}>
+        <DialogContent className="max-w-md rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold">Update Salary Effective Date</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-slate-600">
+              This will update the live salary assignment for this employee.
+            </p>
+            <div className="flex items-center gap-3 bg-slate-50 rounded-xl px-4 py-3 text-sm font-medium">
+              <span className="text-slate-500">
+                {confirmDateDialog?.oldDate
+                  ? new Date(confirmDateDialog.oldDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                  : '—'}
+              </span>
+              <span className="text-blue-500">→</span>
+              <span className="text-blue-700 font-semibold">
+                {confirmDateDialog?.newDate
+                  ? new Date(confirmDateDialog.newDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                  : '—'}
+              </span>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Reason <span className="text-red-500">*</span>
+              </Label>
+              <Textarea
+                value={confirmDateReason}
+                onChange={(e) => setConfirmDateReason(e.target.value)}
+                placeholder="Why is this date being changed? (min 5 characters)"
+                rows={3}
+                className="rounded-xl resize-none text-sm"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="rounded-xl"
+              onClick={() => { setConfirmDateDialog(null); setConfirmDateReason(''); }}>
+              Cancel
+            </Button>
+            <Button
+              disabled={confirmDateBusy || confirmDateReason.trim().length < 5}
+              className="rounded-xl bg-blue-600 hover:bg-blue-700"
+              onClick={async () => {
+                if (!confirmDateDialog) return;
+                setConfirmDateBusy(true);
+                try {
+                  await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/assignment-effective-date`, {
+                    effective_date: confirmDateDialog.newDate,
+                    reason: confirmDateReason.trim(),
+                  });
+                  setLoadedSalaryStartDate(confirmDateDialog.newDate);
+                  setConfirmDateDialog(null);
+                  setConfirmDateReason('');
+                  setNotice('Salary effective date updated.');
+                  setTimeout(() => setNotice(null), 3000);
+                  await loadJourney();
+                } catch (e: any) {
+                  setError(e?.message ?? 'Failed to update effective date.');
+                } finally {
+                  setConfirmDateBusy(false);
+                }
+              }}
+            >
+              {confirmDateBusy ? 'Updating…' : 'Confirm Update'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
