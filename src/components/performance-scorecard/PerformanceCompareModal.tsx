@@ -4,15 +4,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Checkbox } from "@/components/ui/checkbox";
 import type { ScorecardRow } from "./performanceScorecardColumns";
 
-// teamAttritionPct/teamShrinkagePct/teamRevenue are hardcoded null by the
-// backend today (performance-scorecard-snapshot.service.ts — the KPI-role-
-// template metric computation was never built), so they're deliberately
-// excluded here — a selectable series that always plots a flat empty line
-// would look like a broken chart rather than an unbuilt feature. Only
-// lateByMinutes and qualityScore are real, populated per-row metrics.
 const COMPARABLE_METRICS: Array<{ key: keyof ScorecardRow; label: string; color: string }> = [
   { key: "lateByMinutes", label: "Latecoming (min)", color: "#dc2626" },
   { key: "qualityScore", label: "Quality", color: "#15803d" },
+  { key: "teamAttritionPct", label: "Attrition (%)", color: "#ea580c" },
+  { key: "teamShrinkagePct", label: "Shrinkage (%)", color: "#6d28d9" },
 ];
 
 interface PerformanceCompareModalProps {
@@ -38,6 +34,8 @@ export default function PerformanceCompareModal({ open, onClose, employeeName, r
     date: r.snapshotDate,
     lateByMinutes: r.lateByMinutes,
     qualityScore: r.qualityScore,
+    teamAttritionPct: r.teamAttritionPct,
+    teamShrinkagePct: r.teamShrinkagePct,
   }));
 
   return (
