@@ -1,0 +1,11 @@
+{
+  // Typecheck for the Phase 4 Payroll Audit Trail module-broaden fix.
+  // Scoped per the established pattern — root tsconfig reports 0 regardless of errors.
+  //
+  //     npx tsc -p tsconfig.audittrail-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/payroll/PayrollAuditTrail.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

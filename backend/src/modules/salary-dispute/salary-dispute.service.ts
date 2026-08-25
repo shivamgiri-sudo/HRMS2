@@ -12,7 +12,7 @@ export type DisputeType =
 
 export type DisputeStatus =
   | "draft" | "pending_wfm" | "pending_payroll_head"
-  | "approved" | "rejected" | "closed";
+  | "approved" | "rejected" | "closed" | "arrear_pending";
 
 export interface SalaryDispute {
   id: string;
@@ -373,10 +373,18 @@ export const salaryDisputeService = {
       }
     }
 
-    // Update dispute with arrear info
+    // Update dispute with arrear info.
+    //
+    // 'closed' only when the arrear was actually applied to a real payslip line — 'arrear_pending'
+    // otherwise (2026-08-25 fix). Payroll runs in arrears, so no run is ever 'draft'/'processing'
+    // at the moment a dispute is approved; the old unconditional 'closed' here meant an approved
+    // dispute always looked done in the UI even when nothing had actually been paid, with nothing
+    // left anywhere to catch it once a run eventually opened. Still no automatic catch-up once a
+    // run opens — this only stops it from silently reading as resolved in the meantime.
+    const finalStatus = arrearRunMonth && arrearLineId ? "closed" : "arrear_pending";
     await db.execute(
-      `UPDATE salary_dispute SET arrear_run_month = ?, arrear_line_id = ?, status = 'closed' WHERE id = ?`,
-      [arrearRunMonth, arrearLineId, disputeId]
+      `UPDATE salary_dispute SET arrear_run_month = ?, arrear_line_id = ?, status = ? WHERE id = ?`,
+      [arrearRunMonth, arrearLineId, finalStatus, disputeId]
     );
 
     // Notify employee

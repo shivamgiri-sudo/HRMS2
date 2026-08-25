@@ -24,6 +24,10 @@ import {
 interface AuditEntry {
   id: string;
   source: "calculation" | "action";
+  // "payroll" | "payroll_loans" | "exit" — added 2026-08-25 alongside broadening the backend
+  // query past module_key='payroll' only, so a loan or F&F/exit event doesn't read as an
+  // unlabeled payroll one.
+  module: string;
   run_id: string | null;
   employee_id: string | null;
   employee_name: string | null;
@@ -49,6 +53,18 @@ const SOURCE_ICON: Record<string, React.ReactNode> = {
 const SOURCE_COLOR: Record<string, string> = {
   calculation: "bg-blue-100 text-blue-800 border-blue-200",
   action:      "bg-purple-100 text-purple-800 border-purple-200",
+};
+
+// Added 2026-08-25 alongside broadening the backend query past module_key='payroll' only.
+const MODULE_LABEL: Record<string, string> = {
+  payroll: "Payroll",
+  payroll_loans: "Loans",
+  exit: "F&F / Exit",
+};
+const MODULE_COLOR: Record<string, string> = {
+  payroll: "bg-slate-100 text-slate-600 border-slate-200",
+  payroll_loans: "bg-amber-100 text-amber-800 border-amber-200",
+  exit: "bg-rose-100 text-rose-800 border-rose-200",
 };
 
 const SOURCE_BORDER: Record<string, string> = {
@@ -118,12 +134,19 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
           </TooltipProvider>
         </td>
 
-        {/* Source badge */}
+        {/* Source + module badges */}
         <td className="px-3 py-2">
-          <Badge variant="outline" className={`text-[11px] px-1.5 py-0 gap-1 font-bold rounded-full ${SOURCE_COLOR[entry.source]}`}>
-            {SOURCE_ICON[entry.source]}
-            {entry.source}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-1">
+            <Badge variant="outline" className={`text-[11px] px-1.5 py-0 gap-1 font-bold rounded-full ${SOURCE_COLOR[entry.source]}`}>
+              {SOURCE_ICON[entry.source]}
+              {entry.source}
+            </Badge>
+            {entry.module && entry.module !== "payroll" && (
+              <Badge variant="outline" className={`text-[11px] px-1.5 py-0 font-bold rounded-full ${MODULE_COLOR[entry.module] ?? "bg-slate-100 text-slate-600 border-slate-200"}`}>
+                {MODULE_LABEL[entry.module] ?? entry.module}
+              </Badge>
+            )}
+          </div>
         </td>
 
         {/* Event type — monospace chip */}

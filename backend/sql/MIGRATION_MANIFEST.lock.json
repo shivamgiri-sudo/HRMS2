@@ -624,7 +624,9 @@
     "migrations/1602_payroll_loans_rbac_restore.sql",
     "migrations/1603_loan_negative_pending_cleanup.sql",
     "migrations/1604_employee_performance_daily_snapshot.sql",
-    "migrations/1605_deactivate_dangling_payroll_disbursal_grant.sql"
+    "migrations/1605_deactivate_dangling_payroll_disbursal_grant.sql",
+    "migrations/1607_performance_scorecard_page_catalog.sql",
+    "migrations/1608_salary_dispute_arrear_pending_status.sql"
   ],
   "approvedDeletions": [
     {
@@ -658,8 +660,8 @@
     "migrations/1603_loan_negative_pending_cleanup.sql",
     "migrations/1604_employee_performance_daily_snapshot.sql",
     "migrations/1605_deactivate_dangling_payroll_disbursal_grant.sql",
-    "migrations/1606_normalize_component_names_fix_total_deductions.sql",
-    "migrations/1607_performance_scorecard_page_catalog.sql"
+    "migrations/1607_performance_scorecard_page_catalog.sql",
+    "migrations/1608_salary_dispute_arrear_pending_status.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

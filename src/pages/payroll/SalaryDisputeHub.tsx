@@ -32,7 +32,7 @@ import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 // ─── Shared types & constants ─────────────────────────────────────────────────
 
-type DisputeStatus = "pending_wfm"|"pending_payroll_head"|"approved"|"rejected"|"closed";
+type DisputeStatus = "pending_wfm"|"pending_payroll_head"|"approved"|"rejected"|"closed"|"arrear_pending";
 type DisputeType = "MISSING_OT"|"INCORRECT_ATTENDANCE"|"REGULARIZATION_NOT_APPLIED"|
   "LEAVE_NOT_ASSIGNED"|"INCENTIVE_MISSING"|"WRONG_DEDUCTION"|
   "WRONG_COMPONENT_AMOUNT"|"SHIFT_ALLOWANCE_MISSING"|"DOUBLE_DEDUCTION"|"WRONG_LWP_COUNT"|"OTHER";
@@ -88,9 +88,13 @@ const STATUS_CONFIG: Record<DisputeStatus, { label: string; color: string; icon:
   approved:             { label: "Approved",      color: "bg-emerald-100 text-emerald-800 border-emerald-200", icon: <CheckCircle2 className="w-3 h-3" /> },
   rejected:             { label: "Rejected",      color: "bg-red-100 text-red-800 border-red-200",         icon: <XCircle className="w-3 h-3" /> },
   closed:               { label: "Closed",        color: "bg-slate-100 text-slate-600 border-slate-200",   icon: <CheckCircle2 className="w-3 h-3" /> },
+  // 2026-08-25: distinct from "closed" — approved, but payroll runs in arrears so there was no
+  // open run to attach the arrear to yet. Not resolved, still needs a run to open before the
+  // differential actually lands in a payslip. Amber (not green) so it doesn't read as done.
+  arrear_pending:       { label: "Arrear Pending", color: "bg-amber-100 text-amber-800 border-amber-200",  icon: <Clock className="w-3 h-3" /> },
 };
 
-const STATUS_ORDER: DisputeStatus[] = ["pending_wfm","pending_payroll_head","approved","rejected","closed"];
+const STATUS_ORDER: DisputeStatus[] = ["pending_wfm","pending_payroll_head","approved","rejected","closed","arrear_pending"];
 const TIMELINE_STAGES: { key: DisputeStatus; label: string; reviewer: string }[] = [
   { key: "pending_wfm",          label: "Raised",       reviewer: "Employee" },
   { key: "pending_payroll_head", label: "WFM Review",   reviewer: "WFM Team" },

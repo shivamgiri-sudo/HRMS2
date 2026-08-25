@@ -196,12 +196,15 @@ function SubmitTab() {
 
 // ── Approvals Tab ─────────────────────────────────────────────────────────────
 
+// superadmin_approved/payroll_included removed 2026-08-25: the approve action
+// (payroll-more.routes.ts PATCH /requests/:id/approve) only ever writes
+// payroll_head_approved or rejected — no code path anywhere produces either of those two
+// statuses, so filtering by them always returned nothing. payroll_head_approved is the
+// real terminal state today.
 const STATUS_OPTIONS = [
   { value: "", label: "All Statuses" }, { value: "submitted", label: "Submitted" },
   { value: "branch_payroll_validated", label: "Branch Payroll Validated" },
   { value: "payroll_head_approved", label: "Payroll Head Approved" },
-  { value: "superadmin_approved", label: "Super Admin Approved" },
-  { value: "payroll_included", label: "Payroll Included" },
   { value: "rejected", label: "Rejected" }, { value: "cancelled", label: "Cancelled" },
 ];
 
@@ -268,10 +271,10 @@ function ApprovalsTab() {
       <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-600">
-            <tr>{["Holiday", "Branch", "Process", "Requested By", "Status", "Stage", ""].map(h => <th key={h} className="text-left px-4 py-3 whitespace-nowrap font-medium">{h}</th>)}</tr>
+            <tr>{["Holiday", "Branch", "Process", "Requested By", "Status", ""].map(h => <th key={h} className="text-left px-4 py-3 whitespace-nowrap font-medium">{h}</th>)}</tr>
           </thead>
           <tbody>
-            {loading && <tr><td colSpan={7} className="px-4 py-6 text-center text-muted-foreground">Loading…</td></tr>}
+            {loading && <tr><td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">Loading…</td></tr>}
             {!loading && requests.map(req => (
               <tr key={req.id} className="border-t hover:bg-muted/30">
                 <td className="px-4 py-2 whitespace-nowrap"><div className="font-medium">{(req as any).holiday_name ?? "—"}</div><div className="text-xs text-muted-foreground">{req.holiday_date?.slice(0,10)}</div></td>
@@ -279,11 +282,10 @@ function ApprovalsTab() {
                 <td className="px-4 py-2 text-xs">{req.process_id ?? "—"}</td>
                 <td className="px-4 py-2 text-xs">{req.requested_by_name ?? "—"}</td>
                 <td className="px-4 py-2"><span className={`inline-block text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_BADGE[req.status] ?? "bg-gray-100 text-gray-700"}`}>{STAGE_LABELS[req.status] ?? req.status?.replace(/_/g," ")}</span></td>
-                <td className="px-4 py-2 text-xs text-muted-foreground">{STAGE_LABELS[req.current_approval_stage] ?? req.current_approval_stage?.replace(/_/g," ")}</td>
                 <td className="px-4 py-2"><Button size="sm" variant="outline" onClick={() => { setSelected(req); setRemarks(""); setActionError(null); setActionSuccess(null); }}>Review</Button></td>
               </tr>
             ))}
-            {!loading && requests.length === 0 && <tr><td colSpan={7} className="px-4 py-6 text-center text-muted-foreground">No requests found.</td></tr>}
+            {!loading && requests.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-muted-foreground">No requests found.</td></tr>}
           </tbody>
         </table>
       </div>

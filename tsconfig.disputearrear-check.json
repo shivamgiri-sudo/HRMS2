@@ -1,0 +1,11 @@
+{
+  // Typecheck for the Phase 4 Salary Dispute "Arrear Pending" status fix.
+  // Scoped per the established pattern — root tsconfig reports 0 regardless of errors.
+  //
+  //     npx tsc -p tsconfig.disputearrear-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/payroll/SalaryDisputeHub.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

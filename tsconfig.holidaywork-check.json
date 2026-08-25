@@ -1,0 +1,12 @@
+{
+  // Typecheck for the Phase 4 Holiday Work UI collapse (removed unreachable
+  // superadmin_approved/payroll_included filter options and the stale Stage column).
+  // Scoped per the established pattern — root tsconfig reports 0 regardless of errors.
+  //
+  //     npx tsc -p tsconfig.holidaywork-check.json
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/payroll/HolidayWork.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

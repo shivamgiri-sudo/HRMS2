@@ -45,7 +45,14 @@ payrollAuditTrailRouter.get(
     const calcWhere = calcConds.length ? `WHERE ${calcConds.join(" AND ")}` : "";
 
     // --- sensitive action log ----------------------------------------------
-    const salConds: string[] = ["sal.module_key = 'payroll'"];
+    // module_key IN (...) added 2026-08-25: this page's own header claims "full forensic
+    // record of all payroll calculations and sensitive access", but the exact-match filter
+    // silently excluded loan events (module_key='payroll_loans') and F&F/exit events
+    // (module_key='exit') — both genuinely logged to this same table, just invisible here.
+    // Live-verified counts: 41,219 'payroll' rows visible before this fix, 11 'payroll_loans'
+    // and 7 'exit' rows completely absent. Holiday-work approvals still won't appear — they
+    // write to their own holiday_work_approval_log table, not this one, a separate gap.
+    const salConds: string[] = ["sal.module_key IN ('payroll','payroll_loans','exit')"];
     const salParams: unknown[] = [];
 
     if (run_id)      { salConds.push("JSON_UNQUOTE(JSON_EXTRACT(sal.change_summary, '$.run_id')) = ?"); salParams.push(run_id); }
@@ -67,6 +74,9 @@ payrollAuditTrailRouter.get(
           `SELECT
              pca.id,
              'calculation' AS source,
+             -- payroll_calculation_audit has no module_key column — it's payroll-only by
+             -- definition, so this literal is correct, not a stand-in for a missing value.
+             'payroll' AS module,
              pca.run_id,
              pca.employee_id,
              COALESCE(NULLIF(TRIM(e.full_name),''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -104,6 +114,7 @@ payrollAuditTrailRouter.get(
           `SELECT
              sal.id,
              'action' AS source,
+             sal.module_key AS module,
              NULL AS run_id,
              NULL AS employee_id,
              NULL AS employee_name,
