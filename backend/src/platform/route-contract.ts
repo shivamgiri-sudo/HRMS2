@@ -46,9 +46,20 @@ export function normalizePath(rawPath: string): string {
   let path = rawPath.trim();
 
   // The backend never routes on the query string or the hash.
-  const cut = Math.min(
-    ...[path.indexOf("?"), path.indexOf("#")].filter((i) => i >= 0).concat([path.length]),
-  );
+  // Only consider ? or # that are NOT inside a ${...} template expression:
+  // optional-chaining operators (journey?.bgv?.id) contain ? and would
+  // otherwise be misread as query-string delimiters, truncating the path.
+  const cutCandidates: number[] = [];
+  let depth = 0;
+  for (let k = 0; k < path.length; k++) {
+    if (path[k] === "$" && path[k + 1] === "{") { depth++; k++; continue; }
+    if (path[k] === "}" && depth > 0) { depth--; continue; }
+    if (depth === 0 && (path[k] === "?" || path[k] === "#")) {
+      cutCandidates.push(k);
+      break;
+    }
+  }
+  const cut = cutCandidates.length > 0 ? cutCandidates[0] : path.length;
   path = path.slice(0, cut);
 
   if (path.length > 1 && path.endsWith("/")) path = path.slice(0, -1);
