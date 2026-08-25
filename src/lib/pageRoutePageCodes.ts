@@ -233,6 +233,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/jobs": "JOBS",
   "/modules": "MODULE_LAUNCHER",
   "/onboard-full": "ONBOARDING_FULL",
+  "/performance-command-center": "PERFORMANCE_SCORECARD_COMMAND_CENTER",
   "/performance-hub": "PERFORMANCE_HUB",
   "/quality/executive": "QUALITY_EXECUTIVE",
   "/quality/team": "QUALITY_TEAM",

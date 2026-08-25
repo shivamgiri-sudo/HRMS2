@@ -3,8 +3,12 @@ import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
-import { getEmployeeForUser, hasRole } from "../../shared/accessGuard.js";
-import { managementService } from "../management/management.service.js";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
+import {
+  buildScopeWhereEmployees,
+  resolveDashboardScope,
+  DashboardScopeConfigurationError,
+} from "../../shared/dashboardScope.js";
 import { db } from "../../db/mysql.js";
 
 const router = Router();
@@ -13,29 +17,19 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 router.use(requireAuth);
 
 /**
- * Resolve scoped employee ID list for non-admin/hr/ceo/qa roles.
- * Mirrors management.routes.ts's resolveTeamScope (not exported from there,
- * so replicated here rather than imported — see task-7-report.md).
- * Admins, HR, CEO, QA see everyone. Managers/TLs see only their direct reports.
- * Returns null if the caller has no employee record (block the request).
- * Returns [] if the manager has no reports yet (no data returned).
- */
-async function resolveTeamScope(userId: string): Promise<{ employeeIds: string[] | null; isWide: boolean }> {
-  if (await hasRole(userId, "admin", "hr", "ceo", "qa")) {
-    return { employeeIds: null, isWide: true };
-  }
-  const emp = await getEmployeeForUser(userId);
-  if (!emp) return { employeeIds: null, isWide: false };
-  const ids = await managementService.getDirectReportIds(emp.id);
-  if (!ids.includes(emp.id)) ids.push(emp.id);
-  return { employeeIds: ids, isWide: false };
-}
-
-/**
  * Role list is SECURITY-SENSITIVE. Matches dashboardAccessRegistry.ts's
  * PERFORMANCE_SCORECARD.allowedRoleKeys exactly (confirmed 2026-08-25).
  * Deliberately excludes "admin" and "wfm" per Task 5's 2026-08-22
  * production-incident fix — do not add them back without a security review.
+ *
+ * NOTE (asymmetry, not a bug): requireRole's role-alias expansion means
+ * "management" here also admits "operations_manager" — it is NOT in this
+ * registry's allowedRoleKeys or in migration 1607's seeded grants.
+ * operations_manager therefore passes this route gate, but is then scoped
+ * (and possibly zeroed out) by resolveDashboardScope below, and is blocked
+ * at the page-level Gate in the frontend. Not a security leak today — just
+ * a reminder that the three gates (route requireRole, registry
+ * allowedRoleKeys, page Gate) are not alias-for-alias identical.
  */
 router.get(
   "/",
@@ -62,23 +56,41 @@ router.get(
     if (!dateFrom || !dateTo) {
       return res.status(400).json({ success: false, message: "dateFrom and dateTo are required" });
     }
-    const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
-    if (!isWide && employeeIds === null) {
-      return res.status(403).json({
-        success: false,
-        message: "Unable to resolve your team scope — no employee record or organization-wide role found",
-      });
+
+    // Real branch/process/team scoping via the shared resolver (30+ call sites),
+    // replacing a locally-duplicated resolver that only supported
+    // direct-reports-only or fully-org-wide with no branch/process tier —
+    // contradicting this feature's own spec promising HR/Ops roles a
+    // branch/process view. See performance-scorecard-drilldown.ts, fixed the
+    // same way just before this route.
+    let scopeSql: string;
+    let scopeParams: string[];
+    try {
+      const context = await getUserRoleContext(req.authUser!.id);
+      const scope = await resolveDashboardScope(req.authUser!.id, context.primaryRole);
+      ({ sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e"));
+    } catch (err) {
+      // resolveDashboardScope throws DashboardScopeConfigurationError (409) when it
+      // cannot establish any scope for the caller's role (no employee mapping, no
+      // branch/process assignment, no reporting hierarchy). Preserving this route's
+      // prior fail-closed contract: that condition surfaces here as 403, not 409.
+      if (err instanceof DashboardScopeConfigurationError) {
+        return res.status(403).json({
+          success: false,
+          message: "Unable to resolve your team scope — no employee record or organization-wide role found",
+        });
+      }
+      throw err;
     }
-    if (!isWide && employeeIds !== null && employeeIds.length === 0) {
+
+    // A resolvable scope with zero matching employees (e.g. a manager with no
+    // reports yet) is not an error — it is legitimately "no data".
+    if (scopeSql === "1=0") {
       return res.json({ success: true, data: [] });
     }
 
-    const conds = ["s.snapshot_date BETWEEN ? AND ?"];
-    const params: unknown[] = [dateFrom, dateTo];
-    if (!isWide && employeeIds && employeeIds.length > 0) {
-      conds.push(`s.employee_id IN (${employeeIds.map(() => "?").join(",")})`);
-      params.push(...employeeIds);
-    }
+    const conds = ["s.snapshot_date BETWEEN ? AND ?", scopeSql];
+    const params: unknown[] = [dateFrom, dateTo, ...scopeParams];
 
     // One row per employee per day. Raised from 5000: at ~1,110 active employees the
     // previous cap silently truncated any org-wide request wider than ~5 days
@@ -109,7 +121,7 @@ router.get(
       // eslint-disable-next-line no-console
       console.warn(
         `[performance-scorecard] row limit hit (${ROW_LIMIT}) for dateFrom=${dateFrom} dateTo=${dateTo} ` +
-          `userId=${req.authUser!.id} isWide=${isWide} — response was truncated`,
+          `userId=${req.authUser!.id} — response was truncated`,
       );
     }
 

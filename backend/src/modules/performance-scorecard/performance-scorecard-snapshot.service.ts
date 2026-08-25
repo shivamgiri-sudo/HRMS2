@@ -14,13 +14,20 @@ export async function computeEmployeeSnapshot(
     [employeeId, date],
   )) as any;
 
+  // Whether a PIP was active ON `date` (the snapshot date), not whether one is
+  // active right now. `pr.status = 'active'` with no date bound stamped a
+  // HISTORICAL/backfilled snapshot row with TODAY's current PIP status —
+  // flattening the PIP trend in the drilldown to today's value and silently
+  // back-dating the current PIP state across all of history on any backfill.
+  // The checkpoint join is bounded the same way so a checkpoint recorded
+  // AFTER the snapshot date cannot leak into a historical row.
   const [pipRows] = (await db.execute(
     `SELECT pr.status, pc.rating
        FROM pip_record pr
-       LEFT JOIN pip_checkpoint pc ON pc.pip_id = pr.id
-      WHERE pr.employee_id = ? AND pr.status = 'active'
+       LEFT JOIN pip_checkpoint pc ON pc.pip_id = pr.id AND pc.checkpoint_date <= ?
+      WHERE pr.employee_id = ? AND pr.start_date <= ? AND (pr.end_date IS NULL OR pr.end_date >= ?)
       ORDER BY pc.checkpoint_date DESC LIMIT 1`,
-    [employeeId],
+    [date, employeeId, date, date],
   )) as any;
 
   const [[quality]] = (await db.execute(
@@ -30,6 +37,10 @@ export async function computeEmployeeSnapshot(
     [employeeId, date],
   )) as any;
 
+  // Known limitation: designation_id is read as-of-now (employees.designation_id
+  // has no history table in this schema), so a historical backfill stamps a
+  // past snapshot with the employee's CURRENT designation, not the one they
+  // held on `date`. Not fixed here — there is nothing to fix it against.
   const [[emp]] = (await db.execute(
     `SELECT designation_id FROM employees WHERE id = ? LIMIT 1`,
     [employeeId],

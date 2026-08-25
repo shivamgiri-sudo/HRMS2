@@ -24,6 +24,26 @@ describe("computeEmployeeSnapshot", () => {
     expect(result.pipStatus).toBe("none");
     expect(result.qualityScore).toBe(82.5);
   });
+
+  it("binds the snapshot date (not today) into the PIP-active query, for historical correctness", async () => {
+    mocks.execute
+      .mockResolvedValueOnce([[{ attendance_status: "present", late_by_minutes: 0 }]]) // attendance
+      .mockResolvedValueOnce([[{ status: "active", rating: "on_track" }]]) // active pip
+      .mockResolvedValueOnce([[{ overall_score: 90 }]]) // quality
+      .mockResolvedValueOnce([[{ designation_id: "desig-1" }]]); // employee designation
+
+    await computeEmployeeSnapshot("emp-1", "2026-01-15");
+
+    const [pipSql, pipParams] = mocks.execute.mock.calls[1];
+    expect(pipSql).not.toContain("pr.status = 'active'");
+    expect(pipSql).toContain("pr.start_date <=");
+    expect(pipSql).toContain("pr.end_date");
+    expect(pipSql).toContain("pc.checkpoint_date <=");
+    // date param must be bound, not the literal string 'active', and must be the
+    // snapshot date passed in — not the current date.
+    expect(pipParams).toContain("2026-01-15");
+    expect(pipParams).not.toContain("active");
+  });
 });
 
 describe("writeEmployeePerformanceSnapshots", () => {

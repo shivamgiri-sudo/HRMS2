@@ -204,7 +204,7 @@ export const DASHBOARD_ACCESS_REGISTRY: Readonly<
     code: "PERFORMANCE_SCORECARD",
     variant: "performance_scorecard",
     displayName: "Performance Scorecard",
-    route: "/performance-scorecard/dashboard",
+    route: "/performance-command-center",
     pageCode: "PERFORMANCE_SCORECARD_COMMAND_CENTER",
     allowedRoleKeys: ["manager", "process_manager", "assistant_manager", "branch_head", "branch_manager", "team_leader", "tl", "hr", "hr_admin", "ho_hr", "branch_hr", "process_hr", "ceo", "coo", "management", "super_admin"],
     scopeTypes: ["ORGANISATION", "TEAM", "BRANCH", "PROCESS"],
