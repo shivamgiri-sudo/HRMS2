@@ -10,6 +10,7 @@ import { geminiProvider } from './providers/gemini.provider.js';
 import { ollamaProvider } from './providers/ollama.provider.js';
 import { openRouterProvider } from './providers/openrouter.provider.js';
 import { claudeProvider } from './providers/claude.provider.js';
+import { omniRouteProvider } from './providers/omniroute.provider.js';
 import { aiProviderConfigService } from './ai-provider-config.service.js';
 import { env } from '../../config/env.js';
 
@@ -23,6 +24,7 @@ class AiProviderRegistry {
     this.register(ollamaProvider);
     this.register(openRouterProvider);
     this.register(claudeProvider);
+    this.register(omniRouteProvider);
   }
 
   /**
