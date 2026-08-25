@@ -69,6 +69,7 @@ import { portalRouter } from "./modules/portal/portal.routes.js";
 import { atsRouter, atsPublicRouter } from "./modules/ats/ats.routes.js";
 import { atsFormConfigRouter } from "./modules/ats/ats-form-config.routes.js";
 import { registrationEnhancedRouter } from "./modules/ats/registration.enhanced.routes.js";
+import testDailyReportRouter from "./modules/ats/test-daily-report.routes.js";
 import mockDigilockerRouter from "./modules/ats/mock-digilocker.routes.js";
 import { queueRouter, queuePublicRouter } from "./modules/ats/queue.routes.js";
 import { exitRouter } from "./modules/exit/exit.routes.js";
@@ -436,6 +437,7 @@ app.use("/api/ats", atsFormConfigRouter);
 // Unauthenticated by design so a walk-in can self-register; rate limited
 // because that also makes it reachable by anyone.
 app.use("/api/ats/registration", publicRegistrationLimiter, registrationEnhancedRouter);
+app.use("/api/test-report", testDailyReportRouter); // TEMP TEST - REMOVE AFTER TESTING
 app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)
 app.use("/api/public/verify", employeeVerifyRouter); // public QR code verification (no auth)
 app.use("/api/public/login-info", loginInfoRouter);  // public login page stats (no auth, aggregate only)

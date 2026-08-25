@@ -3795,6 +3795,9 @@ function CostCentreSplitEditor({
           const line = group?.lines.find((item) => item.id === row.budgetLineId);
           const nonTaxable = line && ["exempt", "non_gst"].includes(line.tax_treatment);
           const hasOwnBudget = Boolean(line && line.cost_centre_id === row.costCentreKey);
+          const ownBudgetAvailable = hasOwnBudget && Number(line?.available_gross_amount || 0) > 0;
+          const sharedLine = group?.lines.find((l) => !l.cost_centre_id);
+          const sharedPoolAmount = sharedLine ? Number(sharedLine.available_gross_amount) : 0;
           return (
             <div key={row.key} className={cn("rounded-[10px] border border-grn-line p-3", !row.included && "opacity-50")}>
               <div className="mb-2 flex items-start justify-between gap-2">
@@ -3810,10 +3813,10 @@ function CostCentreSplitEditor({
                     </span>
                     {group?.processName && <GrnCellSub>{group.processName}</GrnCellSub>}
                     {line && (
-                      <GrnCellSub className={!hasOwnBudget ? "text-blue-600" : undefined}>
-                        {hasOwnBudget
+                      <GrnCellSub className={!ownBudgetAvailable ? "text-blue-600" : undefined}>
+                        {ownBudgetAvailable
                           ? `${money(Number(line.available_gross_amount))} available`
-                          : `Shared pool (${money(Number(line.available_gross_amount))})`}
+                          : `Shared pool (${money(sharedPoolAmount)})`}
                       </GrnCellSub>
                     )}
                   </div>
@@ -3888,6 +3891,10 @@ function CostCentreSplitEditor({
               // cost centre counts as its own available budget; a shared fallback shows ₹0 here
               // (informational only — doesn't block the split, isUnbudgeted already covers that).
               const hasOwnBudget = Boolean(line && line.cost_centre_id === row.costCentreKey);
+              const ownBudgetAvailable = hasOwnBudget && Number(line?.available_gross_amount || 0) > 0;
+              // Find a branch-common line (cost_centre_id = NULL) for shared pool display
+              const sharedLine = group?.lines.find((l) => !l.cost_centre_id);
+              const sharedPoolAmount = sharedLine ? Number(sharedLine.available_gross_amount) : 0;
               return (
                 <tr key={row.key} className={cn(GRN_TR, !row.included && "opacity-50")}>
                   <GrnTd>
@@ -3952,10 +3959,10 @@ function CostCentreSplitEditor({
                   <GrnTd align="right" className="font-grn-mono">
                     {!line ? (
                       "—"
-                    ) : hasOwnBudget ? (
+                    ) : ownBudgetAvailable ? (
                       money(Number(line.available_gross_amount))
                     ) : (
-                      <span className="text-blue-600" title={`Drawing from branch-level shared pool: ${money(Number(line.available_gross_amount))} available`}>
+                      <span className="text-blue-600" title={`Drawing from branch-level shared pool: ${money(sharedPoolAmount)} available`}>
                         Shared pool
                       </span>
                     )}
