@@ -13,7 +13,12 @@ import { pickConversationEntries } from '../ai-conversation.service.js';
 // /v1/chat/completions, same request/response shape as OpenRouter, so this
 // provider mirrors openrouter.provider.ts almost exactly.
 const DEFAULT_BASE_URL = 'http://127.0.0.1:20128/v1';
-const DEFAULT_MODEL = 'auto/best-chat';
+// 'auto/best-chat' and friends route to reasoning models that spend their
+// entire token budget on hidden reasoning_content and never emit a real
+// `content` field in OmniRoute's keyless free pool — verified 2026-08-25.
+// 'auto/mimo' (mimo-v2.5-free) is the one keyless route confirmed to return
+// real, grounded content in that same free pool.
+const DEFAULT_MODEL = 'auto/mimo';
 
 function baseUrl(value?: string): string {
   const candidate = String(value || process.env.OMNIROUTE_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
