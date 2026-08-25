@@ -62,6 +62,30 @@ describe("AON reference date uses salary_start_date with date_of_joining fallbac
     expect(sql).not.toMatch(/DATEDIFF\([^)]*,\s*e\.date_of_joining\)/);
     expect(sql).not.toMatch(/LAST_DAY\s*\(\s*e\.date_of_joining\s*\)/);
   });
+
+  // Regression test: cohort_month (the SELECT and its GROUP BY) must group by
+  // AON_REFERENCE_JOIN_DATE_SQL, not raw e.date_of_joining — otherwise the cohort a caller
+  // sees on screen disagrees with what a click on that cohort drills into (the cohortMonth
+  // filter in aon-drilldown.executor.ts already uses the COALESCE'd date), for any employee
+  // whose salary_start_date differs from date_of_joining.
+  it("cohort_month is grouped/labelled by AON_REFERENCE_JOIN_DATE_SQL, not raw date_of_joining", async () => {
+    mockExecute.mockResolvedValueOnce([[], []]);
+    await aonCohortSurvival({}, SCOPE, OPTIONS);
+    // Use the LAST call, not calls[0] -- this mock's call log is file-scoped with no reset,
+    // so calls[0] is whichever executor ran first across the whole file, not necessarily
+    // this test's own call.
+    const sql = String(mockExecute.mock.calls[mockExecute.mock.calls.length - 1][0]);
+    expect(sql).toContain(
+      "DATE_FORMAT(COALESCE(e.salary_start_date, e.date_of_joining), '%Y-%m') AS cohort_month"
+    );
+    expect(sql).not.toMatch(/DATE_FORMAT\(\s*e\.date_of_joining\s*,\s*'%Y-%m'\)/);
+    // The GROUP BY must use the same COALESCE'd expression for cohort_month, not the raw column.
+    const groupByMatch = sql.match(/GROUP BY([\s\S]*?)ORDER BY/);
+    expect(groupByMatch).not.toBeNull();
+    expect(groupByMatch![1]).toContain(
+      "DATE_FORMAT(COALESCE(e.salary_start_date, e.date_of_joining), '%Y-%m')"
+    );
+  });
 });
 
 describe("aonCohortSurvival drill-down ids", () => {

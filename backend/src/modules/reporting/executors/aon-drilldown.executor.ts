@@ -96,10 +96,6 @@ export async function aonDrilldownEmployees(
     clauses.push("e.date_of_exit BETWEEN ? AND ?");
     params.push(from, to);
   } else {
-    clauses.push("e.active_status = 1");
-    const bucketClause = aonBucketClause(filters.aonBucket);
-    if (bucketClause) clauses.push(bucketClause);
-
     // Independent, optional narrowing filter alongside aonBucket -- a caller drilling from
     // Cohort Survival passes cohortMonth (and no aonBucket); a caller drilling from the
     // Overview heatmap passes aonBucket (and no cohortMonth). Both may be present at once;
@@ -108,6 +104,23 @@ export async function aonDrilldownEmployees(
       typeof filters.cohortMonth === "string" && /^\d{4}-\d{2}$/.test(filters.cohortMonth)
         ? filters.cohortMonth
         : null;
+
+    // A cohort-month drill is "everyone who joined that month, INCLUDING those who have
+    // since left" -- that is the documented meaning of a cohort (see aonCohortSurvival's own
+    // doc comment and AonAnalyticsView.tsx's CohortRow/CohortSurvival doc comment), and the
+    // cohort-detail table's own joined/left-by-30d counts have no active_status restriction
+    // either. Applying active_status = 1 here would silently drop every since-left employee
+    // and the drawer would never reconcile against the cohort row that opened it.
+    //
+    // The Overview-heatmap headcount call (no cohortMonth, aonBucket instead) is genuinely
+    // "who is currently active in this AON bucket" and keeps the active_status filter exactly
+    // as before -- this branch does not change that call's behaviour or row count.
+    if (!cohortMonth) {
+      clauses.push("e.active_status = 1");
+    }
+    const bucketClause = aonBucketClause(filters.aonBucket);
+    if (bucketClause) clauses.push(bucketClause);
+
     if (cohortMonth) {
       clauses.push(`DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m') = ?`);
       params.push(cohortMonth);

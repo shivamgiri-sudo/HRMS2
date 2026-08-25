@@ -823,7 +823,7 @@ export async function aonCohortSurvival(
          ELSE NULL END`;
 
   const base = `
-    SELECT DATE_FORMAT(e.date_of_joining, '%Y-%m')      AS cohort_month,
+    SELECT DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m') AS cohort_month,
            COALESCE(b.branch_name, 'UNASSIGNED')        AS branch_name,
            COALESCE(cc.cost_centre_code, 'UNASSIGNED')  AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED')  AS cost_centre_name,
@@ -852,7 +852,7 @@ export async function aonCohortSurvival(
       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
       LEFT JOIN process_master p      ON p.id  = e.process_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY DATE_FORMAT(e.date_of_joining, '%Y-%m'),
+     GROUP BY DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m'),
               b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name,
               b.id, cc.id, p.id
      ORDER BY cohort_month DESC, b.branch_name, cc.cost_centre_code, p.process_name`;

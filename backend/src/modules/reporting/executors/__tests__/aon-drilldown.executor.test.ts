@@ -95,4 +95,26 @@ describe("aonDrilldownEmployees", () => {
     const params = mockExecute.mock.calls[0][1];
     expect(params).toContain("2026-03");
   });
+
+  // Regression test: a cohort-month drill must show everyone who joined that month,
+  // INCLUDING those who have since left (see aonCohortSurvival's own doc comment and
+  // AonAnalyticsView.tsx's CohortRow/CohortSurvival doc comment) — active_status must NOT be
+  // filtered when cohortMonth is present, or the drawer silently excludes since-left
+  // employees and never reconciles against the cohort row's own joined/left-by-30d counts.
+  it("does NOT filter by active_status when cohortMonth is present (drilling from Cohort Survival)", async () => {
+    mockExecute.mockResolvedValueOnce([[], []]);
+    await aonDrilldownEmployees({ metric: "headcount", cohortMonth: "2026-03" }, SCOPE, OPTIONS);
+    const sql = String(mockExecute.mock.calls[0][0]);
+    expect(sql).not.toContain("active_status");
+  });
+
+  // The Overview-heatmap headcount call (aonBucket, no cohortMonth) is genuinely "who is
+  // currently active in this AON bucket" and must keep filtering by active_status = 1 —
+  // the cohortMonth fix above must not change this call's behaviour.
+  it("still filters by active_status = 1 for a headcount call with aonBucket and no cohortMonth", async () => {
+    mockExecute.mockResolvedValueOnce([[], []]);
+    await aonDrilldownEmployees({ metric: "headcount", aonBucket: "90+" }, SCOPE, OPTIONS);
+    const sql = String(mockExecute.mock.calls[0][0]);
+    expect(sql).toContain("e.active_status = 1");
+  });
 });
