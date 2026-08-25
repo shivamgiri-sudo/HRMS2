@@ -53,7 +53,14 @@ export function SalaryRevisionDrawer({
   };
 
   return (
-    <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+    <Sheet open={open} onOpenChange={(v) => {
+      if (!v) {
+        setNewDate('');
+        setReason('');
+        setError(null);
+        onClose();
+      }
+    }}>
       <SheetContent side="right" className="max-w-lg w-full flex flex-col p-0 overflow-hidden">
         <div className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-5">
           <SheetHeader>

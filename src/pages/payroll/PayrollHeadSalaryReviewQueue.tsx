@@ -1253,6 +1253,7 @@ export default function PayrollHeadSalaryReviewQueue() {
   useEffect(() => { void loadRevisions(); }, [loadRevisions]);
 
   const reviewRevision = async (id: number, action: 'approve' | 'reject', remarks?: string) => {
+    setError(null);
     setRevBusy(true);
     try {
       await hrmsApi.post(`/api/salary-revision/${id}/review`, { action, remarks });
