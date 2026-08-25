@@ -1007,8 +1007,15 @@ function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: 
   /* early_quit_rate is constant across a value's four bucket rows by construction, so it
      is read from the first row rather than recomputed. Ranked by deviation from the average
      early-quit rate across the current slice, not raw exit count -- this alone answers what is
-     driving attrition. */
-  const values = useMemo(() => {
+     driving attrition.
+     `avgEarly` is computed ONCE here, from `list` -- every distinct dimension value in the
+     current slice, BEFORE the top-20 `.slice()` -- and is the single baseline used both to rank
+     which 20 rows are shown (`deviationFromAvg`) and, further down, to render each shown row's
+     "vs Peer Avg" figure. It must never be recomputed from `values` (the already-sliced top-20),
+     which would silently swap the true full-population average for the average of only the
+     already-most-extreme rows -- a biased number whenever there are more than 20 distinct values,
+     very plausible for `reporting_manager` in a large BPO. */
+  const { values, avgEarly } = useMemo(() => {
     const map = new Map<string, { total: number; early: number; buckets: Record<string, number>; dimensionId: string | null }>();
     for (const r of q.data ?? []) {
       const k = s(r.dimension_value) || "UNASSIGNED";
@@ -1018,19 +1025,15 @@ function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: 
       map.set(k, cur);
     }
     const list = [...map.entries()].map(([value, v]) => ({ value, ...v }));
-    const avgEarly = list.length
+    const avg = list.length
       ? list.reduce((a, v) => a + v.early, 0) / list.length
       : 0;
-    return list
-      .map(v => ({ ...v, deviationFromAvg: v.early - avgEarly }))
+    const sliced = list
+      .map(v => ({ ...v, deviationFromAvg: v.early - avg }))
       .sort((a, b) => b.deviationFromAvg - a.deviationFromAvg)
       .slice(0, 20);
+    return { values: sliced, avgEarly: avg };
   }, [q.data]);
-
-  const avgEarlyQuitRate = useMemo(
-    () => (values.length ? values.reduce((a, v) => a + v.early, 0) / values.length : 0),
-    [values],
-  );
 
   const reasonCaptured = useMemo(() => {
     const rows = q.data ?? [];
@@ -1126,7 +1129,7 @@ function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: 
             </thead>
             <tbody>
               {values.map(v => (
-                <DeepDiveRow v={v} buckets={BUCKETS} dimension={dimension} avgEarlyQuitRate={avgEarlyQuitRate} key={v.value} />
+                <DeepDiveRow v={v} buckets={BUCKETS} dimension={dimension} avgEarlyQuitRate={avgEarly} key={v.value} />
               ))}
             </tbody>
           </table>
