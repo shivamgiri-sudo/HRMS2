@@ -103,7 +103,7 @@ export default function PerformanceScorecardTable({ dateFrom, dateTo }: Performa
                           </Badge>
                         </TooltipTrigger>
                         <TooltipContent>
-                          This metric isn't computed by the backend yet — coming in a future release.
+                          Shrinkage data isn't scoped by branch/process yet in the underlying system — showing once that's fixed.
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>

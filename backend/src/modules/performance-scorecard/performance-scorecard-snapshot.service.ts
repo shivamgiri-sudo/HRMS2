@@ -75,8 +75,12 @@ export async function computeEmployeeSnapshot(
   let teamRevenue: number | null = null;
 
   if (Number(reportsCheck?.has_reports) === 1) {
+    // Active reports only — kept consistent with getDashboardSummary's own
+    // headcount count (active-only). Without this filter, a manager whose
+    // only direct reports have since exited gets an empty active headcount
+    // denominator, which can push its attrition formula toward 200%.
     const [reportRows] = (await db.execute(
-      `SELECT id FROM employees WHERE reporting_manager_id = ? OR manager_id = ?`,
+      `SELECT id FROM employees WHERE (reporting_manager_id = ? OR manager_id = ?) AND active_status = 1`,
       [employeeId, employeeId],
     )) as any;
     const directReportIds = (reportRows as Array<{ id: string }>).map((r) => r.id);
@@ -88,49 +92,66 @@ export async function computeEmployeeSnapshot(
     const processId: string | undefined = managerScope?.process_id ?? undefined;
     const branchId: string | undefined = managerScope?.branch_id ?? undefined;
 
+    // If the manager has neither a process nor a branch on their own record,
+    // skip the rollup calls entirely rather than calling the scoped services
+    // with no scope at all — an unscoped call silently returns company-wide
+    // (or all-branch) totals, which would otherwise get attributed to this
+    // one manager as their "team" numbers.
+    const hasScope = processId !== undefined || branchId !== undefined;
+
     // Each of these 3 calls degrades to null on its own failure, independently
     // of the other two — one service being down must not blank the whole row.
-    try {
-      const snapshots = await shrinkageService.listSnapshots({
-        fromDate: date,
-        toDate: date,
-        processId,
-        branchId,
-      });
-      if (snapshots.length > 0 && snapshots[0].total_shrinkage_pct !== null) {
-        teamShrinkagePct = Number(snapshots[0].total_shrinkage_pct);
-      }
-    } catch (err) {
-      console.error(`[performance-scorecard] shrinkage lookup failed for manager ${employeeId}`, err);
-    }
-
-    try {
-      const summary = await managementService.getDashboardSummary(processId, directReportIds);
-      if (summary?.attrition_rate !== undefined && summary.attrition_rate !== null) {
-        teamAttritionPct = Number(summary.attrition_rate);
-      }
-    } catch (err) {
-      console.error(`[performance-scorecard] attrition lookup failed for manager ${employeeId}`, err);
-    }
-
-    try {
-      // Attrition (30-day rolling) and revenue (monthly P&L) are not true
-      // daily figures — accepted, documented behavior; not a bug.
-      const period = date.slice(0, 7); // YYYY-MM
-      const statement = await getStatement({ period, processId }, "process");
-      const revenueRow = statement.rows.find(
-        (r: { componentKey: string }) => r.componentKey === "recognized_revenue",
-      );
-      if (revenueRow) {
-        const values = Object.values(revenueRow.values as Record<string, number | null>).filter(
-          (v): v is number => v !== null,
-        );
-        if (values.length > 0) {
-          teamRevenue = values.reduce((sum, v) => sum + v, 0);
+    if (hasScope) {
+      try {
+        const snapshots = await shrinkageService.listSnapshots({
+          fromDate: date,
+          toDate: date,
+          processId,
+          branchId,
+        });
+        if (snapshots.length > 0 && snapshots[0].total_shrinkage_pct !== null) {
+          teamShrinkagePct = Number(snapshots[0].total_shrinkage_pct);
         }
+      } catch (err) {
+        console.error(`[performance-scorecard] shrinkage lookup failed for manager ${employeeId}`, err);
       }
-    } catch (err) {
-      console.error(`[performance-scorecard] revenue lookup failed for manager ${employeeId}`, err);
+
+      try {
+        // Known limitation, specific to backfills: getDashboardSummary's
+        // attrition calculation is anchored to CURDATE() inside the shared
+        // management.service.ts, not to `date` (the historical snapshot
+        // date passed in here). A backfilled historical row therefore gets
+        // stamped with TODAY's 30-day attrition rate, not the rate as of
+        // that historical date. Sharper version of the already-accepted
+        // "30-day rolling, not a true daily figure" caveat. Not fixed here —
+        // fixing it means changing the shared service, out of scope.
+        const summary = await managementService.getDashboardSummary(processId, directReportIds);
+        if (summary?.attrition_rate !== undefined && summary.attrition_rate !== null) {
+          teamAttritionPct = Number(summary.attrition_rate);
+        }
+      } catch (err) {
+        console.error(`[performance-scorecard] attrition lookup failed for manager ${employeeId}`, err);
+      }
+
+      try {
+        // Attrition (30-day rolling) and revenue (monthly P&L) are not true
+        // daily figures — accepted, documented behavior; not a bug.
+        const period = date.slice(0, 7); // YYYY-MM
+        const statement = await getStatement({ period, processId }, "process");
+        const revenueRow = statement.rows.find(
+          (r: { componentKey: string }) => r.componentKey === "recognized_revenue",
+        );
+        if (revenueRow) {
+          const values = Object.values(revenueRow.values as Record<string, number | null>).filter(
+            (v): v is number => v !== null,
+          );
+          if (values.length > 0) {
+            teamRevenue = values.reduce((sum, v) => sum + v, 0);
+          }
+        }
+      } catch (err) {
+        console.error(`[performance-scorecard] revenue lookup failed for manager ${employeeId}`, err);
+      }
     }
   }
 

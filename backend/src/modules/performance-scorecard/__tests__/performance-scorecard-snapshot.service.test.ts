@@ -89,6 +89,26 @@ describe("computeEmployeeSnapshot", () => {
     expect(result.teamRevenue).toBe(500000);
   });
 
+  it("skips all 3 rollup calls and leaves metrics null when the manager has neither process_id nor branch_id", async () => {
+    mocks.execute
+      .mockResolvedValueOnce([[{ attendance_status: "present", late_by_minutes: 0 }]]) // attendance
+      .mockResolvedValueOnce([[]]) // active pip
+      .mockResolvedValueOnce([[{ overall_score: 90 }]]) // quality
+      .mockResolvedValueOnce([[{ designation_id: "desig-1" }]]) // designation
+      .mockResolvedValueOnce([[{ has_reports: 1 }]]) // manager-tier check
+      .mockResolvedValueOnce([[{ id: "report-1" }]]) // direct report ids
+      .mockResolvedValueOnce([[{ process_id: null, branch_id: null }]]); // manager's own scope — unscoped
+
+    const result = await computeEmployeeSnapshot("mgr-unscoped", "2026-08-24");
+
+    expect(result.teamShrinkagePct).toBeNull();
+    expect(result.teamAttritionPct).toBeNull();
+    expect(result.teamRevenue).toBeNull();
+    expect(mockListSnapshots).not.toHaveBeenCalled();
+    expect(mockGetDashboardSummary).not.toHaveBeenCalled();
+    expect(mockGetStatement).not.toHaveBeenCalled();
+  });
+
   it("leaves rollup metrics null for an individual contributor with no direct reports", async () => {
     mocks.execute
       .mockResolvedValueOnce([[{ attendance_status: "present", late_by_minutes: 0 }]])
