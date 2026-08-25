@@ -253,3 +253,154 @@ esiRegDocsRouter.get(
     });
   }
 );
+
+// ── Route: Bulk ZIP download ──────────────────────────────────────────────────
+
+esiRegDocsRouter.post(
+  "/esi-reg-docs/bulk-download",
+  requireRole(...ESI_ROLES),
+  async (req: Request, res: Response) => {
+    const { employee_ids } = req.body as { employee_ids?: string[] };
+    if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
+      return res.status(400).json({ error: "employee_ids must be a non-empty array" });
+    }
+    if (employee_ids.length > 200) {
+      return res.status(400).json({ error: "Maximum 200 employees per bulk download" });
+    }
+    const actorId = (req as any).authUser?.id ?? "unknown";
+    const date = new Date().toISOString().slice(0, 10);
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="ESI_Bulk_Docs_${date}.zip"`);
+
+    const archive = archiverLib("zip", { zlib: { level: 9 } });
+    archive.pipe(res);
+    archive.on("error", (err: Error) => console.error("[esi-reg-docs] bulk archive error", err));
+
+    const placeholders = employee_ids.map(() => "?").join(",");
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, emp_code, CONCAT(first_name,' ',COALESCE(last_name,'')) AS name,
+              esic_number, photo_url, avatar_url
+       FROM employees WHERE id IN (${placeholders})`,
+      employee_ids
+    );
+
+    for (const emp of rows as RowDataPacket[]) {
+      const folder = `${emp.emp_code}_${(emp.name as string).replace(/\s+/g, "_")}`;
+      const manifest: string[] = [`ESI Docs — ${emp.name} (${emp.emp_code})\n`];
+
+      const [[panDoc]] = await db.execute<RowDataPacket[]>(
+        `SELECT file_url FROM employee_documents
+         WHERE employee_id = ? AND doc_category = 'pan'
+         ORDER BY created_at DESC LIMIT 1`,
+        [emp.id]
+      );
+      const panPath = urlToLocalPath((panDoc as RowDataPacket | undefined)?.file_url ?? null);
+      if (fileExists(panPath)) {
+        const ext = path.extname(panPath!);
+        archive.file(panPath!, { name: `${folder}/PAN_Card${ext}` });
+        manifest.push("✓ PAN_Card" + ext);
+      } else {
+        manifest.push("✗ PAN document not available");
+      }
+
+      const photoPath = urlToLocalPath(emp.photo_url ?? emp.avatar_url ?? null);
+      if (fileExists(photoPath)) {
+        const ext = path.extname(photoPath!);
+        archive.file(photoPath!, { name: `${folder}/Photo${ext}` });
+        manifest.push("✓ Photo" + ext);
+      } else {
+        manifest.push("✗ Photo not available");
+      }
+
+      try {
+        const bankPdf = await generateBankInfoPdf(emp.id as string);
+        archive.append(bankPdf, { name: `${folder}/Bank_Information.pdf` });
+        manifest.push("✓ Bank_Information.pdf");
+      } catch {
+        manifest.push("✗ Bank info unavailable");
+      }
+
+      archive.append(manifest.join("\n"), { name: `${folder}/manifest.txt` });
+    }
+
+    await archive.finalize();
+
+    await writeAuditLog("esi_bulk_doc_download", actorId, null, {
+      employee_ids,
+      count: employee_ids.length,
+    });
+  }
+);
+
+// ── Route: CSV export ─────────────────────────────────────────────────────────
+
+esiRegDocsRouter.get(
+  "/esi-reg-docs/export-csv",
+  requireRole(...ESI_ROLES),
+  async (req: Request, res: Response) => {
+    const actorId = (req as any).authUser?.id ?? "unknown";
+    const branchId = req.query.branch_id as string | undefined;
+
+    const whereParts = [
+      `(e.esic_number IS NOT NULL OR esi.esi_eligible = 1)`,
+      `e.employment_status != 'terminated'`,
+    ];
+    const params: unknown[] = [];
+    if (branchId) {
+      whereParts.push("e.branch_id = ?");
+      params.push(branchId);
+    }
+
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         e.emp_code,
+         CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name,
+         COALESCE(b.name, e.branch, '')                   AS branch,
+         e.esic_number,
+         e.pan_number,
+         (SELECT ebd.bank_name FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS bank_name,
+         (SELECT ebd.account_number FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS account_number,
+         (SELECT ebd.ifsc_code FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS ifsc_code,
+         (SELECT ebd.account_type FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS account_type,
+         (SELECT COUNT(*) FROM employee_documents ed WHERE ed.employee_id = e.id AND ed.doc_category = 'pan') > 0 AS pan_ready,
+         (e.photo_url IS NOT NULL OR e.avatar_url IS NOT NULL) AS photo_ready,
+         (SELECT COUNT(*) FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id AND ebd.ifsc_code IS NOT NULL) > 0 AS bank_ready
+       FROM employees e
+       LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
+       LEFT JOIN branches b ON b.id = e.branch_id
+       WHERE ${whereParts.join(" AND ")}
+       ORDER BY e.emp_code`,
+      params
+    );
+
+    const mask = (acct: string | null) => (acct ? `****${acct.slice(-4)}` : "");
+
+    const header = "Emp Code,Name,Branch,ESIC Number,PAN Number,Bank Name,Account Number (Masked),IFSC Code,Account Type,PAN Ready,Photo Ready,Bank Ready\n";
+    const csvRows = (rows as RowDataPacket[])
+      .map((r) =>
+        [
+          r.emp_code,
+          `"${r.name}"`,
+          `"${r.branch}"`,
+          r.esic_number ?? "",
+          r.pan_number ?? "",
+          `"${r.bank_name ?? ""}"`,
+          mask(r.account_number ?? null),
+          r.ifsc_code ?? "",
+          r.account_type ?? "",
+          r.pan_ready ? "Yes" : "No",
+          r.photo_ready ? "Yes" : "No",
+          r.bank_ready ? "Yes" : "No",
+        ].join(",")
+      )
+      .join("\n");
+
+    const date = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="ESI_Reg_${date}.csv"`);
+    res.send("﻿" + header + csvRows);
+
+    await writeAuditLog("esi_reg_csv_export", actorId, null, { branch_id: branchId ?? "all" });
+  }
+);

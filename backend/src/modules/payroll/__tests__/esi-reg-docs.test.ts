@@ -113,3 +113,34 @@ describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe("POST /api/payroll/esi-reg-docs/bulk-download", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns 400 when more than 200 employee_ids supplied", async () => {
+    const ids = Array.from({ length: 201 }, (_, i) => `emp-${i}`);
+    const res = await request(app)
+      .post("/api/payroll/esi-reg-docs/bulk-download")
+      .send({ employee_ids: ids });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when employee_ids is empty", async () => {
+    const res = await request(app)
+      .post("/api/payroll/esi-reg-docs/bulk-download")
+      .send({ employee_ids: [] });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /api/payroll/esi-reg-docs/export-csv", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("returns CSV with correct headers", async () => {
+    vi.mocked(db.execute).mockResolvedValueOnce([[] as any, []]);
+    const res = await request(app).get("/api/payroll/esi-reg-docs/export-csv");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/csv/);
+    expect(res.text).toContain("Emp Code");
+  });
+});
