@@ -68,6 +68,7 @@ router.get("/stats", requireAuth, requireRole("super_admin", "admin", "hr", "pay
 // and the Fraud Alert Review page to show face grid, name table, and document numbers.
 router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr"), async (req: AuthenticatedRequest, res: Response) => {
   const { candidateId } = req.params;
+  try {
 
   const [[alerts], [faceMatches], [docs], [profileRows], [bgvNames], [nameSummaryRows], [nameDetails], [bankPennyRows]] = await Promise.all([
     db.execute<RowDataPacket[]>(
@@ -134,24 +135,33 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
     nameDetails,
     bankPennyDrop: bankPennyRows[0] ?? null,
   });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[fraud-alerts/comparison]", msg);
+    res.status(500).json({ error: "Could not load comparison data", detail: msg });
+  }
 });
 
 // Returns the detected face bounding box for a document image.
 // The frontend uses these coordinates to crop and vertically align faces
 // in the comparison grid regardless of document orientation.
 router.get("/documents/face-detect/:documentId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr"), async (req: AuthenticatedRequest, res: Response) => {
-  const { documentId } = req.params;
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT file_path, mime_type FROM candidate_onboarding_document WHERE id = ? LIMIT 1`,
-    [documentId]
-  );
-  const doc = rows[0];
-  if (!doc) return res.status(404).json({ error: "Document not found" });
+  try {
+    const { documentId } = req.params;
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT file_path, mime_type FROM candidate_onboarding_document WHERE id = ? LIMIT 1`,
+      [documentId]
+    );
+    const doc = rows[0];
+    if (!doc) return res.status(404).json({ error: "Document not found" });
 
-  const resolvedPath = resolveOnboardingDocumentFile(doc.file_path);
-  if (!resolvedPath) return res.json({ bbox: null });
-  const bbox = await detectFaceBbox(resolvedPath).catch(() => null);
-  res.json({ bbox });
+    const resolvedPath = resolveOnboardingDocumentFile(doc.file_path);
+    if (!resolvedPath) return res.json({ bbox: null });
+    const bbox = await detectFaceBbox(resolvedPath).catch(() => null);
+    res.json({ bbox });
+  } catch (err: unknown) {
+    res.json({ bbox: null });
+  }
 });
 
 export default router;
