@@ -110,7 +110,14 @@ describe("GET /api/performance-scorecard", () => {
     expect(res.body.success).toBe(false);
   });
 
-  it("returns 200 with an empty array when the manager's resolved team has no members", async () => {
+  it("returns 200 with an empty array when the scoped query has no matching snapshot rows", async () => {
+    // NOTE: resolveTeamScope always appends the caller's own employee id to the
+    // direct-report list (see management.routes.ts's resolveTeamScope), so
+    // employeeIds can never actually be [] for a resolved (non-null) scope in
+    // practice — the route's `employeeIds.length === 0` branch is effectively
+    // unreachable given that behavior. This test instead covers the ordinary
+    // scoped-query path (employeeIds = [self]) returning zero DB rows, which is
+    // the realistic way a caller sees an empty scorecard today.
     vi.mocked(managementService.getDirectReportIds).mockResolvedValueOnce([]);
     execute.mockResolvedValueOnce([[], []]);
 
