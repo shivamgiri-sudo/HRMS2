@@ -380,11 +380,11 @@ export function FraudComparisonPanel({
   const blockingAlerts = openAlerts.filter(a => a.severity === "critical" || a.severity === "high");
 
   // Face data: find selfie, DigiLocker doc, and manual upload
-  const selfieDoc  = docs.find(d => /selfie|live_photo|live/.test(d.doc_type ?? ""));
-  const aadhaarDigi = docs.find(d => /digilocker.*aadhaar|aadhaar.*digilocker/.test(d.doc_type ?? ""));
-  const aadhaarManual = docs.find(d => /aadhaar_front|aadhaar/.test(d.doc_type ?? "") && d !== aadhaarDigi);
-  const panDigi    = docs.find(d => /digilocker.*pan|pan.*digilocker/.test(d.doc_type ?? ""));
-  const panManual  = docs.find(d => /^pan_card|^pan/.test(d.doc_type ?? "") && d !== panDigi);
+  const selfieDoc     = docs.find(d => /selfie|live_photo|live/i.test(d.doc_type ?? ""));
+  const aadhaarDigi   = docs.find(d => /digilocker.*aadhaar|aadhaar.*digilocker/i.test(d.doc_type ?? ""));
+  const aadhaarManual = docs.find(d => /aadhaar/i.test(d.doc_type ?? "") && d !== aadhaarDigi);
+  const panDigi       = docs.find(d => /digilocker.*pan|pan.*digilocker/i.test(d.doc_type ?? ""));
+  const panManual     = docs.find(d => /^pan/i.test(d.doc_type ?? "") && d !== panDigi);
 
   // Primary face match (selfie vs DigiLocker preferred, else vs any ID doc)
   const primaryMatch = faceMatches.find(m =>

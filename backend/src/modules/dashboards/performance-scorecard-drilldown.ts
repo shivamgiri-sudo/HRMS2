@@ -1,6 +1,6 @@
 import { db } from "../../db/mysql.js";
 import type { DrilldownResult } from "./dashboard-drilldown.service.js";
-import type { DashboardScope } from "../../shared/dashboardScope.js";
+import { type DashboardScope, buildScopeWhereEmployees } from "../../shared/dashboardScope.js";
 import type { MetricResult } from "./dashboard-metric.service.js";
 
 interface ScorecardFilters {
@@ -19,7 +19,15 @@ function requireRange(
   return { employeeId: f.employeeId, dateFrom: f.dateFrom, dateTo: f.dateTo };
 }
 
-async function fetchSnapshotRows(employeeId: string, dateFrom: string, dateTo: string) {
+/**
+ * Every drilldown here is keyed by a caller-supplied employeeId. Without folding the
+ * caller's real scope into the query, any of the 16 entitled roles could pass an
+ * arbitrary employeeId and read that employee's full performance/PIP history regardless
+ * of reporting relationship — matches the pattern every other handler in
+ * dashboard-drilldown.service.ts uses (buildScopeWhereEmployees joined into the SQL).
+ */
+async function fetchSnapshotRows(scope: DashboardScope, employeeId: string, dateFrom: string, dateTo: string) {
+  const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
   const [rows] = (await db.execute(
     `SELECT e.employee_code AS employeeCode, e.full_name AS employeeName,
             s.snapshot_date AS snapshotDate, s.attendance_status AS attendanceStatus,
@@ -30,18 +38,19 @@ async function fetchSnapshotRows(employeeId: string, dateFrom: string, dateTo: s
        FROM employee_performance_daily_snapshot s
        JOIN employees e ON e.id = s.employee_id
       WHERE s.employee_id = ? AND s.snapshot_date BETWEEN ? AND ?
+        AND ${scopeSql}
       ORDER BY s.snapshot_date ASC`,
-    [employeeId, dateFrom, dateTo],
+    [employeeId, dateFrom, dateTo, ...scopeParams],
   )) as any;
   return rows as Array<Record<string, unknown>>;
 }
 
 export async function drillAttendanceStatus(
-  _scope: unknown,
+  scope: DashboardScope,
   filters?: Record<string, unknown>,
 ): Promise<DrilldownResult> {
   const { employeeId, dateFrom, dateTo } = requireRange(filters);
-  const rows = await fetchSnapshotRows(employeeId, dateFrom, dateTo);
+  const rows = await fetchSnapshotRows(scope, employeeId, dateFrom, dateTo);
   return {
     metricCode: "ATTENDANCE_STATUS",
     records: rows.map((r) => ({
@@ -55,11 +64,11 @@ export async function drillAttendanceStatus(
 }
 
 export async function drillLatecoming(
-  _scope: unknown,
+  scope: DashboardScope,
   filters?: Record<string, unknown>,
 ): Promise<DrilldownResult> {
   const { employeeId, dateFrom, dateTo } = requireRange(filters);
-  const rows = await fetchSnapshotRows(employeeId, dateFrom, dateTo);
+  const rows = await fetchSnapshotRows(scope, employeeId, dateFrom, dateTo);
   return {
     metricCode: "LATECOMING",
     records: rows.map((r) => ({
@@ -73,11 +82,11 @@ export async function drillLatecoming(
 }
 
 export async function drillUnplannedLeave(
-  _scope: unknown,
+  scope: DashboardScope,
   filters?: Record<string, unknown>,
 ): Promise<DrilldownResult> {
   const { employeeId, dateFrom, dateTo } = requireRange(filters);
-  const rows = (await fetchSnapshotRows(employeeId, dateFrom, dateTo)).filter((r) => Boolean(r.unplannedLeaveFlag));
+  const rows = (await fetchSnapshotRows(scope, employeeId, dateFrom, dateTo)).filter((r) => Boolean(r.unplannedLeaveFlag));
   return {
     metricCode: "UNPLANNED_LEAVE",
     records: rows.map((r) => ({
@@ -91,25 +100,29 @@ export async function drillUnplannedLeave(
 }
 
 export async function drillPipStatus(
-  _scope: unknown,
+  scope: DashboardScope,
   filters?: Record<string, unknown>,
 ): Promise<DrilldownResult> {
   const { employeeId } = requireRange(filters);
+  const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
   const [rows] = (await db.execute(
     `SELECT pr.status, pr.start_date, pr.end_date, pr.reason, pc.checkpoint_date, pc.rating, pc.notes
-       FROM pip_record pr LEFT JOIN pip_checkpoint pc ON pc.pip_id = pr.id
-      WHERE pr.employee_id = ? ORDER BY pr.start_date DESC, pc.checkpoint_date DESC LIMIT 100`,
-    [employeeId],
+       FROM pip_record pr
+       JOIN employees e ON e.id = pr.employee_id
+       LEFT JOIN pip_checkpoint pc ON pc.pip_id = pr.id
+      WHERE pr.employee_id = ? AND ${scopeSql}
+      ORDER BY pr.start_date DESC, pc.checkpoint_date DESC LIMIT 100`,
+    [employeeId, ...scopeParams],
   )) as any;
   return { metricCode: "PIP_STATUS", records: rows, totalCount: rows.length };
 }
 
 export async function drillQualityBaseline(
-  _scope: unknown,
+  scope: DashboardScope,
   filters?: Record<string, unknown>,
 ): Promise<DrilldownResult> {
   const { employeeId, dateFrom, dateTo } = requireRange(filters);
-  const rows = await fetchSnapshotRows(employeeId, dateFrom, dateTo);
+  const rows = await fetchSnapshotRows(scope, employeeId, dateFrom, dateTo);
   return {
     metricCode: "QUALITY_BASELINE",
     records: rows.map((r) => ({
@@ -123,11 +136,11 @@ export async function drillQualityBaseline(
 }
 
 export async function drillAttrition(
-  _scope: unknown,
+  scope: DashboardScope,
   filters?: Record<string, unknown>,
 ): Promise<DrilldownResult> {
   const { employeeId, dateFrom, dateTo } = requireRange(filters);
-  const rows = await fetchSnapshotRows(employeeId, dateFrom, dateTo);
+  const rows = await fetchSnapshotRows(scope, employeeId, dateFrom, dateTo);
   return {
     metricCode: "ATTRITION",
     records: rows.map((r) => ({
@@ -141,11 +154,11 @@ export async function drillAttrition(
 }
 
 export async function drillShrinkage(
-  _scope: unknown,
+  scope: DashboardScope,
   filters?: Record<string, unknown>,
 ): Promise<DrilldownResult> {
   const { employeeId, dateFrom, dateTo } = requireRange(filters);
-  const rows = await fetchSnapshotRows(employeeId, dateFrom, dateTo);
+  const rows = await fetchSnapshotRows(scope, employeeId, dateFrom, dateTo);
   return {
     metricCode: "SHRINKAGE",
     records: rows.map((r) => ({
@@ -159,11 +172,11 @@ export async function drillShrinkage(
 }
 
 export async function drillRevenue(
-  _scope: unknown,
+  scope: DashboardScope,
   filters?: Record<string, unknown>,
 ): Promise<DrilldownResult> {
   const { employeeId, dateFrom, dateTo } = requireRange(filters);
-  const rows = await fetchSnapshotRows(employeeId, dateFrom, dateTo);
+  const rows = await fetchSnapshotRows(scope, employeeId, dateFrom, dateTo);
   return {
     metricCode: "REVENUE",
     records: rows.map((r) => ({

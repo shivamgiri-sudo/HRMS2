@@ -5,7 +5,12 @@ vi.mock("../../../../db/mysql.js", () => ({
 }));
 
 import { db } from "../../../../db/mysql.js";
-import { aonBucketHeadcount, aonCohortSurvival, AON_REFERENCE_JOIN_DATE_SQL } from "../aon.executor.js";
+import {
+  aonBucketHeadcount,
+  aonCohortSurvival,
+  attritionDeepDive,
+  AON_REFERENCE_JOIN_DATE_SQL,
+} from "../aon.executor.js";
 import type { ExecScope, ExecOptions } from "../types.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
@@ -67,5 +72,32 @@ describe("aonCohortSurvival drill-down ids", () => {
     expect(sql).toContain("b.id");
     expect(sql).toContain("cc.id");
     expect(sql).toContain("p.id");
+  });
+});
+
+describe("attritionDeepDive dimension_id", () => {
+  // NOTE: mockExecute.mock.calls accumulates across every "it" in this file (isolation
+  // here is per-file, not per-test, and no beforeEach clears it), so "calls[0]" would
+  // silently pick up whichever query ran first in the whole file rather than this test's
+  // own call -- these two tests read the LATEST call instead, to stay correct regardless
+  // of run order or how many tests precede them.
+  const lastCallSql = () => {
+    const calls = mockExecute.mock.calls;
+    return String(calls[calls.length - 1][0]);
+  };
+
+  it("attritionDeepDive selects a dimension_id, populated for id-backed dimensions", async () => {
+    mockExecute.mockResolvedValueOnce([[], []]);
+    await attritionDeepDive({ dimension: "branch" }, SCOPE, OPTIONS);
+    const sql = lastCallSql();
+    expect(sql).toContain("dimension_id");
+    expect(sql).toContain("b.id");
+  });
+
+  it("attritionDeepDive's dimension_id is NULL for a proxy dimension with no master table", async () => {
+    mockExecute.mockResolvedValueOnce([[], []]);
+    await attritionDeepDive({ dimension: "source" }, SCOPE, OPTIONS);
+    const sql = lastCallSql();
+    expect(sql).toMatch(/NULL\s+AS\s+dimension_id/i);
   });
 });

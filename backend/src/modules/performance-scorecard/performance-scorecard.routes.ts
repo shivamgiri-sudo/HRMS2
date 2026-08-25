@@ -80,6 +80,15 @@ router.get(
       params.push(...employeeIds);
     }
 
+    // One row per employee per day. Raised from 5000: at ~1,110 active employees the
+    // previous cap silently truncated any org-wide request wider than ~5 days
+    // (1,110 x 45-day range needs ~50k rows) and returned only the alphabetically-first
+    // slice with no indication of truncation — presented to a CEO/HR viewer as if it were
+    // the whole organization. 50000 comfortably covers realistic scale (~1,110 employees x
+    // 45 days is under that) without changing the per-day row shape the Compare panel's
+    // client-side filtering (frontend groupByEmployee) depends on. A full
+    // aggregation/pagination redesign is a separate follow-up, not this fix.
+    const ROW_LIMIT = 50000;
     const [rows] = (await db.execute(
       `SELECT e.id AS employeeId, e.full_name AS employeeName, e.employee_code AS employeeCode,
               s.snapshot_date AS snapshotDate, s.attendance_status AS attendanceStatus,
@@ -92,9 +101,17 @@ router.get(
          JOIN employees e ON e.id = s.employee_id
         WHERE ${conds.join(" AND ")}
         ORDER BY e.full_name ASC, s.snapshot_date ASC
-        LIMIT 5000`,
+        LIMIT ${ROW_LIMIT}`,
       params,
     )) as any;
+
+    if (Array.isArray(rows) && rows.length >= ROW_LIMIT) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[performance-scorecard] row limit hit (${ROW_LIMIT}) for dateFrom=${dateFrom} dateTo=${dateTo} ` +
+          `userId=${req.authUser!.id} isWide=${isWide} — response was truncated`,
+      );
+    }
 
     res.json({ success: true, data: rows });
   }),

@@ -923,37 +923,46 @@ const SOURCE_NORMALISED = `
  * caller selects an entry here and nothing from the request reaches the SQL text.
  * `join` names the extra table the expression needs, so only the required joins are added.
  */
-const DEEP_DIVE_DIMENSIONS: Record<string, { label: string; expr: string; join?: string }> = {
+const DEEP_DIVE_DIMENSIONS: Record<
+  string,
+  { label: string; expr: string; join?: string; idExpr?: string }
+> = {
   source: { label: "Source of Hire", expr: SOURCE_NORMALISED },
   branch: {
     label: "Branch",
     expr: "COALESCE(b.branch_name, 'UNASSIGNED')",
     join: "LEFT JOIN branch_master b ON b.id = e.branch_id",
+    idExpr: "b.id",
   },
   cost_centre: {
     label: "Cost Centre",
     expr: "COALESCE(cc.cost_centre_name, 'UNASSIGNED')",
     join: "LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id",
+    idExpr: "cc.id",
   },
   process: {
     label: "Process",
     expr: "COALESCE(p.process_name, 'UNASSIGNED')",
     join: "LEFT JOIN process_master p ON p.id = e.process_id",
+    idExpr: "p.id",
   },
   department: {
     label: "Department",
     expr: "COALESCE(d.dept_name, 'UNASSIGNED')",
     join: "LEFT JOIN department_master d ON d.id = e.department_id",
+    idExpr: "d.id",
   },
   designation: {
     label: "Designation",
     expr: "COALESCE(des.designation_name, 'UNASSIGNED')",
     join: "LEFT JOIN designation_master des ON des.id = e.designation_id",
+    idExpr: "des.id",
   },
   reporting_manager: {
     label: "Reporting Manager",
     expr: `COALESCE(NULLIF(mgr.full_name, ''), mgr.employee_code, 'UNASSIGNED')`,
     join: "LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id",
+    idExpr: "mgr.id",
   },
   gender: { label: "Gender", expr: "COALESCE(NULLIF(TRIM(e.gender), ''), 'UNASSIGNED')" },
   age_band: {
@@ -1029,6 +1038,11 @@ export async function attritionDeepDive(
 
   const bucket = aonBucketSql("e.date_of_exit");
   const bucketOrder = aonBucketOrderSql("e.date_of_exit");
+  // Real master-table FK for the 6 id-backed dimensions; a literal NULL, honestly, for the
+  // 5 derived/proxy dimensions with no stable id to filter or drill by. Grouping by a
+  // literal NULL is a no-op (it groups as a single value, same as omitting it), so it is
+  // always safe to include in GROUP BY regardless of which branch this is.
+  const dimensionIdExpr = dim.idExpr ?? "NULL";
 
   // The dimension's own join, plus the exit_request join that measures reason capture.
   // legacy_history_snapshot is deliberately NOT joined: it holds several rows per
@@ -1045,6 +1059,7 @@ export async function attritionDeepDive(
     SELECT '${key}' AS dimension,
            '${dim.label}' AS dimension_label,
            ${dim.expr} AS dimension_value,
+           ${dimensionIdExpr} AS dimension_id,
            ${bucket} AS aon_bucket,
            COUNT(*) AS exits,
            ROUND(AVG(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})), 1) AS avg_tenure_days,
@@ -1078,7 +1093,7 @@ export async function attritionDeepDive(
       FROM employees e
       ${joins}
      WHERE ${clauses.join(" AND ")}
-     GROUP BY ${dim.expr}, ${bucket}, ${bucketOrder}
+     GROUP BY ${dim.expr}, ${dimensionIdExpr}, ${bucket}, ${bucketOrder}
      ORDER BY ${dim.expr}, ${bucketOrder}`;
 
   try {

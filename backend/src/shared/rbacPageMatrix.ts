@@ -95,6 +95,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "DPDP_WITHDRAWAL_ADMIN",
     // Payroll Head review-rejection notification links straight here (migration 1542).
     "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",
+    // Employee Performance Scorecard (migration 1607).
+    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
   ],
   recruiter: [
     "JOB_REQUISITION",
@@ -131,6 +133,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "CALL_MASTER_INBOUND",
     "SALES_BRAND_ANALYTICS",
     "QUALITY_DASHBOARD",
+    // Employee Performance Scorecard (migration 1607).
+    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
   ],
   process_manager: [
     "JOB_REQUISITION",
@@ -155,6 +159,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "SALES_BRAND_ANALYTICS",
     "QUALITY_DASHBOARD",
     "OPERATIONS_DASHBOARD",
+    // Employee Performance Scorecard (migration 1607).
+    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
   ],
   team_leader: [
     "WFM_ROSTER",
@@ -164,6 +170,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "MY_KPI",
     "EXPENSE_APPROVALS",
     "QUALITY_TEAM",
+    // Employee Performance Scorecard (migration 1607).
+    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
   ],
   tl: [
     "WFM_ROSTER",
@@ -173,6 +181,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "MY_KPI",
     "EXPENSE_APPROVALS",
     "QUALITY_TEAM",
+    // Employee Performance Scorecard (migration 1607).
+    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
   ],
   wfm: [
     "WFM_DASHBOARD",
@@ -323,6 +333,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "CALL_MASTER_INBOUND",
     "SALES_BRAND_ANALYTICS",
     "PERFORMANCE_HUB",
+    // Employee Performance Scorecard (migration 1607).
+    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
   ],
   trainer: [
     "LMS_MY_LEARNING",
@@ -462,7 +474,27 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "WORKFORCE_COMMAND_CENTER",
     "OPERATIONS_KPI",
     "REPORTS_CENTER",
+    // Employee Performance Scorecard (migration 1607).
+    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
   ],
+
+  // Named alongside coo/ceo in the scorecard's allowedRoleKeys but with no other
+  // matrix entry anywhere in this file — falls through to COMMON_USER_PAGE_CODES
+  // only otherwise. Migration 1607.
+  management: ["PERFORMANCE_SCORECARD_COMMAND_CENTER"],
+
+  // HO-level HR role named in dashboardAccessRegistry's PERFORMANCE_SCORECARD
+  // allowedRoleKeys but otherwise absent from this file. Migration 1607.
+  ho_hr: ["PERFORMANCE_SCORECARD_COMMAND_CENTER"],
+
+  // Process-level HR role named in dashboardAccessRegistry's PERFORMANCE_SCORECARD
+  // allowedRoleKeys but otherwise absent from this file. Migration 1607.
+  process_hr: ["PERFORMANCE_SCORECARD_COMMAND_CENTER"],
+
+  // Named in dashboardAccessRegistry's PERFORMANCE_SCORECARD allowedRoleKeys
+  // alongside branch_head, but no branch_manager entry exists anywhere else in
+  // this file. Migration 1607.
+  branch_manager: ["PERFORMANCE_SCORECARD_COMMAND_CENTER"],
 
   // 7 active users. Grants existed only in the 2026-06 SQL seed, and most of
   // those page codes have no mounted route. Dashboard registry already allows
@@ -592,6 +624,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "MODULE_LAUNCHER",
     // Added 2026-08-22: see the manager entry below — same gap, same fix. Migration 1544.
     "TEAM_ATTENDANCE",
+    // Employee Performance Scorecard (migration 1607).
+    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
   ],
   branch_head: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
@@ -616,6 +650,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     // Added 2026-08-22: the page (and its API's own requireRole list) was built
     // for exactly this role, but no role_page_access row ever granted it. Migration 1544.
     "TEAM_ATTENDANCE",
+    // Employee Performance Scorecard (migration 1607).
+    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
   ],
   branch_hr: [
     "ATS_BRANCH_HEAD_APPROVAL",
@@ -636,6 +672,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "PROVISIONING_APPOINTMENT_LETTER",
     "RESIGNATION_COMMAND_CENTER",
     "SALARY_CERTIFICATE",
+    // Employee Performance Scorecard (migration 1607).
+    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
   ],
   branch_payroll: [
     "ATTENDANCE_LOOKUP",
@@ -739,6 +777,8 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
   hr_admin: [
     "PAYROLL_DEDUCTION_TYPES",
     "PAYROLL_DEDUCTION_UPLOAD",
+    // Employee Performance Scorecard (migration 1607).
+    "PERFORMANCE_SCORECARD_COMMAND_CENTER",
   ],
   interviewer: [
     "ATS_INTERVIEW_QUEUE",
