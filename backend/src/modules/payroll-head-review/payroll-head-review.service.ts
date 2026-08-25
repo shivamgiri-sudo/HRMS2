@@ -35,6 +35,12 @@ import { getEmployeeBgvStatus } from "../employees/employee-bgv.service.js";
 import { buildBankReadinessReport } from "../payroll/bank-payment-readiness.service.js";
 import { createPackage, getPackageById } from "../payroll-masters/payrollMasters.service.js";
 import { inboxService } from "../inbox/inbox.service.js";
+import { buildScopeWhereClause, hasAnyRole } from "../../shared/scopeAccess.js";
+
+// GET /queue and /branches are open to all of these (see routes.ts) — payroll_hr/branch_head
+// are branch/process-scoped via buildScopeWhereClause below, payroll_head/admin/super_admin see
+// everything (allowAdminBypass covers admin; super_admin always sees everything regardless).
+const VIEWER_ROLES = ["payroll_head", "payroll_hr", "branch_head", "hr", "admin", "super_admin"] as const;
 
 export type ReviewStatus = "pending_review" | "approved" | "rejected";
 export type ReasonCategory = "salary" | "documents" | "bgv" | "bank" | "other";
@@ -91,7 +97,10 @@ async function writeHistory(params: {
 
 // ── Queue ────────────────────────────────────────────────────────────────────
 
-export async function getQueue(filters: { status?: string; q?: string; branch?: string }) {
+export async function getQueue(
+  filters: { status?: string; q?: string; branch?: string },
+  callerUserId: string
+) {
   const status = filters.status || "pending_review";
   const conds: string[] = ["r.status = ?"];
   const params: unknown[] = [status];
@@ -102,6 +111,21 @@ export async function getQueue(filters: { status?: string; q?: string; branch?: 
   if (filters.branch) {
     conds.push("b.branch_name = ?");
     params.push(filters.branch);
+  }
+  // payroll_head/admin/super_admin see the whole queue as before — bypassed explicitly rather
+  // than relying on buildScopeWhereClause resolving them to an 'all' scope row (both live
+  // payroll_head users happen to have one today, but that's data, not a guarantee for the next
+  // one). payroll_hr/branch_head — newly allowed onto this route — are branch/process-scoped,
+  // the same helper every other row-scoped query in this codebase uses.
+  const isFullAccess = await hasAnyRole(callerUserId, "payroll_head", "admin", "super_admin");
+  if (!isFullAccess) {
+    const scope = await buildScopeWhereClause(
+      callerUserId,
+      [...VIEWER_ROLES],
+      { branchId: "e.branch_id", processId: "e.process_id" }
+    );
+    conds.push(scope.sql);
+    params.push(...scope.params);
   }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT r.id AS review_id, r.employee_id, r.status, r.package_accepted,
@@ -171,14 +195,27 @@ export async function getQueue(filters: { status?: string; q?: string; branch?: 
   return rows;
 }
 
-export async function listQueueBranches() {
+export async function listQueueBranches(callerUserId: string) {
+  const conds = ["b.branch_name IS NOT NULL"];
+  const params: unknown[] = [];
+  const isFullAccess = await hasAnyRole(callerUserId, "payroll_head", "admin", "super_admin");
+  if (!isFullAccess) {
+    const scope = await buildScopeWhereClause(
+      callerUserId,
+      [...VIEWER_ROLES],
+      { branchId: "e.branch_id", processId: "e.process_id" }
+    );
+    conds.push(scope.sql);
+    params.push(...scope.params);
+  }
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT DISTINCT b.branch_name
        FROM employee_payroll_head_review r
        JOIN employees e ON e.id = r.employee_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
-      WHERE b.branch_name IS NOT NULL
-      ORDER BY b.branch_name`
+      WHERE ${conds.join(" AND ")}
+      ORDER BY b.branch_name`,
+    params
   );
   return rows.map((r) => r.branch_name as string);
 }
@@ -409,7 +446,6 @@ export async function updateAssignmentEffectiveDate(
     );
     if (!lockedRows.length) {
       await connection.rollback();
-      connection.release();
       throw httpError("No active salary assignment found. Use the ATS salary-start-date path instead.", 404, "NO_ASSIGNMENT");
     }
     const oldDate = lockedRows[0].effective_from as string;
@@ -417,17 +453,22 @@ export async function updateAssignmentEffectiveDate(
 
     if (oldDate === newDate) {
       await connection.rollback();
-      connection.release();
       return { effective_from: newDate };
     }
 
-    // Stamp effective_to on the current assignment
+    // Stamp effective_to on the current assignment.
+    // Guard against effective_to inversion when backdating: if newDate is before
+    // the row's own effective_from, collapse the period to a single day
+    // (effective_from = effective_to) rather than producing an inverted range.
     await connection.execute(
       `UPDATE employee_salary_assignment
           SET active_status = 0,
-              effective_to = DATE_SUB(?, INTERVAL 1 DAY)
+              effective_to = CASE
+                WHEN DATE(?) < DATE(effective_from) THEN DATE(effective_from)
+                ELSE DATE_SUB(?, INTERVAL 1 DAY)
+              END
         WHERE id = ?`,
-      [newDate, assignmentId]
+      [newDate, newDate, assignmentId]
     );
 
     // Copy current assignment with the new effective_from
@@ -443,6 +484,21 @@ export async function updateAssignmentEffectiveDate(
        VALUES (?, ?, ?, ?, 1, ?)`,
       [employeeId, old.structure_id, old.ctc_annual, newDate, actorUserId]
     );
+
+    // Keep ats_payroll_hr_validation.salary_start_date in sync when a candidate
+    // link exists. Non-fatal: a missing candidate link is valid for direct hires.
+    if (review.candidate_id) {
+      await connection.execute(
+        `UPDATE ats_payroll_hr_validation SET salary_start_date = ?
+          WHERE candidate_id = ? AND id = (
+            SELECT id FROM (
+              SELECT id FROM ats_payroll_hr_validation
+               WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1
+            ) sub
+          )`,
+        [newDate, review.candidate_id, review.candidate_id]
+      ).catch(() => {}); // non-fatal
+    }
 
     // Audit
     await connection.execute(
