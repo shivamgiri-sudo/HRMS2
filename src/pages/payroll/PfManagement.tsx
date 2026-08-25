@@ -10,6 +10,7 @@ import PfCreationQueuePage from "./PfCreationQueuePage";
 import PfBatchesPage from "./PfBatchesPage";
 import EcrDownloadTab from "./EcrDownloadTab";
 import PfEstablishmentsTab from "./PfEstablishmentsTab";
+import EsiRegDocsTab from "./EsiRegDocsTab";
 
 export default function PfManagement() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -28,6 +29,7 @@ export default function PfManagement() {
             <TabsTrigger value="batches">Batches</TabsTrigger>
             <TabsTrigger value="ecr">ECR Download</TabsTrigger>
             <TabsTrigger value="establishments">Establishments</TabsTrigger>
+            <TabsTrigger value="esi-reg">ESI Reg. Docs</TabsTrigger>
           </TabsList>
           {/* Render children without their own DashboardLayout wrapping */}
           <TabsContent value="queue" className="mt-0">
@@ -45,6 +47,9 @@ export default function PfManagement() {
             <div className="py-4">
               <PfEstablishmentsTab />
             </div>
+          </TabsContent>
+          <TabsContent value="esi-reg" className="mt-0">
+            <EsiRegDocsTab />
           </TabsContent>
         </Tabs>
       </div>
