@@ -3810,10 +3810,10 @@ function CostCentreSplitEditor({
                     </span>
                     {group?.processName && <GrnCellSub>{group.processName}</GrnCellSub>}
                     {line && (
-                      <GrnCellSub className={!hasOwnBudget ? "text-grn-warn" : undefined}>
+                      <GrnCellSub className={!hasOwnBudget ? "text-blue-600" : undefined}>
                         {hasOwnBudget
                           ? `${money(Number(line.available_gross_amount))} available`
-                          : `${money(0)} available (shared line — unbudgeted here)`}
+                          : `Shared pool (${money(Number(line.available_gross_amount))})`}
                       </GrnCellSub>
                     )}
                   </div>
@@ -3955,8 +3955,8 @@ function CostCentreSplitEditor({
                     ) : hasOwnBudget ? (
                       money(Number(line.available_gross_amount))
                     ) : (
-                      <span className="text-grn-warn" title="No budget line of its own for this cost centre — it would draw from a shared branch-level line, so this GRN is unbudgeted here.">
-                        {money(0)}
+                      <span className="text-blue-600" title={`Drawing from branch-level shared pool: ${money(Number(line.available_gross_amount))} available`}>
+                        Shared pool
                       </span>
                     )}
                   </GrnTd>

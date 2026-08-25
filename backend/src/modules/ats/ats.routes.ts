@@ -854,9 +854,7 @@ atsRouter.post("/trigger-daily-report", requireRole("admin", "hr_admin", "super_
 
 // ── PUBLIC TEST ROUTE - REMOVE AFTER TESTING ────────────────────────────────
 
-export const atsPublicTestRouter = Router();
-
-atsPublicTestRouter.post("/", async (req, res) => {
+atsPublicRouter.post("/test-daily-report", async (req, res) => {
   const { date, email, preview } = req.body;
 
   try {
@@ -895,4 +893,3 @@ atsPublicTestRouter.post("/", async (req, res) => {
 });
 
 export default atsRouter;
-export { atsPublicTestRouter };

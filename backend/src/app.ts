@@ -66,7 +66,7 @@ import { employeeBgvRouter } from "./modules/employees/employee-bgv.routes.js";
 import { kpiRouter } from "./modules/kpi/kpi.routes.js";
 import { kpiProcessRoleRouter } from "./modules/kpi/kpi.process-role.routes.js";
 import { portalRouter } from "./modules/portal/portal.routes.js";
-import { atsRouter, atsPublicRouter, atsPublicTestRouter } from "./modules/ats/ats.routes.js";
+import { atsRouter, atsPublicRouter } from "./modules/ats/ats.routes.js";
 import { atsFormConfigRouter } from "./modules/ats/ats-form-config.routes.js";
 import { registrationEnhancedRouter } from "./modules/ats/registration.enhanced.routes.js";
 import mockDigilockerRouter from "./modules/ats/mock-digilocker.routes.js";
@@ -349,9 +349,6 @@ app.use("/uploads", (req, res, _next) => {
 });
 
 app.get("/", (_req, res) => res.json({ success: true, service: "MCN HRMS Backend API", version: "1.0.0" }));
-
-// TEMP TEST ROUTE - REMOVE AFTER TESTING
-app.use("/test-daily-report", atsPublicTestRouter);
 
 app.use("/api/auth", authRouter);
 app.use("/api/auth", passwordResetRouter);
