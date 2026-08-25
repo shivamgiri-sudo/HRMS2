@@ -106,6 +106,7 @@ import { rosterSelfSecureRouter } from "./modules/roster/roster.self.secure.rout
 import { rtaRouter } from "./modules/rta/rta.routes.js";
 import { accountControlRouter } from "./modules/account-control/account.control.routes.js";
 import { workforceMandateRouter } from "./modules/workforce-mandate/workforce.mandate.routes.js";
+import { manpowerRiskRouter } from "./modules/workforce-mandate/manpower-risk.routes.js";
 import { lmsRouter } from "./modules/lms/lms.routes.js";
 import { lmsIntegrationRouter } from "./modules/lms-integration/lms-integration.routes.js";
 import { benefitsRouter } from "./modules/benefits/benefits.routes.js";
@@ -527,6 +528,7 @@ app.use("/api/roster-gov", rosterGovRouter);
 app.use("/api/rta", rtaRouter);
 app.use("/api/account-control", accountControlRouter);
 app.use("/api/workforce-mandate", workforceMandateRouter);
+app.use("/api/manpower-risk", manpowerRiskRouter);
 app.use("/api/lms", lmsIntegrationRouter);
 app.use("/api/lms", lmsRouter);
 app.use("/api/benefits", benefitsRouter);

@@ -14,6 +14,9 @@ interface DrillDownContextValue {
   showEmployeeList: boolean;
   openEmployeeList: () => void;
   closeEmployeeList: () => void;
+  selectedEmployeeId: string | null;
+  selectEmployee: (id: string) => void;
+  deselectEmployee: () => void;
 }
 
 const DrillDownContext = createContext<DrillDownContextValue | null>(null);
@@ -38,6 +41,7 @@ export function applyPopToChip(chips: DrillDownChip[], index: number): DrillDown
 export function DrillDownProvider({ children }: { children: React.ReactNode }) {
   const [chips, setChips] = useState<DrillDownChip[]>([]);
   const [showEmployeeList, setShowEmployeeList] = useState(false);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
 
   const pushChip = useCallback((chip: DrillDownChip) => {
     setChips((prev) => applyPushChip(prev, chip));
@@ -54,10 +58,34 @@ export function DrillDownProvider({ children }: { children: React.ReactNode }) {
 
   const openEmployeeList = useCallback(() => setShowEmployeeList(true), []);
   const closeEmployeeList = useCallback(() => setShowEmployeeList(false), []);
+  const selectEmployee = useCallback((id: string) => setSelectedEmployeeId(id), []);
+  const deselectEmployee = useCallback(() => setSelectedEmployeeId(null), []);
 
   const value = useMemo(
-    () => ({ chips, pushChip, popToChip, clear, showEmployeeList, openEmployeeList, closeEmployeeList }),
-    [chips, pushChip, popToChip, clear, showEmployeeList, openEmployeeList, closeEmployeeList],
+    () => ({
+      chips,
+      pushChip,
+      popToChip,
+      clear,
+      showEmployeeList,
+      openEmployeeList,
+      closeEmployeeList,
+      selectedEmployeeId,
+      selectEmployee,
+      deselectEmployee,
+    }),
+    [
+      chips,
+      pushChip,
+      popToChip,
+      clear,
+      showEmployeeList,
+      openEmployeeList,
+      closeEmployeeList,
+      selectedEmployeeId,
+      selectEmployee,
+      deselectEmployee,
+    ],
   );
 
   return <DrillDownContext.Provider value={value}>{children}</DrillDownContext.Provider>;

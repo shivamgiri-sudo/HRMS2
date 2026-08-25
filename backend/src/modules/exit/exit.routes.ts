@@ -286,6 +286,95 @@ exitRouter.get("/:id", h(async (req: AuthenticatedRequest, res: Response) => {
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GET /:id/full  — full exit record for drill-down drawer
+// Returns exit_request + employee + manager name + approval timeline with
+// manager/HR feedback from exit_approval_log + clearance task summary.
+// ─────────────────────────────────────────────────────────────────────────────
+exitRouter.get(
+  "/:id/full",
+  requireRole("admin", "hr", "manager", "finance", "payroll"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const { id } = req.params;
+
+    // Full exit record with employee, manager, branch, process, department
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT er.*,
+              e.employee_code,
+              CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
+              e.joining_date,
+              b.branch_name,
+              p.process_name,
+              d.dept_name AS department_name,
+              des.designation_name,
+              CONCAT_WS(' ', mgr.first_name, mgr.last_name) AS manager_name,
+              mgr.employee_code AS manager_code
+         FROM exit_request er
+         LEFT JOIN employees e ON e.id = er.employee_id
+         LEFT JOIN branch_master b ON b.id = e.branch_id
+         LEFT JOIN process_master p ON p.id = e.process_id
+         LEFT JOIN departments d ON d.id = e.dept_id
+         LEFT JOIN designations des ON des.id = e.designation_id
+         LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
+        WHERE er.id = ?
+        LIMIT 1`,
+      [id]
+    );
+    if (!(rows as RowDataPacket[]).length) {
+      return res.status(404).json({ success: false, message: "Exit request not found" });
+    }
+    const record = (rows as RowDataPacket[])[0];
+
+    // Approval timeline with discussion remarks and internal notes
+    const [logRows] = await db.execute<RowDataPacket[]>(
+      `SELECT al.id, al.stage, al.action, al.action_by_role,
+              al.discussion_remarks, al.internal_notes, al.created_at,
+              CONCAT_WS(' ', au_emp.first_name, au_emp.last_name) AS actioned_by_name,
+              au.email AS actioned_by_email
+         FROM exit_approval_log al
+         LEFT JOIN auth_user au ON au.id = al.action_by
+         LEFT JOIN employees au_emp ON au_emp.user_id = au.id
+        WHERE al.exit_request_id = ?
+        ORDER BY al.created_at ASC`,
+      [id]
+    );
+
+    // Clearance tasks
+    const [clearanceRows] = await db.execute<RowDataPacket[]>(
+      `SELECT clearance_area, task_title, status, due_date, remarks, cleared_at
+         FROM exit_clearance_task
+        WHERE exit_request_id = ?
+        ORDER BY clearance_area, created_at`,
+      [id]
+    );
+
+    // Notice days served / remaining (only meaningful in accepted/notice_serving)
+    let notice_days_served: number | null = null;
+    let notice_days_remaining: number | null = null;
+    if (record.notice_start_date && record.notice_period_days > 0) {
+      const start = new Date(record.notice_start_date);
+      const today = new Date();
+      const end = record.notice_end_date ? new Date(record.notice_end_date) : null;
+      const served = Math.floor((today.getTime() - start.getTime()) / 86400000);
+      notice_days_served = Math.max(0, Math.min(served, record.notice_period_days));
+      notice_days_remaining = end
+        ? Math.max(0, Math.floor((end.getTime() - today.getTime()) / 86400000))
+        : Math.max(0, record.notice_period_days - notice_days_served);
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        ...record,
+        notice_days_served,
+        notice_days_remaining,
+        timeline: logRows,
+        clearance_tasks: clearanceRows,
+      },
+    });
+  })
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /ff/:exitRequestId/outstanding-advances
 // Returns outstanding (not fully recovered) salary advances for the employee
 // linked to the given exit request. Used by F&F panel to pre-fill advances
