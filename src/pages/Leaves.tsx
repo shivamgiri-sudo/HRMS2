@@ -1167,12 +1167,14 @@ const Leaves = () => {
                 </div>
 
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Notes Optional</label>
+                  <label className="text-sm font-medium">
+                    Remarks {actionType === "approve" ? <span className="text-rose-500">*</span> : "(optional)"}
+                  </label>
 
                   <Textarea
                     value={reviewNotes}
                     onChange={(event) => setReviewNotes(event.target.value)}
-                    placeholder="Add any notes for the employee."
+                    placeholder={actionType === "approve" ? "Remarks are required to approve" : "Add any notes for the employee."}
                     rows={3}
                     className="rounded-xl"
                   />
@@ -1195,7 +1197,7 @@ const Leaves = () => {
 
               <Button
                 onClick={confirmAction}
-                disabled={updateStatusMutation.isPending}
+                disabled={updateStatusMutation.isPending || (actionType === "approve" && !reviewNotes.trim())}
                 className={
                   actionType === "approve"
                     ? "rounded-xl bg-slate-950 text-white hover:bg-slate-800"

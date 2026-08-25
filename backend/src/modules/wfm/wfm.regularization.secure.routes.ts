@@ -427,6 +427,9 @@ async function _performReview(req: any, regularizationId: string): Promise<Revie
   }
 
   const reviewerNote = req.body.reviewerNote ?? req.body.remarks ?? null;
+  if ((status === "approved" || status === "manager_approved") && !reviewerNote?.trim()) {
+    return { httpStatus: 400, payload: { success: false, message: "Remarks are required to approve a regularization request" } };
+  }
   const data = await wfmService.reviewRegularization(regularizationId, {
     status: status as any,
     reviewerNote,

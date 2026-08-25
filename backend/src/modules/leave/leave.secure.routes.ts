@@ -97,7 +97,11 @@ leaveSecureRouter.patch("/requests/:id/review", h(async (req: any, res: any) => 
   const status = String(req.body.status ?? "");
   const allowed = ["approved", "rejected", "branch_head_approved", "branch_head_rejected"];
   if (!allowed.includes(status)) return res.status(400).json({ success: false, message: "Invalid leave review status" });
-  const data = await leaveService.reviewRequest(req.params.id, { status: status as any, remarks: req.body.remarks ?? req.body.reviewNotes ?? null }, req.authUser!.id);
+  const remarks = req.body.remarks ?? req.body.reviewNotes ?? null;
+  if ((status === "approved" || status === "branch_head_approved") && !remarks?.trim()) {
+    return res.status(400).json({ success: false, message: "Remarks are required to approve a leave request" });
+  }
+  const data = await leaveService.reviewRequest(req.params.id, { status: status as any, remarks: remarks ?? null }, req.authUser!.id);
   return res.json({ success: true, data, message: `Leave ${status}` });
 }));
 

@@ -11,6 +11,8 @@ import { useBranches } from "@/hooks/useOrgMasters";
 import BulkBranchCorrection from "@/components/attendance/BulkBranchCorrection";
 import { useCanDiscard } from "@/hooks/useDiscard";
 import { DiscardDialog } from "@/components/discard/DiscardDialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge"; // kept for stage badges in DetailDialog
@@ -482,6 +484,8 @@ export default function AttendanceRegularization() {
   const [tablePage, setTablePage] = useState(1);
   const [selectedRequest, setSelectedRequest] = useState<EmployeeRequest | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [reviewDialogTarget, setReviewDialogTarget] = useState<{ id: string; status: "approved" | "rejected" } | null>(null);
+  const [reviewDialogNote, setReviewDialogNote] = useState("");
 
   // Discarding an approved regularization is narrower than approving one:
   // super_admin and wfm only, never a manager or branch head.
@@ -721,8 +725,8 @@ export default function AttendanceRegularization() {
   });
 
   const reviewMutation = useMutation({
-    mutationFn: async ({ id, status, force = false }: { id: string; status: "approved" | "rejected"; force?: boolean }) => {
-      return hrmsApi.patch(`/api/wfm/regularizations/${id}/review`, { status, force });
+    mutationFn: async ({ id, status, force = false, reviewerNote }: { id: string; status: "approved" | "rejected"; force?: boolean; reviewerNote?: string }) => {
+      return hrmsApi.patch(`/api/wfm/regularizations/${id}/review`, { status, force, reviewerNote: reviewerNote ?? null });
     },
     onSuccess: () => {
       toast({ title: "Review saved", description: "The approval queue has been updated." });
@@ -1708,13 +1712,13 @@ export default function AttendanceRegularization() {
                               {["pending_manager", "pending_admin", "payroll_pending"].includes(request.current_status) && !isOwnRequest && (
                                 <>
                                   <button
-                                    onClick={() => reviewMutation.mutate({ id: request.id, status: "approved" })}
+                                    onClick={() => { setReviewDialogTarget({ id: request.id, status: "approved" }); setReviewDialogNote(""); }}
                                     className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
                                   >
                                     Approve
                                   </button>
                                   <button
-                                    onClick={() => reviewMutation.mutate({ id: request.id, status: "rejected" })}
+                                    onClick={() => { setReviewDialogTarget({ id: request.id, status: "rejected" }); setReviewDialogNote(""); }}
                                     className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100"
                                   >
                                     Reject
@@ -1781,6 +1785,53 @@ export default function AttendanceRegularization() {
         entityId={discardTarget?.id ?? null}
         onDiscarded={loadRequests}
       />
+
+      {/* Review confirmation dialog — remarks required for approval */}
+      <Dialog
+        open={!!reviewDialogTarget}
+        onOpenChange={(open) => { if (!open) { setReviewDialogTarget(null); setReviewDialogNote(""); } }}
+      >
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {reviewDialogTarget?.status === "approved"
+                ? <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                : <AlertTriangle className="h-5 w-5 text-rose-600" />}
+              {reviewDialogTarget?.status === "approved" ? "Approve" : "Reject"} Regularization
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">
+              Remarks {reviewDialogTarget?.status === "approved" ? <span className="text-rose-500">*</span> : "(optional)"}
+            </Label>
+            <Textarea
+              value={reviewDialogNote}
+              onChange={(e) => setReviewDialogNote(e.target.value)}
+              placeholder={reviewDialogTarget?.status === "approved" ? "Remarks are required to approve" : "Add rejection reason (optional)"}
+              rows={3}
+              className="rounded-xl resize-none"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" className="rounded-xl" onClick={() => { setReviewDialogTarget(null); setReviewDialogNote(""); }}>
+              Cancel
+            </Button>
+            <Button
+              disabled={reviewMutation.isPending || (reviewDialogTarget?.status === "approved" && !reviewDialogNote.trim())}
+              onClick={() => {
+                if (!reviewDialogTarget) return;
+                reviewMutation.mutate(
+                  { id: reviewDialogTarget.id, status: reviewDialogTarget.status, reviewerNote: reviewDialogNote.trim() || undefined },
+                  { onSuccess: () => { setReviewDialogTarget(null); setReviewDialogNote(""); } }
+                );
+              }}
+              className={`rounded-xl ${reviewDialogTarget?.status === "approved" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"} text-white`}
+            >
+              {reviewMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : reviewDialogTarget?.status === "approved" ? "Approve" : "Reject"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }
