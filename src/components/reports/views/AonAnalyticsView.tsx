@@ -43,6 +43,7 @@ import {
   STATUS,
   StatTile,
   TOOLTIP_STYLE,
+  inrShort,
   num,
   pct,
   ratio,
@@ -101,6 +102,15 @@ const GROUP_BY_ID_FIELD: Record<GroupBy, string> = {
 type Row = Record<string, unknown>;
 const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const s = (v: unknown) => (v == null ? "" : String(v));
+
+/** A group's AON Attrition Rate must be at least this many times the company-wide rate
+ *  for the same bucket, with at least ANOMALY_MIN_EXITS exits, to be flagged. */
+const ANOMALY_MULTIPLIER = 2;
+const ANOMALY_MIN_EXITS = 3;
+
+/** Rule-of-thumb replacement-cost multiplier applied to (exits x avg CTC) -- a stated
+ *  midpoint of the common 0.5-1x annual CTC range, not a precise figure. */
+const REPLACEMENT_COST_MULTIPLIER = 0.75;
 
 /* ── Data access ───────────────────────────────────────────────────────────── */
 
@@ -256,6 +266,74 @@ function DrillResetOnChange({ groupBy, metric }: { groupBy: GroupBy; metric: "he
   return null;
 }
 
+/**
+ * Anomaly banner: (group, bucket) combinations running >= ANOMALY_MULTIPLIER x the
+ * company-wide AON Attrition Rate for that same bucket, with a floor on exits so a
+ * 1-exit group with no peers doesn't get flagged on noise. Each row is a direct jump
+ * into the same Employee List drill the heatmap cells already open.
+ */
+function AnomalyBanner({
+  anomalies, groupBy, onJumpTo,
+}: {
+  anomalies: Array<{ row: Row; rate: number; companyRate: number | null; ratio: number | null }>;
+  groupBy: GroupBy;
+  onJumpTo: (row: Row) => void;
+}) {
+  if (anomalies.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-rose-200 bg-rose-50 p-3">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-rose-600" />
+        <div className="min-w-0 flex-1 space-y-1.5">
+          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-rose-800">
+            Anomalies in this window
+          </p>
+          {anomalies.map((a, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onJumpTo(a.row)}
+              className="block w-full rounded-md px-2 py-1 text-left text-[11.5px] leading-snug text-rose-900 hover:bg-rose-100"
+            >
+              <span className="font-semibold">{s(a.row[groupBy]) || "UNASSIGNED"}</span>
+              {" — "}
+              {s(a.row.aon_bucket)}d bucket running {pct(a.rate)} attrition,
+              {" "}{(a.ratio ?? 0).toFixed(1)}x the company rate ({pct(a.companyRate ?? NaN)})
+              {" · "}{num(n(a.row.exits))} exits
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Supplies `onJumpTo` to `AnomalyBanner` from inside `DrillDownProvider` -- `useDrillDown`
+ * throws outside it, and `Overview` itself renders the provider one level above its own
+ * body, so this wrapper (same pattern as `DrillResetOnChange`) is what lets the banner
+ * reach `pushChip`/`openEmployeeList`. The dimension/idField mapping here is intentionally
+ * identical to `DrillCell`'s own -- both must derive the same FK id the same way, or a
+ * jump-to-anomaly click would push a differently-shaped filter than a direct heatmap click.
+ */
+function AnomalyJumpHandler({
+  anomalies, groupBy, children,
+}: {
+  anomalies: Array<{ row: Row; rate: number; companyRate: number | null; ratio: number | null }>;
+  groupBy: GroupBy;
+  children: (onJumpTo: (row: Row) => void) => React.ReactNode;
+}) {
+  const { pushChip, openEmployeeList } = useDrillDown();
+  const dimension = groupBy === "cost_centre_name" ? "costCentre" : groupBy === "process_name" ? "process" : "branch";
+  const onJumpTo = (row: Row) => {
+    const idField = GROUP_BY_ID_FIELD[groupBy];
+    pushChip({ dimension, value: s(row[idField]), label: s(row[groupBy]) || "UNASSIGNED" });
+    pushChip({ dimension: "aonBucket", value: s(row.aon_bucket), label: `${s(row.aon_bucket)}d` });
+    openEmployeeList();
+  };
+  return <>{children(onJumpTo)}</>;
+}
+
 function Overview({ from, to, branchId, headlineRate }: { from: string; to: string; branchId: string; headlineRate: ReturnType<typeof useReport> }) {
   const [groupBy, setGroupBy] = useState<GroupBy>("cost_centre_name");
   const [metric, setMetric] = useState<"headcount" | "exits" | "shrinkage">("headcount");
@@ -371,6 +449,57 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
     return rows.sort((a, b) => (b.total ?? 0) - (a.total ?? 0)).slice(0, 25);
   }, [metric, groupBy, hc.data, at.data, sh.data]);
 
+  /*
+   * Anomaly detection: for each (group, bucket) in the current attrition data, compare its own
+   * AON Attrition Rate against the company-wide rate for that SAME bucket across ALL groups in
+   * range. A group is anomalous when its rate is >= ANOMALY_MULTIPLIER x the company rate for that
+   * bucket, with a floor on exits so a 1-exit group with no peers doesn't get flagged on noise.
+   */
+  const anomalies = useMemo(() => {
+    const rows = at.data ?? [];
+    // Company-wide totals per bucket, across every group, for the current date range.
+    const byBucket = new Map<string, { exits: number; atRisk: number }>();
+    for (const r of rows) {
+      const b = s(r.aon_bucket);
+      const cur = byBucket.get(b) ?? { exits: 0, atRisk: 0 };
+      cur.exits += n(r.exits);
+      cur.atRisk += n(r.at_risk_population_avg);
+      byBucket.set(b, cur);
+    }
+    const companyRate = (b: string) => {
+      const c = byBucket.get(b);
+      return c && c.atRisk > 0 ? (c.exits / c.atRisk) * 100 : null;
+    };
+
+    // One row per (group, bucket) that clears both the multiplier and the minimum-exits floor.
+    return rows
+      .filter(r => n(r.exits) >= ANOMALY_MIN_EXITS)
+      .map(r => {
+        const rate = n(r.aon_attrition_rate_pct);
+        const cRate = companyRate(s(r.aon_bucket));
+        return { row: r, rate, companyRate: cRate, ratio: cRate && cRate > 0 ? rate / cRate : null };
+      })
+      .filter(a => a.ratio != null && a.ratio >= ANOMALY_MULTIPLIER)
+      .sort((a, b) => (b.ratio ?? 0) - (a.ratio ?? 0))
+      .slice(0, 5);
+  }, [at.data]);
+
+  /*
+   * Rough replacement-cost estimate: exits x that group's average CTC x a stated multiplier. A
+   * common HR rule-of-thumb range is 0.5-1x annual CTC for full replacement cost (sourcing,
+   * onboarding, ramp-up productivity loss); 0.75 is used here as a stated midpoint, not a precise
+   * figure -- always rendered with "(estimate)" per this feature's no-fabrication discipline.
+   */
+  const costImpact = useMemo(() => {
+    const rows = at.data ?? [];
+    let total = 0;
+    for (const r of rows) {
+      const ctc = n(r.avg_ctc_annual);
+      if (ctc > 0) total += n(r.exits) * ctc * REPLACEMENT_COST_MULTIPLIER;
+    }
+    return total;
+  }, [at.data]);
+
   /* Bucket trend over the months in range — the direct answer to "which bucket's trend
      is worst". Shrinkage is re-weighted per month for the same reason as the tiles. */
   const trend = useMemo(() => {
@@ -453,10 +582,14 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
             : []),
           {
             label: "Exit reason",
-            detail: "Not captured in this system — under 1% of leavers have one recorded. This view shows what kind of joiner leaves and when, never why.",
+            detail: "Not captured in this system — under 1% of leavers have one recorded. Bulk reason-capture for pending exits would close this gap; see the Attrition Deep Dive tab's own reason-capture figure for the exact rate in your current date range. This view shows what kind of joiner leaves and when, never why.",
           },
         ]}
       />
+
+      <AnomalyJumpHandler anomalies={anomalies} groupBy={groupBy}>
+        {(onJumpTo) => <AnomalyBanner anomalies={anomalies} groupBy={groupBy} onJumpTo={onJumpTo} />}
+      </AnomalyJumpHandler>
 
       {failure && <MetricFailure />}
 
@@ -467,6 +600,15 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
             value={pct(Number(headlineRate.data[headlineRate.data.length - 1].attrition_rate_pct ?? NaN))}
             denominator={`${num(Number(headlineRate.data[headlineRate.data.length - 1].exits ?? 0))} exits over avg ${num(Number(headlineRate.data[headlineRate.data.length - 1].avg_total_headcount ?? 0))} headcount`}
             intent="neutral"
+            icon={<TrendingDown className="h-4 w-4" />}
+          />
+        )}
+        {!loading && metric === "exits" && costImpact > 0 && (
+          <StatTile
+            label="Est. Replacement Cost (estimate)"
+            value={inrShort(costImpact)}
+            denominator={`${num((at.data ?? []).reduce((a, r) => a + n(r.exits), 0))} exits x avg CTC x ${REPLACEMENT_COST_MULTIPLIER}`}
+            intent="warning"
             icon={<TrendingDown className="h-4 w-4" />}
           />
         )}
