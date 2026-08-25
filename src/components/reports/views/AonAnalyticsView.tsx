@@ -789,7 +789,7 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
         </ChartCard>
       )}
 
-      <EmployeeListPanel open metric={metric === "headcount" ? "headcount" : metric === "exits" ? "exits" : "shrinkage"} from={from} to={to} />
+      <EmployeeListPanel open metric={metric === "headcount" ? "headcount" : metric === "exits" ? "exits" : "shrinkage"} from={from} to={to} branchId={branchId} />
       <EmployeeDetailDrawer />
     </div>
     </DrillDownProvider>
@@ -926,7 +926,7 @@ function CohortSurvival({ from, to, branchId }: { from: string; to: string; bran
         </div>
       </ChartCard>
 
-      <EmployeeListPanel open metric="headcount" from={from} to={to} />
+      <EmployeeListPanel open metric="headcount" from={from} to={to} branchId={branchId} />
       <EmployeeDetailDrawer />
     </div>
     </DrillDownProvider>
@@ -964,6 +964,28 @@ function CohortRow({ c }: { c: { cohort: string; joined: number; left30: number 
       ))}
     </tr>
   );
+}
+
+/**
+ * Resets the drill-down state (chips + open panels) whenever Deep Dive's `dimension`
+ * selector changes -- the exact `DeepDive` counterpart to `Overview`'s own
+ * `DrillResetOnChange` (see that component's doc comment for the full mechanism and why it
+ * cannot live directly in the calling component's body).
+ *
+ * Without this, `pushChip`'s replace-only-by-dimension behaviour let a stale chip survive a
+ * "Slice by" change: click a branch row (pushes a `branch` chip) -> switch Slice by to
+ * Department -> click a department row (pushes a `department` chip alongside the still-live
+ * `branch` chip, since they are different dimensions) -> the Employee List panel then queries
+ * the INTERSECTION of both filters, which reconciles with neither displayed row
+ * (IMPORTANT-2, final whole-branch review).
+ */
+function DeepDiveDrillResetOnChange({ dimension }: { dimension: string }) {
+  const { clear } = useDrillDown();
+  useEffect(() => {
+    clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dimension]);
+  return null;
 }
 
 /* ── Attrition deep dive ───────────────────────────────────────────────────── */
@@ -1087,6 +1109,7 @@ function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: 
 
   return (
     <DrillDownProvider>
+    <DeepDiveDrillResetOnChange dimension={dimension} />
     <div className="space-y-4">
       <GapBanner
         items={[
@@ -1165,7 +1188,7 @@ function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: 
         </div>
       </ChartCard>
 
-      <EmployeeListPanel open metric="exits" from={from} to={to} />
+      <EmployeeListPanel open metric="exits" from={from} to={to} branchId={branchId} />
       <EmployeeDetailDrawer />
     </div>
     </DrillDownProvider>

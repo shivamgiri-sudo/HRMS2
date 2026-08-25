@@ -13,6 +13,15 @@ interface EmployeeListPanelProps {
   metric: "headcount" | "exits" | "shrinkage";
   from: string;
   to: string;
+  /**
+   * The page-level "Branch" filter (IMPORTANT-4, final whole-branch review). Server-side row
+   * scope (`appendScopeConditions`) already restricts the drill-down to what the caller is
+   * authorised to see regardless of this prop -- this is purely a reconciliation fix, so a
+   * drilled Employee List agrees with the branch-scoped aggregate it was opened from instead
+   * of silently including employees from other branches when Group-by/Slice-by isn't itself
+   * Branch. Optional and omitted -> no branch narrowing, same as before this fix.
+   */
+  branchId?: string;
 }
 
 export interface EmployeeRow {
@@ -26,7 +35,33 @@ export interface EmployeeRow {
   risk_score?: number;
   date_of_exit?: string;
   tenure_at_exit_days?: number;
+  /** Present on headcount/shrinkage-context rows only (IMPORTANT-3, final whole-branch
+   * review) -- absent/undefined on exits-context rows, which are unconditionally treated as
+   * "not eligible for a retention flag" via the `metric !== "exits"` check regardless of this
+   * field. A cohort-month drill mixes active and since-left employees in the SAME headcount-
+   * context response (see aon-drilldown.executor.ts's cohortMonth comment), so this is the
+   * only way that response shape can tell the two apart. */
+  is_active?: boolean | number;
   [key: string]: unknown;
+}
+
+/**
+ * Whether the "Flag for Retention Review" action should be offered for a given row
+ * (IMPORTANT-3, final whole-branch review). Extracted as a pure, exported function -- same
+ * reason as `riskBandFor` below -- so the hide-on-exited-employee rule can be asserted
+ * directly without a DOM.
+ *
+ * An exits-context row (`metric === "exits"`) never offers the button regardless of
+ * `is_active`, unchanged from before this fix. What changed is the headcount/shrinkage
+ * context: a cohort-month drill can return an inactive (since-left) employee alongside active
+ * ones in that SAME response shape, and flagging someone who already left for a "retention
+ * review" is nonsensical. `is_active` is treated as active when absent/undefined -- every
+ * pre-fix headcount/shrinkage row (and any row from a code path this fix didn't touch) has no
+ * such field and must keep showing the button exactly as before.
+ */
+export function shouldShowFlagButton(metric: "headcount" | "exits" | "shrinkage", row: EmployeeRow): boolean {
+  if (metric === "exits") return false;
+  return row.is_active !== false && row.is_active !== 0;
 }
 
 /**
@@ -65,8 +100,13 @@ export function buildEmployeeListFilterParams(
   metric: string,
   from: string,
   to: string,
+  branchId?: string,
 ): Record<string, string> {
-  return { metric, from, to, ...chipsToFilterParams(chips) };
+  // Page-level branchId is a default, applied FIRST so a chip's own `branch` dimension (from
+  // drilling directly on a branch row/column) always wins -- chipsToFilterParams is spread
+  // last on purpose. See EmployeeListPanelProps.branchId for why this exists (IMPORTANT-4,
+  // final whole-branch review).
+  return { metric, from, to, ...(branchId ? { branchId } : {}), ...chipsToFilterParams(chips) };
 }
 
 /**
@@ -85,12 +125,12 @@ export async function fetchAonDrilldownEmployees(
   return res.data ?? [];
 }
 
-export function EmployeeListPanel({ open, metric, from, to }: EmployeeListPanelProps) {
+export function EmployeeListPanel({ open, metric, from, to, branchId }: EmployeeListPanelProps) {
   const { chips, showEmployeeList, closeEmployeeList, selectEmployee, popToChip } = useDrillDown();
   const queryClient = useQueryClient();
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
 
-  const filterParams = buildEmployeeListFilterParams(chips, metric, from, to);
+  const filterParams = buildEmployeeListFilterParams(chips, metric, from, to, branchId);
 
   // retry: false + a bounded staleTime, matching the sibling useReport hook in
   // AonAnalyticsView.tsx (aon-bucket-shrinkage) -- a dead/slow query here shouldn't retry three
@@ -171,7 +211,7 @@ export function EmployeeListPanel({ open, metric, from, to }: EmployeeListPanelP
                     {row.tenure_at_exit_days != null ? ` · ${row.tenure_at_exit_days} days at exit` : ""}
                   </p>
                 </button>
-                {metric !== "exits" && (
+                {shouldShowFlagButton(metric, row) && (
                   <Button
                     size="sm"
                     variant={flaggedIds.has(row.employee_id) ? "secondary" : "outline"}

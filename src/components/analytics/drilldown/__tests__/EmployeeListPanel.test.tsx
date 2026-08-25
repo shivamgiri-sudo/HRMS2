@@ -42,6 +42,8 @@ import {
   fetchAonDrilldownEmployees,
   flagForRetentionReview,
   riskBandFor,
+  shouldShowFlagButton,
+  type EmployeeRow,
 } from "../EmployeeListPanel";
 
 // ═══════════════════════════════════════════════════════════════════════════════════════════
@@ -105,6 +107,70 @@ describe("EmployeeListPanel — data fetch", () => {
         aonBucket: "31-60",
       }),
     );
+  });
+
+  // Regression test for IMPORTANT-4 of the final whole-branch review: the page-level Branch
+  // filter must reach the drilled Employee List query for Cohort Survival and Deep Dive, not
+  // just Overview.
+  it("buildEmployeeListFilterParams includes the page-level branchId when no chip overrides it", () => {
+    const params = buildEmployeeListFilterParams(
+      [{ dimension: "cohortMonth", value: "2026-03" }],
+      "headcount",
+      "2026-01-01",
+      "2026-08-25",
+      "branch-page-1",
+    );
+    expect(params).toEqual(
+      expect.objectContaining({ branchId: "branch-page-1", cohortMonth: "2026-03" }),
+    );
+  });
+
+  it("a `branch` dimension chip overrides the page-level branchId, never both/neither", () => {
+    const params = buildEmployeeListFilterParams(
+      [{ dimension: "branch", value: "branch-clicked-2" }],
+      "exits",
+      "2026-01-01",
+      "2026-08-25",
+      "branch-page-1",
+    );
+    expect(params.branchId).toBe("branch-clicked-2");
+  });
+
+  it("omits branchId entirely when the page-level filter is unset (unchanged prior behaviour)", () => {
+    const params = buildEmployeeListFilterParams(
+      [{ dimension: "aonBucket", value: "0-30" }],
+      "exits",
+      "2026-01-01",
+      "2026-08-25",
+    );
+    expect(params.branchId).toBeUndefined();
+  });
+});
+
+// Regression tests for IMPORTANT-3 of the final whole-branch review: a cohort-month drill can
+// return an exited employee alongside active ones in the SAME headcount-context response, and
+// flagging an already-exited employee for "retention review" is nonsensical.
+describe("shouldShowFlagButton", () => {
+  const baseRow: EmployeeRow = { employee_id: "e1", employee_code: "MAS1", employee_name: "X" };
+
+  it("never shows the button for an exits-context row, regardless of is_active", () => {
+    expect(shouldShowFlagButton("exits", { ...baseRow, is_active: true })).toBe(false);
+    expect(shouldShowFlagButton("exits", baseRow)).toBe(false);
+  });
+
+  it("shows the button for an active headcount-context row", () => {
+    expect(shouldShowFlagButton("headcount", { ...baseRow, is_active: true })).toBe(true);
+    expect(shouldShowFlagButton("headcount", { ...baseRow, is_active: 1 })).toBe(true);
+  });
+
+  it("hides the button for an inactive/exited employee surfaced via a cohort headcount drill", () => {
+    expect(shouldShowFlagButton("headcount", { ...baseRow, is_active: false })).toBe(false);
+    expect(shouldShowFlagButton("headcount", { ...baseRow, is_active: 0 })).toBe(false);
+  });
+
+  it("defaults to showing the button when is_active is absent (pre-fix rows / other code paths)", () => {
+    expect(shouldShowFlagButton("headcount", baseRow)).toBe(true);
+    expect(shouldShowFlagButton("shrinkage", baseRow)).toBe(true);
   });
 });
 
