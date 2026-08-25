@@ -939,26 +939,98 @@ function CohortSurvival({ from, to, branchId }: { from: string; to: string; bran
 
 /* ── Attrition deep dive ───────────────────────────────────────────────────── */
 
+/**
+ * One row of the "Exits by AON bucket" table, made clickable ONLY when this value carries a
+ * real FK id (`v.dimensionId`, from Task 3's `dimension_id` column). The five proxy dimensions
+ * (source/gender/age_band/ctc_band/exit_type_proxy) always have `dimensionId === null` by
+ * construction -- there is no stable id to filter by -- and `designation` is deliberately left
+ * out of `dimensionToFilterField` below (no `designationId` filter field exists in the executor
+ * layer this round), so both correctly stay non-interactive rather than silently filtering on a
+ * display-name string, which is exactly the bug Plan 1's whole-branch review found and fixed for
+ * the Overview heatmap (see `DrillCell` above): the chip's VALUE must be the real FK id, and
+ * `v.value` (the display name) is used only for the chip's LABEL.
+ */
+function DeepDiveRow({
+  v, buckets, dimension, avgEarlyQuitRate,
+}: {
+  v: { value: string; total: number; early: number; buckets: Record<string, number>; dimensionId: string | null };
+  buckets: readonly Bucket[];
+  dimension: string;
+  avgEarlyQuitRate: number;
+}) {
+  const { pushChip, openEmployeeList } = useDrillDown();
+
+  const dimensionToFilterField: Record<string, string> = {
+    branch: "branch", cost_centre: "costCentre", process: "process",
+    department: "department", reporting_manager: "managerId",
+    // designation intentionally omitted: no designationId filter field exists yet in
+    // ExecFilters/appendFilterConditions/report-suite.routes.ts's execFilters whitelist, so a
+    // designation row stays non-interactive rather than half-wiring a click that does nothing.
+  };
+  const field = dimensionToFilterField[dimension];
+  const clickable = v.dimensionId != null && v.dimensionId !== "" && !!field;
+
+  const handleClick = () => {
+    if (!clickable) return;
+    pushChip({ dimension: field, value: v.dimensionId!, label: v.value });
+    openEmployeeList();
+  };
+
+  return (
+    <tr
+      className={`border-b border-slate-100 ${clickable ? "cursor-pointer hover:bg-slate-50" : ""}`}
+      onClick={clickable ? handleClick : undefined}
+    >
+      <td className="max-w-[260px] truncate px-2 py-1.5 font-medium text-slate-800" title={v.value}>{v.value}</td>
+      {buckets.map(b => (
+        <td key={b} className="px-2 py-1.5 text-right tabular-nums">
+          {v.buckets[b] == null ? <span className="text-slate-300">—</span> : num(v.buckets[b])}
+        </td>
+      ))}
+      <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{num(v.total)}</td>
+      <td className={`px-2 py-1.5 text-right font-semibold tabular-nums ${v.early >= 45 ? "text-rose-700" : v.early >= 30 ? "text-amber-700" : "text-slate-700"}`}>
+        {pct(v.early)}
+      </td>
+      {dimension === "reporting_manager" && (
+        <td className={`px-2 py-1.5 text-right tabular-nums ${v.early > avgEarlyQuitRate ? "text-rose-700" : "text-emerald-700"}`}>
+          {v.early > avgEarlyQuitRate ? "+" : ""}{(v.early - avgEarlyQuitRate).toFixed(1)}pp
+        </td>
+      )}
+    </tr>
+  );
+}
+
 function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: string }) {
   const [dimension, setDimension] = useState<string>("source");
   const q = useReport("attrition-deep-dive", { from, to, dimension, ...(branchId ? { branchId } : {}) });
 
   /* early_quit_rate is constant across a value's four bucket rows by construction, so it
-     is read from the first row rather than recomputed. */
+     is read from the first row rather than recomputed. Ranked by deviation from the average
+     early-quit rate across the current slice, not raw exit count -- this alone answers what is
+     driving attrition. */
   const values = useMemo(() => {
-    const map = new Map<string, { total: number; early: number; buckets: Record<string, number> }>();
+    const map = new Map<string, { total: number; early: number; buckets: Record<string, number>; dimensionId: string | null }>();
     for (const r of q.data ?? []) {
       const k = s(r.dimension_value) || "UNASSIGNED";
-      const cur = map.get(k) ?? { total: 0, early: n(r.early_quit_rate), buckets: {} };
+      const cur = map.get(k) ?? { total: 0, early: n(r.early_quit_rate), buckets: {}, dimensionId: s(r.dimension_id) || null };
       cur.total += n(r.exits);
       cur.buckets[s(r.aon_bucket)] = n(r.exits);
       map.set(k, cur);
     }
-    return [...map.entries()]
-      .map(([value, v]) => ({ value, ...v }))
-      .sort((a, b) => b.total - a.total)
+    const list = [...map.entries()].map(([value, v]) => ({ value, ...v }));
+    const avgEarly = list.length
+      ? list.reduce((a, v) => a + v.early, 0) / list.length
+      : 0;
+    return list
+      .map(v => ({ ...v, deviationFromAvg: v.early - avgEarly }))
+      .sort((a, b) => b.deviationFromAvg - a.deviationFromAvg)
       .slice(0, 20);
   }, [q.data]);
+
+  const avgEarlyQuitRate = useMemo(
+    () => (values.length ? values.reduce((a, v) => a + v.early, 0) / values.length : 0),
+    [values],
+  );
 
   const reasonCaptured = useMemo(() => {
     const rows = q.data ?? [];
@@ -982,6 +1054,7 @@ function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: 
   }
 
   return (
+    <DrillDownProvider>
     <div className="space-y-4">
       <GapBanner
         items={[
@@ -1008,7 +1081,7 @@ function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: 
 
       <ChartCard
         title="Early-quit rate by slice"
-        subtitle="Share of each value's leavers who went within 30 days. Bars are ranked by total exits, so a high rate on a handful of people sits below a high rate on hundreds."
+        subtitle="Ranked by how far each slice's early-quit rate sits above the average across all slices shown — this IS the answer to what's driving attrition, not a separate view."
       >
         {q.isLoading ? (
           <ChartSkeleton height={Math.max(280, chartData.length * 26)} />
@@ -1035,7 +1108,7 @@ function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: 
         )}
       </ChartCard>
 
-      <ChartCard title="Exits by AON bucket" subtitle="Top 20 values by total exits.">
+      <ChartCard title="Exits by AON bucket" subtitle="Top 20 values by deviation from the average early-quit rate across this slice.">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[620px] border-collapse text-sm">
             <thead>
@@ -1046,28 +1119,24 @@ function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: 
                 ))}
                 <th className="px-2 py-2 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">Total</th>
                 <th className="px-2 py-2 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">Early Quit</th>
+                {dimension === "reporting_manager" && (
+                  <th className="px-2 py-2 text-right text-[11px] font-bold uppercase tracking-wider text-slate-500">vs Peer Avg</th>
+                )}
               </tr>
             </thead>
             <tbody>
               {values.map(v => (
-                <tr key={v.value} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="max-w-[260px] truncate px-2 py-1.5 font-medium text-slate-800" title={v.value}>{v.value}</td>
-                  {BUCKETS.map(b => (
-                    <td key={b} className="px-2 py-1.5 text-right tabular-nums">
-                      {v.buckets[b] == null ? <span className="text-slate-300">—</span> : num(v.buckets[b])}
-                    </td>
-                  ))}
-                  <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{num(v.total)}</td>
-                  <td className={`px-2 py-1.5 text-right font-semibold tabular-nums ${v.early >= 45 ? "text-rose-700" : v.early >= 30 ? "text-amber-700" : "text-slate-700"}`}>
-                    {pct(v.early)}
-                  </td>
-                </tr>
+                <DeepDiveRow v={v} buckets={BUCKETS} dimension={dimension} avgEarlyQuitRate={avgEarlyQuitRate} key={v.value} />
               ))}
             </tbody>
           </table>
         </div>
       </ChartCard>
+
+      <EmployeeListPanel open metric="exits" from={from} to={to} />
+      <EmployeeDetailDrawer />
     </div>
+    </DrillDownProvider>
   );
 }
 
