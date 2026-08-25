@@ -46,7 +46,7 @@ esiRegDocsRouter.get(
       params.push(branchId);
     }
     if (search) {
-      whereParts.push("(e.emp_code LIKE ? OR CONCAT(e.first_name,' ',e.last_name) LIKE ?)");
+      whereParts.push("(e.employee_code LIKE ? OR CONCAT(e.first_name,' ',e.last_name) LIKE ?)");
       params.push(`%${search}%`, `%${search}%`);
     }
 
@@ -63,14 +63,13 @@ esiRegDocsRouter.get(
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          e.id                                              AS employee_id,
-         e.emp_code,
+         e.employee_code,
          CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) AS name,
          COALESCE(b.name, e.branch, '')                   AS branch,
          e.esic_number,
          (SELECT COUNT(*) FROM employee_documents ed
           WHERE ed.employee_id = e.id
-            AND ed.doc_category = 'pan'
-            AND ed.document_status IN ('verified','uploaded','verification_pending')) > 0
+            AND ed.doc_category = 'pan') > 0
                                                           AS pan_ready,
          (SELECT id FROM employee_documents ed
           WHERE ed.employee_id = e.id
@@ -90,7 +89,7 @@ esiRegDocsRouter.get(
        LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
        LEFT JOIN branches b ON b.id = e.branch_id
        WHERE ${whereClause}
-       ORDER BY e.emp_code
+       ORDER BY e.employee_code
        LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
@@ -112,7 +111,7 @@ async function generateBankInfoPdf(employeeId: string): Promise<Buffer> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ebd.bank_name, ebd.account_number, ebd.ifsc_code, ebd.account_type,
             CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name,
-            e.emp_code, e.esic_number
+            e.employee_code, e.esic_number
      FROM employee_bank_detail ebd
      JOIN employees e ON e.id = ebd.employee_id
      WHERE ebd.employee_id = ?
@@ -137,7 +136,7 @@ async function generateBankInfoPdf(employeeId: string): Promise<Buffer> {
       const mask = (acct: string) => acct ? `****${acct.slice(-4)}` : "Not provided";
       doc.fontSize(12).font("Helvetica");
       const fields: [string, string][] = [
-        ["Employee Code", row.emp_code ?? ""],
+        ["Employee Code", row.employee_code ?? ""],
         ["Employee Name", row.name ?? ""],
         ["ESIC Number", row.esic_number ?? "Not assigned"],
         ["Bank Name", row.bank_name ?? ""],
@@ -193,7 +192,7 @@ esiRegDocsRouter.get(
     const actorId = (req as any).authUser?.id ?? "unknown";
 
     const [[empRow]] = await db.execute<RowDataPacket[]>(
-      `SELECT emp_code, CONCAT(first_name,' ',COALESCE(last_name,'')) AS name,
+      `SELECT employee_code, CONCAT(first_name,' ',COALESCE(last_name,'')) AS name,
               esic_number, photo_url, avatar_url
        FROM employees WHERE id = ? LIMIT 1`,
       [employeeId]
@@ -208,7 +207,7 @@ esiRegDocsRouter.get(
     );
 
     const date = new Date().toISOString().slice(0, 10);
-    const filename = `ESI_Docs_${empRow.emp_code}_${date}.zip`;
+    const filename = `ESI_Docs_${empRow.employee_code}_${date}.zip`;
 
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
@@ -217,7 +216,7 @@ esiRegDocsRouter.get(
     archive.pipe(res);
     archive.on("error", (err: Error) => console.error("[esi-reg-docs] archive error", err));
 
-    const manifest: string[] = [`ESI Registration Documents — ${empRow.name} (${empRow.emp_code})\n`];
+    const manifest: string[] = [`ESI Registration Documents — ${empRow.name} (${empRow.employee_code})\n`];
 
     const panPath = urlToLocalPath((panDoc as RowDataPacket | undefined)?.file_url ?? null);
     if (fileExists(panPath)) {
@@ -249,7 +248,7 @@ esiRegDocsRouter.get(
     await archive.finalize();
 
     await writeAuditLog("esi_reg_doc_download", actorId, employeeId, {
-      emp_code: empRow.emp_code,
+      employee_code: empRow.employee_code,
     });
   }
 );
@@ -279,15 +278,15 @@ esiRegDocsRouter.post(
 
     const placeholders = employee_ids.map(() => "?").join(",");
     const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT id, emp_code, CONCAT(first_name,' ',COALESCE(last_name,'')) AS name,
+      `SELECT id, employee_code, CONCAT(first_name,' ',COALESCE(last_name,'')) AS name,
               esic_number, photo_url, avatar_url
        FROM employees WHERE id IN (${placeholders})`,
       employee_ids
     );
 
     for (const emp of rows as RowDataPacket[]) {
-      const folder = `${emp.emp_code}_${(emp.name as string).replace(/\s+/g, "_")}`;
-      const manifest: string[] = [`ESI Docs — ${emp.name} (${emp.emp_code})\n`];
+      const folder = `${emp.employee_code}_${(emp.name as string).replace(/\s+/g, "_")}`;
+      const manifest: string[] = [`ESI Docs — ${emp.name} (${emp.employee_code})\n`];
 
       const [[panDoc]] = await db.execute<RowDataPacket[]>(
         `SELECT file_url FROM employee_documents
@@ -354,7 +353,7 @@ esiRegDocsRouter.get(
 
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
-         e.emp_code,
+         e.employee_code,
          CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name,
          COALESCE(b.name, e.branch, '')                   AS branch,
          e.esic_number,
@@ -370,7 +369,7 @@ esiRegDocsRouter.get(
        LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
        LEFT JOIN branches b ON b.id = e.branch_id
        WHERE ${whereParts.join(" AND ")}
-       ORDER BY e.emp_code`,
+       ORDER BY e.employee_code`,
       params
     );
 
@@ -380,7 +379,7 @@ esiRegDocsRouter.get(
     const csvRows = (rows as RowDataPacket[])
       .map((r) =>
         [
-          r.emp_code,
+          r.employee_code,
           `"${(r.name ?? "").replace(/"/g, '""')}"`,
           `"${(r.branch ?? "").replace(/"/g, '""')}"`,
           r.esic_number ?? "",
