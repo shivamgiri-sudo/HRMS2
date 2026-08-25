@@ -301,7 +301,7 @@ exitRouter.get(
       `SELECT er.*,
               e.employee_code,
               CONCAT_WS(' ', e.first_name, e.last_name) AS employee_name,
-              e.joining_date,
+              e.date_of_joining,
               b.branch_name,
               p.process_name,
               d.dept_name AS department_name,
@@ -312,7 +312,7 @@ exitRouter.get(
          LEFT JOIN employees e ON e.id = er.employee_id
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN process_master p ON p.id = e.process_id
-         LEFT JOIN departments d ON d.id = e.dept_id
+         LEFT JOIN departments d ON d.id = e.department_id
          LEFT JOIN designations des ON des.id = e.designation_id
          LEFT JOIN employees mgr ON mgr.id = e.reporting_manager_id
         WHERE er.id = ?

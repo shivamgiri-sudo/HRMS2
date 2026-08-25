@@ -32,14 +32,14 @@ manpowerRiskRouter.get(
          b.branch_name,
          wm.role_group,
          wm.mandated_hc,
-         wm.alert_threshold_pct,
+         wm.buffer_pct AS alert_threshold_pct,
 
-         -- Active headcount (status='active', same process+branch)
-         COUNT(DISTINCT CASE WHEN e.status = 'active' THEN e.id END) AS active_hc,
+         -- Active headcount (employment_status='active', same process+branch)
+         COUNT(DISTINCT CASE WHEN e.employment_status = 'active' THEN e.id END) AS active_hc,
 
          -- In-notice count
          COUNT(DISTINCT CASE
-           WHEN e.status = 'active'
+           WHEN e.employment_status = 'active'
             AND er.status IN ('accepted', 'notice_serving')
            THEN e.id
          END) AS in_notice_count,
@@ -63,7 +63,7 @@ manpowerRiskRouter.get(
        GROUP BY
          wm.id, wm.process_id, p.process_name,
          wm.branch_id, b.branch_name,
-         wm.role_group, wm.mandated_hc, wm.alert_threshold_pct
+         wm.role_group, wm.mandated_hc, wm.buffer_pct
        ORDER BY p.process_name, b.branch_name`
     );
 
@@ -183,7 +183,7 @@ manpowerRiskRouter.get(
        LEFT JOIN employees e    ON e.id  = er.employee_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN process_master p ON p.id = e.process_id
-       LEFT JOIN departments d   ON d.id  = e.dept_id
+       LEFT JOIN departments d   ON d.id  = e.department_id
        LEFT JOIN designations des ON des.id = e.designation_id
        LEFT JOIN employees mgr   ON mgr.id  = e.reporting_manager_id
        WHERE er.status IN ('accepted', 'notice_serving')

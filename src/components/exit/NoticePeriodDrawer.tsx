@@ -53,7 +53,7 @@ type ExitFullDetail = {
   submitted_at?: string;
   manager_actioned_at?: string;
   hr_actioned_at?: string;
-  joining_date?: string;
+  date_of_joining?: string;
   timeline: TimelineEntry[];
   clearance_tasks: ClearanceTask[];
 };
@@ -257,7 +257,7 @@ export function NoticePeriodDrawer({
                   <InfoRow label="Process" value={detail.process_name ?? "—"} />
                   <InfoRow label="Department" value={detail.department_name ?? "—"} />
                   <InfoRow label="Designation" value={detail.designation_name ?? "—"} />
-                  <InfoRow label="Joining Date" value={fmtDate(detail.joining_date)} />
+                  <InfoRow label="Joining Date" value={fmtDate(detail.date_of_joining)} />
                 </div>
               </section>
 
