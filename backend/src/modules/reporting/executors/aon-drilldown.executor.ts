@@ -77,7 +77,30 @@ export async function aonDrilldownEmployees(
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
-  appendFilterConditions(filters, clauses, params);
+
+  // managerId here comes from a click on a `reporting_manager` dimension row in
+  // attritionDeepDive (or Overview's manager-mapping heatmap), which groups exclusively by
+  // `e.reporting_manager_id` (see DEEP_DIVE_DIMENSIONS.reporting_manager in aon.executor.ts).
+  // appendFilterConditions' generic managerId clause is an OR-union of TWO different manager
+  // columns (`reporting_manager_id OR manager_id`), because other reports elsewhere in the
+  // suite intentionally treat those as interchangeable. Applying that same OR-union here
+  // makes the drill-down a SUPERSET of the aggregate row it was clicked from -- live-verified
+  // against mas_hrms: a manager row showing 46 exits returned 123 drill-down rows (KAMAL
+  // SINGH), because the extra 77 have a matching `manager_id` but a DIFFERENT
+  // `reporting_manager_id`, so the aggregate never counted them.
+  //
+  // Filter on `reporting_manager_id` alone instead, so this drill-down's population matches
+  // attritionDeepDive's own join exactly. appendFilterConditions itself is left untouched --
+  // its OR-union may be exactly what other reports need.
+  if (filters.managerId) {
+    clauses.push("e.reporting_manager_id = ?");
+    params.push(String(filters.managerId));
+  }
+  appendFilterConditions(
+    { ...filters, managerId: undefined },
+    clauses,
+    params
+  );
 
   if (isExitContext) {
     clauses.push("e.date_of_exit IS NOT NULL", "e.date_of_exit >= e.date_of_joining");
@@ -177,7 +200,15 @@ export async function aonDrilldownEmployees(
              COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
              COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
              DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m-%d') AS join_date,
-             DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) AS aon_days
+             DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) AS aon_days,
+             -- IMPORTANT-3 (final whole-branch review): a cohort-month drill deliberately
+             -- includes since-left employees alongside active ones (see the cohortMonth
+             -- comment block above), but this shape had no column telling the caller which
+             -- is which -- so EmployeeListPanel offered "Flag for Retention Review" on an
+             -- already-exited employee, which is nonsensical. e.active_status is already
+             -- available on every row here regardless of whether the active_status = 1
+             -- clause above was applied, so this costs nothing to add.
+             (e.active_status = 1) AS is_active
         FROM employees e
         LEFT JOIN branch_master b       ON b.id  = e.branch_id
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
