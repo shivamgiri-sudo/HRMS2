@@ -204,6 +204,9 @@ export async function aonBucketHeadcount(
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(p.process_name, 'UNASSIGNED')     AS process_name,
+           b.id  AS branch_id,
+           cc.id AS cost_centre_id,
+           p.id  AS process_id,
            ${aonBucketSql("CURDATE()")} AS aon_bucket,
            COUNT(*) AS headcount,
            ROUND(
@@ -221,6 +224,7 @@ export async function aonBucketHeadcount(
       LEFT JOIN process_master p      ON p.id  = e.process_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name,
+              b.id, cc.id, p.id,
               ${aonBucketSql("CURDATE()")}, ${aonBucketOrderSql("CURDATE()")}
      ORDER BY b.branch_name, cc.cost_centre_code, p.process_name,
               ${aonBucketOrderSql("CURDATE()")}`;
@@ -444,6 +448,7 @@ export async function aonBucketAttrition(
        GROUP BY dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, ${atRiskBucketAtEnd}
     )
     SELECT g.month, g.branch_name, g.cost_centre_code, g.cost_centre_name, g.process_name,
+           g.branch_id, g.cost_centre_id, g.process_id,
            g.aon_bucket, g.exits, g.avg_tenure_days, g.min_tenure_days, g.max_tenure_days,
            -- Share of the month's exits that fell in this bucket, within this group.
            -- A plain window over g.exits now (exit_groups already did the aggregating),
@@ -671,6 +676,9 @@ export async function aonBucketShrinkage(
            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
+           b.id  AS branch_id,
+           cc.id AS cost_centre_id,
+           p.id  AS process_id,
            ${bucket} AS aon_bucket,
            COUNT(*)                                        AS emp_days,
            COUNT(DISTINCT adr.employee_id)                 AS employees_with_attendance,
@@ -712,6 +720,7 @@ export async function aonBucketShrinkage(
      WHERE ${clauses.join(" AND ")}
      GROUP BY DATE_FORMAT(adr.record_date, '%Y-%m'),
               b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name,
+              b.id, cc.id, p.id,
               ${bucket}, ${bucketOrder}
      ORDER BY month DESC, b.branch_name, cc.cost_centre_code, p.process_name, ${bucketOrder}`;
 
