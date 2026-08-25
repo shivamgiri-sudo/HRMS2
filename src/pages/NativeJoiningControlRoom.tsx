@@ -321,7 +321,10 @@ export default function NativeJoiningControlRoom() {
 
         <div className="grid gap-4 xl:grid-cols-[440px_1fr]">
           <div className="rounded-2xl border border-blue-200 bg-white shadow-sm">
-            <div className="border-b border-blue-100 bg-blue-50 px-4 py-3 font-semibold text-blue-800 rounded-t-2xl">Onboarding Queue</div>
+            <div className="border-b border-blue-100 bg-blue-50 px-4 py-3 font-semibold text-blue-800 rounded-t-2xl flex items-center justify-between">
+              <span>Onboarding Queue</span>
+              {queue.length >= 50 && <span className="text-xs font-normal text-blue-500">Showing 50 most recent — search to find others</span>}
+            </div>
             <div className="max-h-[76vh] overflow-auto">
               {queue.map((row) => {
                 const rs = row.readiness_status?.toLowerCase() || "";

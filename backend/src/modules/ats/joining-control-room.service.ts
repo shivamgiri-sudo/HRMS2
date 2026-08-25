@@ -160,7 +160,7 @@ export async function listJoiningControlRoomQueue(search = "") {
       )
       ${searchSql}
       ORDER BY COALESCE(p.updated_at, phr.updated_at, jclr.updated_at, c.updated_at, c.created_at) DESC
-      LIMIT 200`,
+      LIMIT 50`,
     params,
   );
 
