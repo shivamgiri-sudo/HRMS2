@@ -203,3 +203,30 @@ PLAN COMPLETE with a documented backlog of Important/Minor items requiring user 
 - Frontend fix (commit c56e9518, typecheck clean): permanently-null Attrition/Shrinkage/Revenue/templateMetrics columns no longer render as if they work (visually distinct, not clickable into empty drilldowns); Compare panel no longer offers fake chart series; admin's 403 on My Team->Performance now reads as an intentional, calm message instead of a raw error box (access itself correctly still restricted, per the established admin policy).
 - NOT done, deliberately deferred (real architectural work, not a quick fix): full KPI-role-template metric computation (Attrition/Shrinkage/Revenue actual values, template_metrics JSON) — this remains the one genuine gap between the design spec's promise and what's built. Needs its own brainstorm/plan cycle if the org wants it.
 ALL CRITICAL AND CORRECTNESS FINDINGS FROM THE FINAL REVIEW ARE NOW RESOLVED. Feature is code-complete pending: (1) backend restart to apply migrations 1604/1607, (2) historical backfill run, (3) manual browser verification, (4) optional future work on KPI-role-template metrics.
+Task 3: complete (commits cfcfa0e1, ecd4d9a6, base e1ba44a9, review clean after 1 fix round -- dimension_id added correctly for all 11 dimensions (NULL for 5 proxy, real FK for 6 id-backed). Genuine grouping-grain improvement found live: reporting_manager text-collation collision meant 2 distinct "Kamal Singh"/"KAMAL SINGH" managers (16 total case-variant employees exist) were silently merged under the old text-only GROUP BY; now correctly split (1030 + 46 = 1076 exits conserved). Task review then caught a real follow-on bug the implementer's own verification missed: share_pct/early_quit_rate window functions still PARTITIONed BY the old (coarser) grain, so the two split rows shared one pooled, wrong percentage (51.30%) -- fixed to PARTITION BY dim.expr, dimensionIdExpr, confirmed live: 50.78%/63.04% respectively. Also flagged (not fixed, correctly out of scope): a pre-existing masked-test bug in this same test file (mockExecute never cleared between tests, calls[0] reads stale calls) -- independently confirmed this does NOT mask a live production bug in aonCohortSurvival (grepped clean, zero bare date_of_joining in any DATEDIFF). Full suite 302 passed + 1 skipped throughout. Commit landed inside a large (10-file) concurrent-session bundle -- verified non-destructive, content intact.)
+
+---
+
+# Salary Date Sync — SDD Progress Ledger
+# Started: 2026-08-25
+# Plan: docs/superpowers/plans/2026-08-25-salary-date-sync.md
+# Branch start commit: 48863b8aeb73ec06cc9d7a9aae7bbda534fa09d9
+
+## Tasks
+Task 1: DB migration (440_salary_date_revision_requests.sql) — complete (commit 4c43299a, base 48863b8a, review clean)
+Task 2: Backend payroll-head-review (getEmployeeJourney + PATCH route) — complete (commits 197ddc29..3f3b7146, review clean)
+Task 3: Backend salary-revision module (service + routes + app mount) — pending
+Task 4: Frontend review page effective date fix + write-back — pending
+Task 5: Frontend NativeJoiningControlRoom tooltip — pending
+Task 6: Frontend SalaryRevisionDrawer + Pending Revisions tab — pending
+Task 4: complete (commits b9f8b653, 1da3c689, base 48863b8a, review clean after 1 fix round -- critical id-vs-display-name check passed on the FIRST round (no repeat of Plan 1's Critical bug in the new AnomalyJumpHandler click path); one real Medium finding traced back to underspecified plan pseudocode: anomaly detection compared raw backend rows (finer grain than the heatmap) instead of aggregating to the same (groupKey, bucket) grain grid uses, letting one displayed group surface as several misleading anomaly entries -- fixed by mirroring grid's own Map-based reduction, re-deriving rate from summed exits/at-risk rather than averaging pre-computed per-row rates. Cost-impact tile and data-quality nudge approved clean throughout. Frontend build verified clean both rounds.)
+
+---
+
+# Performance Scorecard Rollup Metrics (follow-up plan) — SDD Progress Ledger
+# Started: 2026-08-25
+# Plan: docs/superpowers/plans/2026-08-25-performance-scorecard-rollup-metrics.md
+# Working directly on main (established convention, no feature branches)
+
+## Tasks
+Task 1: complete (commit 117291cd, base 8e6a081e, review clean — manager-tier check + 3 independently-degrading service calls populate real teamShrinkagePct/teamAttritionPct/teamRevenue; export-shape correction (managementService.getDashboardSummary is object-method not standalone export) independently verified real; 6/6 + 13/13 tests pass live-reran by reviewer; only 2 files touched. Minor non-blocking optimization noted: 2 near-duplicate has_reports/direct-report-id queries could combine into 1)
