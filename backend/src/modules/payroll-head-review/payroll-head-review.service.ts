@@ -368,6 +368,98 @@ export async function updateSalaryStartDate(
   return { salary_start_date: newDate };
 }
 
+export async function updateAssignmentEffectiveDate(
+  employeeId: string,
+  newDate: string,
+  actorUserId: string,
+  reason: string
+): Promise<{ effective_from: string }> {
+  if (!reason || reason.trim().length < 5) {
+    throw httpError("Reason is required (min 5 characters).", 400, "REASON_REQUIRED");
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate) || isNaN(Date.parse(newDate))) {
+    throw httpError("effective_date must be a valid YYYY-MM-DD date.", 400, "INVALID_DATE");
+  }
+
+  const review = await getReviewRow(employeeId);
+  if (!review) throw httpError("No payroll-head review record for this employee.", 404, "NOT_FOUND");
+
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT date_of_joining FROM employees WHERE id = ? LIMIT 1`,
+    [employeeId]
+  );
+  const doj = empRows[0]?.date_of_joining as string | null;
+  if (doj && new Date(newDate) < new Date(doj)) {
+    throw httpError("Effective date cannot be before date of joining.", 400, "INVALID_DATE");
+  }
+
+  const [assignRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, effective_from FROM employee_salary_assignment
+      WHERE employee_id = ? AND active_status = 1
+      ORDER BY effective_from DESC LIMIT 1`,
+    [employeeId]
+  );
+  if (!assignRows.length) {
+    throw httpError("No active salary assignment found. Use the ATS salary-start-date path instead.", 404, "NO_ASSIGNMENT");
+  }
+  const oldDate = assignRows[0].effective_from as string;
+  const assignmentId = assignRows[0].id as string;
+
+  if (oldDate === newDate) {
+    return { effective_from: newDate };
+  }
+
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // Stamp effective_to on the current assignment
+    await connection.execute(
+      `UPDATE employee_salary_assignment
+          SET active_status = 0,
+              effective_to = DATE_SUB(?, INTERVAL 1 DAY)
+        WHERE id = ?`,
+      [newDate, assignmentId]
+    );
+
+    // Copy current assignment with the new effective_from
+    const [copyRows] = await connection.execute<RowDataPacket[]>(
+      `SELECT * FROM employee_salary_assignment WHERE id = ? LIMIT 1`,
+      [assignmentId]
+    );
+    const old = copyRows[0];
+
+    await connection.execute(
+      `INSERT INTO employee_salary_assignment
+         (employee_id, structure_id, ctc_annual, effective_from, active_status, assigned_by)
+       VALUES (?, ?, ?, ?, 1, ?)`,
+      [employeeId, old.structure_id, old.ctc_annual, newDate, actorUserId]
+    );
+
+    // Audit
+    await connection.execute(
+      `INSERT INTO employee_payroll_head_review_history
+         (id, employee_id, review_id, action, actor_user_id, rejection_remarks, notified_employee)
+       VALUES (UUID(), ?, ?, 'assignment_effective_date_updated', ?, ?, 0)`,
+      [
+        employeeId,
+        review.id as string,
+        actorUserId,
+        JSON.stringify({ old_date: oldDate, new_date: newDate, reason: reason.trim() }),
+      ]
+    );
+
+    await connection.commit();
+  } catch (e) {
+    await connection.rollback();
+    throw e;
+  } finally {
+    connection.release();
+  }
+
+  return { effective_from: newDate };
+}
+
 // ── Salary package actions ──────────────────────────────────────────────────
 
 async function writeComponentAssignment(

@@ -128,4 +128,18 @@ router.patch("/:employeeId/salary-start-date", requireAuth, requireWriteAccess, 
   res.json({ success: true, data });
 }));
 
+router.patch("/:employeeId/assignment-effective-date", requireAuth, requireWriteAccess, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
+  const { effective_date, reason } = req.body as Record<string, unknown>;
+  if (!effective_date || !reason) {
+    return res.status(400).json({ success: false, message: "effective_date and reason are required." });
+  }
+  const data = await svc.updateAssignmentEffectiveDate(
+    req.params.employeeId,
+    String(effective_date),
+    String(req.authUser!.id),
+    String(reason)
+  );
+  res.json({ success: true, data });
+}));
+
 export const payrollHeadReviewRouter = router;
