@@ -184,6 +184,7 @@ export async function createExitPass(input: CreateExitPassInput, requester: Requ
 interface PassRow extends RowDataPacket {
   id: string;
   requestor_employee_id: string;
+  request_department: 'IT' | 'ADMIN';
   branch_id: string;
   status: string;
   movement_type: 'returnable' | 'non_returnable';
@@ -266,20 +267,53 @@ export async function branchHeadDecision(
     throw new ExitPassError(400, 'Remarks are required for a rejection or return-for-correction.');
   }
 
-  const nextStatus =
-    decision === 'approved' ? 'pending_admin_approval' :
-    decision === 'rejected' ? 'branch_head_rejected' : 'returned_for_correction';
+  // ADMIN requests: Branch Head approval is FINAL (skip admin stage)
+  // IT requests: Branch Head approval → pending_admin_approval → Admin approval
+  const isAdminRequest = pass.request_department === 'ADMIN';
+  const isFinalApproval = decision === 'approved' && isAdminRequest;
 
-  await db.execute(
-    `UPDATE exit_pass_requests SET status = ?, branch_head_decided_at = NOW() WHERE id = ?`,
-    [nextStatus, passId],
-  );
-  await db.execute(
-    `INSERT INTO exit_pass_approvals (id, exit_pass_id, stage, approver_employee_id, decision, remarks)
-     VALUES (?, ?, 'branch_head', ?, ?, ?)`,
-    [randomUUID(), passId, actor.employeeId, decision, remarks ?? null],
-  );
-  await writeAudit(db, passId, actor.employeeId, `branch_head_${decision}`, pass.status, nextStatus, remarks);
+  if (isFinalApproval) {
+    // ADMIN request approved by Branch Head → directly to 'approved' with pass number
+    const conn = await db.getConnection();
+    try {
+      await conn.beginTransaction();
+      const passNumber = await nextPassNumber(conn, pass.branch_id);
+      await conn.execute(
+        `UPDATE exit_pass_requests
+         SET status = 'approved', branch_head_decided_at = NOW(), approved_at = NOW(), pass_number = ?
+         WHERE id = ?`,
+        [passNumber, passId],
+      );
+      await conn.execute(
+        `INSERT INTO exit_pass_approvals (id, exit_pass_id, stage, approver_employee_id, decision, remarks)
+         VALUES (?, ?, 'branch_head', ?, ?, ?)`,
+        [randomUUID(), passId, actor.employeeId, decision, remarks ?? null],
+      );
+      await writeAudit(conn, passId, actor.employeeId, 'branch_head_approved_final', pass.status, 'approved', remarks);
+      await conn.commit();
+    } catch (error) {
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
+    }
+  } else {
+    // IT request or rejection/return — standard two-stage flow
+    const nextStatus =
+      decision === 'approved' ? 'pending_admin_approval' :
+      decision === 'rejected' ? 'branch_head_rejected' : 'returned_for_correction';
+
+    await db.execute(
+      `UPDATE exit_pass_requests SET status = ?, branch_head_decided_at = NOW() WHERE id = ?`,
+      [nextStatus, passId],
+    );
+    await db.execute(
+      `INSERT INTO exit_pass_approvals (id, exit_pass_id, stage, approver_employee_id, decision, remarks)
+       VALUES (?, ?, 'branch_head', ?, ?, ?)`,
+      [randomUUID(), passId, actor.employeeId, decision, remarks ?? null],
+    );
+    await writeAudit(db, passId, actor.employeeId, `branch_head_${decision}`, pass.status, nextStatus, remarks);
+  }
 }
 
 async function nextPassNumber(conn: { execute: typeof db.execute }, branchId: string): Promise<string> {

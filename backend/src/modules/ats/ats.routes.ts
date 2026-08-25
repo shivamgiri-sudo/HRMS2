@@ -810,8 +810,7 @@ atsRouter.get("/my-onboarding-status", requireAuth, h(async (req: AuthenticatedR
 
 // ── Trigger Daily Hiring Report ──────────────────────────────────────────────
 
-// Temporarily allow testing without auth - REMOVE AFTER TESTING
-atsRouter.post("/trigger-daily-report", h(async (req, res) => {
+atsRouter.post("/trigger-daily-report", requireRole("admin", "hr_admin", "super_admin"), h(async (req, res) => {
   const { date, email, preview } = req.body;
 
   // Import the report function
@@ -853,4 +852,47 @@ atsRouter.post("/trigger-daily-report", h(async (req, res) => {
   }
 }));
 
+// ── PUBLIC TEST ROUTE - REMOVE AFTER TESTING ────────────────────────────────
+
+export const atsPublicTestRouter = Router();
+
+atsPublicTestRouter.post("/test-daily-report", async (req, res) => {
+  const { date, email, preview } = req.body;
+
+  try {
+    const { runDailyHiringReport } = await import("./ats-reminders.cron.js");
+
+    if (preview) {
+      const result = await runDailyHiringReport(date || '2026-08-24', 'preview');
+      return res.json({
+        success: true,
+        preview: true,
+        data: result,
+        message: "Preview generated successfully"
+      });
+    }
+
+    const result = await runDailyHiringReport(
+      date || '2026-08-24',
+      email || 'shivam.giri@teammas.in'
+    );
+
+    return res.json({
+      success: result.success,
+      messageId: result.messageId,
+      recipients: result.recipients || email,
+      stats: result.stats,
+      error: result.error,
+      message: result.success ? "Daily report email sent" : "Failed to send"
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      success: false,
+      error: error.message || String(error),
+      message: "Failed to generate report"
+    });
+  }
+});
+
 export default atsRouter;
+export { atsPublicTestRouter };
