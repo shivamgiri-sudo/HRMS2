@@ -26,6 +26,7 @@ import { payrollStatutoryConfigCompatRouter } from "./modules/payroll/payroll-st
 import { payrollLinesCompatRouter } from "./modules/payroll/payroll-lines.compat.routes.js";
 import { payrollExtendedRouter } from "./modules/payroll/payroll-extended.routes.js";
 import { payrollMoreRouter } from "./modules/payroll/payroll-more.routes.js";
+import { esiRegDocsRouter } from "./modules/payroll/esi-reg-docs.routes.js";
 import { payrollBranchReadinessRouter } from "./modules/payroll/payroll-branch-readiness.routes.js";
 import { bankPaymentReadinessRouter } from "./modules/payroll/bank-payment-readiness.routes.js";
 import { bankPennyDropVerifyRouter } from "./modules/payroll/bank-penny-drop-verify.routes.js";
@@ -385,6 +386,7 @@ app.use("/api/payroll", listEndpointLimiter, payrollSecureRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollExtendedRouter);
 app.use("/api/payroll", listEndpointLimiter, payrollMoreRouter);
+app.use("/api/payroll", listEndpointLimiter, esiRegDocsRouter);
 app.use("/api/payroll/branch-readiness", listEndpointLimiter, payrollBranchReadinessRouter);
 app.use("/api/payroll/bank-readiness", listEndpointLimiter, bankPaymentReadinessRouter);
 app.use("/api/payroll/bank-penny-drop", bankPennyDropVerifyRouter);
