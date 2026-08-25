@@ -48,4 +48,12 @@ describe("AON Attrition Rate", () => {
     expect(sql).toContain("attrition_rate_pct");
     expect(sql).toContain("avg_total_headcount");
   });
+
+  it("aonBucketAttrition's SQL selects avg_ctc_annual", async () => {
+    mockExecute.mockResolvedValueOnce([[], []]);
+    await aonBucketAttrition({}, SCOPE, OPTIONS);
+    const sql = String(mockExecute.mock.calls[0][0]);
+    expect(sql).toContain("avg_ctc_annual");
+    expect(sql).toContain("employee_salary_assignment");
+  });
 });

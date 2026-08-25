@@ -365,6 +365,24 @@ export async function aonBucketAttrition(
          AND (e.date_of_exit IS NULL OR ${POSSIBLE_TENURE})
     )`;
 
+  /*
+   * Cost-impact source, added Task 1 of Plan 2.
+   *
+   * A sibling CTE, not a join predicate inline on `employees`: employee_salary_assignment
+   * carries multiple historical rows per employee (one per structure/proposal change), so
+   * joining it directly onto exit_groups' GROUP BY would fan out the exit count itself.
+   * Restricting to active_status = 1 here first (each employee has at most one active
+   * assignment row, per the table's own governance model) means the LEFT JOIN below adds
+   * at most one row per e.id and cannot inflate `exits`. Live-verified 2026-08-25:
+   * AVG(ctc_annual) = 142351.14 across 30219 active assignments (see task-1-report.md).
+   */
+  const ctcByEmployeeCte = `
+    ctc_by_employee AS (
+      SELECT esa.employee_id, esa.ctc_annual
+        FROM employee_salary_assignment esa
+       WHERE esa.active_status = 1
+    )`;
+
   // Period boundaries as expressions of `dg.month` (a plain grouped column of the
   // distinct_groups/at_risk_start/at_risk_end derived tables below) rather than of any
   // exit_groups/employees column — this is what keeps the GROUP BY in those two CTEs legal
@@ -376,6 +394,7 @@ export async function aonBucketAttrition(
 
   const base = `
     WITH ${atRiskCte},
+    ${ctcByEmployeeCte},
     exit_groups AS (
       SELECT DATE_FORMAT(e.date_of_exit, '%Y-%m')        AS month,
              e.branch_id,
@@ -395,11 +414,17 @@ export async function aonBucketAttrition(
              -- exits carry one, so a process-grouped row is usually UNASSIGNED and the
              -- reader needs to see that in the row rather than infer it.
              ROUND(SUM(e.process_id IS NOT NULL) * 100.0 / NULLIF(COUNT(*), 0), 2)
-               AS process_coverage_pct
+               AS process_coverage_pct,
+             -- Cost-impact of exits in this group: average ctc_annual (active salary
+             -- assignments only) across the exited employees. LEFT JOIN so a missing
+             -- salary assignment doesn't drop the exit row from exit_groups; AVG()
+             -- ignores NULLs so it averages only over employees that HAVE one.
+             ROUND(AVG(ctc.ctc_annual), 0) AS avg_ctc_annual
         FROM employees e
         LEFT JOIN branch_master b       ON b.id  = e.branch_id
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
         LEFT JOIN process_master p      ON p.id  = e.process_id
+        LEFT JOIN ctc_by_employee ctc   ON ctc.employee_id = e.id
        WHERE ${clauses.join(" AND ")}
        GROUP BY DATE_FORMAT(e.date_of_exit, '%Y-%m'), e.branch_id, b.branch_name,
                 e.cost_centre_id, cc.cost_centre_code, cc.cost_centre_name,
@@ -461,6 +486,7 @@ export async function aonBucketAttrition(
              2
            ) AS pct_of_month_exits,
            g.process_coverage_pct,
+           g.avg_ctc_annual,
            -- New: at-risk population and AON Attrition Rate for this exact bucket/group,
            -- per approved spec §2: exits / avg(at-risk at period start, at period end) x 100.
            -- Sourced from the pre-aggregated at_risk_start/at_risk_end CTEs via a NULL-safe
