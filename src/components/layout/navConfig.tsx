@@ -2,7 +2,7 @@ import type { FC, SVGProps } from "react";
 import {
   Activity, BarChart3, Bell, Briefcase, Building2, Calendar,
   CalendarClock, CalendarDays, ClipboardList, Clock, CreditCard, FileCheck,
-  FileText, GitBranch, GraduationCap, Heart, Home, Landmark,
+  FileText, GitBranch, Gauge, GraduationCap, Heart, Home, Landmark,
   Network, Package, Search, Server, Settings, Settings2, ShieldCheck, Sparkles,
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
   Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
@@ -304,6 +304,7 @@ export const navGroups: NavGroup[] = [
           { label: "KPI Master", href: "/kpi-master", icon: ic(Settings2), pageCode: "KPI_MASTER", description: "KPI master configuration" },
           { label: "My KPI", href: "/my-kpi", icon: ic(Target), pageCode: "MY_KPI", description: "Personal KPI dashboard" },
           { label: "PIP Management", href: "/pip-management", icon: ic(ClipboardList), pageCode: "PIP_MANAGEMENT", description: "Performance improvement plans" },
+          { label: "Performance Scorecard", href: "/performance-command-center", icon: ic(Gauge), pageCode: "PERFORMANCE_SCORECARD_COMMAND_CENTER", description: "Full-scope performance scorecard across your team/branch/org" },
           { label: "TAT Matrix", href: "/governance/tat-matrix", icon: ic(Settings2), pageCode: "TAT_MATRIX", description: "Turnaround-time policy" },
           { label: "TAT Dashboard", href: "/governance/tat-dashboard", icon: ic(BarChart3), pageCode: "TAT_DASHBOARD", description: "Turnaround-time monitoring" },
           { label: "Operations KPI",       href: "/operations-kpi",             icon: ic(Target),       pageCode: "OPERATIONS_KPI",          description: "Ops KPI" },

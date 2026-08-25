@@ -32,6 +32,7 @@ const NativePerformanceFeedbackAssignments     = lazy(() => import("@/pages/Nati
 const NativePerformanceFeedbackForm            = lazy(() => import("@/pages/NativePerformanceFeedbackForm"));
 const NativePerformanceFeedbackTeamReports     = lazy(() => import("@/pages/NativePerformanceFeedbackTeamReports"));
 const PerformanceHub                 = lazy(() => import("@/pages/PerformanceHub"));
+const PerformanceCommandCenter       = lazy(() => import("@/pages/PerformanceCommandCenter"));
 const ExecutiveQualityDashboard = lazy(() => import("@/pages/ExecutiveQualityDashboard"));
 const NativeLMSMyLearning   = lazy(() => import("@/pages/NativeLMSMyLearning"));
 const NativeLMSCoordinator  = lazy(() => import("@/pages/NativeLMSCoordinator"));
@@ -58,6 +59,9 @@ export const performanceRouteElements = (
 
       {/* Performance Hub */}
       <Route path="/performance-hub" element={<ProtectedRoute><Gate pageCode="PERFORMANCE_HUB"><PerformanceHub /></Gate></ProtectedRoute>} />
+
+      {/* Performance Scorecard Command Center */}
+      <Route path="/performance-command-center" element={<ProtectedRoute><Gate pageCode="PERFORMANCE_SCORECARD_COMMAND_CENTER"><PerformanceCommandCenter /></Gate></ProtectedRoute>} />
 
       {/* Retired URLs kept resolvable.
           Both were removed from the ceo role on 31-Jul (rbacPageMatrix.ts) and deactivated
