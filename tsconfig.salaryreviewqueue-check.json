@@ -4,6 +4,9 @@
     "src/pages/payroll/PayrollHeadSalaryReviewQueue.tsx",
     "src/pages/payroll/PayrollHeadSalaryReviewDetail.tsx",
     "src/pages/NativeSalaryPackageManager.tsx",
+    "src/pages/payroll/PayrollApprovalStatusView.tsx",
+    "src/pages/payroll/SalaryChangeCenter.tsx",
+    "src/pages/NativeHROnboardingRequests.tsx",
     "src/components/layout/navConfig.tsx",
     "src/vite-env.d.ts"
   ]

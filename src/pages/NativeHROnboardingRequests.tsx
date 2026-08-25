@@ -362,6 +362,9 @@ export default function NativeHROnboardingRequests() {
   // ── Resend link state
   const [resendingId, setResendingId] = useState<string | null>(null);
   const [resendResult, setResendResult] = useState<{ id: string; ok: boolean; msg: string } | null>(null);
+  // Resend-to-different-email modal — one-off only, never saved to the candidate's own record.
+  const [resendModalRow, setResendModalRow] = useState<OnboardingRequest | null>(null);
+  const [resendEmailInput, setResendEmailInput] = useState('');
 
   // ── Send progress reminder state
   const [reminderSendingId, setReminderSendingId] = useState<string | null>(null);
@@ -625,14 +628,30 @@ export default function NativeHROnboardingRequests() {
     }
   }, []);
 
-  // ── Resend onboarding link
-  const resendLink = useCallback(async (row: OnboardingRequest, e: React.MouseEvent) => {
+  // ── Resend onboarding link — opens a small modal so HR can optionally resend to a
+  // different address (typo'd/unreachable stored email) without editing the candidate's
+  // record; the actual send happens in submitResend below.
+  const resendLink = useCallback((row: OnboardingRequest, e: React.MouseEvent) => {
     e.stopPropagation();
+    setResendEmailInput(row.email ?? '');
+    setResendModalRow(row);
+  }, []);
+
+  const submitResend = useCallback(async () => {
+    const row = resendModalRow;
+    if (!row) return;
+    const typedEmail = resendEmailInput.trim();
+    const isOverride = typedEmail && typedEmail !== (row.email ?? '');
     setResendingId(row.candidate_id);
     setResendResult(null);
+    setResendModalRow(null);
     try {
-      await hrmsApi.post(`/api/ats/onboarding/send-token/${row.candidate_id}`, {});
-      setResendResult({ id: row.candidate_id, ok: true, msg: `Link resent to ${maskEmail(row.email)} / ${maskMobile(row.mobile)}` });
+      await hrmsApi.post(`/api/ats/onboarding/send-token/${row.candidate_id}`, isOverride ? { email: typedEmail } : {});
+      setResendResult({
+        id: row.candidate_id, ok: true,
+        msg: isOverride ? `Link resent to ${maskEmail(typedEmail)} (override) / ${maskMobile(row.mobile)}`
+                        : `Link resent to ${maskEmail(row.email)} / ${maskMobile(row.mobile)}`,
+      });
       setTimeout(() => setResendResult(null), 6000);
     } catch (err: any) {
       setResendResult({ id: row.candidate_id, ok: false, msg: err?.message || 'Failed to resend link.' });
@@ -640,7 +659,7 @@ export default function NativeHROnboardingRequests() {
     } finally {
       setResendingId(null);
     }
-  }, []);
+  }, [resendModalRow, resendEmailInput]);
 
   // ── Mark candidate as dropped out / not joining — stops every automated
   // (nightly cron) and manual (Resend Link / Send Reminder) follow-up.
@@ -2746,6 +2765,55 @@ export default function NativeHROnboardingRequests() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Resend Onboarding Link Modal — top-level, renders regardless of active tab.
+            Lets HR send this one resend to a different address; never edits the
+            candidate's stored email. */}
+        {resendModalRow && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b px-5 py-4">
+                <h3 className="font-bold text-slate-800">Resend Onboarding Link</h3>
+                <button type="button" onClick={() => setResendModalRow(null)}><X className="h-4 w-4 text-slate-400" /></button>
+              </div>
+              <div className="p-5 space-y-4">
+                <p className="text-sm text-slate-600">
+                  Resending to <strong>{resendModalRow.full_name}</strong>. Edit the email below
+                  only if this one resend should go somewhere else — the candidate's record
+                  stays unchanged.
+                </p>
+                <div>
+                  <label className="block text-xs font-bold text-slate-600 mb-1.5">Email</label>
+                  <input
+                    type="email"
+                    value={resendEmailInput}
+                    onChange={(e) => setResendEmailInput(e.target.value)}
+                    placeholder="candidate@example.com"
+                    className={SEL}
+                  />
+                  {resendEmailInput.trim() && resendEmailInput.trim() !== (resendModalRow.email ?? '') && (
+                    <p className="mt-1.5 text-xs text-amber-600 flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3" />One-off only — not saved to the candidate's profile.
+                    </p>
+                  )}
+                </div>
+                <div className="flex gap-3 pt-2">
+                  <Button
+                    type="button"
+                    className="flex-1 min-h-[44px]"
+                    disabled={!resendEmailInput.trim()}
+                    onClick={() => void submitResend()}
+                  >
+                    <Send className="h-4 w-4 mr-2" />Send
+                  </Button>
+                  <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => setResendModalRow(null)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

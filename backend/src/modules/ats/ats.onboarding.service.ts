@@ -76,6 +76,7 @@ function normalizeOfferRoleType(value: unknown): 'Analyst' | 'SupportStaff' {
 export async function sendOnboardingToken(
   candidateId: string,
   requestedBy: string,
+  overrideEmail?: string,
 ): Promise<{ token: string; expiresAt: Date }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.full_name, c.email, c.mobile, c.applied_for_branch, c.candidate_status,
@@ -136,22 +137,29 @@ export async function sendOnboardingToken(
     `UPDATE ats_candidate SET profile_status = 'onboarding_sent' WHERE id = ?`,
     [candidateId],
   );
+  // overrideEmail is one-off only — never written back to ats_candidate.email. A typo'd stored
+  // email shouldn't get silently "corrected" as a side effect of someone just wanting this one
+  // resend to land somewhere else; that's a deliberate profile edit, not a resend action.
+  const stageLogRemarks = overrideEmail
+    ? `Secure onboarding link issued (resent to override address, not saved to candidate record)`
+    : 'Secure onboarding link issued';
   await db.execute(
     `INSERT INTO ats_candidate_stage_log
        (id, candidate_id, from_stage, to_stage, remarks, updated_by)
-     VALUES (UUID(), ?, 'Selected', 'Onboarding Link Sent', 'Secure onboarding link issued', ?)`,
-    [candidateId, requestedBy],
+     VALUES (UUID(), ?, 'Selected', 'Onboarding Link Sent', ?, ?)`,
+    [candidateId, stageLogRemarks, requestedBy],
   );
 
   const baseUrl = env.FRONTEND_URL || 'http://localhost:5173';
   const onboardingLink = `${baseUrl}/onboard-full?token=${savedToken}`;
 
-  if (cand.email) {
+  const sendTo = overrideEmail || cand.email;
+  if (sendTo) {
     try {
       await withDeliveryTimeout(
         sendOnboardingTokenEmail({
           candidateId,
-          to: cand.email,
+          to: sendTo,
           candidateName: cand.full_name,
           onboardingLink,
         }),

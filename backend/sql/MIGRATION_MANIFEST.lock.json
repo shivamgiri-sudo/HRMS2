@@ -626,7 +626,9 @@
     "migrations/1604_employee_performance_daily_snapshot.sql",
     "migrations/1605_deactivate_dangling_payroll_disbursal_grant.sql",
     "migrations/1607_performance_scorecard_page_catalog.sql",
-    "migrations/1608_salary_dispute_arrear_pending_status.sql"
+    "migrations/1608_salary_dispute_arrear_pending_status.sql",
+    "migrations/1610_payroll_approval_status_page_catalog.sql",
+    "migrations/1611_employee_salary_change_log.sql"
   ],
   "approvedDeletions": [
     {
@@ -661,7 +663,9 @@
     "migrations/1604_employee_performance_daily_snapshot.sql",
     "migrations/1605_deactivate_dangling_payroll_disbursal_grant.sql",
     "migrations/1607_performance_scorecard_page_catalog.sql",
-    "migrations/1608_salary_dispute_arrear_pending_status.sql"
+    "migrations/1608_salary_dispute_arrear_pending_status.sql",
+    "migrations/1610_payroll_approval_status_page_catalog.sql",
+    "migrations/1611_employee_salary_change_log.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",

@@ -11,11 +11,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *    Now also notifies the employee themselves, and both audiences get the full salary breakup.
  */
 
-const { execute, getEmployeeBgvStatus, buildBankReadinessReport, createItem } = vi.hoisted(() => ({
+const { execute, getEmployeeBgvStatus, buildBankReadinessReport, createItem, hasAnyRole, buildScopeWhereClause } = vi.hoisted(() => ({
   execute: vi.fn(),
   getEmployeeBgvStatus: vi.fn(),
   buildBankReadinessReport: vi.fn(),
   createItem: vi.fn().mockResolvedValue(undefined),
+  // Default: caller is payroll_head/admin/super_admin — full access, no scoping applied. Tests
+  // for the payroll_hr/branch_head scoped path override this per-test.
+  hasAnyRole: vi.fn().mockResolvedValue(true),
+  buildScopeWhereClause: vi.fn().mockResolvedValue({ sql: "1=1", params: [] }),
 }));
 
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
@@ -23,11 +27,16 @@ vi.mock("../../employees/employee-bgv.service.js", () => ({ getEmployeeBgvStatus
 vi.mock("../../payroll/bank-payment-readiness.service.js", () => ({ buildBankReadinessReport }));
 vi.mock("../../payroll-masters/payrollMasters.service.js", () => ({ createPackage: vi.fn(), getPackageById: vi.fn() }));
 vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem } }));
+vi.mock("../../../shared/scopeAccess.js", () => ({ hasAnyRole, buildScopeWhereClause }));
 
 import { getQueue, approve } from "../payroll-head-review.service.js";
 
 describe("getQueue() summary enrichment", () => {
-  beforeEach(() => { execute.mockReset(); getEmployeeBgvStatus.mockReset(); buildBankReadinessReport.mockReset(); });
+  beforeEach(() => {
+    execute.mockReset(); getEmployeeBgvStatus.mockReset(); buildBankReadinessReport.mockReset();
+    hasAnyRole.mockReset().mockResolvedValue(true);
+    buildScopeWhereClause.mockReset().mockResolvedValue({ sql: "1=1", params: [] });
+  });
 
   it("attaches offered/final/bgv/bank summary for pending_review", async () => {
     execute.mockResolvedValueOnce([[
@@ -39,7 +48,7 @@ describe("getQueue() summary enrichment", () => {
     getEmployeeBgvStatus.mockResolvedValueOnce({ overall_status: "clear" });
     buildBankReadinessReport.mockResolvedValueOnce({ rows: [{ employee_id: "e1", payable: true }] });
 
-    const rows = await getQueue({ status: "pending_review" }) as any[];
+    const rows = await getQueue({ status: "pending_review" }, "caller-1") as any[];
 
     expect(rows[0].summary).toEqual({
       offered: { status: "bh_approved", ctc: 45000 },
@@ -56,11 +65,28 @@ describe("getQueue() summary enrichment", () => {
       { review_id: "r2", employee_id: "e2", status: "approved", package_accepted: 1 },
     ]]);
 
-    const rows = await getQueue({ status: "approved" }) as any[];
+    const rows = await getQueue({ status: "approved" }, "caller-1") as any[];
 
     expect(rows[0].summary).toBeUndefined();
     expect(getEmployeeBgvStatus).not.toHaveBeenCalled();
     expect(buildBankReadinessReport).not.toHaveBeenCalled();
+  });
+
+  it("scopes payroll_hr/branch_head via buildScopeWhereClause instead of seeing everything", async () => {
+    hasAnyRole.mockResolvedValue(false); // not payroll_head/admin/super_admin
+    buildScopeWhereClause.mockResolvedValue({ sql: "e.branch_id = ?", params: ["branch-9"] });
+    execute.mockResolvedValueOnce([[]]);
+
+    await getQueue({ status: "pending_review" }, "caller-2");
+
+    expect(buildScopeWhereClause).toHaveBeenCalledWith(
+      "caller-2",
+      expect.arrayContaining(["payroll_head", "payroll_hr", "branch_head"]),
+      { branchId: "e.branch_id", processId: "e.process_id" }
+    );
+    const [sql, params] = execute.mock.calls[0];
+    expect(sql).toContain("e.branch_id = ?");
+    expect(params).toContain("branch-9");
   });
 });
 

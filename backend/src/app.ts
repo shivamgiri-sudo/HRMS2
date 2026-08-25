@@ -224,6 +224,7 @@ import { secureDocumentsRouter } from "./modules/ats/secure-documents.routes.js"
 import { salaryComponentAssignmentRouter } from "./modules/ats/salary-component-assignment.routes.js";
 import { payrollHeadReviewRouter } from "./modules/payroll-head-review/payroll-head-review.routes.js";
 import { salaryRevisionRouter } from "./modules/salary-revision/salary-revision.routes.js";
+import { salaryChangeRouter } from "./modules/salary-change/salary-change.routes.js";
 import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.js";
 import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
 import { branchHeadApprovalRouter } from "./modules/ats/branch-head-approval.routes.js";
@@ -673,6 +674,7 @@ app.use("/api/ats", secureDocumentsRouter);
 app.use("/api/ats/salary-components", salaryComponentAssignmentRouter);
 app.use("/api/payroll-head-review", payrollHeadReviewRouter);
 app.use("/api/salary-revision", salaryRevisionRouter);
+app.use("/api/salary-change", salaryChangeRouter);
 app.use("/api/ats/employee-code", employeeCodeGateRouter);
 app.use("/api/ats/payroll-hr", payrollHRRouter);
 app.use("/api/ats/branch-head-approval", branchHeadApprovalRouter);

@@ -21,17 +21,22 @@ const FIXER_ROLES = ["payroll_hr", "branch_head", "hr", "admin", "super_admin"] 
 // page_catalog access; this is the route-level half of that fix.
 const VIEWER_ROLES = ["payroll_head", "payroll_hr", "branch_head", "hr", "admin", "super_admin"] as const;
 
-router.get("/queue", requireAuth, requireRole(...REVIEWER_ROLES), h(async (req, res) => {
+// Widened from REVIEWER_ROLES to VIEWER_ROLES — GET /:employeeId (the full journey) was
+// already open to payroll_hr/branch_head, they just had no way to discover which employee to
+// look up. This is the read-only listing half of that same access; getQueue() branch/process-
+// scopes payroll_hr/branch_head via buildScopeWhereClause, payroll_head/admin/super_admin still
+// see everything.
+router.get("/queue", requireAuth, requireRole(...VIEWER_ROLES), h(async (req: AuthenticatedRequest, res) => {
   const data = await svc.getQueue({
     status: typeof req.query.status === "string" ? req.query.status : undefined,
     q: typeof req.query.q === "string" ? req.query.q : undefined,
     branch: typeof req.query.branch === "string" ? req.query.branch : undefined,
-  });
+  }, req.authUser!.id);
   res.json({ success: true, data });
 }));
 
-router.get("/branches", requireAuth, requireRole(...REVIEWER_ROLES), h(async (_req, res) => {
-  const data = await svc.listQueueBranches();
+router.get("/branches", requireAuth, requireRole(...VIEWER_ROLES), h(async (req: AuthenticatedRequest, res) => {
+  const data = await svc.listQueueBranches(req.authUser!.id);
   res.json({ success: true, data });
 }));
 

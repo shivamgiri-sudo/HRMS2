@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/ats/ats.onboarding.service.ts",
+    "src/modules/ats/ats.onboarding.routes.ts",
+    "src/modules/payroll-head-review/payroll-head-review.service.ts",
+    "src/modules/payroll-head-review/payroll-head-review.routes.ts",
+    "src/modules/salary-change/salary-change.service.ts",
+    "src/modules/salary-change/salary-change.routes.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

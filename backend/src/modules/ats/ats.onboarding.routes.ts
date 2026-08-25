@@ -112,7 +112,13 @@ router.post(
       return;
     }
 
-    const result = await sendOnboardingToken(candidateId, userId);
+    const rawEmail = (req.body as Record<string, unknown> | undefined)?.email;
+    const overrideEmail = typeof rawEmail === 'string' && rawEmail.trim() ? rawEmail.trim() : undefined;
+    if (overrideEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(overrideEmail)) {
+      res.status(400).json({ ok: false, error: 'Invalid email address' });
+      return;
+    }
+    const result = await sendOnboardingToken(candidateId, userId, overrideEmail);
     res.json({ ok: true, ...result });
   }),
 );

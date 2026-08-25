@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/pages/NativeHROnboardingRequests.tsx",
+    "src/vite-env.d.ts"
+  ]
+}

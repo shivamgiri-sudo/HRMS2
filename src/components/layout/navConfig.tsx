@@ -5,7 +5,7 @@ import {
   FileText, GitBranch, Gauge, GraduationCap, Heart, Home, Landmark,
   Network, Package, Search, Server, Settings, Settings2, ShieldCheck, Sparkles,
   Target, TrendingUp, Upload, User, UserMinus, UserPlus, Users, Users2, Wallet,
-  Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle,
+  Zap, DollarSign, ShoppingCart, LayoutDashboard, Crown, Receipt, CheckCircle, IndianRupee,
   Plus, Send, Lock, Shield, ShieldAlert, PenSquare, Eye, UsersRound, RotateCcw, Mail, Share2,
   Video, PenLine, Workflow, Layers3, CalendarOff, MessageSquare, AlertCircle, Trophy, History
 } from "lucide-react";
@@ -323,6 +323,8 @@ export const navGroups: NavGroup[] = [
           { label: "Attendance Control",   href: "/payroll/attendance-control-tower", icon: ic(ShieldCheck),  roles: ["super_admin","admin","payroll_head","payroll_branch","payroll","hr","wfm","branch_head"],              pageCode: "PAYROLL_ATTENDANCE_CONTROL_TOWER", description: "COSEC, APR dialler and ADR gap control" },
           { label: "Salary Verification",  href: "/payroll/salary-verification",      icon: ic(CheckCircle),  roles: ["super_admin","payroll_head","branch_head","payroll_branch","wfm","process_manager","admin"],           pageCode: "PAYROLL_SALARY_VERIFICATION", description: "Per-employee salary review before sign-off" },
           { label: "Employee Code Generation",  href: "/payroll/salary-review",            icon: ic(ShieldCheck),  pageCode: "PAYROLL_HEAD_SALARY_REVIEW_QUEUE", roles: ["super_admin","payroll_head","admin"],                  description: "Mandatory pre-payroll salary / BGV / document / bank review" },
+          { label: "Salary Approval Status", href: "/payroll/approval-status",          icon: ic(CheckCircle),  pageCode: "PAYROLL_APPROVAL_STATUS_VIEW", roles: ["branch_head","payroll_hr","payroll_head","admin","super_admin"], description: "Read-only: which onboarded employees are approved/pending, and what was assigned" },
+          { label: "Salary Change",        href: "/payroll/salary-change",            icon: ic(IndianRupee),  pageCode: "SALARY_CHANGE_CENTER", roles: ["payroll_head","admin","super_admin"], description: "Search an active employee and change their salary, fully audited" },
           { label: "Payroll Validation",   href: "/payroll/validation",               icon: ic(ShieldCheck),  roles: ["super_admin","payroll_head"],                                                                         description: "Validate run before salary transfer" },
           { label: "Payroll Sign-off",     href: "/payroll/sign-off",                 icon: ic(CheckCircle),  roles: ["super_admin","payroll_head","finance","ceo","admin"],                                                 description: "Finance & CEO approval" },
           { label: "Payment Center",       href: "/payroll/payment-center",           icon: ic(Send),         roles: ["super_admin","admin","payroll_head","payroll","payroll_admin","payroll_branch","finance","finance_head","hr","branch_head"], pageCode: "PAYROLL_BANK_READINESS", description: "Bank readiness & disbursal in one view" },
