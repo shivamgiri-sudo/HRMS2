@@ -268,9 +268,16 @@ export async function getEmployeeJourney(employeeId: string) {
         ORDER BY eo.created_at DESC LIMIT 1`,
       [review.candidate_id]
     ).then(([r]) => r as RowDataPacket[]).catch(() => []) : Promise.resolve([]),
+    // remarks/joining_remarks: Branch Payroll HR's own notes entered while validating this
+    // candidate's salary/onboarding — previously fetched only for salary_start_date, so these
+    // never reached Payroll Head at all despite Branch HR routinely writing them.
     review.candidate_id ? db.execute<RowDataPacket[]>(
-      `SELECT salary_start_date FROM ats_payroll_hr_validation
-        WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+      `SELECT v.salary_start_date, v.remarks, v.joining_remarks,
+              COALESCE(hr.full_name, au.email) AS validated_by_name, v.validated_at
+         FROM ats_payroll_hr_validation v
+         LEFT JOIN auth_user au ON au.id = v.validated_by
+         LEFT JOIN employees hr ON hr.user_id = v.validated_by
+        WHERE v.candidate_id = ? ORDER BY v.created_at DESC LIMIT 1`,
       [review.candidate_id]
     ).then(([r]) => r as RowDataPacket[]).catch(() => []) : Promise.resolve([]),
   ]);
@@ -292,7 +299,13 @@ export async function getEmployeeJourney(employeeId: string) {
     salary_components: componentRows[0] ?? null,
     offered_salary: offeredSalaryRows[0] ?? null,
     payroll_hr_validation: payrollHrValidationRows[0]
-      ? { salary_start_date: (payrollHrValidationRows[0].salary_start_date as string) || null }
+      ? {
+          salary_start_date: (payrollHrValidationRows[0].salary_start_date as string) || null,
+          remarks: (payrollHrValidationRows[0].remarks as string) || null,
+          joining_remarks: (payrollHrValidationRows[0].joining_remarks as string) || null,
+          validated_by_name: (payrollHrValidationRows[0].validated_by_name as string) || null,
+          validated_at: (payrollHrValidationRows[0].validated_at as string) || null,
+        }
       : null,
     history,
   };
@@ -598,41 +611,71 @@ export async function approve(employeeId: string, actorUserId: string) {
   await audit(actorUserId, "PAYROLL_HEAD_REVIEW_APPROVED", employeeId, {});
   await writeHistory({ employeeId, reviewId: review.id, action: "approved", actorUserId });
 
-  // Notify the Branch Head who originally approved the offer — audit trail only,
-  // no action required. Payroll Head is the FINAL salary approver; BH does not
-  // re-approve. This gives BH visibility of what salary was set without creating
-  // any workflow obligation.
+  // Notify the Branch Head / Payroll HR who originally set up the offer (audit trail only,
+  // no action required — Payroll Head is the FINAL salary approver, they don't re-approve),
+  // AND the employee themselves — previously the employee was never notified at all, and
+  // everyone only saw "Monthly CTC: ₹X", not the actual breakup.
   const targets = await resolveRejectionNotifyTargets(employeeId).catch(() => ({
     payrollHrUserId: null, branchHeadUserId: null,
   }));
 
   const [empRows] = await db.execute<RowDataPacket[]>(
-    `SELECT e.full_name, e.employee_code, phr.salary_package_id,
-            sa.ctc_annual
+    `SELECT e.full_name, e.employee_code, e.user_id, phr.salary_package_id,
+            sa.ctc_annual,
+            sca.basic, sca.hra, sca.conveyance, sca.special_allowance, sca.gross,
+            sca.pf_applicable, sca.employer_pf AS pf_employee_note, sca.esi_applicable,
+            sca.ctc, sca.net_estimate AS net_in_hand
        FROM employees e
        JOIN employee_payroll_head_review phr ON phr.employee_id = e.id
        LEFT JOIN employee_salary_assignment sa ON sa.employee_id = e.id
-      WHERE e.id = ? LIMIT 1`,
+       LEFT JOIN salary_component_assignments sca
+              ON sca.employee_id = e.id AND sca.status = 'active'
+       WHERE e.id = ?
+       ORDER BY sca.effective_date DESC LIMIT 1`,
     [employeeId]
   ).catch(() => [[]] as unknown as [RowDataPacket[]]);
   const emp = empRows[0];
   const name = emp?.full_name ?? 'employee';
   const code = emp?.employee_code ?? '';
+  const empUserId = emp?.user_id ? String(emp.user_id) : null;
   const ctcMonthly = emp?.ctc_annual ? Math.round(Number(emp.ctc_annual) / 12).toLocaleString('en-IN') : '—';
 
+  const inr = (n: unknown) => n == null ? null : `₹${Math.round(Number(n)).toLocaleString('en-IN')}`;
+  const breakupLine = (label: string, v: unknown) => { const f = inr(v); return f ? `${label}: ${f}` : null; };
+  const breakup = emp ? [
+    breakupLine('Basic', emp.basic), breakupLine('HRA', emp.hra), breakupLine('Conveyance', emp.conveyance),
+    breakupLine('Special Allowance', emp.special_allowance), breakupLine('Gross', emp.gross),
+    breakupLine('Net in Hand', emp.net_in_hand), breakupLine('CTC (monthly)', emp.ctc),
+  ].filter(Boolean).join(' · ') : '';
+
   const notifyTargets = [targets.branchHeadUserId, targets.payrollHrUserId].filter(Boolean) as string[];
-  await Promise.allSettled(notifyTargets.map((userId) =>
-    inboxService.createItem({
-      user_id: userId,
-      type: 'payroll_head_review_approved',
-      title: `Salary approved for ${name} (${code})`,
-      description: `Payroll Head has reviewed and approved the salary for ${name}. Monthly CTC: ₹${ctcMonthly}. This employee is now payroll-eligible. No action required — this is for your records.`,
+  await Promise.allSettled([
+    ...notifyTargets.map((userId) =>
+      inboxService.createItem({
+        user_id: userId,
+        type: 'payroll_head_review_approved',
+        title: `Salary approved for ${name} (${code})`,
+        description: breakup
+          ? `Payroll Head has reviewed and approved the salary for ${name}. ${breakup}. This employee is now payroll-eligible. No action required — this is for your records.`
+          : `Payroll Head has reviewed and approved the salary for ${name}. Monthly CTC: ₹${ctcMonthly}. This employee is now payroll-eligible. No action required — this is for your records.`,
+        entity_type: 'employee',
+        entity_id: employeeId,
+        action_url: `/payroll/salary-review/${employeeId}`,
+        priority: 'low',
+      }).catch((e) => console.warn('[payroll-head-review] approve notify failed:', e))
+    ),
+    ...(empUserId ? [inboxService.createItem({
+      user_id: empUserId,
+      type: 'payroll_head_review_approved_employee',
+      title: 'Your salary has been assigned',
+      description: breakup
+        ? `Your salary has been reviewed and approved. ${breakup}.`
+        : `Your salary has been reviewed and approved. Monthly CTC: ₹${ctcMonthly}.`,
       entity_type: 'employee',
       entity_id: employeeId,
-      action_url: `/payroll/salary-review/${employeeId}`,
-      priority: 'low',
-    }).catch((e) => console.warn('[payroll-head-review] approve notify failed:', e))
-  ));
+      priority: 'normal',
+    }).catch((e) => console.warn('[payroll-head-review] approve notify employee failed:', e))] : []),
+  ]);
 
   return { review: await getReviewRow(employeeId) };
 }

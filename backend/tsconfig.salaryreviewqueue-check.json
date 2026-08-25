@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/payroll-head-review/payroll-head-review.service.ts",
+    "src/modules/payroll-head-review/payroll-head-review.routes.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}
