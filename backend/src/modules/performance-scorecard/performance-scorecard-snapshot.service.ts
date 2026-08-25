@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { db } from "../../db/mysql.js";
 import type { EmployeePerformanceSnapshotRow } from "./performance-scorecard.types.js";
+import { shrinkageService } from "../rta/rta.service.js";
+import { managementService } from "../management/management.service.js";
+import { getStatement } from "../process-pnl/pnl-statement.service.js";
 
 const UNPLANNED_STATUSES = new Set(["absent", "missing_punch"]);
 
@@ -56,6 +59,81 @@ export async function computeEmployeeSnapshot(
         : "active"
     : "none";
 
+  // Manager-tier detection: an employee "manages a team" if anyone reports to
+  // them via either the current or legacy manager column. Individual
+  // contributors get null for all 3 rollup fields — never a copy of their
+  // process's numbers.
+  const [[reportsCheck]] = (await db.execute(
+    `SELECT EXISTS(
+       SELECT 1 FROM employees WHERE reporting_manager_id = ? OR manager_id = ?
+     ) AS has_reports`,
+    [employeeId, employeeId],
+  )) as any;
+
+  let teamAttritionPct: number | null = null;
+  let teamShrinkagePct: number | null = null;
+  let teamRevenue: number | null = null;
+
+  if (Number(reportsCheck?.has_reports) === 1) {
+    const [reportRows] = (await db.execute(
+      `SELECT id FROM employees WHERE reporting_manager_id = ? OR manager_id = ?`,
+      [employeeId, employeeId],
+    )) as any;
+    const directReportIds = (reportRows as Array<{ id: string }>).map((r) => r.id);
+
+    const [[managerScope]] = (await db.execute(
+      `SELECT process_id, branch_id FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId],
+    )) as any;
+    const processId: string | undefined = managerScope?.process_id ?? undefined;
+    const branchId: string | undefined = managerScope?.branch_id ?? undefined;
+
+    // Each of these 3 calls degrades to null on its own failure, independently
+    // of the other two — one service being down must not blank the whole row.
+    try {
+      const snapshots = await shrinkageService.listSnapshots({
+        fromDate: date,
+        toDate: date,
+        processId,
+        branchId,
+      });
+      if (snapshots.length > 0 && snapshots[0].total_shrinkage_pct !== null) {
+        teamShrinkagePct = Number(snapshots[0].total_shrinkage_pct);
+      }
+    } catch (err) {
+      console.error(`[performance-scorecard] shrinkage lookup failed for manager ${employeeId}`, err);
+    }
+
+    try {
+      const summary = await managementService.getDashboardSummary(processId, directReportIds);
+      if (summary?.attrition_rate !== undefined && summary.attrition_rate !== null) {
+        teamAttritionPct = Number(summary.attrition_rate);
+      }
+    } catch (err) {
+      console.error(`[performance-scorecard] attrition lookup failed for manager ${employeeId}`, err);
+    }
+
+    try {
+      // Attrition (30-day rolling) and revenue (monthly P&L) are not true
+      // daily figures — accepted, documented behavior; not a bug.
+      const period = date.slice(0, 7); // YYYY-MM
+      const statement = await getStatement({ period, processId }, "process");
+      const revenueRow = statement.rows.find(
+        (r: { componentKey: string }) => r.componentKey === "recognized_revenue",
+      );
+      if (revenueRow) {
+        const values = Object.values(revenueRow.values as Record<string, number | null>).filter(
+          (v): v is number => v !== null,
+        );
+        if (values.length > 0) {
+          teamRevenue = values.reduce((sum, v) => sum + v, 0);
+        }
+      }
+    } catch (err) {
+      console.error(`[performance-scorecard] revenue lookup failed for manager ${employeeId}`, err);
+    }
+  }
+
   return {
     employeeId,
     snapshotDate: date,
@@ -69,9 +147,9 @@ export async function computeEmployeeSnapshot(
         ? null
         : Number(quality.overall_score),
     templateMetrics: null,
-    teamAttritionPct: null,
-    teamShrinkagePct: null,
-    teamRevenue: null,
+    teamAttritionPct,
+    teamShrinkagePct,
+    teamRevenue,
   };
 }
 
