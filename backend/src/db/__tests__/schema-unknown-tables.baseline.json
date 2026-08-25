@@ -14,6 +14,9 @@
     "salary_dispute_attachment",
     "salary_dispute_audit"
   ],
+  "modules/salary-change/salary-change.service.ts": [
+    "employee_salary_change_log"
+  ],
   "modules/assets/exit-pass.service.ts": [
     "exit_pass_approvals",
     "exit_pass_audit_logs",
