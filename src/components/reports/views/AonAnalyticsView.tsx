@@ -47,6 +47,9 @@ import {
   pct,
   ratio,
 } from "@/components/analytics/analytics-kit";
+import { DrillDownProvider, useDrillDown } from "@/components/analytics/drilldown/DrillDownProvider";
+import { EmployeeListPanel } from "@/components/analytics/drilldown/EmployeeListPanel";
+import { EmployeeDetailDrawer } from "@/components/analytics/drilldown/EmployeeDetailDrawer";
 
 /* ── Shared vocabulary ─────────────────────────────────────────────────────── */
 
@@ -101,7 +104,7 @@ interface ApiResponse { data?: Row[]; totalCount?: number; meta?: { totalCount?:
  */
 const CHART_LIMIT = 5000;
 
-function useReport(code: string, params: Record<string, string>, enabled = true) {
+export function useReport(code: string, params: Record<string, string>, enabled = true) {
   const qs = new URLSearchParams({ ...params, limit: String(CHART_LIMIT), offset: "0" });
   return useQuery({
     queryKey: [code, qs.toString()],
@@ -187,7 +190,41 @@ function GapBanner({ items }: { items: Array<{ label: string; detail: string }> 
 
 /* ── Overview ──────────────────────────────────────────────────────────────── */
 
-function Overview({ from, to, branchId }: { from: string; to: string; branchId: string }) {
+/**
+ * One heatmap cell, made clickable.
+ *
+ * `pushChip` here bypasses Panel 1 (SliceDetailPanel) and opens Panel 2 (Employee List)
+ * directly: a heatmap cell already IS one specific group+bucket combination — both
+ * dimensions of this tab's drill path at once — so there's no intermediate narrowing step
+ * needed before showing people. SliceDetailPanel stays reserved for Cohort Survival / Deep
+ * Dive wiring in a future plan, where narrowing happens one dimension at a time.
+ */
+function DrillCell({
+  value, max, metric, groupBy, groupKey, bucket,
+}: { value: number; max: number; metric: "headcount" | "exits" | "shrinkage"; groupBy: GroupBy; groupKey: string; bucket: Bucket }) {
+  const { pushChip, openEmployeeList } = useDrillDown();
+  const dimension = groupBy === "cost_centre_name" ? "costCentre" : groupBy === "process_name" ? "process" : "branch";
+
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        pushChip({ dimension, value: groupKey, label: groupKey });
+        pushChip({ dimension: "aonBucket", value: bucket, label: `${bucket}d` });
+        openEmployeeList();
+      }}
+      className="inline-block cursor-pointer rounded px-1.5 py-0.5 transition-opacity hover:opacity-80"
+      style={{
+        backgroundColor: `rgba(227, 73, 72, ${Math.min(0.75, (value / max) * 0.6)})`,
+        color: value / max > 0.55 ? "#fff" : "#0f172a",
+      }}
+    >
+      {metric === "shrinkage" ? pct(value) : num(value)}
+    </button>
+  );
+}
+
+function Overview({ from, to, branchId, headlineRate }: { from: string; to: string; branchId: string; headlineRate: ReturnType<typeof useReport> }) {
   const [groupBy, setGroupBy] = useState<GroupBy>("cost_centre_name");
   const [metric, setMetric] = useState<"headcount" | "exits" | "shrinkage">("headcount");
 
@@ -359,6 +396,7 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId: 
   );
 
   return (
+    <DrillDownProvider>
     <div className="space-y-4">
       <GapBanner
         items={[
@@ -384,6 +422,15 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId: 
       {failure && <MetricFailure />}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {!loading && !headlineRate.isLoading && headlineRate.data?.[0] && (
+          <StatTile
+            label="Overall Attrition Rate"
+            value={pct(Number(headlineRate.data[0].attrition_rate_pct ?? NaN))}
+            denominator={`${num(Number(headlineRate.data[0].exits ?? 0))} exits over avg ${num(Number(headlineRate.data[0].avg_total_headcount ?? 0))} headcount`}
+            intent="neutral"
+            icon={<TrendingDown className="h-4 w-4" />}
+          />
+        )}
         {loading
           ? BUCKETS.map(b => <ChartSkeleton key={b} height={104} />)
           : failure
@@ -460,17 +507,14 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId: 
                           {v == null ? (
                             <span className="text-slate-300">—</span>
                           ) : (
-                            <span
-                              className="inline-block rounded px-1.5 py-0.5"
-                              style={{
-                                // Intensity is relative to the row, so a small cost centre
-                                // is still readable next to a large one.
-                                backgroundColor: `rgba(227, 73, 72, ${Math.min(0.75, (v / max) * 0.6)})`,
-                                color: v / max > 0.55 ? "#fff" : "#0f172a",
-                              }}
-                            >
-                              {metric === "shrinkage" ? pct(v) : num(v)}
-                            </span>
+                            <DrillCell
+                              value={v}
+                              max={max}
+                              metric={metric}
+                              groupBy={groupBy}
+                              groupKey={row.key}
+                              bucket={BUCKETS[i]}
+                            />
                           )}
                         </td>
                       ))}
@@ -523,7 +567,11 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId: 
           )}
         </ChartCard>
       )}
+
+      <EmployeeListPanel open metric={metric === "headcount" ? "headcount" : metric === "exits" ? "exits" : "shrinkage"} from={from} to={to} />
+      <EmployeeDetailDrawer />
     </div>
+    </DrillDownProvider>
   );
 }
 
@@ -822,6 +870,8 @@ export default function AonAnalyticsView() {
     queryFn: () => hrmsApi.get<{ data: { id: string; branch_name: string }[] }>("/api/org/branches"),
   });
 
+  const headline = useReport("aon-overall-attrition-rate", branchId ? { branchId, from, to } : { from, to });
+
   return (
     <div className="space-y-4 p-6">
       <header className="space-y-1">
@@ -855,7 +905,7 @@ export default function AonAnalyticsView() {
         </div>
       </div>
 
-      {tab === "overview" && <Overview from={from} to={to} branchId={branchId} />}
+      {tab === "overview" && <Overview from={from} to={to} branchId={branchId} headlineRate={headline} />}
       {tab === "cohort" && <CohortSurvival from={from} to={to} branchId={branchId} />}
       {tab === "deep" && <DeepDive from={from} to={to} branchId={branchId} />}
     </div>
