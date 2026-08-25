@@ -673,7 +673,6 @@ function ReviewDrawer({
         open={pkgBuilderOpen}
         onOpenChange={setPkgBuilderOpen}
         defaultBranch={journey?.employee?.branch_name ?? ''}
-        branchState={journey?.employee?.branch_state}
         onPackageCreated={(pkgId) => void onPackageBuilt(pkgId)}
       />
     </>

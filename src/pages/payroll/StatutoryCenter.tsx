@@ -942,8 +942,12 @@ function ConfigTab() {
                     {!cfg["pf_employee_pct"] && !cfg["PF_EMPLOYEE_PCT"] && <EditableRow configKey="PF_EMPLOYEE_PCT" label="Employee Contribution" value={v("PF_EMPLOYEE_PCT")} unit="%" isSuperAdmin={isSuperAdmin} onSave={handleSaveConfig} showHistory={setHistoryKey} />}
                     {(["pf_employer_pct", "PF_EMPLOYER_PCT"] as const).filter((k) => cfg[k]).slice(0, 1).map((k) => <EditableRow key={k} configKey={k} label="Employer Contribution" value={v(k)} unit="%" note={note(k)} isSuperAdmin={isSuperAdmin} onSave={handleSaveConfig} showHistory={setHistoryKey} />)}
                     {!cfg["pf_employer_pct"] && !cfg["PF_EMPLOYER_PCT"] && <EditableRow configKey="PF_EMPLOYER_PCT" label="Employer Contribution" value={v("PF_EMPLOYER_PCT")} unit="%" isSuperAdmin={isSuperAdmin} onSave={handleSaveConfig} showHistory={setHistoryKey} />}
-                    {(["pf_wage_ceiling", "PF_WAGE_LIMIT"] as const).filter((k) => cfg[k]).slice(0, 1).map((k) => <EditableRow key={k} configKey={k} label="PF Wage Ceiling" value={v(k)} unit="₹" note={note(k)} isSuperAdmin={isSuperAdmin} onSave={handleSaveConfig} showHistory={setHistoryKey} />)}
-                    {!cfg["pf_wage_ceiling"] && !cfg["PF_WAGE_LIMIT"] && <EditableRow configKey="pf_wage_ceiling" label="PF Wage Ceiling" value="" unit="₹" isSuperAdmin={isSuperAdmin} onSave={handleSaveConfig} showHistory={setHistoryKey} />}
+                    {/* Resolution order matters: the calc engine only ever reads statConfig["pf_wage_limit"]
+                        (lowercased from PF_WAGE_LIMIT by statutory-config.loader.ts) — pf_wage_ceiling is a
+                        distinct, unread key, not a casing variant. PF_WAGE_LIMIT must win when both exist so the
+                        field a Super Admin edits here is the one payroll actually uses. */}
+                    {(["PF_WAGE_LIMIT", "pf_wage_ceiling"] as const).filter((k) => cfg[k]).slice(0, 1).map((k) => <EditableRow key={k} configKey={k} label="PF Wage Ceiling" value={v(k)} unit="₹" note={note(k)} isSuperAdmin={isSuperAdmin} onSave={handleSaveConfig} showHistory={setHistoryKey} />)}
+                    {!cfg["PF_WAGE_LIMIT"] && !cfg["pf_wage_ceiling"] && <EditableRow configKey="PF_WAGE_LIMIT" label="PF Wage Ceiling" value="" unit="₹" isSuperAdmin={isSuperAdmin} onSave={handleSaveConfig} showHistory={setHistoryKey} />}
                   </div>
                   <p className="mt-4 text-xs text-slate-400 italic">PF is computed on min(Basic, PF wage ceiling). Employer 12% splits into EPF 3.67% + EPS 8.33%.</p>
                 </>

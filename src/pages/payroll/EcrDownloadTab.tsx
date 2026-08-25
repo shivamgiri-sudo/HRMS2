@@ -12,7 +12,8 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { Download, AlertTriangle, Info } from "lucide-react";
+import { Download, AlertTriangle, Info, Loader2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 interface Establishment {
   id: string;
@@ -32,6 +33,8 @@ function getISTMonth(): string {
 export default function EcrDownloadTab() {
   const [month, setMonth] = useState(getISTMonth());
   const [establishmentId, setEstablishmentId] = useState("");
+  const [downloading, setDownloading] = useState(false);
+  const { toast } = useToast();
 
   const { data: estResp, isLoading: estLoading } = useQuery<EstablishmentsResponse>({
     queryKey: ["pf-establishments"],
@@ -40,11 +43,40 @@ export default function EcrDownloadTab() {
   });
   const establishments = estResp?.data ?? [];
 
-  const downloadUrl = establishmentId && month
+  const downloadPath = establishmentId && month
     ? `/api/payroll/pf/ecr-monthly?month=${month}&establishmentId=${establishmentId}`
     : null;
 
   const selectedEst = establishments.find((e) => e.id === establishmentId);
+
+  const handleDownload = async () => {
+    if (!downloadPath || !selectedEst) return;
+    setDownloading(true);
+    try {
+      const blob = await hrmsApi.getBlob(downloadPath);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ECR_${selectedEst.establishment_code}_${month.replace("-", "")}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      // getBlob throws the raw response body text on a non-2xx response — this route returns a
+      // JSON error envelope, so pull out the real message (e.g. "No finalised salary run found
+      // for 2026-07") instead of leaving the user with a downloaded error page or nothing at all,
+      // which the old <a href download> silently did on 401/409.
+      let message = "Failed to download ECR file.";
+      try {
+        const parsed = JSON.parse(e?.message ?? "");
+        message = parsed?.message ?? parsed?.error ?? message;
+      } catch {
+        if (e?.message) message = e.message;
+      }
+      toast({ variant: "destructive", title: "ECR download failed", description: message });
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -113,15 +145,15 @@ export default function EcrDownloadTab() {
       )}
 
       {/* Download button */}
-      {downloadUrl ? (
-        <a
-          href={downloadUrl}
-          download
-          className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-emerald-700 transition-colors"
+      {downloadPath ? (
+        <Button
+          onClick={handleDownload}
+          disabled={downloading}
+          className="gap-2 bg-emerald-600 hover:bg-emerald-700"
         >
-          <Download className="h-4 w-4" />
-          Download ECR File — {month}
-        </a>
+          {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          {downloading ? "Downloading…" : `Download ECR File — ${month}`}
+        </Button>
       ) : (
         <Button disabled className="gap-2">
           <Download className="h-4 w-4" />

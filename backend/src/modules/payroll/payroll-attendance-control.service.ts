@@ -310,7 +310,7 @@ function employeeScope(alias = "e", params: ControlParams) {
 
 async function latestRun(runMonth: string, runId?: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, run_month, status, total_employees, total_gross, total_deductions, total_net
+    `SELECT id, run_month, status, total_employees, total_gross, total_deductions, total_net, attendance_snapshot_locked
        FROM salary_prep_run
       WHERE (? IS NULL OR id = ?)
         AND run_month = ?

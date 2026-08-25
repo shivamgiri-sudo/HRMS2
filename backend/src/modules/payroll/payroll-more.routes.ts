@@ -11,6 +11,7 @@ import { randomUUID } from "crypto";
 import { recalculateOpenPayrollForEmployee } from "./payroll-targeted-recalculation.service.js";
 import { payslipService } from "./payslip.service.js";
 import { resolvePii } from "../../shared/piiCiphertext.js";
+import { logSensitiveAction } from "../../shared/auditLog.js";
 
 export const payrollMoreRouter = Router();
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
@@ -212,7 +213,22 @@ payrollMoreRouter.get("/recalculation-queue", requireRole("admin", "super_admin"
     `SELECT COUNT(*) AS total FROM payroll_recalculation_queue rq ${where}`,
     params
   );
-  return res.json({ success: true, data: rows, total: (countRow[0] as any).total, page, limit });
+
+  // Status breakdown across the full filtered set (payrollMonth only, never the status filter
+  // itself) — the KPI tiles used to be computed client-side over just the current page's `data`,
+  // so "Failed" could read 0/green while thousands of failed rows sat on other pages.
+  const statusConds: string[] = [];
+  const statusParams: unknown[] = [];
+  if (payrollMonth) { statusConds.push("DATE_FORMAT(rq.payroll_month, '%Y-%m') = ?"); statusParams.push(payrollMonth); }
+  const statusWhere = statusConds.length ? `WHERE ${statusConds.join(" AND ")}` : "";
+  const [statusRows] = await db.execute<RowDataPacket[]>(
+    `SELECT rq.status, COUNT(*) AS c FROM payroll_recalculation_queue rq ${statusWhere} GROUP BY rq.status`,
+    statusParams
+  );
+  const statusCounts: Record<string, number> = {};
+  (statusRows as any[]).forEach((r) => { statusCounts[r.status] = Number(r.c); });
+
+  return res.json({ success: true, data: rows, total: (countRow[0] as any).total, page, limit, statusCounts });
 }));
 
 payrollMoreRouter.post("/recalculation-queue", requireRole("admin", "super_admin", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
@@ -1154,6 +1170,17 @@ payrollMoreRouter.post("/runs/:id/email-payslips",
       [runId]
     );
     const affected = (result as any).affectedRows ?? 0;
+    const runMonth = (runRows as any[])[0]?.run_month;
+
+    void logSensitiveAction({
+      actor_user_id: req.authUser?.id ?? "system",
+      action_type: "PAYSLIP_BULK_EMAILED",
+      module_key: "payroll",
+      entity_type: "salary_prep_run",
+      entity_id: runId,
+      change_summary: { run_id: runId, run_month: runMonth, affected_rows: affected },
+      req,
+    });
 
     return res.json({ success: true, data: { runId, emailed: affected } });
   })

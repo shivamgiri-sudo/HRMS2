@@ -134,6 +134,7 @@ export default function RecalculationQueue() {
 
   const [items, setItems] = useState<QueueItem[]>([]);
   const [total, setTotal] = useState(0);
+  const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [statusFilter, setStatusFilter] = useState("all");
   const [monthFilter, setMonthFilter] = useState("");
   const [loading, setLoading] = useState(false);
@@ -170,6 +171,7 @@ export default function RecalculationQueue() {
       .then((data: any) => {
         setItems(Array.isArray(data) ? data : data.data ?? data.items ?? []);
         setTotal(data.total ?? 0);
+        setStatusCounts(data.statusCounts ?? {});
       })
       .catch(() => setError("Failed to load recalculation queue."))
       .finally(() => setLoading(false));
@@ -273,11 +275,14 @@ export default function RecalculationQueue() {
     );
   }
 
-  // Derived KPI counts from current page of items
-  const pendingCount    = items.filter(i => i.status === "pending").length;
-  const processingCount = items.filter(i => i.status === "processing").length;
-  const failedCount     = items.filter(i => i.status === "failed").length;
-  const completedCount  = items.filter(i => i.status === "completed").length;
+  // KPI counts from the backend's full status breakdown (payrollMonth-filtered, never
+  // status-filtered) — previously computed via items.filter() over just the current page
+  // (default 50 of thousands of rows), so e.g. "Failed" could read 0/green while failed rows
+  // sat unseen on other pages.
+  const pendingCount    = statusCounts["pending"] ?? 0;
+  const processingCount = statusCounts["processing"] ?? 0;
+  const failedCount     = statusCounts["failed"] ?? 0;
+  const completedCount  = statusCounts["completed"] ?? 0;
 
   return (
     <DashboardLayout>
@@ -326,7 +331,7 @@ export default function RecalculationQueue() {
           <KpiTile label="Pending"    value={pendingCount}    tone="amber"  icon={Clock}       sub="awaiting processing" />
           <KpiTile label="Processing" value={processingCount} tone="blue"   icon={Activity}    sub="currently running"   />
           <KpiTile label="Failed"     value={failedCount}     tone={failedCount > 0 ? "red" : "green"} icon={XCircle} sub={failedCount > 0 ? "requires retry" : "no failures"} />
-          <KpiTile label="Completed"  value={completedCount}  tone="green"  icon={CheckCircle2} sub="this view" />
+          <KpiTile label="Completed"  value={completedCount}  tone="green"  icon={CheckCircle2} sub="all matching runs" />
         </div>
 
         {/* ── Trigger single recalc form ───────────────────────────────── */}

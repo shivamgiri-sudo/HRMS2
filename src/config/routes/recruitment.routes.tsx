@@ -33,7 +33,6 @@ const NativeBGVReport                  = lazy(() => import("@/pages/NativeBGVRep
 const NativeBGVReportView              = lazy(() => import("@/pages/NativeBGVReportView"));
 const NativeBGVAPIMonitor              = lazy(() => import("@/pages/NativeBGVAPIMonitor"));
 const NativeReconciliationDashboard    = lazy(() => import("@/pages/NativeReconciliationDashboard"));
-const NativePayrollHRValidation        = lazy(() => import("@/pages/NativePayrollHRValidation"));
 const NativeJoiningControlRoom         = lazy(() => import("@/pages/NativeJoiningControlRoom"));
 const NativeHROnboardingHub            = lazy(() => import("@/pages/NativeHROnboardingHub"));
 const NativeOfferLetterGeneration      = lazy(() => import("@/pages/NativeOfferLetterGeneration"));

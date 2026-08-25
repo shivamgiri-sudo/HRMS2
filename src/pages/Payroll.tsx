@@ -1464,7 +1464,12 @@ function LifecyclePipelineCard() {
   });
   const allRuns = (runsRaw as any[]) ?? [];
 
-  const stages = ["draft", "calculating", "reviewed", "approved", "locked", "finance-approved", "disbursed"];
+  // "finalized" is a closed/terminal run status (see backend run-status.ts CLOSED_RUN_STATUSES,
+  // alongside "locked" and "disbursed") that was missing here — every finalized run fell through
+  // this list uncounted, so the board showed 100% "in progress" even when the vast majority of
+  // runs were actually done. Placed after "locked" since a run is finalized once locked/approved,
+  // ahead of the separate disbursal step.
+  const stages = ["draft", "calculating", "reviewed", "approved", "locked", "finalized", "finance-approved", "disbursed"];
   const stageCounts: Record<string, number> = {};
   stages.forEach((s) => {
     stageCounts[s] = allRuns.filter((r: any) => r.status === s).length;
@@ -1478,7 +1483,7 @@ function LifecyclePipelineCard() {
   if (!isPayrollRoleOK) return null;
 
   const totalRuns = allRuns.length;
-  const completedRuns = stageCounts["disbursed"];
+  const completedRuns = stageCounts["disbursed"] + stageCounts["finalized"];
   const activeRuns = totalRuns - completedRuns;
 
   const completionPct = totalRuns > 0 ? Math.round((completedRuns / totalRuns) * 100) : 0;
@@ -1489,6 +1494,7 @@ function LifecyclePipelineCard() {
     reviewed:          { bg: "bg-violet-50",  text: "text-violet-700", border: "border-violet-200", dot: "bg-violet-500" },
     approved:          { bg: "bg-amber-50",   text: "text-amber-700",  border: "border-amber-200",  dot: "bg-amber-500"  },
     locked:            { bg: "bg-orange-50",  text: "text-orange-700", border: "border-orange-200", dot: "bg-orange-500" },
+    finalized:         { bg: "bg-teal-50",    text: "text-teal-700",   border: "border-teal-200",   dot: "bg-teal-500"   },
     "finance-approved":{ bg: "bg-indigo-50",  text: "text-indigo-700", border: "border-indigo-200", dot: "bg-indigo-500" },
     disbursed:         { bg: "bg-emerald-50", text: "text-emerald-700",border: "border-emerald-200",dot: "bg-emerald-500"},
   };
@@ -1518,7 +1524,7 @@ function LifecyclePipelineCard() {
         </div>
         <div className="flex justify-between mt-1 text-[10px] text-slate-400">
           <span>{totalRuns} total runs</span>
-          <span>{activeRuns} in progress · {completedRuns} disbursed</span>
+          <span>{activeRuns} in progress · {completedRuns} finalized/disbursed</span>
         </div>
       </div>
 
@@ -1533,13 +1539,13 @@ function LifecyclePipelineCard() {
           <p className="text-xl font-bold text-blue-700 mt-0.5">{activeRuns}</p>
         </div>
         <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2.5">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-600">Disbursed</p>
+          <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-600">Finalized/Disbursed</p>
           <p className="text-xl font-bold text-emerald-700 mt-0.5">{completedRuns}</p>
         </div>
       </div>
 
       {/* Stage cards grid */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-7 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2">
         {stages.map((stage) => {
           const meta  = STAGE_META[stage] ?? STAGE_META.draft;
           const count = stageCounts[stage];
