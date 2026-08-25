@@ -63,6 +63,12 @@ router.get(
       return res.status(400).json({ success: false, message: "dateFrom and dateTo are required" });
     }
     const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
+    if (!isWide && employeeIds === null) {
+      return res.status(403).json({
+        success: false,
+        message: "Unable to resolve your team scope — no employee record or organization-wide role found",
+      });
+    }
     if (!isWide && employeeIds !== null && employeeIds.length === 0) {
       return res.json({ success: true, data: [] });
     }

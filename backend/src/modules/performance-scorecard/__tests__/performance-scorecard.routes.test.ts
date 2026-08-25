@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getEmployeeForUser } from "../../../shared/accessGuard.js";
+import { managementService } from "../../management/management.service.js";
 
 /**
  * Task 7: GET /api/performance-scorecard — RBAC-scoped route over
@@ -95,5 +97,28 @@ describe("GET /api/performance-scorecard", () => {
       .get("/api/performance-scorecard")
       .query({ dateFrom: "2026-08-01", dateTo: "2026-08-24" });
     expect(res.status).toBe(403);
+  });
+
+  it("fails closed with 403 when the caller has no employee record and no org-wide role", async () => {
+    vi.mocked(getEmployeeForUser).mockResolvedValueOnce(null as unknown as { id: string });
+
+    const res = await request(app())
+      .get("/api/performance-scorecard")
+      .query({ dateFrom: "2026-08-01", dateTo: "2026-08-24" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.success).toBe(false);
+  });
+
+  it("returns 200 with an empty array when the manager's resolved team has no members", async () => {
+    vi.mocked(managementService.getDirectReportIds).mockResolvedValueOnce([]);
+    execute.mockResolvedValueOnce([[], []]);
+
+    const res = await request(app())
+      .get("/api/performance-scorecard")
+      .query({ dateFrom: "2026-08-01", dateTo: "2026-08-24" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ success: true, data: [] });
   });
 });
