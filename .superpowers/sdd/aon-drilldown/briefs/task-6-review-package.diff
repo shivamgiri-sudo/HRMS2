@@ -1,0 +1,424 @@
+=== git log (9cf9a0bd..adec39f3, path-filtered to Task 6 files ONLY) ===
+adec39f3 feat(exit): notice period tab + manpower risk intelligence
+
+=== diff --stat, scoped ===
+ .../analytics/drilldown/DrillDownProvider.tsx      |  32 +++-
+ .../analytics/drilldown/EmployeeListPanel.tsx      | 174 +++++++++++++++++++++
+ .../drilldown/__tests__/EmployeeListPanel.test.tsx | 132 ++++++++++++++++
+ 3 files changed, 336 insertions(+), 2 deletions(-)
+
+=== full diff, scoped (Task 6's actual 3 files only -- 6 unrelated files from a concurrent session's exit/manpower-risk feature were bundled into this same commit by a shared-tree race and are DELIBERATELY EXCLUDED from this review) ===
+diff --git a/src/components/analytics/drilldown/DrillDownProvider.tsx b/src/components/analytics/drilldown/DrillDownProvider.tsx
+index 16e15104..7b9b54df 100644
+--- a/src/components/analytics/drilldown/DrillDownProvider.tsx
++++ b/src/components/analytics/drilldown/DrillDownProvider.tsx
+@@ -7,20 +7,23 @@ export interface DrillDownChip {
+ }
+ 
+ interface DrillDownContextValue {
+   chips: DrillDownChip[];
+   pushChip: (chip: DrillDownChip) => void;
+   popToChip: (index: number) => void;
+   clear: () => void;
+   showEmployeeList: boolean;
+   openEmployeeList: () => void;
+   closeEmployeeList: () => void;
++  selectedEmployeeId: string | null;
++  selectEmployee: (id: string) => void;
++  deselectEmployee: () => void;
+ }
+ 
+ const DrillDownContext = createContext<DrillDownContextValue | null>(null);
+ 
+ /**
+  * Appends `chip` to `chips`, replacing an existing chip of the same dimension rather than
+  * stacking a duplicate -- e.g. clicking a different AON bucket cell replaces the current
+  * bucket chip, it doesn't add a second one. Exported as a pure function so the chip-state
+  * transitions can be tested directly (this repo has no jsdom/@testing-library/react to drive
+  * real click events against the mounted component).
+@@ -31,40 +34,65 @@ export function applyPushChip(chips: DrillDownChip[], chip: DrillDownChip): Dril
+ }
+ 
+ /** Truncates `chips` to the first `index` entries -- removing the clicked chip and everything after it. */
+ export function applyPopToChip(chips: DrillDownChip[], index: number): DrillDownChip[] {
+   return chips.slice(0, index);
+ }
+ 
+ export function DrillDownProvider({ children }: { children: React.ReactNode }) {
+   const [chips, setChips] = useState<DrillDownChip[]>([]);
+   const [showEmployeeList, setShowEmployeeList] = useState(false);
++  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
+ 
+   const pushChip = useCallback((chip: DrillDownChip) => {
+     setChips((prev) => applyPushChip(prev, chip));
+   }, []);
+ 
+   const popToChip = useCallback((index: number) => {
+     setChips((prev) => applyPopToChip(prev, index));
+   }, []);
+ 
+   const clear = useCallback(() => {
+     setChips([]);
+     setShowEmployeeList(false);
+   }, []);
+ 
+   const openEmployeeList = useCallback(() => setShowEmployeeList(true), []);
+   const closeEmployeeList = useCallback(() => setShowEmployeeList(false), []);
++  const selectEmployee = useCallback((id: string) => setSelectedEmployeeId(id), []);
++  const deselectEmployee = useCallback(() => setSelectedEmployeeId(null), []);
+ 
+   const value = useMemo(
+-    () => ({ chips, pushChip, popToChip, clear, showEmployeeList, openEmployeeList, closeEmployeeList }),
+-    [chips, pushChip, popToChip, clear, showEmployeeList, openEmployeeList, closeEmployeeList],
++    () => ({
++      chips,
++      pushChip,
++      popToChip,
++      clear,
++      showEmployeeList,
++      openEmployeeList,
++      closeEmployeeList,
++      selectedEmployeeId,
++      selectEmployee,
++      deselectEmployee,
++    }),
++    [
++      chips,
++      pushChip,
++      popToChip,
++      clear,
++      showEmployeeList,
++      openEmployeeList,
++      closeEmployeeList,
++      selectedEmployeeId,
++      selectEmployee,
++      deselectEmployee,
++    ],
+   );
+ 
+   return <DrillDownContext.Provider value={value}>{children}</DrillDownContext.Provider>;
+ }
+ 
+ export function useDrillDown(): DrillDownContextValue {
+   const ctx = useContext(DrillDownContext);
+   if (!ctx) throw new Error("useDrillDown must be used inside a DrillDownProvider");
+   return ctx;
+ }
+diff --git a/src/components/analytics/drilldown/EmployeeListPanel.tsx b/src/components/analytics/drilldown/EmployeeListPanel.tsx
+new file mode 100644
+index 00000000..32ebc4f3
+--- /dev/null
++++ b/src/components/analytics/drilldown/EmployeeListPanel.tsx
+@@ -0,0 +1,174 @@
++import { useState } from "react";
++import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
++import { Button } from "@/components/ui/button";
++import { Skeleton } from "@/components/ui/skeleton";
++import { AlertTriangle } from "lucide-react";
++import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
++import { hrmsApi } from "@/lib/hrmsApi";
++import { useDrillDown } from "./DrillDownProvider";
++import { chipsToFilterParams } from "./SliceDetailPanel";
++
++interface EmployeeListPanelProps {
++  open: boolean;
++  metric: "headcount" | "exits" | "shrinkage";
++  from: string;
++  to: string;
++}
++
++export interface EmployeeRow {
++  /** Real UUID `employees.id` -- the aon-drilldown-employees report selects this in both
++   * response shapes (Task 3). This, never `employee_code`, is what the flag-retention
++   * endpoint (Task 4) accepts as `employeeId`. */
++  employee_id: string;
++  employee_code: string;
++  employee_name: string;
++  aon_days?: number;
++  risk_score?: number;
++  date_of_exit?: string;
++  tenure_at_exit_days?: number;
++  [key: string]: unknown;
++}
++
++/**
++ * Risk-band bucketing for the Flag-for-Retention-Review payload, exported as a pure function so
++ * it can be tested directly (this repo has no jsdom/@testing-library/react to drive a real click
++ * event against the mounted button -- see DrillDownProvider.test.tsx for the same deviation, and
++ * EmployeeListPanel.test.tsx for how this file follows it).
++ */
++export function riskBandFor(score: number | undefined): "High" | "Medium" | "Low" {
++  const s = score ?? 0;
++  if (s >= 60) return "High";
++  if (s >= 35) return "Medium";
++  return "Low";
++}
++
++/**
++ * Pure wrapper around the flag-retention POST, exported so the test can call it directly instead
++ * of simulating a click. Takes the employee's real UUID `employee_id` -- Task 4's endpoint
++ * expects `employeeId` to be that UUID, not the human-readable `employee_code`, and Task 3's
++ * report already selects `e.id AS employee_id` in both response shapes to make that possible.
++ */
++export function flagForRetentionReview(employeeId: string, riskScore?: number) {
++  return hrmsApi.post("/api/reports/aon-analytics/flag-retention", {
++    employeeId,
++    riskBand: riskBandFor(riskScore),
++  });
++}
++
++/**
++ * Builds the query-string filter params for the aon-drilldown-employees report from the current
++ * chip bar plus the panel's own metric/from/to props. Exported so the shape can be asserted
++ * directly without needing to introspect react-query's internals.
++ */
++export function buildEmployeeListFilterParams(
++  chips: { dimension: string; value: string }[],
++  metric: string,
++  from: string,
++  to: string,
++): Record<string, string> {
++  return { metric, from, to, ...chipsToFilterParams(chips) };
++}
++
++/**
++ * Fetches the employee rows for the current slice. Extracted out of the `useQuery` call as a
++ * plain async function so it -- and the `res.data` unwrapping -- can be exercised directly in a
++ * test without mounting the component.
++ */
++export async function fetchAonDrilldownEmployees(
++  filterParams: Record<string, string>,
++): Promise<EmployeeRow[]> {
++  const qs = new URLSearchParams({ ...filterParams, limit: "200", offset: "0" });
++  const res = await hrmsApi.get<{ data?: EmployeeRow[] }>(
++    `/api/reports/suite/aon-drilldown-employees?${qs.toString()}`,
++    60_000,
++  );
++  return res.data ?? [];
++}
++
++export function EmployeeListPanel({ open, metric, from, to }: EmployeeListPanelProps) {
++  const { chips, showEmployeeList, closeEmployeeList, selectEmployee } = useDrillDown();
++  const queryClient = useQueryClient();
++  const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
++
++  const filterParams = buildEmployeeListFilterParams(chips, metric, from, to);
++
++  // retry: false + a bounded staleTime, matching the sibling useReport hook in
++  // AonAnalyticsView.tsx (aon-bucket-shrinkage) -- a dead/slow query here shouldn't retry three
++  // times over before the panel gives up.
++  const q = useQuery({
++    queryKey: ["aon-drilldown-employees", JSON.stringify(filterParams)],
++    enabled: open && showEmployeeList,
++    retry: false,
++    staleTime: 60_000,
++    queryFn: () => fetchAonDrilldownEmployees(filterParams),
++  });
++
++  const flagMutation = useMutation({
++    mutationFn: (params: { employeeId: string; riskScore?: number }) =>
++      flagForRetentionReview(params.employeeId, params.riskScore),
++    onSuccess: (_data, params) => {
++      setFlaggedIds(prev => new Set(prev).add(params.employeeId));
++      void queryClient.invalidateQueries({ queryKey: ["work-inbox"] });
++    },
++  });
++
++  const rows = q.data ?? [];
++
++  return (
++    <Sheet open={open && showEmployeeList} onOpenChange={o => !o && closeEmployeeList()}>
++      <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
++        <SheetHeader>
++          <SheetTitle>Employees in this slice</SheetTitle>
++        </SheetHeader>
++
++        {q.isLoading ? (
++          <div className="mt-4 space-y-2">
++            {[...Array(6)].map((_, i) => (
++              <Skeleton key={i} className="h-12 w-full rounded-lg" />
++            ))}
++          </div>
++        ) : q.error ? (
++          <div className="mt-4 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
++            <AlertTriangle className="h-4 w-4 shrink-0" />
++            {(q.error as Error).message || "Failed to load employees."}
++          </div>
++        ) : rows.length === 0 ? (
++          <p className="mt-4 text-sm text-slate-500">No employees match this slice.</p>
++        ) : (
++          <div className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200">
++            {rows.map(row => (
++              <div key={row.employee_id} className="flex items-center justify-between gap-3 px-3 py-2.5">
++                <button
++                  type="button"
++                  onClick={() => selectEmployee(row.employee_id)}
++                  className="min-w-0 flex-1 text-left"
++                >
++                  <p className="truncate text-sm font-semibold text-slate-900 hover:underline">
++                    {row.employee_name}
++                  </p>
++                  <p className="text-xs text-slate-500">
++                    {row.employee_code}
++                    {row.aon_days != null ? ` · ${row.aon_days} days on network` : ""}
++                    {row.tenure_at_exit_days != null ? ` · ${row.tenure_at_exit_days} days at exit` : ""}
++                  </p>
++                </button>
++                {metric !== "exits" && (
++                  <Button
++                    size="sm"
++                    variant={flaggedIds.has(row.employee_id) ? "secondary" : "outline"}
++                    disabled={flaggedIds.has(row.employee_id) || flagMutation.isPending}
++                    onClick={() =>
++                      flagMutation.mutate({ employeeId: row.employee_id, riskScore: row.risk_score })
++                    }
++                  >
++                    {flaggedIds.has(row.employee_id) ? "Flagged" : "Flag for Retention Review"}
++                  </Button>
++                )}
++              </div>
++            ))}
++          </div>
++        )}
++      </SheetContent>
++    </Sheet>
++  );
++}
+diff --git a/src/components/analytics/drilldown/__tests__/EmployeeListPanel.test.tsx b/src/components/analytics/drilldown/__tests__/EmployeeListPanel.test.tsx
+new file mode 100644
+index 00000000..f55fe1ed
+--- /dev/null
++++ b/src/components/analytics/drilldown/__tests__/EmployeeListPanel.test.tsx
+@@ -0,0 +1,132 @@
++/**
++ * EmployeeListPanel tests (Task 6 of the AON drill-down plan).
++ *
++ * Same deviation as DrillDownProvider.test.tsx / RosterPivotGrid.test.tsx: this repo does not
++ * have @testing-library/react or jsdom installed, and vitest.config.ts runs frontend tests
++ * under `environment: "node"` — there is no `render()`/`fireEvent.click()` DOM available.
++ *   - Section A renders the REAL provider + a consuming component through `renderToStaticMarkup`,
++ *     proving the panel's own mount-time wiring (via `useDrillDown()`) is correct.
++ *   - Section B drives the exported pure helpers the component itself calls for data-fetch and
++ *     the flag action, so the brief's fireEvent-based "renders rows / fires the flag action"
++ *     intent is verified against the real, live logic rather than a re-implementation in the
++ *     test. Critically, this asserts the flag call uses `employee_id` (the UUID Task 4's
++ *     endpoint expects), never `employee_code`.
++ */
++import { describe, expect, it, vi } from "vitest";
++import * as React from "react";
++import { renderToStaticMarkup } from "react-dom/server";
++import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
++
++vi.mock("@/lib/hrmsApi", () => ({
++  hrmsApi: {
++    get: vi.fn().mockResolvedValue({
++      data: [
++        {
++          employee_id: "uuid-123",
++          employee_code: "MAS1",
++          employee_name: "Test One",
++          aon_days: 45,
++          risk_score: 62,
++        },
++      ],
++    }),
++    post: vi.fn().mockResolvedValue({ success: true, outcome: "created" }),
++  },
++}));
++
++import { hrmsApi } from "@/lib/hrmsApi";
++import { DrillDownProvider, useDrillDown } from "../DrillDownProvider";
++import {
++  EmployeeListPanel,
++  buildEmployeeListFilterParams,
++  fetchAonDrilldownEmployees,
++  flagForRetentionReview,
++  riskBandFor,
++} from "../EmployeeListPanel";
++
++// ═══════════════════════════════════════════════════════════════════════════════════════════
++// Section A — real render, mount-time wiring through useDrillDown()
++// ═══════════════════════════════════════════════════════════════════════════════════════════
++
++describe("EmployeeListPanel — mount", () => {
++  it("renders inside a DrillDownProvider without crashing while the employee list is closed", () => {
++    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
++    const html = renderToStaticMarkup(
++      <QueryClientProvider client={qc}>
++        <DrillDownProvider>
++          <EmployeeListPanel open metric="headcount" from="2026-01-01" to="2026-08-25" />
++        </DrillDownProvider>
++      </QueryClientProvider>,
++    );
++    // showEmployeeList defaults to false, so the Sheet content should not be in the static markup.
++    expect(html).not.toContain("Employees in this slice");
++  });
++
++  it("throws outside a DrillDownProvider (guards against a missing wrapper)", () => {
++    function Bare() {
++      useDrillDown();
++      return null;
++    }
++    expect(() => renderToStaticMarkup(<Bare />)).toThrow(
++      "useDrillDown must be used inside a DrillDownProvider",
++    );
++  });
++});
++
++// ═══════════════════════════════════════════════════════════════════════════════════════════
++// Section B — the real helpers the component's useQuery/useMutation call
++// ═══════════════════════════════════════════════════════════════════════════════════════════
++
++describe("EmployeeListPanel — data fetch", () => {
++  it("fetchAonDrilldownEmployees hits the report endpoint and unwraps res.data", async () => {
++    const rows = await fetchAonDrilldownEmployees({ metric: "headcount", from: "2026-01-01", to: "2026-08-25" });
++    expect(hrmsApi.get).toHaveBeenCalledWith(
++      expect.stringContaining("/api/reports/suite/aon-drilldown-employees?"),
++      60_000,
++    );
++    expect(rows).toEqual([
++      expect.objectContaining({ employee_id: "uuid-123", employee_name: "Test One" }),
++    ]);
++  });
++
++  it("buildEmployeeListFilterParams merges chips with metric/from/to", () => {
++    const params = buildEmployeeListFilterParams(
++      [{ dimension: "costCentre", value: "cc-1" }, { dimension: "aonBucket", value: "31-60" }],
++      "headcount",
++      "2026-01-01",
++      "2026-08-25",
++    );
++    expect(params).toEqual(
++      expect.objectContaining({
++        metric: "headcount",
++        from: "2026-01-01",
++        to: "2026-08-25",
++        costCentreId: "cc-1",
++        aonBucket: "31-60",
++      }),
++    );
++  });
++});
++
++describe("EmployeeListPanel — Flag for Retention Review", () => {
++  it("riskBandFor buckets scores into High/Medium/Low", () => {
++    expect(riskBandFor(62)).toBe("High");
++    expect(riskBandFor(40)).toBe("Medium");
++    expect(riskBandFor(10)).toBe("Low");
++    expect(riskBandFor(undefined)).toBe("Low");
++  });
++
++  it("flagForRetentionReview posts employeeId (the UUID), not employee_code", async () => {
++    await flagForRetentionReview("uuid-123", 62);
++    expect(hrmsApi.post).toHaveBeenCalledWith(
++      "/api/reports/aon-analytics/flag-retention",
++      expect.objectContaining({ employeeId: "uuid-123", riskBand: "High" }),
++    );
++    // The mocked report row's identity is employee_id, not employee_code — confirm the two are
++    // not accidentally interchangeable in the payload the component sends.
++    expect(hrmsApi.post).not.toHaveBeenCalledWith(
++      "/api/reports/aon-analytics/flag-retention",
++      expect.objectContaining({ employeeId: "MAS1" }),
++    );
++  });
++});

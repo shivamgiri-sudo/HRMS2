@@ -1,0 +1,1766 @@
+diff --git a/backend/src/modules/ats/face-match.service.ts b/backend/src/modules/ats/face-match.service.ts
+index 411c413a..314679f9 100644
+--- a/backend/src/modules/ats/face-match.service.ts
++++ b/backend/src/modules/ats/face-match.service.ts
+@@ -124,10 +124,39 @@ export async function compareFaces(
+ }
+ 
+ export async function isModelAvailable(): Promise<boolean> {
+   try {
+     await ensureModels();
+     return true;
+   } catch {
+     return false;
+   }
+ }
++
++export interface FaceBbox {
++  x: number;
++  y: number;
++  width: number;
++  height: number;
++  imageWidth: number;
++  imageHeight: number;
++}
++
++export async function detectFaceBbox(imagePath: string): Promise<FaceBbox | null> {
++  try {
++    await ensureModels();
++    const image = await loadImage(imagePath);
++    const detection = await faceapi.detectSingleFace(image as any);
++    if (!detection) return null;
++    const box = detection.box;
++    return {
++      x: box.x,
++      y: box.y,
++      width: box.width,
++      height: box.height,
++      imageWidth: (image as any).width,
++      imageHeight: (image as any).height,
++    };
++  } catch {
++    return null;
++  }
++}
+diff --git a/backend/src/modules/ats/fraud-alerts.routes.ts b/backend/src/modules/ats/fraud-alerts.routes.ts
+index 108be2a7..c700f8e9 100644
+--- a/backend/src/modules/ats/fraud-alerts.routes.ts
++++ b/backend/src/modules/ats/fraud-alerts.routes.ts
+@@ -1,17 +1,19 @@
+ import { Router } from "express";
+ import type { Response } from "express";
+ import { requireAuth } from "../../middleware/authMiddleware.js";
+ import { requireRole } from "../../middleware/requireRole.js";
+ import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+ import { db } from "../../db/mysql.js";
+ import type { RowDataPacket } from "mysql2";
++import { detectFaceBbox } from "./face-match.service.js";
++import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
+ 
+ const router = Router();
+ 
+ router.get("/", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr"), async (req: AuthenticatedRequest, res: Response) => {
+   const status = req.query.status as string || "open";
+   const [rows] = await db.execute<RowDataPacket[]>(
+     `SELECT fa.*, c.full_name AS candidate_name, c.applied_for_branch, c.applied_for_process,
+             mc.full_name AS matched_candidate_name
+        FROM candidate_fraud_alert fa
+        JOIN ats_candidate c ON c.id = fa.candidate_id
+@@ -55,11 +57,101 @@ router.patch("/:alertId/review", requireAuth, requireRole("super_admin", "admin"
+   res.json({ success: true });
+ });
+ 
+ router.get("/stats", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr"), async (_req: AuthenticatedRequest, res: Response) => {
+   const [rows] = await db.execute<RowDataPacket[]>(
+     `SELECT alert_type, status, COUNT(*) as count FROM candidate_fraud_alert GROUP BY alert_type, status`
+   );
+   res.json({ stats: rows });
+ });
+ 
++// Full fraud comparison payload for a single candidate — used in HR Profile Approval
++// and the Fraud Alert Review page to show face grid, name table, and document numbers.
++router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr"), async (req: AuthenticatedRequest, res: Response) => {
++  const { candidateId } = req.params;
++
++  const [[alerts], [faceMatches], [docs], [profileRows], [bgvNames], [nameSummaryRows], [nameDetails], [bankPennyRows]] = await Promise.all([
++    db.execute<RowDataPacket[]>(
++      `SELECT * FROM candidate_fraud_alert WHERE candidate_id = ? ORDER BY created_at DESC`,
++      [candidateId]
++    ),
++    db.execute<RowDataPacket[]>(
++      `SELECT cfm.*,
++              pd.doc_type AS photo_doc_type, pd.file_path AS photo_file_path,
++              id_doc.doc_type AS id_doc_type, id_doc.file_path AS id_file_path,
++              id_doc.ocr_extracted_name AS id_ocr_name
++         FROM candidate_face_match cfm
++         LEFT JOIN candidate_onboarding_document pd     ON pd.id     = cfm.photo_document_id
++         LEFT JOIN candidate_onboarding_document id_doc ON id_doc.id = cfm.id_document_id
++        WHERE cfm.candidate_id = ?
++        ORDER BY cfm.created_at DESC`,
++      [candidateId]
++    ),
++    db.execute<RowDataPacket[]>(
++      `SELECT id, doc_type, ocr_extracted_number, ocr_extracted_name,
++              ocr_number_match, ocr_extraction_status, document_status, uploaded_at
++         FROM candidate_onboarding_document
++        WHERE candidate_id = ? AND deleted_at IS NULL
++        ORDER BY uploaded_at ASC`,
++      [candidateId]
++    ),
++    db.execute<RowDataPacket[]>(
++      `SELECT employee_name, aadhaar_number_masked, pan_number_masked
++         FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
++      [candidateId]
++    ),
++    db.execute<RowDataPacket[]>(
++      `SELECT check_type, matched_name, status, verified_at
++         FROM candidate_bgv_check
++        WHERE candidate_id = ? AND check_type IN ('aadhaar','aadhaar_offline','pan','bank_account')
++        ORDER BY updated_at DESC`,
++      [candidateId]
++    ),
++    db.execute<RowDataPacket[]>(
++      `SELECT * FROM candidate_name_match_summary WHERE candidate_id = ? LIMIT 1`,
++      [candidateId]
++    ),
++    db.execute<RowDataPacket[]>(
++      `SELECT source_type, source_name, match_score, is_match, checked_at
++         FROM candidate_name_match_detail WHERE candidate_id = ? ORDER BY checked_at DESC`,
++      [candidateId]
++    ),
++    db.execute<RowDataPacket[]>(
++      `SELECT account_holder_name AS entered_name, account_name AS bank_name,
++              name_match_score, status
++         FROM onboarding_penny_drop_requests
++        WHERE candidate_id = ? ORDER BY initiated_at DESC LIMIT 1`,
++      [candidateId]
++    ),
++  ]);
++
++  res.json({
++    alerts,
++    faceMatches,
++    docs,
++    profile: profileRows[0] ?? null,
++    bgvNames,
++    nameSummary: nameSummaryRows[0] ?? null,
++    nameDetails,
++    bankPennyDrop: bankPennyRows[0] ?? null,
++  });
++});
++
++// Returns the detected face bounding box for a document image.
++// The frontend uses these coordinates to crop and vertically align faces
++// in the comparison grid regardless of document orientation.
++router.get("/documents/face-detect/:documentId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr"), async (req: AuthenticatedRequest, res: Response) => {
++  const { documentId } = req.params;
++  const [rows] = await db.execute<RowDataPacket[]>(
++    `SELECT file_path, mime_type FROM candidate_onboarding_document WHERE id = ? LIMIT 1`,
++    [documentId]
++  );
++  const doc = rows[0];
++  if (!doc) return res.status(404).json({ error: "Document not found" });
++
++  const resolvedPath = resolveOnboardingDocumentFile(doc.file_path);
++  if (!resolvedPath) return res.json({ bbox: null });
++  const bbox = await detectFaceBbox(resolvedPath).catch(() => null);
++  res.json({ bbox });
++});
++
+ export default router;
+diff --git a/backend/src/modules/payroll/__tests__/esi-reg-docs.test.ts b/backend/src/modules/payroll/__tests__/esi-reg-docs.test.ts
+new file mode 100644
+index 00000000..565041ad
+--- /dev/null
++++ b/backend/src/modules/payroll/__tests__/esi-reg-docs.test.ts
+@@ -0,0 +1,60 @@
++import { describe, it, expect, vi, beforeEach } from "vitest";
++import request from "supertest";
++import express from "express";
++import { esiRegDocsRouter } from "../esi-reg-docs.routes.js";
++
++vi.mock("../../../db/mysql.js", () => ({
++  db: { execute: vi.fn() },
++}));
++
++vi.mock("../../../middleware/requireRole.js", () => ({
++  requireRole: (..._roles: string[]) =>
++    (_req: express.Request, _res: express.Response, next: express.NextFunction) => {
++      (_req as any).authUser = { id: "user-1", roles: ["payroll_head"] };
++      next();
++    },
++}));
++
++import { db } from "../../../db/mysql.js";
++
++const app = express();
++app.use(express.json());
++app.use("/api/payroll", esiRegDocsRouter);
++
++describe("GET /api/payroll/esi-reg-docs", () => {
++  beforeEach(() => vi.clearAllMocks());
++
++  it("returns paginated ESI-eligible employees with readiness flags", async () => {
++    vi.mocked(db.execute)
++      .mockResolvedValueOnce([[{ total: 1 }] as any, []])
++      .mockResolvedValueOnce([
++        [
++          {
++            employee_id: "emp-1",
++            emp_code: "EMP001",
++            name: "Alice Smith",
++            branch: "Chennai",
++            esic_number: "1234567890",
++            pan_ready: 1,
++            pan_doc_id: "doc-1",
++            pan_file_url: "/api/files/employee-documents/pan.jpg",
++            photo_ready: 1,
++            photo_url: "/api/files/employee-photos/emp1.jpg",
++            bank_ready: 1,
++          },
++        ] as any,
++        [],
++      ]);
++
++    const res = await request(app).get("/api/payroll/esi-reg-docs");
++    expect(res.status).toBe(200);
++    expect(res.body.employees).toHaveLength(1);
++    expect(res.body.employees[0].pan_ready).toBe(true);
++    expect(res.body.total).toBe(1);
++  });
++
++  it("returns 400 when limit exceeds 200", async () => {
++    const res = await request(app).get("/api/payroll/esi-reg-docs?limit=999");
++    expect(res.status).toBe(400);
++  });
++});
+diff --git a/backend/src/modules/payroll/esi-reg-docs.routes.ts b/backend/src/modules/payroll/esi-reg-docs.routes.ts
+new file mode 100644
+index 00000000..60a9684f
+--- /dev/null
++++ b/backend/src/modules/payroll/esi-reg-docs.routes.ts
+@@ -0,0 +1,92 @@
++import { Router, Request, Response } from "express";
++import { requireRole } from "../../middleware/requireRole.js";
++import { db } from "../../db/mysql.js";
++import type { RowDataPacket } from "mysql2";
++
++export const esiRegDocsRouter = Router();
++
++const ESI_ROLES = ["payroll_branch", "payroll_head", "super_admin"] as const;
++
++esiRegDocsRouter.get(
++  "/esi-reg-docs",
++  requireRole(...ESI_ROLES),
++  async (req: Request, res: Response) => {
++    const page = Math.max(1, parseInt(String(req.query.page ?? "1"), 10));
++    const limit = parseInt(String(req.query.limit ?? "50"), 10);
++    if (limit > 200) {
++      return res.status(400).json({ error: "Maximum limit is 200" });
++    }
++    const offset = (page - 1) * limit;
++    const branchId = req.query.branch_id as string | undefined;
++    const search = req.query.search as string | undefined;
++
++    const whereParts: string[] = [
++      `(e.esic_number IS NOT NULL OR esi.esi_eligible = 1)`,
++      `e.employment_status != 'terminated'`,
++    ];
++    const params: unknown[] = [];
++
++    if (branchId) {
++      whereParts.push("e.branch_id = ?");
++      params.push(branchId);
++    }
++    if (search) {
++      whereParts.push("(e.emp_code LIKE ? OR CONCAT(e.first_name,' ',e.last_name) LIKE ?)");
++      params.push(`%${search}%`, `%${search}%`);
++    }
++
++    const whereClause = whereParts.join(" AND ");
++
++    const [[{ total }]] = await db.execute<RowDataPacket[]>(
++      `SELECT COUNT(*) AS total
++       FROM employees e
++       LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
++       WHERE ${whereClause}`,
++      params
++    );
++
++    const [rows] = await db.execute<RowDataPacket[]>(
++      `SELECT
++         e.id                                              AS employee_id,
++         e.emp_code,
++         CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) AS name,
++         COALESCE(b.name, e.branch, '')                   AS branch,
++         e.esic_number,
++         (SELECT COUNT(*) FROM employee_documents ed
++          WHERE ed.employee_id = e.id
++            AND ed.doc_category = 'pan'
++            AND ed.document_status IN ('verified','uploaded','verification_pending')) > 0
++                                                          AS pan_ready,
++         (SELECT id FROM employee_documents ed
++          WHERE ed.employee_id = e.id
++            AND ed.doc_category = 'pan'
++          ORDER BY ed.created_at DESC LIMIT 1)            AS pan_doc_id,
++         (SELECT file_url FROM employee_documents ed
++          WHERE ed.employee_id = e.id
++            AND ed.doc_category = 'pan'
++          ORDER BY ed.created_at DESC LIMIT 1)            AS pan_file_url,
++         (e.photo_url IS NOT NULL OR e.avatar_url IS NOT NULL) AS photo_ready,
++         COALESCE(e.photo_url, e.avatar_url)              AS photo_url,
++         (SELECT COUNT(*) FROM employee_bank_detail ebd
++          WHERE ebd.employee_id = e.id
++            AND ebd.ifsc_code IS NOT NULL AND ebd.ifsc_code != '') > 0
++                                                          AS bank_ready
++       FROM employees e
++       LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
++       LEFT JOIN branches b ON b.id = e.branch_id
++       WHERE ${whereClause}
++       ORDER BY e.emp_code
++       LIMIT ? OFFSET ?`,
++      [...params, limit, offset]
++    );
++
++    const employees = (rows as RowDataPacket[]).map((r) => ({
++      ...r,
++      pan_ready: !!r.pan_ready,
++      photo_ready: !!r.photo_ready,
++      bank_ready: !!r.bank_ready,
++    }));
++
++    return res.json({ employees, total: Number(total), page, limit });
++  }
++);
+diff --git a/src/components/ats/FraudComparisonPanel.tsx b/src/components/ats/FraudComparisonPanel.tsx
+new file mode 100644
+index 00000000..375422b8
+--- /dev/null
++++ b/src/components/ats/FraudComparisonPanel.tsx
+@@ -0,0 +1,869 @@
++/**
++ * FraudComparisonPanel
++ *
++ * Reusable panel used in two places:
++ *   1. HR Profile Approval drawer — auto-opens when critical/high alerts exist
++ *   2. /settings/fraud-alerts — Payroll HR queue, per-candidate expand
++ *
++ * Shows:
++ *   • Alert summary banner with blocking/non-blocking counts
++ *   • Face comparison grid — selfie vs DigiLocker doc vs manual upload,
++ *     each face auto-detected and cropped to align vertically
++ *   • Name comparison table — 6 sources (form, DigiLocker Aadhaar, DigiLocker PAN,
++ *     Bank penny drop, BGV Aadhaar, BGV PAN) with Indian name match status
++ *   • Document number comparison — Aadhaar and PAN across entered/DigiLocker/OCR
++ *   • Resolution action panel — acknowledgement checkbox gates the approve button
++ *     when embedded in the HR profile review flow
++ */
++import React, { useCallback, useEffect, useRef, useState } from "react";
++import {
++  AlertTriangle,
++  CheckCircle2,
++  ChevronDown,
++  ChevronUp,
++  Eye,
++  EyeOff,
++  Loader2,
++  ShieldAlert,
++  ShieldCheck,
++  ShieldX,
++  User,
++  X,
++} from "lucide-react";
++import { Badge } from "@/components/ui/badge";
++import { Button } from "@/components/ui/button";
++import { hrmsApi } from "@/lib/hrmsApi";
++
++// ── Types ─────────────────────────────────────────────────────────────────────
++
++interface FraudAlert {
++  id: string;
++  alert_type: string;
++  severity: "low" | "medium" | "high" | "critical";
++  status: string;
++  details?: string | Record<string, unknown> | null;
++  created_at?: string | null;
++  review_notes?: string | null;
++  reviewed_at?: string | null;
++}
++
++interface FaceMatch {
++  id: string;
++  photo_document_id?: string | null;
++  id_document_id?: string | null;
++  photo_doc_type?: string | null;
++  id_doc_type?: string | null;
++  match_score?: number | null;
++  match_status: string;
++}
++
++interface DocRow {
++  id: string;
++  doc_type: string;
++  ocr_extracted_number?: string | null;
++  ocr_extracted_name?: string | null;
++  ocr_number_match?: string | null;
++  ocr_extraction_status?: string | null;
++  document_status?: string | null;
++  uploaded_at?: string | null;
++}
++
++interface NameDetail {
++  source_type: string;
++  source_name?: string | null;
++  match_score?: number | null;
++  is_match?: number | null;  // TINYINT(1): 1=matched, 0=mismatch, null=not_checked
++}
++
++interface ComparisonData {
++  alerts: FraudAlert[];
++  faceMatches: FaceMatch[];
++  docs: DocRow[];
++  profile: { employee_name?: string; aadhaar_number_masked?: string; pan_number_masked?: string } | null;
++  bgvNames: { check_type: string; matched_name?: string | null; status?: string | null }[];
++  nameSummary: { overall_status?: string; mismatch_sources?: string | unknown; blocks_employee_code?: number } | null;
++  nameDetails: NameDetail[];
++  bankPennyDrop: { entered_name?: string | null; bank_name?: string | null; name_match_score?: number | null; status?: string | null } | null;
++}
++
++interface FaceBbox {
++  x: number;
++  y: number;
++  width: number;
++  height: number;
++  imageWidth: number;
++  imageHeight: number;
++}
++
++// ── Resolution options (same as NativeFraudAlertReview) ──────────────────────
++
++const RESOLUTIONS = [
++  { value: "resolved_false_positive", code: "name_variance",  label: "Same person — name written differently",  hint: "Initials, added/dropped middle name, regional ordering" },
++  { value: "resolved_false_positive", code: "married_name",   label: "Name changed after marriage",             hint: "Supporting document seen" },
++  { value: "resolved_false_positive", code: "data_entry",     label: "Our data was wrong",                     hint: "OCR misread or a typo in the record" },
++  { value: "resolved_fraud",          code: "confirmed_fraud", label: "Confirmed — different person",           hint: "Candidate rejected" },
++  { value: "dismissed",               code: "not_applicable",  label: "Not applicable",                         hint: "Raised in error or duplicate alert" },
++] as const;
++
++// ── Severity styles ───────────────────────────────────────────────────────────
++
++const SEVERITY_BG: Record<string, string> = {
++  critical: "bg-red-100 text-red-800 border-red-300",
++  high:     "bg-orange-100 text-orange-800 border-orange-300",
++  medium:   "bg-amber-100 text-amber-800 border-amber-300",
++  low:      "bg-slate-100 text-slate-700 border-slate-300",
++};
++
++const SEVERITY_BORDER: Record<string, string> = {
++  critical: "border-red-300 bg-red-50",
++  high:     "border-orange-300 bg-orange-50",
++  medium:   "border-amber-200 bg-amber-50",
++  low:      "border-slate-200 bg-slate-50",
++};
++
++// ── Face Photo Cell with canvas-based face alignment ─────────────────────────
++
++interface FacePhotoCellProps {
++  documentId: string | null | undefined;
++  label: string;
++  subLabel?: string;
++  isTrusted?: boolean;
++  noFaceText?: string;
++}
++
++function FacePhotoCell({ documentId, label, subLabel, isTrusted, noFaceText }: FacePhotoCellProps) {
++  const canvasRef = useRef<HTMLCanvasElement>(null);
++  const [loading, setLoading] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++  const [hasImage, setHasImage] = useState(false);
++
++  useEffect(() => {
++    if (!documentId) { setError(noFaceText ?? "No document"); return; }
++
++    let blobUrl: string | null = null;
++    setLoading(true);
++    setError(null);
++    setHasImage(false);
++
++    // Load blob + bbox in parallel
++    Promise.all([
++      hrmsApi.getBlob(`/api/ats/onboarding-full/documents/preview/${documentId}`),
++      hrmsApi.get<{ bbox: FaceBbox | null }>(`/api/ats/fraud-alerts/documents/face-detect/${documentId}`)
++        .catch(() => ({ bbox: null as FaceBbox | null })),
++    ]).then(([blob, { bbox }]) => {
++      blobUrl = URL.createObjectURL(blob);
++      const img = new Image();
++      img.onload = () => {
++        const canvas = canvasRef.current;
++        if (!canvas) return;
++        const ctx = canvas.getContext("2d");
++        if (!ctx) return;
++
++        // Canvas output: 160 × 200 px (portrait face crop)
++        canvas.width  = 160;
++        canvas.height = 200;
++
++        if (bbox) {
++          // Expand the detected face region by margins for natural crop
++          const mx = bbox.width  * 0.6;   // horizontal margin
++          const my = bbox.height * 0.9;   // vertical margin (more above/below)
++          const sx = Math.max(0, bbox.x - mx);
++          const sy = Math.max(0, bbox.y - my * 1.2);
++          const sw = Math.min(bbox.imageWidth  - sx, bbox.width  + mx * 2);
++          const sh = Math.min(bbox.imageHeight - sy, bbox.height + my * 2.2);
++          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 160, 200);
++        } else {
++          // Fallback: show the upper 62.5% of the document (face is typically here)
++          const naturalH = img.width * 1.25;
++          ctx.drawImage(img, 0, 0, img.width, Math.min(naturalH, img.height), 0, 0, 160, 200);
++        }
++        setHasImage(true);
++        setLoading(false);
++      };
++      img.onerror = () => { setError("Cannot render image"); setLoading(false); };
++      img.src = blobUrl!;
++    }).catch(() => {
++      setError("Failed to load");
++      setLoading(false);
++    });
++
++    return () => { if (blobUrl) URL.revokeObjectURL(blobUrl); };
++  }, [documentId, noFaceText]);
++
++  return (
++    <div className="flex flex-col items-center gap-2">
++      {/* Photo frame */}
++      <div className="relative rounded-xl overflow-hidden border-2 border-slate-200 bg-slate-100 w-[160px] h-[200px] flex items-center justify-center shadow-sm">
++        {loading && (
++          <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
++            <Loader2 className="h-6 w-6 animate-spin text-blue-500" />
++          </div>
++        )}
++        {error && !loading && (
++          <div className="flex flex-col items-center gap-1 text-slate-400 px-3 text-center">
++            <User className="h-10 w-10" />
++            <span className="text-[11px]">{error}</span>
++          </div>
++        )}
++        <canvas ref={canvasRef} className={`w-full h-full object-cover ${hasImage ? "block" : "hidden"}`} />
++        {isTrusted && (
++          <div className="absolute top-2 left-2 bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full flex items-center gap-0.5 shadow">
++            <ShieldCheck className="h-2.5 w-2.5" /> GOVT VERIFIED
++          </div>
++        )}
++      </div>
++      {/* Labels */}
++      <div className="text-center">
++        <p className="text-xs font-bold text-slate-800">{label}</p>
++        {subLabel && <p className="text-[11px] text-slate-500 mt-0.5">{subLabel}</p>}
++      </div>
++    </div>
++  );
++}
++
++// ── Match Score Badge ─────────────────────────────────────────────────────────
++
++function MatchScoreBadge({ score, status }: { score?: number | null; status: string }) {
++  if (status === "no_face_detected") return (
++    <span className="inline-flex items-center gap-1 text-[11px] font-semibold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full border border-slate-200">
++      <X className="h-3 w-3" /> No face
++    </span>
++  );
++  if (score == null) return null;
++  const matched = status === "matched";
++  return (
++    <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full border ${matched ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-red-50 text-red-700 border-red-200"}`}>
++      {matched ? <CheckCircle2 className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
++      {score}% {matched ? "Match" : "Mismatch"}
++    </span>
++  );
++}
++
++// ── Name status chip ──────────────────────────────────────────────────────────
++
++function NameStatusChip({ status }: { status?: string | null }) {
++  if (!status || status === "not_checked" || status === "pending") return (
++    <span className="text-[11px] text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">Not checked</span>
++  );
++  if (status === "matched") return (
++    <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
++      <CheckCircle2 className="h-3 w-3" /> Match
++    </span>
++  );
++  if (status === "partial" || status === "acceptable") return (
++    <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full flex items-center gap-1">
++      <AlertTriangle className="h-3 w-3" /> Acceptable
++    </span>
++  );
++  return (
++    <span className="text-[11px] font-semibold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full flex items-center gap-1">
++      <ShieldX className="h-3 w-3" /> Mismatch
++    </span>
++  );
++}
++
++// ── Doc Number Status Chip ────────────────────────────────────────────────────
++
++function NumStatusChip({ status }: { status?: string | null }) {
++  if (!status || status === "not_checked") return <span className="text-[11px] text-slate-400">—</span>;
++  if (status === "matched") return <span className="text-[11px] font-semibold text-emerald-700 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Match</span>;
++  if (status === "mismatch") return <span className="text-[11px] font-semibold text-red-700 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Mismatch</span>;
++  return <span className="text-[11px] text-slate-500">{status}</span>;
++}
++
++// ── Section Header ────────────────────────────────────────────────────────────
++
++function SectionHeader({ children }: { children: React.ReactNode }) {
++  return (
++    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">{children}</p>
++  );
++}
++
++// ── Main Component ────────────────────────────────────────────────────────────
++
++interface FraudComparisonPanelProps {
++  candidateId: string;
++  candidateName?: string;
++  /** When true, shows the resolution action panel and acknowledgement gate */
++  showActions?: boolean;
++  /** Called when HR acknowledges fraud review — unblocks the Approve button */
++  onAcknowledged?: (acknowledged: boolean) => void;
++  /** Called when any alert is resolved (triggers reload in parent) */
++  onAlertResolved?: () => void;
++}
++
++export function FraudComparisonPanel({
++  candidateId,
++  candidateName,
++  showActions = true,
++  onAcknowledged,
++  onAlertResolved,
++}: FraudComparisonPanelProps) {
++  const [data, setData]       = useState<ComparisonData | null>(null);
++  const [loading, setLoading] = useState(false);
++  const [error, setError]     = useState<string | null>(null);
++
++  // Resolution state per alert
++  const [choice, setChoice]   = useState<Record<string, number>>({});
++  const [notes, setNotes]     = useState<Record<string, string>>({});
++  const [savingId, setSavingId] = useState<string | null>(null);
++  const [saveError, setSaveError] = useState<string | null>(null);
++
++  // Acknowledgement gate
++  const [acknowledged, setAcknowledged] = useState(false);
++
++  // Face comparison section collapse
++  const [showFaces, setShowFaces] = useState(true);
++
++  const load = useCallback(async () => {
++    setLoading(true);
++    setError(null);
++    try {
++      const r = await hrmsApi.get<ComparisonData>(`/api/ats/fraud-alerts/candidate/${candidateId}/comparison`);
++      setData(r);
++    } catch {
++      setError("Could not load fraud comparison data.");
++    } finally {
++      setLoading(false);
++    }
++  }, [candidateId]);
++
++  useEffect(() => { void load(); }, [load]);
++
++  // Reset acknowledgement when alerts change
++  useEffect(() => {
++    setAcknowledged(false);
++    onAcknowledged?.(false);
++  }, [candidateId]); // eslint-disable-line react-hooks/exhaustive-deps
++
++  const handleAcknowledge = (checked: boolean) => {
++    setAcknowledged(checked);
++    onAcknowledged?.(checked);
++  };
++
++  const resolveAlert = async (alert: FraudAlert) => {
++    const picked = RESOLUTIONS[choice[alert.id] ?? -1];
++    const reason = (notes[alert.id] ?? "").trim();
++    if (!picked) { setSaveError("Choose what you found before clearing this alert."); return; }
++    if (picked.value !== "under_review" && !reason) { setSaveError("Add a note — it becomes the audit record."); return; }
++    setSavingId(alert.id);
++    setSaveError(null);
++    try {
++      await hrmsApi.patch(`/api/ats/fraud-alerts/${alert.id}/review`, {
++        status: picked.value,
++        notes: `[${picked.code}] ${reason}`,
++      });
++      onAlertResolved?.();
++      await load();
++    } catch {
++      setSaveError("Could not save decision. Nothing was changed.");
++    } finally {
++      setSavingId(null);
++    }
++  };
++
++  // ── Derived values ──────────────────────────────────────────────────────────
++
++  if (loading) return (
++    <div className="flex items-center gap-2 py-10 justify-center text-sm text-slate-500">
++      <Loader2 className="h-4 w-4 animate-spin text-blue-500" /> Loading fraud comparison…
++    </div>
++  );
++
++  if (error) return (
++    <div className="rounded-xl border border-red-200 bg-red-50 p-4 flex items-start gap-2 text-sm text-red-800">
++      <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" /> {error}
++    </div>
++  );
++
++  if (!data) return null;
++
++  const { alerts, faceMatches, docs, profile, bgvNames, nameSummary, nameDetails, bankPennyDrop } = data;
++
++  const openAlerts    = alerts.filter(a => a.status === "open" || a.status === "under_review");
++  const blockingAlerts = openAlerts.filter(a => a.severity === "critical" || a.severity === "high");
++
++  // Face data: find selfie, DigiLocker doc, and manual upload
++  const selfieDoc  = docs.find(d => /selfie|live_photo|live/.test(d.doc_type ?? ""));
++  const aadhaarDigi = docs.find(d => /digilocker.*aadhaar|aadhaar.*digilocker/.test(d.doc_type ?? ""));
++  const aadhaarManual = docs.find(d => /aadhaar_front|aadhaar/.test(d.doc_type ?? "") && d !== aadhaarDigi);
++  const panDigi    = docs.find(d => /digilocker.*pan|pan.*digilocker/.test(d.doc_type ?? ""));
++  const panManual  = docs.find(d => /^pan_card|^pan/.test(d.doc_type ?? "") && d !== panDigi);
++
++  // Primary face match (selfie vs DigiLocker preferred, else vs any ID doc)
++  const primaryMatch = faceMatches.find(m =>
++    m.photo_document_id === selfieDoc?.id && m.id_document_id === aadhaarDigi?.id
++  ) ?? faceMatches[0];
++
++  // Convert is_match TINYINT(1) → status string for NameStatusChip
++  const toMatchStatus = (d?: NameDetail) =>
++    d ? (d.is_match === 1 ? "matched" : d.is_match === 0 ? "mismatch" : null) : null;
++
++  // Lookup helper — source_type values can vary by integration (short codes or prefixed)
++  const findDetail = (...types: string[]) => nameDetails.find(d => types.includes(d.source_type));
++
++  // Name rows for comparison table
++  const nameRows: { label: string; name: string | null | undefined; status: string | null | undefined; isTrusted?: boolean; isReference?: boolean }[] = [
++    { label: "Form entry (candidate)",   name: profile?.employee_name, status: null, isReference: true },
++    {
++      label: "DigiLocker — Aadhaar",
++      name: findDetail("aadhaar", "digilocker_aadhaar", "aadhaar_offline")?.source_name
++         ?? bgvNames.find(b => b.check_type === "aadhaar" || b.check_type === "aadhaar_offline")?.matched_name,
++      status: toMatchStatus(findDetail("aadhaar", "digilocker_aadhaar", "aadhaar_offline")),
++      isTrusted: true,
++    },
++    {
++      label: "DigiLocker — PAN",
++      name: findDetail("pan", "digilocker_pan")?.source_name
++         ?? bgvNames.find(b => b.check_type === "pan")?.matched_name,
++      status: toMatchStatus(findDetail("pan", "digilocker_pan")),
++      isTrusted: true,
++    },
++    {
++      label: "Bank — Penny Drop",
++      name: bankPennyDrop?.bank_name,
++      status: bankPennyDrop
++        ? (bankPennyDrop.name_match_score != null
++            ? (bankPennyDrop.name_match_score >= 80 ? "matched" : bankPennyDrop.name_match_score >= 60 ? "partial" : "mismatch")
++            : null)
++        : null,
++    },
++    {
++      label: "BGV — Aadhaar check",
++      name: bgvNames.find(b => b.check_type === "aadhaar" || b.check_type === "aadhaar_offline")?.matched_name,
++      status: toMatchStatus(findDetail("bgv_aadhaar")),
++    },
++    {
++      label: "BGV — PAN check",
++      name: bgvNames.find(b => b.check_type === "pan")?.matched_name,
++      status: toMatchStatus(findDetail("bgv_pan")),
++    },
++  ];
++
++  // Document number rows
++  const aadhaarEntered  = profile?.aadhaar_number_masked;
++  // DigiLocker docs are fetched as PDFs — no OCR extraction. The verification status comes from BGV.
++  const aadhaarBgvCheck = bgvNames.find(b => b.check_type === "aadhaar" || b.check_type === "aadhaar_offline");
++
++  const panEntered  = profile?.pan_number_masked;
++  const panBgvCheck = bgvNames.find(b => b.check_type === "pan");
++
++  return (
++    <div className="space-y-5">
++
++      {/* ── Alert Summary Banner ──────────────────────────────────────────── */}
++      <div className={`rounded-xl border p-4 ${blockingAlerts.length > 0 ? "border-red-300 bg-red-50" : openAlerts.length > 0 ? "border-amber-200 bg-amber-50" : "border-emerald-200 bg-emerald-50"}`}>
++        <div className="flex flex-wrap items-center gap-3">
++          {blockingAlerts.length > 0
++            ? <ShieldAlert className="h-5 w-5 text-red-600 shrink-0" />
++            : openAlerts.length > 0
++              ? <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0" />
++              : <ShieldCheck className="h-5 w-5 text-emerald-600 shrink-0" />
++          }
++          <div className="flex-1 min-w-0">
++            {openAlerts.length === 0
++              ? <p className="text-sm font-bold text-emerald-800">No open fraud alerts — candidate cleared</p>
++              : <>
++                  <p className="text-sm font-bold text-slate-900">
++                    {openAlerts.length} open fraud {openAlerts.length === 1 ? "alert" : "alerts"}
++                    {blockingAlerts.length > 0 && <span className="ml-1 text-red-700">· {blockingAlerts.length} blocking employee creation</span>}
++                  </p>
++                  <p className="text-xs text-slate-600 mt-0.5">
++                    Indian name rules applied: shuffle, initials and dropped middle words are acceptable. Review each flag below.
++                  </p>
++                </>
++            }
++          </div>
++          <div className="flex flex-wrap gap-1.5">
++            {openAlerts.map(a => (
++              <Badge key={a.id} className={`border text-[10px] font-bold ${SEVERITY_BG[a.severity]}`}>
++                {a.alert_type.replace(/_/g, " ")}
++              </Badge>
++            ))}
++          </div>
++        </div>
++      </div>
++
++      {/* ── Face Comparison Grid ─────────────────────────────────────────── */}
++      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
++        <button
++          type="button"
++          onClick={() => setShowFaces(v => !v)}
++          className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-50 transition-colors"
++        >
++          <div className="flex items-center gap-2">
++            <Eye className="h-4 w-4 text-blue-600" />
++            <span className="text-sm font-bold text-slate-800">Face Comparison</span>
++            {primaryMatch && (
++              <MatchScoreBadge score={primaryMatch.match_score} status={primaryMatch.match_status} />
++            )}
++          </div>
++          {showFaces ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
++        </button>
++
++        {showFaces && (
++          <div className="border-t border-slate-100 p-4 space-y-4">
++            <p className="text-[11px] text-slate-500">
++              All faces are auto-detected and vertically aligned for comparison. The DigiLocker source is government-verified (ground truth). Face match score is selfie vs DigiLocker.
++            </p>
++
++            {/* Primary comparison: Selfie vs DigiLocker Aadhaar vs Manual Aadhaar */}
++            <div>
++              <SectionHeader>Aadhaar face comparison</SectionHeader>
++              <div className="flex flex-wrap gap-6 justify-start">
++                <FacePhotoCell
++                  documentId={selfieDoc?.id}
++                  label="Live Selfie"
++                  subLabel="Captured during onboarding"
++                  noFaceText="No selfie uploaded"
++                />
++                <div className="flex items-center self-center">
++                  <div className="text-center">
++                    {primaryMatch ? (
++                      <MatchScoreBadge score={primaryMatch.match_score} status={primaryMatch.match_status} />
++                    ) : (
++                      <span className="text-[11px] text-slate-400">vs</span>
++                    )}
++                  </div>
++                </div>
++                <FacePhotoCell
++                  documentId={aadhaarDigi?.id}
++                  label="DigiLocker Aadhaar"
++                  subLabel="Govt-verified · ground truth"
++                  isTrusted
++                  noFaceText="DigiLocker not completed"
++                />
++                <div className="flex items-center self-center">
++                  <span className="text-[11px] text-slate-400">vs</span>
++                </div>
++                <FacePhotoCell
++                  documentId={aadhaarManual?.id}
++                  label="Manually Uploaded Aadhaar"
++                  subLabel="Candidate-submitted"
++                  noFaceText="No manual upload"
++                />
++              </div>
++            </div>
++
++            {/* PAN comparison if PAN docs exist */}
++            {(panDigi?.id || panManual?.id) && (
++              <div className="border-t border-slate-100 pt-4">
++                <SectionHeader>PAN face comparison</SectionHeader>
++                <div className="flex flex-wrap gap-6 justify-start">
++                  <FacePhotoCell
++                    documentId={selfieDoc?.id}
++                    label="Live Selfie"
++                    subLabel="Reference"
++                  />
++                  <div className="flex items-center self-center">
++                    {faceMatches.find(m => m.id_document_id === panDigi?.id) ? (
++                      <MatchScoreBadge
++                        score={faceMatches.find(m => m.id_document_id === panDigi?.id)?.match_score}
++                        status={faceMatches.find(m => m.id_document_id === panDigi?.id)?.match_status ?? ""}
++                      />
++                    ) : (
++                      <span className="text-[11px] text-slate-400">vs</span>
++                    )}
++                  </div>
++                  <FacePhotoCell
++                    documentId={panDigi?.id}
++                    label="DigiLocker PAN"
++                    subLabel="Govt-verified"
++                    isTrusted
++                    noFaceText="PAN not in DigiLocker"
++                  />
++                  <div className="flex items-center self-center">
++                    <span className="text-[11px] text-slate-400">vs</span>
++                  </div>
++                  <FacePhotoCell
++                    documentId={panManual?.id}
++                    label="Manually Uploaded PAN"
++                    subLabel="Candidate-submitted"
++                    noFaceText="No PAN uploaded"
++                  />
++                </div>
++              </div>
++            )}
++
++            {/* All face matches summary table */}
++            {faceMatches.length > 0 && (
++              <div className="border-t border-slate-100 pt-3">
++                <SectionHeader>All face match records</SectionHeader>
++                <div className="overflow-x-auto">
++                  <table className="w-full text-xs">
++                    <thead>
++                      <tr className="border-b border-slate-100">
++                        <th className="text-left pb-2 text-slate-400 font-semibold">Photo source</th>
++                        <th className="text-left pb-2 text-slate-400 font-semibold">ID document</th>
++                        <th className="text-left pb-2 text-slate-400 font-semibold">Score</th>
++                        <th className="text-left pb-2 text-slate-400 font-semibold">Status</th>
++                      </tr>
++                    </thead>
++                    <tbody>
++                      {faceMatches.map(m => (
++                        <tr key={m.id} className="border-b border-slate-50">
++                          <td className="py-1.5 pr-4 text-slate-700 font-medium">{m.photo_doc_type ?? "—"}</td>
++                          <td className="py-1.5 pr-4 text-slate-700">{m.id_doc_type ?? "—"}</td>
++                          <td className="py-1.5 pr-4 font-bold text-slate-800">{m.match_score != null ? `${m.match_score}%` : "—"}</td>
++                          <td className="py-1.5">
++                            <MatchScoreBadge score={m.match_score} status={m.match_status} />
++                          </td>
++                        </tr>
++                      ))}
++                    </tbody>
++                  </table>
++                </div>
++              </div>
++            )}
++          </div>
++        )}
++      </div>
++
++      {/* ── Name Comparison Table ─────────────────────────────────────────── */}
++      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
++        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100">
++          <ShieldCheck className="h-4 w-4 text-violet-600" />
++          <span className="text-sm font-bold text-slate-800">Name Comparison</span>
++          {nameSummary?.overall_status && (
++            <NameStatusChip status={nameSummary.overall_status} />
++          )}
++        </div>
++        <div className="p-4">
++          <p className="text-[11px] text-slate-500 mb-3">
++            Name shuffle, initials and dropped middle words are acceptable per Indian name matching rules.
++            All sources are compared against the form-entry name.
++          </p>
++          <div className="overflow-x-auto">
++            <table className="w-full text-xs">
++              <thead>
++                <tr className="border-b border-slate-100">
++                  <th className="text-left pb-2 text-slate-400 font-semibold w-48">Source</th>
++                  <th className="text-left pb-2 text-slate-400 font-semibold">Name fetched</th>
++                  <th className="text-left pb-2 text-slate-400 font-semibold w-32">Status</th>
++                </tr>
++              </thead>
++              <tbody>
++                {nameRows.map((row, i) => (
++                  <tr key={i} className={`border-b border-slate-50 ${row.isReference ? "bg-blue-50/40" : ""}`}>
++                    <td className="py-2 pr-4 text-slate-700 font-medium">
++                      <div className="flex items-center gap-1.5">
++                        {row.isTrusted && <ShieldCheck className="h-3 w-3 text-emerald-500 shrink-0" />}
++                        {row.label}
++                        {row.isReference && <span className="text-[10px] text-blue-600 font-bold">(reference)</span>}
++                      </div>
++                    </td>
++                    <td className="py-2 pr-4 font-bold text-slate-900">
++                      {row.name ? (
++                        <span className={!row.isReference && row.status === "mismatch" ? "text-red-700" : ""}>{row.name}</span>
++                      ) : (
++                        <span className="text-slate-400 font-normal">Not available</span>
++                      )}
++                    </td>
++                    <td className="py-2">
++                      {row.isReference ? (
++                        <span className="text-[11px] text-blue-600 font-semibold">— Reference</span>
++                      ) : (
++                        <NameStatusChip status={row.status} />
++                      )}
++                    </td>
++                  </tr>
++                ))}
++              </tbody>
++            </table>
++          </div>
++
++          {/* Bank penny drop detail */}
++          {bankPennyDrop && (
++            <div className="mt-3 rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs">
++              <p className="font-bold text-slate-600 uppercase tracking-wide text-[10px] mb-1.5">Bank Penny Drop Detail</p>
++              <div className="grid grid-cols-2 gap-2">
++                <div><span className="text-slate-400">Submitted by candidate:</span> <span className="font-bold text-slate-800">{bankPennyDrop.entered_name ?? "—"}</span></div>
++                <div><span className="text-slate-400">Returned by bank:</span> <span className={`font-bold ${bankPennyDrop.status === "name_mismatch" ? "text-red-700" : "text-emerald-700"}`}>{bankPennyDrop.bank_name ?? "—"}</span></div>
++                {bankPennyDrop.name_match_score != null && (
++                  <div><span className="text-slate-400">Match score:</span> <span className="font-bold text-slate-800">{bankPennyDrop.name_match_score}%</span></div>
++                )}
++                {bankPennyDrop.status && (
++                  <div><span className="text-slate-400">Status:</span> <span className="font-bold">{bankPennyDrop.status}</span></div>
++                )}
++              </div>
++            </div>
++          )}
++        </div>
++      </div>
++
++      {/* ── Document Number Comparison ────────────────────────────────────── */}
++      <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
++        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-100">
++          <EyeOff className="h-4 w-4 text-orange-600" />
++          <span className="text-sm font-bold text-slate-800">Document Number Comparison</span>
++        </div>
++        <div className="p-4 space-y-4">
++          {/* Aadhaar numbers */}
++          <div>
++            <SectionHeader>Aadhaar number</SectionHeader>
++            <div className="overflow-x-auto">
++              <table className="w-full text-xs">
++                <thead>
++                  <tr className="border-b border-slate-100">
++                    <th className="text-left pb-2 text-slate-400 font-semibold w-44">Source</th>
++                    <th className="text-left pb-2 text-slate-400 font-semibold">Number (masked)</th>
++                    <th className="text-left pb-2 text-slate-400 font-semibold w-28">Match vs entered</th>
++                  </tr>
++                </thead>
++                <tbody>
++                  <tr className="border-b border-slate-50 bg-blue-50/40">
++                    <td className="py-2 pr-4 font-medium text-slate-700">Manually entered (form)</td>
++                    <td className="py-2 pr-4 font-mono font-bold text-slate-900">{aadhaarEntered ?? "—"}</td>
++                    <td className="py-2 text-[11px] text-blue-600 font-semibold">— Reference</td>
++                  </tr>
++                  <tr className="border-b border-slate-50">
++                    <td className="py-2 pr-4 font-medium text-slate-700 flex items-center gap-1">
++                      <ShieldCheck className="h-3 w-3 text-emerald-500 shrink-0" /> DigiLocker — BGV verified
++                    </td>
++                    <td className="py-2 pr-4 font-mono font-bold text-slate-900">
++                      {aadhaarBgvCheck
++                        ? <span className="font-sans text-slate-600 font-normal">Verified via BGV ({aadhaarBgvCheck.status ?? "checked"})</span>
++                        : <span className="text-slate-400 font-normal font-sans">DigiLocker not completed</span>}
++                    </td>
++                    <td className="py-2">
++                      {aadhaarBgvCheck?.status === "verified" || aadhaarBgvCheck?.status === "matched"
++                        ? <NumStatusChip status="matched" />
++                        : aadhaarBgvCheck
++                          ? <NumStatusChip status={aadhaarBgvCheck.status ?? undefined} />
++                          : <span className="text-[11px] text-slate-400">—</span>}
++                    </td>
++                  </tr>
++                </tbody>
++              </table>
++            </div>
++          </div>
++
++          {/* PAN numbers */}
++          <div className="border-t border-slate-100 pt-4">
++            <SectionHeader>PAN number</SectionHeader>
++            <div className="overflow-x-auto">
++              <table className="w-full text-xs">
++                <thead>
++                  <tr className="border-b border-slate-100">
++                    <th className="text-left pb-2 text-slate-400 font-semibold w-44">Source</th>
++                    <th className="text-left pb-2 text-slate-400 font-semibold">Number</th>
++                    <th className="text-left pb-2 text-slate-400 font-semibold w-28">Match vs entered</th>
++                  </tr>
++                </thead>
++                <tbody>
++                  <tr className="border-b border-slate-50 bg-blue-50/40">
++                    <td className="py-2 pr-4 font-medium text-slate-700">Manually entered (form)</td>
++                    <td className="py-2 pr-4 font-mono font-bold text-slate-900">{panEntered ?? "—"}</td>
++                    <td className="py-2 text-[11px] text-blue-600 font-semibold">— Reference</td>
++                  </tr>
++                  <tr className="border-b border-slate-50">
++                    <td className="py-2 pr-4 font-medium text-slate-700 flex items-center gap-1">
++                      <ShieldCheck className="h-3 w-3 text-emerald-500 shrink-0" /> DigiLocker — BGV verified
++                    </td>
++                    <td className="py-2 pr-4 font-mono font-bold text-slate-900">
++                      {panBgvCheck
++                        ? <span className="font-sans text-slate-600 font-normal">Verified via BGV ({panBgvCheck.status ?? "checked"})</span>
++                        : <span className="text-slate-400 font-normal font-sans">DigiLocker not completed</span>}
++                    </td>
++                    <td className="py-2">
++                      {panBgvCheck?.status === "verified" || panBgvCheck?.status === "matched"
++                        ? <NumStatusChip status="matched" />
++                        : panBgvCheck
++                          ? <NumStatusChip status={panBgvCheck.status ?? undefined} />
++                          : <span className="text-[11px] text-slate-400">—</span>}
++                    </td>
++                  </tr>
++                </tbody>
++              </table>
++            </div>
++          </div>
++        </div>
++      </div>
++
++      {/* ── Alert Resolution + Acknowledgement Gate ───────────────────────── */}
++      {showActions && openAlerts.length > 0 && (
++        <div className="space-y-3">
++          {saveError && (
++            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800 flex items-start gap-2">
++              <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" /> {saveError}
++            </div>
++          )}
++
++          {openAlerts.map(alert => (
++            <div key={alert.id} className={`rounded-xl border p-4 space-y-3 ${SEVERITY_BORDER[alert.severity]}`}>
++              <div className="flex flex-wrap items-center gap-2">
++                <Badge className={`border text-[10px] font-bold ${SEVERITY_BG[alert.severity]}`}>{alert.severity}</Badge>
++                <span className="font-mono text-xs font-bold text-slate-700">{alert.alert_type.replace(/_/g, " ")}</span>
++                {alert.created_at && (
++                  <span className="text-xs text-slate-400 ml-auto">{String(alert.created_at).slice(0, 10)}</span>
++                )}
++              </div>
++
++              {/* Resolution choices */}
++              <div className="grid gap-1.5">
++                {RESOLUTIONS.map((opt, idx) => (
++                  <label
++                    key={`${alert.id}-${opt.code}`}
++                    className={`flex items-start gap-2.5 rounded-lg border p-2.5 cursor-pointer text-xs transition-colors ${
++                      choice[alert.id] === idx ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-300"
++                    }`}
++                  >
++                    <input
++                      type="radio"
++                      name={`resolution-${alert.id}`}
++                      checked={choice[alert.id] === idx}
++                      onChange={() => setChoice(prev => ({ ...prev, [alert.id]: idx }))}
++                      className="mt-0.5 accent-blue-600"
++                    />
++                    <span>
++                      <span className="font-semibold text-slate-900">{opt.label}</span>
++                      <span className="block text-slate-500">{opt.hint}</span>
++                    </span>
++                  </label>
++                ))}
++              </div>
++
++              <textarea
++                value={notes[alert.id] ?? ""}
++                onChange={e => setNotes(prev => ({ ...prev, [alert.id]: e.target.value }))}
++                placeholder="What did you check and what did it show? This is the audit record."
++                rows={2}
++                className="w-full rounded-lg border border-slate-300 p-2.5 text-xs focus:border-blue-400 focus:outline-none resize-none"
++              />
++
++              <Button
++                onClick={() => void resolveAlert(alert)}
++                disabled={savingId === alert.id}
++                size="sm"
++                className="bg-blue-600 hover:bg-blue-700 min-h-[36px]"
++              >
++                {savingId === alert.id ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> Saving…</> : "Record decision"}
++              </Button>
++            </div>
++          ))}
++        </div>
++      )}
++
++      {/* ── Acknowledgement Gate (unblocks Approve button in parent) ─────── */}
++      {showActions && (
++        <label className={`flex items-start gap-3 rounded-xl border p-4 cursor-pointer transition-colors ${acknowledged ? "border-emerald-300 bg-emerald-50" : "border-blue-200 bg-blue-50/60 hover:border-blue-300"}`}>
++          <input
++            type="checkbox"
++            checked={acknowledged}
++            onChange={e => handleAcknowledge(e.target.checked)}
++            className="mt-0.5 h-4 w-4 accent-blue-600 shrink-0"
++          />
++          <div>
++            <p className="text-sm font-bold text-slate-900">I have reviewed all fraud flags for {candidateName ?? "this candidate"}</p>
++            <p className="text-xs text-slate-600 mt-0.5">
++              Checking this box records your review and enables the Approve Profile button.
++              {blockingAlerts.length > 0 && openAlerts.some(a => a.status === "open") && (
++                <span className="text-red-700 font-semibold"> Blocking alerts must be resolved first.</span>
++              )}
++            </p>
++          </div>
++        </label>
++      )}
++    </div>
++  );
++}
+diff --git a/src/pages/NativeFraudAlertReview.tsx b/src/pages/NativeFraudAlertReview.tsx
+index 06f6985d..f4445b78 100644
+--- a/src/pages/NativeFraudAlertReview.tsx
++++ b/src/pages/NativeFraudAlertReview.tsx
+@@ -1,231 +1,201 @@
+ /**
+  * Payroll HR's queue for fraud alerts raised during candidate onboarding.
+  *
+  * These alerts already existed and nothing read them: six sat in production
+  * with status 'open' and no reviewer, because the endpoints were built and no
+  * screen ever called them. That stopped mattering the moment an open critical
+  * or high alert began refusing employee creation — without somewhere to clear
+  * them, a false positive would strand a real candidate with no way out.
+  *
+- * The review decision follows the process Payroll HR already runs: open the
+- * flagged case, look at what conflicts, and record why it was accepted or
+- * rejected. Two things are deliberate here. Both names are shown side by side,
+- * because the question is only ever "is this the same person"; and the reason
+- * is mandatory, because clearing an alert is what allows an employee record to
+- * be created.
++ * Updated: each alert row now expands into a full FraudComparisonPanel showing
++ * the face photo grid, name comparison table, document number comparison, and
++ * resolution action panel — so Payroll HR can review all evidence in one place
++ * before recording a decision.
+  */
+ import { useCallback, useEffect, useState } from "react";
+ import { DashboardLayout } from "@/components/layout/DashboardLayout";
+ import { Button } from "@/components/ui/button";
+ import { Badge } from "@/components/ui/badge";
+ import { Card, CardContent } from "@/components/ui/card";
++import { FraudComparisonPanel } from "@/components/ats/FraudComparisonPanel";
+ import { hrmsApi } from "@/lib/hrmsApi";
+-import { AlertCircle, CheckCircle2, ShieldAlert, Loader2 } from "lucide-react";
++import {
++  AlertCircle,
++  CheckCircle2,
++  ChevronDown,
++  ChevronUp,
++  Loader2,
++  ShieldAlert,
++} from "lucide-react";
+ 
+ interface FraudAlert {
+   id: string;
+   candidate_id: string;
+   candidate_name?: string | null;
+   matched_candidate_name?: string | null;
+   applied_for_branch?: string | null;
+   alert_type: string;
+   severity: string;
+   status: string;
+   details?: Record<string, unknown> | string | null;
+   created_at?: string | null;
+ }
+ 
+-/**
+- * Why an alert was cleared, captured as a code rather than only prose.
+- *
+- * Free text cannot be counted, and the point of reviewing these is learning
+- * which variances are genuine so the automated rules can be tightened or
+- * relaxed against evidence. The wording matches the cases that actually occur —
+- * married names, initials, and the regional forms that dominate here.
+- */
+-const RESOLUTIONS = [
+-  { value: "resolved_false_positive", code: "name_variance", label: "Same person, name written differently",
+-    hint: "Initials, an added or dropped middle name, regional ordering" },
+-  { value: "resolved_false_positive", code: "married_name", label: "Name changed after marriage",
+-    hint: "Supporting document seen" },
+-  { value: "resolved_false_positive", code: "data_entry", label: "Our data was wrong",
+-    hint: "OCR misread or a typo in the record" },
+-  { value: "resolved_fraud", code: "confirmed_fraud", label: "Confirmed — different person",
+-    hint: "Candidate rejected" },
+-  { value: "dismissed", code: "not_applicable", label: "Not applicable",
+-    hint: "Raised in error or a duplicate of another alert" },
+-] as const;
+-
+ const SEVERITY_STYLES: Record<string, string> = {
+   critical: "bg-red-100 text-red-800 border-red-300",
+-  high: "bg-orange-100 text-orange-800 border-orange-300",
+-  medium: "bg-amber-100 text-amber-800 border-amber-300",
+-  low: "bg-slate-100 text-slate-700 border-slate-300",
++  high:     "bg-orange-100 text-orange-800 border-orange-300",
++  medium:   "bg-amber-100 text-amber-800 border-amber-300",
++  low:      "bg-slate-100 text-slate-700 border-slate-300",
+ };
+ 
+-function detailMessage(details: FraudAlert["details"]): string {
+-  if (!details) return "";
+-  const parsed = typeof details === "string" ? safeParse(details) : details;
+-  return String((parsed as Record<string, unknown>)?.message ?? "");
+-}
+-
+-function safeParse(value: string): Record<string, unknown> {
+-  try { return JSON.parse(value) as Record<string, unknown>; } catch { return {}; }
+-}
++const SEVERITY_BORDER: Record<string, string> = {
++  critical: "border-l-red-500",
++  high:     "border-l-orange-500",
++  medium:   "border-l-amber-400",
++  low:      "border-l-slate-300",
++};
+ 
+ export default function NativeFraudAlertReview() {
+-  const [alerts, setAlerts] = useState<FraudAlert[]>([]);
+-  const [loading, setLoading] = useState(true);
+-  const [error, setError] = useState("");
+-  const [savingId, setSavingId] = useState<string | null>(null);
+-  const [notes, setNotes] = useState<Record<string, string>>({});
+-  const [choice, setChoice] = useState<Record<string, number>>({});
++  const [alerts, setAlerts]         = useState<FraudAlert[]>([]);
++  const [loading, setLoading]        = useState(true);
++  const [error, setError]            = useState("");
++  // expanded: which candidate_ids are showing the full comparison panel
++  const [expanded, setExpanded]      = useState<Set<string>>(new Set());
+ 
+   const load = useCallback(async () => {
+     setLoading(true);
+     setError("");
+     try {
+       const res = await hrmsApi.get<{ alerts: FraudAlert[] }>("/api/ats/fraud-alerts?status=open");
+       setAlerts(res?.alerts ?? []);
+     } catch {
+       setError("Could not load the alert queue. Please refresh, or contact IT if it persists.");
+     } finally {
+       setLoading(false);
+     }
+   }, []);
+ 
+   useEffect(() => { void load(); }, [load]);
+ 
+-  const resolve = async (alert: FraudAlert) => {
+-    const picked = RESOLUTIONS[choice[alert.id] ?? -1];
+-    const reason = (notes[alert.id] ?? "").trim();
+-    if (!picked) { setError("Choose what you found before clearing an alert."); return; }
+-    if (!reason) { setError("Add a note explaining the decision — it is kept as the audit record."); return; }
+-
+-    setSavingId(alert.id);
+-    setError("");
+-    try {
+-      await hrmsApi.patch(`/api/ats/fraud-alerts/${alert.id}/review`, {
+-        status: picked.value,
+-        notes: `[${picked.code}] ${reason}`,
+-      });
+-      await load();
+-    } catch {
+-      setError("Could not save that decision. Nothing was changed.");
+-    } finally {
+-      setSavingId(null);
+-    }
++  // Group alerts by candidate so one candidate with multiple flags shows one panel
++  const candidateAlerts = alerts.reduce<Record<string, FraudAlert[]>>((acc, a) => {
++    const key = a.candidate_id;
++    (acc[key] ??= []).push(a);
++    return acc;
++  }, {});
++
++  const toggleExpand = (candidateId: string) => {
++    setExpanded(prev => {
++      const next = new Set(prev);
++      if (next.has(candidateId)) next.delete(candidateId);
++      else next.add(candidateId);
++      return next;
++    });
+   };
+ 
+   return (
+     <DashboardLayout>
+       <div className="space-y-4 p-4 sm:p-6">
+-        <div className="flex items-start gap-3">
+-          <ShieldAlert className="h-6 w-6 text-red-600 flex-shrink-0 mt-0.5" />
+-          <div>
+-            <h1 className="text-lg font-bold text-slate-900">Fraud Alert Review</h1>
+-            <p className="text-sm text-slate-600">
+-              An open <strong>critical</strong> or <strong>high</strong> alert prevents the candidate becoming an
+-              employee until it is cleared here. Medium alerts are recorded but do not block.
+-            </p>
+-          </div>
++        {/* Header */}
++        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-600 via-rose-600 to-pink-600 text-white p-6 shadow-lg">
++          <div className="absolute -right-8 -top-8 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
++          <div className="absolute right-24 bottom-0 h-16 w-16 rounded-full bg-red-300/20 blur-xl" />
++          <p className="text-xs font-bold uppercase tracking-widest text-red-200">Payroll HR · Security</p>
++          <h1 className="mt-1 text-2xl font-bold text-white flex items-center gap-2">
++            <ShieldAlert className="h-6 w-6" />
++            Fraud Alert Review
++          </h1>
++          <p className="mt-1 text-sm text-red-100">
++            An open <strong>critical</strong> or <strong>high</strong> alert blocks employee creation until cleared.
++            Expand each candidate to compare faces, verify document numbers, and record your decision.
++          </p>
+         </div>
+ 
+         {error && (
+           <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 flex items-start gap-2">
+             <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+             {error}
+           </div>
+         )}
+ 
+         {loading ? (
+           <div className="flex items-center gap-2 text-sm text-slate-600 p-6">
+-            <Loader2 className="h-4 w-4 animate-spin" /> Loading the queue…
++            <Loader2 className="h-4 w-4 animate-spin" /> Loading alert queue…
+           </div>
+         ) : !alerts.length ? (
+           <Card className="border-emerald-200 bg-emerald-50">
+             <CardContent className="pt-5 pb-5 flex items-center gap-3">
+               <CheckCircle2 className="h-5 w-5 text-emerald-700 flex-shrink-0" />
+               <div>
+                 <p className="text-sm font-bold text-emerald-900">Nothing waiting</p>
+                 <p className="text-xs text-emerald-700">No onboarding fraud alert is currently open.</p>
+               </div>
+             </CardContent>
+           </Card>
+         ) : (
+-          alerts.map((alert) => (
+-            <Card key={alert.id} className="border border-slate-200">
+-              <CardContent className="pt-4 pb-4 space-y-3">
+-                <div className="flex flex-wrap items-center gap-2">
+-                  <Badge className={`border ${SEVERITY_STYLES[String(alert.severity).toLowerCase()] ?? SEVERITY_STYLES.low}`}>
+-                    {alert.severity}
+-                  </Badge>
+-                  <span className="font-mono text-xs font-bold text-slate-700">{alert.alert_type}</span>
+-                  <span className="text-sm font-semibold text-slate-900">{alert.candidate_name ?? alert.candidate_id}</span>
+-                  {alert.applied_for_branch && (
+-                    <span className="text-xs text-slate-500">{alert.applied_for_branch}</span>
+-                  )}
+-                  {alert.created_at && (
+-                    <span className="text-xs text-slate-400 ml-auto">{String(alert.created_at).slice(0, 10)}</span>
+-                  )}
+-                </div>
+-
+-                {detailMessage(alert.details) && (
+-                  <p className="text-xs text-slate-700 bg-slate-50 rounded-md p-2.5">{detailMessage(alert.details)}</p>
+-                )}
+-
+-                {alert.matched_candidate_name && (
+-                  // The conflicting record is the whole question, so it is shown
+-                  // rather than left for the reviewer to go and find.
+-                  <p className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md p-2.5">
+-                    Conflicts with another candidate: <strong>{alert.matched_candidate_name}</strong>
+-                  </p>
+-                )}
+-
+-                <div className="grid gap-1.5">
+-                  {RESOLUTIONS.map((option, index) => (
+-                    <label
+-                      key={`${alert.id}-${option.code}`}
+-                      className={`flex items-start gap-2.5 rounded-md border p-2.5 cursor-pointer text-xs transition-colors ${
+-                        choice[alert.id] === index ? "border-indigo-400 bg-indigo-50" : "border-slate-200 hover:border-slate-300"
+-                      }`}
++          Object.entries(candidateAlerts).map(([candidateId, cAlerts]) => {
++            const rep = cAlerts[0];
++            const isExpanded = expanded.has(candidateId);
++            const maxSeverity = cAlerts.some(a => a.severity === "critical") ? "critical"
++                              : cAlerts.some(a => a.severity === "high") ? "high"
++                              : cAlerts.some(a => a.severity === "medium") ? "medium" : "low";
++
++            return (
++              <div key={candidateId} className={`rounded-xl border border-slate-200 border-l-4 ${SEVERITY_BORDER[maxSeverity]} bg-white shadow-sm overflow-hidden`}>
++                {/* Candidate row — click to expand */}
++                <button
++                  type="button"
++                  onClick={() => toggleExpand(candidateId)}
++                  className="w-full flex flex-wrap items-center gap-3 px-5 py-4 text-left hover:bg-slate-50 transition-colors"
++                >
++                  <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
++                    <span className="font-bold text-slate-900 text-sm">
++                      {rep.candidate_name ?? candidateId}
++                    </span>
++                    {rep.applied_for_branch && (
++                      <span className="text-xs text-slate-500">{rep.applied_for_branch}</span>
++                    )}
++                    <div className="flex flex-wrap gap-1.5">
++                      {cAlerts.map(a => (
++                        <Badge key={a.id} className={`border text-[10px] font-bold ${SEVERITY_STYLES[String(a.severity).toLowerCase()] ?? SEVERITY_STYLES.low}`}>
++                          {a.alert_type.replace(/_/g, " ")}
++                        </Badge>
++                      ))}
++                    </div>
++                  </div>
++                  <div className="flex items-center gap-2 shrink-0">
++                    {rep.created_at && (
++                      <span className="text-xs text-slate-400">{String(rep.created_at).slice(0, 10)}</span>
++                    )}
++                    <Button
++                      asChild
++                      size="sm"
++                      variant="outline"
++                      className={`min-h-[32px] text-xs gap-1 pointer-events-none ${isExpanded ? "bg-blue-50 border-blue-200 text-blue-700" : ""}`}
+                     >
+-                      <input
+-                        type="radio"
+-                        name={`resolution-${alert.id}`}
+-                        checked={choice[alert.id] === index}
+-                        onChange={() => setChoice((prev) => ({ ...prev, [alert.id]: index }))}
+-                        className="mt-0.5 accent-indigo-600"
+-                      />
+                       <span>
+-                        <span className="font-semibold text-slate-900">{option.label}</span>
+-                        <span className="block text-slate-500">{option.hint}</span>
++                        {isExpanded ? <><ChevronUp className="h-3.5 w-3.5" /> Collapse</> : <><ChevronDown className="h-3.5 w-3.5" /> Review</>}
+                       </span>
+-                    </label>
+-                  ))}
+-                </div>
+-
+-                <textarea
+-                  value={notes[alert.id] ?? ""}
+-                  onChange={(e) => setNotes((prev) => ({ ...prev, [alert.id]: e.target.value }))}
+-                  placeholder="What did you check, and what did it show? Kept as the audit record."
+-                  rows={2}
+-                  className="w-full rounded-md border border-slate-300 p-2 text-xs focus:border-indigo-400 focus:outline-none"
+-                />
+-
+-                <Button
+-                  onClick={() => void resolve(alert)}
+-                  disabled={savingId === alert.id}
+-                  size="sm"
+-                  className="bg-indigo-600 hover:bg-indigo-700"
+-                >
+-                  {savingId === alert.id ? "Saving…" : "Record decision"}
+-                </Button>
+-              </CardContent>
+-            </Card>
+-          ))
++                    </Button>
++                  </div>
++                </button>
++
++                {/* Expanded comparison panel */}
++                {isExpanded && (
++                  <div className="border-t border-slate-200 p-5 bg-slate-50/40">
++                    <FraudComparisonPanel
++                      candidateId={candidateId}
++                      candidateName={rep.candidate_name ?? undefined}
++                      showActions
++                      onAlertResolved={() => void load()}
++                    />
++                  </div>
++                )}
++              </div>
++            );
++          })
+         )}
+       </div>
+     </DashboardLayout>
+   );
+ }
+diff --git a/src/pages/NativeHROnboardingRequests.tsx b/src/pages/NativeHROnboardingRequests.tsx
+index 380a2528..36a8db13 100644
+--- a/src/pages/NativeHROnboardingRequests.tsx
++++ b/src/pages/NativeHROnboardingRequests.tsx
+@@ -1,18 +1,19 @@
+ /* eslint-disable @typescript-eslint/no-explicit-any */
+ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+ import { Link } from 'react-router-dom';
+ import { DashboardLayout } from '@/components/layout/DashboardLayout';
+ import { hrmsApi } from '@/lib/hrmsApi';
+ import { useAuth } from '@/contexts/AuthContext';
+ import { useWorkforceAccess } from '@/hooks/useUserRole';
+ import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
++import { FraudComparisonPanel } from "@/components/ats/FraudComparisonPanel";
+ import { Button } from '@/components/ui/button';
+ import {
+   AlertTriangle,
+   Calculator,
+   CheckCircle2,
+   ChevronDown,
+   ChevronLeft,
+   ChevronRight,
+   ChevronUp,
+   Download,
+@@ -377,20 +378,28 @@ export default function NativeHROnboardingRequests() {
+   const [detailData, setDetailData] = useState<any | null>(null);
+   const [detailLoading, setDetailLoading] = useState(false);
+   const [detailError, setDetailError] = useState<string | null>(null);
+   const [openStep, setOpenStep] = useState<number | null>(null);
+ 
+   // ── Review state
+   const [reviewError, setReviewError] = useState<string | null>(null);
+   const [reviewSaving, setReviewSaving] = useState(false);
+   const [pushbackRemarks, setPushbackRemarks] = useState('');
+ 
++  // ── Fraud review state
++  // fraudAlertCount: open critical/high alerts for the selected candidate
++  // fraudAcknowledged: HR checked "I have reviewed" — unblocks Approve
++  // showFraudPanel: controls collapse of the fraud section
++  const [fraudAlertCount, setFraudAlertCount] = useState(0);
++  const [fraudAcknowledged, setFraudAcknowledged] = useState(false);
++  const [showFraudPanel, setShowFraudPanel] = useState(false);
++
+   // ── Document preview state
+   const [documentPreview, setDocumentPreview] = useState<DocumentPreview | null>(null);
+   const [documentPreviewUrl, setDocumentPreviewUrl] = useState<string | null>(null);
+   const [documentPreviewLoading, setDocumentPreviewLoading] = useState(false);
+   const [documentPreviewError, setDocumentPreviewError] = useState<string | null>(null);
+   const [previewZoom, setPreviewZoom] = useState(1);
+   const [previewGroup, setPreviewGroup] = useState<DocumentPreview[]>([]);
+   const [previewGroupIndex, setPreviewGroupIndex] = useState(0);
+   const [previewRotation, setPreviewRotation] = useState(0);
+   const [previewBlurred, setPreviewBlurred] = useState(false);
+@@ -790,29 +799,40 @@ export default function NativeHROnboardingRequests() {
+     setSelected(row);
+     setDetailData(null);
+     setDetailError(null);
+     setDetailLoading(true);
+     setOpenStep(null);
+     resetOffer();
+     setBgv(null);
+     setPushbackRemarks('');
+     setReviewError(null);
+     setCostCentres([]);  // cleared — useEffect will populate once selected + allBranches/allCostCentres are ready
++    setFraudAlertCount(0);
++    setFraudAcknowledged(false);
++    setShowFraudPanel(false);
+     // Load all branch employees upfront for reporting manager dropdown
+     void loadManagersByBranch(row.branch_id ?? '');
+     Promise.allSettled([
+       hrmsApi.get<any>(`/api/ats/onboarding-full/candidate/${row.candidate_id}`)
+         .then((r: any) => setDetailData(r?.data ?? r))
+         .catch((e: any) => setDetailError(e?.message || 'Unable to load candidate profile.')),
+       hrmsApi.get<any>(`/api/ats/bgv/status/${row.candidate_id}`)
+         .then((r: any) => setBgv(r?.data ?? r))
+         .catch(() => setBgv({ overall_status: 'unavailable' })),
++      hrmsApi.get<any>(`/api/ats/fraud-alerts/candidate/${row.candidate_id}`)
++        .then((r: any) => {
++          const alerts: any[] = r?.alerts ?? [];
++          const blocking = alerts.filter((a: any) => (a.status === 'open' || a.status === 'under_review') && (a.severity === 'critical' || a.severity === 'high'));
++          setFraudAlertCount(blocking.length);
++          if (blocking.length > 0) setShowFraudPanel(true);
++        })
++        .catch(() => setFraudAlertCount(0)),
+     ]).finally(() => setDetailLoading(false));
+   // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [loadManagersByBranch]);
+ 
+   // ── Salary calculation
+   const calcSalaryManual = async () => {
+     setFormError(null);
+     if (!offer.offered_ctc || !offer.salary_band) {
+       setFormError('Enter CTC and salary band before calculating salary.');
+       return;
+@@ -2059,47 +2079,111 @@ export default function NativeHROnboardingRequests() {
+                     <InfoRow label="EPF Number" value={dp.epf_number} />
+                     <InfoRow label="ESIC Number" value={dp.esic_number} />
+                     <InfoRow label="Declaration Accepted" value={dp.statutory_declaration_accepted ? 'Yes' : 'No'} />
+                     <InfoRow label="Declaration At" value={dp.statutory_declaration_at} />
+                   </SectionCard>
+ 
+                 </div>
+               )}
+             </div>
+ 
++            {/* C-0 — Fraud Review Section (auto-expands when blocking alerts exist) */}
++            {selected.profile_status !== 'onboarded' && (
++              <div className={`rounded-xl border shadow-sm overflow-hidden ${fraudAlertCount > 0 ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white'}`}>
++                <button
++                  type="button"
++                  onClick={() => setShowFraudPanel(v => !v)}
++                  className={`w-full flex items-center justify-between px-5 py-4 transition-colors ${fraudAlertCount > 0 ? 'hover:bg-red-100/60' : 'hover:bg-slate-50'}`}
++                >
++                  <div className="flex items-center gap-2.5">
++                    <ShieldAlert className={`h-5 w-5 ${fraudAlertCount > 0 ? 'text-red-600' : 'text-slate-400'}`} />
++                    <span className={`font-bold text-sm ${fraudAlertCount > 0 ? 'text-red-800' : 'text-slate-700'}`}>
++                      Fraud &amp; Identity Review
++                    </span>
++                    {fraudAlertCount > 0 && (
++                      <span className="inline-flex items-center justify-center bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1">
++                        {fraudAlertCount}
++                      </span>
++                    )}
++                    {fraudAlertCount > 0 && !fraudAcknowledged && (
++                      <span className="text-xs font-semibold text-red-700 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">
++                        Review required before approving
++                      </span>
++                    )}
++                    {fraudAcknowledged && (
++                      <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
++                        <CheckCircle2 className="h-3 w-3" /> Reviewed
++                      </span>
++                    )}
++                  </div>
++                  {showFraudPanel ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
++                </button>
++                {showFraudPanel && (
++                  <div className="border-t border-slate-200 p-5 bg-white">
++                    <FraudComparisonPanel
++                      candidateId={selected.candidate_id}
++                      candidateName={selected.full_name}
++                      showActions
++                      onAcknowledged={setFraudAcknowledged}
++                      onAlertResolved={() => {
++                        // Re-load fraud count after a resolution
++                        hrmsApi.get<any>(`/api/ats/fraud-alerts/candidate/${selected.candidate_id}`)
++                          .then((r: any) => {
++                            const alerts: any[] = r?.alerts ?? [];
++                            const blocking = alerts.filter((a: any) => (a.status === 'open' || a.status === 'under_review') && (a.severity === 'critical' || a.severity === 'high'));
++                            setFraudAlertCount(blocking.length);
++                          })
++                          .catch(() => {/* non-fatal */});
++                      }}
++                    />
++                  </div>
++                )}
++              </div>
++            )}
++
+             {/* C — Approve / Push-back */}
+             {selected.profile_status !== 'onboarded' && (
+               <div className="rounded-xl border bg-white p-5 shadow-sm space-y-3">
+                 <h3 className="font-bold text-slate-800">HR Review Decision</h3>
++                {fraudAlertCount > 0 && !fraudAcknowledged && (
++                  <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
++                    <ShieldAlert className="h-3.5 w-3.5 shrink-0 mt-0.5 text-red-600" />
++                    <span>
++                      <strong>{fraudAlertCount} blocking fraud {fraudAlertCount === 1 ? 'alert' : 'alerts'} detected.</strong>{' '}
++                      Open the Fraud &amp; Identity Review section above, review each flag, and check the acknowledgement box to enable approval.
++                    </span>
++                  </div>
++                )}
+                 <ErrorBanner message={reviewError} />
+                 <textarea
+                   value={pushbackRemarks}
+                   onChange={(e) => setPushbackRemarks(e.target.value)}
+                   rows={2}
+                   placeholder="Push-back remarks (required only when pushing back)…"
+                   className={`${SEL} py-2`}
+                 />
+                 <div className="flex gap-2">
+                   <Button
+                     type="button"
+                     variant="outline"
+                     disabled={reviewSaving}
+                     onClick={() => void submitReview('hr_review')}
+                     className="min-h-[44px] flex-1 border-amber-300 text-amber-700 hover:bg-amber-50"
+                   >
+                     {reviewSaving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Push Back
+                   </Button>
+                   <Button
+                     type="button"
+-                    disabled={reviewSaving}
++                    disabled={reviewSaving || (fraudAlertCount > 0 && !fraudAcknowledged)}
+                     onClick={() => void submitReview('approved')}
+-                    className="min-h-[44px] flex-1 bg-emerald-600 text-white hover:bg-emerald-700"
++                    title={fraudAlertCount > 0 && !fraudAcknowledged ? 'Review fraud flags above before approving' : undefined}
++                    className={`min-h-[44px] flex-1 text-white transition-all ${fraudAlertCount > 0 && !fraudAcknowledged ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
+                   >
+                     {reviewSaving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Approve Profile
+                   </Button>
+                 </div>
+               </div>
+             )}
+ 
+             {/* D — Employment Offer form: hide when offer submitted/approved, show pending BH rejection or no offer yet */}
+             {(selected.profile_status === 'profile_submitted' || selected.profile_status === 'hr_approved') && (() => {
+               const offerBlocked = selected.offer_status === 'submitted' || selected.offer_status === 'bh_approved';

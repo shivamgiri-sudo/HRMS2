@@ -1,0 +1,828 @@
+=== git log (03dc3adb..4e85c01a, path-filtered to fix files) ===
+4e85c01a fix(reports): reset drill-down chips on groupBy/metric change, show chip bar in EmployeeListPanel
+5e4c4e7c fix(reporting): close final-review backend gaps in AON drill-down + retention flag guard
+
+=== diff --stat ===
+ .../__tests__/aon-retention-flag.guard.test.ts     | 48 +++++++++++++++
+ .../__tests__/aon-retention-flag.routes.test.ts    | 10 ++++
+ .../modules/reporting/aon-retention-flag.routes.ts | 45 +++++++++++++-
+ .../__tests__/aon-drilldown.executor.test.ts       | 31 ++++++++++
+ .../reporting/executors/aon-drilldown.executor.ts  | 15 +++++
+ backend/src/modules/reporting/report-catalog.ts    | 68 ++++++++++++++++++++++
+ .../src/modules/reporting/report-suite.routes.ts   |  2 +
+ .../analytics/drilldown/EmployeeListPanel.tsx      | 23 +++++++-
+ src/components/reports/views/AonAnalyticsView.tsx  | 23 +++++++-
+ src/lib/report-catalog.ts                          |  1 +
+ 10 files changed, 260 insertions(+), 6 deletions(-)
+
+=== full diff ===
+diff --git a/backend/src/modules/reporting/__tests__/aon-retention-flag.guard.test.ts b/backend/src/modules/reporting/__tests__/aon-retention-flag.guard.test.ts
+new file mode 100644
+index 00000000..3efb8e87
+--- /dev/null
++++ b/backend/src/modules/reporting/__tests__/aon-retention-flag.guard.test.ts
+@@ -0,0 +1,48 @@
++import { describe, expect, it, vi, beforeEach } from "vitest";
++import express from "express";
++import request from "supertest";
++
++// Unlike aon-retention-flag.routes.test.ts (which mocks requireRole/requireScopedRole away to
++// isolate the handler logic), THIS file exercises the real middleware chain end to end -- it is
++// the regression test for CRITICAL/IMPORTANT-3 of the final whole-branch review: `/flag-retention`
++// previously had `requireAuth` only, so any authenticated employee could flag ANY employee.id in
++// ANY branch/process with no row-scope check at all.
++
++const { upsertOpenWorkItem } = vi.hoisted(() => ({ upsertOpenWorkItem: vi.fn() }));
++vi.mock("../../../shared/workItem.js", () => ({ upsertOpenWorkItem }));
++
++const { dbExecute } = vi.hoisted(() => ({ dbExecute: vi.fn() }));
++vi.mock("../../../db/mysql.js", () => ({ db: { execute: dbExecute } }));
++
++let currentUser: { id: string; role: string } = { id: "u1", role: "hr" };
++vi.mock("../../../middleware/authMiddleware.js", () => ({
++  requireAuth: (req: any, _res: any, next: any) => { req.authUser = currentUser; next(); },
++}));
++
++const { aonRetentionFlagRouter } = await import("../aon-retention-flag.routes.js");
++
++const app = express();
++app.use(express.json());
++app.use("/api/reports/aon-analytics", aonRetentionFlagRouter);
++
++describe("POST /flag-retention -- role and scope guard (real middleware)", () => {
++  beforeEach(() => {
++    vi.clearAllMocks();
++    currentUser = { id: "u1", role: "hr" };
++  });
++
++  it("rejects a role outside the allow-list (a plain employee cannot flag anyone)", async () => {
++    currentUser = { id: "emp-x", role: "employee" };
++    // requireRole has no cached req.authUser.roles here, so it looks the role up itself
++    // (`SELECT role_key FROM user_roles ...`) before requireScopedRole -- or the handler --
++    // ever runs.
++    dbExecute.mockResolvedValueOnce([[{ role_key: "employee" }], []]);
++
++    const res = await request(app)
++      .post("/api/reports/aon-analytics/flag-retention")
++      .send({ employeeId: "emp-1" });
++
++    expect(res.status).toBe(403);
++    expect(upsertOpenWorkItem).not.toHaveBeenCalled();
++  });
++});
+diff --git a/backend/src/modules/reporting/__tests__/aon-retention-flag.routes.test.ts b/backend/src/modules/reporting/__tests__/aon-retention-flag.routes.test.ts
+index 4a14897a..b2a79227 100644
+--- a/backend/src/modules/reporting/__tests__/aon-retention-flag.routes.test.ts
++++ b/backend/src/modules/reporting/__tests__/aon-retention-flag.routes.test.ts
+@@ -1,29 +1,39 @@
+ import { describe, expect, it, vi, beforeEach } from "vitest";
+ import express from "express";
+ import request from "supertest";
+ 
+ const { upsertOpenWorkItem } = vi.hoisted(() => ({ upsertOpenWorkItem: vi.fn() }));
+ vi.mock("../../../shared/workItem.js", () => ({ upsertOpenWorkItem }));
+ 
+ vi.mock("../../../db/mysql.js", () => ({ db: { execute: vi.fn() } }));
+ import { db } from "../../../db/mysql.js";
+ const mockExecute = db.execute as ReturnType<typeof vi.fn>;
+ 
+ vi.mock("../../../middleware/authMiddleware.js", () => ({
+   requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: "u1", role: "hr" }; next(); },
+ }));
++// These two are covered by their own dedicated tests below ("rejects a role outside the
++// allow-list" / "enforces scope via requireScopedRole with the resolved employee scope").
++// Pass them through here so the pre-existing behavioural tests keep exercising only the
++// handler logic, exactly like employee.routes.audit-logging.test.ts does for the same pair.
++vi.mock("../../../middleware/requireRole.js", () => ({
++  requireRole: () => (_req: any, _res: any, next: any) => next(),
++}));
++vi.mock("../../../middleware/scopeMiddleware.js", () => ({
++  requireScopedRole: () => (_req: any, _res: any, next: any) => next(),
++}));
+ 
+ import { aonRetentionFlagRouter } from "../aon-retention-flag.routes.js";
+ 
+ const app = express();
+ app.use(express.json());
+ app.use("/api/reports/aon-analytics", aonRetentionFlagRouter);
+ 
+ describe("POST /api/reports/aon-analytics/flag-retention", () => {
+   beforeEach(() => { vi.clearAllMocks(); });
+ 
+   it("calls upsertOpenWorkItem with RETENTION_REVIEW, routed to the manager's highest-priority role", async () => {
+     // employees WHERE id = ? (the flagged employee, looked up by real UUID, not employee_code)
+     mockExecute.mockResolvedValueOnce([[{
+       id: "emp-1", reporting_manager_id: "mgr-1", branch_id: "b1",
+     }], []]);
+diff --git a/backend/src/modules/reporting/aon-retention-flag.routes.ts b/backend/src/modules/reporting/aon-retention-flag.routes.ts
+index 8fb1ad05..8362e9e3 100644
+--- a/backend/src/modules/reporting/aon-retention-flag.routes.ts
++++ b/backend/src/modules/reporting/aon-retention-flag.routes.ts
+@@ -28,36 +28,73 @@
+  *   2. A manager can hold several simultaneously-active `user_roles` rows (confirmed live: one
+  *      real branch manager account carries active "employee", "payroll_admin" and "payroll_hr"
+  *      roles at once). `... LIMIT 1` with no ordering returns whichever the storage engine hands
+  *      back first -- it picked "employee" in a live check, which is useless as a review-routing
+  *      target. This reuses `resolvePrimaryRole()` from `shared/roleResolver.ts` -- the same
+  *      priority ranking already used for `req.authUser.role` and `/api/access/me` -- so the same
+  *      manager always resolves to the same, most-senior role instead of an arbitrary one.
+  *
+  *   If the manager has no resolvable role beyond "employee" (or no `user_roles` row at all,
+  *   which `resolvePrimaryRole` also reports as "employee"), that's not a real routing target --
+  *   fall back to "branch_head", the same fallback used when there is no manager at all.
+  */
+ import { Router, type Request, type Response } from "express";
+ import type { RowDataPacket } from "mysql2";
+ import { db } from "../../db/mysql.js";
+-import { requireAuth } from "../../middleware/authMiddleware.js";
++import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
++import { requireRole } from "../../middleware/requireRole.js";
++import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
++import type { ScopeTarget } from "../../shared/scopeAccess.js";
+ import { upsertOpenWorkItem } from "../../shared/workItem.js";
+ import { resolvePrimaryRole } from "../../shared/roleResolver.js";
+ 
+ export const aonRetentionFlagRouter = Router();
+ 
++const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
++
++// Same roles that can view the AON Analytics page itself (REPORTS_CENTER — see
++// backend/sql/529_reports_center_page_access.sql), narrowed to the roles that actually run an
++// HR workflow action elsewhere in this codebase (employee.routes.ts's hrProfileGate /
++// PATCH /:id scope gate). "finance"/"ceo"/"quality"/"operations" can VIEW this report but have
++// no business writing a RETENTION_REVIEW work item against an employee record.
++const RETENTION_FLAG_ROLES = [
++  "super_admin",
++  "admin",
++  "hr",
++  "hr_head",
++  "manager",
++  "process_manager",
++  "branch_head",
++  "payroll_head",
++];
++
++// Resolves the target employee's branch/process from the request body so requireScopedRole can
++// confirm the caller (a Branch Head, Process Manager, etc.) is scoped to that employee before
++// the work item is created — mirrors the resolver PATCH /:id uses in employee.routes.ts, just
++// reading employeeId from the POST body instead of req.params.id.
++async function resolveFlagTargetScope(req: AuthenticatedRequest): Promise<ScopeTarget> {
++  const employeeId = String((req.body as { employeeId?: unknown })?.employeeId ?? "").trim();
++  if (!employeeId) return {};
++  const [rows] = await db.execute<RowDataPacket[]>(
++    "SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1",
++    [employeeId],
++  );
++  const emp = rows[0] as { branch_id?: string; process_id?: string } | undefined;
++  if (!emp) return {};
++  return { branchId: emp.branch_id, processId: emp.process_id };
++}
++
+ interface EmployeeForFlag extends RowDataPacket {
+   id: string;
+   reporting_manager_id: string | null;
+   branch_id: string | null;
+ }
+ 
+ interface ManagerRoleRow extends RowDataPacket {
+   role_key: string;
+ }
+ 
+ const FALLBACK_ROLE = "branch_head";
+ 
+ async function resolveAssignedRole(employeeId: string): Promise<string> {
+   const [rows] = await db.execute<EmployeeForFlag[]>(
+     `SELECT id, reporting_manager_id, branch_id FROM employees WHERE id = ? LIMIT 1`,
+@@ -72,39 +109,41 @@ async function resolveAssignedRole(employeeId: string): Promise<string> {
+     `SELECT ur.role_key
+        FROM employees mgr
+        JOIN user_roles ur ON ur.user_id = mgr.user_id
+       WHERE mgr.id = ? AND ur.active_status = 1`,
+     [emp.reporting_manager_id],
+   );
+ 
+   const roleKeys = roleRows.map((row) => row.role_key);
+   const primaryRole = resolvePrimaryRole(roleKeys);
+   return primaryRole === "employee" ? FALLBACK_ROLE : primaryRole;
+ }
+ 
+ aonRetentionFlagRouter.post(
+   "/flag-retention",
+   requireAuth,
+-  async (req: Request, res: Response) => {
++  requireRole(...RETENTION_FLAG_ROLES),
++  requireScopedRole(RETENTION_FLAG_ROLES, resolveFlagTargetScope, { allowAdminBypass: true }),
++  h(async (req: Request, res: Response) => {
+     const employeeId = String((req.body as { employeeId?: unknown })?.employeeId ?? "").trim();
+     if (!employeeId) {
+       return res.status(400).json({ success: false, message: "employeeId is required" });
+     }
+ 
+     const assignedToRole = await resolveAssignedRole(employeeId);
+     const riskBand = String((req.body as { riskBand?: unknown })?.riskBand ?? "").trim();
+     const priority = riskBand === "High" ? "high" : riskBand === "Medium" ? "normal" : "low";
+ 
+     const outcome = await upsertOpenWorkItem({
+       itemType: "RETENTION_REVIEW",
+       title: "Retention review requested",
+       moduleCode: "aon-analytics",
+       entityType: "employee",
+       entityId: employeeId,
+       assignedToRole,
+       priority,
+       description: `Flagged from AON & Attrition Analytics${riskBand ? ` — risk band: ${riskBand}` : ""}.`,
+     });
+ 
+     return res.json({ success: true, outcome });
+-  },
++  }),
+ );
+diff --git a/backend/src/modules/reporting/executors/__tests__/aon-drilldown.executor.test.ts b/backend/src/modules/reporting/executors/__tests__/aon-drilldown.executor.test.ts
+index ceed8293..04eea47b 100644
+--- a/backend/src/modules/reporting/executors/__tests__/aon-drilldown.executor.test.ts
++++ b/backend/src/modules/reporting/executors/__tests__/aon-drilldown.executor.test.ts
+@@ -43,16 +43,47 @@ describe("aonDrilldownEmployees", () => {
+   it("exits context queries exited employees with exit date, tenure, and employee_id", async () => {
+     mockExecute.mockResolvedValueOnce([[], []]);
+     await aonDrilldownEmployees({ metric: "exits", costCentreId: "cc-1", aonBucket: "0-30" }, SCOPE, OPTIONS);
+     const sql = String(mockExecute.mock.calls[0][0]);
+     expect(sql).toContain("date_of_exit");
+     expect(sql).not.toContain("active_status = 1");
+     expect(sql).toContain("employee_id");
+   });
+ 
+   it("defaults to headcount context when metric is not provided", async () => {
+     mockExecute.mockResolvedValueOnce([[], []]);
+     await aonDrilldownEmployees({}, SCOPE, OPTIONS);
+     const sql = String(mockExecute.mock.calls[0][0]);
+     expect(sql).toContain("e.active_status = 1");
+   });
++
++  // Regression test for IMPORTANT-1 of the final whole-branch review: the exits branch
++  // previously ignored filters.from/filters.to entirely, returning ALL historical exits for
++  // the slice (capped only by the row limit) instead of the same date window the heatmap cell
++  // that led here was built from.
++  it("exits context applies an explicit from/to date window to date_of_exit", async () => {
++    mockExecute.mockResolvedValueOnce([[], []]);
++    await aonDrilldownEmployees(
++      { metric: "exits", costCentreId: "cc-1", from: "2026-01-01", to: "2026-03-31" },
++      SCOPE,
++      OPTIONS,
++    );
++    const sql = String(mockExecute.mock.calls[0][0]);
++    const params = mockExecute.mock.calls[0][1] as unknown[];
++    expect(sql).toContain("e.date_of_exit BETWEEN ? AND ?");
++    expect(params).toContain("2026-01-01");
++    expect(params).toContain("2026-03-31");
++  });
++
++  it("exits context defaults to a twelve-month window when from/to are absent", async () => {
++    mockExecute.mockResolvedValueOnce([[], []]);
++    await aonDrilldownEmployees({ metric: "exits", costCentreId: "cc-1" }, SCOPE, OPTIONS);
++    const sql = String(mockExecute.mock.calls[0][0]);
++    const params = mockExecute.mock.calls[0][1] as unknown[];
++    expect(sql).toContain("e.date_of_exit BETWEEN ? AND ?");
++    // Both bounds must be real YYYY-MM-DD strings, not undefined/NaN, and to must not precede from.
++    const [from, to] = params.filter((p): p is string => typeof p === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p)).slice(-2);
++    expect(from).toBeDefined();
++    expect(to).toBeDefined();
++    expect(new Date(from!).getTime()).toBeLessThan(new Date(to!).getTime());
++  });
+ });
+diff --git a/backend/src/modules/reporting/executors/aon-drilldown.executor.ts b/backend/src/modules/reporting/executors/aon-drilldown.executor.ts
+index 8188a766..2cf08b34 100644
+--- a/backend/src/modules/reporting/executors/aon-drilldown.executor.ts
++++ b/backend/src/modules/reporting/executors/aon-drilldown.executor.ts
+@@ -15,30 +15,31 @@
+  * `employee_id` (the real UUID `employees.id`, not `employee_code`) is selected in both branches
+  * so a later "Flag for Retention Review" action can address the record without a second lookup.
+  *
+  * This is a deliberately simplified subset of `attritionRiskScore`'s full weighting (tenure +
+  * absence only, not missing-punch/half-day) for the first cut -- extending to the full weighted
+  * score is a small follow-up, not required here.
+  */
+ import type { RowDataPacket } from "mysql2";
+ import { db } from "../../../db/mysql.js";
+ import type { ExecFilters, ExecScope, ExecOptions, ExecResult } from "./types.js";
+ import {
+   appendScopeConditions,
+   appendFilterConditions,
+   fetchPageWithTotal,
+   rethrowReportSchemaError,
++  dateParam,
+ } from "./types.js";
+ import { AON_REFERENCE_JOIN_DATE_SQL } from "./aon.executor.js";
+ 
+ async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
+   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
+   return rows;
+ }
+ 
+ async function count(baseSql: string, params: unknown[]): Promise<number> {
+   const [rows] = await db.execute<RowDataPacket[]>(
+     `SELECT COUNT(*) AS total FROM (${baseSql}) AS _cnt`,
+     params
+   );
+   return Number((rows as Array<{ total?: number }>)[0]?.total ?? 0);
+ }
+@@ -70,81 +71,95 @@ export async function aonDrilldownEmployees(
+   scope: ExecScope,
+   options: ExecOptions
+ ): Promise<ExecResult> {
+   const metric = String(filters.metric ?? "headcount");
+   const isExitContext = metric === "exits";
+ 
+   const clauses: string[] = ["e.id IS NOT NULL"];
+   const params: unknown[] = [];
+   appendScopeConditions(scope, clauses, params);
+   appendFilterConditions(filters, clauses, params);
+ 
+   if (isExitContext) {
+     clauses.push("e.date_of_exit IS NOT NULL", "e.date_of_exit >= e.date_of_joining");
+     const bucketClause = aonBucketAtExitClause(filters.aonBucket);
+     if (bucketClause) clauses.push(bucketClause);
++
++    // Same default window as aonBucketAttrition (aon.executor.ts): the twelve months ending
++    // today when the caller didn't pass from/to. Without this the exits branch returned ALL
++    // historical exits for the slice (capped only by the row limit), which never reconciled
++    // against the heatmap cell's own date-windowed count.
++    const today = new Date();
++    const iso = (d: Date) => d.toISOString().slice(0, 10);
++    const twelveMonthsAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
++    const from = dateParam(filters.from, iso(twelveMonthsAgo));
++    const to = dateParam(filters.to, iso(today));
++    clauses.push("e.date_of_exit BETWEEN ? AND ?");
++    params.push(from, to);
+   } else {
+     clauses.push("e.active_status = 1");
+     const bucketClause = aonBucketClause(filters.aonBucket);
+     if (bucketClause) clauses.push(bucketClause);
+   }
+ 
+   // Exit context: a plain LEFT JOIN straight to the manager's own employees row. An earlier
+   // draft wrapped this in a derived table that re-joined employees to itself before joining
+   // out to `e` — same row count, extra work, and it was doing so with an unqualified
+   // `reporting_manager_name` reference that would have thrown ER_BAD_FIELD_ERROR at the outer
+   // SELECT. Measured live against mas_hrms (cost_centre_id with 5,054 exit rows, 0-30 bucket,
+   // 2,000-row probe): the derived-table form took ~5.1s, this direct join ~2.4-3.2s.
+   //
+   // Headcount/shrinkage context: the attendance aggregate is computed in a CTE-scoped subquery
+   // restricted to the already-filtered employee set (`employee_id IN (SELECT employee_id FROM
+   // filtered)`), not aggregated across the whole table first. Timed live against mas_hrms on a
+   // realistic filtered call (cost_centre_id with 27 active employees in the 31-60 bucket): the
+   // naive "aggregate attendance_daily_record for everyone, then join down" form -- which is
+   // what a straight port of attrition-risk.executor.ts's derived table would have been --
+   // took 51.3s (full scan of ~125k attendance rows before the join ever narrows anything, the
+   // same unscoped-aggregate shape flagged for aon-bucket-shrinkage). Restricting the derived
+   // table's WHERE to the filtered id set first drops that to ~1-1.6s, because it then drives
+   // off `idx_adr_emp_date` per employee instead of scanning the whole table.
+   const base = isExitContext
+     ? `
+     SELECT e.id AS employee_id,
+            e.employee_code,
+            COALESCE(NULLIF(TRIM(e.full_name),''),
+                     TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
+            COALESCE(b.branch_name, 'UNASSIGNED')       AS branch_name,
++           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+            COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
+            DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m-%d') AS join_date,
+            DATE_FORMAT(e.date_of_exit, '%Y-%m-%d')     AS date_of_exit,
+            DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) AS tenure_at_exit_days,
+            COALESCE(NULLIF(TRIM(m.full_name),''),
+                     TRIM(CONCAT(m.first_name,' ',COALESCE(m.last_name,'')))) AS reporting_manager_name
+       FROM employees e
+       LEFT JOIN branch_master b       ON b.id  = e.branch_id
+       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+       LEFT JOIN process_master p      ON p.id  = e.process_id
+       LEFT JOIN employees m           ON m.id  = e.reporting_manager_id
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY e.date_of_exit DESC`
+     : `
+     WITH filtered AS (
+       SELECT e.id AS employee_id,
+              e.employee_code,
+              COALESCE(NULLIF(TRIM(e.full_name),''),
+                       TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
+              COALESCE(b.branch_name, 'UNASSIGNED')       AS branch_name,
++             COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+              COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+              COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
+              DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m-%d') AS join_date,
+              DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) AS aon_days
+         FROM employees e
+         LEFT JOIN branch_master b       ON b.id  = e.branch_id
+         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+         LEFT JOIN process_master p      ON p.id  = e.process_id
+        WHERE ${clauses.join(" AND ")}
+     )
+     SELECT f.*,
+            COALESCE(a.attendance_days, 0) AS attendance_days,
+            CASE WHEN COALESCE(a.attendance_days,0) >= ${MIN_DAYS_FOR_RATE}
+                 THEN ROUND(a.absent_days * 100.0 / a.attendance_days, 1) END AS absence_rate_pct,
+            LEAST(100,
+diff --git a/backend/src/modules/reporting/report-catalog.ts b/backend/src/modules/reporting/report-catalog.ts
+index 365f359f..6e51d613 100644
+--- a/backend/src/modules/reporting/report-catalog.ts
++++ b/backend/src/modules/reporting/report-catalog.ts
+@@ -3133,30 +3133,98 @@ export const REPORT_CATALOG: ReportDefinition[] = [
+       "AON at exit = DATEDIFF(date_of_exit, date_of_joining). Counts DATED exits only — " +
+       "28,426 inactive employees carry no date_of_exit and are excluded, because tenure at " +
+       "exit is unknowable without one. Safe for rolling windows: only 22 of those have a " +
+       "date_of_joining on or after 2025-08-01. Reconciles live 2026-08-15 over the twelve " +
+       "months to that date to 1,210 / 399 / 291 / 896, total 2,796, matching a plain COUNT " +
+       "over the same window (no join fan-out). process_coverage_pct is emitted because " +
+       "process_id is populated on only 272 of 2,796 recent exits (9.7%), so a " +
+       "process-grouped row is usually UNASSIGNED.",
+     branchScoped: true,
+     processScoped: true,
+     sensitivityLevel: 'internal',
+     containsPII: false,
+     containsFinancialData: false,
+     availabilityStatus: 'validated',
+   },
++  {
++    code: "aon-drilldown-employees",
++    name: "AON Drill-Down Employees",
++    category: "Attrition & Trends",
++    subcategory: "AON Analytics",
++    description: "Named employees for a specific branch/cost-centre/process/AON-bucket slice",
++    rowGrain: "One row per employee",
++    primaryKey: ["employee_code"],
++    columns: [
++      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
++      { key: "employee_name", label: "Employee", format: "text", width: 180 },
++      { key: "branch_name", label: "Branch", format: "text", width: 140 },
++      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 130 },
++      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
++      { key: "process_name", label: "Process", format: "text", width: 150 },
++      { key: "join_date", label: "Join Date", format: "text", width: 110 },
++      { key: "aon_days", label: "AON Days", format: "number", width: 90, align: "right" },
++      { key: "risk_score", label: "Risk Score", format: "number", width: 100, align: "right" },
++    ],
++    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE, F_PROCESS],
++    viewRoles: ROLES_ALL_MANAGEMENT,
++    exportRoles: ROLES_HR_ADMIN,
++    sourceTables: ["employees", "branch_master", "cost_centre_master", "process_master", "attendance_daily_record"],
++    calculationNotes:
++      "The employee-level bottom of the AON drill-down chain, reached from a heatmap cell " +
++      "(branch/cost-centre/process x AON bucket). filters.metric selects the response shape: " +
++      "'exits' returns exited employees dated by date_of_exit (bucketed by AON-at-exit, i.e. " +
++      "tenure at the time they left), any other value (default 'headcount') returns active " +
++      "employees (bucketed by AON today) with a simplified risk score (tenure + 30-day " +
++      "absence rate). filters.aonBucket narrows to one of 0-30/31-60/61-90/90+; without it the " +
++      "whole slice (still scoped by branch/cost-centre/process) is returned.",
++    branchScoped: true,
++    processScoped: true,
++    sensitivityLevel: 'internal',
++    containsPII: false,
++    containsFinancialData: false,
++    availabilityStatus: 'validated',
++  },
++  {
++    code: "aon-overall-attrition-rate",
++    name: "Overall Attrition Rate",
++    category: "Attrition & Trends",
++    subcategory: "AON Analytics",
++    description: "Company-wide (or scope-wide) monthly attrition rate: exits / average headcount",
++    rowGrain: "One row per month",
++    primaryKey: ["month"],
++    columns: [
++      { key: "month", label: "Month", format: "text", width: 90 },
++      { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
++      { key: "avg_total_headcount", label: "Avg Headcount", format: "number", width: 130, align: "right" },
++      { key: "attrition_rate_pct", label: "Attrition Rate %", format: "percentage", width: 140, align: "right" },
++    ],
++    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE, F_PROCESS],
++    viewRoles: ROLES_ALL_MANAGEMENT,
++    exportRoles: ROLES_HR_ADMIN,
++    sourceTables: ["employees"],
++    calculationNotes:
++      "attrition_rate_pct = exits / avg_total_headcount for the month, where avg_total_headcount " +
++      "is the average of headcount at the start and end of the month (see aon.executor.ts for " +
++      "the month_seq generation). Defaults to the twelve months ending today when filters.from/to " +
++      "are absent, matching aon-bucket-attrition's own default window.",
++    branchScoped: true,
++    processScoped: true,
++    sensitivityLevel: 'internal',
++    containsPII: false,
++    containsFinancialData: false,
++    availabilityStatus: 'validated',
++  },
+   {
+     code: "aon-bucket-shrinkage",
+     name: "AON Bucket Shrinkage",
+     category: "Attrition & Trends",
+     subcategory: "AON Analytics",
+     description: "Shrinkage by AON bucket per month, branch, cost centre and process, with data coverage",
+     rowGrain: "One row per month per branch per cost centre per process per AON bucket",
+     primaryKey: ["month", "branch_name", "cost_centre_code", "process_name", "aon_bucket"],
+     columns: [
+       { key: "month", label: "Month", format: "text", width: 90 },
+       { key: "branch_name", label: "Branch", format: "text", width: 140 },
+       { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+       { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+       { key: "process_name", label: "Process", format: "text", width: 150 },
+       { key: "aon_bucket", label: "AON Bucket", format: "text", width: 100 },
+diff --git a/backend/src/modules/reporting/report-suite.routes.ts b/backend/src/modules/reporting/report-suite.routes.ts
+index 0d1879e6..5754239b 100644
+--- a/backend/src/modules/reporting/report-suite.routes.ts
++++ b/backend/src/modules/reporting/report-suite.routes.ts
+@@ -3152,30 +3152,32 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+       const execScope = await resolveFullScope(userId);
+       const execFilters: ExecFilters = {
+         branchId:     req.query.branchId     as string | undefined,
+         processId:    req.query.processId    as string | undefined,
+         departmentId: req.query.departmentId as string | undefined,
+         costCentreId: req.query.costCentreId as string | undefined,
+         managerId:    req.query.managerId    as string | undefined,
+         employeeCode: req.query.employeeCode as string | undefined,
+         from:         req.query.from         as string | undefined,
+         to:           req.query.to           as string | undefined,
+         month:        req.query.month        as string | undefined,
+         year:         req.query.year         as string | undefined,
+         status:       req.query.status       as string | undefined,
+         includeInactive: req.query.includeInactive === 'true',
+         financialYear: req.query.financialYear as string | undefined,
++        metric:       req.query.metric       as string | undefined,
++        aonBucket:    req.query.aonBucket    as string | undefined,
+       };
+       const execOffset = Number(req.query.offset ?? 0);
+       const execLimit  = limit > 0 ? limit : 100;
+       const execOptions: ExecOptions = {
+         limit: execLimit,
+         offset: execOffset,
+         cursor: null,
+         includeTotal: true,
+         mode: 'preview',
+       };
+       try {
+         const result = await executeReport(code, execFilters, execScope, execOptions);
+         const execData = stripCursorField(result.rows);
+         return res.json({
+           success: true,
+diff --git a/src/components/analytics/drilldown/EmployeeListPanel.tsx b/src/components/analytics/drilldown/EmployeeListPanel.tsx
+index 32ebc4f3..e5fa8fe2 100644
+--- a/src/components/analytics/drilldown/EmployeeListPanel.tsx
++++ b/src/components/analytics/drilldown/EmployeeListPanel.tsx
+@@ -1,20 +1,20 @@
+ import { useState } from "react";
+ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+ import { Button } from "@/components/ui/button";
+ import { Skeleton } from "@/components/ui/skeleton";
+-import { AlertTriangle } from "lucide-react";
++import { AlertTriangle, X } from "lucide-react";
+ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+ import { hrmsApi } from "@/lib/hrmsApi";
+ import { useDrillDown } from "./DrillDownProvider";
+ import { chipsToFilterParams } from "./SliceDetailPanel";
+ 
+ interface EmployeeListPanelProps {
+   open: boolean;
+   metric: "headcount" | "exits" | "shrinkage";
+   from: string;
+   to: string;
+ }
+ 
+ export interface EmployeeRow {
+   /** Real UUID `employees.id` -- the aon-drilldown-employees report selects this in both
+    * response shapes (Task 3). This, never `employee_code`, is what the flag-retention
+@@ -74,31 +74,31 @@ export function buildEmployeeListFilterParams(
+  * plain async function so it -- and the `res.data` unwrapping -- can be exercised directly in a
+  * test without mounting the component.
+  */
+ export async function fetchAonDrilldownEmployees(
+   filterParams: Record<string, string>,
+ ): Promise<EmployeeRow[]> {
+   const qs = new URLSearchParams({ ...filterParams, limit: "200", offset: "0" });
+   const res = await hrmsApi.get<{ data?: EmployeeRow[] }>(
+     `/api/reports/suite/aon-drilldown-employees?${qs.toString()}`,
+     60_000,
+   );
+   return res.data ?? [];
+ }
+ 
+ export function EmployeeListPanel({ open, metric, from, to }: EmployeeListPanelProps) {
+-  const { chips, showEmployeeList, closeEmployeeList, selectEmployee } = useDrillDown();
++  const { chips, showEmployeeList, closeEmployeeList, selectEmployee, popToChip } = useDrillDown();
+   const queryClient = useQueryClient();
+   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
+ 
+   const filterParams = buildEmployeeListFilterParams(chips, metric, from, to);
+ 
+   // retry: false + a bounded staleTime, matching the sibling useReport hook in
+   // AonAnalyticsView.tsx (aon-bucket-shrinkage) -- a dead/slow query here shouldn't retry three
+   // times over before the panel gives up.
+   const q = useQuery({
+     queryKey: ["aon-drilldown-employees", JSON.stringify(filterParams)],
+     enabled: open && showEmployeeList,
+     retry: false,
+     staleTime: 60_000,
+     queryFn: () => fetchAonDrilldownEmployees(filterParams),
+   });
+@@ -109,30 +109,49 @@ export function EmployeeListPanel({ open, metric, from, to }: EmployeeListPanelP
+     onSuccess: (_data, params) => {
+       setFlaggedIds(prev => new Set(prev).add(params.employeeId));
+       void queryClient.invalidateQueries({ queryKey: ["work-inbox"] });
+     },
+   });
+ 
+   const rows = q.data ?? [];
+ 
+   return (
+     <Sheet open={open && showEmployeeList} onOpenChange={o => !o && closeEmployeeList()}>
+       <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
+         <SheetHeader>
+           <SheetTitle>Employees in this slice</SheetTitle>
+         </SheetHeader>
+ 
++        <div className="mt-3 flex flex-wrap gap-1.5">
++          {chips.map((chip, i) => (
++            <span
++              key={chip.dimension}
++              className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700"
++            >
++              {chip.label}
++              <button
++                type="button"
++                onClick={() => popToChip(i)}
++                className="ml-0.5 rounded-full hover:bg-slate-200"
++                aria-label={`Remove ${chip.label} filter`}
++              >
++                <X className="h-3 w-3" />
++              </button>
++            </span>
++          ))}
++        </div>
++
+         {q.isLoading ? (
+           <div className="mt-4 space-y-2">
+             {[...Array(6)].map((_, i) => (
+               <Skeleton key={i} className="h-12 w-full rounded-lg" />
+             ))}
+           </div>
+         ) : q.error ? (
+           <div className="mt-4 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+             <AlertTriangle className="h-4 w-4 shrink-0" />
+             {(q.error as Error).message || "Failed to load employees."}
+           </div>
+         ) : rows.length === 0 ? (
+           <p className="mt-4 text-sm text-slate-500">No employees match this slice.</p>
+         ) : (
+           <div className="mt-4 divide-y divide-slate-100 rounded-lg border border-slate-200">
+diff --git a/src/components/reports/views/AonAnalyticsView.tsx b/src/components/reports/views/AonAnalyticsView.tsx
+index b55fc44d..52154715 100644
+--- a/src/components/reports/views/AonAnalyticsView.tsx
++++ b/src/components/reports/views/AonAnalyticsView.tsx
+@@ -4,31 +4,31 @@
+  * AON is days since date_of_joining, bucketed 0-30 / 31-60 / 61-90 / 90+. Nothing is
+  * stored — the backend derives every bucket at read time, so a new joiner appears in
+  * 0-30 the moment their joining date exists.
+  *
+  * Three tabs, because they answer three different questions:
+  *   Overview   — where the people are now, and where the losses and shrinkage sit
+  *   Cohort     — does each intake decay the same way (it does, and badly)
+  *   Deep dive  — what kind of joiner leaves early
+  *
+  * Every number on this screen states its denominator, and each of the four known data
+  * gaps is drawn rather than hidden. That is deliberate: the cost-centre feed stopped on
+  * 2026-07-20, process is 9.7% populated on exits, some new joiners have no attendance
+  * row at all, and exit reason is captured for well under 1% of leavers. A blank cell
+  * would read as a rendering fault; a stated zero reads as the finding it is.
+  */
+-import { useMemo, useState } from "react";
++import { useEffect, useMemo, useState } from "react";
+ import { useQuery } from "@tanstack/react-query";
+ import {
+   Bar,
+   BarChart,
+   CartesianGrid,
+   Cell,
+   Legend,
+   Line,
+   LineChart,
+   ResponsiveContainer,
+   Tooltip,
+   XAxis,
+   YAxis,
+ } from "recharts";
+ import { AlertTriangle, Users, LogOut, Activity, TrendingDown } from "lucide-react";
+@@ -224,30 +224,50 @@ function DrillCell({
+         pushChip({ dimension, value: groupId, label: groupKey });
+         pushChip({ dimension: "aonBucket", value: bucket, label: `${bucket}d` });
+         openEmployeeList();
+       }}
+       className="inline-block cursor-pointer rounded px-1.5 py-0.5 transition-opacity hover:opacity-80"
+       style={{
+         backgroundColor: `rgba(227, 73, 72, ${Math.min(0.75, (value / max) * 0.6)})`,
+         color: value / max > 0.55 ? "#fff" : "#0f172a",
+       }}
+     >
+       {metric === "shrinkage" ? pct(value) : num(value)}
+     </button>
+   );
+ }
+ 
++/**
++ * Resets the drill-down state (chips + open panels) whenever `groupBy` or `metric` changes.
++ *
++ * Must be mounted as a child of `DrillDownProvider` -- `useDrillDown` throws otherwise -- so it
++ * cannot live directly in `Overview`'s own body: `Overview` renders `<DrillDownProvider>` itself,
++ * meaning `Overview`'s hooks run one level above the provider, not inside it. Without this,
++ * `pushChip` (which replaces only by dimension) let a stale chip from a since-abandoned
++ * `groupBy`/`metric` selection persist into a later slice, silently narrowing it with an
++ * intersection filter the user never asked for and, before this task's chip bar was added to
++ * `EmployeeListPanel`, could not even see.
++ */
++function DrillResetOnChange({ groupBy, metric }: { groupBy: GroupBy; metric: "headcount" | "exits" | "shrinkage" }) {
++  const { clear } = useDrillDown();
++  useEffect(() => {
++    clear();
++    // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [groupBy, metric]);
++  return null;
++}
++
+ function Overview({ from, to, branchId, headlineRate }: { from: string; to: string; branchId: string; headlineRate: ReturnType<typeof useReport> }) {
+   const [groupBy, setGroupBy] = useState<GroupBy>("cost_centre_name");
+   const [metric, setMetric] = useState<"headcount" | "exits" | "shrinkage">("headcount");
+ 
+   const base = branchId ? { branchId } : {};
+   const hc = useReport("aon-bucket-headcount", base);
+   const at = useReport("aon-bucket-attrition", { ...base, from, to });
+   /*
+    * Shrinkage is fetched ONLY when its metric is selected.
+    *
+    * It scans attendance_daily_record, and although that table is small (131,906 rows in
+    * total, of which twelve months is essentially all of it) the aggregate takes 65s for a
+    * three-month window on this database and exceeds the 120s gateway limit over twelve.
+    * The cost is contention, not volume — Threads_running was 27 while measuring — so
+    * narrowing the window does not rescue it.
+@@ -403,30 +423,31 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
+   const failure = error
+     ? (error as Error).message?.toLowerCase().includes("timeout") ||
+       (error as Error).message?.includes("504")
+       ? "This metric is taking longer than the 120-second limit and was stopped. Narrow the date range, or pick a single branch, and try again."
+       : (error as Error).message || "Failed to load this metric."
+     : null;
+ 
+   const MetricFailure = () => (
+     <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+       {failure}
+     </div>
+   );
+ 
+   return (
+     <DrillDownProvider>
++    <DrillResetOnChange groupBy={groupBy} metric={metric} />
+     <div className="space-y-4">
+       <GapBanner
+         items={[
+           ...(unassignedCc > 0
+             ? [{
+                 label: "Cost centre unassigned",
+                 detail: `${num(unassignedCc)} active employees carry no cost centre. Onboarding does capture one — it is a required field on the employment offer — but no employee-creation path writes it to the employee record, so it only ever arrives via a manual edit. Recent joiners are therefore almost all UNASSIGNED. Branch is unaffected: group by Branch for a complete picture.`,
+               }]
+             : []),
+           ...(zeroAttendanceGroups > 0
+             ? [{
+                 label: "Attendance coverage",
+                 detail: `${zeroAttendanceGroups} group/bucket combinations recorded zero worked days in this window and read as 100% shrinkage. New joiners are also often not yet enrolled on biometric, so a 0-30 shrinkage figure rests on fewer people than the bucket contains — read Employee Days alongside it.`,
+               }]
+             : []),
+diff --git a/src/lib/report-catalog.ts b/src/lib/report-catalog.ts
+index d8fb7b35..61bc467f 100644
+--- a/src/lib/report-catalog.ts
++++ b/src/lib/report-catalog.ts
+@@ -1985,30 +1985,31 @@ export const REPORT_CATALOG: ReportMeta[] = [
+     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"],
+     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
+   },
+   {
+     code: "aon-drilldown-employees",
+     name: "AON Drill-Down Employees",
+     category: "Attrition & Trends",
+     subcategory: "AON Analytics",
+     description: "Named employees for a specific branch/cost-centre/process/AON-bucket slice",
+     rowGrain: "One row per employee",
+     primaryKey: ["employee_code"],
+     columns: [
+       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+       { key: "employee_name", label: "Employee", format: "text", width: 180 },
+       { key: "branch_name", label: "Branch", format: "text", width: 140 },
++      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 130 },
+       { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+       { key: "process_name", label: "Process", format: "text", width: 150 },
+       { key: "join_date", label: "Join Date", format: "text", width: 110 },
+       { key: "aon_days", label: "AON Days", format: "number", width: 90, align: "right" },
+       { key: "risk_score", label: "Risk Score", format: "number", width: 100, align: "right" },
+     ],
+     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"],
+     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
+   },
+   {
+     code: "aon-overall-attrition-rate",
+     name: "Overall Attrition Rate",
+     category: "Attrition & Trends",
+     subcategory: "AON Analytics",
+     description: "Company-wide (or scope-wide) monthly attrition rate: exits / average headcount",

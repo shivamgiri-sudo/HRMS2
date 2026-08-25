@@ -115,3 +115,71 @@ Notable session-wide findings for the whole-branch review to weigh:
 - 1 CRITICAL bug in the plan's own Task 8 Step 2 snippet (display name pushed where a UUID was required) -- caught by task review, not self-caught, fixed in 2 commits.
 - Minor/deferred items for final review: SliceDetailPanel.tsx still lacks retry:false (dormant, unwired in this plan); EmployeeDetailDrawer shows raw UUIDs for branch/cost-centre/process (UX-only, Plan-2-adjacent); DrillDownProvider.test.tsx's "clear" test doesn't actually invoke clear().
 Task 12: complete (commit e160679a, base 4739bafa, review clean, no Critical/Important findings — Compare button+column wired correctly (appended after metrics, sticky-column layout preserved, colSpan bumped correctly for empty state), modal caps at 4 metrics, correctly uses RAW un-deduplicated per-day rows for the chart not the display-deduped rows (highest-risk detail, done right), real npm run typecheck independently verified clean, exactly 2 files touched. Frontend delivery (Tasks 9-12) now complete)
+
+=== FINAL WHOLE-BRANCH REVIEW: complete, 1 fix round + 1 cleanup round, now clean ===
+Whole-branch review (opus) found 2 CRITICAL + 3 IMPORTANT integration-layer gaps invisible to any
+single task's review -- exactly what this review stage exists to catch:
+  - CRITICAL A: backend report-catalog.ts was missing aon-drilldown-employees + aon-overall-attrition-rate
+    entries (only the FRONTEND catalog had them) -> every real request 404'd before reaching the executor.
+  - CRITICAL B: report-suite.routes.ts's default execFilters whitelist dropped metric/aonBucket entirely
+    -> aonDrilldownEmployees always saw defaults regardless of what the frontend sent.
+  - IMPORTANT: exits drilldown ignored the date window (all-time exits vs heatmap's windowed count);
+    EmployeeListPanel had no chip bar (stale chips from a groupBy/metric switch silently narrowed later
+    drills); /flag-retention had requireAuth only, no role/scope guard, no async-error wrapper.
+Fixed in 5e4c4e7c (backend) + 4e85c01a (frontend), re-reviewed clean by a second opus pass (all 5 fixes
+independently confirmed CORRECT not just present, incl. tracing requireScopedRole's fail-closed semantics
+and confirming the exits date-window logic is character-for-character identical to aonBucketAttrition's).
+2 small Important follow-ups from that re-review (stale test comment claiming a nonexistent scope test;
+containsPII/sensitivityLevel metadata wrong on the new report) closed in e95d0d82 -- real scope-resolution
+test added (proven to fail pre-fix, pass post-fix), PII metadata corrected to match attrition-risk-score's
+sibling declaration. Full reporting suite: 49 files / 297 passed + 1 skipped, 0 failed. Frontend drilldown
+suite 18/18. Build clean throughout.
+
+Minor items NOT fixed, carried forward as known/accepted (per reviewer's own severity call, cheap to defer):
+  - /:code/export route (report-suite.routes.ts:243) drops metric/aonBucket/costCentreId the same way the
+    preview path did before Critical B -- pre-existing defect class affecting every F_COST_CENTRE report,
+    not introduced by this branch; XLSX export of aon-drilldown-employees would ignore a cost-centre filter.
+  - No 404 when /flag-retention's employeeId doesn't exist (falls back to branch_head fallback instead).
+  - Chip bar duplicated ~18 lines between SliceDetailPanel/EmployeeListPanel (extractable later);
+    popToChip(0) on the first chip's X clears ALL chips (pre-existing, faithfully-copied semantics).
+  - SliceDetailPanel.tsx still lacks retry:false (confirmed dead code in this plan -- never mounted).
+  - EmployeeDetailDrawer shows raw UUIDs for branch/cost-centre/process (UX-only, Plan-2-adjacent).
+  - process-scope callers (20 active) mostly can't use Flag button given process_id is only ~9.7%
+    populated on exits -- fail-closed, so not a security gap, just low usability for that one scope type.
+
+PLAN 1 (8 tasks + whole-branch review + 2 fix rounds) IS NOW FULLY CLOSED.
+
+---
+
+# AON & Attrition Drill-Down (Plan 2 of 2) — SDD Progress Ledger
+# Started: 2026-08-25
+# Plan: docs/superpowers/plans/2026-08-25-aon-attrition-drilldown-plan-2.md
+# Working directly on main (this repo's established convention, no feature branches)
+
+## Tasks
+Task 1: complete (commit 61aabc3e, base 8650bff0, review clean first round -- fan-out risk on the employee_salary_assignment join independently verified by both coordinator and reviewer: active_status=1 is empirically 1:1 with employee_id today (30,219 rows = 30,219 distinct employees, zero dupes), so no COUNT(*) inflation of already-shipped exit numbers. Noted as an application-level invariant, not DB-enforced -- future tech-debt note, not blocking. Live-verified: 545 rows, 12.3s, avg_ctc_annual populated and plausible. Full suite 298 passed + 1 skipped.)
+
+---
+
+# ESI Registration Documents Tab — SDD Progress Ledger
+# Started: 2026-08-25
+# Plan: docs/superpowers/plans/2026-08-25-esi-reg-docs.md
+# Branch start commit: 5fc6320d
+
+## Tasks
+Task 1: complete (commit 534d3698, base 5fc6320d, review Approved — spec ✅, quality Approved. Important: missing requireAuth — fix to be added in Task 2 via esiRegDocsRouter.use(requireAuth) matching payroll-extended pattern. Minor: no NaN guard on limit; test missing 0→false coercion case.)
+Task 2: complete (commit ed4b332d, base 534d3698, review Approved — spec ✅, requireAuth fix confirmed at line 117. Minor: no try/catch around archive.finalize(); archive error handler doesn't call res.destroy() — both consistent with codebase pattern, non-blocking.)
+Task 3: complete (commits 3f97abc6+27204614, base ed4b332d, review Approved after 1 fix round — CSV quoting fix (RFC 4180 double-quote escaping), BOM as explicit \uFEFF, bulk 200/zip test added, CSV test strengthened with BOM charcode + 12-col + masking assertions. 8/8 tests pass.)
+Task 4: complete (commit e108018c, base 27204614, review Approved — import + mount exact, listEndpointLimiter present, no requireAuth at mount, only app.ts staged.)
+Task 5: complete (commit 5ec1a72b, base e108018c, review Approved — spec ✅, all constraints met verbatim. Minor: dead useMemo allSelected in parent; drawer early-null skips close animation; page state never changes; immediate revokeObjectURL — all non-blocking, all from brief itself.)
+Task 6: complete (commit 5ca64dfc, base 5ec1a72b, review Approved — import + TabsTrigger + TabsContent exact, build ✓ 9.79s zero errors, only PfManagement.tsx staged.)
+
+=== ALL 6 TASKS COMPLETE ===
+
+=== FINAL WHOLE-BRANCH REVIEW: complete ===
+Opus review found 1 CRITICAL issue: `writeAuditLog` inserted into non-existent `payroll_audit_trail` table.
+Fixed in commit d34f4fa6 — now uses `sensitive_action_log` with correct column mapping (actor_user_id, action_type, module_key='payroll', entity_type='esi_registration', change_summary).
+All 8 tests pass, frontend build ✓ 10.34s, backend ESI files tsc clean.
+
+=== ESI REGISTRATION DOCUMENTS FEATURE COMPLETE ===
+Branch ready for merge.

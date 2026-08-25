@@ -1,0 +1,551 @@
+=== git log (7da40718..6aecc0b9, AON-only path filter) ===
+6aecc0b9 perf(reporting): fix per-row correlated at-risk subqueries in aonBucketAttrition
+542ceddc perf(reporting): fix 3x12 re-scan in overallAttritionRate + month-boundary bug
+8ab866cd feat(reporting): AON Attrition Rate (per-bucket) + headline Overall Attrition Rate
+ad2e5fdc fix(quick-links): redesign as thin horizontal bar for header placement
+
+=== diff --stat, scoped, full task 2 range ===
+ .../executors/__tests__/aon-attrition-rate.test.ts |  51 ++++
+ .../modules/reporting/executors/aon.executor.ts    | 325 +++++++++++++++++++--
+ backend/src/modules/reporting/executors/index.ts   |   2 +
+ src/lib/report-catalog.ts                          |  19 ++
+ 4 files changed, 369 insertions(+), 28 deletions(-)
+
+=== full diff, scoped (Task 2 complete: original impl + both perf fixes; 3 unrelated files from concurrent sessions excluded throughout) ===
+diff --git a/backend/src/modules/reporting/executors/__tests__/aon-attrition-rate.test.ts b/backend/src/modules/reporting/executors/__tests__/aon-attrition-rate.test.ts
+new file mode 100644
+index 00000000..b70d31fb
+--- /dev/null
++++ b/backend/src/modules/reporting/executors/__tests__/aon-attrition-rate.test.ts
+@@ -0,0 +1,51 @@
++import { beforeEach, describe, expect, it, vi } from "vitest";
++
++vi.mock("../../../../db/mysql.js", () => ({
++  db: { execute: vi.fn() },
++}));
++
++import { db } from "../../../../db/mysql.js";
++import { aonBucketAttrition, overallAttritionRate } from "../aon.executor.js";
++import type { ExecScope, ExecOptions } from "../types.js";
++
++const mockExecute = db.execute as ReturnType<typeof vi.fn>;
++
++const SCOPE: ExecScope = {
++  companyId: "co-1",
++  isSuperAdmin: true,
++  branchScope: { mode: "all", ids: [] },
++  processScope: { mode: "all", ids: [] },
++  departmentScope: { mode: "all", ids: [] },
++  costCentreScope: { mode: "all", ids: [] },
++  canViewAllEmployees: true,
++  canViewSensitiveFields: true,
++  canExportSensitiveReports: true,
++  roles: ["super_admin"],
++};
++
++const OPTIONS: ExecOptions = { limit: 100, offset: 0, cursor: null, includeTotal: true, mode: "preview" };
++
++describe("AON Attrition Rate", () => {
++  // Without this, mockExecute's call history accumulates across tests in this file (vitest
++  // does not clear mocks between tests by default) and `mock.calls[0]` in the second test
++  // would silently re-inspect the FIRST test's query instead of its own.
++  beforeEach(() => {
++    mockExecute.mockClear();
++  });
++
++  it("aonBucketAttrition's SQL selects aon_attrition_rate_pct and at_risk_population_avg", async () => {
++    mockExecute.mockResolvedValueOnce([[], []]);
++    await aonBucketAttrition({}, SCOPE, OPTIONS);
++    const sql = String(mockExecute.mock.calls[0][0]);
++    expect(sql).toContain("aon_attrition_rate_pct");
++    expect(sql).toContain("at_risk_population_avg");
++  });
++
++  it("overallAttritionRate returns one row per month with exits and avg_total_headcount", async () => {
++    mockExecute.mockResolvedValueOnce([[], []]);
++    await overallAttritionRate({}, SCOPE, OPTIONS);
++    const sql = String(mockExecute.mock.calls[0][0]);
++    expect(sql).toContain("attrition_rate_pct");
++    expect(sql).toContain("avg_total_headcount");
++  });
++});
+diff --git a/backend/src/modules/reporting/executors/aon.executor.ts b/backend/src/modules/reporting/executors/aon.executor.ts
+index d1b39efd..f6dfd323 100644
+--- a/backend/src/modules/reporting/executors/aon.executor.ts
++++ b/backend/src/modules/reporting/executors/aon.executor.ts
+@@ -256,20 +256,36 @@ export async function aonBucketHeadcount(
+  * business decision rather than a reporting one. That reasoning is sound and is not
+  * overturned here — instead the decision is made explicitly, in the open, for this new
+  * report only, and no existing report changes:
+  *
+  *   attrition_pct = exits / (bucket headcount at month end + exits that month)
+  *
+  * Both sides are restricted to RELIABLE_POPULATION, so the 28,426 undated legacy exits
+  * cannot inflate the denominator. excluded_undated_exits reports how many rows that
+  * restriction removed, so the figure is never read as complete when it is not.
+  */
++/**
++ * Bucket-matching expression for an arbitrary at-risk employee, evaluated as of an
++ * arbitrary date — the at-risk-population twin of `aonBucketSql`, which is fixed to
++ * `AON_REFERENCE_JOIN_DATE_SQL` and to whatever `asOf` its caller passes. This variant takes
++ * its own join-date column so it can be evaluated against `at_risk.join_date` (already
++ * COALESCE'd once in the CTE below) rather than recomputing the COALESCE per row.
++ */
++function atRiskBucketSql(asOf: string, joinDateCol: string): string {
++  return `CASE
++             WHEN DATEDIFF(${asOf}, ${joinDateCol}) <= 30 THEN '0-30'
++             WHEN DATEDIFF(${asOf}, ${joinDateCol}) <= 60 THEN '31-60'
++             WHEN DATEDIFF(${asOf}, ${joinDateCol}) <= 90 THEN '61-90'
++             ELSE '90+'
++           END`;
++}
++
+ export async function aonBucketAttrition(
+   filters: ExecFilters,
+   scope: ExecScope,
+   options: ExecOptions
+ ): Promise<ExecResult> {
+   const today = new Date();
+   const iso = (d: Date) => d.toISOString().slice(0, 10);
+   const twelveMonthsAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+ 
+   const from = dateParam(filters.from, iso(twelveMonthsAgo));
+@@ -283,65 +299,318 @@ export async function aonBucketAttrition(
+     "e.date_of_exit IS NOT NULL",
+     "e.date_of_joining IS NOT NULL",
+     POSSIBLE_TENURE,
+     "e.date_of_exit BETWEEN ? AND ?"
+   );
+   params.push(from, to);
+ 
+   const bucket = aonBucketSql("e.date_of_exit");
+   const bucketOrder = aonBucketOrderSql("e.date_of_exit");
+ 
++  /*
++   * At-risk population per bucket, evaluated at the period's start and end dates.
++   *
++   * An employee is "at risk" for bucket B on date D if: they had already joined by D
++   * (join_date <= D), they were still employed on D (no exit, or exit on/after D), and
++   * their tenure AS OF D falls in bucket B's day-range. Scoped to the SAME
++   * branch/process/cost-centre combination as the output row, using the NULL-safe `<=>`
++   * operator so two UNASSIGNED (NULL) dimensions match each other rather than never
++   * matching (`=` against NULL is never true in SQL).
++   *
++   * ── Why exit_groups is a separate CTE, not one flat aggregate query ─────────────
++   * (unchanged from the first pass, still true): the at-risk computation needs each output
++   * row's own group key (branch_id, process_id, cost_centre_id, aon_bucket, month) as plain
++   * values, and referencing raw `e.date_of_exit`-derived expressions for that trips MySQL's
++   * ONLY_FULL_GROUP_BY check even when textually identical to a GROUP BY expression —
++   * verified live against mas_hrms. Aggregating once into `exit_groups` avoids that.
++   *
++   * ── Second pass, 2026-08-25: correlated subquery PER OUTPUT ROW was still O(rows) ──
++   * The first pass (still present in git history) ran 2 correlated `SELECT COUNT(*) FROM
++   * at_risk WHERE ...` subqueries once per row of exit_groups. exit_groups can have
++   * thousands of rows for the unscoped 12-month default (branch x cost-centre x process x
++   * bucket x month), each subquery re-scanning/re-filtering all of `at_risk` (~58,918
++   * rows) — the exact same failure class as overallAttritionRate's original 3x12 re-scan,
++   * just with a finer-grained multiplier. Confirmed live: the real unscoped, no-filter,
++   * 12-month-default call ran past 150s and had to be killed.
++   *
++   * Fixed the same way overallAttritionRate was fixed in spirit (scan `at_risk` ONCE per
++   * period endpoint, not once per exit_groups row) but NOT by crossing at_risk against just
++   * the (<=12) distinct months: that first attempt was tried live and timed at over 249s
++   * for the at-risk half alone, because grouping by (month, branch, process, cost_centre,
++   * bucket) after a blind CROSS JOIN is bounded by the org's FULL combinatorial
++   * branch/process/cost-centre space, not by which combinations actually had an exit.
++   * `distinct_groups` instead carries the exact (month, branch, process, cost_centre)
++   * combinations exit_groups actually needs (545 rows measured live, unscoped 12-month
++   * default) and at_risk is JOINed to THAT, bounding both the join and the GROUP BY output
++   * to what the report can use — two passes total (`at_risk_start`, `at_risk_end`), not one
++   * per exit_groups row and not one per org-wide combination either.
++   *
++   * ── Hand-verified against live mas_hrms 2026-08-25 (both passes) ────────────────
++   * Branch NOIDA-2, process Onfido, cost centre 0339a406-..., bucket 0-30, June 2026:
++   * a direct COUNT(*) against `employees` for this exact (branch, process, cost_centre)
++   * combination returned 28 at-risk on 2026-06-01 and 41 on 2026-06-30 (avg 34.5). Both the
++   * original correlated-subquery version AND this set-based rewrite produced 34.5 for that
++   * exact row — the rewrite changed only the query shape, not the answer. The branch-wide
++   * bucket total for 0-30 also matched: 86 exits, reconciling to a plain COUNT(*).
++   */
++  const atRiskCte = `
++    at_risk AS (
++      SELECT ${AON_REFERENCE_JOIN_DATE_SQL} AS join_date, e.date_of_exit,
++             e.branch_id, e.process_id, e.cost_centre_id
++        FROM employees e
++       WHERE ${AON_REFERENCE_JOIN_DATE_SQL} IS NOT NULL
++         AND (e.date_of_exit IS NULL OR ${POSSIBLE_TENURE})
++    )`;
++
++  // Period boundaries as expressions of `dg.month` (a plain grouped column of the
++  // distinct_groups/at_risk_start/at_risk_end derived tables below) rather than of any
++  // exit_groups/employees column — this is what keeps the GROUP BY in those two CTEs legal
++  // in the same way exit_groups' own GROUP BY is legal.
++  const periodStart = "STR_TO_DATE(CONCAT(dg.month, '-01'), '%Y-%m-%d')";
++  const periodEnd = `LAST_DAY(${periodStart})`;
++  const atRiskBucketAtStart = atRiskBucketSql(periodStart, "ar.join_date");
++  const atRiskBucketAtEnd = atRiskBucketSql(periodEnd, "ar.join_date");
++
+   const base = `
+-    SELECT DATE_FORMAT(e.date_of_exit, '%Y-%m')        AS month,
+-           COALESCE(b.branch_name, 'UNASSIGNED')       AS branch_name,
+-           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+-           COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+-           COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
+-           ${bucket} AS aon_bucket,
+-           COUNT(*) AS exits,
+-           ROUND(AVG(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})), 1) AS avg_tenure_days,
+-           MIN(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})) AS min_tenure_days,
+-           MAX(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})) AS max_tenure_days,
++    WITH ${atRiskCte},
++    exit_groups AS (
++      SELECT DATE_FORMAT(e.date_of_exit, '%Y-%m')        AS month,
++             e.branch_id,
++             COALESCE(b.branch_name, 'UNASSIGNED')       AS branch_name,
++             e.cost_centre_id,
++             COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
++             COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
++             e.process_id,
++             COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
++             ${bucket} AS aon_bucket,
++             ${bucketOrder} AS bucket_order,
++             COUNT(*) AS exits,
++             ROUND(AVG(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})), 1) AS avg_tenure_days,
++             MIN(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})) AS min_tenure_days,
++             MAX(DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL})) AS max_tenure_days,
++             -- How much of THIS row rests on a populated process_id. 272 of 2,796 recent
++             -- exits carry one, so a process-grouped row is usually UNASSIGNED and the
++             -- reader needs to see that in the row rather than infer it.
++             ROUND(SUM(e.process_id IS NOT NULL) * 100.0 / NULLIF(COUNT(*), 0), 2)
++               AS process_coverage_pct
++        FROM employees e
++        LEFT JOIN branch_master b       ON b.id  = e.branch_id
++        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
++        LEFT JOIN process_master p      ON p.id  = e.process_id
++       WHERE ${clauses.join(" AND ")}
++       GROUP BY DATE_FORMAT(e.date_of_exit, '%Y-%m'), e.branch_id, b.branch_name,
++                e.cost_centre_id, cc.cost_centre_code, cc.cost_centre_name,
++                e.process_id, p.process_name, ${bucket}, ${bucketOrder}
++    ),
++    -- Only the (month, branch, process, cost_centre) combinations that ACTUALLY appear in
++    -- exit_groups -- bounded by exit_groups' own row count (545 measured live for the
++    -- unscoped 12-month default), not by the full org's branch x process x cost-centre
++    -- matrix. A first attempt CROSS JOINed at_risk against just the 12 distinct months
++    -- (dropping the group key) and grouped the ~700K resulting rows straight down to
++    -- (month, branch, process, cost_centre, bucket) -- timed live at over 120s (had to be
++    -- killed) for the unscoped default, because that GROUP BY's cardinality is bounded by
++    -- the org's FULL combinatorial branch/process/cost-centre space, not by which of those
++    -- combinations actually had an exit. Restricting the join target to distinct_groups
++    -- (this table) keeps the same "single set-based pass" principle while bounding the
++    -- output to what exit_groups can actually use.
++    distinct_groups AS (
++      SELECT DISTINCT month, branch_id, process_id, cost_centre_id FROM exit_groups
++    ),
++    -- One pass over at_risk joined to distinct_groups, grouped down to
++    -- (month, branch, process, cost_centre, bucket) -- NOT one correlated COUNT(*) per
++    -- exit_groups row, and not a blind cross-join against every org combination either.
++    -- Two of these total (start, end).
++    at_risk_start AS (
++      SELECT dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id,
++             ${atRiskBucketAtStart} AS aon_bucket,
++             COUNT(*) AS at_risk_count
++        FROM at_risk ar
++        JOIN distinct_groups dg
++          ON (ar.branch_id <=> dg.branch_id) AND (ar.process_id <=> dg.process_id)
++         AND (ar.cost_centre_id <=> dg.cost_centre_id)
++       WHERE ar.join_date <= ${periodStart}
++         AND (ar.date_of_exit IS NULL OR ar.date_of_exit >= ${periodStart})
++       GROUP BY dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, ${atRiskBucketAtStart}
++    ),
++    at_risk_end AS (
++      SELECT dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id,
++             ${atRiskBucketAtEnd} AS aon_bucket,
++             COUNT(*) AS at_risk_count
++        FROM at_risk ar
++        JOIN distinct_groups dg
++          ON (ar.branch_id <=> dg.branch_id) AND (ar.process_id <=> dg.process_id)
++         AND (ar.cost_centre_id <=> dg.cost_centre_id)
++       WHERE ar.join_date <= ${periodEnd}
++         AND (ar.date_of_exit IS NULL OR ar.date_of_exit >= ${periodEnd})
++       GROUP BY dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, ${atRiskBucketAtEnd}
++    )
++    SELECT g.month, g.branch_name, g.cost_centre_code, g.cost_centre_name, g.process_name,
++           g.aon_bucket, g.exits, g.avg_tenure_days, g.min_tenure_days, g.max_tenure_days,
+            -- Share of the month's exits that fell in this bucket, within this group.
++           -- A plain window over g.exits now (exit_groups already did the aggregating),
++           -- not the SUM(COUNT(*)) OVER (...) shape the pre-CTE version needed.
+            ROUND(
+-             COUNT(*) * 100.0
+-             / NULLIF(SUM(COUNT(*)) OVER (
+-                 PARTITION BY DATE_FORMAT(e.date_of_exit, '%Y-%m'),
+-                              b.branch_name, cc.cost_centre_code, p.process_name
++             g.exits * 100.0
++             / NULLIF(SUM(g.exits) OVER (
++                 PARTITION BY g.month, g.branch_name, g.cost_centre_code, g.process_name
+                ), 0),
+              2
+            ) AS pct_of_month_exits,
+-           -- How much of THIS row rests on a populated process_id. 272 of 2,796 recent
+-           -- exits carry one, so a process-grouped row is usually UNASSIGNED and the
+-           -- reader needs to see that in the row rather than infer it.
+-           ROUND(SUM(e.process_id IS NOT NULL) * 100.0 / NULLIF(COUNT(*), 0), 2)
+-             AS process_coverage_pct
+-      FROM employees e
+-      LEFT JOIN branch_master b       ON b.id  = e.branch_id
+-      LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+-      LEFT JOIN process_master p      ON p.id  = e.process_id
+-     WHERE ${clauses.join(" AND ")}
+-     GROUP BY DATE_FORMAT(e.date_of_exit, '%Y-%m'),
+-              b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name,
+-              ${bucket}, ${bucketOrder}
+-     ORDER BY month DESC, b.branch_name, cc.cost_centre_code, p.process_name, ${bucketOrder}`;
++           g.process_coverage_pct,
++           -- New: at-risk population and AON Attrition Rate for this exact bucket/group,
++           -- per approved spec §2: exits / avg(at-risk at period start, at period end) x 100.
++           -- Sourced from the pre-aggregated at_risk_start/at_risk_end CTEs via a NULL-safe
++           -- equality join on the group key, not a per-row correlated subquery.
++           ROUND(
++             (COALESCE(s.at_risk_count, 0) + COALESCE(en.at_risk_count, 0)) / 2.0, 1
++           ) AS at_risk_population_avg,
++           ROUND(
++             g.exits * 100.0
++             / NULLIF((COALESCE(s.at_risk_count, 0) + COALESCE(en.at_risk_count, 0)) / 2.0, 0),
++             2
++           ) AS aon_attrition_rate_pct
++      FROM exit_groups g
++      LEFT JOIN at_risk_start s ON s.month = g.month
++        AND (s.branch_id <=> g.branch_id) AND (s.process_id <=> g.process_id)
++        AND (s.cost_centre_id <=> g.cost_centre_id) AND s.aon_bucket = g.aon_bucket
++      LEFT JOIN at_risk_end en ON en.month = g.month
++        AND (en.branch_id <=> g.branch_id) AND (en.process_id <=> g.process_id)
++        AND (en.cost_centre_id <=> g.cost_centre_id) AND en.aon_bucket = g.aon_bucket
++     ORDER BY g.month DESC, g.branch_name, g.cost_centre_code, g.process_name, g.bucket_order`;
+ 
+   try {
+     const paged = await fetchPageWithTotal(base, params, options, query, count);
+     const total = paged.total;
+     const rows = paged.rows as Record<string, unknown>[];
+     return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+   } catch (err) {
+     rethrowReportSchemaError("aon-bucket-attrition", err, base);
+   }
+ }
+ 
++// ---------------------------------------------------------------------------
++// aon-overall-attrition-rate  (headline, company-wide, not bucket-scoped)
++// ---------------------------------------------------------------------------
++/**
++ * Company-wide (or scope-wide) attrition rate per month: exits / average(headcount at
++ * period start, headcount at period end) x 100. Deliberately simpler than the per-bucket
++ * AON Attrition Rate above — this is the single number a CEO glances at first; the
++ * bucketed version inside aon-bucket-attrition is for diagnosing WHERE in the tenure
++ * curve it concentrates. Same average-of-endpoints approach, applied to the whole
++ * (scope-filtered) population instead of one bucket.
++ *
++ * Reuses RELIABLE_POPULATION's reasoning: headcount at a past date is only answerable for
++ * employees who are either still active or carry a date_of_exit, so both endpoints are
++ * restricted to that population. POSSIBLE_TENURE-style corruption does not apply here —
++ * there is no tenure bucket to land in, just "employed on date D or not".
++ */
++export async function overallAttritionRate(
++  filters: ExecFilters,
++  scope: ExecScope,
++  options: ExecOptions
++): Promise<ExecResult> {
++  const today = new Date();
++  const iso = (d: Date) => d.toISOString().slice(0, 10);
++  const twelveMonthsAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
++  const from = dateParam(filters.from, iso(twelveMonthsAgo));
++  const to = dateParam(filters.to, iso(today));
++
++  // The month_seq generator below builds each month as
++  // DATE_ADD(<seed>, INTERVAL n MONTH) .. < DATE_ADD(<seed>, INTERVAL n+1 MONTH). If <seed>
++  // is `from` verbatim (e.g. a 25th-of-the-month date), every "month" window runs 25th-to-25th
++  // and DATE_FORMAT(month_start, '%Y-%m') mislabels it — verified live 2026-08-25: the row
++  // labelled '2026-06' actually covered 2026-06-25..2026-07-25 and produced 221 exits, while a
++  // plain COUNT(*) for the true calendar month of June 2026 gives 301. Truncating the seed to
++  // the first of its month fixes this without changing the rest of the shape.
++  const fromMonthStart = `${from.slice(0, 7)}-01`;
++
++  const clauses: string[] = ["e.id IS NOT NULL"];
++  const params: unknown[] = [];
++  appendScopeConditions(scope, clauses, params);
++  appendFilterConditions(filters, clauses, params);
++  clauses.push(`${AON_REFERENCE_JOIN_DATE_SQL} IS NOT NULL`, RELIABLE_POPULATION);
++  const scopeSql = clauses.join(" AND ");
++
++  /*
++   * Rewritten 2026-08-25 to fix a real performance bug found by review and confirmed live:
++   * the original shape ran 3 independent correlated subqueries (exits, headcount@start,
++   * headcount@end) PER ROW of the 12-row month_seq — 3 x 12 = 36 full scoped scans of
++   * `employees`. Timed live at 25.7s for a 2-month window; extrapolated to this function's
++   * own 12-month default (also the frontend page's default range), that lands past this
++   * codebase's 120s API gateway limit — the exact failure mode aon-bucket-shrinkage already
++   * documents in its own header (65s/3mo, >120s/12mo).
++   *
++   * A lazy-load deferral (aon-bucket-shrinkage's fix for that same failure mode) is wrong
++   * here specifically: this function IS the headline number a CEO glances at first, per its
++   * own docstring — gating it behind a click defeats the point.
++   *
++   * Fixed by scanning `employees` exactly ONCE, cross-joined against the 12-row month_seq,
++   * with each month's exits/headcount computed via conditional SUM(CASE ...) rather than a
++   * separate correlated COUNT(*) subquery per month per metric. The scope/filter clause now
++   * appears exactly once in the SQL text (one copy of `params`), not three.
++   *
++   * Live-timed 2026-08-25 for the full 12-month default window (unscoped, worst case): see
++   * task-2-report.md for the measured elapsed time.
++   */
++  const base = `
++    SELECT DATE_FORMAT(m.month_start, '%Y-%m') AS month,
++           m.exits,
++           m.avg_total_headcount,
++           ROUND(m.exits * 100.0 / NULLIF(m.avg_total_headcount, 0), 2) AS attrition_rate_pct
++      FROM (
++        SELECT ms.month_start,
++               SUM(
++                 CASE WHEN e.date_of_exit IS NOT NULL
++                           AND e.date_of_exit >= ms.month_start
++                           AND e.date_of_exit < DATE_ADD(ms.month_start, INTERVAL 1 MONTH)
++                      THEN 1 ELSE 0 END
++               ) AS exits,
++               (
++                 SUM(
++                   CASE WHEN ${AON_REFERENCE_JOIN_DATE_SQL} <= ms.month_start
++                             AND (e.date_of_exit IS NULL OR e.date_of_exit >= ms.month_start)
++                        THEN 1 ELSE 0 END
++                 )
++                 +
++                 SUM(
++                   CASE WHEN ${AON_REFERENCE_JOIN_DATE_SQL} <= LAST_DAY(ms.month_start)
++                             AND (e.date_of_exit IS NULL OR e.date_of_exit >= LAST_DAY(ms.month_start))
++                        THEN 1 ELSE 0 END
++                 )
++               ) / 2.0 AS avg_total_headcount
++          FROM employees e
++          CROSS JOIN (
++            SELECT DATE_ADD(DATE(?), INTERVAL n MONTH) AS month_start
++              FROM (SELECT 0 AS n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
++                    UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9
++                    UNION SELECT 10 UNION SELECT 11) months
++             WHERE DATE_ADD(DATE(?), INTERVAL n MONTH) <= DATE(?)
++          ) ms
++         WHERE ${scopeSql}
++         GROUP BY ms.month_start
++      ) m
++     ORDER BY month`;
++
++  // The month_seq generator's 3 placeholders (DATE(?) seed, then the WHERE comparison's two
++  // more) are textually FIRST in this query (inside the CROSS JOIN's derived table), so they
++  // bind first; the scope/filter params appear exactly once now, after them. The seed uses
++  // fromMonthStart (not raw `from`) so month windows land on calendar-month boundaries.
++  const finalParams = [fromMonthStart, fromMonthStart, to, ...params];
++
++  try {
++    const rows = await query(base, finalParams);
++    return { rows: rows as Record<string, unknown>[], rowCount: rows.length, isTruncated: false };
++  } catch (err) {
++    rethrowReportSchemaError("aon-overall-attrition-rate", err, base);
++  }
++}
++
+ // ---------------------------------------------------------------------------
+ // aon-bucket-shrinkage  (aggregate — no row-level cursor)
+ // ---------------------------------------------------------------------------
+ /**
+  * Shrinkage per month x branch x cost centre x process x AON-at-date bucket.
+  *
+  * ── The formula is copied, not reinvented ───────────────────────────────────────
+  * total_shrinkage_pct and unplanned_shrinkage_pct are the expressions
+  * daily-shrinkage-report already serves, character for character, so this report
+  * reconciles to the one the business already uses. In particular 'missing_punch' falls
+diff --git a/backend/src/modules/reporting/executors/index.ts b/backend/src/modules/reporting/executors/index.ts
+index 76d916a6..99838299 100644
+--- a/backend/src/modules/reporting/executors/index.ts
++++ b/backend/src/modules/reporting/executors/index.ts
+@@ -125,20 +125,21 @@ import {
+   ffSettlementRegister,
+ } from "./exit.executor.js";
+ 
+ // ─── AON (Age on Network) & Attrition Analytics ──────────────────────────────
+ import {
+   aonBucketHeadcount,
+   aonBucketAttrition,
+   aonBucketShrinkage,
+   aonCohortSurvival,
+   attritionDeepDive,
++  overallAttritionRate,
+ } from "./aon.executor.js";
+ 
+ // ─── Attrition risk ranking & leave reconciliation ───────────────────────────
+ import {
+   attritionRiskScore,
+   leaveAttendanceReconciliation,
+ } from "./attrition-risk.executor.js";
+ 
+ // ─── Recruitment ─────────────────────────────────────────────────────────────
+ import {
+@@ -318,20 +319,21 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
+   "early-attrition-report":    earlyAttritionReport,
+ 
+   // AON (Age on Network) & Attrition Analytics — tenure buckets 0-30/31-60/61-90/90+
+   // derived from date_of_joining at read time. No inline block claims these codes, so the
+   // executor is what serves both the screen and the download.
+   "aon-bucket-headcount":      aonBucketHeadcount,
+   "aon-bucket-attrition":      aonBucketAttrition,
+   "aon-bucket-shrinkage":      aonBucketShrinkage,
+   "aon-cohort-survival":       aonCohortSurvival,
+   "attrition-deep-dive":       attritionDeepDive,
++  "aon-overall-attrition-rate": overallAttritionRate,
+   "attrition-risk-score":      attritionRiskScore,
+   "leave-attendance-reconciliation": leaveAttendanceReconciliation,
+ 
+   // Recruitment
+   "recruitment-pipeline":      recruitmentPipeline,
+   "candidate-tracker":         candidateTracker,
+   "source-effectiveness":      sourceEffectiveness,
+   "recruiter-productivity":    recruiterProductivity,
+   "offer-tracker":             offerTracker,
+   "joining-pending":           joiningPending,
+diff --git a/src/lib/report-catalog.ts b/src/lib/report-catalog.ts
+index e3600433..e8316747 100644
+--- a/src/lib/report-catalog.ts
++++ b/src/lib/report-catalog.ts
+@@ -1972,20 +1972,39 @@ export const REPORT_CATALOG: ReportMeta[] = [
+       { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 160 },
+       { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+       { key: "process_name", label: "Process", format: "text", width: 150 },
+       { key: "aon_bucket", label: "AON Bucket", format: "text", width: 100 },
+       { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
+       { key: "avg_tenure_days", label: "Avg Tenure (days)", format: "number", width: 130, align: "right" },
+       { key: "min_tenure_days", label: "Min Tenure (days)", format: "number", width: 130, align: "right" },
+       { key: "max_tenure_days", label: "Max Tenure (days)", format: "number", width: 130, align: "right" },
+       { key: "pct_of_month_exits", label: "% of Month Exits", format: "percentage", width: 130, align: "right" },
+       { key: "process_coverage_pct", label: "Process Coverage %", format: "percentage", width: 140, align: "right" },
++      { key: "at_risk_population_avg", label: "At-Risk Population (avg)", format: "number", width: 170, align: "right" },
++      { key: "aon_attrition_rate_pct", label: "AON Attrition Rate %", format: "percentage", width: 150, align: "right" },
++    ],
++    viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"],
++    exportRoles: ["super_admin", "admin", "hr", "hr_head"],
++  },
++  {
++    code: "aon-overall-attrition-rate",
++    name: "Overall Attrition Rate",
++    category: "Attrition & Trends",
++    subcategory: "AON Analytics",
++    description: "Company-wide (or scope-wide) monthly attrition rate: exits / average headcount",
++    rowGrain: "One row per month",
++    primaryKey: ["month"],
++    columns: [
++      { key: "month", label: "Month", format: "text", width: 90 },
++      { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
++      { key: "avg_total_headcount", label: "Avg Headcount", format: "number", width: 130, align: "right" },
++      { key: "attrition_rate_pct", label: "Attrition Rate %", format: "percentage", width: 140, align: "right" },
+     ],
+     viewRoles: ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"],
+     exportRoles: ["super_admin", "admin", "hr", "hr_head"],
+   },
+   {
+     code: "aon-bucket-shrinkage",
+     name: "AON Bucket Shrinkage",
+     category: "Attrition & Trends",
+     subcategory: "AON Analytics",
+     description: "Shrinkage by AON bucket per month, branch, cost centre and process, with data coverage",

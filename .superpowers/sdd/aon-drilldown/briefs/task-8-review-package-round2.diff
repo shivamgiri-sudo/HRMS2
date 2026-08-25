@@ -1,0 +1,353 @@
+=== git log (1df0308f..03dc3adb, path-filtered to Task 8's files) ===
+03dc3adb fix(analytics): thread real FK id through heatmap drill chips, not display name
+c2658a92 fix(reporting): select raw branch/cost-centre/process ids in AON bucket reports
+
+=== diff --stat ===
+ .../modules/reporting/executors/aon.executor.ts    |  9 ++++++++
+ src/components/reports/views/AonAnalyticsView.tsx  | 27 ++++++++++++++++++----
+ 2 files changed, 32 insertions(+), 4 deletions(-)
+
+=== full diff ===
+diff --git a/backend/src/modules/reporting/executors/aon.executor.ts b/backend/src/modules/reporting/executors/aon.executor.ts
+index f6dfd323..d7671ec2 100644
+--- a/backend/src/modules/reporting/executors/aon.executor.ts
++++ b/backend/src/modules/reporting/executors/aon.executor.ts
+@@ -192,47 +192,51 @@ export async function aonBucketHeadcount(
+   filters: ExecFilters,
+   scope: ExecScope,
+   options: ExecOptions
+ ): Promise<ExecResult> {
+   const clauses: string[] = ["e.id IS NOT NULL"];
+   const params: unknown[] = [];
+   appendScopeConditions(scope, clauses, params);
+   appendFilterConditions(filters, clauses, params);
+   clauses.push(ACTIVE, "e.date_of_joining IS NOT NULL");
+ 
+   const base = `
+     SELECT COALESCE(b.branch_name, 'UNASSIGNED')      AS branch_name,
+            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+            COALESCE(p.process_name, 'UNASSIGNED')     AS process_name,
++           b.id  AS branch_id,
++           cc.id AS cost_centre_id,
++           p.id  AS process_id,
+            ${aonBucketSql("CURDATE()")} AS aon_bucket,
+            COUNT(*) AS headcount,
+            ROUND(
+              COUNT(*) * 100.0
+              / NULLIF(SUM(COUNT(*)) OVER (
+                  PARTITION BY b.branch_name, cc.cost_centre_code, p.process_name
+                ), 0),
+              2
+            ) AS pct_of_group,
+            MIN(DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL})) AS min_aon_days,
+            MAX(DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL})) AS max_aon_days
+       FROM employees e
+       LEFT JOIN branch_master b       ON b.id  = e.branch_id
+       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+       LEFT JOIN process_master p      ON p.id  = e.process_id
+      WHERE ${clauses.join(" AND ")}
+      GROUP BY b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name,
++              b.id, cc.id, p.id,
+               ${aonBucketSql("CURDATE()")}, ${aonBucketOrderSql("CURDATE()")}
+      ORDER BY b.branch_name, cc.cost_centre_code, p.process_name,
+               ${aonBucketOrderSql("CURDATE()")}`;
+ 
+   try {
+     const paged = await fetchPageWithTotal(base, params, options, query, count);
+     const total = paged.total;
+     const rows = paged.rows as Record<string, unknown>[];
+     return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+   } catch (err) {
+     rethrowReportSchemaError("aon-bucket-headcount", err, base);
+   }
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -432,30 +436,31 @@ export async function aonBucketAttrition(
+        GROUP BY dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, ${atRiskBucketAtStart}
+     ),
+     at_risk_end AS (
+       SELECT dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id,
+              ${atRiskBucketAtEnd} AS aon_bucket,
+              COUNT(*) AS at_risk_count
+         FROM at_risk ar
+         JOIN distinct_groups dg
+           ON (ar.branch_id <=> dg.branch_id) AND (ar.process_id <=> dg.process_id)
+          AND (ar.cost_centre_id <=> dg.cost_centre_id)
+        WHERE ar.join_date <= ${periodEnd}
+          AND (ar.date_of_exit IS NULL OR ar.date_of_exit >= ${periodEnd})
+        GROUP BY dg.month, dg.branch_id, dg.process_id, dg.cost_centre_id, ${atRiskBucketAtEnd}
+     )
+     SELECT g.month, g.branch_name, g.cost_centre_code, g.cost_centre_name, g.process_name,
++           g.branch_id, g.cost_centre_id, g.process_id,
+            g.aon_bucket, g.exits, g.avg_tenure_days, g.min_tenure_days, g.max_tenure_days,
+            -- Share of the month's exits that fell in this bucket, within this group.
+            -- A plain window over g.exits now (exit_groups already did the aggregating),
+            -- not the SUM(COUNT(*)) OVER (...) shape the pre-CTE version needed.
+            ROUND(
+              g.exits * 100.0
+              / NULLIF(SUM(g.exits) OVER (
+                  PARTITION BY g.month, g.branch_name, g.cost_centre_code, g.process_name
+                ), 0),
+              2
+            ) AS pct_of_month_exits,
+            g.process_coverage_pct,
+            -- New: at-risk population and AON Attrition Rate for this exact bucket/group,
+            -- per approved spec §2: exits / avg(at-risk at period start, at period end) x 100.
+            -- Sourced from the pre-aggregated at_risk_start/at_risk_end CTEs via a NULL-safe
+@@ -659,30 +664,33 @@ export async function aonBucketShrinkage(
+     "e.date_of_joining IS NOT NULL",
+     "adr.record_date >= ?",
+     "adr.record_date < DATE_ADD(?, INTERVAL 1 DAY)"
+   );
+   params.push(from, toInclusive);
+ 
+   const bucket = aonBucketSql("adr.record_date");
+   const bucketOrder = aonBucketOrderSql("adr.record_date");
+ 
+   const base = `
+     SELECT DATE_FORMAT(adr.record_date, '%Y-%m')       AS month,
+            COALESCE(b.branch_name, 'UNASSIGNED')       AS branch_name,
+            COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
+            COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
++           b.id  AS branch_id,
++           cc.id AS cost_centre_id,
++           p.id  AS process_id,
+            ${bucket} AS aon_bucket,
+            COUNT(*)                                        AS emp_days,
+            COUNT(DISTINCT adr.employee_id)                 AS employees_with_attendance,
+            SUM(adr.attendance_status = 'present')          AS present_days,
+            SUM(adr.attendance_status = 'half_day')         AS half_days,
+            SUM(adr.attendance_status = 'absent')           AS absent_days,
+            SUM(adr.attendance_status = 'leave_approved')   AS leave_days,
+            SUM(adr.attendance_status = 'missing_punch')    AS missing_punch_days,
+            SUM(adr.attendance_status = 'week_off')         AS week_off_days,
+            -- Emitted because it is part of the "worked" numerator below and without it
+            -- total_shrinkage_pct cannot be recomputed from the other columns. It is small
+            -- (0/4/5/45 employee-days across the four buckets in Jul-2026) which is exactly
+            -- why it is easy to leave out and then mis-reconcile by ~0.16pp — that happened
+            -- while verifying this report.
+            SUM(adr.attendance_status = 'week_off_worked')  AS week_off_worked_days,
+@@ -700,30 +708,31 @@ export async function aonBucketShrinkage(
+            ) AS unplanned_shrinkage_pct,
+            -- What fraction of this row's employee-days is a missing punch rather than a
+            -- recorded outcome. High values mean the shrinkage figure is a feed gap.
+            ROUND(
+              SUM(adr.attendance_status = 'missing_punch') / NULLIF(COUNT(*), 0) * 100,
+              2
+            ) AS missing_punch_pct
+       FROM attendance_daily_record adr
+       JOIN employees e                ON e.id  = adr.employee_id
+       LEFT JOIN branch_master b       ON b.id  = e.branch_id
+       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+       LEFT JOIN process_master p      ON p.id  = e.process_id
+      WHERE ${clauses.join(" AND ")}
+      GROUP BY DATE_FORMAT(adr.record_date, '%Y-%m'),
+               b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name,
++              b.id, cc.id, p.id,
+               ${bucket}, ${bucketOrder}
+      ORDER BY month DESC, b.branch_name, cc.cost_centre_code, p.process_name, ${bucketOrder}`;
+ 
+   try {
+     const paged = await fetchPageWithTotal(base, params, options, query, count);
+     const total = paged.total;
+     const rows = paged.rows as Record<string, unknown>[];
+     return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+   } catch (err) {
+     rethrowReportSchemaError("aon-bucket-shrinkage", err, base);
+   }
+ }
+ 
+ // ---------------------------------------------------------------------------
+ // aon-cohort-survival  (aggregate — no row-level cursor)
+diff --git a/src/components/reports/views/AonAnalyticsView.tsx b/src/components/reports/views/AonAnalyticsView.tsx
+index 07d96461..b55fc44d 100644
+--- a/src/components/reports/views/AonAnalyticsView.tsx
++++ b/src/components/reports/views/AonAnalyticsView.tsx
+@@ -77,30 +77,39 @@ const DIMENSIONS = [
+   { value: "cost_centre", label: "Cost Centre" },
+   { value: "age_band", label: "Age Band" },
+   { value: "gender", label: "Gender" },
+   { value: "ctc_band", label: "CTC Band" },
+   { value: "exit_type_proxy", label: "Exit Type (proxy)" },
+   { value: "process", label: "Process (9.7% coverage)" },
+ ] as const;
+ 
+ const GROUP_BY = [
+   { value: "branch_name", label: "Branch" },
+   { value: "cost_centre_name", label: "Cost Centre" },
+   { value: "process_name", label: "Process" },
+ ] as const;
+ type GroupBy = (typeof GROUP_BY)[number]["value"];
+ 
++/** The raw FK id column matching each display-name `groupBy` dimension -- aon-bucket-headcount /
++ *  -attrition / -shrinkage all now select both (Task 8 review fix: the display name is not a
++ *  valid filter value downstream, only the id is). */
++const GROUP_BY_ID_FIELD: Record<GroupBy, string> = {
++  branch_name: "branch_id",
++  cost_centre_name: "cost_centre_id",
++  process_name: "process_id",
++};
++
+ type Row = Record<string, unknown>;
+ const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+ const s = (v: unknown) => (v == null ? "" : String(v));
+ 
+ /* ── Data access ───────────────────────────────────────────────────────────── */
+ 
+ interface ApiResponse { data?: Row[]; totalCount?: number; meta?: { totalCount?: number } }
+ 
+ /**
+  * The grid pages at 100; these charts aggregate, so they ask for the whole result. The
+  * largest of the five (aon-bucket-attrition over twelve months) returned 573 rows live,
+  * so 5,000 leaves headroom without inviting an unbounded transfer.
+  */
+ const CHART_LIMIT = 5000;
+ 
+@@ -188,40 +197,43 @@ function GapBanner({ items }: { items: Array<{ label: string; detail: string }>
+   );
+ }
+ 
+ /* ── Overview ──────────────────────────────────────────────────────────────── */
+ 
+ /**
+  * One heatmap cell, made clickable.
+  *
+  * `pushChip` here bypasses Panel 1 (SliceDetailPanel) and opens Panel 2 (Employee List)
+  * directly: a heatmap cell already IS one specific group+bucket combination — both
+  * dimensions of this tab's drill path at once — so there's no intermediate narrowing step
+  * needed before showing people. SliceDetailPanel stays reserved for Cohort Survival / Deep
+  * Dive wiring in a future plan, where narrowing happens one dimension at a time.
+  */
+ function DrillCell({
+-  value, max, metric, groupBy, groupKey, bucket,
+-}: { value: number; max: number; metric: "headcount" | "exits" | "shrinkage"; groupBy: GroupBy; groupKey: string; bucket: Bucket }) {
++  value, max, metric, groupBy, groupKey, groupId, bucket,
++}: { value: number; max: number; metric: "headcount" | "exits" | "shrinkage"; groupBy: GroupBy; groupKey: string; groupId: string; bucket: Bucket }) {
+   const { pushChip, openEmployeeList } = useDrillDown();
+   const dimension = groupBy === "cost_centre_name" ? "costCentre" : groupBy === "process_name" ? "process" : "branch";
+ 
+   return (
+     <button
+       type="button"
+       onClick={() => {
+-        pushChip({ dimension, value: groupKey, label: groupKey });
++        // The chip's VALUE must be the real FK id (aon-drilldown-employees filters
++        // e.branch_id / e.cost_centre_id / e.process_id, actual UUID comparisons) --
++        // groupKey is only the human-readable display name, used for the chip's LABEL.
++        pushChip({ dimension, value: groupId, label: groupKey });
+         pushChip({ dimension: "aonBucket", value: bucket, label: `${bucket}d` });
+         openEmployeeList();
+       }}
+       className="inline-block cursor-pointer rounded px-1.5 py-0.5 transition-opacity hover:opacity-80"
+       style={{
+         backgroundColor: `rgba(227, 73, 72, ${Math.min(0.75, (value / max) * 0.6)})`,
+         color: value / max > 0.55 ? "#fff" : "#0f172a",
+       }}
+     >
+       {metric === "shrinkage" ? pct(value) : num(value)}
+     </button>
+   );
+ }
+ 
+ function Overview({ from, to, branchId, headlineRate }: { from: string; to: string; branchId: string; headlineRate: ReturnType<typeof useReport> }) {
+@@ -288,58 +300,64 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
+     const totalExits = Object.values(exits).reduce((a, b) => a + b, 0);
+     return BUCKETS.map(b => ({
+       bucket: b,
+       headcount: head[b] ?? 0,
+       headShare: ratio(head[b] ?? 0, totalHead),
+       exits: exits[b] ?? 0,
+       exitShare: ratio(exits[b] ?? 0, totalExits),
+       empDays: days[b] ?? 0,
+       shrinkage: days[b] ? ((days[b] - (worked[b] ?? 0)) / days[b]) * 100 : null,
+     }));
+   }, [hc.data, at.data, sh.data]);
+ 
+   /* The heatmap: one row per group, one column per bucket, for the chosen metric. */
+   const grid = useMemo(() => {
+     const src = metric === "headcount" ? hc.data : metric === "exits" ? at.data : sh.data;
++    const idField = GROUP_BY_ID_FIELD[groupBy];
+     const map = new Map<string, Record<string, { value: number; days: number; worked: number }>>();
++    const ids = new Map<string, string>();
+     for (const r of src ?? []) {
+       const key = s(r[groupBy]) || "UNASSIGNED";
+       const b = s(r.aon_bucket);
+       if (!map.has(key)) map.set(key, {});
++      if (!ids.has(key)) ids.set(key, s(r[idField]));
+       const cell = map.get(key)!;
+       const prev = cell[b] ?? { value: 0, days: 0, worked: 0 };
+       cell[b] = {
+         value: prev.value + (metric === "headcount" ? n(r.headcount) : metric === "exits" ? n(r.exits) : 0),
+         days: prev.days + n(r.emp_days),
+         worked: prev.worked + n(r.present_days) + n(r.half_days) + n(r.week_off_worked_days),
+       };
+     }
+     const rows = [...map.entries()].map(([key, cells]) => {
+       const vals = BUCKETS.map(b => {
+         const c = cells[b];
+         if (!c) return null;
+         if (metric === "shrinkage") return c.days ? ((c.days - c.worked) / c.days) * 100 : null;
+         return c.value;
+       });
+       const total = metric === "shrinkage"
+         ? (() => {
+             const d = BUCKETS.reduce((a, b) => a + (cells[b]?.days ?? 0), 0);
+             const w = BUCKETS.reduce((a, b) => a + (cells[b]?.worked ?? 0), 0);
+             return d ? ((d - w) / d) * 100 : null;
+           })()
+         : vals.reduce<number>((a, v) => a + (v ?? 0), 0);
+-      return { key, vals, total };
++      // The real FK id backing this row's display name -- UNASSIGNED (and any group whose
++      // master-table join was NULL) carries an empty id, which is an inherent, pre-existing
++      // limit (there is no single id to filter by), not a new bug.
++      return { key, id: ids.get(key) ?? "", vals, total };
+     });
+     // Rank by magnitude so the worst offenders are at the top rather than alphabetical.
+     return rows.sort((a, b) => (b.total ?? 0) - (a.total ?? 0)).slice(0, 25);
+   }, [metric, groupBy, hc.data, at.data, sh.data]);
+ 
+   /* Bucket trend over the months in range — the direct answer to "which bucket's trend
+      is worst". Shrinkage is re-weighted per month for the same reason as the tiles. */
+   const trend = useMemo(() => {
+     const src = metric === "shrinkage" ? sh.data : at.data;
+     if (metric === "headcount") return [];
+     const months = new Map<string, Record<string, { v: number; d: number; w: number }>>();
+     for (const r of src ?? []) {
+       const m = s(r.month);
+       const b = s(r.aon_bucket);
+       if (!months.has(m)) months.set(m, {});
+@@ -501,30 +519,31 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
+                     <tr key={row.key} className="border-b border-slate-100 hover:bg-slate-50">
+                       <td className="max-w-[240px] truncate px-2 py-1.5 font-medium text-slate-800" title={row.key}>
+                         {row.key}
+                       </td>
+                       {row.vals.map((v, i) => (
+                         <td key={BUCKETS[i]} className="px-2 py-1.5 text-right tabular-nums">
+                           {v == null ? (
+                             <span className="text-slate-300">—</span>
+                           ) : (
+                             <DrillCell
+                               value={v}
+                               max={max}
+                               metric={metric}
+                               groupBy={groupBy}
+                               groupKey={row.key}
++                              groupId={row.id}
+                               bucket={BUCKETS[i]}
+                             />
+                           )}
+                         </td>
+                       ))}
+                       <td className="px-2 py-1.5 text-right font-semibold tabular-nums text-slate-900">
+                         {row.total == null ? "—" : metric === "shrinkage" ? pct(row.total) : num(row.total)}
+                       </td>
+                     </tr>
+                   );
+                 })}
+               </tbody>
+             </table>
+           </div>
+         )}

@@ -58,3 +58,14 @@ describe("AON reference date uses salary_start_date with date_of_joining fallbac
     expect(sql).not.toMatch(/LAST_DAY\s*\(\s*e\.date_of_joining\s*\)/);
   });
 });
+
+describe("aonCohortSurvival drill-down ids", () => {
+  it("aonCohortSurvival's SQL selects branch_id/cost_centre_id/process_id", async () => {
+    mockExecute.mockResolvedValueOnce([[], []]);
+    await aonCohortSurvival({}, SCOPE, OPTIONS);
+    const sql = String(mockExecute.mock.calls[0][0]);
+    expect(sql).toContain("b.id");
+    expect(sql).toContain("cc.id");
+    expect(sql).toContain("p.id");
+  });
+});

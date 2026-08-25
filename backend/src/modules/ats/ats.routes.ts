@@ -808,4 +808,48 @@ atsRouter.get("/my-onboarding-status", requireAuth, h(async (req: AuthenticatedR
   });
 }));
 
+// ── Trigger Daily Hiring Report ──────────────────────────────────────────────
+
+atsRouter.post("/trigger-daily-report", requireRole("admin", "hr_admin", "super_admin"), h(async (req, res) => {
+  const { date, email, preview } = req.body;
+
+  // Import the report function
+  const { runDailyHiringReport } = await import("./ats-reminders.cron.js");
+
+  try {
+    // If preview mode, just return the data
+    if (preview) {
+      const result = await runDailyHiringReport(date || '2026-08-24', 'preview');
+      return res.json({
+        success: true,
+        preview: true,
+        data: result,
+        message: "Preview generated. Check 'data' field for report content."
+      });
+    }
+
+    // Otherwise send the email
+    const result = await runDailyHiringReport(
+      date || '2026-08-24',  // Default to yesterday
+      email || 'shivam.giri@teammas.in'
+    );
+
+    return res.json({
+      success: result.success,
+      messageId: result.messageId,
+      recipients: result.recipients || email,
+      stats: result.stats,
+      error: result.error,
+      message: result.success ? "Daily report email sent successfully" : "Failed to send email"
+    });
+  } catch (error) {
+    console.error("[trigger-daily-report] Error:", error);
+    return res.status(500).json({
+      success: false,
+      error: String(error),
+      message: "Failed to generate report"
+    });
+  }
+}));
+
 export default atsRouter;

@@ -86,4 +86,13 @@ describe("aonDrilldownEmployees", () => {
     expect(to).toBeDefined();
     expect(new Date(from!).getTime()).toBeLessThan(new Date(to!).getTime());
   });
+
+  it("filters by cohortMonth for a headcount-context call, matching join-date month", async () => {
+    mockExecute.mockResolvedValueOnce([[], []]);
+    await aonDrilldownEmployees({ metric: "headcount", cohortMonth: "2026-03" }, SCOPE, OPTIONS);
+    const sql = String(mockExecute.mock.calls[0][0]);
+    expect(sql).toContain("DATE_FORMAT");
+    const params = mockExecute.mock.calls[0][1];
+    expect(params).toContain("2026-03");
+  });
 });

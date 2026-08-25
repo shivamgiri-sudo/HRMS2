@@ -1,7 +1,7 @@
 /**
  * ATS Reminders Scheduler
  *
- * Four nightly/morning jobs:
+ * Five nightly/morning jobs:
  *  1. Onboarding incomplete reminder  — 9 PM daily
  *     Candidates selected 3+ days ago whose onboarding portal is not submitted
  *  1b. Joining docs incomplete reminder — 9 PM daily
@@ -10,6 +10,8 @@
  *     Requisitions / candidates whose target joining date is in 2 days
  *  3. Requisition approval nudge      — 8 AM daily
  *     Requisitions pending approval for 2+ days
+ *  4. Daily Hiring Report          — 8 PM daily
+ *     Branch-wise recruiter performance and pending submissions
  */
 
 import type { RowDataPacket } from "mysql2";
@@ -18,6 +20,9 @@ import { inboxService } from "../inbox/inbox.service.js";
 import { sendOnboardingTokenEmail } from "./ats.email.service.js";
 import { env } from "../../config/env.js";
 import { triggerOnboardingStuck, triggerJoiningDocsIncomplete } from "../work-inbox/work-inbox.triggers.js";
+import { computeBranchReport } from "./ats-daily-report.service.js";
+import { buildDailyReportEmail } from "./ats-daily-report.template.js";
+import nodemailer from "nodemailer";
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -266,6 +271,127 @@ async function runRequisitionApprovalNudge(): Promise<void> {
 
   if (rows.length > 0) {
     console.log(`[ats-reminders] approval nudge: sent for ${rows.length} overdue requisition(s)`);
+  }
+}
+
+// ── 4. Daily Hiring Report ───────────────────────────────────────────────────
+
+export async function runDailyHiringReport(forDate?: string, testEmail?: string): Promise<any> {
+  const BRANCHES = ['NOIDA', 'NOIDA-2', 'AHMEDABAD-JALDARSHAN'];
+  const reports: any[] = [];
+  const targetDate = forDate || new Date().toISOString().slice(0, 10);
+
+  console.log(`[ats-daily-report] Generating report for date: ${targetDate}`);
+
+  for (const branch of BRANCHES) {
+    try {
+      const report = await computeBranchReport(branch, targetDate);
+      reports.push(report);
+      console.log(`[ats-daily-report] ${branch}: ${report.ftd.walkin} walk-ins, ${report.ftd.selected} selected, ${report.ftd.pending} pending`);
+    } catch (error) {
+      console.error(`[ats-daily-report] Error computing ${branch}:`, error);
+    }
+  }
+
+  // If testEmail provided, just return the data for preview
+  if (testEmail === 'preview') {
+    return { reports, targetDate };
+  }
+
+  // Build combined email
+  const dashboardUrl = `${env.FRONTEND_URL || 'https://mcnhrms.teammas.in'}/recruitment/candidates`;
+  const combinedFtd = reports.reduce((acc, r) => ({
+    walkin: acc.walkin + r.ftd.walkin,
+    selected: acc.selected + r.ftd.selected,
+    pending: acc.pending + r.ftd.pending
+  }), { walkin: 0, selected: 0, pending: 0 });
+
+  // Combine all intervention points
+  const allInterventions: any[] = [];
+  for (const report of reports) {
+    allInterventions.push(...report.interventions);
+  }
+
+  // Get branch head emails
+  const [branchHeadRows] = await db.execute<RowDataPacket[]>(
+    `SELECT DISTINCT au.email
+     FROM auth_user au
+     JOIN user_roles ur ON ur.user_id = au.id
+     WHERE ur.role_key IN ('branch_head', 'hr_admin', 'super_admin', 'management')
+       AND ur.active_status = 1
+       AND au.email IS NOT NULL`,
+    []
+  );
+
+  const recipients = testEmail || branchHeadRows.map(r => r.email).join(',') || 'shivam.giri@teammas.in';
+
+  // Create a simple combined HTML email
+  let interventionHtml = '';
+  if (allInterventions.length > 0) {
+    interventionHtml = `<h3 style="color:#dc2626;">⚠ Top Management Intervention Points</h3><ul>`;
+    for (const int of allInterventions) {
+      interventionHtml += `<li>${int.message}</li>`;
+    }
+    interventionHtml += `</ul>`;
+  }
+
+  let branchTables = '';
+  for (const report of reports) {
+    branchTables += `<h3>${report.branchName} - FTD Metrics</h3>
+      <table border="1" cellpadding="5" style="border-collapse:collapse;">
+        <tr><td>Walk-ins</td><td>${report.ftd.walkin}</td></tr>
+        <tr><td>Selected</td><td>${report.ftd.selected}</td></tr>
+        <tr><td>Rejected</td><td>${report.ftd.rejected}</td></tr>
+        <tr><td>Pending Submission</td><td style="color:${report.ftd.pending > 0 ? '#dc2626' : '#000'}"><strong>${report.ftd.pending}</strong></td></tr>
+        <tr><td>Selection %</td><td>${report.ftd.selectionPct}</td></tr>
+      </table>`;
+
+    if (report.recruiterFtd.length > 0) {
+      branchTables += `<h4>Recruiter Breakdown</h4><table border="1" cellpadding="5" style="border-collapse:collapse;"><tr><th>Recruiter</th><th>Sourced</th><th>Attended</th><th>Pending</th></tr>`;
+      for (const rec of report.recruiterFtd) {
+        if (rec.pendingCount > 0) {
+          branchTables += `<tr><td>${rec.recruiter}</td><td>${rec.sourced}</td><td>${rec.attended}</td><td style="color:#dc2626"><strong>${rec.pendingCount}</strong></td></tr>`;
+        }
+      }
+      branchTables += `</table>`;
+    }
+  }
+
+  const html = `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;">
+    <h2>Daily Hiring Report - ${targetDate}</h2>
+    <p>Combined: ${combinedFtd.walkin} walk-ins, ${combinedFtd.selected} selected, <strong style="color:#dc2626">${combinedFtd.pending} pending</strong></p>
+    ${interventionHtml}
+    ${branchTables}
+    <hr>
+    <p><a href="${dashboardUrl}">Open ATS Dashboard</a></p>
+  </body></html>`;
+
+  const subject = `[Daily Report] ${targetDate} | ${combinedFtd.walkin} Walk-ins · ${combinedFtd.selected} Selected · ${combinedFtd.pending} Pending`;
+
+  // Send email
+  try {
+    const transporter = nodemailer.createTransport({
+      host: env.SMTP_HOST || 'smtp.gmail.com',
+      port: Number(env.SMTP_PORT || 587),
+      secure: false,
+      auth: {
+        user: env.SMTP_USER || '',
+        pass: env.SMTP_PASS || '',
+      },
+    });
+
+    const result = await transporter.sendMail({
+      from: `"MAS HRMS Daily Report" <${env.SMTP_FROM || env.SMTP_USER}>`,
+      to: recipients,
+      subject,
+      html,
+    });
+
+    console.log(`[ats-daily-report] Email sent to ${recipients}: ${result.messageId}`);
+    return { success: true, messageId: result.messageId, recipients, stats: combinedFtd };
+  } catch (error) {
+    console.error('[ats-daily-report] Email send failed:', error);
+    return { success: false, error: String(error), stats: combinedFtd };
   }
 }
 

@@ -1,5 +1,11 @@
 # MAS Callnet PeopleOS / HRMS — Claude Project Instructions
 
+## ⛔ HARD STOP — NEVER DEPLOY WITHOUT EXPLICIT USER APPROVAL
+
+**DO NOT run `git push`, `plink`, `pm2`, `npm run build` on the production server, or any deployment command without the user typing explicit approval in the current conversation.**
+
+The production URL https://mcnhrms.teammas.in is live and actively used. An unsanctioned deploy — even a clean one — disrupts real users. "The code builds locally" is NOT approval to deploy. "Show me the demo" is NOT approval to deploy. Wait for the user to say something like "deploy it", "push to server", or "go live".
+
 ## Product Goal
 
 Build a production-grade MAS Callnet workforce platform for a multi-branch BPO/call-centre organisation, while preserving the modules that already work.

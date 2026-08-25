@@ -1,0 +1,107 @@
+diff --git a/src/pages/NativeITProvisioningTracker.tsx b/src/pages/NativeITProvisioningTracker.tsx
+index 3f25c9ba..060a7ede 100644
+--- a/src/pages/NativeITProvisioningTracker.tsx
++++ b/src/pages/NativeITProvisioningTracker.tsx
+@@ -770,31 +770,31 @@ export default function NativeITProvisioningTracker() {
+     ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(","));
+     const csv = [headers.join(","), ...lines].join("\n");
+     const blob = new Blob([csv], { type: "text/csv" });
+     const url  = URL.createObjectURL(blob);
+     const a    = document.createElement("a");
+     a.href = url; a.download = `ad-compliance-report-${new Date().toISOString().slice(0,10)}.csv`;
+     a.click(); URL.revokeObjectURL(url);
+   }
+ 
+   // ── Data fetch ───────────────────────────────────────────────────────────────
+-  // "Fresh start from today" (2026-08-24): IT/Admin/WFM provisioning only show requests
+-  // created on or after today — not Appointment Letters, which keeps full history. Hides rows
+-  // from the list view only; no it_provisioning_request row is deleted or modified.
++  // "Fresh start from 2026-08-24": IT/Admin/WFM provisioning only show requests
++  // created on or after the cutover date — not Appointment Letters, which keeps full history.
++  // Fixed date so pending tasks from prior days remain visible in the queue each day.
+   const FRESH_START_PATHS = ["/provisioning/it", "/provisioning/admin", "/provisioning/wfm-alignment"];
+-  const todayIso = new Date().toISOString().slice(0, 10);
++  const FRESH_START_CUTOVER = "2026-08-24";
+   const queryParams = {
+     ...(statusFilter !== "all" && { status: statusFilter }),
+     ...(typeFilter   !== "all" && { request_type: typeFilter }),
+     ...(roleFilter   !== "all" && { assigned_role: roleFilter }),
+     ...(taskFilter   !== "all" && { task_code: taskFilter }),
+-    ...(FRESH_START_PATHS.includes(location.pathname) && { created_from: todayIso }),
++    ...(FRESH_START_PATHS.includes(location.pathname) && { created_from: FRESH_START_CUTOVER }),
+     page, limit: LIMIT,
+   };
+ 
+   const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
+     queryKey: ["it-provisioning", queryParams],
+     queryFn: async () => {
+       const qs = new URLSearchParams(
+         Object.entries(queryParams).filter(([, v]) => v != null && v !== "") as [string, string][]
+       ).toString();
+       const res = await hrmsApi.get<{ success: boolean; data: ProvisioningRequest[]; total: number }>(
+diff --git a/src/pages/payroll/PfManagement.tsx b/src/pages/payroll/PfManagement.tsx
+index be1d3400..abeff171 100644
+--- a/src/pages/payroll/PfManagement.tsx
++++ b/src/pages/payroll/PfManagement.tsx
+@@ -3,56 +3,61 @@
+  * Tabs: Creation Queue (formerly /payroll/pf-creation-queue)
+  *       Batches        (formerly /payroll/pf-batches)
+  */
+ import { useSearchParams } from "react-router-dom";
+ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+ import { DashboardLayout } from "@/components/layout/DashboardLayout";
+ import PfCreationQueuePage from "./PfCreationQueuePage";
+ import PfBatchesPage from "./PfBatchesPage";
+ import EcrDownloadTab from "./EcrDownloadTab";
+ import PfEstablishmentsTab from "./PfEstablishmentsTab";
++import EsiRegDocsTab from "./EsiRegDocsTab";
+ 
+ export default function PfManagement() {
+   const [searchParams, setSearchParams] = useSearchParams();
+   const defaultTab = searchParams.get("tab") ?? "queue";
+ 
+   return (
+     <DashboardLayout>
+       <div className="p-6 max-w-7xl mx-auto space-y-5">
+         <div>
+           <h1 className="text-2xl font-semibold text-slate-900">PF / EPFO Management</h1>
+           <p className="text-sm text-muted-foreground mt-0.5">Manage bulk PF registration — validate new joiner queue entries, create EPFO batches, and track acknowledgements.</p>
+         </div>
+         <Tabs defaultValue={defaultTab} onValueChange={v => setSearchParams(v === "queue" ? {} : { tab: v })}>
+           <TabsList className="mb-2">
+             <TabsTrigger value="queue">Creation Queue</TabsTrigger>
+             <TabsTrigger value="batches">Batches</TabsTrigger>
+             <TabsTrigger value="ecr">ECR Download</TabsTrigger>
+             <TabsTrigger value="establishments">Establishments</TabsTrigger>
++            <TabsTrigger value="esi-reg">ESI Reg. Docs</TabsTrigger>
+           </TabsList>
+           {/* Render children without their own DashboardLayout wrapping */}
+           <TabsContent value="queue" className="mt-0">
+             <PfCreationQueueInner />
+           </TabsContent>
+           <TabsContent value="batches" className="mt-0">
+             <PfBatchesInner />
+           </TabsContent>
+           <TabsContent value="ecr" className="mt-0">
+             <div className="py-4">
+               <EcrDownloadTab />
+             </div>
+           </TabsContent>
+           <TabsContent value="establishments" className="mt-0">
+             <div className="py-4">
+               <PfEstablishmentsTab />
+             </div>
+           </TabsContent>
++          <TabsContent value="esi-reg" className="mt-0">
++            <EsiRegDocsTab />
++          </TabsContent>
+         </Tabs>
+       </div>
+     </DashboardLayout>
+   );
+ }
+ 
+ // Inner wrappers strip the outer DashboardLayout from each child page by
+ // re-exporting the inner content. Since those pages export a default component
+ // that includes DashboardLayout, we render them in a portal-like div and
+ // override the layout nesting via CSS containment.

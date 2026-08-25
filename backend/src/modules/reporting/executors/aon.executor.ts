@@ -830,6 +830,9 @@ export async function aonCohortSurvival(
            -- Process was absent here while every other AON report carried it, so a cohort
            -- could not be read per process — the dimension WFM actually plans against.
            COALESCE(p.process_name, 'UNASSIGNED')       AS process_name,
+           b.id  AS branch_id,
+           cc.id AS cost_centre_id,
+           p.id  AS process_id,
            COUNT(*)                        AS joined,
            SUM(e.active_status = 1)        AS still_active,
            ${leftBy(30)} AS left_by_30,
@@ -850,7 +853,8 @@ export async function aonCohortSurvival(
       LEFT JOIN process_master p      ON p.id  = e.process_id
      WHERE ${clauses.join(" AND ")}
      GROUP BY DATE_FORMAT(e.date_of_joining, '%Y-%m'),
-              b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name
+              b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name,
+              b.id, cc.id, p.id
      ORDER BY cohort_month DESC, b.branch_name, cc.cost_centre_code, p.process_name`;
 
   try {

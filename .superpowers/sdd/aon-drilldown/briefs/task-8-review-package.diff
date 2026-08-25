@@ -1,0 +1,355 @@
+=== git log (3ddb0f02..1df0308f, path-filtered to Task 8's file) ===
+1df0308f fix(analytics): headline attrition rate tile read oldest month, not latest
+d7a97727 feat(analytics): wire drill-down + headline attrition rate into AON Overview tab
+
+=== diff --stat ===
+ src/components/reports/views/AonAnalyticsView.tsx | 78 +++++++++++++++++++----
+ 1 file changed, 64 insertions(+), 14 deletions(-)
+
+=== full diff ===
+diff --git a/src/components/reports/views/AonAnalyticsView.tsx b/src/components/reports/views/AonAnalyticsView.tsx
+index 10a5cb43..07d96461 100644
+--- a/src/components/reports/views/AonAnalyticsView.tsx
++++ b/src/components/reports/views/AonAnalyticsView.tsx
+@@ -35,30 +35,33 @@ import { AlertTriangle, Users, LogOut, Activity, TrendingDown } from "lucide-rea
+ import { hrmsApi } from "@/lib/hrmsApi";
+ import {
+   AXIS_TICK,
+   ChartCard,
+   ChartSkeleton,
+   EmptyState,
+   GRID_PROPS,
+   SERIES,
+   STATUS,
+   StatTile,
+   TOOLTIP_STYLE,
+   num,
+   pct,
+   ratio,
+ } from "@/components/analytics/analytics-kit";
++import { DrillDownProvider, useDrillDown } from "@/components/analytics/drilldown/DrillDownProvider";
++import { EmployeeListPanel } from "@/components/analytics/drilldown/EmployeeListPanel";
++import { EmployeeDetailDrawer } from "@/components/analytics/drilldown/EmployeeDetailDrawer";
+ 
+ /* ── Shared vocabulary ─────────────────────────────────────────────────────── */
+ 
+ /**
+  * Bucket order is fixed here rather than sorted from the data. A string sort puts "90+"
+  * ahead of "0-30" and the axis reads backwards; the backend orders correctly but the
+  * client re-groups, so the order has to be restated.
+  */
+ const BUCKETS = ["0-30", "31-60", "61-90", "90+"] as const;
+ type Bucket = (typeof BUCKETS)[number];
+ 
+ const BUCKET_COLOR: Record<Bucket, string> = {
+   "0-30": SERIES[7],  // red — the bucket that loses 43% of all leavers
+   "31-60": SERIES[1], // orange
+   "61-90": SERIES[3], // yellow
+@@ -89,31 +92,31 @@ type GroupBy = (typeof GROUP_BY)[number]["value"];
+ type Row = Record<string, unknown>;
+ const n = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+ const s = (v: unknown) => (v == null ? "" : String(v));
+ 
+ /* ── Data access ───────────────────────────────────────────────────────────── */
+ 
+ interface ApiResponse { data?: Row[]; totalCount?: number; meta?: { totalCount?: number } }
+ 
+ /**
+  * The grid pages at 100; these charts aggregate, so they ask for the whole result. The
+  * largest of the five (aon-bucket-attrition over twelve months) returned 573 rows live,
+  * so 5,000 leaves headroom without inviting an unbounded transfer.
+  */
+ const CHART_LIMIT = 5000;
+ 
+-function useReport(code: string, params: Record<string, string>, enabled = true) {
++export function useReport(code: string, params: Record<string, string>, enabled = true) {
+   const qs = new URLSearchParams({ ...params, limit: String(CHART_LIMIT), offset: "0" });
+   return useQuery({
+     queryKey: [code, qs.toString()],
+     enabled,
+     /*
+      * One attempt, not four.
+      *
+      * These are heavy aggregates: measured live, headcount returns in ~2s and attrition in
+      * 8-18s, but aon-bucket-shrinkage scans twelve months of attendance and reliably
+      * exceeds the gateway's 120s limit, coming back 504 with an HTML error body. With
+      * react-query's default retry of 3, that one dead query became four consecutive
+      * two-minute requests — eight minutes of load on a database this codebase already
+      * knows to be contended, with the view stuck loading the whole time. A query that
+      * times out at the gateway will time out again; retrying it only hurts.
+      */
+@@ -175,31 +178,65 @@ function GapBanner({ items }: { items: Array<{ label: string; detail: string }>
+           <ul className="space-y-0.5">
+             {items.map(it => (
+               <li key={it.label} className="text-[11.5px] leading-snug text-amber-900">
+                 <span className="font-semibold">{it.label}:</span> {it.detail}
+               </li>
+             ))}
+           </ul>
+         </div>
+       </div>
+     </div>
+   );
+ }
+ 
+ /* ── Overview ──────────────────────────────────────────────────────────────── */
+ 
+-function Overview({ from, to, branchId }: { from: string; to: string; branchId: string }) {
++/**
++ * One heatmap cell, made clickable.
++ *
++ * `pushChip` here bypasses Panel 1 (SliceDetailPanel) and opens Panel 2 (Employee List)
++ * directly: a heatmap cell already IS one specific group+bucket combination — both
++ * dimensions of this tab's drill path at once — so there's no intermediate narrowing step
++ * needed before showing people. SliceDetailPanel stays reserved for Cohort Survival / Deep
++ * Dive wiring in a future plan, where narrowing happens one dimension at a time.
++ */
++function DrillCell({
++  value, max, metric, groupBy, groupKey, bucket,
++}: { value: number; max: number; metric: "headcount" | "exits" | "shrinkage"; groupBy: GroupBy; groupKey: string; bucket: Bucket }) {
++  const { pushChip, openEmployeeList } = useDrillDown();
++  const dimension = groupBy === "cost_centre_name" ? "costCentre" : groupBy === "process_name" ? "process" : "branch";
++
++  return (
++    <button
++      type="button"
++      onClick={() => {
++        pushChip({ dimension, value: groupKey, label: groupKey });
++        pushChip({ dimension: "aonBucket", value: bucket, label: `${bucket}d` });
++        openEmployeeList();
++      }}
++      className="inline-block cursor-pointer rounded px-1.5 py-0.5 transition-opacity hover:opacity-80"
++      style={{
++        backgroundColor: `rgba(227, 73, 72, ${Math.min(0.75, (value / max) * 0.6)})`,
++        color: value / max > 0.55 ? "#fff" : "#0f172a",
++      }}
++    >
++      {metric === "shrinkage" ? pct(value) : num(value)}
++    </button>
++  );
++}
++
++function Overview({ from, to, branchId, headlineRate }: { from: string; to: string; branchId: string; headlineRate: ReturnType<typeof useReport> }) {
+   const [groupBy, setGroupBy] = useState<GroupBy>("cost_centre_name");
+   const [metric, setMetric] = useState<"headcount" | "exits" | "shrinkage">("headcount");
+ 
+   const base = branchId ? { branchId } : {};
+   const hc = useReport("aon-bucket-headcount", base);
+   const at = useReport("aon-bucket-attrition", { ...base, from, to });
+   /*
+    * Shrinkage is fetched ONLY when its metric is selected.
+    *
+    * It scans attendance_daily_record, and although that table is small (131,906 rows in
+    * total, of which twelve months is essentially all of it) the aggregate takes 65s for a
+    * three-month window on this database and exceeds the 120s gateway limit over twelve.
+    * The cost is contention, not volume — Threads_running was 27 while measuring — so
+    * narrowing the window does not rescue it.
+    *
+@@ -347,55 +384,65 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId:
+    */
+   const failure = error
+     ? (error as Error).message?.toLowerCase().includes("timeout") ||
+       (error as Error).message?.includes("504")
+       ? "This metric is taking longer than the 120-second limit and was stopped. Narrow the date range, or pick a single branch, and try again."
+       : (error as Error).message || "Failed to load this metric."
+     : null;
+ 
+   const MetricFailure = () => (
+     <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+       {failure}
+     </div>
+   );
+ 
+   return (
++    <DrillDownProvider>
+     <div className="space-y-4">
+       <GapBanner
+         items={[
+           ...(unassignedCc > 0
+             ? [{
+                 label: "Cost centre unassigned",
+                 detail: `${num(unassignedCc)} active employees carry no cost centre. Onboarding does capture one — it is a required field on the employment offer — but no employee-creation path writes it to the employee record, so it only ever arrives via a manual edit. Recent joiners are therefore almost all UNASSIGNED. Branch is unaffected: group by Branch for a complete picture.`,
+               }]
+             : []),
+           ...(zeroAttendanceGroups > 0
+             ? [{
+                 label: "Attendance coverage",
+                 detail: `${zeroAttendanceGroups} group/bucket combinations recorded zero worked days in this window and read as 100% shrinkage. New joiners are also often not yet enrolled on biometric, so a 0-30 shrinkage figure rests on fewer people than the bucket contains — read Employee Days alongside it.`,
+               }]
+             : []),
+           {
+             label: "Exit reason",
+             detail: "Not captured in this system — under 1% of leavers have one recorded. This view shows what kind of joiner leaves and when, never why.",
+           },
+         ]}
+       />
+ 
+       {failure && <MetricFailure />}
+ 
+       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
++        {!loading && !headlineRate.isLoading && headlineRate.data?.[headlineRate.data.length - 1] && (
++          <StatTile
++            label="Overall Attrition Rate"
++            value={pct(Number(headlineRate.data[headlineRate.data.length - 1].attrition_rate_pct ?? NaN))}
++            denominator={`${num(Number(headlineRate.data[headlineRate.data.length - 1].exits ?? 0))} exits over avg ${num(Number(headlineRate.data[headlineRate.data.length - 1].avg_total_headcount ?? 0))} headcount`}
++            intent="neutral"
++            icon={<TrendingDown className="h-4 w-4" />}
++          />
++        )}
+         {loading
+           ? BUCKETS.map(b => <ChartSkeleton key={b} height={104} />)
+           : failure
+           ? null
+           : tiles.map(t => (
+               <StatTile
+                 key={t.bucket}
+                 label={`AON ${t.bucket} days`}
+                 value={metric === "exits" ? num(t.exits) : metric === "shrinkage" ? pct(t.shrinkage ?? NaN) : num(t.headcount)}
+                 denominator={
+                   metric === "exits"
+                     ? `${pct(t.exitShare ?? NaN)} of exits in range · ${headReady ? `avg over ${num(t.headcount)} active now` : "headcount unavailable"}`
+                     : metric === "shrinkage"
+                       ? `over ${num(t.empDays)} employee-days`
+                       : `${pct(t.headShare ?? NaN)} of active headcount · ${exitsReady ? `${num(t.exits)} exits in range` : "exits unavailable"}`
+@@ -448,41 +495,38 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId:
+                 </tr>
+               </thead>
+               <tbody>
+                 {grid.map(row => {
+                   const max = Math.max(...row.vals.map(v => v ?? 0), 1);
+                   return (
+                     <tr key={row.key} className="border-b border-slate-100 hover:bg-slate-50">
+                       <td className="max-w-[240px] truncate px-2 py-1.5 font-medium text-slate-800" title={row.key}>
+                         {row.key}
+                       </td>
+                       {row.vals.map((v, i) => (
+                         <td key={BUCKETS[i]} className="px-2 py-1.5 text-right tabular-nums">
+                           {v == null ? (
+                             <span className="text-slate-300">—</span>
+                           ) : (
+-                            <span
+-                              className="inline-block rounded px-1.5 py-0.5"
+-                              style={{
+-                                // Intensity is relative to the row, so a small cost centre
+-                                // is still readable next to a large one.
+-                                backgroundColor: `rgba(227, 73, 72, ${Math.min(0.75, (v / max) * 0.6)})`,
+-                                color: v / max > 0.55 ? "#fff" : "#0f172a",
+-                              }}
+-                            >
+-                              {metric === "shrinkage" ? pct(v) : num(v)}
+-                            </span>
++                            <DrillCell
++                              value={v}
++                              max={max}
++                              metric={metric}
++                              groupBy={groupBy}
++                              groupKey={row.key}
++                              bucket={BUCKETS[i]}
++                            />
+                           )}
+                         </td>
+                       ))}
+                       <td className="px-2 py-1.5 text-right font-semibold tabular-nums text-slate-900">
+                         {row.total == null ? "—" : metric === "shrinkage" ? pct(row.total) : num(row.total)}
+                       </td>
+                     </tr>
+                   );
+                 })}
+               </tbody>
+             </table>
+           </div>
+         )}
+       </ChartCard>
+ 
+@@ -511,31 +555,35 @@ function Overview({ from, to, branchId }: { from: string; to: string; branchId:
+                     key={b}
+                     type="monotone"
+                     dataKey={b}
+                     name={`${b} days`}
+                     stroke={BUCKET_COLOR[b]}
+                     strokeWidth={b === "0-30" ? 2.5 : 1.75}
+                     dot={{ r: 2 }}
+                     connectNulls={false}
+                   />
+                 ))}
+               </LineChart>
+             </ResponsiveContainer>
+           )}
+         </ChartCard>
+       )}
++
++      <EmployeeListPanel open metric={metric === "headcount" ? "headcount" : metric === "exits" ? "exits" : "shrinkage"} from={from} to={to} />
++      <EmployeeDetailDrawer />
+     </div>
++    </DrillDownProvider>
+   );
+ }
+ 
+ /* ── Cohort survival ───────────────────────────────────────────────────────── */
+ 
+ function CohortSurvival({ from, to, branchId }: { from: string; to: string; branchId: string }) {
+   const q = useReport("aon-cohort-survival", { from, to, ...(branchId ? { branchId } : {}) });
+ 
+   /**
+    * Cohorts are rolled up across branch and cost centre here. Survival must be
+    * recomputed from joined/left counts — averaging the per-row percentages would weight
+    * a one-person cost centre the same as a 200-person one.
+    *
+    * A horizon is only shown once every contributing cohort row has reached it; the
+    * backend nulls immature horizons, and a cohort mixing mature and immature rows would
+@@ -810,30 +858,32 @@ function isoLocal(d: Date) {
+   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+ }
+ 
+ export default function AonAnalyticsView() {
+   const today = new Date();
+   const [tab, setTab] = useState<"overview" | "cohort" | "deep">("overview");
+   const [from, setFrom] = useState(isoLocal(new Date(today.getFullYear() - 1, today.getMonth(), today.getDate())));
+   const [to, setTo] = useState(isoLocal(today));
+   const [branchId, setBranchId] = useState("");
+ 
+   const branches = useQuery({
+     queryKey: ["org-branches-aon"],
+     queryFn: () => hrmsApi.get<{ data: { id: string; branch_name: string }[] }>("/api/org/branches"),
+   });
+ 
++  const headline = useReport("aon-overall-attrition-rate", branchId ? { branchId, from, to } : { from, to });
++
+   return (
+     <div className="space-y-4 p-6">
+       <header className="space-y-1">
+         <h2 className="text-lg font-bold text-slate-900">AON &amp; Attrition Analytics</h2>
+         <p className="text-[12px] leading-snug text-slate-500">
+           AON (Age on Network) is days since joining, bucketed 0-30 / 31-60 / 61-90 / 90+. It is derived
+           from the joining date on every read, so a new joiner appears in the 0-30 bucket the same day —
+           nothing is stored and nothing needs to be recalculated.
+         </p>
+       </header>
+ 
+       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+         <Field label={tab === "cohort" ? "Joined from" : "From"}>
+           <input type="date" className={inputCls} value={from} onChange={e => setFrom(e.target.value)} />
+         </Field>
+@@ -843,21 +893,21 @@ export default function AonAnalyticsView() {
+         <Field label="Branch">
+           <select className={inputCls} value={branchId} onChange={e => setBranchId(e.target.value)}>
+             <option value="">All branches</option>
+             {(branches.data?.data ?? []).map(b => (
+               <option key={b.id} value={b.id}>{b.branch_name}</option>
+             ))}
+           </select>
+         </Field>
+         <div className="ml-auto flex gap-1 rounded-lg bg-slate-50 p-1">
+           <TabButton active={tab === "overview"} onClick={() => setTab("overview")}>Overview</TabButton>
+           <TabButton active={tab === "cohort"} onClick={() => setTab("cohort")}>Cohort Survival</TabButton>
+           <TabButton active={tab === "deep"} onClick={() => setTab("deep")}>Attrition Deep Dive</TabButton>
+         </div>
+       </div>
+ 
+-      {tab === "overview" && <Overview from={from} to={to} branchId={branchId} />}
++      {tab === "overview" && <Overview from={from} to={to} branchId={branchId} headlineRate={headline} />}
+       {tab === "cohort" && <CohortSurvival from={from} to={to} branchId={branchId} />}
+       {tab === "deep" && <DeepDive from={from} to={to} branchId={branchId} />}
+     </div>
+   );
+ }

@@ -99,6 +99,19 @@ export async function aonDrilldownEmployees(
     clauses.push("e.active_status = 1");
     const bucketClause = aonBucketClause(filters.aonBucket);
     if (bucketClause) clauses.push(bucketClause);
+
+    // Independent, optional narrowing filter alongside aonBucket -- a caller drilling from
+    // Cohort Survival passes cohortMonth (and no aonBucket); a caller drilling from the
+    // Overview heatmap passes aonBucket (and no cohortMonth). Both may be present at once;
+    // neither is mutually exclusive with the other in the SQL.
+    const cohortMonth =
+      typeof filters.cohortMonth === "string" && /^\d{4}-\d{2}$/.test(filters.cohortMonth)
+        ? filters.cohortMonth
+        : null;
+    if (cohortMonth) {
+      clauses.push(`DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m') = ?`);
+      params.push(cohortMonth);
+    }
   }
 
   // Exit context: a plain LEFT JOIN straight to the manager's own employees row. An earlier

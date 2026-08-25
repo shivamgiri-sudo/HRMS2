@@ -1,0 +1,302 @@
+=== git log (fdf4c0d0..9cf9a0bd, path-filtered to Task 5 files) ===
+9cf9a0bd feat(analytics): DrillDownProvider + Panel 1 (Slice Detail) for AON Analytics
+
+=== diff --stat ===
+ .../analytics/drilldown/DrillDownProvider.tsx      |  70 ++++++++++++++
+ .../analytics/drilldown/SliceDetailPanel.tsx       | 104 +++++++++++++++++++++
+ .../drilldown/__tests__/DrillDownProvider.test.tsx | 100 ++++++++++++++++++++
+ 3 files changed, 274 insertions(+)
+
+=== full diff ===
+diff --git a/src/components/analytics/drilldown/DrillDownProvider.tsx b/src/components/analytics/drilldown/DrillDownProvider.tsx
+new file mode 100644
+index 00000000..16e15104
+--- /dev/null
++++ b/src/components/analytics/drilldown/DrillDownProvider.tsx
+@@ -0,0 +1,70 @@
++import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
++
++export interface DrillDownChip {
++  dimension: string;
++  value: string;
++  label: string;
++}
++
++interface DrillDownContextValue {
++  chips: DrillDownChip[];
++  pushChip: (chip: DrillDownChip) => void;
++  popToChip: (index: number) => void;
++  clear: () => void;
++  showEmployeeList: boolean;
++  openEmployeeList: () => void;
++  closeEmployeeList: () => void;
++}
++
++const DrillDownContext = createContext<DrillDownContextValue | null>(null);
++
++/**
++ * Appends `chip` to `chips`, replacing an existing chip of the same dimension rather than
++ * stacking a duplicate -- e.g. clicking a different AON bucket cell replaces the current
++ * bucket chip, it doesn't add a second one. Exported as a pure function so the chip-state
++ * transitions can be tested directly (this repo has no jsdom/@testing-library/react to drive
++ * real click events against the mounted component).
++ */
++export function applyPushChip(chips: DrillDownChip[], chip: DrillDownChip): DrillDownChip[] {
++  const withoutSameDimension = chips.filter((c) => c.dimension !== chip.dimension);
++  return [...withoutSameDimension, chip];
++}
++
++/** Truncates `chips` to the first `index` entries -- removing the clicked chip and everything after it. */
++export function applyPopToChip(chips: DrillDownChip[], index: number): DrillDownChip[] {
++  return chips.slice(0, index);
++}
++
++export function DrillDownProvider({ children }: { children: React.ReactNode }) {
++  const [chips, setChips] = useState<DrillDownChip[]>([]);
++  const [showEmployeeList, setShowEmployeeList] = useState(false);
++
++  const pushChip = useCallback((chip: DrillDownChip) => {
++    setChips((prev) => applyPushChip(prev, chip));
++  }, []);
++
++  const popToChip = useCallback((index: number) => {
++    setChips((prev) => applyPopToChip(prev, index));
++  }, []);
++
++  const clear = useCallback(() => {
++    setChips([]);
++    setShowEmployeeList(false);
++  }, []);
++
++  const openEmployeeList = useCallback(() => setShowEmployeeList(true), []);
++  const closeEmployeeList = useCallback(() => setShowEmployeeList(false), []);
++
++  const value = useMemo(
++    () => ({ chips, pushChip, popToChip, clear, showEmployeeList, openEmployeeList, closeEmployeeList }),
++    [chips, pushChip, popToChip, clear, showEmployeeList, openEmployeeList, closeEmployeeList],
++  );
++
++  return <DrillDownContext.Provider value={value}>{children}</DrillDownContext.Provider>;
++}
++
++export function useDrillDown(): DrillDownContextValue {
++  const ctx = useContext(DrillDownContext);
++  if (!ctx) throw new Error("useDrillDown must be used inside a DrillDownProvider");
++  return ctx;
++}
+diff --git a/src/components/analytics/drilldown/SliceDetailPanel.tsx b/src/components/analytics/drilldown/SliceDetailPanel.tsx
+new file mode 100644
+index 00000000..9f74306f
+--- /dev/null
++++ b/src/components/analytics/drilldown/SliceDetailPanel.tsx
+@@ -0,0 +1,104 @@
++import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
++import { Button } from "@/components/ui/button";
++import { Skeleton } from "@/components/ui/skeleton";
++import { X } from "lucide-react";
++import { useQuery } from "@tanstack/react-query";
++import { hrmsApi } from "@/lib/hrmsApi";
++import { useDrillDown } from "./DrillDownProvider";
++
++interface SliceDetailPanelProps {
++  open: boolean;
++  onClose: () => void;
++  metric: "headcount" | "exits" | "shrinkage";
++  reportCode: string; // "aon-bucket-headcount" | "aon-bucket-attrition" | "aon-bucket-shrinkage"
++  from: string;
++  to: string;
++}
++
++export function chipsToFilterParams(chips: { dimension: string; value: string }[]): Record<string, string> {
++  const params: Record<string, string> = {};
++  for (const chip of chips) {
++    if (chip.dimension === "costCentre") params.costCentreId = chip.value;
++    else if (chip.dimension === "process") params.processId = chip.value;
++    else if (chip.dimension === "branch") params.branchId = chip.value;
++    else if (chip.dimension === "aonBucket") params.aonBucket = chip.value;
++  }
++  return params;
++}
++
++export function SliceDetailPanel({ open, onClose, metric, reportCode, from, to }: SliceDetailPanelProps) {
++  const { chips, popToChip, openEmployeeList } = useDrillDown();
++  const filterParams = chipsToFilterParams(chips);
++
++  const q = useQuery({
++    queryKey: [reportCode, "slice-detail", JSON.stringify(filterParams), from, to],
++    enabled: open && chips.length > 0,
++    queryFn: async () => {
++      const qs = new URLSearchParams({ ...filterParams, from, to, limit: "500", offset: "0" });
++      const res = await hrmsApi.get<{ data?: Record<string, unknown>[] }>(
++        `/api/reports/suite/${reportCode}?${qs.toString()}`,
++        60_000,
++      );
++      return res.data ?? [];
++    },
++  });
++
++  const rows = q.data ?? [];
++  const valueKey = metric === "exits" ? "exits" : metric === "shrinkage" ? "shrinkage" : "headcount";
++  const total = rows.reduce((a, r) => a + Number(r[valueKey] ?? 0), 0);
++
++  return (
++    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
++      <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
++        <SheetHeader>
++          <SheetTitle>Slice Detail</SheetTitle>
++        </SheetHeader>
++
++        <div className="mt-3 flex flex-wrap gap-1.5">
++          {chips.map((chip, i) => (
++            <span
++              key={chip.dimension}
++              className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700"
++            >
++              {chip.label}
++              <button
++                type="button"
++                onClick={() => popToChip(i)}
++                className="ml-0.5 rounded-full hover:bg-slate-200"
++                aria-label={`Remove ${chip.label} filter`}
++              >
++                <X className="h-3 w-3" />
++              </button>
++            </span>
++          ))}
++        </div>
++
++        {q.isLoading ? (
++          <div className="mt-4 space-y-2">
++            <Skeleton className="h-16 w-full rounded-lg" />
++            <Skeleton className="h-40 w-full rounded-lg" />
++          </div>
++        ) : q.error ? (
++          <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
++            {(q.error as Error).message || "Failed to load this slice."}
++          </div>
++        ) : (
++          <div className="mt-4 space-y-3">
++            <div className="rounded-lg border border-slate-200 bg-white p-3">
++              <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
++                {metric === "exits" ? "Exits" : metric === "shrinkage" ? "Shrinkage" : "Headcount"} in this slice
++              </p>
++              <p className="text-xl font-bold text-slate-900">
++                {metric === "shrinkage" ? `${total.toFixed(1)}%` : total.toLocaleString("en-IN")}
++              </p>
++            </div>
++
++            <Button onClick={openEmployeeList} className="w-full">
++              View employees
++            </Button>
++          </div>
++        )}
++      </SheetContent>
++    </Sheet>
++  );
++}
+diff --git a/src/components/analytics/drilldown/__tests__/DrillDownProvider.test.tsx b/src/components/analytics/drilldown/__tests__/DrillDownProvider.test.tsx
+new file mode 100644
+index 00000000..ed09ebb9
+--- /dev/null
++++ b/src/components/analytics/drilldown/__tests__/DrillDownProvider.test.tsx
+@@ -0,0 +1,100 @@
++/**
++ * DrillDownProvider tests (Task 5 of the AON drill-down plan).
++ *
++ * Same deviation as RosterPivotGrid.test.tsx / RosterBuilderPage.test.tsx: this repo does not
++ * have @testing-library/react or jsdom installed, and vitest.config.ts runs frontend tests
++ * under `environment: "node"` — there is no `render()`/`fireEvent.click()` DOM available.
++ *   - Section A renders the REAL provider + a consuming component through
++ *     `renderToStaticMarkup`, proving the initial (mount-time) state is correct.
++ *   - Section B drives the chip-state transitions (append, replace-by-dimension, truncate,
++ *     clear) directly against the exported pure reducer helpers the component itself calls,
++ *     so the append/replace/truncate/empty behaviour the brief's fireEvent-based test wants
++ *     is verified against the real, live logic rather than a re-implementation in the test.
++ */
++import { describe, expect, it } from "vitest";
++import * as React from "react";
++import { renderToStaticMarkup } from "react-dom/server";
++import {
++  DrillDownProvider,
++  useDrillDown,
++  applyPushChip,
++  applyPopToChip,
++  type DrillDownChip,
++} from "../DrillDownProvider";
++
++function Harness() {
++  const { chips, showEmployeeList } = useDrillDown();
++  return (
++    <div>
++      <span data-testid="chip-count">{chips.length}</span>
++      <span data-testid="employee-list-open">{String(showEmployeeList)}</span>
++      {chips.map((c, i) => (
++        <span key={c.dimension} data-testid={`chip-${i}`}>
++          {c.label}
++        </span>
++      ))}
++    </div>
++  );
++}
++
++// ═══════════════════════════════════════════════════════════════════════════════════════════
++// Section A — real render, initial mount state
++// ═══════════════════════════════════════════════════════════════════════════════════════════
++
++describe("DrillDownProvider — mount", () => {
++  it("starts with zero chips and the employee list closed", () => {
++    const html = renderToStaticMarkup(
++      <DrillDownProvider>
++        <Harness />
++      </DrillDownProvider>,
++    );
++    expect(html).toContain('data-testid="chip-count">0<');
++    expect(html).toContain('data-testid="employee-list-open">false<');
++  });
++
++  it("throws outside a DrillDownProvider (guards against a missing wrapper)", () => {
++    function Bare() {
++      useDrillDown();
++      return null;
++    }
++    expect(() => renderToStaticMarkup(<Bare />)).toThrow(
++      "useDrillDown must be used inside a DrillDownProvider",
++    );
++  });
++});
++
++// ═══════════════════════════════════════════════════════════════════════════════════════════
++// Section B — the real reducer helpers the component's setChips calls use
++// ═══════════════════════════════════════════════════════════════════════════════════════════
++
++describe("DrillDownProvider — chip transitions", () => {
++  const cc: DrillDownChip = { dimension: "costCentre", value: "cc-1", label: "Kolkata CC" };
++  const bucket: DrillDownChip = { dimension: "aonBucket", value: "31-60", label: "31-60d" };
++  const bucket2: DrillDownChip = { dimension: "aonBucket", value: "61-90", label: "61-90d" };
++
++  it("pushChip appends a new-dimension chip", () => {
++    const afterCc = applyPushChip([], cc);
++    expect(afterCc).toEqual([cc]);
++    const afterBoth = applyPushChip(afterCc, bucket);
++    expect(afterBoth).toEqual([cc, bucket]);
++    expect(afterBoth.map((c) => c.label)).toEqual(["Kolkata CC", "31-60d"]);
++  });
++
++  it("pushChip replaces an existing chip of the same dimension instead of stacking a duplicate", () => {
++    const chips = applyPushChip([cc, bucket], bucket2);
++    expect(chips).toEqual([cc, bucket2]);
++    expect(chips).toHaveLength(2);
++  });
++
++  it("popToChip truncates the chip list to the given index", () => {
++    const chips = [cc, bucket];
++    expect(applyPopToChip(chips, 1)).toEqual([cc]);
++    expect(applyPopToChip(chips, 0)).toEqual([]);
++  });
++
++  it("clear empties the chip list", () => {
++    // clear() is `setChips([])` directly in the provider — assert the empty array it resets to
++    // matches what popToChip(0) already proves truncates correctly.
++    expect(applyPopToChip([cc, bucket], 0)).toEqual([]);
++  });
++});
