@@ -15,6 +15,32 @@ vi.mock("../../../middleware/requireRole.js", () => ({
     },
 }));
 
+vi.mock("../../../middleware/authMiddleware.js", () => ({
+  requireAuth: (_req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    (_req as any).authUser = { id: "user-1", roles: ["payroll_head"] };
+    next();
+  },
+}));
+
+vi.mock("archiver", () => {
+  return {
+    default: vi.fn(() => {
+      let _dest: any = null;
+      const archiveMock = {
+        append: vi.fn().mockReturnThis(),
+        file: vi.fn().mockReturnThis(),
+        pipe: vi.fn((dest: any) => { _dest = dest; return archiveMock; }),
+        on: vi.fn().mockReturnThis(),
+        finalize: vi.fn(() => {
+          if (_dest && typeof _dest.end === "function") _dest.end();
+          return Promise.resolve();
+        }),
+      };
+      return archiveMock;
+    }),
+  };
+});
+
 import { db } from "../../../db/mysql.js";
 
 const app = express();
@@ -56,5 +82,34 @@ describe("GET /api/payroll/esi-reg-docs", () => {
   it("returns 400 when limit exceeds 200", async () => {
     const res = await request(app).get("/api/payroll/esi-reg-docs?limit=999");
     expect(res.status).toBe(400);
+  });
+});
+
+describe("GET /api/payroll/esi-reg-docs/:employeeId/download", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("streams a zip with manifest.txt when no files exist on disk", async () => {
+    vi.mocked(db.execute)
+      .mockResolvedValueOnce([[{ emp_code: "EMP001", first_name: "Alice", last_name: "Smith", esic_number: "123", photo_url: null, avatar_url: null }] as any, []])
+      .mockResolvedValueOnce([[] as any, []]) // no pan doc
+      .mockResolvedValueOnce([[] as any, []]); // no bank detail for PDF
+
+    const res = await request(app)
+      .get("/api/payroll/esi-reg-docs/emp-1/download")
+      .buffer(true)
+      .parse((res: any, cb: any) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => cb(null, Buffer.concat(chunks)));
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/zip/);
+  });
+
+  it("returns 404 when employee not found", async () => {
+    vi.mocked(db.execute).mockResolvedValueOnce([[] as any, []]);
+    const res = await request(app).get("/api/payroll/esi-reg-docs/nonexistent/download");
+    expect(res.status).toBe(404);
   });
 });

@@ -1,9 +1,24 @@
 import { Router, Request, Response } from "express";
 import { requireRole } from "../../middleware/requireRole.js";
+import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
+import path from "path";
+import fs from "fs";
+import PDFDocument from "pdfkit";
+import * as _archiverNs from "archiver";
+import type { ArchiverOptions, Archiver as ArchiverInstance } from "archiver";
+
+const archiverLib = ((_archiverNs as unknown as { default?: unknown }).default ??
+  _archiverNs) as (format: string, options?: ArchiverOptions) => ArchiverInstance;
+
+const UPLOADS_ROOT = path.resolve(
+  new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"),
+  "../../../../uploads"
+);
 
 export const esiRegDocsRouter = Router();
+esiRegDocsRouter.use(requireAuth);
 
 const ESI_ROLES = ["payroll_branch", "payroll_head", "super_admin"] as const;
 
@@ -88,5 +103,153 @@ esiRegDocsRouter.get(
     }));
 
     return res.json({ employees, total: Number(total), page, limit });
+  }
+);
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+async function generateBankInfoPdf(employeeId: string): Promise<Buffer> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ebd.bank_name, ebd.account_number, ebd.ifsc_code, ebd.account_type,
+            CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name,
+            e.emp_code, e.esic_number
+     FROM employee_bank_detail ebd
+     JOIN employees e ON e.id = ebd.employee_id
+     WHERE ebd.employee_id = ?
+     ORDER BY ebd.created_at DESC LIMIT 1`,
+    [employeeId]
+  );
+  const row = (rows as RowDataPacket[])[0];
+
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 50 });
+    const chunks: Buffer[] = [];
+    doc.on("data", (c: Buffer) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    doc.fontSize(16).font("Helvetica-Bold").text("ESI Registration — Bank Information", { align: "center" });
+    doc.moveDown();
+
+    if (!row) {
+      doc.fontSize(12).font("Helvetica").text("Bank details not on record for this employee.");
+    } else {
+      const mask = (acct: string) => acct ? `****${acct.slice(-4)}` : "Not provided";
+      doc.fontSize(12).font("Helvetica");
+      const fields: [string, string][] = [
+        ["Employee Code", row.emp_code ?? ""],
+        ["Employee Name", row.name ?? ""],
+        ["ESIC Number", row.esic_number ?? "Not assigned"],
+        ["Bank Name", row.bank_name ?? ""],
+        ["Account Number (Masked)", mask(row.account_number ?? "")],
+        ["IFSC Code", row.ifsc_code ?? ""],
+        ["Account Type", row.account_type ?? ""],
+      ];
+      for (const [label, value] of fields) {
+        doc.font("Helvetica-Bold").text(`${label}: `, { continued: true });
+        doc.font("Helvetica").text(value);
+      }
+    }
+    doc.end();
+  });
+}
+
+function urlToLocalPath(fileUrl: string | null): string | null {
+  if (!fileUrl) return null;
+  const match = fileUrl.match(/\/api\/files\/(employee-documents|employee-photos)\/(.+)$/);
+  if (!match) return null;
+  return path.join(UPLOADS_ROOT, match[1], match[2]);
+}
+
+function fileExists(filePath: string | null): boolean {
+  if (!filePath) return false;
+  try { return fs.statSync(filePath).isFile(); } catch { return false; }
+}
+
+async function writeAuditLog(
+  action: string,
+  performedBy: string,
+  targetEmployeeId: string | null,
+  details: Record<string, unknown>
+): Promise<void> {
+  try {
+    await db.execute(
+      `INSERT INTO payroll_audit_trail (id, action, performed_by, target_employee_id, details, created_at)
+       VALUES (UUID(), ?, ?, ?, ?, NOW())`,
+      [action, performedBy, targetEmployeeId, JSON.stringify(details)]
+    );
+  } catch (err) {
+    console.error("[esi-reg-docs] audit log failed", err);
+  }
+}
+
+// ── Route: ZIP download ───────────────────────────────────────────────────────
+
+esiRegDocsRouter.get(
+  "/esi-reg-docs/:employeeId/download",
+  requireRole(...ESI_ROLES),
+  async (req: Request, res: Response) => {
+    const { employeeId } = req.params;
+    const actorId = (req as any).authUser?.id ?? "unknown";
+
+    const [[empRow]] = await db.execute<RowDataPacket[]>(
+      `SELECT emp_code, CONCAT(first_name,' ',COALESCE(last_name,'')) AS name,
+              esic_number, photo_url, avatar_url
+       FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId]
+    );
+    if (!empRow) return res.status(404).json({ error: "Employee not found" });
+
+    const [[panDoc]] = await db.execute<RowDataPacket[]>(
+      `SELECT file_url FROM employee_documents
+       WHERE employee_id = ? AND doc_category = 'pan'
+       ORDER BY created_at DESC LIMIT 1`,
+      [employeeId]
+    );
+
+    const date = new Date().toISOString().slice(0, 10);
+    const filename = `ESI_Docs_${empRow.emp_code}_${date}.zip`;
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    const archive = archiverLib("zip", { zlib: { level: 9 } });
+    archive.pipe(res);
+    archive.on("error", (err: Error) => console.error("[esi-reg-docs] archive error", err));
+
+    const manifest: string[] = [`ESI Registration Documents — ${empRow.name} (${empRow.emp_code})\n`];
+
+    const panPath = urlToLocalPath((panDoc as RowDataPacket | undefined)?.file_url ?? null);
+    if (fileExists(panPath)) {
+      const ext = path.extname(panPath!);
+      archive.file(panPath!, { name: `PAN_Card${ext}` });
+      manifest.push("✓ PAN_Card" + ext);
+    } else {
+      manifest.push("✗ PAN document not available — please upload in employee profile");
+    }
+
+    const photoPath = urlToLocalPath(empRow.photo_url ?? empRow.avatar_url ?? null);
+    if (fileExists(photoPath)) {
+      const ext = path.extname(photoPath!);
+      archive.file(photoPath!, { name: `Photo${ext}` });
+      manifest.push("✓ Photo" + ext);
+    } else {
+      manifest.push("✗ Employee photo not available");
+    }
+
+    try {
+      const bankPdf = await generateBankInfoPdf(employeeId);
+      archive.append(bankPdf, { name: "Bank_Information.pdf" });
+      manifest.push("✓ Bank_Information.pdf");
+    } catch {
+      manifest.push("✗ Bank information could not be generated");
+    }
+
+    archive.append(manifest.join("\n"), { name: "manifest.txt" });
+    await archive.finalize();
+
+    await writeAuditLog("esi_reg_doc_download", actorId, employeeId, {
+      emp_code: empRow.emp_code,
+    });
   }
 );
