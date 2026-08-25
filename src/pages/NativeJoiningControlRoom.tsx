@@ -5,6 +5,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -496,9 +497,15 @@ export default function NativeJoiningControlRoom() {
                       If the joining date is delayed or preponed, update the effective dates below. This affects when attendance, statutory deductions, and first payroll month begin.
                     </div>
                     <div className="grid gap-4 md:grid-cols-4">
-                      <Field label="Salary Start Date">
+                      <div className="flex flex-col gap-1">
+                        <Label htmlFor="salary_start_date" className="text-xs font-medium text-slate-600">
+                          Salary Start Date
+                        </Label>
                         <TextInput form={dateForm} setForm={setDateForm} name="salary_start_date" type="date" />
-                      </Field>
+                        <p className="text-[11px] text-slate-400">
+                          Date salary generation begins. Defaults to joining date if left blank.
+                        </p>
+                      </div>
                       <Field label="Attendance Effective From">
                         <TextInput form={dateForm} setForm={setDateForm} name="attendance_effective_from" type="date" />
                       </Field>

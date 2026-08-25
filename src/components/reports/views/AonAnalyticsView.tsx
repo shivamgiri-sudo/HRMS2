@@ -854,6 +854,7 @@ function CohortSurvival({ from, to, branchId }: { from: string; to: string; bran
   }
 
   return (
+    <DrillDownProvider>
     <div className="space-y-4">
       <GapBanner
         items={[{
@@ -918,22 +919,50 @@ function CohortSurvival({ from, to, branchId }: { from: string; to: string; bran
             </thead>
             <tbody>
               {cohorts.map(c => (
-                <tr key={c.cohort} className="border-b border-slate-100 hover:bg-slate-50">
-                  <td className="px-2 py-1.5 font-medium text-slate-800">{c.cohort}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums">{num(c.joined)}</td>
-                  <td className="px-2 py-1.5 text-right tabular-nums text-rose-700">{num(c.left30)}</td>
-                  {(["Survived 30d", "Survived 60d", "Survived 90d"] as const).map(k => (
-                    <td key={k} className="px-2 py-1.5 text-right tabular-nums">
-                      {c[k] == null ? <span className="text-slate-300">—</span> : pct(c[k] as number)}
-                    </td>
-                  ))}
-                </tr>
+                <CohortRow c={c} key={c.cohort} />
               ))}
             </tbody>
           </table>
         </div>
       </ChartCard>
+
+      <EmployeeListPanel open metric="headcount" from={from} to={to} />
+      <EmployeeDetailDrawer />
     </div>
+    </DrillDownProvider>
+  );
+}
+
+/**
+ * Cohort-detail rows are rolled up across branch/cost centre/process by `cohort_month` alone
+ * (see the `cohorts` memo above), so a click here can only mean "everyone who joined this
+ * month" -- a `cohortMonth`-only filter, with no further dimension narrowing available at
+ * this rollup level. Unlike the branch/cost-centre/process/manager chips elsewhere in this
+ * file, `c.cohort` (a `YYYY-MM` string, e.g. "2026-03") is not a display name standing in for
+ * a separate FK id -- it IS the exact value the backend's `cohortMonth` filter matches against
+ * (`aon-drilldown.executor.ts`'s `/^\d{4}-\d{2}$/` check, matched via `DATE_FORMAT(...,
+ * '%Y-%m')`), so pushing it directly as the chip's `value` is correct here, not a display-name
+ * bug.
+ */
+function CohortRow({ c }: { c: { cohort: string; joined: number; left30: number } & Record<string, number | null> }) {
+  const { pushChip, openEmployeeList } = useDrillDown();
+  return (
+    <tr
+      className="cursor-pointer border-b border-slate-100 hover:bg-slate-50"
+      onClick={() => {
+        pushChip({ dimension: "cohortMonth", value: c.cohort, label: `Joined ${c.cohort}` });
+        openEmployeeList();
+      }}
+    >
+      <td className="px-2 py-1.5 font-medium text-slate-800">{c.cohort}</td>
+      <td className="px-2 py-1.5 text-right tabular-nums">{num(c.joined)}</td>
+      <td className="px-2 py-1.5 text-right tabular-nums text-rose-700">{num(c.left30)}</td>
+      {(["Survived 30d", "Survived 60d", "Survived 90d"] as const).map(k => (
+        <td key={k} className="px-2 py-1.5 text-right tabular-nums">
+          {c[k] == null ? <span className="text-slate-300">—</span> : pct(c[k] as number)}
+        </td>
+      ))}
+    </tr>
   );
 }
 
