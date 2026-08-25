@@ -173,9 +173,10 @@ async function writeAuditLog(
 ): Promise<void> {
   try {
     await db.execute(
-      `INSERT INTO payroll_audit_trail (id, action, performed_by, target_employee_id, details, created_at)
-       VALUES (UUID(), ?, ?, ?, ?, NOW())`,
-      [action, performedBy, targetEmployeeId, JSON.stringify(details)]
+      `INSERT INTO sensitive_action_log
+       (id, actor_user_id, action_type, module_key, entity_type, entity_id, change_summary, acted_at)
+       VALUES (UUID(), ?, ?, 'payroll', 'esi_registration', ?, ?, NOW())`,
+      [performedBy, action, targetEmployeeId, JSON.stringify(details)]
     );
   } catch (err) {
     console.error("[esi-reg-docs] audit log failed", err);
