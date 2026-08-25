@@ -882,6 +882,23 @@ export async function reject(
       WHERE employee_id = ? AND status = 'pending_review'`,
     [actorUserId, category, reasonCode, remarks.trim(), employeeId]
   );
+
+  // The clause above detaches the review's own pointer, but that alone left the
+  // actual salary_component_assignments row sitting at status='active' forever
+  // — with no salary_package_id to re-attach to, "Accept Package" could never
+  // reappear on resubmission, and payrollCalculate.service.ts reads this table
+  // by status alone, with no idea the review that produced the row was
+  // rejected. A rejected salary review must not leave a payable-looking row
+  // behind. Rejected, not deleted: the record of what was proposed and
+  // rejected stays for audit.
+  if (category === "salary" && result.affectedRows > 0) {
+    await db.execute(
+      `UPDATE salary_component_assignments SET status = 'rejected'
+        WHERE employee_id = ? AND status = 'active'`,
+      [employeeId]
+    ).catch(() => undefined);
+  }
+
   if (result.affectedRows === 0) {
     throw httpError("This review's status just changed — please refresh and try again.", 409, "CONFLICT");
   }

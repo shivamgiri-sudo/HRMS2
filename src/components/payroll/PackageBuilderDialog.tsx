@@ -485,6 +485,18 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
         </div>
 
         <DialogFooter className="gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setDraft({ ...BLANK, branch_name: defaultBranch ?? '' });
+              setCtcInput(''); setInHand(''); setMode('ctc'); setError(null); setLockBasic(false);
+              setIncludePf(true); setIncludeEsic(true); setIncludeBonus(false);
+              setBasicPct(40); setHraPct(40);
+            }}
+            className="cursor-pointer mr-auto"
+          >
+            Reset
+          </Button>
           <Button variant="outline" onClick={() => onOpenChange(false)} className="cursor-pointer">Cancel</Button>
           <Button disabled={saving || !canSave} onClick={() => void save()} className="cursor-pointer bg-blue-600 hover:bg-blue-700">
             {saving

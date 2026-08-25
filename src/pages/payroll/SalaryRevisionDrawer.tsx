@@ -32,7 +32,7 @@ export function SalaryRevisionDrawer({
 
   const handleSubmit = async () => {
     setError(null);
-    if (!newDate) { setError('New effective date is required.'); return; }
+    if (!newDate) { setError('New salary date is required.'); return; }
     if (reason.trim().length < 10) { setError('Reason must be at least 10 characters.'); return; }
     setBusy(true);
     try {
@@ -69,7 +69,7 @@ export function SalaryRevisionDrawer({
           <p className="text-blue-100 text-sm mt-1">{employeeName}</p>
           <div className="mt-2 inline-flex items-center gap-1.5 bg-white/20 rounded-lg px-3 py-1 text-sm">
             <CalendarDays className="h-3.5 w-3.5" />
-            Current effective: {fmtDate(currentEffectiveFrom)}
+            Current salary date: {fmtDate(currentEffectiveFrom)}
           </div>
         </div>
 
@@ -79,7 +79,7 @@ export function SalaryRevisionDrawer({
           )}
           <div className="space-y-1.5">
             <Label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              New Effective Date <span className="text-red-500">*</span>
+              New Salary Date <span className="text-red-500">*</span>
             </Label>
             <Input
               type="date"

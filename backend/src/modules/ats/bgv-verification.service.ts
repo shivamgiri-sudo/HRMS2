@@ -936,6 +936,27 @@ export async function autoCreateDigilockerVerifiedChecks(
     }
 
     await logEvent(candidateId, "BGV_AUTO_VERIFIED", { checkType, source: "digilocker" }, null, { actorType: "system" });
+
+    // The paid offline check for the same identity uses a different check_type
+    // ('aadhaar_offline' vs digilocker's 'aadhaar'), so upserting the row above
+    // never touches it — it is left sitting in candidate_bgv_check forever as a
+    // still-open manual_review row. verifyAadhaarOfflineForCandidate already
+    // refuses to spend on it going forward once DigiLocker is verified, but that
+    // guard only stops a FUTURE call; it does nothing about the row this same
+    // completion just made stale. The Payroll Head / recruiter BGV view renders
+    // every row in candidate_bgv_check with no dedup, so without this the
+    // reviewer sees a "verified" DigiLocker Aadhaar next to a "manual_review"
+    // offline Aadhaar for the identical document, with Verify/Waive/Fail buttons
+    // on a check nobody should still be acting on.
+    if (checkType === "aadhaar") {
+      await db.execute(
+        `UPDATE candidate_bgv_check
+            SET status = 'waived', review_remarks = 'Superseded by DigiLocker Aadhaar verification.', updated_at = NOW()
+          WHERE candidate_id = ? AND check_type = 'aadhaar_offline'
+            AND status NOT IN ('verified', 'waived', 'failed')`,
+        [candidateId]
+      ).catch(() => undefined);
+    }
   }
   // Recompute score after auto-verifying checks
   await computeAndSaveScore(candidateId);

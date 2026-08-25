@@ -195,7 +195,7 @@ export function OfferedSalarySection({
           <div className="mt-3 pt-3 border-t border-amber-200 flex items-end gap-2">
             <div className="flex-1">
               <Label className="text-[10px] font-medium mb-1 block text-amber-700">
-                Effective Date <span className="text-red-500">*</span>
+                Salary Date <span className="text-red-500">*</span>
               </Label>
               <div className="flex flex-col gap-1">
                 <Input
@@ -266,8 +266,13 @@ export function FinalSalarySection({
               <DrawerSalaryRow label="Gross" value={inr(sc.gross_monthly ?? sc.gross)} bold separator />
             </div>
             <div>
-              <DrawerSalaryRow label={`PF (Emp) — ${Number(sc.pf_employee) > 0 ? 'Yes' : 'No'}`} value={sc.pf_employee ? `− ${inr(sc.pf_employee)}` : '—'} />
-              <DrawerSalaryRow label={`ESIC (Emp) — ${Number(sc.esic_employee) > 0 ? 'Yes' : 'No'}`} value={sc.esic_employee ? `− ${inr(sc.esic_employee)}` : '—'} />
+              {/* salary_component_assignments stores applicability flags (pf_applicable/
+                  esi_applicable), not a per-component employee-side ₹ amount — the old
+                  sc.pf_employee/sc.esic_employee fields don't exist on this table and always
+                  read as falsy, so this always showed "No" even when PF/ESIC were actually
+                  deducted (visible only as a gap between Gross and Net in Hand below). */}
+              <DrawerSalaryRow label={`PF (Emp) — ${sc.pf_applicable ? 'Yes' : 'No'}`} value={sc.pf_applicable ? 'Included in Net' : '—'} />
+              <DrawerSalaryRow label={`ESIC (Emp) — ${sc.esi_applicable ? 'Yes' : 'No'}`} value={sc.esi_applicable ? 'Included in Net' : '—'} />
               <DrawerSalaryRow label="Net in Hand" value={inr(sc.net_in_hand ?? sc.net_estimate)} bold separator />
               <DrawerSalaryRow label="CTC" value={inr(sc.ctc)} bold separator />
             </div>
@@ -291,7 +296,7 @@ export function FinalSalarySection({
             <div className="flex items-end gap-2">
               <div>
                 <Label className="text-[10px] font-medium mb-1 block text-slate-600">
-                  Effective Date <span className="text-red-500">*</span>
+                  Salary Date <span className="text-red-500">*</span>
                 </Label>
                 <div className="flex flex-col gap-1">
                   <Input
@@ -839,7 +844,7 @@ function SectionPopup({
       <Dialog open={!!confirmDateDialog} onOpenChange={(v) => { if (!v) { setConfirmDateDialog(null); setConfirmDateReason(''); } }}>
         <DialogContent className="max-w-md rounded-2xl">
           <DialogHeader>
-            <DialogTitle className="text-base font-semibold">Update Salary Effective Date</DialogTitle>
+            <DialogTitle className="text-base font-semibold">Update Salary Date</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <p className="text-sm text-slate-600">
@@ -1196,13 +1201,33 @@ function ReviewDrawer({
                   <div className="divide-y divide-slate-50">
                     {(journey.joining_checklist as any[]).map((c: any) => {
                       const done = c.status === 'signed' || c.status === 'completed' || c.status === 'esign_completed';
-                      return (
-                        <div key={c.id} className="flex items-center justify-between px-3 py-2">
-                          <div className="flex items-center gap-2">
-                            <div className={`w-1.5 h-1.5 rounded-full ${done ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                            <span className="text-xs text-slate-700">{c.document_name || c.document_code}</span>
-                          </div>
-                          <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 border ${
+                      // The checklist row itself carries no file — the signed/uploaded file lives in
+                      // employee_documents, matched by doc type/code. Without a match there's nothing
+                      // to open, so the row stays inert rather than pretending to be clickable.
+                      const doc = (journey?.documents as any[] ?? []).find(
+                        (d) => d.doc_type === c.document_code || d.doc_category === c.document_code
+                      );
+                      const openable = !!doc?.file_url;
+                      const Row = (
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${done ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                          <span className="text-xs text-slate-700 truncate">{c.document_name || c.document_code}</span>
+                          {openable && <ExternalLink className="h-3 w-3 text-indigo-400 flex-shrink-0" />}
+                        </div>
+                      );
+                      return openable ? (
+                        <a key={c.id} href={doc.file_url} target="_blank" rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-indigo-50/60 transition-colors">
+                          {Row}
+                          <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 border flex-shrink-0 ${
+                            done ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'
+                          }`}>{c.status}</span>
+                        </a>
+                      ) : (
+                        <div key={c.id} className="flex items-center justify-between px-3 py-2" title="No document on file for this item yet">
+                          {Row}
+                          <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 border flex-shrink-0 ${
                             done ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'
                           }`}>{c.status}</span>
                         </div>
@@ -1307,7 +1332,7 @@ function ReviewDrawer({
       <Dialog open={!!confirmDateDialog} onOpenChange={(v) => { if (!v) { setConfirmDateDialog(null); setConfirmDateReason(''); } }}>
         <DialogContent className="max-w-md rounded-2xl">
           <DialogHeader>
-            <DialogTitle className="text-base font-semibold">Update Salary Effective Date</DialogTitle>
+            <DialogTitle className="text-base font-semibold">Update Salary Date</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <p className="text-sm text-slate-600">
@@ -1671,7 +1696,7 @@ export default function PayrollHeadSalaryReviewQueue() {
                   <div className="min-w-0 shrink-0 w-[220px]">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-semibold text-slate-900 text-sm">{row.full_name}</p>
-                      <span className="font-mono text-[11px] text-slate-400 bg-slate-50 rounded px-1">{row.employee_code}</span>
+                      <span className="font-mono text-xs font-medium text-slate-500 bg-slate-50 rounded px-1.5 py-0.5">{row.employee_code}</span>
                       {isOverdue && <span className="text-[10px] font-bold text-red-600 bg-red-50 rounded-full px-1.5 py-0.5 flex items-center gap-0.5 border border-red-200"><AlertTriangle className="h-2.5 w-2.5" />Overdue</span>}
                     </div>
                     <div className="flex items-center gap-3 mt-0.5 text-xs text-slate-500">
@@ -1679,7 +1704,7 @@ export default function PayrollHeadSalaryReviewQueue() {
                       {row.branch_name && <span className="flex items-center gap-1"><Building2 className="h-3 w-3 text-slate-300" />{row.branch_name}</span>}
                     </div>
                     {(row.cost_centre_name || row.process_name || row.emp_type) && (
-                      <p className="text-[10px] text-slate-400 mt-0.5 truncate">
+                      <p className="text-xs text-slate-400 mt-0.5 truncate">
                         {[row.cost_centre_name, row.process_name, row.emp_type].filter(Boolean).join(' · ')}
                       </p>
                     )}
@@ -1711,9 +1736,9 @@ export default function PayrollHeadSalaryReviewQueue() {
                     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold border ${cfg.chip}`}>
                       <Icon className="h-3 w-3" />{cfg.label}
                     </span>
-                    {row.status === 'pending_review' && !row.package_accepted && (
-                      <span className="text-[10px] text-amber-500">Pkg not accepted</span>
-                    )}
+                    {/* "Pkg not accepted" dropped here — the Final Salary section card
+                        (tab === 'pending_review') already says this; keeping both duplicated
+                        the same fact in one row. */}
                     <AgingChip hours={row.pending_hours} status={row.status} />
                   </div>
 
@@ -1727,7 +1752,11 @@ export default function PayrollHeadSalaryReviewQueue() {
                         Approve
                       </Button>
                     )}
-                    {isFixer && (
+                    {/* Approved tab only — Pending Review already lets the reviewer set the
+                        salary date inline (Offered/Final Salary cards), so surfacing this here
+                        too just duplicated the same action via a second route. Once a package
+                        is approved, this is the only way left to change its date. */}
+                    {isFixer && tab === 'approved' && (
                       <Button size="sm" variant="outline"
                         onClick={(e) => { e.stopPropagation(); setRevDrawerTarget({ id: row.employee_id, name: row.full_name }); setRevDrawerOpen(true); }}
                         className="h-7 text-xs cursor-pointer rounded-lg px-2.5 gap-1 opacity-0 group-hover:opacity-100 transition-opacity border-blue-200 text-blue-600 hover:bg-blue-50">
