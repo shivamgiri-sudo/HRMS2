@@ -777,17 +777,17 @@ export default function NativeITProvisioningTracker() {
   }
 
   // ── Data fetch ───────────────────────────────────────────────────────────────
-  // "Fresh start from today" (2026-08-24): IT/Admin/WFM provisioning only show requests
-  // created on or after today — not Appointment Letters, which keeps full history. Hides rows
-  // from the list view only; no it_provisioning_request row is deleted or modified.
+  // "Fresh start from 2026-08-24": IT/Admin/WFM provisioning only show requests
+  // created on or after the cutover date — not Appointment Letters, which keeps full history.
+  // Fixed date so pending tasks from prior days remain visible in the queue each day.
   const FRESH_START_PATHS = ["/provisioning/it", "/provisioning/admin", "/provisioning/wfm-alignment"];
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const FRESH_START_CUTOVER = "2026-08-24";
   const queryParams = {
     ...(statusFilter !== "all" && { status: statusFilter }),
     ...(typeFilter   !== "all" && { request_type: typeFilter }),
     ...(roleFilter   !== "all" && { assigned_role: roleFilter }),
     ...(taskFilter   !== "all" && { task_code: taskFilter }),
-    ...(FRESH_START_PATHS.includes(location.pathname) && { created_from: todayIso }),
+    ...(FRESH_START_PATHS.includes(location.pathname) && { created_from: FRESH_START_CUTOVER }),
     page, limit: LIMIT,
   };
 
