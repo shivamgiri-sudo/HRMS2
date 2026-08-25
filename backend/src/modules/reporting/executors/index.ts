@@ -201,6 +201,15 @@ import {
   auditObservationRegister,
 } from "./governance.executor.js";
 
+// ─── Legacy HR (migrated from Legacy HRMS Reports) ───────────────────────────
+import {
+  attendanceIssuesRegister,
+  loanRegister,
+  dojChangeRegister,
+  bankAccountRegister,
+  nomineeRegister,
+} from "./legacy-hr.executor.js";
+
 // ---------------------------------------------------------------------------
 // EXECUTOR_MAP — maps every report code to its canonical executor function
 // ---------------------------------------------------------------------------
@@ -371,6 +380,13 @@ export const EXECUTOR_MAP: Record<string, ExecutorFn> = {
   "helpdesk-summary":          helpDeskSummary,
   "grievance-register":        grievanceRegister,
   "audit-observation-register": auditObservationRegister,
+
+  // Legacy HR (migrated from Legacy HRMS Reports tab)
+  "attendance-issues-register": attendanceIssuesRegister,
+  "loan-register":              loanRegister,
+  "doj-change-register":        dojChangeRegister,
+  "bank-account-register":      bankAccountRegister,
+  "nominee-register":           nomineeRegister,
 };
 
 // ---------------------------------------------------------------------------
