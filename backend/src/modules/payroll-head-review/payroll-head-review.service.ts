@@ -393,25 +393,33 @@ export async function updateAssignmentEffectiveDate(
     throw httpError("Effective date cannot be before date of joining.", 400, "INVALID_DATE");
   }
 
-  const [assignRows] = await db.execute<RowDataPacket[]>(
-    `SELECT id, effective_from FROM employee_salary_assignment
-      WHERE employee_id = ? AND active_status = 1
-      ORDER BY effective_from DESC LIMIT 1`,
-    [employeeId]
-  );
-  if (!assignRows.length) {
-    throw httpError("No active salary assignment found. Use the ATS salary-start-date path instead.", 404, "NO_ASSIGNMENT");
-  }
-  const oldDate = assignRows[0].effective_from as string;
-  const assignmentId = assignRows[0].id as string;
-
-  if (oldDate === newDate) {
-    return { effective_from: newDate };
-  }
-
   const connection = await db.getConnection();
   try {
     await connection.beginTransaction();
+
+    // Lock the active assignment row immediately — prevents two concurrent requests
+    // from both reading the same row outside the transaction and each inserting a
+    // duplicate active assignment (TOCTOU race).
+    const [lockedRows] = await connection.execute<RowDataPacket[]>(
+      `SELECT id, effective_from FROM employee_salary_assignment
+        WHERE employee_id = ? AND active_status = 1
+        ORDER BY effective_from DESC LIMIT 1
+        FOR UPDATE`,
+      [employeeId]
+    );
+    if (!lockedRows.length) {
+      await connection.rollback();
+      connection.release();
+      throw httpError("No active salary assignment found. Use the ATS salary-start-date path instead.", 404, "NO_ASSIGNMENT");
+    }
+    const oldDate = lockedRows[0].effective_from as string;
+    const assignmentId = lockedRows[0].id as string;
+
+    if (oldDate === newDate) {
+      await connection.rollback();
+      connection.release();
+      return { effective_from: newDate };
+    }
 
     // Stamp effective_to on the current assignment
     await connection.execute(
