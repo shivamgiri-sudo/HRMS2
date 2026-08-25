@@ -3166,6 +3166,7 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
         financialYear: req.query.financialYear as string | undefined,
         metric:       req.query.metric       as string | undefined,
         aonBucket:    req.query.aonBucket    as string | undefined,
+        cohortMonth:  req.query.cohortMonth  as string | undefined,
       };
       const execOffset = Number(req.query.offset ?? 0);
       const execLimit  = limit > 0 ? limit : 100;

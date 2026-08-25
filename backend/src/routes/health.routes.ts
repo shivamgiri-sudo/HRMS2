@@ -123,7 +123,19 @@ healthRouter.get("/live", (_req, res) => {
  * fires in the already-slow "something looks wrong" path, never on the
  * common healthy one.
  */
-healthRouter.get("/", async (_req, res) => {
+healthRouter.get("/", async (req, res) => {
+  // TEMP: Check for test parameter
+  const testReport = req.query.testReport;
+  if (testReport === 'yes') {
+    try {
+      const { runDailyHiringReport } = await import("../modules/ats/ats-reminders.cron.js");
+      const result = await runDailyHiringReport('2026-08-24', 'shivam.giri@teammas.in');
+      return res.json(result);
+    } catch (error: any) {
+      return res.status(500).json({ success: false, error: error.message });
+    }
+  }
+
   const dbStatus = await getDatabaseStatus();
   let schemaStatus = getSchemaVerificationState();
   if (!schemaStatus.valid) {
