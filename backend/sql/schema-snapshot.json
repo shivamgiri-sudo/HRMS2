@@ -6386,6 +6386,19 @@
       "active_status",
       "created_at"
     ],
+    "employee_salary_date_revision_requests": [
+      "id",
+      "employee_id",
+      "current_effective_from",
+      "requested_effective_from",
+      "reason",
+      "status",
+      "requested_by",
+      "reviewed_by",
+      "reviewed_at",
+      "review_remarks",
+      "created_at"
+    ],
     "employee_salary_history": [
       "id",
       "employee_id",
