@@ -272,12 +272,25 @@ function DrillResetOnChange({ groupBy, metric }: { groupBy: GroupBy; metric: "he
  * 1-exit group with no peers doesn't get flagged on noise. Each row is a direct jump
  * into the same Employee List drill the heatmap cells already open.
  */
+/** One (group, bucket) anomaly entry, already aggregated to the SAME grain `grid` displays --
+ *  see `anomalies`'s own comment for why raw at.data rows must be summed up to this grain
+ *  before being compared or rendered. */
+type AnomalyEntry = {
+  groupKey: string;
+  groupId: string;
+  bucket: string;
+  exits: number;
+  atRisk: number;
+  rate: number;
+  companyRate: number | null;
+  ratio: number | null;
+};
+
 function AnomalyBanner({
-  anomalies, groupBy, onJumpTo,
+  anomalies, onJumpTo,
 }: {
-  anomalies: Array<{ row: Row; rate: number; companyRate: number | null; ratio: number | null }>;
-  groupBy: GroupBy;
-  onJumpTo: (row: Row) => void;
+  anomalies: AnomalyEntry[];
+  onJumpTo: (a: AnomalyEntry) => void;
 }) {
   if (anomalies.length === 0) return null;
   return (
@@ -292,14 +305,14 @@ function AnomalyBanner({
             <button
               key={i}
               type="button"
-              onClick={() => onJumpTo(a.row)}
+              onClick={() => onJumpTo(a)}
               className="block w-full rounded-md px-2 py-1 text-left text-[11.5px] leading-snug text-rose-900 hover:bg-rose-100"
             >
-              <span className="font-semibold">{s(a.row[groupBy]) || "UNASSIGNED"}</span>
+              <span className="font-semibold">{a.groupKey}</span>
               {" — "}
-              {s(a.row.aon_bucket)}d bucket running {pct(a.rate)} attrition,
+              {a.bucket}d bucket running {pct(a.rate)} attrition,
               {" "}{(a.ratio ?? 0).toFixed(1)}x the company rate ({pct(a.companyRate ?? NaN)})
-              {" · "}{num(n(a.row.exits))} exits
+              {" · "}{num(a.exits)} exits
             </button>
           ))}
         </div>
@@ -312,23 +325,23 @@ function AnomalyBanner({
  * Supplies `onJumpTo` to `AnomalyBanner` from inside `DrillDownProvider` -- `useDrillDown`
  * throws outside it, and `Overview` itself renders the provider one level above its own
  * body, so this wrapper (same pattern as `DrillResetOnChange`) is what lets the banner
- * reach `pushChip`/`openEmployeeList`. The dimension/idField mapping here is intentionally
- * identical to `DrillCell`'s own -- both must derive the same FK id the same way, or a
- * jump-to-anomaly click would push a differently-shaped filter than a direct heatmap click.
+ * reach `pushChip`/`openEmployeeList`. The dimension mapping here is intentionally identical
+ * to `DrillCell`'s own; `groupId`/`groupKey` on each `AnomalyEntry` are already the real FK
+ * id and display name (resolved by the `anomalies` memo the same way `grid` resolves them),
+ * so this only needs to push chips, not re-derive anything from a raw row.
  */
 function AnomalyJumpHandler({
   anomalies, groupBy, children,
 }: {
-  anomalies: Array<{ row: Row; rate: number; companyRate: number | null; ratio: number | null }>;
+  anomalies: AnomalyEntry[];
   groupBy: GroupBy;
-  children: (onJumpTo: (row: Row) => void) => React.ReactNode;
+  children: (onJumpTo: (a: AnomalyEntry) => void) => React.ReactNode;
 }) {
   const { pushChip, openEmployeeList } = useDrillDown();
   const dimension = groupBy === "cost_centre_name" ? "costCentre" : groupBy === "process_name" ? "process" : "branch";
-  const onJumpTo = (row: Row) => {
-    const idField = GROUP_BY_ID_FIELD[groupBy];
-    pushChip({ dimension, value: s(row[idField]), label: s(row[groupBy]) || "UNASSIGNED" });
-    pushChip({ dimension: "aonBucket", value: s(row.aon_bucket), label: `${s(row.aon_bucket)}d` });
+  const onJumpTo = (a: AnomalyEntry) => {
+    pushChip({ dimension, value: a.groupId, label: a.groupKey });
+    pushChip({ dimension: "aonBucket", value: a.bucket, label: `${a.bucket}d` });
     openEmployeeList();
   };
   return <>{children(onJumpTo)}</>;
@@ -454,9 +467,22 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
    * AON Attrition Rate against the company-wide rate for that SAME bucket across ALL groups in
    * range. A group is anomalous when its rate is >= ANOMALY_MULTIPLIER x the company rate for that
    * bucket, with a floor on exits so a 1-exit group with no peers doesn't get flagged on noise.
+   *
+   * Raw at.data rows are at (month, branch_id, cost_centre_id, process_id, aon_bucket) grain --
+   * finer than the single `groupBy` dimension the UI actually displays. `grid` (above) already
+   * re-aggregates raw rows up to `s(r[groupBy])` before doing anything with them; this memo must
+   * do the same, or the SAME displayed group can surface as several separate "anomaly" entries
+   * (one per month/sub-combination), each compared using only its own narrow slice's numbers
+   * rather than the true group total the heatmap shows. exits and at_risk_population_avg are
+   * summed per (groupKey, bucket) and the rate is RE-DERIVED from those sums -- never averaging
+   * the raw rows' own pre-computed aon_attrition_rate_pct, which would weight a large and a small
+   * sub-combination equally (the same class of mistake `tiles`/`grid` already guard against for
+   * shrinkage elsewhere in this file).
    */
   const anomalies = useMemo(() => {
     const rows = at.data ?? [];
+    const idField = GROUP_BY_ID_FIELD[groupBy];
+
     // Company-wide totals per bucket, across every group, for the current date range.
     const byBucket = new Map<string, { exits: number; atRisk: number }>();
     for (const r of rows) {
@@ -471,18 +497,31 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
       return c && c.atRisk > 0 ? (c.exits / c.atRisk) * 100 : null;
     };
 
-    // One row per (group, bucket) that clears both the multiplier and the minimum-exits floor.
-    return rows
-      .filter(r => n(r.exits) >= ANOMALY_MIN_EXITS)
-      .map(r => {
-        const rate = n(r.aon_attrition_rate_pct);
-        const cRate = companyRate(s(r.aon_bucket));
-        return { row: r, rate, companyRate: cRate, ratio: cRate && cRate > 0 ? rate / cRate : null };
+    // Re-aggregate raw rows up to (groupKey, bucket) -- the exact grain `grid` shows -- before
+    // comparing against the company rate. Mirrors `grid`'s own Map-based reduction pattern.
+    const byGroupBucket = new Map<string, { groupKey: string; groupId: string; bucket: string; exits: number; atRisk: number }>();
+    for (const r of rows) {
+      const groupKey = s(r[groupBy]) || "UNASSIGNED";
+      const bucket = s(r.aon_bucket);
+      const key = `${groupKey}::${bucket}`;
+      const cur = byGroupBucket.get(key) ?? { groupKey, groupId: s(r[idField]), bucket, exits: 0, atRisk: 0 };
+      cur.exits += n(r.exits);
+      cur.atRisk += n(r.at_risk_population_avg);
+      byGroupBucket.set(key, cur);
+    }
+
+    // One entry per (group, bucket) that clears both the multiplier and the minimum-exits floor.
+    return [...byGroupBucket.values()]
+      .filter(g => g.exits >= ANOMALY_MIN_EXITS)
+      .map(g => {
+        const rate = g.atRisk > 0 ? (g.exits / g.atRisk) * 100 : 0;
+        const cRate = companyRate(g.bucket);
+        return { ...g, rate, companyRate: cRate, ratio: cRate && cRate > 0 ? rate / cRate : null };
       })
       .filter(a => a.ratio != null && a.ratio >= ANOMALY_MULTIPLIER)
       .sort((a, b) => (b.ratio ?? 0) - (a.ratio ?? 0))
       .slice(0, 5);
-  }, [at.data]);
+  }, [at.data, groupBy]);
 
   /*
    * Rough replacement-cost estimate: exits x that group's average CTC x a stated multiplier. A
@@ -588,7 +627,7 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
       />
 
       <AnomalyJumpHandler anomalies={anomalies} groupBy={groupBy}>
-        {(onJumpTo) => <AnomalyBanner anomalies={anomalies} groupBy={groupBy} onJumpTo={onJumpTo} />}
+        {(onJumpTo) => <AnomalyBanner anomalies={anomalies} onJumpTo={onJumpTo} />}
       </AnomalyJumpHandler>
 
       {failure && <MetricFailure />}
