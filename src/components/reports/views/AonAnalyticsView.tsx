@@ -422,11 +422,11 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
       {failure && <MetricFailure />}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {!loading && !headlineRate.isLoading && headlineRate.data?.[0] && (
+        {!loading && !headlineRate.isLoading && headlineRate.data?.[headlineRate.data.length - 1] && (
           <StatTile
             label="Overall Attrition Rate"
-            value={pct(Number(headlineRate.data[0].attrition_rate_pct ?? NaN))}
-            denominator={`${num(Number(headlineRate.data[0].exits ?? 0))} exits over avg ${num(Number(headlineRate.data[0].avg_total_headcount ?? 0))} headcount`}
+            value={pct(Number(headlineRate.data[headlineRate.data.length - 1].attrition_rate_pct ?? NaN))}
+            denominator={`${num(Number(headlineRate.data[headlineRate.data.length - 1].exits ?? 0))} exits over avg ${num(Number(headlineRate.data[headlineRate.data.length - 1].avg_total_headcount ?? 0))} headcount`}
             intent="neutral"
             icon={<TrendingDown className="h-4 w-4" />}
           />
