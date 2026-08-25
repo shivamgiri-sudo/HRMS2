@@ -3146,6 +3146,74 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     availabilityStatus: 'validated',
   },
   {
+    code: "aon-drilldown-employees",
+    name: "AON Drill-Down Employees",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Named employees for a specific branch/cost-centre/process/AON-bucket slice",
+    rowGrain: "One row per employee",
+    primaryKey: ["employee_code"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee", format: "text", width: 180 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 130 },
+      { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
+      { key: "process_name", label: "Process", format: "text", width: 150 },
+      { key: "join_date", label: "Join Date", format: "text", width: 110 },
+      { key: "aon_days", label: "AON Days", format: "number", width: 90, align: "right" },
+      { key: "risk_score", label: "Risk Score", format: "number", width: 100, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees", "branch_master", "cost_centre_master", "process_master", "attendance_daily_record"],
+    calculationNotes:
+      "The employee-level bottom of the AON drill-down chain, reached from a heatmap cell " +
+      "(branch/cost-centre/process x AON bucket). filters.metric selects the response shape: " +
+      "'exits' returns exited employees dated by date_of_exit (bucketed by AON-at-exit, i.e. " +
+      "tenure at the time they left), any other value (default 'headcount') returns active " +
+      "employees (bucketed by AON today) with a simplified risk score (tenure + 30-day " +
+      "absence rate). filters.aonBucket narrows to one of 0-30/31-60/61-90/90+; without it the " +
+      "whole slice (still scoped by branch/cost-centre/process) is returned.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
+    code: "aon-overall-attrition-rate",
+    name: "Overall Attrition Rate",
+    category: "Attrition & Trends",
+    subcategory: "AON Analytics",
+    description: "Company-wide (or scope-wide) monthly attrition rate: exits / average headcount",
+    rowGrain: "One row per month",
+    primaryKey: ["month"],
+    columns: [
+      { key: "month", label: "Month", format: "text", width: 90 },
+      { key: "exits", label: "Exits", format: "number", width: 80, align: "right" },
+      { key: "avg_total_headcount", label: "Avg Headcount", format: "number", width: 130, align: "right" },
+      { key: "attrition_rate_pct", label: "Attrition Rate %", format: "percentage", width: 140, align: "right" },
+    ],
+    filters: [F_DATE_FROM, F_DATE_TO, F_BRANCH, F_COST_CENTRE, F_PROCESS],
+    viewRoles: ROLES_ALL_MANAGEMENT,
+    exportRoles: ROLES_HR_ADMIN,
+    sourceTables: ["employees"],
+    calculationNotes:
+      "attrition_rate_pct = exits / avg_total_headcount for the month, where avg_total_headcount " +
+      "is the average of headcount at the start and end of the month (see aon.executor.ts for " +
+      "the month_seq generation). Defaults to the twelve months ending today when filters.from/to " +
+      "are absent, matching aon-bucket-attrition's own default window.",
+    branchScoped: true,
+    processScoped: true,
+    sensitivityLevel: 'internal',
+    containsPII: false,
+    containsFinancialData: false,
+    availabilityStatus: 'validated',
+  },
+  {
     code: "aon-bucket-shrinkage",
     name: "AON Bucket Shrinkage",
     category: "Attrition & Trends",

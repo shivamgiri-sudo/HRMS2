@@ -40,11 +40,48 @@
 import { Router, type Request, type Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
-import { requireAuth } from "../../middleware/authMiddleware.js";
+import { requireAuth, type AuthenticatedRequest } from "../../middleware/authMiddleware.js";
+import { requireRole } from "../../middleware/requireRole.js";
+import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
+import type { ScopeTarget } from "../../shared/scopeAccess.js";
 import { upsertOpenWorkItem } from "../../shared/workItem.js";
 import { resolvePrimaryRole } from "../../shared/roleResolver.js";
 
 export const aonRetentionFlagRouter = Router();
+
+const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
+
+// Same roles that can view the AON Analytics page itself (REPORTS_CENTER — see
+// backend/sql/529_reports_center_page_access.sql), narrowed to the roles that actually run an
+// HR workflow action elsewhere in this codebase (employee.routes.ts's hrProfileGate /
+// PATCH /:id scope gate). "finance"/"ceo"/"quality"/"operations" can VIEW this report but have
+// no business writing a RETENTION_REVIEW work item against an employee record.
+const RETENTION_FLAG_ROLES = [
+  "super_admin",
+  "admin",
+  "hr",
+  "hr_head",
+  "manager",
+  "process_manager",
+  "branch_head",
+  "payroll_head",
+];
+
+// Resolves the target employee's branch/process from the request body so requireScopedRole can
+// confirm the caller (a Branch Head, Process Manager, etc.) is scoped to that employee before
+// the work item is created — mirrors the resolver PATCH /:id uses in employee.routes.ts, just
+// reading employeeId from the POST body instead of req.params.id.
+async function resolveFlagTargetScope(req: AuthenticatedRequest): Promise<ScopeTarget> {
+  const employeeId = String((req.body as { employeeId?: unknown })?.employeeId ?? "").trim();
+  if (!employeeId) return {};
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT branch_id, process_id FROM employees WHERE id = ? LIMIT 1",
+    [employeeId],
+  );
+  const emp = rows[0] as { branch_id?: string; process_id?: string } | undefined;
+  if (!emp) return {};
+  return { branchId: emp.branch_id, processId: emp.process_id };
+}
 
 interface EmployeeForFlag extends RowDataPacket {
   id: string;
@@ -84,7 +121,9 @@ async function resolveAssignedRole(employeeId: string): Promise<string> {
 aonRetentionFlagRouter.post(
   "/flag-retention",
   requireAuth,
-  async (req: Request, res: Response) => {
+  requireRole(...RETENTION_FLAG_ROLES),
+  requireScopedRole(RETENTION_FLAG_ROLES, resolveFlagTargetScope, { allowAdminBypass: true }),
+  h(async (req: Request, res: Response) => {
     const employeeId = String((req.body as { employeeId?: unknown })?.employeeId ?? "").trim();
     if (!employeeId) {
       return res.status(400).json({ success: false, message: "employeeId is required" });
@@ -106,5 +145,5 @@ aonRetentionFlagRouter.post(
     });
 
     return res.json({ success: true, outcome });
-  },
+  }),
 );

@@ -55,4 +55,35 @@ describe("aonDrilldownEmployees", () => {
     const sql = String(mockExecute.mock.calls[0][0]);
     expect(sql).toContain("e.active_status = 1");
   });
+
+  // Regression test for IMPORTANT-1 of the final whole-branch review: the exits branch
+  // previously ignored filters.from/filters.to entirely, returning ALL historical exits for
+  // the slice (capped only by the row limit) instead of the same date window the heatmap cell
+  // that led here was built from.
+  it("exits context applies an explicit from/to date window to date_of_exit", async () => {
+    mockExecute.mockResolvedValueOnce([[], []]);
+    await aonDrilldownEmployees(
+      { metric: "exits", costCentreId: "cc-1", from: "2026-01-01", to: "2026-03-31" },
+      SCOPE,
+      OPTIONS,
+    );
+    const sql = String(mockExecute.mock.calls[0][0]);
+    const params = mockExecute.mock.calls[0][1] as unknown[];
+    expect(sql).toContain("e.date_of_exit BETWEEN ? AND ?");
+    expect(params).toContain("2026-01-01");
+    expect(params).toContain("2026-03-31");
+  });
+
+  it("exits context defaults to a twelve-month window when from/to are absent", async () => {
+    mockExecute.mockResolvedValueOnce([[], []]);
+    await aonDrilldownEmployees({ metric: "exits", costCentreId: "cc-1" }, SCOPE, OPTIONS);
+    const sql = String(mockExecute.mock.calls[0][0]);
+    const params = mockExecute.mock.calls[0][1] as unknown[];
+    expect(sql).toContain("e.date_of_exit BETWEEN ? AND ?");
+    // Both bounds must be real YYYY-MM-DD strings, not undefined/NaN, and to must not precede from.
+    const [from, to] = params.filter((p): p is string => typeof p === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p)).slice(-2);
+    expect(from).toBeDefined();
+    expect(to).toBeDefined();
+    expect(new Date(from!).getTime()).toBeLessThan(new Date(to!).getTime());
+  });
 });

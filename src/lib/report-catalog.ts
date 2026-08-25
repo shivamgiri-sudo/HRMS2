@@ -1997,6 +1997,7 @@ export const REPORT_CATALOG: ReportMeta[] = [
       { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
       { key: "employee_name", label: "Employee", format: "text", width: 180 },
       { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "cost_centre_code", label: "Cost Centre Code", format: "text", width: 130 },
       { key: "cost_centre_name", label: "Cost Centre", format: "text", width: 180 },
       { key: "process_name", label: "Process", format: "text", width: 150 },
       { key: "join_date", label: "Join Date", format: "text", width: 110 },

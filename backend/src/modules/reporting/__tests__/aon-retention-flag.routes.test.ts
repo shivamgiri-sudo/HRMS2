@@ -12,6 +12,16 @@ const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 vi.mock("../../../middleware/authMiddleware.js", () => ({
   requireAuth: (req: any, _res: any, next: any) => { req.authUser = { id: "u1", role: "hr" }; next(); },
 }));
+// These two are covered by their own dedicated tests below ("rejects a role outside the
+// allow-list" / "enforces scope via requireScopedRole with the resolved employee scope").
+// Pass them through here so the pre-existing behavioural tests keep exercising only the
+// handler logic, exactly like employee.routes.audit-logging.test.ts does for the same pair.
+vi.mock("../../../middleware/requireRole.js", () => ({
+  requireRole: () => (_req: any, _res: any, next: any) => next(),
+}));
+vi.mock("../../../middleware/scopeMiddleware.js", () => ({
+  requireScopedRole: () => (_req: any, _res: any, next: any) => next(),
+}));
 
 import { aonRetentionFlagRouter } from "../aon-retention-flag.routes.js";
 

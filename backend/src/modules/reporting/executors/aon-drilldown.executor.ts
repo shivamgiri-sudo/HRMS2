@@ -27,6 +27,7 @@ import {
   appendFilterConditions,
   fetchPageWithTotal,
   rethrowReportSchemaError,
+  dateParam,
 } from "./types.js";
 import { AON_REFERENCE_JOIN_DATE_SQL } from "./aon.executor.js";
 
@@ -82,6 +83,18 @@ export async function aonDrilldownEmployees(
     clauses.push("e.date_of_exit IS NOT NULL", "e.date_of_exit >= e.date_of_joining");
     const bucketClause = aonBucketAtExitClause(filters.aonBucket);
     if (bucketClause) clauses.push(bucketClause);
+
+    // Same default window as aonBucketAttrition (aon.executor.ts): the twelve months ending
+    // today when the caller didn't pass from/to. Without this the exits branch returned ALL
+    // historical exits for the slice (capped only by the row limit), which never reconciled
+    // against the heatmap cell's own date-windowed count.
+    const today = new Date();
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const twelveMonthsAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+    const from = dateParam(filters.from, iso(twelveMonthsAgo));
+    const to = dateParam(filters.to, iso(today));
+    clauses.push("e.date_of_exit BETWEEN ? AND ?");
+    params.push(from, to);
   } else {
     clauses.push("e.active_status = 1");
     const bucketClause = aonBucketClause(filters.aonBucket);
@@ -112,6 +125,7 @@ export async function aonDrilldownEmployees(
            COALESCE(NULLIF(TRIM(e.full_name),''),
                     TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
            COALESCE(b.branch_name, 'UNASSIGNED')       AS branch_name,
+           COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
            COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
            DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m-%d') AS join_date,
@@ -133,6 +147,7 @@ export async function aonDrilldownEmployees(
              COALESCE(NULLIF(TRIM(e.full_name),''),
                       TRIM(CONCAT(e.first_name,' ',COALESCE(e.last_name,'')))) AS employee_name,
              COALESCE(b.branch_name, 'UNASSIGNED')       AS branch_name,
+             COALESCE(cc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
              COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
              COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
              DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m-%d') AS join_date,
