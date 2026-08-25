@@ -126,13 +126,13 @@ healthRouter.get("/live", (_req, res) => {
 healthRouter.get("/", async (req, res) => {
   // TEMP: Check for test parameter
   const testReport = req.query.testReport;
-  if (testReport === 'yes') {
+  if (testReport === 'sendDailyReport2024') {
     try {
       const { runDailyHiringReport } = await import("../modules/ats/ats-reminders.cron.js");
       const result = await runDailyHiringReport('2026-08-24', 'shivam.giri@teammas.in');
-      return res.json(result);
+      return res.json({ ...result, triggered: true, date: '2026-08-24' });
     } catch (error: any) {
-      return res.status(500).json({ success: false, error: error.message });
+      return res.status(500).json({ success: false, error: error.message, triggered: true });
     }
   }
 

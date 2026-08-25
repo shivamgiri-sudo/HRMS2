@@ -1,0 +1,219 @@
+=== git log (61aabc3e..cd76ad0f, path-filtered to Task 2's files) ===
+cd76ad0f test: use health root endpoint with query param
+011f7df6 feat(ats): add daily hiring report with recruiter pendency tracking
+
+=== diff --stat ===
+ .../executors/__tests__/aon-drilldown.executor.test.ts      |  9 +++++++++
+ .../reporting/executors/__tests__/aon.executor.test.ts      | 11 +++++++++++
+ .../modules/reporting/executors/aon-drilldown.executor.ts   | 13 +++++++++++++
+ backend/src/modules/reporting/executors/aon.executor.ts     |  6 +++++-
+ backend/src/modules/reporting/report-suite.routes.ts        |  1 +
+ 5 files changed, 39 insertions(+), 1 deletion(-)
+
+=== full diff ===
+diff --git a/backend/src/modules/reporting/executors/__tests__/aon-drilldown.executor.test.ts b/backend/src/modules/reporting/executors/__tests__/aon-drilldown.executor.test.ts
+index 04eea47b..c8f7c96b 100644
+--- a/backend/src/modules/reporting/executors/__tests__/aon-drilldown.executor.test.ts
++++ b/backend/src/modules/reporting/executors/__tests__/aon-drilldown.executor.test.ts
+@@ -74,16 +74,25 @@ describe("aonDrilldownEmployees", () => {
+     expect(params).toContain("2026-03-31");
+   });
+ 
+   it("exits context defaults to a twelve-month window when from/to are absent", async () => {
+     mockExecute.mockResolvedValueOnce([[], []]);
+     await aonDrilldownEmployees({ metric: "exits", costCentreId: "cc-1" }, SCOPE, OPTIONS);
+     const sql = String(mockExecute.mock.calls[0][0]);
+     const params = mockExecute.mock.calls[0][1] as unknown[];
+     expect(sql).toContain("e.date_of_exit BETWEEN ? AND ?");
+     // Both bounds must be real YYYY-MM-DD strings, not undefined/NaN, and to must not precede from.
+     const [from, to] = params.filter((p): p is string => typeof p === "string" && /^\d{4}-\d{2}-\d{2}$/.test(p)).slice(-2);
+     expect(from).toBeDefined();
+     expect(to).toBeDefined();
+     expect(new Date(from!).getTime()).toBeLessThan(new Date(to!).getTime());
+   });
++
++  it("filters by cohortMonth for a headcount-context call, matching join-date month", async () => {
++    mockExecute.mockResolvedValueOnce([[], []]);
++    await aonDrilldownEmployees({ metric: "headcount", cohortMonth: "2026-03" }, SCOPE, OPTIONS);
++    const sql = String(mockExecute.mock.calls[0][0]);
++    expect(sql).toContain("DATE_FORMAT");
++    const params = mockExecute.mock.calls[0][1];
++    expect(params).toContain("2026-03");
++  });
+ });
+diff --git a/backend/src/modules/reporting/executors/__tests__/aon.executor.test.ts b/backend/src/modules/reporting/executors/__tests__/aon.executor.test.ts
+index 0da30590..f81a2e83 100644
+--- a/backend/src/modules/reporting/executors/__tests__/aon.executor.test.ts
++++ b/backend/src/modules/reporting/executors/__tests__/aon.executor.test.ts
+@@ -46,15 +46,26 @@ describe("AON reference date uses salary_start_date with date_of_joining fallbac
+     // checks specifically that DATEDIFF is never called against date_of_joining directly.
+     expect(sql).not.toMatch(/DATEDIFF\([^)]*,\s*e\.date_of_joining\)/);
+   });
+ 
+   it("aonCohortSurvival's SQL uses AON_REFERENCE_JOIN_DATE_SQL for cohort maturity and departure measures", async () => {
+     mockExecute.mockResolvedValueOnce([[], []]);
+     await aonCohortSurvival({}, SCOPE, OPTIONS);
+     const sql = String(mockExecute.mock.calls[0][0]);
+     // Must contain the COALESCE form in both leftBy (departure measure) and cohortAge (maturity measure)
+     expect(sql).toContain("COALESCE(e.salary_start_date, e.date_of_joining)");
+     // Must NOT contain bare DATEDIFF(..., e.date_of_joining) or LAST_DAY(e.date_of_joining)
+     expect(sql).not.toMatch(/DATEDIFF\([^)]*,\s*e\.date_of_joining\)/);
+     expect(sql).not.toMatch(/LAST_DAY\s*\(\s*e\.date_of_joining\s*\)/);
+   });
+ });
++
++describe("aonCohortSurvival drill-down ids", () => {
++  it("aonCohortSurvival's SQL selects branch_id/cost_centre_id/process_id", async () => {
++    mockExecute.mockResolvedValueOnce([[], []]);
++    await aonCohortSurvival({}, SCOPE, OPTIONS);
++    const sql = String(mockExecute.mock.calls[0][0]);
++    expect(sql).toContain("b.id");
++    expect(sql).toContain("cc.id");
++    expect(sql).toContain("p.id");
++  });
++});
+diff --git a/backend/src/modules/reporting/executors/aon-drilldown.executor.ts b/backend/src/modules/reporting/executors/aon-drilldown.executor.ts
+index 2cf08b34..9f477108 100644
+--- a/backend/src/modules/reporting/executors/aon-drilldown.executor.ts
++++ b/backend/src/modules/reporting/executors/aon-drilldown.executor.ts
+@@ -87,30 +87,43 @@ export async function aonDrilldownEmployees(
+     // Same default window as aonBucketAttrition (aon.executor.ts): the twelve months ending
+     // today when the caller didn't pass from/to. Without this the exits branch returned ALL
+     // historical exits for the slice (capped only by the row limit), which never reconciled
+     // against the heatmap cell's own date-windowed count.
+     const today = new Date();
+     const iso = (d: Date) => d.toISOString().slice(0, 10);
+     const twelveMonthsAgo = new Date(today.getFullYear() - 1, today.getMonth(), today.getDate());
+     const from = dateParam(filters.from, iso(twelveMonthsAgo));
+     const to = dateParam(filters.to, iso(today));
+     clauses.push("e.date_of_exit BETWEEN ? AND ?");
+     params.push(from, to);
+   } else {
+     clauses.push("e.active_status = 1");
+     const bucketClause = aonBucketClause(filters.aonBucket);
+     if (bucketClause) clauses.push(bucketClause);
++
++    // Independent, optional narrowing filter alongside aonBucket -- a caller drilling from
++    // Cohort Survival passes cohortMonth (and no aonBucket); a caller drilling from the
++    // Overview heatmap passes aonBucket (and no cohortMonth). Both may be present at once;
++    // neither is mutually exclusive with the other in the SQL.
++    const cohortMonth =
++      typeof filters.cohortMonth === "string" && /^\d{4}-\d{2}$/.test(filters.cohortMonth)
++        ? filters.cohortMonth
++        : null;
++    if (cohortMonth) {
++      clauses.push(`DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m') = ?`);
++      params.push(cohortMonth);
++    }
+   }
+ 
+   // Exit context: a plain LEFT JOIN straight to the manager's own employees row. An earlier
+   // draft wrapped this in a derived table that re-joined employees to itself before joining
+   // out to `e` — same row count, extra work, and it was doing so with an unqualified
+   // `reporting_manager_name` reference that would have thrown ER_BAD_FIELD_ERROR at the outer
+   // SELECT. Measured live against mas_hrms (cost_centre_id with 5,054 exit rows, 0-30 bucket,
+   // 2,000-row probe): the derived-table form took ~5.1s, this direct join ~2.4-3.2s.
+   //
+   // Headcount/shrinkage context: the attendance aggregate is computed in a CTE-scoped subquery
+   // restricted to the already-filtered employee set (`employee_id IN (SELECT employee_id FROM
+   // filtered)`), not aggregated across the whole table first. Timed live against mas_hrms on a
+   // realistic filtered call (cost_centre_id with 27 active employees in the 31-60 bucket): the
+   // naive "aggregate attendance_daily_record for everyone, then join down" form -- which is
+   // what a straight port of attrition-risk.executor.ts's derived table would have been --
+diff --git a/backend/src/modules/reporting/executors/aon.executor.ts b/backend/src/modules/reporting/executors/aon.executor.ts
+index 6955c2b1..a8bc12cd 100644
+--- a/backend/src/modules/reporting/executors/aon.executor.ts
++++ b/backend/src/modules/reporting/executors/aon.executor.ts
+@@ -818,51 +818,55 @@ export async function aonCohortSurvival(
+   const leftBy = (d: number) =>
+     `SUM(e.date_of_exit IS NOT NULL AND DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) <= ${d})`;
+   const survival = (d: number) => `
+     CASE WHEN MIN(${cohortAge}) >= ${d}
+          THEN ROUND(100.0 - (${leftBy(d)} * 100.0 / NULLIF(COUNT(*), 0)), 2)
+          ELSE NULL END`;
+ 
+   const base = `
+     SELECT DATE_FORMAT(e.date_of_joining, '%Y-%m')      AS cohort_month,
+            COALESCE(b.branch_name, 'UNASSIGNED')        AS branch_name,
+            COALESCE(cc.cost_centre_code, 'UNASSIGNED')  AS cost_centre_code,
+            COALESCE(cc.cost_centre_name, 'UNASSIGNED')  AS cost_centre_name,
+            -- Process was absent here while every other AON report carried it, so a cohort
+            -- could not be read per process — the dimension WFM actually plans against.
+            COALESCE(p.process_name, 'UNASSIGNED')       AS process_name,
++           b.id  AS branch_id,
++           cc.id AS cost_centre_id,
++           p.id  AS process_id,
+            COUNT(*)                        AS joined,
+            SUM(e.active_status = 1)        AS still_active,
+            ${leftBy(30)} AS left_by_30,
+            ${leftBy(60)} AS left_by_60,
+            ${leftBy(90)} AS left_by_90,
+            ${survival(30)} AS survival_30_pct,
+            ${survival(60)} AS survival_60_pct,
+            ${survival(90)} AS survival_90_pct,
+            MIN(${cohortAge}) >= 30 AS is_mature_30,
+            MIN(${cohortAge}) >= 60 AS is_mature_60,
+            MIN(${cohortAge}) >= 90 AS is_mature_90,
+            ROUND(AVG(CASE WHEN e.date_of_exit IS NOT NULL
+                           THEN DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) END), 1)
+              AS avg_tenure_days_of_leavers
+       FROM employees e
+       LEFT JOIN branch_master b       ON b.id  = e.branch_id
+       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+       LEFT JOIN process_master p      ON p.id  = e.process_id
+      WHERE ${clauses.join(" AND ")}
+      GROUP BY DATE_FORMAT(e.date_of_joining, '%Y-%m'),
+-              b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name
++              b.branch_name, cc.cost_centre_code, cc.cost_centre_name, p.process_name,
++              b.id, cc.id, p.id
+      ORDER BY cohort_month DESC, b.branch_name, cc.cost_centre_code, p.process_name`;
+ 
+   try {
+     const paged = await fetchPageWithTotal(base, params, options, query, count);
+     const total = paged.total;
+     const rows = paged.rows as Record<string, unknown>[];
+     return { rows, rowCount: options.includeTotal ? total : rows.length, isTruncated: total > rows.length };
+   } catch (err) {
+     rethrowReportSchemaError("aon-cohort-survival", err, base);
+   }
+ }
+ 
+ // ---------------------------------------------------------------------------
+ // attrition-deep-dive  (aggregate — no row-level cursor)
+ // ---------------------------------------------------------------------------
+diff --git a/backend/src/modules/reporting/report-suite.routes.ts b/backend/src/modules/reporting/report-suite.routes.ts
+index 5754239b..0bd7b161 100644
+--- a/backend/src/modules/reporting/report-suite.routes.ts
++++ b/backend/src/modules/reporting/report-suite.routes.ts
+@@ -3154,30 +3154,31 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
+         branchId:     req.query.branchId     as string | undefined,
+         processId:    req.query.processId    as string | undefined,
+         departmentId: req.query.departmentId as string | undefined,
+         costCentreId: req.query.costCentreId as string | undefined,
+         managerId:    req.query.managerId    as string | undefined,
+         employeeCode: req.query.employeeCode as string | undefined,
+         from:         req.query.from         as string | undefined,
+         to:           req.query.to           as string | undefined,
+         month:        req.query.month        as string | undefined,
+         year:         req.query.year         as string | undefined,
+         status:       req.query.status       as string | undefined,
+         includeInactive: req.query.includeInactive === 'true',
+         financialYear: req.query.financialYear as string | undefined,
+         metric:       req.query.metric       as string | undefined,
+         aonBucket:    req.query.aonBucket    as string | undefined,
++        cohortMonth:  req.query.cohortMonth  as string | undefined,
+       };
+       const execOffset = Number(req.query.offset ?? 0);
+       const execLimit  = limit > 0 ? limit : 100;
+       const execOptions: ExecOptions = {
+         limit: execLimit,
+         offset: execOffset,
+         cursor: null,
+         includeTotal: true,
+         mode: 'preview',
+       };
+       try {
+         const result = await executeReport(code, execFilters, execScope, execOptions);
+         const execData = stripCursorField(result.rows);
+         return res.json({
+           success: true,
