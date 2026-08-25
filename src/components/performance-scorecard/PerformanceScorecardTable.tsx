@@ -6,6 +6,8 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { DashboardDrilldownDrawer } from "@/components/dashboard/DashboardDrilldownDrawer";
 import { BASELINE_COLUMNS, TEMPLATE_COLUMNS, type ScorecardRow } from "./performanceScorecardColumns";
+import { Button } from "@/components/ui/button";
+import PerformanceCompareModal from "./PerformanceCompareModal";
 
 interface PerformanceScorecardTableProps {
   dateFrom: string;
@@ -23,6 +25,7 @@ function groupByEmployee(rows: ScorecardRow[]): ScorecardRow[] {
 
 export default function PerformanceScorecardTable({ dateFrom, dateTo }: PerformanceScorecardTableProps) {
   const [drilldown, setDrilldown] = useState<{ employeeId: string; metricCode: string; metricName: string } | null>(null);
+  const [compareEmployee, setCompareEmployee] = useState<{ id: string; name: string } | null>(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["performance-scorecard", dateFrom, dateTo],
@@ -60,12 +63,13 @@ export default function PerformanceScorecardTable({ dateFrom, dateTo }: Performa
             {columns.map((col) => (
               <TableHead key={col.key}>{col.label}</TableHead>
             ))}
+            <TableHead>Compare</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {rows.length === 0 && (
             <TableRow>
-              <TableCell colSpan={columns.length + 1} className="text-center text-sm text-gray-500 py-6">
+              <TableCell colSpan={columns.length + 2} className="text-center text-sm text-gray-500 py-6">
                 No performance data for this date range.
               </TableCell>
             </TableRow>
@@ -95,10 +99,27 @@ export default function PerformanceScorecardTable({ dateFrom, dateTo }: Performa
                   )}
                 </TableCell>
               ))}
+              <TableCell>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCompareEmployee({ id: row.employeeId, name: row.employeeName })}
+                >
+                  Compare
+                </Button>
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
       </Table>
+      {compareEmployee && (
+        <PerformanceCompareModal
+          open={true}
+          onClose={() => setCompareEmployee(null)}
+          employeeName={compareEmployee.name}
+          rows={(data?.data ?? []).filter((r) => r.employeeId === compareEmployee.id)}
+        />
+      )}
       {drilldown && (
         <DashboardDrilldownDrawer
           open={true}
