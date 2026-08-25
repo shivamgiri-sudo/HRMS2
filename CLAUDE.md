@@ -338,7 +338,10 @@ curl -s -H "Authorization: Bearer <token>" https://mcnhrms.teammas.in/api/<endpo
 
 # 2. Confirm the response shape matches what the frontend expects.
 # 3. For DB changes: query the table directly to confirm rows/columns exist.
-mysql -u shivam_user -p'qwersdfg!@#hjk' -h 122.184.128.90 mas_hrms -e "SELECT ..."
+# Never paste a literal password here — read credentials from backend/.env
+# (DB_HOST/DB_USER/DB_PASSWORD/DB_NAME) via a short mysql2/promise script, the
+# same pattern used throughout this repo's own verification scripts.
+mysql -u "$DB_USER" -p"$DB_PASSWORD" -h "$DB_HOST" "$DB_NAME" -e "SELECT ..."
 ```
 
 #### Frontend Verification (run every time)
