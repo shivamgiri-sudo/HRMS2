@@ -108,7 +108,20 @@ export async function getQueue(filters: { status?: string; q?: string; branch?: 
             r.rejection_category, r.rejection_reason_code, r.rejection_remarks,
             r.resubmit_count, r.reopen_count, r.created_at, r.reviewed_at,
             TIMESTAMPDIFF(HOUR, r.created_at, NOW()) AS pending_hours,
-            e.employee_code, e.full_name, dm.designation_name, b.branch_name
+            e.employee_code, e.full_name, dm.designation_name, b.branch_name,
+            -- Correlated, not a JOIN — salary_component_assignments/ats_employment_offer can
+            -- each have more than one matching row; a JOIN here would multiply queue rows.
+            -- ctc_annual was never selected before this, so the "monthly CTC" column on this
+            -- page always rendered "—"; final_ctc/offered_ctc now feed it a real value.
+            (SELECT sca.ctc FROM salary_component_assignments sca
+              WHERE sca.employee_id = r.employee_id AND sca.status = 'active'
+              ORDER BY sca.effective_date DESC LIMIT 1) AS final_ctc,
+            (SELECT o.status FROM ats_employment_offer o
+              WHERE o.candidate_id = r.candidate_id
+              ORDER BY o.created_at DESC LIMIT 1) AS offer_status,
+            (SELECT o.offered_ctc FROM ats_employment_offer o
+              WHERE o.candidate_id = r.candidate_id
+              ORDER BY o.created_at DESC LIMIT 1) AS offered_ctc
        FROM employee_payroll_head_review r
        JOIN employees e ON e.id = r.employee_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
@@ -118,6 +131,40 @@ export async function getQueue(filters: { status?: string; q?: string; branch?: 
       LIMIT 500`,
     params
   );
+
+  // Pending Review is the only actionable tab and always small (~16 live today) — bound the
+  // extra BGV/bank enrichment to it so Approved/Rejected (which can hold years of history) never
+  // pay for it. BGV reuses the real per-employee resolver as-is (candidate_id, with the
+  // ats_onboarding_bridge fallback) rather than a second, drift-prone implementation. Bank calls
+  // the org-wide report exactly ONCE for the whole batch, not once per row.
+  if (status === "pending_review" && rows.length > 0) {
+    const [bgvResults, bankReport] = await Promise.all([
+      Promise.all(rows.map((r) =>
+        getEmployeeBgvStatus(r.employee_id as string).catch((e: unknown) => ({
+          error: e instanceof Error ? e.message : String(e),
+        }))
+      )),
+      buildBankReadinessReport(null).catch((e: unknown) => ({
+        error: e instanceof Error ? e.message : String(e),
+      })),
+    ]);
+    const bankByEmployee = new Map<string, unknown>();
+    if ("rows" in bankReport) {
+      for (const b of bankReport.rows as Array<{ employee_id: string }>) {
+        bankByEmployee.set(b.employee_id, b);
+      }
+    }
+    rows.forEach((r, i) => {
+      r.summary = {
+        offered: { status: r.offer_status ?? null, ctc: r.offered_ctc ?? null },
+        final: { accepted: !!r.package_accepted, assigned: !!r.final_ctc, ctc: r.final_ctc ?? null },
+        bgv: bgvResults[i],
+        bank: bankByEmployee.get(r.employee_id as string)
+          ?? (("error" in bankReport) ? bankReport : null),
+      };
+    });
+  }
+
   return rows;
 }
 
@@ -268,19 +315,26 @@ export async function updateSalaryStartDate(
     [employeeId]
   );
   const doj = empRows[0]?.date_of_joining as string | null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate) || isNaN(Date.parse(newDate))) {
+    throw httpError("salary_start_date must be a valid YYYY-MM-DD date.", 400, "INVALID_DATE");
+  }
   if (doj && new Date(newDate) < new Date(doj)) {
     throw httpError("Salary start date cannot be before date of joining.", 400, "INVALID_DATE");
   }
 
-  const [oldRows] = await db.execute<RowDataPacket[]>(
-    `SELECT salary_start_date FROM ats_payroll_hr_validation WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
+  const [latestRows] = await db.execute<RowDataPacket[]>(
+    `SELECT id, salary_start_date FROM ats_payroll_hr_validation
+      WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1`,
     [review.candidate_id]
   );
-  const oldDate = (oldRows[0]?.salary_start_date as string) || null;
+  if (!latestRows[0]) {
+    throw httpError("No payroll_hr_validation row found for this candidate.", 404, "NOT_FOUND");
+  }
+  const oldDate = (latestRows[0].salary_start_date as string) || null;
 
   await db.execute(
-    `UPDATE ats_payroll_hr_validation SET salary_start_date = ? WHERE candidate_id = ?`,
-    [newDate, review.candidate_id]
+    `UPDATE ats_payroll_hr_validation SET salary_start_date = ? WHERE id = ?`,
+    [newDate, latestRows[0].id]
   );
 
   await writeHistory({
