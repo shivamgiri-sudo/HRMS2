@@ -266,3 +266,22 @@ Fixed (commit c73ef346, no regressions): shared DashboardDrilldownDrawer.tsx now
 
 ## Backlog fix: N/A cells no longer clickable
 Fixed (commit e49fe20c): PerformanceScorecardTable.tsx now has 3 cell states — column unavailable (dashed badge, unchanged), row value null on an available column (plain non-clickable text, new), real value (clickable into drilldown, unchanged). typecheck clean both frontend halves + backend. THIS CLOSES THE ENTIRE FIXABLE BACKLOG FROM THIS SESSION — only deploy-blocked items remain (backend restart, historical backfill, manual browser verification), none of which can be done from this sandboxed session.
+
+---
+
+# Payroll Head Direct Salary Date Change — SDD Progress Ledger
+# Started: 2026-08-25
+# Plan: docs/superpowers/plans/2026-08-25-payroll-head-direct-date-change.md
+# Branch start commit: 44cdab4e
+
+## Tasks
+Task 1: Backend updateAssignmentEffectiveDate + PATCH route — complete (commits 86e987d0..bb393e2b, review clean — 2 minor: assignment_reason not carried, assigned_by attribution)
+Task 2: Frontend context-aware blur + confirmation dialog — complete (commit ce669129, review clean — 2 minor: unexplained exports in Queue, confirmDateBusy not cleared on Escape dismiss)
+
+Final whole-branch review: complete (commit 9c458bc0, all 4 blockers fixed — connection cleanup, salary_start_date sync, effective_to backdate guard). Ready to merge.
+
+## Shrinkage fix (investigated + fixed, went beyond the original 3-column scope)
+Root cause found: real bug, not seed/placeholder data — rta-nightly.cron.ts called calculateSnapshot() once with no scope; the service itself scopes correctly when given branchId/processId, it was just never invoked that way. process-level scoping deferred (81% NULL process_name in wfm_roster_assignment, would produce misleading zero rows); branch-level is safe (98% populated, only 4 active branches).
+Fixed (commit 2390f871, review APPROVED — org-wide call preserved not replaced, per-branch error isolation verified, upsert-safety confirmed via real UNIQUE KEY read): added additive per-branch loop to the shared rta-nightly.cron.ts; changed performance-scorecard's shrinkage lookup to match branchId only; re-enabled the Shrinkage column (available:false removed).
+Review found one Important item (real, independently DB-verified: 0/1119 live exposure but not schema-impossible, 92 historical rows have the shape) — fixed immediately (commit ef723a97): guard skips the shrinkage lookup entirely when branchId is falsy, rather than risking an unscoped listSnapshots call silently matching another branch's data. 14/14 tests still pass.
+ALL 3 ROLLUP COLUMNS (Attrition, Shrinkage, Revenue) NOW REAL. Full backlog from the entire session, including the shrinkage data-gap follow-up, is exhausted.
