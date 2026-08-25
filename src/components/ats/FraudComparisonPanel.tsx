@@ -60,10 +60,6 @@ interface FaceMatch {
 interface DocRow {
   id: string;
   doc_type: string;
-  ocr_extracted_number?: string | null;
-  ocr_extracted_name?: string | null;
-  ocr_number_match?: string | null;
-  ocr_extraction_status?: string | null;
   document_status?: string | null;
   uploaded_at?: string | null;
 }

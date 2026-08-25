@@ -88,8 +88,7 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
       [candidateId]
     ),
     db.execute<RowDataPacket[]>(
-      `SELECT id, doc_type, ocr_extracted_number, ocr_extracted_name,
-              ocr_number_match, ocr_extraction_status, document_status, uploaded_at
+      `SELECT id, doc_type, document_status, uploaded_at
          FROM candidate_onboarding_document
         WHERE candidate_id = ? AND deleted_at IS NULL
         ORDER BY uploaded_at ASC`,
