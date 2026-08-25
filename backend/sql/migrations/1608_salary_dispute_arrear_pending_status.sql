@@ -13,9 +13,13 @@
 -- stops the dormant case from silently reading as resolved.
 --
 -- Additive, backward-compatible: existing rows and values are untouched, only a new enum value
--- is added. NOT SAFE TO AUTO-APPLY — production data-shape change (Batch 3 Phase 4 of the
--- payroll audit fix plan). Run ONLY on local/staging first; get explicit approval before
--- production.
+-- is added.
+--
+-- APPLIED against production 2026-08-25 with explicit user approval. Confirmed after:
+-- SHOW COLUMNS FROM salary_dispute LIKE 'status' includes 'arrear_pending'; 0 existing rows
+-- (salary_dispute has never had a row written to it), so nothing else was affected. Idempotent
+-- (MODIFY COLUMN with the same target definition is a no-op if re-run) — kept here for the
+-- migration manifest/history.
 
 ALTER TABLE salary_dispute
   MODIFY COLUMN status ENUM('draft','pending_wfm','pending_payroll_head','approved','rejected','closed','arrear_pending')
