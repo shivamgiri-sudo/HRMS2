@@ -417,7 +417,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     const loan = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY') || getDeduction('LOAN_EMI') || Number(record.loan_deduction ?? 0);
     const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || Number(record.advance_recovery ?? record.advance_paid ?? 0);
     const knownDeductions = pf + esic + pt + tds + lwpDed + loan + adDed;
-    const otherDed = Math.max(Number(record.total_deductions ?? 0) - knownDeductions, 0);
+    const otherDed = Math.max(effectiveDeductions(record) - knownDeductions, 0);
 
     await downloadMasCallnetPayslip({
       companyName: "Mas Callnet India Pvt Ltd",
@@ -454,6 +454,14 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
   const deductionBreakdown = getDeductionBreakdown();
   const latestRecord = payrollRecords?.[0];
 
+  // When total_deductions = 0 (legacy migration didn't populate the column) but
+  // component-level detail exists, derive the total from the components array.
+  const effectiveDeductions = (record: PayslipRecord) => {
+    const stored = Number(record.total_deductions);
+    if (stored > 0) return stored;
+    return (record.deductions ?? []).reduce((s, d) => s + Number(d.amount), 0);
+  };
+
   // Source-of-truth rule:
   //   locked/approved/disbursed record → use stored figures directly
   //   draft/processing record → use stored figures (same engine, labelled Draft)
@@ -467,7 +475,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
   const displayDeductions = useRunningEstimate
     ? Number(runningSalary.pf_employee ?? 0) + Number(runningSalary.esic_employee ?? 0)
       + Number(runningSalary.professional_tax ?? 0) + Number(runningSalary.tds ?? 0)
-    : Number(latestRecord?.total_deductions ?? 0);
+    : (latestRecord ? effectiveDeductions(latestRecord) : 0);
   const displayNet = useRunningEstimate
     ? Number(runningSalary.earned_net_till_date ?? 0)
     : Number(latestRecord?.net_salary ?? 0);
@@ -758,7 +766,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                           <tr className="font-semibold">
                             <td className="py-1.5">Total Deductions</td>
                             <td className="py-1.5 text-right font-mono text-red-600">
-                              {renderSensitive(`-${formatCurrency(Number(payrollRecords?.[0]?.total_deductions ?? 0))}`)}
+                              {renderSensitive(`-${formatCurrency(payrollRecords?.[0] ? effectiveDeductions(payrollRecords[0]) : 0)}`)}
                             </td>
                           </tr>
                         </tbody>
@@ -862,7 +870,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                             {renderSensitive(`+${formatCurrency(totalAllowances > 0 ? totalAllowances : 0)}`)}
                           </TableCell>
                           <TableCell className="text-right text-red-600">
-                            {renderSensitive(`-${formatCurrency(Number(record.total_deductions) || 0)}`)}
+                            {renderSensitive(`-${formatCurrency(effectiveDeductions(record))}`)}
                           </TableCell>
                           <TableCell className="text-right font-semibold">
                             {renderSensitive(formatCurrency(Number(record.net_salary) || 0))}
