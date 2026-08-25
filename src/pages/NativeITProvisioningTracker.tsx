@@ -172,6 +172,26 @@ function TypeBadge({ type }: { type: string }) {
     : <Badge className="bg-rose-100 text-rose-800 border-rose-300 font-medium" variant="outline">EXIT</Badge>;
 }
 
+// ── Evidence file open helper ───────────────────────────────────────────────────
+// AD evidence files live behind an authenticated route (GET /api/files/:category/:filename
+// requires a session JWT or a short-lived ?token=). A plain <a href> has neither and always
+// 401s, so this fetches a download token first, the same pattern TaxCertificateCard.tsx uses.
+async function openEvidenceFile(evidenceFileUrl: string) {
+  try {
+    const parts = evidenceFileUrl.split("/").filter(Boolean);
+    const storedFilename = parts[parts.length - 1];
+    const category = parts[parts.length - 2] || "provisioning-evidence";
+    const res = await hrmsApi.post<{ token: string; expiresAt: string }>(
+      "/api/files/download-token",
+      { storedFilename, category },
+    );
+    if (!res?.token) throw new Error("No download token was issued.");
+    window.open(`/api/files/${category}/${storedFilename}?token=${res.token}`, "_blank", "noopener,noreferrer");
+  } catch (err) {
+    toast.error((err as Error)?.message || "Could not open the evidence file.");
+  }
+}
+
 // ── Candidate Report Sheet ─────────────────────────────────────────────────────
 
 function CandidateReportSheet({ taskId, open, onClose }: { taskId: string | null; open: boolean; onClose: () => void }) {
@@ -242,16 +262,15 @@ function CandidateReportSheet({ taskId, open, onClose }: { taskId: string | null
               <div className="flex items-start justify-between gap-3 text-sm">
                 <span className="text-slate-500 shrink-0 w-36">AD Log File</span>
                 {r.evidence_file_url ? (
-                  <a
-                    href={r.evidence_file_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <button
+                    type="button"
+                    onClick={() => openEvidenceFile(r.evidence_file_url!)}
                     className="font-medium text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 text-right"
                     aria-label="Download AD event log evidence file"
                   >
                     <Paperclip className="h-3.5 w-3.5" aria-hidden="true" /> View File
                     <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                  </a>
+                  </button>
                 ) : (
                   <span className="font-medium text-slate-800 text-right">—</span>
                 )}
@@ -648,26 +667,29 @@ export default function NativeITProvisioningTracker() {
 
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter]     = useState("all");
-  const [roleFilter, setRoleFilter]     = useState(preset?.role ?? "all");
+  const [roleFilter]     = useState(preset?.role ?? "all");
   const [taskFilter, setTaskFilter]     = useState(preset?.taskCode ?? "all");
   const [searchQuery, setSearchQuery]   = useState("");
   const [page, setPage]                 = useState(1);
   const LIMIT = 50;
 
-  // SLA summary data
+  // SLA summary data — scoped to this queue's own role/task so IT/Admin/WFM pages don't
+  // show each other's SLA figures mixed together.
   const { data: slaSummaryData } = useQuery({
-    queryKey: ["it-provisioning-sla-summary"],
+    queryKey: ["it-provisioning-sla-summary", preset?.taskCode],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/it-provisioning/sla/summary");
+      const qs = preset?.taskCode ? `?task_code=${preset.taskCode}` : "";
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/it-provisioning/sla/summary${qs}`);
       return (res as any)?.data ?? [];
     },
     staleTime: 5 * 60 * 1000,
   });
 
   const { data: slaViolationsData } = useQuery({
-    queryKey: ["it-provisioning-sla-violations"],
+    queryKey: ["it-provisioning-sla-violations", preset?.taskCode],
     queryFn: async () => {
-      const res = await hrmsApi.get<{ success: boolean; data: any[] }>("/api/it-provisioning/sla/violations");
+      const qs = preset?.taskCode ? `?task_code=${preset.taskCode}` : "";
+      const res = await hrmsApi.get<{ success: boolean; data: any[] }>(`/api/it-provisioning/sla/violations${qs}`);
       return (res as any)?.data ?? [];
     },
     staleTime: 2 * 60 * 1000,
@@ -960,7 +982,7 @@ export default function NativeITProvisioningTracker() {
         <h1 className="mt-1 text-2xl font-bold text-white">Provisioning Tracker</h1>
         <p className="mt-1 text-sm text-slate-200">Track IT setup, biometric enrollment, WFM alignment and appointment letter tasks.</p>
       </div>
-      <OnboardingTabBar hideTabs={location.pathname === "/provisioning/it" ? ["Appointment Letters"] : []} />
+      <OnboardingTabBar hideTabs={["Requests", "Joining Ops", "Documents", "Appointment Letters"]} />
     <HrmsModernShell
       eyebrow="Provisioning"
       title={preset?.title ?? "IT Provisioning Tracker"}
@@ -1171,20 +1193,6 @@ export default function NativeITProvisioningTracker() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="w-[140px]">
-              <Label htmlFor="filter-role" className="sr-only">Filter by assigned role</Label>
-              <Select value={roleFilter} onValueChange={(v) => { setRoleFilter(v); setPage(1); }}>
-                <SelectTrigger id="filter-role" className="min-h-[44px]"><SelectValue placeholder="Assigned To" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Roles</SelectItem>
-                  <SelectItem value="it">IT</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="branch_admin">Branch Admin</SelectItem>
-                  <SelectItem value="wfm">WFM</SelectItem>
-                  <SelectItem value="hr">HR</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
             <div className="w-[190px]">
               <Label htmlFor="filter-task" className="sr-only">Filter by task type</Label>
               <Select value={taskFilter} onValueChange={(v) => { setTaskFilter(v); setPage(1); }}>
@@ -1270,16 +1278,15 @@ export default function NativeITProvisioningTracker() {
                           {req.official_email ? <span className="text-emerald-700 font-medium">{req.official_email}</span> : "—"}
                           {req.domain_account && <><br />{req.domain_account}</>}
                           {req.evidence_file_url && (
-                            <a
-                              href={req.evidence_file_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
+                            <button
+                              type="button"
+                              onClick={() => openEvidenceFile(req.evidence_file_url!)}
                               className="mt-1 flex items-center gap-1 text-blue-600 hover:text-blue-800 hover:underline"
                               aria-label="View AD log evidence file"
                             >
                               <Paperclip className="h-3 w-3" aria-hidden="true" /> AD Log
                               <ExternalLink className="h-3 w-3" aria-hidden="true" />
-                            </a>
+                            </button>
                           )}
                         </TableCell>
                       )}
@@ -1588,7 +1595,10 @@ export default function NativeITProvisioningTracker() {
                 {adReportQuery.isLoading && (
                   <TableRow><TableCell colSpan={11} className="text-center text-sm text-gray-400 py-8">Loading report…</TableCell></TableRow>
                 )}
-                {!adReportQuery.isLoading && !adReportQuery.data?.length && (
+                {adReportQuery.isError && (
+                  <TableRow><TableCell colSpan={11} className="text-center text-sm text-red-500 py-8">Failed to load report: {(adReportQuery.error as Error)?.message ?? "Unknown error"}</TableCell></TableRow>
+                )}
+                {!adReportQuery.isLoading && !adReportQuery.isError && !adReportQuery.data?.length && (
                   <TableRow><TableCell colSpan={11} className="text-center text-sm text-gray-400 py-8">No records found for selected filters</TableCell></TableRow>
                 )}
                 {(adReportQuery.data ?? []).map((r: any, i: number) => (
@@ -1623,10 +1633,10 @@ export default function NativeITProvisioningTracker() {
                     </TableCell>
                     <TableCell className="py-2">
                       {r.evidence_file_url
-                        ? <a href={r.evidence_file_url} target="_blank" rel="noreferrer"
+                        ? <button type="button" onClick={() => openEvidenceFile(r.evidence_file_url)}
                             className="flex items-center gap-1 text-blue-600 hover:underline text-xs">
                             <Paperclip className="h-3 w-3" /> View
-                          </a>
+                          </button>
                         : <span className="text-amber-600 text-xs">Missing</span>}
                     </TableCell>
                     <TableCell className="py-2">

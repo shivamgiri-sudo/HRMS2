@@ -771,10 +771,10 @@ export function ItManagerReferenceLayout({ data, filters }: { data: ReferenceDas
         columns={4}
         loading={data.loading}
         metrics={[
-          { label: "Pending Provisioning", value: pendingTotal,    helper: "new joiners awaiting IT", icon: Clock,      tone: pendingTotal === null ? "slate" : pendingTotal > 10 ? "red" : pendingTotal > 5 ? "amber" : "green" },
-          { label: "SLA Overdue",          value: overdueCount,    helper: "provisioning tasks past SLA", icon: AlertTriangle, tone: overdueCount === null ? "slate" : overdueCount > 0 ? "red" : "green" },
-          { label: "Open IT Tickets",      value: openTickets,     helper: "helpdesk tickets open",  icon: Ticket,      tone: openTickets === null ? "slate" : openTickets > 10 ? "red" : openTickets > 3 ? "amber" : "green" },
-          { label: "SLA Breached",         value: slaBreachedOpen, helper: "IT tickets past SLA",    icon: ShieldX,     tone: slaBreachedOpen === null ? "slate" : slaBreachedOpen > 0 ? "red" : "green" },
+          { label: "Pending Provisioning", value: pendingTotal,    helper: "new joiners awaiting IT", icon: Clock,      tone: pendingTotal === null ? "slate" : pendingTotal > 10 ? "red" : pendingTotal > 5 ? "amber" : "green", onDrilldown: () => setActiveTab("provisioning") },
+          { label: "SLA Overdue",          value: overdueCount,    helper: "provisioning tasks past SLA", icon: AlertTriangle, tone: overdueCount === null ? "slate" : overdueCount > 0 ? "red" : "green", onDrilldown: () => setActiveTab("provisioning") },
+          { label: "Open IT Tickets",      value: openTickets,     helper: "helpdesk tickets open",  icon: Ticket,      tone: openTickets === null ? "slate" : openTickets > 10 ? "red" : openTickets > 3 ? "amber" : "green", onDrilldown: () => setActiveTab("helpdesk") },
+          { label: "SLA Breached",         value: slaBreachedOpen, helper: "IT tickets past SLA",    icon: ShieldX,     tone: slaBreachedOpen === null ? "slate" : slaBreachedOpen > 0 ? "red" : "green", onDrilldown: () => setActiveTab("helpdesk") },
         ]}
       />
 

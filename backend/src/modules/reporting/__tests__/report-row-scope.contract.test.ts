@@ -52,7 +52,9 @@ const UNSCOPED_BACKLOG = new Set<string>([
   "roster-change-audit", "asset-assignment-register",
   "esic-challan-data", "cheque-name-mismatch-report",
   "rehire-eligibility-register", "feedback-360-summary", "goal-completion-summary",
-  "training-needs-summary", "it-ad-account-audit",
+  "training-needs-summary",
+  // it-ad-account-audit was removed from this list: it now calls addScopedEmployeeFilters
+  // (added when it was registered in REPORT_CATALOG and made reachable).
 ]);
 
 /** Every `case "<code>"` block that builds SQL over employee data with no scope call. */

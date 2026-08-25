@@ -3013,6 +3013,11 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
       const reqType  = req.query.request_type ? String(req.query.request_type) : null;
       const evStatus = req.query.evidence_status ? String(req.query.evidence_status) : null;
 
+      const scopeClauses: string[] = [];
+      const scopeParams: unknown[] = [];
+      addScopedEmployeeFilters(req, scopeClauses, scopeParams);
+      const scopeSql = scopeClauses.length ? scopeClauses.map(c => `AND ${c}`).join(' ') : '';
+
       sql = `
         SELECT
           e.employee_code,
@@ -3060,12 +3065,14 @@ COALESCE(zcc.cost_centre_code, 'UNASSIGNED') AS cost_centre_code,
           ${reqType  ? 'AND ipr.request_type = ?' : ''}
           ${evStatus === 'with_evidence'    ? 'AND ipr.evidence_file_url IS NOT NULL' : ''}
           ${evStatus === 'without_evidence' ? 'AND ipr.evidence_file_url IS NULL' : ''}
+          ${scopeSql}
         ORDER BY ipr.requested_at DESC
       `;
       if (dateFrom) params.push(dateFrom);
       if (dateTo)   params.push(dateTo);
       if (branch)   params.push(branch);
       if (reqType)  params.push(reqType);
+      params.push(...scopeParams);
       break;
     }
 

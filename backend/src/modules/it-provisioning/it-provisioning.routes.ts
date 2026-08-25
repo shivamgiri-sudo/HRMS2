@@ -8,7 +8,7 @@ import multer from 'multer';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import type { AuthenticatedRequest } from '../../middleware/authMiddleware.js';
-import { hasRole } from '../../shared/accessGuard.js';
+import { hasRole, getEmployeeForUser } from '../../shared/accessGuard.js';
 import { narrowDashboardScope, resolveDashboardScope } from '../../shared/dashboardScope.js';
 import { getUserRoleContext } from '../../shared/roleResolver.js';
 import { db } from '../../db/mysql.js';
@@ -322,10 +322,24 @@ router.get(['/tasks', '/tasks/my'], requireRole(...PROVISIONING_ROLES), h(async 
     limit: req.query.limit ? Number(req.query.limit) : 50,
   };
   if (req.path.endsWith('/my')) filters.assignedUserId = userId;
-  if (!isAdmin && !filters.assignedRole) {
-    if (await hasRole(userId, 'it')) filters.assignedRole = 'it';
-    else if (await hasRole(userId, 'wfm')) filters.assignedRole = 'wfm';
-    else if (await hasRole(userId, 'branch_admin')) filters.assignedRole = 'admin';
+  if (!isAdmin) {
+    if (!filters.assignedRole) {
+      if (await hasRole(userId, 'it')) filters.assignedRole = 'it';
+      else if (await hasRole(userId, 'wfm')) filters.assignedRole = 'wfm';
+      else if (await hasRole(userId, 'branch_admin')) filters.assignedRole = 'admin';
+    }
+
+    const roleContext = await getUserRoleContext(userId);
+    const baseScope = await resolveDashboardScope(userId, roleContext.primaryRole);
+    const scoped = await narrowDashboardScope(
+      baseScope,
+      String(req.query.branch_id ?? ''),
+      String(req.query.process_id ?? ''),
+    );
+    filters.branchIds = scoped.branchIds;
+    filters.processIds = scoped.processIds;
+  } else {
+    if (req.query.branch_id) filters.branchId = req.query.branch_id as string;
   }
   const result = await listProvisioningRequests(filters);
   return res.json({ success: true, ...result });
@@ -549,6 +563,7 @@ router.post(
     // Register in document vault for audit trail (non-fatal)
     try {
       const { registerUpload } = await import('../document-vault/documentVault.service.js');
+      const actorEmployee = await getEmployeeForUser(req.authUser!.id).catch(() => null);
       await registerUpload({
         uploadedByUser: req.authUser!.id,
         category: 'provisioning-evidence',
@@ -557,6 +572,7 @@ router.post(
         mimeType: file.mimetype,
         fileSizeBytes: file.size,
         accessLevel: 'internal',
+        ownerEmployeeId: actorEmployee?.id,
       });
     } catch (err) {
       console.error('[upload-evidence] document vault registration failed:', err);
@@ -598,9 +614,10 @@ router.post(
 );
 
 // ── SLA Violations Dashboard ──────────────────────────────────────────────────
-router.get('/sla/violations', requireRole('admin', 'super_admin', 'hr'), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get('/sla/violations', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm', 'branch_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
   const { findSlaViolations } = await import('../employees/employee-activation.service.js');
-  const violations = await findSlaViolations();
+  const taskCode = req.query.task_code ? String(req.query.task_code) : undefined;
+  const violations = await findSlaViolations(taskCode);
   return res.json({ success: true, data: violations, count: violations.length });
 }));
 
@@ -652,7 +669,8 @@ router.post('/sla/bulk-waive', requireRole('admin', 'super_admin', 'hr'), h(asyn
   return res.json({ success: true, waived, message: `${waived} SLA violation${waived !== 1 ? 's' : ''} resolved` });
 }));
 
-router.get('/sla/summary', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm'), h(async (_req: AuthenticatedRequest, res: Response) => {
+router.get('/sla/summary', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm', 'branch_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+  const taskCode = req.query.task_code ? String(req.query.task_code) : null;
   const [summary] = await db.execute<RowDataPacket[]>(
     `SELECT
        task_code,
@@ -668,9 +686,10 @@ router.get('/sla/summary', requireRole('admin', 'super_admin', 'hr', 'it', 'wfm'
      FROM it_provisioning_request
      WHERE request_type = 'join'
        AND created_at > DATE_SUB(NOW(), INTERVAL 30 DAY)
+       ${taskCode ? 'AND task_code = ?' : ''}
      GROUP BY task_code
      ORDER BY task_code`,
-    []
+    taskCode ? [taskCode] : []
   );
   return res.json({ success: true, data: summary });
 }));

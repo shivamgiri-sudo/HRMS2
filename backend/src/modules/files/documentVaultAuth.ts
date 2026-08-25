@@ -46,6 +46,9 @@ const HRMS_EMPLOYEE_ROLES = new Set([
   "hr", "hr_admin", "payroll", "payroll_hr", "recruiter",
   "wfm", "wfm_analyst", "qa", "trainer", "finance", "ops_manager",
   "dpo", "admin", "super_admin", "ceo",
+  // it/branch_it upload AD provisioning evidence (accessLevel: 'internal') via
+  // /api/it-provisioning/tasks/:id/upload-evidence and need to view it back.
+  "it", "branch_it",
 ]);
 
 // Access level → roles allowed (beyond document owner)

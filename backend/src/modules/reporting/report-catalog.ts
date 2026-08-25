@@ -2027,6 +2027,67 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     containsPII: true,
   },
 
+  // it-ad-account-audit has working SQL in report-suite.routes.ts (case
+  // "it-ad-account-audit") and is called directly by the "AD Compliance
+  // Report" dialog on NativeITProvisioningTracker.tsx, but was never
+  // registered here — reportCatalogAccessMiddleware 404s any code missing
+  // from this array before the query ever runs, so the dialog always
+  // rendered "No records found" regardless of real data. Same bug class as
+  // payslip-status and friends above. Columns below match the real SELECT
+  // clause exactly.
+  {
+    code: "it-ad-account-audit",
+    name: "AD Account Provisioning Compliance",
+    category: "IT Provisioning",
+    subcategory: "Active Directory Audit",
+    description: "Domain/AD account provisioning status and AD event log evidence for every IT_EMAIL_DOMAIN_ASSET task",
+    rowGrain: "One row per IT provisioning request (email/domain/AD account task)",
+    primaryKey: ["employee_code", "requested_at"],
+    columns: [
+      { key: "employee_code", label: "Emp Code", format: "text", width: 100 },
+      { key: "employee_name", label: "Employee Name", format: "text", width: 180 },
+      { key: "date_of_joining", label: "Date of Joining", format: "date", width: 110 },
+      { key: "date_of_leaving", label: "Date of Leaving", format: "date", width: 110 },
+      { key: "branch_name", label: "Branch", format: "text", width: 140 },
+      { key: "process_name", label: "Process", format: "text", width: 140 },
+      { key: "request_type", label: "Request Type", format: "text", width: 100 },
+      { key: "status", label: "Status", format: "status", width: 120 },
+      { key: "locked", label: "Locked", format: "boolean", width: 80 },
+      { key: "domain_account", label: "Domain Account", format: "text", width: 160 },
+      { key: "official_email", label: "Official Email", format: "email", width: 200 },
+      { key: "ad_log_type", label: "AD Log Type", format: "text", width: 120 },
+      { key: "ad_account_name", label: "AD Account Name", format: "text", width: 160 },
+      { key: "ad_event_id", label: "AD Event ID", format: "text", width: 100 },
+      { key: "ad_actioned_by_it", label: "Actioned By (IT)", format: "text", width: 160 },
+      { key: "ad_event_time", label: "AD Event Time", format: "datetime", width: 150 },
+      { key: "evidence_file_url", label: "Evidence File", format: "text", width: 120 },
+      { key: "requested_at", label: "Requested At", format: "datetime", width: 150 },
+      { key: "actioned_at", label: "Actioned At", format: "datetime", width: 150 },
+      { key: "sla_due_at", label: "SLA Due At", format: "datetime", width: 150 },
+      { key: "sla_status", label: "SLA Status", format: "status", width: 110 },
+      { key: "evidence_status", label: "Evidence Status", format: "status", width: 140 },
+    ],
+    filters: [
+      { key: "date_from", label: "From Date", type: "date" },
+      { key: "date_to", label: "To Date", type: "date" },
+      { key: "branch", label: "Branch", type: "text" },
+      { key: "request_type", label: "Request Type", type: "select", options: [
+        { value: "join", label: "Join" },
+        { value: "exit", label: "Exit" },
+      ] },
+      { key: "evidence_status", label: "Evidence Status", type: "select", options: [
+        { value: "with_evidence", label: "With Evidence" },
+        { value: "without_evidence", label: "Without Evidence" },
+      ] },
+    ],
+    viewRoles: ["super_admin", "admin", "it", "branch_admin", "wfm", "hr"],
+    exportRoles: ["super_admin", "admin", "it", "hr"],
+    sourceTables: ["it_provisioning_request", "employees", "branch_master", "process_master"],
+    branchScoped: true,
+    sensitivityLevel: "confidential",
+    containsPII: true,
+  },
+
   {
     code: "increment-requests",
     name: "Increment Requests",
