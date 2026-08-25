@@ -183,3 +183,4 @@ All 8 tests pass, frontend build ✓ 10.34s, backend ESI files tsc clean.
 
 === ESI REGISTRATION DOCUMENTS FEATURE COMPLETE ===
 Branch ready for merge.
+Task 13: complete (report .superpowers/sdd/employee-performance-scorecard/reports/task-13-report.md — full backend suite 955 passed/29 failed files but 0 traced to this plan's 5 files (18/18 plan-specific tests pass), frontend suite 780/794 pass with 8 pre-existing unrelated failures, backfill against live DB confirmed the known missing-table failure mode across 5 days with correct per-employee error isolation until DB circuit-breaker safety tripped (unrelated pre-existing mechanism) — flagged inter-employee pacing as a follow-up for the real post-deploy backfill. Discovered: local main and origin/main are IDENTICAL — this plan's work (Tasks 1-12) is already on GitHub via a concurrent session's push of the shared branch, not via any push this plan's execution performed itself. ALL 13 TASKS COMPLETE.)

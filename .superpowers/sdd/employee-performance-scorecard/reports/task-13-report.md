@@ -98,7 +98,38 @@ and unrelated (confirmed by reading the actual failing assertions, not just file
 
 Command: `cd backend && npx tsx scripts/backfill-performance-scorecard-snapshot.ts 2026-08-18 2026-08-24`
 
-[FILL IN AFTER SCRIPT COMPLETES]
+(This step was completed by the controller directly after the retried implementer's
+long-running Monitor wait exceeded a reasonable turnaround — the implementer's Steps 1-2
+and Step 4 above were preserved as written; only this step's result was appended.)
+
+**Result:** exactly the expected failure mode, confirmed for real against the live DB —
+`employee_performance_daily_snapshot` does not exist (migration 1604 registered but not
+applied, per the known deploy-timing gap). Sample from the run:
+
+```
+2026-08-22: wrote 0 rows, 1112 errors
+2026-08-22 errors: [
+  { employeeId: '0000bf5c-...', error: "Table 'mas_hrms.employee_performance_daily_snapshot' doesn't exist" },
+  { employeeId: '000d8562-...', error: "Table 'mas_hrms.employee_performance_daily_snapshot' doesn't exist" },
+  ...
+]
+```
+
+The run reached day 5 of 7 (2026-08-18 through 2026-08-22) before the live DB's own
+circuit-breaker protection (`backend/src/db/mysql.ts`'s `checkCircuitBreaker`, unrelated to
+this plan's code) opened after the sustained run of per-employee failures and halted further
+retries with `CIRCUIT_BREAKER_OPEN` — not a crash, a deliberate pre-existing safety mechanism.
+This confirms the same conclusion as Task 4's single-day dry run, now across multiple days:
+the script's per-employee error isolation (Task 2's fix) worked correctly under sustained
+failure (no unhandled crash, one line per employee, capped error detail), and the missing
+table is the sole cause, not a bug in this plan's code.
+
+**Observation for whoever runs the real post-deploy backfill:** the script has no inter-day or
+inter-employee pacing/backoff, so a genuinely large failure run (or even a large *successful*
+run against ~1,110+ employees × many days) risks tripping this same circuit breaker under load.
+Worth adding a small delay or batching if the real historical backfill covers 30-60+ days —
+flagged as a follow-up, not fixed here since it's speculative tuning against conditions that
+don't reproduce until the table actually exists.
 
 ---
 
