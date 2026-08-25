@@ -173,3 +173,97 @@ correctly committed and pushed.
 3. My commit landed via another session's broad, unrelated commit rather than my own
    scoped one — content verified identical to my intent, already on `origin/main`, no
    git surgery attempted per instructions.
+
+---
+
+## Addendum — post-review fix: window functions not matched to the new GROUP BY grain
+
+## Status: DONE
+
+Task review correctly caught a real, high-severity-but-narrow-scope bug that my original
+verification missed: `share_pct` and `early_quit_rate` are both computed with window
+functions (`... OVER (PARTITION BY ${dim.expr})`), and I had added `dimensionIdExpr` to
+`GROUP BY` but not to either `PARTITION BY`. Before this task, `dim.expr` alone was the
+`GROUP BY` key, so `PARTITION BY dim.expr` matched it exactly. After adding `dimension_id`
+to `GROUP BY`, the `GROUP BY` grain became strictly finer than the `PARTITION BY` grain
+whenever two distinct `dimension_id`s collate to equal text — exactly the "Kamal Singh"/
+"KAMAL SINGH" case my own Concern #1 above already surfaced, but I had checked only that
+`GROUP BY` correctly split the two managers into two rows with correctly-summed `exits`
+(1030 + 46 = 1076); I had not checked whether the two *split* rows' window-function
+columns (`share_pct`, `early_quit_rate`) were each computed from the manager's own exits or
+still pooled from both. They were still pooled — the exact bug the reviewer named.
+
+### Fix
+
+Added `${dimensionIdExpr}` to both `OVER (PARTITION BY ...)` clauses (the `share_pct`
+window and both windows inside `early_quit_rate`), so partition grain now matches `GROUP
+BY` grain exactly:
+
+```sql
+/ NULLIF(SUM(COUNT(*)) OVER (PARTITION BY ${dim.expr}, ${dimensionIdExpr}), 0), -- share_pct
+...
+SUM(SUM(CASE WHEN ... THEN 1 ELSE 0 END)) OVER (PARTITION BY ${dim.expr}, ${dimensionIdExpr}) * 100.0
+/ NULLIF(SUM(COUNT(*)) OVER (PARTITION BY ${dim.expr}, ${dimensionIdExpr}), 0)          -- early_quit_rate
+```
+
+Only `aon.executor.ts` changed — no new test case was added (the existing 2 dimension_id
+tests assert on SQL text shape, not on computed percentage values, and adding a
+percentage-value assertion would require executing real SQL against a live/seeded DB,
+which the existing mocked-`db.execute` unit tests in this file are not set up to do; the
+live-verification script below is the actual proof for this specific value-correctness
+claim, matching how the original task's own live-verification was done).
+
+### Live re-verification — the exact Kamal Singh / KAMAL SINGH case
+
+Read-only script against the live `mas_hrms` DB, same 12-month exit window
+(`2025-08-25`–`2026-08-25`), reproducing the `reporting_manager` dimension's `share_pct`/
+`early_quit_rate` computation before and after the fix, isolated to just these two
+manager rows:
+
+```
+=== BEFORE FIX (window partitioned by text only, pooled) ===
+{ dimension_value: 'KAMAL SINGH',  dimension_id: '3efa07f9-6584-11f1-adb1-00155d0ab410', exits: 46,   share_pct: '4.28',  early_quit_rate: '51.30' }
+{ dimension_value: 'Kamal Singh',  dimension_id: '149ba301-5e8e-11f1-adb1-00155d0ab410', exits: 1030, share_pct: '95.72', early_quit_rate: '51.30' }
+
+=== AFTER FIX (window partitioned by text + dimension_id) ===
+{ dimension_value: 'Kamal Singh',  dimension_id: '149ba301-5e8e-11f1-adb1-00155d0ab410', exits: 1030, share_pct: '100.00', early_quit_rate: '50.78' }
+{ dimension_value: 'KAMAL SINGH',  dimension_id: '3efa07f9-6584-11f1-adb1-00155d0ab410', exits: 46,   share_pct: '100.00', early_quit_rate: '63.04' }
+```
+
+Confirmed: before the fix both managers shared one pooled `early_quit_rate` of `51.30`
+(computed from the combined 1076 exits) despite already being separate `GROUP BY` rows.
+After the fix each manager's `early_quit_rate` is distinct and computed from their own
+exits only — `50.78` for the 1030-exit manager, `63.04` for the 46-exit manager — no
+pooling across the two now-separated identities. (`share_pct` reads `100.00` for both in
+this isolated single-dimension-only reproduction because the reproduction query has no
+`aon_bucket` grouping term; in the real `attritionDeepDive` query `share_pct` is a
+per-bucket share within each manager's own total, which is exactly what the fixed
+partition now computes.)
+
+### Test output (after fix)
+
+```
+$ cd backend && npx vitest run src/modules/reporting/executors/__tests__/aon.executor.test.ts
+ Test Files  1 passed (1)
+      Tests  6 passed (6)
+
+$ cd backend && npx vitest run src/modules/reporting/
+ Test Files  49 passed (49)
+      Tests  302 passed | 1 skipped (303)
+
+$ cd backend && npx tsc --noEmit -p tsconfig.json 2>&1 | grep -E "aon\.executor"
+(no output)
+```
+
+### Commit
+
+Checked `git status --porcelain` first: several unrelated files were dirty in this shared
+tree from other concurrent sessions (`performance-scorecard*`, `dashboardAccessRegistry.ts`,
+`pageRoutePageCodes.ts`) — left untouched. Diffed `aon.executor.ts` against HEAD before
+staging to confirm the working tree contained exactly my 2 intended one-line changes and
+nothing else, staged only that file by explicit path, and committed.
+
+**Commit SHA:** `ecd4d9a6565aaddc328cb06f8e487bae8e8c9ba9`
+Confirmed on `origin/main`: `git merge-base --is-ancestor ecd4d9a6 origin/main` → true.
+`git show --stat HEAD` confirmed exactly 1 file changed, 3 insertions/3 deletions, matching
+the intended fix.
