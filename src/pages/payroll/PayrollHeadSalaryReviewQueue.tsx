@@ -1561,12 +1561,13 @@ export default function PayrollHeadSalaryReviewQueue() {
         {/* KPI tiles */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: 'Pending Review', value: pendingCount, icon: Clock, bg: 'from-amber-50 to-orange-50', border: 'border-amber-200', text: 'text-amber-600', val: 'text-amber-900', sub: 'awaiting decision' },
-            { label: `Overdue (>48h)`, value: overdueCount, icon: AlertTriangle, bg: overdueCount > 0 ? 'from-red-50 to-rose-50' : 'from-slate-50 to-slate-100', border: overdueCount > 0 ? 'border-red-200' : 'border-slate-200', text: overdueCount > 0 ? 'text-red-600' : 'text-slate-500', val: overdueCount > 0 ? 'text-red-900' : 'text-slate-900', sub: overdueCount > 0 ? 'salary blocked' : 'all on time' },
-            { label: 'Approved', value: approvedCount, icon: CheckCircle2, bg: 'from-emerald-50 to-green-50', border: 'border-emerald-200', text: 'text-emerald-600', val: 'text-emerald-900', sub: 'cleared for payroll' },
-            { label: 'Rejected', value: rejectedCount, icon: XCircle, bg: 'from-rose-50 to-pink-50', border: 'border-rose-200', text: 'text-rose-600', val: 'text-rose-900', sub: 'requires correction' },
-          ].map(({ label, value, icon: Icon, bg, border, text, val, sub }) => (
-            <div key={label} className={`rounded-2xl border bg-gradient-to-br ${bg} ${border} p-4 shadow-sm`}>
+            { label: 'Pending Review', value: pendingCount, icon: Clock, bg: 'from-amber-50 to-orange-50', border: 'border-amber-200', text: 'text-amber-600', val: 'text-amber-900', sub: 'awaiting decision', tabKey: 'pending_review' as const },
+            { label: `Overdue (>48h)`, value: overdueCount, icon: AlertTriangle, bg: overdueCount > 0 ? 'from-red-50 to-rose-50' : 'from-slate-50 to-slate-100', border: overdueCount > 0 ? 'border-red-200' : 'border-slate-200', text: overdueCount > 0 ? 'text-red-600' : 'text-slate-500', val: overdueCount > 0 ? 'text-red-900' : 'text-slate-900', sub: overdueCount > 0 ? 'salary blocked' : 'all on time', tabKey: 'pending_review' as const },
+            { label: 'Approved', value: approvedCount, icon: CheckCircle2, bg: 'from-emerald-50 to-green-50', border: 'border-emerald-200', text: 'text-emerald-600', val: 'text-emerald-900', sub: 'cleared for payroll', tabKey: 'approved' as const },
+            { label: 'Rejected', value: rejectedCount, icon: XCircle, bg: 'from-rose-50 to-pink-50', border: 'border-rose-200', text: 'text-rose-600', val: 'text-rose-900', sub: 'requires correction', tabKey: 'rejected' as const },
+          ].map(({ label, value, icon: Icon, bg, border, text, val, sub, tabKey }) => (
+            <div key={label} onClick={() => setTab(tabKey)}
+              className={`rounded-2xl border bg-gradient-to-br ${bg} ${border} p-4 shadow-sm cursor-pointer hover:shadow-md hover:scale-[1.01] transition-all duration-150 ${tab === tabKey ? 'ring-2 ring-offset-1 ring-current' : ''}`}>
               <div className="flex items-start justify-between mb-3">
                 <p className={`text-[11px] font-semibold uppercase tracking-wide ${text}`}>{label}</p>
                 <div className={`w-7 h-7 rounded-lg flex items-center justify-center bg-white/60`}>
