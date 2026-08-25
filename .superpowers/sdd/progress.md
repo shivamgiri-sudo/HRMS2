@@ -215,7 +215,7 @@ Task 3: complete (commits cfcfa0e1, ecd4d9a6, base e1ba44a9, review clean after 
 ## Tasks
 Task 1: DB migration (440_salary_date_revision_requests.sql) — complete (commit 4c43299a, base 48863b8a, review clean)
 Task 2: Backend payroll-head-review (getEmployeeJourney + PATCH route) — complete (commits 197ddc29..3f3b7146, review clean)
-Task 3: Backend salary-revision module (service + routes + app mount) — pending
+Task 3: Backend salary-revision module — complete (commits e4c03af2..a54b094c, review clean — 3 minor: status validation, pagination, col reuse)
 Task 4: Frontend review page effective date fix + write-back — pending
 Task 5: Frontend NativeJoiningControlRoom tooltip — pending
 Task 6: Frontend SalaryRevisionDrawer + Pending Revisions tab — pending
@@ -230,3 +230,4 @@ Task 4: complete (commits b9f8b653, 1da3c689, base 48863b8a, review clean after 
 
 ## Tasks
 Task 1: complete (commit 117291cd, base 8e6a081e, review clean — manager-tier check + 3 independently-degrading service calls populate real teamShrinkagePct/teamAttritionPct/teamRevenue; export-shape correction (managementService.getDashboardSummary is object-method not standalone export) independently verified real; 6/6 + 13/13 tests pass live-reran by reviewer; only 2 files touched. Minor non-blocking optimization noted: 2 near-duplicate has_reports/direct-report-id queries could combine into 1)
+Task 2: complete (commit 2596c2e9, base 9d741e43, review clean — available:false dropped on all 3 columns, N/A text for null, teamAttritionPct/teamShrinkagePct restored to compare chart (teamRevenue correctly excluded per scale mismatch), PerformanceScorecardTable.tsx genuinely needs no changes (confirmed live). Both tasks of this follow-up plan complete.)
