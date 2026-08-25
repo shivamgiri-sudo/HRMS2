@@ -35,12 +35,23 @@ function nameMatchScore(a: string, b: string): number {
   return Math.round((intersect / union) * 100);
 }
 
-// ── Routes ────────────────────────────────────────────────────────────────────
+// ── Core recalculation logic ─────────────────────────────────────────────────
 
-// POST /:candidateId/recalculate — recalculate name match for a candidate
-router.post("/:candidateId/recalculate", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
-  const { candidateId } = req.params;
+export interface RecalculateNameMatchResult {
+  success: true;
+  candidateId: string;
+  overallStatus: string;
+  mismatches: string[];
+  sourcesChecked: number;
+}
 
+/**
+ * Recalculates a candidate's cross-source name match summary/detail rows.
+ * Extracted out of the POST /:candidateId/recalculate handler so other
+ * callers (e.g. fraud-alerts' comparison endpoint) can trigger the same
+ * logic inline without an HTTP round-trip.
+ */
+export async function recalculateNameMatch(candidateId: string): Promise<RecalculateNameMatchResult | { success: false; message: string }> {
   // ats_candidate has no aadhar_name or pan_name column — it stores the
   // numbers (aadhar_number, pan_number) and their verification flags, never a
   // name. The name a document was actually issued to is what the provider
@@ -96,7 +107,7 @@ router.post("/:candidateId/recalculate", requireRole("admin", "hr", "super_admin
   // If a learner name is ever captured, add it back as a source here.
 
   if (!profile.length) {
-    return res.status(404).json({ success: false, message: "Candidate not found" });
+    return { success: false, message: "Candidate not found" };
   }
 
   const p = profile[0] as RowDataPacket;
@@ -173,10 +184,20 @@ router.post("/:candidateId/recalculate", requireRole("admin", "hr", "super_admin
     ).catch(() => {});
   }
 
-  return res.json({
-    success: true,
-    data: { candidateId, overallStatus, mismatches, sourcesChecked: sources.length },
-  });
+  return { success: true, candidateId, overallStatus, mismatches, sourcesChecked: sources.length };
+}
+
+// ── Routes ────────────────────────────────────────────────────────────────────
+
+// POST /:candidateId/recalculate — recalculate name match for a candidate
+router.post("/:candidateId/recalculate", requireRole("admin", "hr", "super_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const { candidateId } = req.params;
+  const result = await recalculateNameMatch(candidateId);
+  if (!result.success) {
+    return res.status(404).json(result);
+  }
+  const { candidateId: _cid, ...data } = result;
+  return res.json({ success: true, data: { candidateId, ...data } });
 }));
 
 // GET / — list all candidates with name mismatches

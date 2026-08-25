@@ -41,6 +41,21 @@ interface FraudAlert {
   created_at?: string | null;
 }
 
+interface StatRow {
+  alert_type: string;
+  status: string;
+  count: number;
+}
+
+const STATUS_OPTIONS = [
+  { value: "open", label: "Open" },
+  { value: "under_review", label: "Under Review" },
+  { value: "resolved_fraud", label: "Resolved — Fraud" },
+  { value: "resolved_false_positive", label: "Resolved — False Positive" },
+  { value: "dismissed", label: "Dismissed" },
+  { value: "all", label: "All" },
+] as const;
+
 const SEVERITY_STYLES: Record<string, string> = {
   critical: "bg-red-100 text-red-800 border-red-300",
   high:     "bg-orange-100 text-orange-800 border-orange-300",
@@ -55,6 +70,8 @@ const SEVERITY_BORDER: Record<string, string> = {
   low:      "border-l-slate-300",
 };
 
+const PAGE_SIZE = 100; // matches the backend's LIMIT 100
+
 export default function NativeFraudAlertReview() {
   const [alerts, setAlerts]         = useState<FraudAlert[]>([]);
   const [loading, setLoading]        = useState(true);
@@ -62,11 +79,18 @@ export default function NativeFraudAlertReview() {
   // expanded: which candidate_ids are showing the full comparison panel
   const [expanded, setExpanded]      = useState<Set<string>>(new Set());
 
-  const load = useCallback(async () => {
+  const [statusFilter, setStatusFilter] = useState<string>("open");
+  const [offset, setOffset]             = useState(0);
+
+  const [stats, setStats] = useState<StatRow[] | null>(null);
+
+  const load = useCallback(async (status: string, off: number) => {
     setLoading(true);
     setError("");
     try {
-      const res = await hrmsApi.get<{ alerts: FraudAlert[] }>("/api/ats/fraud-alerts?status=open");
+      const res = await hrmsApi.get<{ alerts: FraudAlert[] }>(
+        `/api/ats/fraud-alerts?status=${encodeURIComponent(status)}&offset=${off}`
+      );
       setAlerts(res?.alerts ?? []);
     } catch {
       setError("Could not load the alert queue. Please refresh, or contact IT if it persists.");
@@ -75,7 +99,23 @@ export default function NativeFraudAlertReview() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  const loadStats = useCallback(async () => {
+    try {
+      const res = await hrmsApi.get<{ stats: StatRow[] }>("/api/ats/fraud-alerts/stats");
+      setStats(res?.stats ?? []);
+    } catch {
+      // Non-critical — the summary strip just stays hidden if this fails.
+      setStats(null);
+    }
+  }, []);
+
+  useEffect(() => { void load(statusFilter, offset); }, [load, statusFilter, offset]);
+  useEffect(() => { void loadStats(); }, [loadStats]);
+
+  const handleStatusChange = (status: string) => {
+    setStatusFilter(status);
+    setOffset(0);
+  };
 
   // Group alerts by candidate so one candidate with multiple flags shows one panel
   const candidateAlerts = alerts.reduce<Record<string, FraudAlert[]>>((acc, a) => {
@@ -109,6 +149,44 @@ export default function NativeFraudAlertReview() {
             An open <strong>critical</strong> or <strong>high</strong> alert blocks employee creation until cleared.
             Expand each candidate to compare faces, verify document numbers, and record your decision.
           </p>
+        </div>
+
+        {/* ── Summary strip — GET /stats, grouped by status across all alert types ── */}
+        {stats && stats.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {(() => {
+              const totalFor = (statuses: string[]) =>
+                stats
+                  .filter(s => statuses.includes(s.status))
+                  .reduce((sum, s) => sum + Number(s.count ?? 0), 0);
+              const strip = [
+                { label: "Open", value: totalFor(["open"]), tone: "text-red-700 bg-red-50 border-red-200" },
+                { label: "Under Review", value: totalFor(["under_review"]), tone: "text-amber-700 bg-amber-50 border-amber-200" },
+                { label: "Resolved", value: totalFor(["resolved_fraud", "resolved_false_positive"]), tone: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+                { label: "Dismissed", value: totalFor(["dismissed"]), tone: "text-slate-600 bg-slate-50 border-slate-200" },
+              ];
+              return strip.map(s => (
+                <div key={s.label} className={`rounded-xl border p-3 ${s.tone}`}>
+                  <p className="text-[10px] font-bold uppercase tracking-wide opacity-80">{s.label}</p>
+                  <p className="text-xl font-bold mt-0.5">{s.value}</p>
+                </div>
+              ));
+            })()}
+          </div>
+        )}
+
+        {/* ── Status filter ─────────────────────────────────────────────── */}
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</label>
+          <select
+            value={statusFilter}
+            onChange={e => handleStatusChange(e.target.value)}
+            className="rounded-lg border border-slate-300 text-sm px-2.5 py-1.5 bg-white focus:border-blue-400 focus:outline-none"
+          >
+            {STATUS_OPTIONS.map(opt => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
         </div>
 
         {error && (
@@ -187,13 +265,38 @@ export default function NativeFraudAlertReview() {
                       candidateId={candidateId}
                       candidateName={rep.candidate_name ?? undefined}
                       showActions
-                      onAlertResolved={() => void load()}
+                      onAlertResolved={() => { void load(statusFilter, offset); void loadStats(); }}
                     />
                   </div>
                 )}
               </div>
             );
           })
+        )}
+
+        {/* ── Pagination ───────────────────────────────────────────────── */}
+        {!loading && alerts.length > 0 && (
+          <div className="flex items-center justify-between pt-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={offset === 0}
+              onClick={() => setOffset(o => Math.max(0, o - PAGE_SIZE))}
+              className="text-xs"
+            >
+              Prev
+            </Button>
+            <span className="text-xs text-slate-500">Showing from {offset + 1}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={alerts.length < PAGE_SIZE}
+              onClick={() => setOffset(o => o + PAGE_SIZE)}
+              className="text-xs"
+            >
+              Next
+            </Button>
+          </div>
         )}
       </div>
     </DashboardLayout>

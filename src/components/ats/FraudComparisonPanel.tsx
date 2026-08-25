@@ -42,9 +42,35 @@ interface FraudAlert {
   severity: "low" | "medium" | "high" | "critical";
   status: string;
   details?: string | Record<string, unknown> | null;
+  matched_candidate_id?: string | null;
+  matched_candidate_name?: string | null;
   created_at?: string | null;
   review_notes?: string | null;
   reviewed_at?: string | null;
+}
+
+/**
+ * `details` is a JSON column — mysql2 normally hands it back already parsed,
+ * but it is typed defensively as string | object | null, so parse only when
+ * it actually arrives as a string. The backend writers (ocr.service.ts,
+ * face-match.service.ts) use "message" as the human-readable key; a couple
+ * of call sites have no message at all (e.g. FACE_MISMATCH), so this can
+ * legitimately return null.
+ */
+function getAlertMessage(details: FraudAlert["details"]): string | null {
+  if (!details) return null;
+  let parsed: Record<string, unknown>;
+  if (typeof details === "string") {
+    try {
+      parsed = JSON.parse(details);
+    } catch {
+      return null;
+    }
+  } else {
+    parsed = details;
+  }
+  const msg = parsed.message ?? parsed.reason;
+  return typeof msg === "string" && msg.trim() ? msg : null;
 }
 
 interface FaceMatch {
@@ -398,6 +424,21 @@ export function FraudComparisonPanel({
   // Lookup helper — source_type values can vary by integration (short codes or prefixed)
   const findDetail = (...types: string[]) => nameDetails.find(d => types.includes(d.source_type));
 
+  // "bgv_aadhaar" / "bgv_pan" are not real candidate_name_match_detail.source_type
+  // values — the backend only ever writes "form","aadhaar","pan","bank",
+  // "employee_master","appointment_letter" (name-consistency.routes.ts), so those
+  // findDetail() lookups always returned undefined and these two rows never showed
+  // a status. Derive the BGV row's status directly from the check's own record
+  // instead: candidate_bgv_check.status is 'verified'/'mismatch'/'failed'/etc, not
+  // the NameStatusChip vocabulary, so map it the same way the Document Number
+  // Comparison table below already does for the same column.
+  const bgvCheckStatusToNameStatus = (status?: string | null): string | null => {
+    if (!status) return null;
+    if (status === "verified" || status === "matched") return "matched";
+    if (status === "mismatch" || status === "failed") return "mismatch";
+    return null; // pending / in_progress / manual_review / waived / queued — not yet decided
+  };
+
   // Name rows for comparison table
   const nameRows: { label: string; name: string | null | undefined; status: string | null | undefined; isTrusted?: boolean; isReference?: boolean }[] = [
     { label: "Form entry (candidate)",   name: profile?.employee_name, status: null, isReference: true },
@@ -427,12 +468,12 @@ export function FraudComparisonPanel({
     {
       label: "BGV — Aadhaar check",
       name: bgvNames.find(b => b.check_type === "aadhaar" || b.check_type === "aadhaar_offline")?.matched_name,
-      status: toMatchStatus(findDetail("bgv_aadhaar")),
+      status: bgvCheckStatusToNameStatus(bgvNames.find(b => b.check_type === "aadhaar" || b.check_type === "aadhaar_offline")?.status),
     },
     {
       label: "BGV — PAN check",
       name: bgvNames.find(b => b.check_type === "pan")?.matched_name,
-      status: toMatchStatus(findDetail("bgv_pan")),
+      status: bgvCheckStatusToNameStatus(bgvNames.find(b => b.check_type === "pan")?.status),
     },
   ];
 
@@ -758,7 +799,7 @@ export function FraudComparisonPanel({
                     </td>
                     <td className="py-2 pr-4 font-mono font-bold text-slate-900">
                       {panBgvCheck
-                        ? <span className="font-sans text-slate-600 font-normal">Verified via BGV ({panBgvCheck.status ?? "checked"})</span>
+                        ? <span className="font-sans text-slate-600 font-normal">BGV verification status: {panBgvCheck.status ?? "checked"}</span>
                         : <span className="text-slate-400 font-normal font-sans">DigiLocker not completed</span>}
                     </td>
                     <td className="py-2">
@@ -790,10 +831,21 @@ export function FraudComparisonPanel({
               <div className="flex flex-wrap items-center gap-2">
                 <Badge className={`border text-[10px] font-bold ${SEVERITY_BG[alert.severity]}`}>{alert.severity}</Badge>
                 <span className="font-mono text-xs font-bold text-slate-700">{alert.alert_type.replace(/_/g, " ")}</span>
+                {alert.matched_candidate_id && (
+                  <span className="inline-flex items-center text-[10px] font-bold px-2 py-0.5 rounded-full border border-violet-200 bg-violet-50 text-violet-700">
+                    Matched: {alert.matched_candidate_name ?? alert.matched_candidate_id}
+                  </span>
+                )}
                 {alert.created_at && (
                   <span className="text-xs text-slate-400 ml-auto">{String(alert.created_at).slice(0, 10)}</span>
                 )}
               </div>
+
+              {getAlertMessage(alert.details) && (
+                <p className="text-xs text-slate-600 bg-white/60 border border-slate-200 rounded-lg px-3 py-2">
+                  {getAlertMessage(alert.details)}
+                </p>
+              )}
 
               {/* Resolution choices */}
               <div className="grid gap-1.5">

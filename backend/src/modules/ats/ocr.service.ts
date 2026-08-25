@@ -183,9 +183,20 @@ export async function crossValidateDocument(
 
   if (!matched && alertType) {
     const alertId = randomUUID();
+    // ON DUPLICATE KEY UPDATE against uq_candidate_alert_type (candidate_id,
+    // alert_type) — see 442_candidate_fraud_alert_unique_constraint.sql. A
+    // re-run of this check (e.g. the document is re-uploaded) refreshes the
+    // finding on the same row instead of adding a duplicate open alert. The
+    // status guard means a re-fire never resurrects an alert HR already
+    // reviewed: it only stays/goes 'open' if it was already 'open'.
     await db.execute(
       `INSERT INTO candidate_fraud_alert (id, candidate_id, alert_type, severity, details)
-       VALUES (?, ?, ?, 'medium', ?)`,
+       VALUES (?, ?, ?, 'medium', ?) AS new_alert
+       ON DUPLICATE KEY UPDATE
+         severity = new_alert.severity,
+         details = new_alert.details,
+         status = CASE WHEN candidate_fraud_alert.status = 'open' THEN 'open' ELSE candidate_fraud_alert.status END,
+         updated_at = NOW()`,
       [
         alertId,
         candidateId,
@@ -240,9 +251,18 @@ export async function checkDuplicates(
 
 /** A fraud check that could not complete is itself worth a reviewer's attention. */
 async function recordCheckFailure(candidateId: string, type: string, error: unknown) {
+  // ON DUPLICATE KEY UPDATE against uq_candidate_alert_type — see
+  // 442_candidate_fraud_alert_unique_constraint.sql. Same guard as the OCR
+  // mismatch alert above: a repeat failure refreshes this row instead of
+  // piling up duplicates, and never overwrites a status HR already set.
   await db.execute(
     `INSERT INTO candidate_fraud_alert (id, candidate_id, alert_type, severity, details)
-     VALUES (?, ?, 'FRAUD_CHECK_FAILED', 'medium', ?)`,
+     VALUES (?, ?, 'FRAUD_CHECK_FAILED', 'medium', ?) AS new_alert
+     ON DUPLICATE KEY UPDATE
+       severity = new_alert.severity,
+       details = new_alert.details,
+       status = CASE WHEN candidate_fraud_alert.status = 'open' THEN 'open' ELSE candidate_fraud_alert.status END,
+       updated_at = NOW()`,
     [
       randomUUID(),
       candidateId,
@@ -294,9 +314,20 @@ async function runDuplicateCheck(
   );
 
   const scope = type === "aadhaar" ? "Aadhaar" : type === "pan" ? "PAN" : "bank account";
+  // ON DUPLICATE KEY UPDATE against uq_candidate_alert_type — see
+  // 442_candidate_fraud_alert_unique_constraint.sql. Same guard as the other
+  // call sites: a repeat duplicate-check hit refreshes severity/details/
+  // matched_candidate_id on the existing row rather than adding another open
+  // alert, and never overwrites a status HR already reviewed away from 'open'.
   await db.execute(
     `INSERT INTO candidate_fraud_alert (id, candidate_id, alert_type, severity, matched_candidate_id, details)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?) AS new_alert
+     ON DUPLICATE KEY UPDATE
+       severity = new_alert.severity,
+       matched_candidate_id = new_alert.matched_candidate_id,
+       details = new_alert.details,
+       status = CASE WHEN candidate_fraud_alert.status = 'open' THEN 'open' ELSE candidate_fraud_alert.status END,
+       updated_at = NOW()`,
     [
       randomUUID(),
       candidateId,

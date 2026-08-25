@@ -105,9 +105,21 @@ export async function compareFaces(
 
     if (!matched) {
       const alertId = randomUUID();
+      // ON DUPLICATE KEY UPDATE against uq_candidate_alert_type — see
+      // 442_candidate_fraud_alert_unique_constraint.sql. A re-run of face
+      // match (e.g. a document re-upload) refreshes this alert's
+      // severity/details in place instead of adding another duplicate open
+      // alert, and never overwrites a status HR already reviewed away from
+      // 'open'. Mirrors the ON DUPLICATE KEY UPDATE style used for
+      // candidate_bgv_check in bgv-verification.service.ts.
       await db.execute(
         `INSERT INTO candidate_fraud_alert (id, candidate_id, alert_type, severity, details)
-         VALUES (?, ?, 'FACE_MISMATCH', 'high', ?)`,
+         VALUES (?, ?, 'FACE_MISMATCH', 'high', ?) AS new_alert
+         ON DUPLICATE KEY UPDATE
+           severity = new_alert.severity,
+           details = new_alert.details,
+           status = CASE WHEN candidate_fraud_alert.status = 'open' THEN 'open' ELSE candidate_fraud_alert.status END,
+           updated_at = NOW()`,
         [alertId, candidateId, JSON.stringify({ score, distance, photo_doc_id: photoDocId, id_doc_id: idDocId })]
       );
     }
