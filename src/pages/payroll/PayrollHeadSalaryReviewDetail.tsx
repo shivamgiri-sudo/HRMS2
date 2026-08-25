@@ -155,12 +155,22 @@ export default function PayrollHeadSalaryReviewDetail() {
   const [packages, setPackages]                 = useState<any[]>([]);
   const [selectedPkgId, setSelectedPkgId]       = useState('');
   const [effectiveDate, setEffectiveDate]       = useState('');
+  const [loadedSalaryStartDate, setLoadedSalaryStartDate] = useState<string>('');
   const [pkgBuilderOpen, setPkgBuilderOpen]     = useState(false);
 
   useEffect(() => {
-    if (!journey?.employee?.date_of_joining || effectiveDate) return;
-    const d = new Date(journey.employee.date_of_joining);
-    if (!isNaN(d.getTime())) setEffectiveDate(d.toISOString().slice(0, 10));
+    if (effectiveDate) return;
+    const preferred = journey?.payroll_hr_validation?.salary_start_date
+                   ?? journey?.employee?.date_of_joining;
+    if (!preferred) return;
+    const d = new Date(preferred);
+    if (!isNaN(d.getTime())) {
+      const iso = d.toISOString().slice(0, 10);
+      setEffectiveDate(iso);
+      setLoadedSalaryStartDate(
+        journey?.payroll_hr_validation?.salary_start_date ? iso : ''
+      );
+    }
   }, [journey]);
 
   const load = useCallback(async () => {
@@ -491,8 +501,35 @@ export default function PayrollHeadSalaryReviewDetail() {
                   <Label className="text-xs font-medium mb-1.5 block text-slate-700">
                     Effective Date <span className="text-red-500">*</span>
                   </Label>
-                  <Input type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)}
-                    className="w-[160px] rounded-xl" />
+                  <div className="flex flex-col gap-1">
+                    <Input
+                      type="date"
+                      value={effectiveDate}
+                      onChange={(e) => setEffectiveDate(e.target.value)}
+                      onBlur={async (e) => {
+                        const newDate = e.target.value;
+                        if (!newDate || newDate === loadedSalaryStartDate) return;
+                        try {
+                          await hrmsApi.patch(`/api/payroll-head-review/${employeeId}/salary-start-date`, {
+                            salary_start_date: newDate,
+                          });
+                          setLoadedSalaryStartDate(newDate);
+                          setNotice('Salary start date updated.');
+                          setTimeout(() => setNotice(null), 3000);
+                        } catch {
+                          setError('Failed to update salary start date.');
+                        }
+                      }}
+                      className="w-[160px] rounded-xl"
+                    />
+                    {journey?.payroll_hr_validation?.salary_start_date && (
+                      <p className="text-xs text-slate-400">
+                        Payroll HR set:{' '}
+                        {new Date(journey.payroll_hr_validation.salary_start_date)
+                          .toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </p>
+                    )}
+                  </div>
                 </div>
                 <p className="text-xs text-slate-400 mb-2">Required for both catalog and new package.</p>
               </div>
