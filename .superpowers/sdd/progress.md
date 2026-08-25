@@ -263,3 +263,6 @@ Minor (non-blocking, noted for awareness): the new execfilters-dimension-whiteli
 
 ## Backlog fix: drilldown drawer number formatting
 Fixed (commit c73ef346, no regressions): shared DashboardDrilldownDrawer.tsx now formats "Pct"-suffixed columns with % and revenue/amount/salary/cost/budget/payable/balance-matching columns with ₹ en-IN grouping, instead of bare numbers, for ALL ~20 dashboard consumers (not just Performance Scorecard) — satisfies CLAUDE.md's stated "monetary values formatted with ₹ and Indian locale" mandate broadly. Checked all real drillXxx handler column names for collisions; one near-miss (payableMismatch) confirmed not exposed via the affected records-table code path. typecheck clean both halves.
+
+## Backlog fix: N/A cells no longer clickable
+Fixed (commit e49fe20c): PerformanceScorecardTable.tsx now has 3 cell states — column unavailable (dashed badge, unchanged), row value null on an available column (plain non-clickable text, new), real value (clickable into drilldown, unchanged). typecheck clean both frontend halves + backend. THIS CLOSES THE ENTIRE FIXABLE BACKLOG FROM THIS SESSION — only deploy-blocked items remain (backend restart, historical backfill, manual browser verification), none of which can be done from this sandboxed session.
