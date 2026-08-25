@@ -131,3 +131,32 @@ export async function isModelAvailable(): Promise<boolean> {
     return false;
   }
 }
+
+export interface FaceBbox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  imageWidth: number;
+  imageHeight: number;
+}
+
+export async function detectFaceBbox(imagePath: string): Promise<FaceBbox | null> {
+  try {
+    await ensureModels();
+    const image = await loadImage(imagePath);
+    const detection = await faceapi.detectSingleFace(image as any);
+    if (!detection) return null;
+    const box = detection.box;
+    return {
+      x: box.x,
+      y: box.y,
+      width: box.width,
+      height: box.height,
+      imageWidth: (image as any).width,
+      imageHeight: (image as any).height,
+    };
+  } catch {
+    return null;
+  }
+}

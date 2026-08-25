@@ -6,6 +6,7 @@ import { hrmsApi } from '@/lib/hrmsApi';
 import { useAuth } from '@/contexts/AuthContext';
 import { useWorkforceAccess } from '@/hooks/useUserRole';
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
+import { FraudComparisonPanel } from "@/components/ats/FraudComparisonPanel";
 import { Button } from '@/components/ui/button';
 import {
   AlertTriangle,
@@ -383,6 +384,14 @@ export default function NativeHROnboardingRequests() {
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [reviewSaving, setReviewSaving] = useState(false);
   const [pushbackRemarks, setPushbackRemarks] = useState('');
+
+  // ── Fraud review state
+  // fraudAlertCount: open critical/high alerts for the selected candidate
+  // fraudAcknowledged: HR checked "I have reviewed" — unblocks Approve
+  // showFraudPanel: controls collapse of the fraud section
+  const [fraudAlertCount, setFraudAlertCount] = useState(0);
+  const [fraudAcknowledged, setFraudAcknowledged] = useState(false);
+  const [showFraudPanel, setShowFraudPanel] = useState(false);
 
   // ── Document preview state
   const [documentPreview, setDocumentPreview] = useState<DocumentPreview | null>(null);
@@ -797,6 +806,9 @@ export default function NativeHROnboardingRequests() {
     setPushbackRemarks('');
     setReviewError(null);
     setCostCentres([]);  // cleared — useEffect will populate once selected + allBranches/allCostCentres are ready
+    setFraudAlertCount(0);
+    setFraudAcknowledged(false);
+    setShowFraudPanel(false);
     // Load all branch employees upfront for reporting manager dropdown
     void loadManagersByBranch(row.branch_id ?? '');
     Promise.allSettled([
@@ -806,6 +818,14 @@ export default function NativeHROnboardingRequests() {
       hrmsApi.get<any>(`/api/ats/bgv/status/${row.candidate_id}`)
         .then((r: any) => setBgv(r?.data ?? r))
         .catch(() => setBgv({ overall_status: 'unavailable' })),
+      hrmsApi.get<any>(`/api/ats/fraud-alerts/candidate/${row.candidate_id}`)
+        .then((r: any) => {
+          const alerts: any[] = r?.alerts ?? [];
+          const blocking = alerts.filter((a: any) => (a.status === 'open' || a.status === 'under_review') && (a.severity === 'critical' || a.severity === 'high'));
+          setFraudAlertCount(blocking.length);
+          if (blocking.length > 0) setShowFraudPanel(true);
+        })
+        .catch(() => setFraudAlertCount(0)),
     ]).finally(() => setDetailLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadManagersByBranch]);
@@ -2066,10 +2086,73 @@ export default function NativeHROnboardingRequests() {
               )}
             </div>
 
+            {/* C-0 — Fraud Review Section (auto-expands when blocking alerts exist) */}
+            {selected.profile_status !== 'onboarded' && (
+              <div className={`rounded-xl border shadow-sm overflow-hidden ${fraudAlertCount > 0 ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white'}`}>
+                <button
+                  type="button"
+                  onClick={() => setShowFraudPanel(v => !v)}
+                  className={`w-full flex items-center justify-between px-5 py-4 transition-colors ${fraudAlertCount > 0 ? 'hover:bg-red-100/60' : 'hover:bg-slate-50'}`}
+                >
+                  <div className="flex items-center gap-2.5">
+                    <ShieldAlert className={`h-5 w-5 ${fraudAlertCount > 0 ? 'text-red-600' : 'text-slate-400'}`} />
+                    <span className={`font-bold text-sm ${fraudAlertCount > 0 ? 'text-red-800' : 'text-slate-700'}`}>
+                      Fraud &amp; Identity Review
+                    </span>
+                    {fraudAlertCount > 0 && (
+                      <span className="inline-flex items-center justify-center bg-red-600 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1">
+                        {fraudAlertCount}
+                      </span>
+                    )}
+                    {fraudAlertCount > 0 && !fraudAcknowledged && (
+                      <span className="text-xs font-semibold text-red-700 bg-red-100 border border-red-200 px-2 py-0.5 rounded-full">
+                        Review required before approving
+                      </span>
+                    )}
+                    {fraudAcknowledged && (
+                      <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <CheckCircle2 className="h-3 w-3" /> Reviewed
+                      </span>
+                    )}
+                  </div>
+                  {showFraudPanel ? <ChevronUp className="h-4 w-4 text-slate-400" /> : <ChevronDown className="h-4 w-4 text-slate-400" />}
+                </button>
+                {showFraudPanel && (
+                  <div className="border-t border-slate-200 p-5 bg-white">
+                    <FraudComparisonPanel
+                      candidateId={selected.candidate_id}
+                      candidateName={selected.full_name}
+                      showActions
+                      onAcknowledged={setFraudAcknowledged}
+                      onAlertResolved={() => {
+                        // Re-load fraud count after a resolution
+                        hrmsApi.get<any>(`/api/ats/fraud-alerts/candidate/${selected.candidate_id}`)
+                          .then((r: any) => {
+                            const alerts: any[] = r?.alerts ?? [];
+                            const blocking = alerts.filter((a: any) => (a.status === 'open' || a.status === 'under_review') && (a.severity === 'critical' || a.severity === 'high'));
+                            setFraudAlertCount(blocking.length);
+                          })
+                          .catch(() => {/* non-fatal */});
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* C — Approve / Push-back */}
             {selected.profile_status !== 'onboarded' && (
               <div className="rounded-xl border bg-white p-5 shadow-sm space-y-3">
                 <h3 className="font-bold text-slate-800">HR Review Decision</h3>
+                {fraudAlertCount > 0 && !fraudAcknowledged && (
+                  <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+                    <ShieldAlert className="h-3.5 w-3.5 shrink-0 mt-0.5 text-red-600" />
+                    <span>
+                      <strong>{fraudAlertCount} blocking fraud {fraudAlertCount === 1 ? 'alert' : 'alerts'} detected.</strong>{' '}
+                      Open the Fraud &amp; Identity Review section above, review each flag, and check the acknowledgement box to enable approval.
+                    </span>
+                  </div>
+                )}
                 <ErrorBanner message={reviewError} />
                 <textarea
                   value={pushbackRemarks}
@@ -2090,9 +2173,10 @@ export default function NativeHROnboardingRequests() {
                   </Button>
                   <Button
                     type="button"
-                    disabled={reviewSaving}
+                    disabled={reviewSaving || (fraudAlertCount > 0 && !fraudAcknowledged)}
                     onClick={() => void submitReview('approved')}
-                    className="min-h-[44px] flex-1 bg-emerald-600 text-white hover:bg-emerald-700"
+                    title={fraudAlertCount > 0 && !fraudAcknowledged ? 'Review fraud flags above before approving' : undefined}
+                    className={`min-h-[44px] flex-1 text-white transition-all ${fraudAlertCount > 0 && !fraudAcknowledged ? 'bg-slate-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700'}`}
                   >
                     {reviewSaving && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Approve Profile
                   </Button>
