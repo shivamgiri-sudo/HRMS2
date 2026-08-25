@@ -104,7 +104,7 @@ export default function PerformanceScorecardTable({ dateFrom, dateTo }: Performa
                             </Badge>
                           </TooltipTrigger>
                           <TooltipContent>
-                            Shrinkage data isn't scoped by branch/process yet in the underlying system — showing once that's fixed.
+                            This metric isn't reliably scoped in the underlying system yet — it will show once that's fixed.
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>

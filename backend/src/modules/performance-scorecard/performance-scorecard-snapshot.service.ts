@@ -103,10 +103,13 @@ export async function computeEmployeeSnapshot(
     // of the other two — one service being down must not blank the whole row.
     if (hasScope) {
       try {
+        // Shrinkage snapshots are currently only computed at branch grain
+        // (RTA's process-level roster data isn't reliable enough yet — see
+        // rta-nightly.cron.ts), so matching on processId too would never
+        // find a row.
         const snapshots = await shrinkageService.listSnapshots({
           fromDate: date,
           toDate: date,
-          processId,
           branchId,
         });
         if (snapshots.length > 0 && snapshots[0].total_shrinkage_pct !== null) {
