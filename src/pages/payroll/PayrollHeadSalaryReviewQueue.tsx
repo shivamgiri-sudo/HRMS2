@@ -21,6 +21,7 @@ import {
   TrendingUp, Lock, ChevronRight, BadgeCheck, User,
 } from 'lucide-react';
 import { PackageBuilderDialog } from '@/components/payroll/PackageBuilderDialog';
+import { SalaryRevisionDrawer } from '@/pages/payroll/SalaryRevisionDrawer';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -80,6 +81,7 @@ const SECTION_META: Record<SectionKey, { label: string; icon: any; category: 'sa
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const REVIEWER_ROLES = ['payroll_head', 'admin', 'super_admin'];
+const FIXER_ROLES = ['payroll_hr', 'branch_head', 'hr', 'payroll_head', 'admin', 'super_admin'];
 const STATUS_CFG = {
   pending_review: { label: 'Pending Review', chip: 'bg-amber-50 text-amber-700 border-amber-200', icon: Clock },
   approved:       { label: 'Approved',       chip: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: BadgeCheck },
@@ -1189,6 +1191,7 @@ export default function PayrollHeadSalaryReviewQueue() {
   const navigate = useNavigate();
   const { hasAnyRole } = useWorkforceAccess();
   const isReviewer = hasAnyRole(...REVIEWER_ROLES);
+  const isFixer = hasAnyRole(...FIXER_ROLES);
 
   const [tab, setTab] = useState<'pending_review' | 'approved' | 'rejected' | 'revisions'>('pending_review');
   const [q, setQ] = useState('');
@@ -1210,6 +1213,10 @@ export default function PayrollHeadSalaryReviewQueue() {
   // Drawer
   const [drawerEmployee, setDrawerEmployee] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Salary revision drawer
+  const [revDrawerOpen, setRevDrawerOpen] = useState(false);
+  const [revDrawerTarget, setRevDrawerTarget] = useState<{ id: string; name: string } | null>(null);
 
   // Section popup (Pending Review tab card click)
   const [popupSection, setPopupSection] = useState<SectionKey | null>(null);
@@ -1523,6 +1530,13 @@ export default function PayrollHeadSalaryReviewQueue() {
                         Approve
                       </Button>
                     )}
+                    {isFixer && (
+                      <Button size="sm" variant="outline"
+                        onClick={(e) => { e.stopPropagation(); setRevDrawerTarget({ id: row.employee_id, name: row.full_name }); setRevDrawerOpen(true); }}
+                        className="h-7 text-xs cursor-pointer rounded-lg px-2.5 gap-1 opacity-0 group-hover:opacity-100 transition-opacity border-blue-200 text-blue-600 hover:bg-blue-50">
+                        Request Date Revision
+                      </Button>
+                    )}
                     <Button size="sm" variant="ghost"
                       onClick={(e) => { e.stopPropagation(); openDrawer(row.employee_id); }}
                       className="h-7 text-xs cursor-pointer text-indigo-600 hover:bg-indigo-50 rounded-lg px-2.5 gap-1">
@@ -1563,6 +1577,19 @@ export default function PayrollHeadSalaryReviewQueue() {
         isReviewer={isReviewer}
         reasons={reasons}
       />
+
+      {/* Salary date revision drawer — triggered from employee card rows */}
+      {revDrawerTarget && (
+        <SalaryRevisionDrawer
+          open={revDrawerOpen}
+          onClose={() => { setRevDrawerOpen(false); setRevDrawerTarget(null); }}
+          employeeId={revDrawerTarget.id}
+          employeeName={revDrawerTarget.name}
+          currentEffectiveFrom=""
+          dateOfJoining=""
+          onSuccess={() => { void loadRevisions(); }}
+        />
+      )}
     </DashboardLayout>
   );
 }

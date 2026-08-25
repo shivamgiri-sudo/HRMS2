@@ -165,12 +165,17 @@ export async function reviewRevisionRequest(
       ).catch(() => {});
     }
 
-    await connection.execute(
+    const [updateResult] = await connection.execute(
       `UPDATE employee_salary_date_revision_requests
           SET status = ?, reviewed_by = ?, reviewed_at = NOW(), review_remarks = ?
-        WHERE id = ?`,
+        WHERE id = ? AND status = 'pending'`,
       [action === "approve" ? "approved" : "rejected", reviewedBy, remarks ?? null, id]
-    );
+    ) as any;
+
+    if ((updateResult as any).affectedRows === 0) {
+      await connection.rollback();
+      throw httpError("Request was already processed by another reviewer.", 409, "ALREADY_PROCESSED");
+    }
 
     await connection.commit();
   } catch (e) {
