@@ -109,7 +109,15 @@ interface ComparisonData {
   nameDetails: NameDetail[];
   bankPennyDrop: { entered_name?: string | null; bank_name?: string | null; name_match_score?: number | null; status?: string | null } | null;
   /** The single downloaded DigiLocker KYC file, if the candidate completed DigiLocker. Null when they never did. */
-  digilocker: { fileName: string; contentType: string; updatedAt?: string | null } | null;
+  digilocker: {
+    fileName: string;
+    contentType: string;
+    updatedAt?: string | null;
+    /** candidate_digilocker_session.id — doubles as a stable id_document_id for candidate_face_match rows scored against this file. */
+    sessionId: string;
+    /** Whether this specific download is confirmed (via autoCreateDigilockerVerifiedChecks' own evidence rule) to include PAN, not just Aadhaar. */
+    panConfirmed: boolean;
+  } | null;
 }
 
 interface FaceBbox {
@@ -514,9 +522,11 @@ export function FraudComparisonPanel({
   // DigiLocker's completion download is ONE file total (Luckpay hands back a
   // single document, not a set — see digilocker-evidence.ts), stored outside
   // candidate_onboarding_document entirely, so it can never be matched by the
-  // doc_type lookups above. Both the Aadhaar and PAN comparison rows point at
-  // this same file — there's no way to tell which of the two it actually is
-  // once it comes back as a generic PDF.
+  // doc_type lookups above. Aadhaar is always evidenced by a completed
+  // session; PAN only when the backend's own evidence rule (autoCreateDigilockerVerifiedChecks,
+  // mirrored here via digilocker.panConfirmed) positively confirmed it — so
+  // the file is only shown under the PAN row when that's true, rather than
+  // guessing.
   const digilockerFile = data.digilocker;
   const digilockerUrls = digilockerFile
     ? {
@@ -525,10 +535,14 @@ export function FraudComparisonPanel({
         isPdf: digilockerFile.contentType === "application/pdf",
       }
     : null;
+  const showDigilockerForPan = digilockerFile?.panConfirmed ?? false;
 
-  // Primary face match (selfie vs DigiLocker preferred, else vs any ID doc)
+  // Primary face match (selfie vs DigiLocker preferred, else vs any ID doc).
+  // aadhaarDigi is dead (nothing ever writes that doc_type — see comment
+  // above), so this falls back to the live-computed DigiLocker match keyed
+  // by the session id before falling back to "whatever came back first".
   const primaryMatch = faceMatches.find(m =>
-    m.photo_document_id === selfieDoc?.id && m.id_document_id === aadhaarDigi?.id
+    m.photo_document_id === selfieDoc?.id && m.id_document_id === (aadhaarDigi?.id ?? digilockerFile?.sessionId)
   ) ?? faceMatches[0];
 
   // Convert is_match TINYINT(1) → status string for NameStatusChip
@@ -683,7 +697,7 @@ export function FraudComparisonPanel({
                   faceDetectUrl={digilockerUrls?.faceDetectUrl}
                   isPdf={digilockerUrls?.isPdf}
                   label="DigiLocker Aadhaar"
-                  subLabel={digilockerFile ? "Govt-verified · single KYC file" : "Govt-verified · ground truth"}
+                  subLabel="Govt-verified · ground truth"
                   isTrusted
                   noFaceText="DigiLocker not completed"
                 />
@@ -700,9 +714,14 @@ export function FraudComparisonPanel({
             </div>
 
             {/* PAN comparison if PAN docs exist */}
-            {(panDigi?.id || panManual?.id || digilockerFile) && (
+            {(panDigi?.id || panManual?.id || showDigilockerForPan) && (
               <div className="border-t border-slate-100 pt-4">
                 <SectionHeader>PAN face comparison</SectionHeader>
+                {digilockerFile && !showDigilockerForPan && (
+                  <p className="text-[11px] text-amber-600 mb-2">
+                    DigiLocker completed for this candidate, but only confirmed Aadhaar — its file isn't shown here because we don't have evidence it's the PAN document.
+                  </p>
+                )}
                 <div className="flex flex-wrap gap-6 justify-start">
                   <FacePhotoCell
                     documentId={selfieDoc?.id}
@@ -710,10 +729,10 @@ export function FraudComparisonPanel({
                     subLabel="Reference"
                   />
                   <div className="flex items-center self-center">
-                    {faceMatches.find(m => m.id_document_id === panDigi?.id) ? (
+                    {faceMatches.find(m => m.id_document_id === (panDigi?.id ?? (showDigilockerForPan ? digilockerFile?.sessionId : undefined))) ? (
                       <MatchScoreBadge
-                        score={faceMatches.find(m => m.id_document_id === panDigi?.id)?.match_score}
-                        status={faceMatches.find(m => m.id_document_id === panDigi?.id)?.match_status ?? ""}
+                        score={faceMatches.find(m => m.id_document_id === (panDigi?.id ?? (showDigilockerForPan ? digilockerFile?.sessionId : undefined)))?.match_score}
+                        status={faceMatches.find(m => m.id_document_id === (panDigi?.id ?? (showDigilockerForPan ? digilockerFile?.sessionId : undefined)))?.match_status ?? ""}
                       />
                     ) : (
                       <span className="text-[11px] text-slate-400">vs</span>
@@ -721,11 +740,11 @@ export function FraudComparisonPanel({
                   </div>
                   <FacePhotoCell
                     documentId={panDigi?.id}
-                    previewUrl={digilockerUrls?.previewUrl}
-                    faceDetectUrl={digilockerUrls?.faceDetectUrl}
-                    isPdf={digilockerUrls?.isPdf}
+                    previewUrl={showDigilockerForPan ? digilockerUrls?.previewUrl : undefined}
+                    faceDetectUrl={showDigilockerForPan ? digilockerUrls?.faceDetectUrl : undefined}
+                    isPdf={showDigilockerForPan ? digilockerUrls?.isPdf : undefined}
                     label="DigiLocker PAN"
-                    subLabel={digilockerFile ? "Govt-verified · same file as Aadhaar" : "Govt-verified"}
+                    subLabel="Govt-verified"
                     isTrusted
                     noFaceText="PAN not in DigiLocker"
                   />

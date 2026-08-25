@@ -6,7 +6,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { detectFaceBbox } from "./face-match.service.js";
+import { detectFaceBbox, compareFaces } from "./face-match.service.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { recalculateNameMatch } from "./name-consistency.routes.js";
 import { getLatestDigilockerFile } from "../integrations/luckpay/luckpay-status.service.js";
@@ -148,7 +148,7 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
       [candidateId]
     ),
     db.execute<RowDataPacket[]>(
-      `SELECT check_type, matched_name, status, verified_at
+      `SELECT check_type, matched_name, status, verified_at, provider_key
          FROM candidate_bgv_check
         WHERE candidate_id = ? AND check_type IN ('aadhaar','aadhaar_offline','pan','bank_account')
         ORDER BY updated_at DESC`,
@@ -178,6 +178,60 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
     getLatestDigilockerFile(candidateId),
   ]);
 
+  // Whether THIS candidate's DigiLocker download is confirmed to include PAN,
+  // per the same evidence rule autoCreateDigilockerVerifiedChecks already
+  // applies (aadhaar is assumed from session completion; pan only when
+  // positively named) — see digilocker-evidence.ts. Reuses that decision
+  // rather than re-guessing from the filename here, which the panel cannot
+  // do reliably: the raw-binary download path names every file generically
+  // (digilocker-kyc-document.pdf), so there is no signal left in the file
+  // itself by the time it reaches this endpoint.
+  const digilockerPanConfirmed = bgvNames.some(
+    (b) => b.check_type === "pan" && b.provider_key === "digilocker" && b.status === "verified"
+  );
+
+  // Score the DigiLocker photo against the live selfie, the same way any
+  // uploaded ID document is scored — this never ran before because
+  // compareFaces() is only ever triggered from document-upload events, and
+  // the DigiLocker file was never a document row those events fire on. Only
+  // possible when the download is an image (it is usually a PDF, which face
+  // detection cannot read); skipped once a row already exists for this pair
+  // so a page view never re-runs the model.
+  if (digilockerFile?.contentType.startsWith("image/")) {
+    try {
+      const [existingMatch] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM candidate_face_match WHERE candidate_id = ? AND id_document_id = ? LIMIT 1`,
+        [candidateId, digilockerFile.sessionId]
+      );
+      if (!existingMatch.length) {
+        const selfieDoc = docs.find((d) => /selfie|live_photo|live/i.test(d.doc_type ?? ""));
+        if (selfieDoc) {
+          const [[selfieRow]] = await db.execute<RowDataPacket[]>(
+            `SELECT file_path FROM candidate_onboarding_document WHERE id = ? LIMIT 1`,
+            [selfieDoc.id]
+          );
+          const selfiePath = selfieRow ? resolveOnboardingDocumentFile(selfieRow.file_path) : null;
+          const digilockerPath = resolveOnboardingDocumentFile(digilockerFile.filePath);
+          if (selfiePath && digilockerPath) {
+            const result = await compareFaces(candidateId, selfiePath, digilockerPath, selfieDoc.id, digilockerFile.sessionId);
+            faceMatches.unshift({
+              id: "pending-refresh",
+              candidate_id: candidateId,
+              photo_document_id: selfieDoc.id,
+              id_document_id: digilockerFile.sessionId,
+              photo_doc_type: selfieDoc.doc_type,
+              id_doc_type: "digilocker",
+              match_score: result.score,
+              match_status: result.status,
+            } as unknown as RowDataPacket);
+          }
+        }
+      }
+    } catch (err: unknown) {
+      console.error("[fraud-alerts/comparison] digilocker face-match failed for", candidateId, err instanceof Error ? err.message : err);
+    }
+  }
+
   res.json({
     alerts,
     faceMatches,
@@ -188,7 +242,13 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
     nameDetails,
     bankPennyDrop: bankPennyRows[0] ?? null,
     digilocker: digilockerFile
-      ? { fileName: digilockerFile.fileName, contentType: digilockerFile.contentType, updatedAt: digilockerFile.updatedAt }
+      ? {
+          fileName: digilockerFile.fileName,
+          contentType: digilockerFile.contentType,
+          updatedAt: digilockerFile.updatedAt,
+          sessionId: digilockerFile.sessionId,
+          panConfirmed: digilockerPanConfirmed,
+        }
       : null,
   });
   } catch (err: unknown) {

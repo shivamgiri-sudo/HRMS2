@@ -345,6 +345,8 @@ export async function syncDigilockerStatus(candidateId: string): Promise<SyncOut
 }
 
 export type DigilockerFile = {
+  /** candidate_digilocker_session.id — stable, globally unique, safe to use anywhere a document id would normally go (e.g. candidate_face_match.id_document_id) since this file has no candidate_onboarding_document row of its own. */
+  sessionId: string;
   filePath: string;
   fileName: string;
   contentType: string;
@@ -366,7 +368,7 @@ export type DigilockerFile = {
  */
 export async function getLatestDigilockerFile(candidateId: string): Promise<DigilockerFile | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT session_status, returned_documents_json, updated_at
+    `SELECT id, session_status, returned_documents_json, updated_at
        FROM candidate_digilocker_session
       WHERE candidate_id = ? AND session_status = 'completed' AND returned_documents_json IS NOT NULL
       ORDER BY updated_at DESC
@@ -383,6 +385,7 @@ export async function getLatestDigilockerFile(candidateId: string): Promise<Digi
     const filePath = Array.isArray(meta?.files) ? meta.files[0] : null;
     if (!filePath) return null;
     return {
+      sessionId: row.id,
       filePath,
       fileName: typeof meta.fileName === "string" ? meta.fileName : "digilocker-document",
       contentType: typeof meta.contentType === "string" ? meta.contentType : "application/octet-stream",
