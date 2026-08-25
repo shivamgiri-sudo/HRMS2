@@ -13,7 +13,6 @@ const Payroll                   = lazy(() => import("@/pages/Payroll"));
 const NativePayslipCenter       = lazy(() => import("@/pages/NativePayslipCenter"));
 const NativeTaxDeclaration      = lazy(() => import("@/pages/NativeTaxDeclaration"));
 const NativeFullFinal           = lazy(() => import("@/pages/NativeFullFinal"));
-const NativeStatutoryConfig     = lazy(() => import("@/pages/NativeStatutoryConfig"));
 const NativePayrollMasters      = lazy(() => import("@/pages/NativePayrollMasters"));
 const NativeSalaryPackages      = lazy(() => import("@/pages/NativeSalaryPackages"));
 const NativeSalaryPackageAdmin  = lazy(() => import("@/pages/NativeSalaryPackageAdmin"));
