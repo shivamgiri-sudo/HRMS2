@@ -248,7 +248,7 @@ payrollExtendedRouter.get("/runs/:id/ecr", requireRole("admin", "finance", "payr
 
 // ── Salary Sheet XLSX export (mirrors Onfido Noida sheet format) ──────────────
 // Accepts either /runs/:id/salary-sheet-export OR /salary-sheet-export?month=YYYY-MM&branchId=X
-payrollExtendedRouter.get("/salary-sheet-export", requireRole("admin", "finance", "payroll", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollExtendedRouter.get("/salary-sheet-export", requireRole("admin", "finance", "payroll", "hr", "payroll_head", "finance_head", "payroll_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { month, branchId } = req.query as { month?: string; branchId?: string };
   if (!month) return res.status(400).json({ success: false, message: "month query param required (YYYY-MM)" });
 
@@ -268,7 +268,7 @@ payrollExtendedRouter.get("/salary-sheet-export", requireRole("admin", "finance"
   return res.redirect(`/api/payroll/runs/${foundRun.id}/salary-sheet-export`);
 }));
 
-payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", "finance", "payroll", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollExtendedRouter.get("/runs/:id/salary-sheet-export", requireRole("admin", "finance", "payroll", "hr", "payroll_head", "finance_head", "payroll_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const runId = req.params.id;
   const [runRows] = await db.execute<RowDataPacket[]>("SELECT * FROM salary_prep_run WHERE id = ? LIMIT 1", [runId]);
   const run = runRows[0];

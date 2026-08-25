@@ -495,7 +495,10 @@ router.get("/runs/:id/readiness", requireRole("admin", "hr", "super_admin", "fin
   return res.json({ success: true, data });
 }));
 
-router.post("/runs/:id/freeze-attendance", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req, res) => {
+// payroll_head/finance_head added 2026-08-25: Payroll Validation Screen's Freeze Attendance
+// button is built for payroll_head specifically, and this route excluded them, so the button
+// 403'd for the exact role the page is designed around.
+router.post("/runs/:id/freeze-attendance", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "finance_head"), h(async (req, res) => {
   await assertRunEditable(req.params.id);
   const actorId = req.authUser?.id ?? "system";
   const data = await payrollGovernanceService.freezeAttendance(req.params.id, actorId);

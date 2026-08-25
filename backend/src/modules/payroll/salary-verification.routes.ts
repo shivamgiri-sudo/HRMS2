@@ -60,7 +60,10 @@ async function resolveActorOwnScope(
 salaryVerificationRouter.get(
   "/processes",
   requireAuth,
-  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll"),
+  // admin/payroll_branch added 2026-08-25: the frontend page (ProcessSalaryVerify.tsx)
+  // grants both roles but this list excluded them, so an admin/payroll_branch user could
+  // open the page and every query would 403 — rendering identically to "nothing pending."
+  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll", "admin", "payroll_branch"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
@@ -117,7 +120,10 @@ salaryVerificationRouter.get(
 salaryVerificationRouter.get(
   "/employees",
   requireAuth,
-  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll"),
+  // admin/payroll_branch added 2026-08-25: the frontend page (ProcessSalaryVerify.tsx)
+  // grants both roles but this list excluded them, so an admin/payroll_branch user could
+  // open the page and every query would 403 — rendering identically to "nothing pending."
+  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll", "admin", "payroll_branch"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
@@ -308,7 +314,10 @@ salaryVerificationRouter.get(
 salaryVerificationRouter.get(
   "/employee/:employeeId",
   requireAuth,
-  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll"),
+  // admin/payroll_branch added 2026-08-25: the frontend page (ProcessSalaryVerify.tsx)
+  // grants both roles but this list excluded them, so an admin/payroll_branch user could
+  // open the page and every query would 403 — rendering identically to "nothing pending."
+  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll", "admin", "payroll_branch"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { employeeId } = req.params;
@@ -470,7 +479,10 @@ salaryVerificationRouter.get(
 salaryVerificationRouter.get(
   "/summary",
   requireAuth,
-  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll"),
+  // admin/payroll_branch added 2026-08-25: the frontend page (ProcessSalaryVerify.tsx)
+  // grants both roles but this list excluded them, so an admin/payroll_branch user could
+  // open the page and every query would 403 — rendering identically to "nothing pending."
+  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "payroll", "admin", "payroll_branch"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
@@ -764,7 +776,9 @@ async function markReadinessDoneIfComplete(
 salaryVerificationRouter.post(
   "/verify-bulk",
   requireAuth,
-  requireRole("wfm", "process_manager", "branch_head"),
+  // payroll_head/super_admin added 2026-08-25: the frontend's canBulkVerify shows "Verify All
+  // Non-Flagged" to those roles too, but this list excluded them.
+  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.authUser!.id;
@@ -878,7 +892,9 @@ salaryVerificationRouter.get(
 salaryVerificationRouter.get(
   "/export",
   requireAuth,
-  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin"),
+  // admin/payroll_branch added 2026-08-25: same page-vs-backend gap as the other endpoints
+  // in this file, on the register's own export.
+  requireRole("wfm", "process_manager", "branch_head", "payroll_head", "super_admin", "admin", "payroll_branch"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);

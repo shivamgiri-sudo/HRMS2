@@ -9,7 +9,12 @@ payrollLinesCompatRouter.use(requireAuth);
 
 payrollLinesCompatRouter.get(
   "/runs/:id/lines",
-  requireRole("admin", "hr", "finance", "payroll"),
+  // payroll_head/super_admin/finance_head added 2026-08-25: this route (mounted before and
+  // therefore shadowing payroll.routes.ts's own /runs/:id/lines) is what actually serves the
+  // Payroll Validation Screen and the Overtime Management page's line-editing table, both of
+  // which are designed for payroll_head. Without this, that role's own dedicated page 403s on
+  // its main data fetch, indistinguishable from "no payroll data."
+  requireRole("admin", "hr", "finance", "payroll", "payroll_head", "super_admin", "finance_head"),
   async (req, res, next) => {
     try {
       const [rows] = await db.execute<RowDataPacket[]>(

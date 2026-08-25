@@ -1981,7 +1981,12 @@ const fmtDateTime = (v: string | null | undefined) =>
 function FinanceApprovalQueue() {
   const { data: roleData } = useUserRole();
   const roleKeys = roleData?.roleKeys ?? [];
-  const isFinance = roleKeys.some((r) => ["finance", "admin", "super_admin"].includes(r));
+  // Matches the backend's deliberate finance-approve boundary (payroll-signoff.routes.ts):
+  // finance, super_admin, payroll_head — NOT admin. A generic admin grant doesn't bypass the
+  // separation-of-duties control finance sign-off is meant to be; payroll_head is one of the
+  // three roles the backend trusts to approve but was excluded here entirely, so a
+  // payroll_head-only user couldn't even see this queue's contents before this fix.
+  const isFinance = roleKeys.some((r) => ["finance", "super_admin", "payroll_head"].includes(r));
   const { toast } = useToast();
   const [approvalModal, setApprovalModal] = useState<{ runId: string; runMonth: string } | null>(null);
   const [confirmChecked, setConfirmChecked] = useState(false);

@@ -18,7 +18,9 @@ router.use(requireAuth);
 
 // ── GET /api/payroll/runs/:id/window-status ───────────────────────────────────
 // Returns window_close_date and whether the run is within the editable window.
-router.get('/runs/:id/window-status', requireRole('payroll', 'super_admin', 'finance', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
+// admin/payroll_head added 2026-08-25: HO Queues' Run Window tab grants both roles page access
+// but this read-only status check excluded them.
+router.get('/runs/:id/window-status', requireRole('payroll', 'super_admin', 'finance', 'hr', 'admin', 'payroll_head'), h(async (req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, run_month, status, window_close_date, auto_closed_at, closed_by, tds_mode
      FROM salary_prep_run WHERE id = ? LIMIT 1`,
@@ -62,7 +64,10 @@ router.get('/runs/:id/tds-mode', requireRole('payroll', 'super_admin', 'finance'
 
 // ── PATCH /api/payroll/runs/:id/tds-mode ─────────────────────────────────────
 // Toggle TDS mode for a run.
-router.patch('/runs/:id/tds-mode', requireRole('payroll', 'super_admin'), h(async (req: AuthenticatedRequest, res: Response) => {
+// payroll_head/finance added 2026-08-25: matches the GET on the same resource above, which
+// already allowed finance. Payroll.tsx's TDS Mode panel shows the toggle to payroll_head and
+// finance, both of which 403'd on the actual write.
+router.patch('/runs/:id/tds-mode', requireRole('payroll', 'super_admin', 'payroll_head', 'finance'), h(async (req: AuthenticatedRequest, res: Response) => {
   const { tds_mode } = req.body as { tds_mode: 'auto' | 'manual' };
   if (!['auto', 'manual'].includes(tds_mode)) {
     return res.status(400).json({ success: false, message: 'tds_mode must be auto or manual' });
@@ -342,7 +347,9 @@ router.patch('/bank-change-requests/:id', requireRole('payroll', 'super_admin'),
 
 // ── GET /api/payroll/employee-salary-history ─────────────────────────────────
 // Bulk salary history view for Payroll HO with optional branch/process filters.
-router.get('/employee-salary-history', requireRole('payroll', 'super_admin', 'finance'), h(async (req: AuthenticatedRequest, res: Response) => {
+// admin/hr/payroll_head added 2026-08-25: HO Queues' Salary History tab grants these roles
+// page access but this read-only lookup excluded them.
+router.get('/employee-salary-history', requireRole('payroll', 'super_admin', 'finance', 'admin', 'hr', 'payroll_head'), h(async (req: AuthenticatedRequest, res: Response) => {
   const { branch_id, employee_id, from, to } = req.query as Record<string, string | undefined>;
 
   const conditions: string[] = [];

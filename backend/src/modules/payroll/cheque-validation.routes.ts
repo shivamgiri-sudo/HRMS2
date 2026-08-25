@@ -14,7 +14,10 @@ router.use(requireAuth);
 
 // ── GET /api/payroll/cheque-validation/queue ─────────────────────────────────
 // Payroll HO list of pending cheque name mismatch cases.
-router.get('/queue', requireRole('payroll', 'super_admin', 'finance'), h(async (_req: AuthenticatedRequest, res: Response) => {
+// admin/hr/payroll_head added 2026-08-25: HO Queues' Cheque Validation tab grants these roles
+// page access but this read-only list excluded them. The PATCH approve action stays restricted
+// to payroll/super_admin — gated client-side instead (NativePayrollHOQueues.tsx).
+router.get('/queue', requireRole('payroll', 'super_admin', 'finance', 'admin', 'hr', 'payroll_head'), h(async (_req: AuthenticatedRequest, res: Response) => {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT cnv.*,
             ac.full_name AS candidate_full_name, ac.candidate_code, ac.mobile,

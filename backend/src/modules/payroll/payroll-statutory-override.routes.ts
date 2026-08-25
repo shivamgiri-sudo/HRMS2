@@ -139,7 +139,9 @@ router.get('/pending', requireRole('payroll', 'super_admin', 'finance'), h(async
 
 // ── GET /api/payroll/statutory-overrides/all ─────────────────────────────────
 // Full list for audit, filterable by status/employee.
-router.get('/all', requireRole('payroll', 'super_admin', 'finance'), h(async (req: AuthenticatedRequest, res: Response) => {
+// admin/hr/payroll_head added 2026-08-25: HO Queues' Opt-Out Queue tab grants these roles page
+// access but this read-only list excluded them.
+router.get('/all', requireRole('payroll', 'super_admin', 'finance', 'admin', 'hr', 'payroll_head'), h(async (req: AuthenticatedRequest, res: Response) => {
   const status = req.query.status as string | undefined;
   const empId  = req.query.employee_id as string | undefined;
 

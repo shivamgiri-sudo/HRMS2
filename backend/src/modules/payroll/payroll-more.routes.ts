@@ -625,7 +625,10 @@ payrollMoreRouter.get("/holiday-work/policies", requireRole("admin", "super_admi
   return res.json({ success: true, data: rows });
 }));
 
-payrollMoreRouter.get("/holiday-work/requests", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch"), h(async (req: AuthenticatedRequest, res: Response) => {
+// wfm added 2026-08-25: HolidayWork.tsx's REQUEST_ROLES/APPROVAL_ROLES include wfm on all three
+// of these endpoints, but this list (and the two below) excluded it — a wfm user could reach
+// the page and 403 on the very first list fetch.
+payrollMoreRouter.get("/holiday-work/requests", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "payroll_branch", "wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { status, month } = req.query as { status?: string; month?: string };
   const conds: string[] = [];
   const params: unknown[] = [];
@@ -648,7 +651,7 @@ payrollMoreRouter.get("/holiday-work/requests", requireRole("admin", "super_admi
   return res.json({ success: true, data: rows });
 }));
 
-payrollMoreRouter.post("/holiday-work/requests", requireRole("admin", "super_admin", "payroll", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.post("/holiday-work/requests", requireRole("admin", "super_admin", "payroll", "payroll_head", "wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { holiday_id, request_month, branch_id, process_id, cost_centre_id, payout_policy_id, designation_ids, request_reason, remarks } = req.body as {
     holiday_id: string; request_month: string; branch_id: string; process_id: string;
     cost_centre_id?: string; payout_policy_id: string; designation_ids?: string[];
@@ -673,7 +676,7 @@ payrollMoreRouter.post("/holiday-work/requests", requireRole("admin", "super_adm
   return res.status(201).json({ success: true, data: rows[0] });
 }));
 
-payrollMoreRouter.patch("/holiday-work/requests/:id/approve", requireRole("admin", "super_admin", "payroll", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+payrollMoreRouter.patch("/holiday-work/requests/:id/approve", requireRole("admin", "super_admin", "payroll", "payroll_head", "wfm"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { id } = req.params;
   const { action, remarks } = req.body as { action: "approve" | "reject"; remarks?: string };
   if (!["approve", "reject"].includes(action)) return res.status(400).json({ success: false, message: "action must be approve or reject" });

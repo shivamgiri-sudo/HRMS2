@@ -463,6 +463,14 @@ function ManualTDSTab() {
   const [selectedRunId, setSelectedRunId] = useState("");
   const [editRows, setEditRows] = useState<Record<string, string>>({});
 
+  // Money-movement write action — backend (payroll-window.routes.ts) restricts the whole
+  // manual-TDS surface to payroll/super_admin(/finance for the mode read) even though this
+  // page's own role grant (PAYROLL_HO_QUEUES) also admits admin/hr/payroll_head. Gated here
+  // client-side rather than widening the backend, so those roles get a clear reserved-for
+  // note instead of a silent 403 that looked identical to "no TDS entries."
+  const { roleKeys } = useWorkforceAccess();
+  const canManageTds = roleKeys.some((r) => ["payroll", "super_admin"].includes(r));
+
   const { data: runsData } = useQuery({
     queryKey: ["payroll-runs-list"],
     queryFn: () => hrmsApi.get<any>("/api/payroll/runs?limit=24"),
@@ -547,6 +555,14 @@ function ManualTDSTab() {
   }
 
   const editCount = Object.keys(editRows).length;
+
+  if (!canManageTds) {
+    return (
+      <div className="rounded-lg border bg-card p-6 text-center text-sm text-muted-foreground">
+        Manual TDS is reserved for Payroll or Super Admin.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -753,6 +769,13 @@ function ChequeValidationTab() {
     "manual_validated"
   );
 
+  // The list (GET /queue) is now open to admin/hr/payroll_head too — only the approve/reject
+  // decision (PATCH) stays backend-restricted to payroll/super_admin. Gated here so those
+  // roles can see the queue but the Review action tells them plainly why it's disabled,
+  // instead of a 403 on save after they've already filled in a decision.
+  const { roleKeys } = useWorkforceAccess();
+  const canDecideCheque = roleKeys.some((r) => ["payroll", "super_admin"].includes(r));
+
   const { data, isFetching } = useQuery({
     queryKey: ["cheque-validation-queue"],
     queryFn: () => hrmsApi.get<any>("/api/payroll/cheque-validation/queue"),
@@ -872,6 +895,12 @@ function ChequeValidationTab() {
                         size="sm"
                         variant="outline"
                         className="h-7 rounded-lg px-3 text-[11px] font-medium"
+                        disabled={!canDecideCheque}
+                        title={
+                          canDecideCheque
+                            ? undefined
+                            : "Reserved for Payroll or Super Admin"
+                        }
                         onClick={() => {
                           setSelected(r);
                           setNote("");
@@ -1038,9 +1067,18 @@ function BankChangeTab() {
   const qc = useQueryClient();
   const [selected, setSelected] = useState<any | null>(null);
 
+  // Money-movement write action — backend (payroll-window.routes.ts) restricts both the list
+  // and the approve/reject decision to payroll/super_admin, even though this page's own role
+  // grant (PAYROLL_HO_QUEUES) also admits admin/hr/payroll_head. Gated here client-side rather
+  // than widening the backend, so those roles get a clear reserved-for note instead of a
+  // silent 403 that looked identical to "no pending bank-change requests."
+  const { roleKeys } = useWorkforceAccess();
+  const canManageBankChange = roleKeys.some((r) => ["payroll", "super_admin"].includes(r));
+
   const { data, isFetching } = useQuery({
     queryKey: ["bank-change-requests"],
     queryFn: () => hrmsApi.get<any>("/api/payroll/bank-change-requests"),
+    enabled: canManageBankChange,
   });
   const rows: any[] = data?.data ?? [];
 
@@ -1055,6 +1093,14 @@ function BankChangeTab() {
     onError: (e: Error) =>
       toast({ title: "Failed", description: e.message, variant: "destructive" }),
   });
+
+  if (!canManageBankChange) {
+    return (
+      <div className="rounded-lg border bg-card p-6 text-center text-sm text-muted-foreground">
+        Bank change approval is reserved for Payroll or Super Admin.
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
