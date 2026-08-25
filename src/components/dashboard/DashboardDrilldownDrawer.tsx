@@ -102,6 +102,21 @@ function formatColumnLabel(col: string): string {
   return COLUMN_LABELS[col] ?? col.replace(/([A-Z])/g, " $1").replace(/_/g, " ").trim();
 }
 
+// Naming-convention-based formatting for the generic numeric cell renderer below.
+// Scoped to suffixes/substrings verified against every column name actually returned
+// by the ~20 drillXxx handlers in backend/src/modules/dashboards/*.ts (see
+// drilldown-formatting-fix-report.md) — none of the in-use "count"/"days"/"score"/"id"
+// style columns collide with these patterns.
+function formatNumericValue(colName: string, value: number): string {
+  if (colName.endsWith("Pct") || colName.endsWith("Percent") || colName.endsWith("Percentage")) {
+    return `${value.toLocaleString("en-IN", { maximumFractionDigits: 1 })}%`;
+  }
+  if (/revenue|amount|salary|cost|budget|payable|balance/i.test(colName)) {
+    return `₹${value.toLocaleString("en-IN")}`;
+  }
+  return value.toLocaleString();
+}
+
 export function DashboardDrilldownDrawer({
   open,
   onClose,
@@ -285,7 +300,7 @@ export function DashboardDrilldownDrawer({
                               if (isUuidValue(s)) return <span className="text-slate-300">—</span>;
                               // Format numbers with locale
                               if (typeof v === "number") return (
-                                <span className="font-bold text-[#0b63e5]">{v.toLocaleString()}</span>
+                                <span className="font-bold text-[#0b63e5]">{formatNumericValue(col, v)}</span>
                               );
                               return s;
                             })()}
