@@ -7,11 +7,10 @@ import { requireRole } from "../middleware/requireRole.js";
 export const healthRouter = Router();
 
 // TEMP TEST ENDPOINT - REMOVE AFTER TESTING
-healthRouter.post("/test-daily-report", async (req, res) => {
-  const { date, email } = req.body;
+healthRouter.get("/test-daily-report", async (req, res) => {
   try {
     const { runDailyHiringReport } = await import("../modules/ats/ats-reminders.cron.js");
-    const result = await runDailyHiringReport(date || '2026-08-24', email || 'shivam.giri@teammas.in');
+    const result = await runDailyHiringReport('2026-08-24', 'shivam.giri@teammas.in');
     return res.json(result);
   } catch (error: any) {
     return res.status(500).json({ success: false, error: error.message });
