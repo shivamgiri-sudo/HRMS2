@@ -92,23 +92,36 @@ export default function PerformanceScorecardTable({ dateFrom, dateTo }: Performa
                   <span className="font-semibold text-gray-800">{row.employeeName}</span>
                 </div>
               </TableCell>
-              {columns.map((col) =>
-                col.available === false ? (
-                  <TableCell key={col.key} className="text-gray-400">
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Badge variant="outline" className="cursor-default border-dashed text-gray-400 font-normal">
-                            Not yet available
-                          </Badge>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          Shrinkage data isn't scoped by branch/process yet in the underlying system — showing once that's fixed.
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </TableCell>
-                ) : (
+              {columns.map((col) => {
+                if (col.available === false) {
+                  return (
+                    <TableCell key={col.key} className="text-gray-400">
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Badge variant="outline" className="cursor-default border-dashed text-gray-400 font-normal">
+                              Not yet available
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            Shrinkage data isn't scoped by branch/process yet in the underlying system — showing once that's fixed.
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </TableCell>
+                  );
+                }
+
+                const rowValue = row[col.key as keyof ScorecardRow];
+                if (rowValue === null) {
+                  return (
+                    <TableCell key={col.key} className="text-gray-500">
+                      {col.format(row)}
+                    </TableCell>
+                  );
+                }
+
+                return (
                   <TableCell
                     key={col.key}
                     className="cursor-pointer hover:underline"
@@ -122,8 +135,8 @@ export default function PerformanceScorecardTable({ dateFrom, dateTo }: Performa
                       col.format(row)
                     )}
                   </TableCell>
-                ),
-              )}
+                );
+              })}
               <TableCell>
                 <Button
                   variant="outline"
