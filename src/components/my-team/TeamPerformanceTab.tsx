@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertTriangle, Plus, BarChart2, Shield } from "lucide-react";
+import { Plus, BarChart2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
   ChartContainer,
@@ -33,31 +33,6 @@ function scoreColor(score: number) {
   if (score >= 80) return { bar: "#22c55e", ring: "bg-emerald-100 text-emerald-700" };
   if (score >= 65) return { bar: "#f59e0b", ring: "bg-amber-100 text-amber-700" };
   return { bar: "#ef4444", ring: "bg-rose-100 text-rose-700" };
-}
-
-function riskLabel(score?: number) {
-  if (!score) return { label: "Low", cls: "bg-emerald-100 text-emerald-700" };
-  if (score >= 70) return { label: "High",   cls: "bg-rose-100 text-rose-700" };
-  if (score >= 45) return { label: "Medium", cls: "bg-amber-100 text-amber-700" };
-  return { label: "Low", cls: "bg-emerald-100 text-emerald-700" };
-}
-
-// ── Score bar visual ──────────────────────────────────────────
-function ScoreBar({ score }: { score: number }) {
-  const { bar, ring } = scoreColor(score);
-  return (
-    <div className="flex items-center gap-2.5">
-      <div className="relative h-2 w-28 overflow-hidden rounded-full bg-slate-100">
-        <div
-          className="absolute inset-y-0 left-0 rounded-full transition-all duration-500"
-          style={{ width: `${Math.min(100, score)}%`, background: bar }}
-        />
-      </div>
-      <span className={`min-w-[2.5rem] rounded-full px-2 py-0.5 text-xs font-bold text-center ${ring}`}>
-        {score}
-      </span>
-    </div>
-  );
 }
 
 const chartConfig = {
