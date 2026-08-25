@@ -103,8 +103,11 @@ export async function reviewRevisionRequest(
 
     if (action === "approve") {
       await connection.execute(
-        `UPDATE employee_salary_assignment SET active_status = 0 WHERE employee_id = ? AND active_status = 1`,
-        [req.employee_id]
+        `UPDATE employee_salary_assignment
+            SET active_status = 0,
+                effective_to = DATE_SUB(?, INTERVAL 1 DAY)
+          WHERE employee_id = ? AND active_status = 1`,
+        [req.requested_effective_from, req.employee_id]
       );
 
       const [assignRows] = await connection.execute<RowDataPacket[]>(

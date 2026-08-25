@@ -1335,10 +1335,13 @@ async function createRelatedEmployeeRecords(
   {
     const annualCtc = Number(offer.offered_ctc ?? 0) * 12;
     const salaryEffectiveFrom = offer.date_of_salary ?? offer.date_of_joining;
+    // structure_id is left NULL: 'ss-std-001' only exists in demo data and
+    // would throw ER_NO_REFERENCED_ROW_2 on production, 500ing every approval.
+    // Payroll HR assigns the correct structure via the salary-increment workflow.
     await conn.execute(
       `INSERT IGNORE INTO employee_salary_assignment
          (id, employee_id, structure_id, ctc_annual, effective_from, active_status)
-       VALUES (UUID(), ?, 'ss-std-001', ?, ?, 1)`,
+       VALUES (UUID(), ?, NULL, ?, ?, 1)`,
       [employeeId, annualCtc, salaryEffectiveFrom]
     );
   }
