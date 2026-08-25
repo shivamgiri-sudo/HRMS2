@@ -856,7 +856,7 @@ atsRouter.post("/trigger-daily-report", requireRole("admin", "hr_admin", "super_
 
 export const atsPublicTestRouter = Router();
 
-atsPublicTestRouter.post("/test-daily-report", async (req, res) => {
+atsPublicTestRouter.post("/", async (req, res) => {
   const { date, email, preview } = req.body;
 
   try {

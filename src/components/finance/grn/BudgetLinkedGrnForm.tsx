@@ -3063,6 +3063,7 @@ export function BudgetLinkedGrnForm({
               directCostCentreKey={directCostCentreKey}
               onDirectCostCentreChange={setDirectCostCentreKey}
               isUnbudgeted={isUnbudgetedExpense}
+              hideGstColumn={!isVendor}
             />
           )}
 
@@ -3708,6 +3709,7 @@ function CostCentreSplitEditor({
   directCostCentreKey,
   onDirectCostCentreChange,
   isUnbudgeted,
+  hideGstColumn,
 }: {
   groups: Array<{ costCentreKey: string; costCentreName: string; processName?: string | null; lines: BudgetLine[] }>;
   rows: CostCentreSplitDraft[];
@@ -3723,6 +3725,8 @@ function CostCentreSplitEditor({
   onDirectCostCentreChange: (key: string) => void;
   /** True when no budget exists for the selected HEAD/SUB-HEAD */
   isUnbudgeted?: boolean;
+  /** Hide GST/Tax column — imprest vouchers don't need tax breakdown */
+  hideGstColumn?: boolean;
 }) {
   const reconciled = Math.abs(total - 100) <= 0.5;
   const isDirectMethod = splitMethod === "direct";
@@ -3814,7 +3818,7 @@ function CostCentreSplitEditor({
                     )}
                   </div>
                 </div>
-                {line && (
+                {!hideGstColumn && line && (
                   <span
                     className={cn(
                       "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
@@ -3867,7 +3871,7 @@ function CostCentreSplitEditor({
               <GrnTh sticky={false} className="w-8">#</GrnTh>
               <GrnTh sticky={false}>Cost centre</GrnTh>
               <GrnTh sticky={false}>Item</GrnTh>
-              <GrnTh sticky={false} className="w-28">Tax</GrnTh>
+              {!hideGstColumn && <GrnTh sticky={false} className="w-28">Tax</GrnTh>}
               <GrnTh sticky={false} align="right" className="w-28">Split %</GrnTh>
               <GrnTh sticky={false} align="right" className="w-32">Available</GrnTh>
             </tr>
@@ -3916,21 +3920,23 @@ function CostCentreSplitEditor({
                       <span className="text-grn-ink-soft">{line?.item_name ?? "—"}</span>
                     )}
                   </GrnTd>
-                  <GrnTd>
-                    {line ? (
-                      <span
-                        className={cn(
-                          "inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-                          nonTaxable
-                            ? "bg-amber-100 text-amber-800"
-                            : "bg-emerald-100 text-emerald-800"
-                        )}
-                        title={line.tax_treatment.replace("_", " ")}
-                      >
-                        {nonTaxable ? (line.tax_treatment === "exempt" ? "Exempt" : "Non-GST") : `GST ${line.gst_rate}%`}
-                      </span>
-                    ) : "—"}
-                  </GrnTd>
+                  {!hideGstColumn && (
+                    <GrnTd>
+                      {line ? (
+                        <span
+                          className={cn(
+                            "inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                            nonTaxable
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-emerald-100 text-emerald-800"
+                          )}
+                          title={line.tax_treatment.replace("_", " ")}
+                        >
+                          {nonTaxable ? (line.tax_treatment === "exempt" ? "Exempt" : "Non-GST") : `GST ${line.gst_rate}%`}
+                        </span>
+                      ) : "—"}
+                    </GrnTd>
+                  )}
                   <GrnTd>
                     <Input
                       type="number"
