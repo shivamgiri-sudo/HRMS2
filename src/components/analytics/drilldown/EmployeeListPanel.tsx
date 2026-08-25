@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useDrillDown } from "./DrillDownProvider";
@@ -86,7 +86,7 @@ export async function fetchAonDrilldownEmployees(
 }
 
 export function EmployeeListPanel({ open, metric, from, to }: EmployeeListPanelProps) {
-  const { chips, showEmployeeList, closeEmployeeList, selectEmployee } = useDrillDown();
+  const { chips, showEmployeeList, closeEmployeeList, selectEmployee, popToChip } = useDrillDown();
   const queryClient = useQueryClient();
   const [flaggedIds, setFlaggedIds] = useState<Set<string>>(new Set());
 
@@ -120,6 +120,25 @@ export function EmployeeListPanel({ open, metric, from, to }: EmployeeListPanelP
         <SheetHeader>
           <SheetTitle>Employees in this slice</SheetTitle>
         </SheetHeader>
+
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {chips.map((chip, i) => (
+            <span
+              key={chip.dimension}
+              className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700"
+            >
+              {chip.label}
+              <button
+                type="button"
+                onClick={() => popToChip(i)}
+                className="ml-0.5 rounded-full hover:bg-slate-200"
+                aria-label={`Remove ${chip.label} filter`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
 
         {q.isLoading ? (
           <div className="mt-4 space-y-2">

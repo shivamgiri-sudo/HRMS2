@@ -16,7 +16,7 @@
  * row at all, and exit reason is captured for well under 1% of leavers. A blank cell
  * would read as a rendering fault; a stated zero reads as the finding it is.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Bar,
@@ -236,6 +236,26 @@ function DrillCell({
   );
 }
 
+/**
+ * Resets the drill-down state (chips + open panels) whenever `groupBy` or `metric` changes.
+ *
+ * Must be mounted as a child of `DrillDownProvider` -- `useDrillDown` throws otherwise -- so it
+ * cannot live directly in `Overview`'s own body: `Overview` renders `<DrillDownProvider>` itself,
+ * meaning `Overview`'s hooks run one level above the provider, not inside it. Without this,
+ * `pushChip` (which replaces only by dimension) let a stale chip from a since-abandoned
+ * `groupBy`/`metric` selection persist into a later slice, silently narrowing it with an
+ * intersection filter the user never asked for and, before this task's chip bar was added to
+ * `EmployeeListPanel`, could not even see.
+ */
+function DrillResetOnChange({ groupBy, metric }: { groupBy: GroupBy; metric: "headcount" | "exits" | "shrinkage" }) {
+  const { clear } = useDrillDown();
+  useEffect(() => {
+    clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupBy, metric]);
+  return null;
+}
+
 function Overview({ from, to, branchId, headlineRate }: { from: string; to: string; branchId: string; headlineRate: ReturnType<typeof useReport> }) {
   const [groupBy, setGroupBy] = useState<GroupBy>("cost_centre_name");
   const [metric, setMetric] = useState<"headcount" | "exits" | "shrinkage">("headcount");
@@ -415,6 +435,7 @@ function Overview({ from, to, branchId, headlineRate }: { from: string; to: stri
 
   return (
     <DrillDownProvider>
+    <DrillResetOnChange groupBy={groupBy} metric={metric} />
     <div className="space-y-4">
       <GapBanner
         items={[
