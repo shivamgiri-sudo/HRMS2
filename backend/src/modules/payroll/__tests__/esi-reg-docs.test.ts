@@ -131,16 +131,63 @@ describe("POST /api/payroll/esi-reg-docs/bulk-download", () => {
       .send({ employee_ids: [] });
     expect(res.status).toBe(400);
   });
+
+  it("returns 200 zip when valid employee_ids supplied", async () => {
+    vi.mocked(db.execute)
+      .mockResolvedValueOnce([[{ id: "emp-1", emp_code: "EMP001", name: "Alice Smith", esic_number: "123", photo_url: null, avatar_url: null }] as any, []])
+      .mockResolvedValueOnce([[] as any, []]) // no pan doc
+      .mockResolvedValueOnce([[] as any, []]); // no bank detail for PDF
+
+    const res = await request(app)
+      .post("/api/payroll/esi-reg-docs/bulk-download")
+      .send({ employee_ids: ["emp-1"] })
+      .buffer(true)
+      .parse((res: any, cb: any) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => cb(null, Buffer.concat(chunks)));
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/zip/);
+  });
 });
 
 describe("GET /api/payroll/esi-reg-docs/export-csv", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("returns CSV with correct headers", async () => {
-    vi.mocked(db.execute).mockResolvedValueOnce([[] as any, []]);
+  it("returns CSV with BOM, all 12 column headers, and masked account number", async () => {
+    vi.mocked(db.execute).mockResolvedValueOnce([
+      [{
+        emp_code: "EMP001",
+        name: "Alice Smith",
+        branch: "Chennai",
+        esic_number: "1234567890",
+        pan_number: "ABCDE1234F",
+        bank_name: "SBI",
+        account_number: "9876543210",
+        ifsc_code: "SBIN0001234",
+        account_type: "savings",
+        pan_ready: 1,
+        photo_ready: 1,
+        bank_ready: 1,
+      }] as any,
+      [],
+    ]);
+
     const res = await request(app).get("/api/payroll/esi-reg-docs/export-csv");
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toMatch(/text\/csv/);
-    expect(res.text).toContain("Emp Code");
+    expect(res.text.charCodeAt(0)).toBe(0xfeff);
+    const expectedColumns = [
+      "Emp Code", "Name", "Branch", "ESIC Number", "PAN Number",
+      "Bank Name", "Account Number (Masked)", "IFSC Code",
+      "Account Type", "PAN Ready", "Photo Ready", "Bank Ready",
+    ];
+    for (const col of expectedColumns) {
+      expect(res.text).toContain(col);
+    }
+    expect(res.text).toContain("****3210");
+    expect(res.text).not.toContain("9876543210");
   });
 });

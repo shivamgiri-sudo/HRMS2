@@ -381,11 +381,11 @@ esiRegDocsRouter.get(
       .map((r) =>
         [
           r.emp_code,
-          `"${r.name}"`,
-          `"${r.branch}"`,
+          `"${(r.name ?? "").replace(/"/g, '""')}"`,
+          `"${(r.branch ?? "").replace(/"/g, '""')}"`,
           r.esic_number ?? "",
           r.pan_number ?? "",
-          `"${r.bank_name ?? ""}"`,
+          `"${(r.bank_name ?? "").replace(/"/g, '""')}"`,
           mask(r.account_number ?? null),
           r.ifsc_code ?? "",
           r.account_type ?? "",
@@ -399,7 +399,7 @@ esiRegDocsRouter.get(
     const date = new Date().toISOString().slice(0, 10);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="ESI_Reg_${date}.csv"`);
-    res.send("﻿" + header + csvRows);
+    res.send("\uFEFF" + header + csvRows);
 
     await writeAuditLog("esi_reg_csv_export", actorId, null, { branch_id: branchId ?? "all" });
   }
