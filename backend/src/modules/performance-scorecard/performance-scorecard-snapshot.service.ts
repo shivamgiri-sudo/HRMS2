@@ -102,21 +102,29 @@ export async function computeEmployeeSnapshot(
     // Each of these 3 calls degrades to null on its own failure, independently
     // of the other two — one service being down must not blank the whole row.
     if (hasScope) {
-      try {
-        // Shrinkage snapshots are currently only computed at branch grain
-        // (RTA's process-level roster data isn't reliable enough yet — see
-        // rta-nightly.cron.ts), so matching on processId too would never
-        // find a row.
-        const snapshots = await shrinkageService.listSnapshots({
-          fromDate: date,
-          toDate: date,
-          branchId,
-        });
-        if (snapshots.length > 0 && snapshots[0].total_shrinkage_pct !== null) {
-          teamShrinkagePct = Number(snapshots[0].total_shrinkage_pct);
+      // Shrinkage snapshots are currently only computed at branch grain (RTA's
+      // process-level roster data isn't reliable enough yet — see
+      // rta-nightly.cron.ts), so listSnapshots is called with branchId only.
+      // A manager with processId but no branchId (0 live today, but not
+      // schema-impossible) must NOT fall through to an unscoped lookup here —
+      // listSnapshots only filters on branch_id when it's truthy, so an
+      // undefined branchId would silently match ANY branch's row for the
+      // date, attributing someone else's shrinkage to this manager. Skip
+      // entirely rather than risk that, same principle as the hasScope guard
+      // above.
+      if (branchId) {
+        try {
+          const snapshots = await shrinkageService.listSnapshots({
+            fromDate: date,
+            toDate: date,
+            branchId,
+          });
+          if (snapshots.length > 0 && snapshots[0].total_shrinkage_pct !== null) {
+            teamShrinkagePct = Number(snapshots[0].total_shrinkage_pct);
+          }
+        } catch (err) {
+          console.error(`[performance-scorecard] shrinkage lookup failed for manager ${employeeId}`, err);
         }
-      } catch (err) {
-        console.error(`[performance-scorecard] shrinkage lookup failed for manager ${employeeId}`, err);
       }
 
       try {
