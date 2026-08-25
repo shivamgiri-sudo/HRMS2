@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -449,7 +449,7 @@ const TABLE_PAGE_SIZE = 20;
 export default function AttendanceRegularization() {
   const geoCapture = useGeoCapture();
   const { toast } = useToast();
-  const { employeeId: currentEmployeeId, roleKeys } = useWorkforceAccess();
+  const { employeeId: currentEmployeeId, roleKeys, isLoading: roleLoading } = useWorkforceAccess();
 
   // The "Bulk approve safe" control below sits inside the personal "My Requests"
   // panel and previously had NO role condition at all — its only guard was
@@ -464,7 +464,17 @@ export default function AttendanceRegularization() {
 
   // View tabs: "my_requests" shows only user's own, "pending_approval" shows team requests awaiting action
   type ViewTab = "my_requests" | "pending_approval" | "all";
-  const [viewTab, setViewTab] = useState<ViewTab>(canBulkApprove ? "pending_approval" : "my_requests");
+  // useState initializer runs once at mount — roleKeys is [] on first render (query pending),
+  // so canBulkApprove would always be false and the tab would wrongly default to "my_requests".
+  // Use a ref guard + effect to set the correct default once roles have loaded.
+  const [viewTab, setViewTab] = useState<ViewTab>("my_requests");
+  const tabInitialized = useRef(false);
+  useEffect(() => {
+    if (!roleLoading && !tabInitialized.current) {
+      tabInitialized.current = true;
+      if (canBulkApprove) setViewTab("pending_approval");
+    }
+  }, [roleLoading, canBulkApprove]);
 
   // Branches for BulkBranchCorrection
   const { data: branchesData } = useBranches();
