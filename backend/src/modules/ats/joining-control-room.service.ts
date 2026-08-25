@@ -190,7 +190,7 @@ export async function getJoiningControlRoomCandidate(candidateId: string) {
   const [jclr] = await db.execute<RowDataPacket[]>(`SELECT * FROM jclr_detail WHERE candidate_id = ? LIMIT 1`, [candidateId]);
   const [statutory] = await db.execute<RowDataPacket[]>(`SELECT * FROM statutory_declaration WHERE candidate_id = ? LIMIT 1`, [candidateId]);
   const [dpdp] = await db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_register WHERE candidate_id = ? ORDER BY purpose_code`, [candidateId]);
-  const [withdrawals] = await db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_withdrawal WHERE candidate_id = ? ORDER BY created_at DESC`, [candidateId]);
+  const [withdrawals] = await db.execute<RowDataPacket[]>(`SELECT * FROM dpdp_consent_withdrawal WHERE requester_id = ? AND requester_type = 'candidate' ORDER BY created_at DESC`, [candidateId]);
   const [bridge] = await db.execute<RowDataPacket[]>(`SELECT ob.*, e.employee_code, e.official_email FROM ats_onboarding_bridge ob LEFT JOIN employees e ON e.id = ob.employee_id WHERE ob.candidate_id = ? LIMIT 1`, [candidateId]);
 
   // Fetch employment offer (salary source of truth set in onboarding-requests)
@@ -531,9 +531,9 @@ export async function upsertDpdpConsent(candidateId: string, input: JsonRecord, 
 export async function requestDpdpWithdrawal(candidateId: string, input: JsonRecord, actorId: string) {
   const purpose = String(input.purpose_code || "candidate_onboarding");
   await db.execute(
-    `INSERT INTO dpdp_consent_withdrawal (id, candidate_id, purpose_code, requested_by, status, reason)
-     VALUES (UUID(), ?, ?, ?, 'requested', ?)`,
-    [candidateId, purpose, actorId, input.reason || "Withdrawal requested from HR control room"],
+    `INSERT INTO dpdp_consent_withdrawal (id, requester_id, requester_type, withdrawal_reason, status)
+     VALUES (UUID(), ?, 'candidate', ?, 'submitted')`,
+    [candidateId, String(input.reason || "Withdrawal requested from HR control room")],
   );
   return getJoiningControlRoomCandidate(candidateId);
 }
