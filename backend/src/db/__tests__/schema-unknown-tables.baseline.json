@@ -53,6 +53,9 @@
   "modules/payroll/bank-payment-readiness.routes.ts": [
     "payroll_bank_exception"
   ],
+  "modules/payroll/esi-reg-docs.routes.ts": [
+    "payroll_audit_trail"
+  ],
   "modules/payroll/payroll-statutory-filing.routes.ts": [
     "statutory_filing_record"
   ],
