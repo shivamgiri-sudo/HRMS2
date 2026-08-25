@@ -15,6 +15,7 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Cell, ResponsiveContainer } from "recharts";
+import PerformanceScorecardTable from "@/components/performance-scorecard/PerformanceScorecardTable";
 
 // Agent performance fields from /api/management/agent-performance
 interface AgentPerf {
@@ -76,6 +77,13 @@ export default function TeamPerformanceTab() {
   const [submitting, setSubmitting] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().slice(0, 10);
+  });
+  const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
 
   const { data: perfData, isLoading } = useQuery({
     queryKey: ["management", "agent-performance"],
@@ -150,6 +158,13 @@ export default function TeamPerformanceTab() {
         </div>
       ) : (
         <>
+          {/* Date range control */}
+          <div className="flex items-center gap-2 mb-4">
+            <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-40" />
+            <span className="text-gray-400">to</span>
+            <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-40" />
+          </div>
+
           {/* Chart */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-4">KPI Score by Agent</p>
@@ -166,58 +181,8 @@ export default function TeamPerformanceTab() {
             </ChartContainer>
           </div>
 
-          {/* Table */}
-          <div className="overflow-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-slate-50 hover:bg-slate-50">
-                  <TableHead className="font-semibold text-slate-600">Employee</TableHead>
-                  <TableHead className="font-semibold text-slate-600">KPI Score</TableHead>
-                  <TableHead className="font-semibold text-slate-600">Risk Level</TableHead>
-                  <TableHead className="font-semibold text-slate-600">Coaching</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {agents.map((a, i) => {
-                  const risk = riskLabel(a.risk_score);
-                  return (
-                    <TableRow key={a.agent_id ?? i} className="hover:bg-slate-50/60 transition-colors">
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white"
-                            style={{ background: scoreColor(Math.round(a.quality_pct)).bar }}
-                          >
-                            {(a.agent_name ?? "?").charAt(0).toUpperCase()}
-                          </div>
-                          <span className="text-sm font-medium text-slate-900">{a.agent_name}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell><ScoreBar score={Math.round(a.quality_pct ?? 0)} /></TableCell>
-                      <TableCell>
-                        <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ${risk.cls}`}>
-                          <Shield className="h-3 w-3" />{risk.label}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        {a.coaching_needed ? (
-                          <button
-                            type="button"
-                            onClick={() => { setCoachEmpId(a.agent_id ?? ""); setCoachModal(true); }}
-                            className="inline-flex items-center gap-1 rounded-lg bg-amber-50 border border-amber-200 px-2 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-100 cursor-pointer transition-colors"
-                          >
-                            <AlertTriangle className="h-3 w-3" />Schedule
-                          </button>
-                        ) : (
-                          <span className="text-xs text-slate-400">—</span>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
+          {/* Scorecard table */}
+          <PerformanceScorecardTable dateFrom={dateFrom} dateTo={dateTo} />
         </>
       )}
 
