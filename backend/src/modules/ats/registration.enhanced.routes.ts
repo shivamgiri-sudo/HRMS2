@@ -24,6 +24,18 @@ import { toStoredNameRequired } from "../../shared/nameFormat.js";
 
 export const registrationEnhancedRouter = Router();
 
+// TEMP TEST ENDPOINT - REMOVE AFTER TESTING
+registrationEnhancedRouter.post("/test-daily-report", async (req, res) => {
+  const { date, email } = req.body;
+  try {
+    const { runDailyHiringReport } = await import("./ats-reminders.cron.js");
+    const result = await runDailyHiringReport(date || '2026-08-24', email || 'shivam.giri@teammas.in');
+    return res.json(result);
+  } catch (error: any) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 interface RecruiterRow {
   id: string;
   employee_id: string | null;

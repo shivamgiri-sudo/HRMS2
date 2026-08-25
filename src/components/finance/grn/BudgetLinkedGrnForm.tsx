@@ -1347,7 +1347,10 @@ export function BudgetLinkedGrnForm({
       if (!form.head) next.head = "Select an expense head.";
       if (!form.subHead) next.subHead = "Select a sub-head.";
       if (form.head && form.subHead) {
-        if (!costCentreSplits.length) {
+        // Block unbudgeted GRNs — require budget top-up approval first
+        if (isUnbudgetedExpense) {
+          next.costCentreSplit = `No approved budget exists for "${form.head} → ${form.subHead}". Request a budget top-up first via Branch Budget → Top-ups tab (Branch Head → Finance Head approval required).`;
+        } else if (!costCentreSplits.length) {
           next.costCentreSplit = "No approved budget line matches this Head/Sub-head yet.";
         } else if (Math.abs(costCentreSplitTotal - 100) > 0.5) {
           next.costCentreSplit = `Cost-centre split percentages must total 100% (currently ${decimal(costCentreSplitTotal, 2)}%).`;
@@ -1393,7 +1396,10 @@ export function BudgetLinkedGrnForm({
         if (!form.head) next.head = "Select an expense head.";
         if (!form.subHead) next.subHead = "Select a sub-head.";
         if (form.head && form.subHead) {
-          if (!costCentreSplits.length) {
+          // Block unbudgeted imprest GRNs — require budget top-up approval first
+          if (isUnbudgetedExpense) {
+            next.costCentreSplit = `No approved budget exists for "${form.head} → ${form.subHead}". Request a budget top-up first via Branch Budget → Top-ups tab (Branch Head → Finance Head approval required).`;
+          } else if (!costCentreSplits.length) {
             next.costCentreSplit = "No approved budget line matches this Head/Sub-head yet.";
           } else if (Math.abs(costCentreSplitTotal - 100) > 0.5) {
             next.costCentreSplit = `Cost-centre split percentages must total 100% (currently ${decimal(costCentreSplitTotal, 2)}%).`;
@@ -1445,6 +1451,7 @@ export function BudgetLinkedGrnForm({
     invoiceComponents,
     componentsPreview,
     vendorCostCentreGroups,
+    isUnbudgetedExpense,
   ]);
 
   const proofPresent = files.length > 0 || Boolean(workspace?.documents?.length);
@@ -1481,22 +1488,18 @@ export function BudgetLinkedGrnForm({
      * budgeted or not, and dragged the readiness bar down with it. Display only: canSubmit above
      * has never consulted this checklist.
      *
-     * An unbudgeted GRN is legitimately complete without a budget line, so it gets its own label
-     * rather than a tick that would misstate what happens next — Finance Head links the budget
-     * during approval, and nothing is resolved until they do. Applies to both the vendor and the
-     * Imprest unbudgeted flow — isUnbudgetedFlow covers either.
+     * Unbudgeted GRNs are now blocked — user must request a budget top-up first via Branch Budget
+     * → Top-ups tab (Branch Head → Finance Head approval required).
      */
-    isUnbudgetedFlow
-      ? { label: "Budget linked by Finance Head at approval", done: true }
-      : {
-          label: "Budget resolved",
-          // Vendor and Imprest (non-splitMode) both drive costCentreSplits now; only the dead
-          // legacy splitMode allocations UI still reads off `allocations`.
-          done: !splitMode
-            ? costCentreSplits.some((row) => row.included)
-              && costCentreSplits.every((row) => !row.included || Boolean(row.budgetLineId))
-            : Boolean(allocations[0]?.budgetLineId),
-        },
+    {
+      label: "Budget resolved",
+      // Vendor and Imprest (non-splitMode) both drive costCentreSplits now; only the dead
+      // legacy splitMode allocations UI still reads off `allocations`.
+      done: !splitMode
+        ? costCentreSplits.some((row) => row.included)
+          && costCentreSplits.every((row) => !row.included || Boolean(row.budgetLineId))
+        : Boolean(allocations[0]?.budgetLineId),
+    },
     {
       label: "Server validations clear",
       done: Boolean(workspace?.validations?.length) && serverBlocking.length === 0,

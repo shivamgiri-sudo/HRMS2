@@ -1,5 +1,5 @@
 // src/components/finance/budget/BudgetTopupPanel.tsx
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, PlusCircle, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -318,6 +318,24 @@ export function BudgetTopupPanel({
   // query key, per the brief.
   const { costCentresQuery } = useBranchBudgetAllocations(branchId, period);
   const costCentreOptions = costCentresQuery.data ?? [];
+
+  // Expense master for HEAD/SUB-HEAD dropdowns in "Request new head/sub-head" mode
+  const expenseMasterQuery = useQuery({
+    queryKey: ["expense-masters-all"],
+    queryFn: () => hrmsApi.get<any>("/api/finance/expense-masters"),
+    staleTime: 10 * 60 * 1000,
+    enabled: createOpen && createMode === "new",
+  });
+  type ExpenseHead = { headName?: string; subHeads?: Array<{ subHeadName?: string }> };
+  const expenseMasterHeads = useMemo<string[]>(() => {
+    const list = (expenseMasterQuery.data?.data ?? expenseMasterQuery.data ?? []) as ExpenseHead[];
+    return list.map((h) => String(h.headName ?? "")).filter(Boolean);
+  }, [expenseMasterQuery.data]);
+  const expenseMasterSubHeads = useMemo<string[]>(() => {
+    const list = (expenseMasterQuery.data?.data ?? expenseMasterQuery.data ?? []) as ExpenseHead[];
+    const headEntry = list.find((h) => h.headName === newLineHead);
+    return (headEntry?.subHeads ?? []).map((sh) => String(sh.subHeadName ?? "")).filter(Boolean);
+  }, [expenseMasterQuery.data, newLineHead]);
 
   const requestedAmountNumber = Number(requestedAmount) || 0;
   const directAmountNumber = Number(directAmount) || 0;
@@ -675,11 +693,25 @@ export function BudgetTopupPanel({
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <Label className="text-xs">Head *</Label>
-                  <Input className="mt-1 h-9" value={newLineHead} onChange={(event) => setNewLineHead(event.target.value)} />
+                  <Select value={newLineHead} onValueChange={(value) => { setNewLineHead(value); setNewLineSubHead(""); }}>
+                    <SelectTrigger className="mt-1 h-9"><SelectValue placeholder="Select head" /></SelectTrigger>
+                    <SelectContent>
+                      {expenseMasterHeads.map((head) => (
+                        <SelectItem key={head} value={head}>{head}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <Label className="text-xs">Sub-head *</Label>
-                  <Input className="mt-1 h-9" value={newLineSubHead} onChange={(event) => setNewLineSubHead(event.target.value)} />
+                  <Select value={newLineSubHead} onValueChange={setNewLineSubHead} disabled={!newLineHead}>
+                    <SelectTrigger className="mt-1 h-9"><SelectValue placeholder={newLineHead ? "Select sub-head" : "Select head first"} /></SelectTrigger>
+                    <SelectContent>
+                      {expenseMasterSubHeads.map((subHead) => (
+                        <SelectItem key={subHead} value={subHead}>{subHead}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <Label className="text-xs">Unit *</Label>
