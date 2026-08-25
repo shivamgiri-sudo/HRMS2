@@ -100,6 +100,17 @@ export const inrMo = (annual: number | null | undefined) =>
 export const fmtDate = (d: string | null | undefined) =>
   d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
 
+export const fmtTs = (d: string | null | undefined) => {
+  if (!d) return '—';
+  const dt = new Date(d);
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const yyyy = dt.getFullYear();
+  const hh = String(dt.getHours()).padStart(2, '0');
+  const mi = String(dt.getMinutes()).padStart(2, '0');
+  return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+};
+
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
 export function AgingChip({ hours, status }: { hours: number; status: string }) {
@@ -1708,6 +1719,10 @@ export default function PayrollHeadSalaryReviewQueue() {
                         {[row.cost_centre_name, row.process_name, row.emp_type].filter(Boolean).join(' · ')}
                       </p>
                     )}
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      Raised: {fmtTs(row.created_at)}
+                      {row.reviewed_at && <> &nbsp;·&nbsp; Approved: {fmtTs(row.reviewed_at)}</>}
+                    </p>
                   </div>
 
                   {/* Section summary cards — fills the space that used to sit empty, Pending

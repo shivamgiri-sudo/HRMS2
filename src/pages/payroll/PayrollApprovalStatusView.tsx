@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import {
   STATUS_CFG, AgingChip, OfferedSalarySection, FinalSalarySection, BgvSection, BankSection,
-  inr, fmtDate,
+  inr, fmtDate, fmtTs,
   type QueueRow,
 } from './PayrollHeadSalaryReviewQueue';
 
@@ -257,6 +257,10 @@ export default function PayrollApprovalStatusView() {
                         {[row.cost_centre_name, row.process_name, row.emp_type].filter(Boolean).join(' · ')}
                       </p>
                     )}
+                    <p className="text-[10px] text-slate-400 mt-0.5">
+                      Raised: {fmtTs(row.created_at)}
+                      {row.reviewed_at && <> &nbsp;·&nbsp; Approved: {fmtTs(row.reviewed_at)}</>}
+                    </p>
                   </div>
                   <div className="hidden sm:flex flex-col items-end min-w-[90px]">
                     <p className="text-sm font-bold text-slate-900 tabular-nums flex items-center gap-1">
