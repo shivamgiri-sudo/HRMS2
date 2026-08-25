@@ -109,6 +109,7 @@ export async function getQueue(filters: { status?: string; q?: string; branch?: 
             r.resubmit_count, r.reopen_count, r.created_at, r.reviewed_at,
             TIMESTAMPDIFF(HOUR, r.created_at, NOW()) AS pending_hours,
             e.employee_code, e.full_name, dm.designation_name, b.branch_name,
+            cc.cost_centre_name, pm.process_name, e.emp_type,
             -- Correlated, not a JOIN — salary_component_assignments/ats_employment_offer can
             -- each have more than one matching row; a JOIN here would multiply queue rows.
             -- ctc_annual was never selected before this, so the "monthly CTC" column on this
@@ -126,6 +127,8 @@ export async function getQueue(filters: { status?: string; q?: string; branch?: 
        JOIN employees e ON e.id = r.employee_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN designation_master dm ON dm.id = e.designation_id
+       LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+       LEFT JOIN process_master pm ON pm.id = e.process_id
       WHERE ${conds.join(" AND ")}
       ORDER BY r.created_at ASC
       LIMIT 500`,
@@ -200,9 +203,13 @@ export async function getEmployeeJourney(employeeId: string) {
     payrollHrValidationRows,
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
-      `SELECT e.*, b.branch_name, b.state AS branch_state, dm.designation_name FROM employees e
+      `SELECT e.*, b.branch_name, b.state AS branch_state, dm.designation_name,
+              cc.cost_centre_name, pm.process_name
+         FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN designation_master dm ON dm.id = e.designation_id
+         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+         LEFT JOIN process_master pm ON pm.id = e.process_id
         WHERE e.id = ? LIMIT 1`,
       [employeeId]
     ).then(([r]) => r as RowDataPacket[]),

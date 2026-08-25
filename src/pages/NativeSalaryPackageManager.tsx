@@ -70,6 +70,8 @@ interface GradeBand {
   id: number | string;
   name: string;
   code?: string;
+  min_ctc?: number | null;
+  max_ctc?: number | null;
 }
 
 interface SalarySlab {
@@ -135,9 +137,22 @@ interface SlabsResponse {
   data: SalarySlab[];
 }
 
+// Raw shape /api/org/grade-bands actually returns (grade_band_master row) — grade_name/
+// grade_code, not name/code. GradeBandsResponse was previously typed as if the API already
+// returned GradeBand shape; it doesn't, so gradeBands' org-bands path rendered blank
+// name/code for every real band. Mapped explicitly below instead of trusting the type.
+interface RawGradeBand {
+  id: number | string;
+  grade_name?: string;
+  grade_code?: string;
+  band?: string;
+  min_ctc?: number | null;
+  max_ctc?: number | null;
+}
+
 interface GradeBandsResponse {
   success: boolean;
-  data: GradeBand[];
+  data: RawGradeBand[];
 }
 
 // ─── Types: NativeSalaryPackageAdmin ─────────────────────────────────────────
@@ -937,8 +952,15 @@ export default function NativeSalaryPackageManager() {
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const gradeBands = useMemo<GradeBand[]>(() => {
-    if (orgBandsData?.data && orgBandsData.data.length > 0)
-      return orgBandsData.data;
+    if (orgBandsData?.data && orgBandsData.data.length > 0) {
+      return orgBandsData.data.map((b) => ({
+        id: b.id,
+        name: b.grade_name ?? b.band ?? String(b.id),
+        code: b.grade_code,
+        min_ctc: b.min_ctc,
+        max_ctc: b.max_ctc,
+      }));
+    }
     if (!allPackages?.data) return [];
     const seen = new Map<string, GradeBand>();
     for (const p of allPackages.data) {
@@ -1374,6 +1396,9 @@ export default function NativeSalaryPackageManager() {
                               >
                                 {b.name}
                                 {b.code ? ` (${b.code})` : ""}
+                                {b.min_ctc != null && b.max_ctc != null
+                                  ? ` · ${fmt(b.min_ctc)}–${fmt(b.max_ctc)}`
+                                  : ""}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1421,6 +1446,14 @@ export default function NativeSalaryPackageManager() {
                         (b) => String(b.id) === selectedGradeId
                       )?.name ?? selectedGradeId}
                     </CardTitle>
+                    {(() => {
+                      const band = gradeBands.find((b) => String(b.id) === selectedGradeId);
+                      return band?.min_ctc != null && band?.max_ctc != null ? (
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          Band range: {fmt(band.min_ctc)} – {fmt(band.max_ctc)} / year
+                        </p>
+                      ) : null;
+                    })()}
                   </CardHeader>
                   <CardContent className="p-0">
                     {slabs.length === 0 ? (

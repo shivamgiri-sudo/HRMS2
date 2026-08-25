@@ -2,6 +2,9 @@
   "extends": "./tsconfig.app.json",
   "include": [
     "src/pages/payroll/PayrollHeadSalaryReviewQueue.tsx",
+    "src/pages/payroll/PayrollHeadSalaryReviewDetail.tsx",
+    "src/pages/NativeSalaryPackageManager.tsx",
+    "src/components/layout/navConfig.tsx",
     "src/vite-env.d.ts"
   ]
 }

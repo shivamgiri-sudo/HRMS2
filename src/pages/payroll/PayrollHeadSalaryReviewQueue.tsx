@@ -48,6 +48,9 @@ interface QueueRow {
   full_name: string;
   designation_name: string | null;
   branch_name: string | null;
+  cost_centre_name?: string | null;
+  process_name?: string | null;
+  emp_type?: string | null;
   ctc_annual?: number | null;
   final_ctc?: number | null;
   offer_status?: string | null;
@@ -161,8 +164,10 @@ function OfferedSalarySection({
             <DrawerSalaryRow label="Gross" value={inr(os.gross)} bold separator />
           </div>
           <div>
-            <DrawerSalaryRow label="PF (Emp)" value={Number(os.pf_employee) > 0 ? `− ${inr(os.pf_employee)}` : '—'} />
-            <DrawerSalaryRow label="ESIC (Emp)" value={Number(os.esic_employee) > 0 ? `− ${inr(os.esic_employee)}` : '—'} />
+            {/* Explicit Yes/No — a bare "—" for a legitimately zero PF/ESIC value (opted out,
+                above wage ceiling, etc.) read as "missing/broken" rather than "not applicable". */}
+            <DrawerSalaryRow label={`PF (Emp) — ${Number(os.pf_employee) > 0 ? 'Yes' : 'No'}`} value={Number(os.pf_employee) > 0 ? `− ${inr(os.pf_employee)}` : '—'} />
+            <DrawerSalaryRow label={`ESIC (Emp) — ${Number(os.esic_employee) > 0 ? 'Yes' : 'No'}`} value={Number(os.esic_employee) > 0 ? `− ${inr(os.esic_employee)}` : '—'} />
             <DrawerSalaryRow label="Net in Hand" value={inr(os.net_in_hand)} bold separator />
             <DrawerSalaryRow label="Offered CTC" value={inr(os.offered_ctc)} bold separator />
           </div>
@@ -261,8 +266,8 @@ function FinalSalarySection({
               <DrawerSalaryRow label="Gross" value={inr(sc.gross_monthly ?? sc.gross)} bold separator />
             </div>
             <div>
-              <DrawerSalaryRow label="PF (Emp)" value={sc.pf_employee ? `− ${inr(sc.pf_employee)}` : '—'} />
-              <DrawerSalaryRow label="ESIC (Emp)" value={sc.esic_employee ? `− ${inr(sc.esic_employee)}` : '—'} />
+              <DrawerSalaryRow label={`PF (Emp) — ${Number(sc.pf_employee) > 0 ? 'Yes' : 'No'}`} value={sc.pf_employee ? `− ${inr(sc.pf_employee)}` : '—'} />
+              <DrawerSalaryRow label={`ESIC (Emp) — ${Number(sc.esic_employee) > 0 ? 'Yes' : 'No'}`} value={sc.esic_employee ? `− ${inr(sc.esic_employee)}` : '—'} />
               <DrawerSalaryRow label="Net in Hand" value={inr(sc.net_in_hand ?? sc.net_estimate)} bold separator />
               <DrawerSalaryRow label="CTC" value={inr(sc.ctc)} bold separator />
             </div>
@@ -693,6 +698,12 @@ function SectionPopup({
               {section && <>{(() => { const Icon = SECTION_META[section].icon; return <Icon className="h-4 w-4 text-indigo-600" />; })()}{SECTION_META[section].label}</>}
               <span className="text-xs font-normal text-slate-400">— {journey?.employee?.full_name ?? '…'}</span>
             </DialogTitle>
+            {journey?.employee && (
+              <p className="text-[11px] text-slate-400 flex items-center gap-2 flex-wrap">
+                {[journey.employee.designation_name, journey.employee.cost_centre_name, journey.employee.process_name, journey.employee.emp_type]
+                  .filter(Boolean).join(' · ')}
+              </p>
+            )}
           </DialogHeader>
 
           {loading ? (
@@ -991,8 +1002,11 @@ function ReviewDrawer({
                 </div>
               </SheetTitle>
             </SheetHeader>
-            <div className="flex items-center gap-4 mt-3 pt-3 border-t border-white/20 text-xs text-white/70">
+            <div className="flex items-center gap-4 mt-3 pt-3 border-t border-white/20 text-xs text-white/70 flex-wrap">
               {employee?.designation_name && <span className="flex items-center gap-1"><Briefcase className="h-3 w-3" />{employee.designation_name}</span>}
+              {employee?.cost_centre_name && <span className="flex items-center gap-1"><Building2 className="h-3 w-3" />{employee.cost_centre_name}</span>}
+              {employee?.process_name && <span className="flex items-center gap-1">{employee.process_name}</span>}
+              {employee?.emp_type && <span className="flex items-center gap-1">{employee.emp_type}</span>}
               {employee?.date_of_joining && <span className="flex items-center gap-1"><Clock className="h-3 w-3" />DOJ: {fmtDate(employee.date_of_joining)}</span>}
               <button onClick={() => navigate(`/payroll/salary-review/${employeeId}`)}
                 className="ml-auto flex items-center gap-1 text-white/70 hover:text-white transition-colors cursor-pointer">
@@ -1317,7 +1331,7 @@ export default function PayrollHeadSalaryReviewQueue() {
                 <ShieldCheck className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold tracking-tight">Salary Review Queue</h1>
+                <h1 className="text-2xl font-bold tracking-tight">Employee Code Generation</h1>
                 <p className="text-indigo-200 text-sm mt-0.5">
                   Every new employee is blocked from payroll until reviewed and approved
                 </p>
@@ -1486,6 +1500,11 @@ export default function PayrollHeadSalaryReviewQueue() {
                       {row.designation_name && <span className="flex items-center gap-1"><Briefcase className="h-3 w-3 text-slate-300" />{row.designation_name}</span>}
                       {row.branch_name && <span className="flex items-center gap-1"><Building2 className="h-3 w-3 text-slate-300" />{row.branch_name}</span>}
                     </div>
+                    {(row.cost_centre_name || row.process_name || row.emp_type) && (
+                      <p className="text-[10px] text-slate-400 mt-0.5 truncate">
+                        {[row.cost_centre_name, row.process_name, row.emp_type].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
                   </div>
 
                   {/* Section summary cards — fills the space that used to sit empty, Pending

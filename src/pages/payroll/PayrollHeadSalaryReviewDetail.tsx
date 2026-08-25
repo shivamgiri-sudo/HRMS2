@@ -314,7 +314,7 @@ export default function PayrollHeadSalaryReviewDetail() {
         {/* Back */}
         <Button variant="ghost" size="sm" onClick={() => navigate('/payroll/salary-review')}
           className="cursor-pointer -ml-2 text-slate-600 hover:text-slate-900">
-          <ArrowLeft className="h-4 w-4 mr-1.5" />Back to Salary Review Queue
+          <ArrowLeft className="h-4 w-4 mr-1.5" />Back to Employee Code Generation
         </Button>
 
         {/* Banners */}
@@ -384,6 +384,24 @@ export default function PayrollHeadSalaryReviewDetail() {
                 <User className="h-3.5 w-3.5 text-white/50" />
                 Type: <strong className="text-white ml-0.5">{employee?.employment_type ?? '—'}</strong>
               </span>
+              {employee?.emp_type && (
+                <span className="flex items-center gap-1.5">
+                  <User className="h-3.5 w-3.5 text-white/50" />
+                  Emp Type: <strong className="text-white ml-0.5">{employee.emp_type}</strong>
+                </span>
+              )}
+              {employee?.cost_centre_name && (
+                <span className="flex items-center gap-1.5">
+                  <Building2 className="h-3.5 w-3.5 text-white/50" />
+                  Cost Centre: <strong className="text-white ml-0.5">{employee.cost_centre_name}</strong>
+                </span>
+              )}
+              {employee?.process_name && (
+                <span className="flex items-center gap-1.5">
+                  <Briefcase className="h-3.5 w-3.5 text-white/50" />
+                  Process: <strong className="text-white ml-0.5">{employee.process_name}</strong>
+                </span>
+              )}
               <span className="flex items-center gap-1.5">
                 <Package className="h-3.5 w-3.5 text-white/50" />
                 Package: <strong className="text-white ml-0.5">
@@ -430,7 +448,7 @@ export default function PayrollHeadSalaryReviewDetail() {
             icon={IndianRupee}
             sub={grossMonthly && netInHand ? `${Math.round((netInHand / grossMonthly) * 100)}% take-home` : undefined} />
           <KpiTile label="PF (Employee)" value={sc?.pf_employee ? inr(sc.pf_employee) : '—'} tone="violet"
-            icon={ShieldCheck} sub={sc?.epf_employee ? inr(sc.epf_employee) : undefined} />
+            icon={ShieldCheck} sub={sc ? `PF: ${Number(sc.pf_employee) > 0 ? 'Yes' : 'No'} · ESIC: ${Number(sc.esic_employee) > 0 ? 'Yes' : 'No'}` : undefined} />
           <KpiTile label="Review Status" value={statusBadge.label}
             tone={status === 'approved' ? 'green' : status === 'rejected' ? 'red' : 'amber'}
             icon={statusBadge.icon} sub={review?.reviewed_at ? fmtDate(review.reviewed_at) : undefined} />
@@ -468,8 +486,8 @@ export default function PayrollHeadSalaryReviewDetail() {
                 </div>
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Deductions</p>
-                  <SalaryRow label="PF (Employee)" value={sc.pf_employee ? `− ${inr(sc.pf_employee)}` : '—'} />
-                  <SalaryRow label="ESIC (Employee)" value={sc.esic_employee ? `− ${inr(sc.esic_employee)}` : '—'} />
+                  <SalaryRow label={`PF (Employee) — ${Number(sc.pf_employee) > 0 ? 'Yes' : 'No'}`} value={sc.pf_employee ? `− ${inr(sc.pf_employee)}` : '—'} />
+                  <SalaryRow label={`ESIC (Employee) — ${Number(sc.esic_employee) > 0 ? 'Yes' : 'No'}`} value={sc.esic_employee ? `− ${inr(sc.esic_employee)}` : '—'} />
                   <SalaryRow label="Net in Hand" value={inr(sc.net_in_hand ?? sc.net_estimate)} bold separator />
                   <div className="mt-3 pt-3 border-t border-slate-100">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Employer Cost</p>
@@ -489,6 +507,23 @@ export default function PayrollHeadSalaryReviewDetail() {
                   Payroll will fall back to the generic template split. Assign a catalog package or build a new one below.
                 </p>
               </div>
+            </div>
+          )}
+
+          {/* Branch Payroll HR's own remarks from salary/onboarding validation — the backend
+              already returns these (payroll_hr_validation.remarks/joining_remarks), the Queue
+              page's Offered Salary card already shows them; this page never did. Shown
+              regardless of review status, not just while pending. */}
+          {(journey?.payroll_hr_validation?.remarks || journey?.payroll_hr_validation?.joining_remarks) && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 mb-4 space-y-1">
+              <p className="text-xs font-bold text-amber-700 uppercase tracking-wide flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5" />Branch Payroll HR Remarks
+                {journey.payroll_hr_validation.validated_by_name && (
+                  <span className="font-normal normal-case text-amber-500">— {journey.payroll_hr_validation.validated_by_name}</span>
+                )}
+              </p>
+              {journey.payroll_hr_validation.remarks && <p className="text-sm text-amber-800">{journey.payroll_hr_validation.remarks}</p>}
+              {journey.payroll_hr_validation.joining_remarks && <p className="text-sm text-amber-800">{journey.payroll_hr_validation.joining_remarks}</p>}
             </div>
           )}
 
