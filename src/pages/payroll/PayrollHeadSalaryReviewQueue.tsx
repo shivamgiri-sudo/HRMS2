@@ -56,6 +56,19 @@ interface QueueRow {
 
 interface Reason { code: string; category: string; label: string; }
 
+interface RevisionRequest {
+  id: number;
+  employee_id: string;
+  full_name: string;
+  employee_code: string;
+  branch_name: string | null;
+  current_effective_from: string;
+  requested_effective_from: string;
+  reason: string;
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: string;
+}
+
 type SectionKey = 'offered' | 'final' | 'bgv' | 'bank';
 const SECTION_META: Record<SectionKey, { label: string; icon: any; category: 'salary' | 'bgv' | 'bank' }> = {
   offered: { label: 'Offered Salary',  icon: Package,      category: 'salary' },
@@ -1177,7 +1190,7 @@ export default function PayrollHeadSalaryReviewQueue() {
   const { hasAnyRole } = useWorkforceAccess();
   const isReviewer = hasAnyRole(...REVIEWER_ROLES);
 
-  const [tab, setTab] = useState<'pending_review' | 'approved' | 'rejected'>('pending_review');
+  const [tab, setTab] = useState<'pending_review' | 'approved' | 'rejected' | 'revisions'>('pending_review');
   const [q, setQ] = useState('');
   const [branch, setBranch] = useState('');
   const [branches, setBranches] = useState<string[]>([]);
@@ -1185,6 +1198,14 @@ export default function PayrollHeadSalaryReviewQueue() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [reasons, setReasons] = useState<Reason[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  // Revisions tab state
+  const [revisions, setRevisions]               = useState<RevisionRequest[]>([]);
+  const [rejectingRevId, setRejectingRevId]     = useState<number | null>(null);
+  const [revRejectRemarks, setRevRejectRemarks] = useState('');
+  const [revBusy, setRevBusy]                   = useState(false);
+  const [pendingRevisionCount, setPendingRevisionCount] = useState(0);
 
   // Drawer
   const [drawerEmployee, setDrawerEmployee] = useState<string | null>(null);
@@ -1202,6 +1223,7 @@ export default function PayrollHeadSalaryReviewQueue() {
   const [quickBusy, setQuickBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (tab === 'revisions') return;
     setLoading(true);
     try {
       const params = new URLSearchParams({ status: tab });
@@ -1216,6 +1238,30 @@ export default function PayrollHeadSalaryReviewQueue() {
   }, [tab, q, branch]);
 
   useEffect(() => { void load(); }, [load]);
+
+  const loadRevisions = useCallback(async () => {
+    try {
+      const r = await hrmsApi.get<{ success: boolean; data: RevisionRequest[] }>(
+        '/api/salary-revision?status=pending'
+      );
+      const data = (r as any)?.data ?? [];
+      setRevisions(data);
+      setPendingRevisionCount(data.length);
+    } catch { /* non-fatal */ }
+  }, []);
+
+  useEffect(() => { void loadRevisions(); }, [loadRevisions]);
+
+  const reviewRevision = async (id: number, action: 'approve' | 'reject', remarks?: string) => {
+    setRevBusy(true);
+    try {
+      await hrmsApi.post(`/api/salary-revision/${id}/review`, { action, remarks });
+      setRejectingRevId(null); setRevRejectRemarks('');
+      void loadRevisions();
+    } catch (e: any) {
+      setError(e?.message ?? 'Action failed.');
+    } finally { setRevBusy(false); }
+  };
 
   useEffect(() => {
     hrmsApi.get<{ data: string[] }>('/api/payroll-head-review/branches')
@@ -1304,6 +1350,14 @@ export default function PayrollHeadSalaryReviewQueue() {
               <TabsTrigger value="pending_review" className="cursor-pointer text-xs">{tabLabel('pending_review')}</TabsTrigger>
               <TabsTrigger value="approved" className="cursor-pointer text-xs">{tabLabel('approved')}</TabsTrigger>
               <TabsTrigger value="rejected" className="cursor-pointer text-xs">{tabLabel('rejected')}</TabsTrigger>
+              <TabsTrigger value="revisions" className="cursor-pointer text-xs relative">
+                Pending Revisions
+                {pendingRevisionCount > 0 && (
+                  <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-[10px] font-bold">
+                    {pendingRevisionCount}
+                  </span>
+                )}
+              </TabsTrigger>
             </TabsList>
           </Tabs>
           <div className="relative flex-1 min-w-[200px] max-w-xs">
@@ -1320,8 +1374,68 @@ export default function PayrollHeadSalaryReviewQueue() {
           </Select>
         </div>
 
+        {/* Revisions content */}
+        {tab === 'revisions' && (
+          <div className="space-y-3 mt-3">
+            {error && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{error}</p>
+            )}
+            {revisions.length === 0 && (
+              <p className="text-sm text-slate-500 text-center py-8">No pending revision requests.</p>
+            )}
+            {revisions.map((r) => (
+              <div key={r.id} className="rounded-2xl border border-white/60 bg-white/95 backdrop-blur-sm shadow-sm p-4 space-y-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="font-semibold text-slate-800 text-sm">{r.full_name}</p>
+                    <p className="text-xs text-slate-500">{r.employee_code} · {r.branch_name ?? '—'}</p>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm font-medium text-slate-700 shrink-0">
+                    <span className="text-slate-500">{new Date(r.current_effective_from).toLocaleDateString('en-IN')}</span>
+                    <ArrowRight className="h-3.5 w-3.5 text-blue-500" />
+                    <span className="text-blue-700 font-semibold">{new Date(r.requested_effective_from).toLocaleDateString('en-IN')}</span>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-600 bg-slate-50 rounded-lg px-3 py-2 line-clamp-3">{r.reason}</p>
+
+                {rejectingRevId === r.id ? (
+                  <div className="space-y-2">
+                    <Textarea
+                      value={revRejectRemarks}
+                      onChange={(e) => setRevRejectRemarks(e.target.value)}
+                      placeholder="Rejection reason (required)"
+                      rows={2}
+                      className="rounded-xl resize-none text-sm"
+                    />
+                    <div className="flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => { setRejectingRevId(null); setRevRejectRemarks(''); }} className="rounded-xl flex-1">
+                        Cancel
+                      </Button>
+                      <Button size="sm" disabled={revBusy || !revRejectRemarks.trim()} onClick={() => void reviewRevision(r.id, 'reject', revRejectRemarks)}
+                        className="rounded-xl flex-1 bg-red-600 hover:bg-red-700 text-white">
+                        Confirm Reject
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <Button size="sm" disabled={revBusy} onClick={() => void reviewRevision(r.id, 'approve')}
+                      className="rounded-xl flex-1 bg-blue-600 hover:bg-blue-700 text-white">
+                      Approve
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={revBusy} onClick={() => setRejectingRevId(r.id)}
+                      className="rounded-xl flex-1 border-red-200 text-red-600 hover:bg-red-50">
+                      Reject
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Employee cards */}
-        <div className="space-y-2">
+        <div className="space-y-2" style={{ display: tab === 'revisions' ? 'none' : undefined }}>
           {loading ? (
             <div className="flex items-center justify-center py-16 text-slate-400">
               <Loader2 className="h-6 w-6 animate-spin" />
@@ -1420,7 +1534,7 @@ export default function PayrollHeadSalaryReviewQueue() {
           )}
         </div>
 
-        {rows.length > 0 && (
+        {tab !== 'revisions' && rows.length > 0 && (
           <p className="text-xs text-slate-400">
             {rows.length} employee{rows.length !== 1 ? 's' : ''} shown
             {tab === 'pending_review' && ' — salary will not build for any of these until approved'}
