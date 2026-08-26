@@ -646,12 +646,27 @@ export default function NativeHROnboardingRequests() {
     setResendResult(null);
     setResendModalRow(null);
     try {
-      await hrmsApi.post(`/api/ats/onboarding/send-token/${row.candidate_id}`, isOverride ? { email: typedEmail } : {});
-      setResendResult({
-        id: row.candidate_id, ok: true,
-        msg: isOverride ? `Link resent to ${maskEmail(typedEmail)} (override) / ${maskMobile(row.mobile)}`
-                        : `Link resent to ${maskEmail(row.email)} / ${maskMobile(row.mobile)}`,
-      });
+      // Backend generates the token either way (that half always succeeds), but emailSent is
+      // the only honest signal for whether HR's actual ask — "get this candidate a link" — did
+      // anything. It used to be silently dropped here, so a real SMTP failure (e.g. an account
+      // lockout) still showed this exact "Link resent" toast with nothing having gone out.
+      const res = await hrmsApi.post<{ emailSent: boolean; emailError?: string; smsSent: boolean }>(
+        `/api/ats/onboarding/send-token/${row.candidate_id}`,
+        isOverride ? { email: typedEmail } : {},
+      );
+      if (res.emailSent) {
+        setResendResult({
+          id: row.candidate_id, ok: true,
+          msg: isOverride ? `Link resent to ${maskEmail(typedEmail)} (override) / ${maskMobile(row.mobile)}`
+                          : `Link resent to ${maskEmail(row.email)} / ${maskMobile(row.mobile)}`,
+        });
+      } else {
+        setResendResult({
+          id: row.candidate_id, ok: false,
+          msg: `Email failed to send${res.emailError ? `: ${res.emailError}` : ''}.`
+             + (res.smsSent ? ' SMS notification went out instead.' : ''),
+        });
+      }
       setTimeout(() => setResendResult(null), 6000);
     } catch (err: any) {
       setResendResult({ id: row.candidate_id, ok: false, msg: err?.message || 'Failed to resend link.' });

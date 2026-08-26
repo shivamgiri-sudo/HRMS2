@@ -77,7 +77,7 @@ export async function sendOnboardingToken(
   candidateId: string,
   requestedBy: string,
   overrideEmail?: string,
-): Promise<{ token: string; expiresAt: Date }> {
+): Promise<{ token: string; expiresAt: Date; emailSent: boolean; emailError?: string; smsSent: boolean; sentTo?: string }> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.full_name, c.email, c.mobile, c.applied_for_branch, c.candidate_status,
             b.id AS resolved_branch_id, b.branch_name
@@ -154,6 +154,13 @@ export async function sendOnboardingToken(
   const onboardingLink = `${baseUrl}/onboard-full?token=${savedToken}`;
 
   const sendTo = overrideEmail || cand.email;
+  // Previously swallowed into console.error only — the route handler then always answered
+  // {ok: true}, so the UI showed "link sent" on every SMTP failure, including the account-wide
+  // Gmail lockout that made every real send fail for over 30 minutes on 2026-08-26 while HR kept
+  // being told each resend had worked. Tracked and returned instead so the caller can tell HR
+  // the truth.
+  let emailSent = false;
+  let emailError: string | undefined;
   if (sendTo) {
     try {
       await withDeliveryTimeout(
@@ -165,12 +172,17 @@ export async function sendOnboardingToken(
         }),
         `email delivery for ${candidateId}`,
       );
+      emailSent = true;
     } catch (emailErr) {
-      console.error('[onboarding] email delivery failed for', candidateId, emailErr instanceof Error ? emailErr.message : String(emailErr));
+      emailError = emailErr instanceof Error ? emailErr.message : String(emailErr);
+      console.error('[onboarding] email delivery failed for', candidateId, emailError);
     }
+  } else {
+    emailError = 'No email address on file for this candidate';
   }
 
   // SMS/WhatsApp fallback for candidates without email (walk-ins)
+  let smsSent = false;
   if (cand.mobile) {
     // SmartPing (the live SMS provider) requires a numeric TRAI DLT template id where this
     // used to pass the literal string 'Onboarding Link' — rejected on every send, same class
@@ -192,6 +204,7 @@ export async function sendOnboardingToken(
         smsProvider.send(cand.mobile, dltContentId, smsBody),
         `SMS delivery for ${candidateId}`,
       );
+      smsSent = true;
     } catch (smsErr) {
       // SMS failure must not block token generation — log and continue
       console.error('[onboarding] SMS delivery failed for', candidateId, smsErr instanceof Error ? smsErr.message : String(smsErr));
@@ -212,7 +225,7 @@ export async function sendOnboardingToken(
     }
   }
 
-  return { token: savedToken, expiresAt: savedExpiry };
+  return { token: savedToken, expiresAt: savedExpiry, emailSent, emailError, smsSent, sentTo: sendTo || undefined };
 }
 
 // ── Token Validation ──────────────────────────────────────────────────────────

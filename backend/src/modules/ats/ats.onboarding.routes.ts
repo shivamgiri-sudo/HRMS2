@@ -119,6 +119,11 @@ router.post(
       return;
     }
     const result = await sendOnboardingToken(candidateId, userId, overrideEmail);
+    // ok stays true — the token itself IS generated either way, that half of the action
+    // succeeded. What used to be missing is emailSent/emailError/smsSent, now included via
+    // ...result: HR saw "link sent" on every SMTP failure before this, including a 30+ minute
+    // Gmail account lockout on 2026-08-26 where every real send failed and every UI toast still
+    // said success. The frontend now has what it needs to tell HR the truth about delivery.
     res.json({ ok: true, ...result });
   }),
 );
