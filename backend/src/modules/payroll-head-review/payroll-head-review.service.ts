@@ -49,6 +49,79 @@ function httpError(message: string, statusCode: number, code?: string): Error {
   return Object.assign(new Error(message), { statusCode, code });
 }
 
+/**
+ * Penny-drop verification for a set of employees, keyed by employee_id.
+ *
+ * Bank readiness on this page is built by classifyBankReadiness, which reaches
+ * READY only when db_bill shows a confirmed prior salary credit. That is correct
+ * for the standing payroll bank-exceptions queue, but it can never be satisfied
+ * by the people in THIS queue: a new hire has no payroll history by definition,
+ * so every one of them lands on BLOCKED / no_payment_history_to_verify_against
+ * no matter how their penny drop went. Reviewers saw "not verified" for accounts
+ * that had in fact been penny-drop confirmed -- 16 of the 23 employees in the
+ * live queue.
+ *
+ * This is read alongside that classification and never folded into it. The
+ * readiness_class and its `payable` flag still govern the payment file
+ * (payroll.routes.ts filters on readiness_class === "READY"), and a penny drop
+ * must not put a new hire into a payment run; it only tells the reviewer the
+ * account itself was confirmed against the bank.
+ *
+ * Joined on employee_code rather than employees.candidate_id: that column is
+ * populated on 2 of 58,929 employee rows and is NULL for every employee in this
+ * queue, so it resolves nothing. employee_code matches 22 of 23.
+ */
+async function fetchPennyDropByEmployee(employeeIds: string[]): Promise<Map<string, {
+  verified: boolean;
+  status: string | null;
+  method: string | null;
+  verified_at: string | null;
+  account_holder_name: string | null;
+  name_match_score: number | null;
+}>> {
+  const out = new Map<string, {
+    verified: boolean; status: string | null; method: string | null;
+    verified_at: string | null; account_holder_name: string | null; name_match_score: number | null;
+  }>();
+  if (!employeeIds.length) return out;
+  const placeholders = employeeIds.map(() => "?").join(",");
+  try {
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id AS employee_id, cbv.verification_status, cbv.verification_method,
+              cbv.verified_at, cbv.provider_account_holder_name, cbv.name_match_score
+         FROM employees e
+         JOIN ats_candidate ac ON ac.employee_code = e.employee_code
+         JOIN candidate_bank_verification cbv ON cbv.candidate_id = ac.id
+        WHERE e.id IN (${placeholders})
+          AND cbv.id = (
+            SELECT c2.id FROM candidate_bank_verification c2
+             WHERE c2.candidate_id = ac.id
+             ORDER BY (c2.verification_status = 'verified') DESC, c2.verified_at DESC, c2.created_at DESC
+             LIMIT 1
+          )`,
+      employeeIds,
+    );
+    for (const r of rows) {
+      out.set(String(r.employee_id), {
+        // Only a real penny drop counts. 'mock' is the local provider stub and
+        // 4 rows carry verification_status='verified' against it; treating those
+        // as confirmed would show a green chip for an account nobody checked.
+        verified: r.verification_status === "verified" && r.verification_method === "penny_drop",
+        status: r.verification_status ?? null,
+        method: r.verification_method ?? null,
+        verified_at: r.verified_at ? String(r.verified_at) : null,
+        account_holder_name: r.provider_account_holder_name ?? null,
+        name_match_score: r.name_match_score == null ? null : Number(r.name_match_score),
+      });
+    }
+  } catch {
+    // Non-fatal: this is an informational overlay on top of the real
+    // classification, so a failure here must not take the queue down with it.
+    return out;
+  }
+  return out;
+}
+
 async function getReviewRow(employeeId: string): Promise<RowDataPacket | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT * FROM employee_payroll_head_review WHERE employee_id = ? LIMIT 1`,
@@ -165,7 +238,7 @@ export async function getQueue(
   // ats_onboarding_bridge fallback) rather than a second, drift-prone implementation. Bank calls
   // the org-wide report exactly ONCE for the whole batch, not once per row.
   if (status === "pending_review" && rows.length > 0) {
-    const [bgvResults, bankReport] = await Promise.all([
+    const [bgvResults, bankReport, pennyDrop] = await Promise.all([
       Promise.all(rows.map((r) =>
         getEmployeeBgvStatus(r.employee_id as string).catch((e: unknown) => ({
           error: e instanceof Error ? e.message : String(e),
@@ -174,6 +247,7 @@ export async function getQueue(
       buildBankReadinessReport(null).catch((e: unknown) => ({
         error: e instanceof Error ? e.message : String(e),
       })),
+      fetchPennyDropByEmployee(rows.map((r) => r.employee_id as string)),
     ]);
     const bankByEmployee = new Map<string, unknown>();
     if ("rows" in bankReport) {
@@ -186,8 +260,12 @@ export async function getQueue(
         offered: { status: r.offer_status ?? null, ctc: r.offered_ctc ?? null },
         final: { accepted: !!r.package_accepted, assigned: !!r.final_ctc, ctc: r.final_ctc ?? null },
         bgv: bgvResults[i],
-        bank: bankByEmployee.get(r.employee_id as string)
-          ?? (("error" in bankReport) ? bankReport : null),
+        bank: (() => {
+          const b = bankByEmployee.get(r.employee_id as string)
+            ?? (("error" in bankReport) ? bankReport : null);
+          const pd = pennyDrop.get(r.employee_id as string) ?? null;
+          return b && typeof b === "object" ? { ...(b as object), penny_drop: pd } : b;
+        })(),
       };
     });
   }
@@ -359,11 +437,20 @@ export async function getEmployeeJourney(employeeId: string) {
     ? (bankReport.rows as Array<{ employee_id: string }>).find((r) => r.employee_id === employeeId) ?? null
     : null;
 
+  const journeyPennyDrop = await fetchPennyDropByEmployee([employeeId]);
+
   return {
     review,
     employee,
     bgv,
-    bank: bankRow ?? (("error" in bankReport) ? bankReport : null),
+    bank: (() => {
+      const b = bankRow ?? (("error" in bankReport) ? bankReport : null);
+      // Same overlay as the queue: informational only, never merged into
+      // readiness_class or `payable`. See fetchPennyDropByEmployee.
+      return b && typeof b === "object"
+        ? { ...(b as object), penny_drop: journeyPennyDrop.get(employeeId) ?? null }
+        : b;
+    })(),
     documents,
     joining_kit: kitRows[0] ?? null,
     joining_checklist: checklistRows,

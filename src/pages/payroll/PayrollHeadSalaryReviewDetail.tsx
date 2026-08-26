@@ -16,7 +16,7 @@ import {
   Loader2, ArrowLeft, CheckCircle2, XCircle, FileText, ShieldCheck, Banknote,
   IndianRupee, FileSignature, AlertTriangle, RotateCcw, History as HistoryIcon,
   Building2, CalendarDays, Plus, Package, Calculator, TrendingUp,
-  User, Lock, ChevronDown, ChevronRight, Briefcase, BadgeCheck, Clock,
+  User, Lock, ChevronDown, ChevronRight, Briefcase, BadgeCheck, Clock, ExternalLink,
 } from 'lucide-react';
 import { PackageBuilderDialog } from '@/components/payroll/PackageBuilderDialog';
 
@@ -743,16 +743,35 @@ export default function PayrollHeadSalaryReviewDetail() {
         >
           {journey?.bank ? (
             <div className="space-y-3">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
                 {[
                   { label: 'Readiness', value: journey.bank.readiness_class, tone: journey.bank.payable ? 'green' : 'amber' },
                   { label: 'Payable', value: journey.bank.payable ? 'Yes ✓' : 'Not yet', tone: journey.bank.payable ? 'green' : 'red' },
+                  // A new hire has no db_bill salary history for the classifier to
+                  // verify against, so "Not yet" above is structural, not a finding.
+                  // The penny drop is the confirmation that actually exists here.
+                  {
+                    label: 'Penny Drop',
+                    value: journey.bank.penny_drop?.verified
+                      ? 'Verified ✓'
+                      : (journey.bank.penny_drop?.status ?? 'Not attempted'),
+                    tone: journey.bank.penny_drop?.verified ? 'green' : 'slate',
+                  },
                   { label: 'Bank', value: journey.bank.bank_name ?? '—', tone: 'slate' },
                   { label: 'Account', value: journey.bank.account_masked ?? '—', tone: 'slate' },
                 ].map((t) => (
                   <KpiTile key={t.label} label={t.label} value={t.value} tone={t.tone as any} />
                 ))}
               </div>
+              {journey.bank.penny_drop?.verified && (
+                <div className="rounded-xl bg-emerald-50 border border-emerald-100 p-3 text-sm text-emerald-700">
+                  Penny drop confirmed this account
+                  {journey.bank.penny_drop.account_holder_name
+                    ? ` — the bank returned "${journey.bank.penny_drop.account_holder_name}"` : ''}
+                  {journey.bank.penny_drop.name_match_score != null
+                    ? ` (name match ${journey.bank.penny_drop.name_match_score}%)` : ''}.
+                </div>
+              )}
               {journey.bank.reason_detail && (
                 <div className="rounded-xl bg-slate-50 border border-slate-100 p-3 text-sm text-slate-600">
                   <span className="font-medium text-slate-700">Note: </span>{journey.bank.reason_detail}
@@ -778,15 +797,42 @@ export default function PayrollHeadSalaryReviewDetail() {
             </div>
           ) : (
             <div className="divide-y divide-slate-100">
-              {(journey.documents as any[]).map((d) => (
-                <div key={d.id} className="flex items-center justify-between py-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className={`w-2 h-2 rounded-full ${d.verified ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                    <span className="text-sm text-slate-700">{d.doc_name || d.doc_type}</span>
+              {(journey.documents as any[]).map((d) => {
+                // The reviewer is asked to Verify or Reject each document, so it
+                // has to be openable — this section rendered the name as plain
+                // text even though the API has always returned file_url. Same
+                // file_url-gated pattern as the Joining Kit list on the queue
+                // page: a row with no file stays inert rather than pretending to
+                // be clickable.
+                const openable = !!d.file_url;
+                const Label = (
+                  <>
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${d.verified ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                    <span className={`text-sm ${openable ? 'text-indigo-700 group-hover:underline' : 'text-slate-700'}`}>
+                      {d.doc_name || d.doc_type}
+                    </span>
+                    {openable && <ExternalLink className="h-3 w-3 text-indigo-400 flex-shrink-0" />}
                     <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold border ${
                       d.verified ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-500 border-slate-200'
                     }`}>{d.verified ? 'Verified' : 'Not verified'}</span>
-                  </div>
+                  </>
+                );
+                return (
+                <div key={d.id} className="flex items-center justify-between py-3">
+                  {openable ? (
+                    <a
+                      href={d.file_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="group flex items-center gap-2.5 min-w-0 cursor-pointer"
+                    >
+                      {Label}
+                    </a>
+                  ) : (
+                    <div className="flex items-center gap-2.5 min-w-0" title="No file on record for this document">
+                      {Label}
+                    </div>
+                  )}
                   {isReviewer && !d.verified && (
                     <div className="flex gap-1.5">
                       <Button size="sm" variant="outline" disabled={busy} onClick={() => void verifyDoc(d.id, 'verified')}
@@ -796,7 +842,8 @@ export default function PayrollHeadSalaryReviewDetail() {
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </SectionCard>

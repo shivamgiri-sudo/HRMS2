@@ -452,12 +452,33 @@ export function FinalSalarySection({
 }
 
 export function BgvSection({
-  bgv, bgvOverall, isReviewer, bgvCandidateId, bgvManual, bgvWaive,
+  bgv, bgvOverall, isReviewer, bgvCandidateId, bgvManual, bgvWaive, employeeId,
 }: {
   bgv: any; bgvOverall: string | undefined; isReviewer: boolean; bgvCandidateId: string | null | undefined;
   bgvManual: (checkId: string, s: 'verified' | 'mismatch' | 'failed') => void;
   bgvWaive: (checkId: string) => void;
+  /** Used only to fetch the recovered DigiLocker Aadhaar photo thumbnail below — optional so existing callers keep working unchanged. */
+  employeeId?: string | null;
 }) {
+  // Recovered DigiLocker Aadhaar photo — a small thumbnail next to the
+  // digilocker/aadhaar check rows below. `bgv.digilocker.photo_available`
+  // comes from getEmployeeBgvStatus (employee-bgv.service.ts), which this
+  // page's journey data already includes. Not every employee has completed
+  // DigiLocker, so this can stay undefined with no error shown.
+  const [digilockerPhoto, setDigilockerPhoto] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!employeeId || !bgv?.digilocker?.photo_available) { setDigilockerPhoto(undefined); return; }
+    let cancelled = false;
+    hrmsApi.getBlob(`/api/bgv/employee/${employeeId}/digilocker-photo`).then((blob) => {
+      if (cancelled) return;
+      const reader = new FileReader();
+      reader.onloadend = () => { if (!cancelled) setDigilockerPhoto(reader.result as string); };
+      reader.onerror = () => { if (!cancelled) setDigilockerPhoto(undefined); };
+      reader.readAsDataURL(blob);
+    }).catch(() => { if (!cancelled) setDigilockerPhoto(undefined); });
+    return () => { cancelled = true; };
+  }, [employeeId, bgv?.digilocker?.photo_available]);
+
   return (
     <div className="rounded-xl border border-slate-100 overflow-hidden">
       <div className="bg-gradient-to-r from-indigo-600 to-blue-600 px-4 py-2.5 flex items-center gap-2">
@@ -481,6 +502,14 @@ export function BgvSection({
                       : c.status === 'waived' ? 'bg-blue-400' : 'bg-amber-400'
                   }`} />
                   <p className="text-xs text-slate-700">{c.check_type}</p>
+                  {(c.check_type === 'digilocker' || c.check_type === 'aadhaar') && digilockerPhoto && (
+                    <img
+                      src={digilockerPhoto}
+                      alt="DigiLocker Aadhaar photo"
+                      title="Recovered DigiLocker Aadhaar photo"
+                      className="w-5 h-5 rounded object-cover border border-slate-300"
+                    />
+                  )}
                   <span className={`text-[10px] font-semibold rounded-full px-1.5 py-0.5 border capitalize ${
                     c.status === 'verified' || c.status === 'clear' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                       : c.status === 'failed' || c.status === 'mismatch' ? 'bg-red-50 text-red-700 border-red-200'
@@ -523,8 +552,12 @@ export function BankSection({ bank }: { bank: any }) {
         <p className="text-xs font-semibold text-white">Bank Readiness</p>
         {bank?.payable != null && (
           <span className={`ml-auto text-[10px] font-semibold rounded-full px-2 py-0.5 ${
-            bank.payable ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
-          }`}>{bank.payable ? 'Payable ✓' : 'Not payable'}</span>
+            bank.payable ? 'bg-emerald-100 text-emerald-700'
+              : bank.penny_drop?.verified ? 'bg-emerald-100 text-emerald-700'
+              : 'bg-amber-100 text-amber-700'
+          }`}>
+            {bank.payable ? 'Payable ✓' : bank.penny_drop?.verified ? 'Penny-drop verified ✓' : 'Not payable'}
+          </span>
         )}
       </div>
       <div className="p-3">
@@ -540,6 +573,24 @@ export function BankSection({ bank }: { bank: any }) {
                 <p className="font-semibold text-slate-800 mt-0.5">{v}</p>
               </div>
             ))}
+            {bank.penny_drop && (
+              <div className={`col-span-2 rounded-lg border px-3 py-2 text-xs ${
+                bank.penny_drop.verified
+                  ? 'bg-emerald-50 border-emerald-100 text-emerald-700'
+                  : 'bg-slate-50 border-slate-150 text-slate-600'
+              }`}>
+                {bank.penny_drop.verified ? (
+                  <>
+                    Penny drop confirmed this account
+                    {bank.penny_drop.account_holder_name ? ` — bank returned "${bank.penny_drop.account_holder_name}"` : ''}
+                    {bank.penny_drop.name_match_score != null ? ` (name match ${bank.penny_drop.name_match_score}%)` : ''}.
+                  </>
+                ) : (
+                  <>Penny drop status: {bank.penny_drop.status ?? 'not attempted'}
+                    {bank.penny_drop.method && bank.penny_drop.method !== 'penny_drop' ? ` (via ${bank.penny_drop.method})` : ''}.</>
+                )}
+              </div>
+            )}
             {bank.reason_detail && (
               <div className="col-span-2 rounded-lg bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-700">
                 {bank.reason_detail}
@@ -579,7 +630,16 @@ export function sectionStatus(section: SectionKey, row: QueueRow): { text: strin
     }
     case 'bank': {
       if (s.bank?.error || s.bank?.payable == null) return { text: 'Unavailable', tone: 'neutral' };
-      return s.bank.payable ? { text: 'Payable ✓', tone: 'good' } : { text: s.bank.readiness_class ?? 'Not payable', tone: 'bad' };
+      if (s.bank.payable) return { text: 'Payable ✓', tone: 'good' };
+      // A new hire has no db_bill salary history, so classifyBankReadiness can
+      // never reach READY for anyone in this queue and every row read as a red
+      // "BLOCKED" -- including the 16 of 23 whose account had actually been
+      // penny-drop confirmed. Show that confirmation instead of the blocker it
+      // cannot clear. Still not `payable`: the payment file is gated on
+      // readiness_class === 'READY', and a penny drop must not enter a new hire
+      // into a payroll run.
+      if (s.bank.penny_drop?.verified) return { text: 'Penny-drop verified', tone: 'good' };
+      return { text: s.bank.readiness_class ?? 'Not payable', tone: 'bad' };
     }
   }
 }
@@ -855,6 +915,7 @@ function SectionPopup({
                   bgvCandidateId={journey?.bgv?.candidateId}
                   bgvManual={(checkId, s) => void bgvManual(checkId, s)}
                   bgvWaive={(checkId) => void bgvWaive(checkId)}
+                  employeeId={employeeId}
                 />
               )}
               {section === 'bank' && <BankSection bank={journey?.bank} />}
@@ -1254,6 +1315,7 @@ function ReviewDrawer({
                 bgvCandidateId={bgvCandidateId}
                 bgvManual={(checkId, s) => void bgvManual(checkId, s)}
                 bgvWaive={(checkId) => void bgvWaive(checkId)}
+                employeeId={employeeId}
               />
 
               {/* ── Bank ── */}
