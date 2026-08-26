@@ -2437,8 +2437,6 @@ export function BudgetLinkedGrnForm({
                     </DenseField>
                   </DenseFieldGroup>
                   <div className="flex items-center gap-3 text-[11px] text-grn-ink-soft">
-                    <span>Taxable: <b className="text-grn-ink">{money(totals.base)}</b></span>
-                    <span>GST: <b className="text-grn-ink">{money(totals.tax)}</b></span>
                     <span className="font-bold text-grn-ink">Total: {money(totals.gross)}</span>
                   </div>
 
@@ -3345,14 +3343,18 @@ export function BudgetLinkedGrnForm({
             Cost
           </h3>
           <dl className="mt-2.5 space-y-1 rounded-[10px] border border-grn-line bg-grn-paper p-3 text-[12px]">
-            <div className="flex justify-between">
-              <dt className="text-grn-ink-soft">Taxable</dt>
-              <dd className="font-grn-mono">{money(totals.base)}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-grn-ink-soft">GST</dt>
-              <dd className="font-grn-mono">{money(totals.tax)}</dd>
-            </div>
+            {isVendor && (
+              <>
+                <div className="flex justify-between">
+                  <dt className="text-grn-ink-soft">Taxable</dt>
+                  <dd className="font-grn-mono">{money(totals.base)}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-grn-ink-soft">GST</dt>
+                  <dd className="font-grn-mono">{money(totals.tax)}</dd>
+                </div>
+              </>
+            )}
             <div className="mt-1 flex justify-between border-t border-grn-line pt-[7px] text-[13px] font-bold">
               <dt>Total</dt>
               <dd className="font-grn-mono">{money(totals.gross)}</dd>
