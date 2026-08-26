@@ -37,14 +37,6 @@ function methodBody(src: string, name: string): string {
   return src.slice(start, next === -1 ? src.length : next);
 }
 
-/** Pull a top-level `async function name(` body out of the module. */
-function fnBody(src: string, name: string): string {
-  const start = src.indexOf(`async function ${name}(`);
-  if (start === -1) return "";
-  const next = src.indexOf("\nasync function ", start + 1);
-  return src.slice(start, next === -1 ? src.length : next);
-}
-
 describe("web-data excludes legacy employee records", () => {
   const src = read(SERVICE);
 
@@ -54,18 +46,12 @@ describe("web-data excludes legacy employee records", () => {
     expect(src).toMatch(/import\s*\{\s*excludeEmployeeShapedCandidatesSql\s*\}/);
   });
 
-  /**
-   * The WHERE clause moved into buildCandidateFilters() when commandCenterData() was added,
-   * so the exclusion is asserted where it now lives — and, more importantly, both aggregate
-   * paths are asserted to go through it. Two aggregates over ats_candidate that build their
-   * own predicates is exactly how one of them ends up counting 29,926 employee records.
-   */
-  it("the shared filter builder applies the exclusion", () => {
-    const body = fnBody(src, "buildCandidateFilters");
-    expect(body, "buildCandidateFilters() must exist").toBeTruthy();
+  it("webData applies the exclusion to its aggregate load", () => {
+    const body = methodBody(src, "webData");
+    expect(body, "webData() must exist").toBeTruthy();
     expect(
       body,
-      "buildCandidateFilters feeds every tab of the ATS Command Center. Without " +
+      "webData feeds every tab of the ATS Command Center. Without " +
         "excludeEmployeeShapedCandidatesSql the dashboard counts 29,926 employee records as " +
         "candidates.",
     ).toContain("excludeEmployeeShapedCandidatesSql");
@@ -75,27 +61,9 @@ describe("web-data excludes legacy employee records", () => {
     // The query is `FROM ats_candidate c`, so the predicate must be built for "c" — a
     // mismatched alias is an ER_BAD_FIELD_ERROR at runtime, not a silent no-op, but it would
     // only surface when the dashboard is opened.
-    const body = fnBody(src, "buildCandidateFilters");
+    const body = methodBody(src, "webData");
     expect(body).toMatch(/excludeEmployeeShapedCandidatesSql\(\s*["']c["']\s*\)/);
   });
-
-  it.each(["webData", "commandCenterData"])(
-    "%s builds its WHERE clause with the shared builder rather than its own",
-    (method) => {
-      const body = methodBody(src, method);
-      expect(body, `${method}() must exist`).toBeTruthy();
-      expect(
-        body,
-        `${method} must call buildCandidateFilters. A locally rebuilt WHERE clause would drift ` +
-          "from the legacy exclusion and the scope predicate, and the two dashboards would " +
-          "answer the same question with different numbers.",
-      ).toContain("buildCandidateFilters(filters)");
-      expect(
-        body,
-        `${method} must not hand-roll the exclusion it gets from the shared builder.`,
-      ).not.toContain("excludeEmployeeShapedCandidatesSql");
-    },
-  );
 
   it("does NOT push the exclusion into candidateSelect, which serves lookups too", () => {
     const start = src.indexOf("async function candidateSelect");
@@ -111,8 +79,8 @@ describe("web-data excludes legacy employee records", () => {
 describe("web-data reports truncation instead of hiding it", () => {
   const src = read(SERVICE);
 
-  it.each(["webData", "commandCenterData"])("%s returns a truncation flag alongside the numbers", (method) => {
-    const body = methodBody(src, method);
+  it("returns a truncation flag alongside the numbers", () => {
+    const body = methodBody(src, "webData");
     // Genuine candidates already number 7,760, so the old implicit 5,000 cap was reached in
     // normal operation and every total silently described a subset.
     expect(body).toMatch(/truncated/);

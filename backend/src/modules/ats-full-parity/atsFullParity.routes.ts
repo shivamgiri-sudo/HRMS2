@@ -102,21 +102,6 @@ atsFullParityRouter.get("/web-data", requireRole("admin", "hr", "recruiter", "ma
   res.json(data);
 }));
 
-/**
- * The ATS Command Center's data call.
- *
- * Same filters, same roles and the same scope resolution as /web-data — it is the payload
- * that differs. /web-data returns every candidate row in full because /submissions and the
- * daily report are built on it; this returns the aggregates plus only the rows the tabs
- * render. See commandCenterData() for the measurements.
- */
-atsFullParityRouter.get("/command-center", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
-  const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
-  const bypassScope = isSuperAdmin || role === "hr" || role === "ceo";
-  const data = await svc.commandCenterData({ ...(req.query as Record<string, unknown>), actorId: req.authUser?.id, bypassScope });
-  res.json(data);
-}));
-
 atsFullParityRouter.get("/queue", requireRole("admin", "hr", "recruiter", "manager", "branch_head", "process_manager", "ceo"), h(async (req: AuthenticatedRequest, res) => {
   const { primaryRole: role, isSuperAdmin } = await getUserRoleContext(req.authUser?.id ?? "");
   const bypassScope = isSuperAdmin || role === "hr" || role === "ceo";

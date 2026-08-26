@@ -95,7 +95,7 @@ dpdpWithdrawalRouter.get(
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { primaryRole: role } = await getUserRoleContext((req as any).authUser?.id ?? '');
     const isHr = ["admin", "hr", "compliance", "dpo"].includes(role);
-    const record = await svc.getById(req.params.id, req.authUser!.id, isHr);
+    const record = await svc.getById(req.params.id, req.authUser!.id, isHr, true);
     if (!record) {
       return res.status(404).json({ success: false, message: "Not found or access denied" });
     }
@@ -164,7 +164,7 @@ dpdpWithdrawalRouter.get(
     if (!record) {
       return res.status(404).json({ success: false, message: "Not found or access denied" });
     }
-    const data = await svc.getAudit(req.params.id);
+    const data = await svc.getAudit(req.params.id, req.authUser!.id);
     return res.json({ success: true, data });
   })
 );

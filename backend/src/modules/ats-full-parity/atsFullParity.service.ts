@@ -463,63 +463,6 @@ async function sendTemplateEmail(code: string, candidateId: string | null, to: s
  */
 const WEB_DATA_ROW_LIMIT = 25000;
 
-/**
- * The columns the command-center analytics actually read.
- *
- * webData() selects `c.*` — all 165 columns of ats_candidate — and every figure on the
- * dashboard is then computed in JavaScript over those rows. Measured against production
- * 2026-08-26: 8,229 genuine candidates, `SELECT c.*` 13,538ms warm / 36.3MB, the same rows
- * projected to this list 4,319ms / 8.95MB. Same rows, same derived values, 3.1x faster.
- *
- * This list is NOT a guess at what looks useful. It is every column name read by
- * enrichCandidate() and the helpers it calls (parseCandidateDate, minutesBetween, slotLabel,
- * roundSuccessCount, hardRejectReason, candidateQualityScore, handlingQualityScore,
- * reusableReason) plus the few the tabs render directly. Miss one and the derived `_*` field
- * silently changes for every row — the exact failure this module has already been bitten by.
- * `analyticsProjectionCoverage.contract.test.ts` re-derives the required set from the source
- * of those helpers and fails if this list stops covering it, so adding a `row.foo` read to a
- * helper later breaks the test rather than the dashboard.
- *
- * Deliberately NOT applied to webData(): /submissions hands its rows to
- * UnifiedPerformanceCommandCenter, whose search box filters on Object.values(row), so
- * narrowing the columns there would silently narrow that search. webData() keeps `c.*`.
- */
-export const CANDIDATE_ANALYTICS_COLUMNS = [
-  "id", "candidate_code", "q_token", "full_name", "email",
-  "created_date", "created_time", "created_at", "updated_at", "walk_in_date",
-  "hr_form_submission_time",
-  "status", "current_stage", "final_decision", "walkin_end_stage",
-  "branch_text", "applied_for_branch", "process_text", "applied_for_process", "role_applied",
-  "recruiter_assigned_name", "recruiter_name", "recruiter_email", "recruiter_mobile",
-  "recruiter_selected", "referred_by", "recruiter_id",
-  "source_details", "sourcing_channel", "walkin_slot",
-  "sla_breached", "aht_minutes",
-  "round1_result", "skilltest_result", "round2_result", "round3_result",
-  "round1_voc", "skilltest_voc", "round2_voc", "round3_voc",
-  "remarks", "rejection_voc",
-] as const;
-
-/**
- * Same shape as candidateSelect(), but projecting only CANDIDATE_ANALYTICS_COLUMNS.
- *
- * Column names come from a frozen const list and never from caller input, so interpolating
- * them into the SQL text is safe; the WHERE clause keeps its bound parameters.
- */
-async function candidateSelectAnalytics(where = "1=1", params: unknown[] = [], limit = 5000): Promise<CandidateRow[]> {
-  const safeLimit = Math.max(1, Math.floor(limit));
-  const cols = CANDIDATE_ANALYTICS_COLUMNS.map((c) => `c.\`${c}\``).join(", ");
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ${cols},
-            COALESCE(c.candidate_code, c.id) AS candidate_id
-       FROM ats_candidate c
-      WHERE ${where}
-      ORDER BY COALESCE(c.created_date, c.created_at) DESC, c.created_at DESC
-      LIMIT ${safeLimit}`,
-    params
-  );
-  return rows.map(enrichCandidate);
-}
-
 async function candidateSelect(where = "1=1", params: unknown[] = [], limit = 5000): Promise<CandidateRow[]> {
   const safeLimit = Math.max(1, Math.floor(limit));
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -534,75 +477,60 @@ async function candidateSelect(where = "1=1", params: unknown[] = [], limit = 50
   return rows.map(enrichCandidate);
 }
 
-type CandidateFilters = { fromDate?: string; toDate?: string; branch?: string; process?: string; recruiter?: string; period?: Period; actorId?: string; bypassScope?: boolean };
-
-/**
- * The WHERE clause shared by webData() and commandCenterData().
- *
- * Extracted rather than duplicated: these two paths must agree on scope, legacy exclusion and
- * date bounds exactly, or the command center and the daily report would answer the same
- * question with different numbers. One of them being wrong would be obvious; both being
- * subtly different would not.
- */
-async function buildCandidateFilters(filters: CandidateFilters): Promise<{ where: string; params: unknown[] }> {
-  const conds = ["c.active_status = 1"];
-  const params: unknown[] = [];
-  if (filters.fromDate) { conds.push("COALESCE(c.created_date, DATE(c.created_at)) >= ?"); params.push(filters.fromDate); }
-  if (filters.toDate) { conds.push("COALESCE(c.created_date, DATE(c.created_at)) <= ?"); params.push(filters.toDate); }
-  // Push date bounds into SQL when no explicit date range provided
-  // This prevents full-table scans for bounded periods (FTD/WTD/MTD)
-  if (!filters.fromDate && !filters.toDate) {
-    const now = new Date();
-    const todayStr = now.toISOString().slice(0, 10);
-    const period = filters.period || "ALL";
-    if (period === "FTD") {
-      conds.push("(c.created_date = ? OR (c.created_date IS NULL AND DATE(c.created_at) = ?))");
-      params.push(todayStr, todayStr);
-    } else if (period === "WTD") {
-      const dow = new Date(now);
-      dow.setDate(now.getDate() - now.getDay());
-      const weekStart = dow.toISOString().slice(0, 10);
-      conds.push("(c.created_date >= ? OR (c.created_date IS NULL AND DATE(c.created_at) >= ?))");
-      params.push(weekStart, weekStart);
-    } else if (period === "MTD") {
-      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-      conds.push("(c.created_date >= ? OR (c.created_date IS NULL AND DATE(c.created_at) >= ?))");
-      params.push(monthStart, monthStart);
-    }
-    // period === "ALL": no date filter added — 5000-row cap in candidateSelect still applies
-  }
-  if (filters.branch) { conds.push("COALESCE(c.branch_text, c.applied_for_branch) = ?"); params.push(filters.branch); }
-  if (filters.process) { conds.push("COALESCE(c.process_text, c.applied_for_process) = ?"); params.push(filters.process); }
-  if (filters.recruiter) {
-    // Support both FK (recommended) and legacy string match for backward compatibility
-    conds.push("(c.recruiter_id = ? OR COALESCE(c.recruiter_assigned_name, c.recruiter_name) = ?)");
-    params.push(filters.recruiter, filters.recruiter);
-  }
-  if (filters.actorId && !filters.bypassScope) {
-    const scope = await buildScopeWhereClause(
-      filters.actorId,
-      ["branch_head", "process_manager", "recruiter", "manager", "hr"],
-      { branchId: "c.applied_for_branch", processId: "c.applied_for_process" },
-      { allowAdminBypass: true, allowCeoAllRead: true },
-    );
-    conds.push(scope.sql);
-    params.push(...scope.params);
-  }
-  // ats_candidate holds 29,926 legacy EMPLOYEE records (candidate_code matching a real
-  // employees.employee_code) alongside 7,760 genuine candidates — measured 2026-08-11.
-  // Without this every tile on the ATS Command Center counted them: "Applied" reads 34,923
-  // against a true 5,056. The exclusion belongs here rather than inside candidateSelect(),
-  // which is also used to fetch a single candidate by id and to run candidateJourney's
-  // search — both of which must still find an ex-employee's record.
-  conds.push(excludeEmployeeShapedCandidatesSql("c"));
-  return { where: conds.join(" AND "), params };
-}
-
 export const atsFullParityService = {
   async webData(filters: { fromDate?: string; toDate?: string; branch?: string; process?: string; recruiter?: string; period?: Period; actorId?: string; bypassScope?: boolean } = {}) {
-    const { where, params } = await buildCandidateFilters(filters);
+    const conds = ["c.active_status = 1"];
+    const params: unknown[] = [];
+    if (filters.fromDate) { conds.push("COALESCE(c.created_date, DATE(c.created_at)) >= ?"); params.push(filters.fromDate); }
+    if (filters.toDate) { conds.push("COALESCE(c.created_date, DATE(c.created_at)) <= ?"); params.push(filters.toDate); }
+    // Push date bounds into SQL when no explicit date range provided
+    // This prevents full-table scans for bounded periods (FTD/WTD/MTD)
+    if (!filters.fromDate && !filters.toDate) {
+      const now = new Date();
+      const todayStr = now.toISOString().slice(0, 10);
+      const period = filters.period || "ALL";
+      if (period === "FTD") {
+        conds.push("(c.created_date = ? OR (c.created_date IS NULL AND DATE(c.created_at) = ?))");
+        params.push(todayStr, todayStr);
+      } else if (period === "WTD") {
+        const dow = new Date(now);
+        dow.setDate(now.getDate() - now.getDay());
+        const weekStart = dow.toISOString().slice(0, 10);
+        conds.push("(c.created_date >= ? OR (c.created_date IS NULL AND DATE(c.created_at) >= ?))");
+        params.push(weekStart, weekStart);
+      } else if (period === "MTD") {
+        const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+        conds.push("(c.created_date >= ? OR (c.created_date IS NULL AND DATE(c.created_at) >= ?))");
+        params.push(monthStart, monthStart);
+      }
+      // period === "ALL": no date filter added — 5000-row cap in candidateSelect still applies
+    }
+    if (filters.branch) { conds.push("COALESCE(c.branch_text, c.applied_for_branch) = ?"); params.push(filters.branch); }
+    if (filters.process) { conds.push("COALESCE(c.process_text, c.applied_for_process) = ?"); params.push(filters.process); }
+    if (filters.recruiter) {
+      // Support both FK (recommended) and legacy string match for backward compatibility
+      conds.push("(c.recruiter_id = ? OR COALESCE(c.recruiter_assigned_name, c.recruiter_name) = ?)");
+      params.push(filters.recruiter, filters.recruiter);
+    }
+    if (filters.actorId && !filters.bypassScope) {
+      const scope = await buildScopeWhereClause(
+        filters.actorId,
+        ["branch_head", "process_manager", "recruiter", "manager", "hr"],
+        { branchId: "c.applied_for_branch", processId: "c.applied_for_process" },
+        { allowAdminBypass: true, allowCeoAllRead: true },
+      );
+      conds.push(scope.sql);
+      params.push(...scope.params);
+    }
+    // ats_candidate holds 29,926 legacy EMPLOYEE records (candidate_code matching a real
+    // employees.employee_code) alongside 7,760 genuine candidates — measured 2026-08-11.
+    // Without this every tile on the ATS Command Center counted them: "Applied" reads 34,923
+    // against a true 5,056. The exclusion belongs here rather than inside candidateSelect(),
+    // which is also used to fetch a single candidate by id and to run candidateJourney's
+    // search — both of which must still find an ex-employee's record.
+    conds.push(excludeEmployeeShapedCandidatesSql("c"));
 
-    const allRows = await candidateSelect(where, params, WEB_DATA_ROW_LIMIT);
+    const allRows = await candidateSelect(conds.join(" AND "), params, WEB_DATA_ROW_LIMIT);
     // candidateSelect caps rows and every figure below is computed in JS over what came back,
     // so a cap that is hit silently understates every total. Report it instead: genuine
     // candidates are already 7,760 and rising, so this is reached in normal operation, not
@@ -663,115 +591,6 @@ export const atsFullParityService = {
       recruiterTable: recruiterProductivity(candidateRows),
       slotTable: dimensionTable(candidateRows, "_slot"),
       reusablePool: candidateRows.filter((r) => r._reusableReason).slice(0, 100),
-    };
-  },
-
-  /**
-   * The ATS Command Center's payload.
-   *
-   * webData() exists for /queue, /submissions and the daily branch report, which need whole
-   * candidate rows. The dashboard does not: measured 2026-08-26, it was shipping 8,229 rows x
-   * 206 fields = 44.7MB of JSON so the browser could render a 210-row queue, 50 rejection rows
-   * and a set of counts. Against a 30s client timeout (hrmsApi's default, which this page does
-   * not override) that is what "the Command Center times out" means.
-   *
-   * So: identical aggregates, computed by the identical helpers over the identical rows, but
-   * only the rows the tabs actually render leave the server, projected to the fields they
-   * render. Everything dropped below was verified unread by the page first.
-   */
-  async commandCenterData(filters: CandidateFilters = {}) {
-    const { where, params } = await buildCandidateFilters(filters);
-    const allRows = await candidateSelectAnalytics(where, params, WEB_DATA_ROW_LIMIT);
-    const truncated = allRows.length >= WEB_DATA_ROW_LIMIT;
-    const period = filters.period || "ALL";
-    const candidateRows = allRows.filter((r) => inPeriod(r, period));
-    const queueRows = allRows.filter((r) => {
-      const status = normalizeText(r.status || r.current_stage || "Waiting");
-      const stage = normalizeText(r.walkin_end_stage || r.current_stage || "");
-      return OPEN_STATUSES.has(status) && OPEN_QUEUE_STAGES.has(stage) && !r._selected && !r._rejected;
-    }).sort((a, b) => Number(b.WaitingMinutes || 0) - Number(a.WaitingMinutes || 0));
-    const dashboardRows = ["FTD", "WTD", "MTD"].map((p) => {
-      const rows = allRows.filter((r) => inPeriod(r, p as Period));
-      const s = summarizeRows(rows);
-      return {
-        Date: p,
-        _dateKey: p,
-        "Total Arrival": s.totalArrival,
-        Selection: s.totalSelection,
-        Rejection: s.totalRejection,
-        "On Hold": s.onHold,
-        Pending: s.pending,
-        "Un-attended": s.waiting,
-        "SLA Breach": s.slaBreach,
-        "Avg Time": s.avgWaitMinutes,
-        "HR Screening": rows.filter((r) => contains(r._endStage, ["hr screening", "screening"])).length,
-        Assessment: rows.filter((r) => contains(r._endStage, ["assessment"])).length,
-        "OP's Round": rows.filter((r) => contains(r._endStage, ["op", "ops"])).length,
-        "Client Round": rows.filter((r) => contains(r._endStage, ["client"])).length,
-      };
-    });
-
-    /**
-     * Rejection reasons, grouped here instead of in the browser.
-     *
-     * RejectionsTab did this over all 8,229 candidate rows to render one chart and the first
-     * 50 records. The grouping key and its normalisation are copied from that component
-     * exactly — _hardRejectReason, then rejection_voc, then "Unspecified", lowercased and
-     * trimmed — so the bars do not move.
-     */
-    const rejected = candidateRows.filter((r) => r._rejected || r._hardRejectReason);
-    const reasonMap = new Map<string, { label: string; count: number }>();
-    for (const r of rejected) {
-      const raw = normalizeText(r._hardRejectReason) || normalizeText(r.rejection_voc) || "Unspecified";
-      const label = raw.trim() || "Unspecified";
-      const key = label.toLowerCase();
-      const current = reasonMap.get(key) ?? { label, count: 0 };
-      current.count += 1;
-      reasonMap.set(key, current);
-    }
-
-    const queueCard = (r: CandidateRow) => ({
-      CandidateID: r.CandidateID, FullName: r.FullName, Branch: r.Branch, RoleApplied: r.RoleApplied,
-      CurrentStage: r.CurrentStage, QToken: r.QToken, RecruiterAssignedName: r.RecruiterAssignedName,
-      SLAFlag: r.SLAFlag, WaitingMinutes: r.WaitingMinutes,
-    });
-
-    return {
-      ok: true,
-      truncated,
-      rowLimit: WEB_DATA_ROW_LIMIT,
-      rowsLoaded: allRows.length,
-      refreshTime: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
-      options: buildOptions(allRows, queueRows),
-      summary: summarizeRows(candidateRows),
-      dashboardRows,
-      /**
-       * Capped because this is the only unbounded row list left. The live open queue is 5 rows
-       * (measured 2026-08-26 through this exact predicate — OPEN_STATUSES intersected with
-       * OPEN_QUEUE_STAGES, minus selected and rejected), so the cap is nowhere near reached
-       * today. queueTotal carries the real figure regardless, so a capped list can say so
-       * rather than reading as the whole queue.
-       */
-      queueRows: queueRows.slice(0, 500).map(queueCard),
-      queueTotal: queueRows.length,
-      branchTable: dimensionTable(candidateRows, "_branch"),
-      processTable: dimensionTable(candidateRows, "_process"),
-      sourceTable: dimensionTable(candidateRows, "_source"),
-      recruiterTable: recruiterProductivity(candidateRows),
-      slotTable: dimensionTable(candidateRows, "_slot"),
-      rejections: {
-        total: rejected.length,
-        distinctReasons: reasonMap.size,
-        reasons: [...reasonMap.values()].sort((a, b) => b.count - a.count),
-        rows: rejected.slice(0, 50).map((r) => ({
-          CandidateID: r.CandidateID, FullName: r.FullName, Branch: r.Branch,
-          _endStage: r._endStage, _hardRejectReason: r._hardRejectReason, rejection_voc: r.rejection_voc,
-        })),
-      },
-      reusablePool: candidateRows.filter((r) => r._reusableReason).slice(0, 100).map((r) => ({
-        CandidateID: r.CandidateID, FullName: r.FullName, Branch: r.Branch,
-        _candidateQualityLabel: r._candidateQualityLabel, _reusableReason: r._reusableReason,
-      })),
     };
   },
 
