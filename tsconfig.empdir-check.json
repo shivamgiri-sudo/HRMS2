@@ -1,4 +1,19 @@
 {
   "extends": "./tsconfig.app.json",
-  "include": ["src/pages/Employees.tsx", "src/hooks/useEmployees.ts", "src/vite-env.d.ts"]
+  "include": [
+    "src/pages/Employees.tsx",
+    "src/hooks/useEmployees.ts",
+    "src/components/employees/EmployeeTable.tsx",
+    "src/components/employees/BulkAssignManagerDialog.tsx",
+    "src/components/employees/EmployeeEditDialog.tsx",
+    "src/components/employees/EmployeeViewDialog.tsx",
+    "src/components/layout/TopBar.tsx",
+    "src/pages/Assets.tsx",
+    "src/pages/NativeCompanyFeedCreatorAccess.tsx",
+    "src/pages/NativeOrgChart.tsx",
+    "src/pages/NativeSalaryIncrement.tsx",
+    "src/pages/Onboarding.tsx",
+    "src/pages/Payroll.tsx",
+    "src/vite-env.d.ts"
+  ]
 }

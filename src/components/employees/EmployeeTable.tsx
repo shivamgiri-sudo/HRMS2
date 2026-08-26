@@ -36,12 +36,15 @@ import {
 import { SortableTableHead } from "@/components/ui/sortable-table-head";
 import { SortDirection } from "@/hooks/useSorting";
 import { MobileRecordCard, StatusBadgeV2 } from "@/components/enterprise";
+import { cn } from "@/lib/utils";
 
 export interface Employee {
   id: string;
   employeeCode: string;
   name: string;
   email: string;
+  personalEmail: string;
+  officialEmail: string;
   phone?: string | null;
   avatar?: string;
   department: string;
@@ -52,6 +55,7 @@ export interface Employee {
   officialEmailCompliant: boolean;
   designation: string;
   joinDate: string;
+  salaryStartDate: string;
   status: "active" | "inactive" | "onboarding" | "offboarded";
   profileIncomplete?: boolean;
 }
@@ -250,6 +254,22 @@ export function EmployeeTable({
                 <span className="text-[var(--text-muted)]">Manager</span>
                 <span className="text-right font-semibold">{employee.reportingManager || "-"}</span>
               </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-[var(--text-muted)]">Personal email</span>
+                <span className="break-all text-right font-semibold">{employee.personalEmail || "-"}</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-[var(--text-muted)]">Official email</span>
+                <span className="break-all text-right font-semibold">{employee.officialEmail || "-"}</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-[var(--text-muted)]">Joining date</span>
+                <span className="text-right font-semibold">{employee.joinDate || "-"}</span>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-[var(--text-muted)]">Salary start date</span>
+                <span className="text-right font-semibold">{employee.salaryStartDate || "-"}</span>
+              </div>
             </div>
           </MobileRecordCard>
         ))}
@@ -290,6 +310,8 @@ export function EmployeeTable({
                   >
                     Employee
                   </SortableTableHead>
+                  <TableHead className="w-[190px]">Personal Email</TableHead>
+                  <TableHead className="w-[190px]">Official Email</TableHead>
                   <SortableTableHead
                     sortKey="department"
                     currentSortKey={sortKey ?? null}
@@ -330,6 +352,10 @@ export function EmployeeTable({
                   >
                     Join Date
                   </SortableTableHead>
+                  {/* Not sortable: salary_start_date is not in the backend's
+                      EMPLOYEE_SORT_COLUMNS whitelist, so a sort request on it would be
+                      silently dropped back to employee_code. */}
+                  <TableHead className="w-[130px]">Salary Start Date</TableHead>
                   <SortableTableHead
                     sortKey="status"
                     currentSortKey={sortKey ?? null}
@@ -343,11 +369,14 @@ export function EmployeeTable({
                 <>
                   <TableHead className="w-[100px]">Emp. No.</TableHead>
                   <TableHead className="w-[260px]">Employee</TableHead>
+                  <TableHead className="w-[190px]">Personal Email</TableHead>
+                  <TableHead className="w-[190px]">Official Email</TableHead>
                   <TableHead>Department</TableHead>
                   <TableHead>Process / Cost Centre</TableHead>
                   <TableHead>Reporting Manager</TableHead>
                   <TableHead>Designation</TableHead>
                   <TableHead>Join Date</TableHead>
+                  <TableHead className="w-[130px]">Salary Start Date</TableHead>
                   <TableHead>Status</TableHead>
                 </>
               )}
@@ -356,12 +385,31 @@ export function EmployeeTable({
           </TableHeader>
           <TableBody>
             {employees.map((employee) => (
-              <TableRow 
+              /* The whole row opens the profile drawer, same as the Actions -> View Profile
+                 item. The checkbox and Actions cells stop propagation below so selecting or
+                 opening the menu does not also fire the row click. */
+              <TableRow
                 key={employee.id}
-                className={selectedIds.includes(employee.id) ? "bg-primary/5" : ""}
+                role={onView ? "button" : undefined}
+                tabIndex={onView ? 0 : undefined}
+                onClick={onView ? () => onView(employee) : undefined}
+                onKeyDown={
+                  onView
+                    ? (event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          onView(employee);
+                        }
+                      }
+                    : undefined
+                }
+                className={cn(
+                  onView && "cursor-pointer",
+                  selectedIds.includes(employee.id) ? "bg-primary/5" : "",
+                )}
               >
                 {showBulkActions && (
-                  <TableCell>
+                  <TableCell onClick={(event) => event.stopPropagation()}>
                     <Checkbox 
                       checked={selectedIds.includes(employee.id)}
                       onCheckedChange={(checked) => handleSelectOne(employee.id, checked as boolean)}
@@ -394,6 +442,12 @@ export function EmployeeTable({
                     </div>
                   </div>
                 </TableCell>
+                <TableCell className="max-w-[190px] truncate text-muted-foreground" title={employee.personalEmail || undefined}>
+                  {employee.personalEmail || "-"}
+                </TableCell>
+                <TableCell className="max-w-[190px] truncate text-muted-foreground" title={employee.officialEmail || undefined}>
+                  {employee.officialEmail || "-"}
+                </TableCell>
                 <TableCell className="text-muted-foreground">{employee.department}</TableCell>
                 <TableCell className="text-muted-foreground">
                   <div className="font-medium text-slate-700">{employee.process}</div>
@@ -402,10 +456,11 @@ export function EmployeeTable({
                 <TableCell className="text-muted-foreground">{employee.reportingManager}</TableCell>
                 <TableCell className="text-muted-foreground">{employee.designation}</TableCell>
                 <TableCell className="text-muted-foreground">{employee.joinDate}</TableCell>
+                <TableCell className="text-muted-foreground">{employee.salaryStartDate || "-"}</TableCell>
                 <TableCell>
                   <StatusBadgeV2 status={employee.status} />
                 </TableCell>
-                <TableCell className="text-right">
+                <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <Button

@@ -12,6 +12,10 @@ export interface Employee {
   employeeCode: string;
   name: string;
   email: string;
+  /** Raw `employees.email` — the address the employee gave us, shown in its own column. */
+  personalEmail: string;
+  /** Raw `employees.official_email` — the @teammas address, shown in its own column. */
+  officialEmail: string;
   phone?: string | null;
   avatar?: string;
   department: string;
@@ -22,6 +26,8 @@ export interface Employee {
   officialEmailCompliant: boolean;
   designation: string;
   joinDate: string;
+  /** `employees.salary_start_date`; falls back to date_of_joining server-side when unset. */
+  salaryStartDate: string;
   status: "active" | "inactive" | "onboarding" | "offboarded";
   /**
    * Set by the mapper below from the API's `profile_incomplete`, but never declared here — so
@@ -60,6 +66,8 @@ export interface RawEmployee {
   first_name: string;
   last_name?: string | null;
   email?: string | null;
+  personal_email?: string | null;
+  official_email?: string | null;
   mobile?: string | null;
   avatar_url?: string | null;
   photo_url?: string | null;
@@ -67,6 +75,7 @@ export interface RawEmployee {
   designation_name?: string | null;
   designation?: string | null;
   date_of_joining?: string | null;
+  salary_start_date?: string | null;
   employment_status?: string | null;
   reporting_manager_id?: string | null;
   reporting_manager_name?: string | null;
@@ -244,6 +253,8 @@ function mapEmployee(emp: RawEmployee): Employee {
     employeeCode: emp.employee_code,
     name: `${emp.first_name} ${emp.last_name ?? ""}`.trim(),
     email: emp.email ?? "",
+    personalEmail: emp.personal_email ?? "",
+    officialEmail: emp.official_email ?? "",
     phone: emp.mobile ?? null,
     avatar: emp.avatar_url ?? emp.photo_url ?? undefined,
     department: emp.department_name || "Unassigned",
@@ -254,6 +265,7 @@ function mapEmployee(emp: RawEmployee): Employee {
     officialEmailCompliant: /@(teammas\.in|teammas\.co\.in)$/i.test(emp.email ?? ""),
     designation: emp.designation_name || emp.designation || "",
     joinDate: formatEmployeeDate(emp.date_of_joining),
+    salaryStartDate: formatEmployeeDate(emp.salary_start_date),
     status: normalizeEmployeeStatus(emp.employment_status),
     profileIncomplete: Boolean(emp.profile_incomplete),
   };

@@ -2436,10 +2436,11 @@ export function BudgetLinkedGrnForm({
                       />
                     </DenseField>
                   </DenseFieldGroup>
-                  <div className="flex items-center gap-3 text-[11px] text-grn-ink-soft">
-                    <span className="font-bold text-grn-ink">Total: {money(totals.gross)}</span>
-                  </div>
-
+                  {/* The running Total strip used to sit here, between Amount and Budget
+                      Allocation. On Imprest it reads costCentreSplitMoneyTotals, which stays ₹0.00
+                      until a cost centre row is included — so it contradicted the Amount the raiser
+                      had just typed. The sticky header strip already shows the same figure with a
+                      "—" placeholder, so this one is dropped rather than duplicated. */}
                   <DenseSection
                     title="Budget Allocation"
                     action={<GrnBudgetImportButton branchId={form.branchId} period={effectivePeriod} disabled={locked} />}

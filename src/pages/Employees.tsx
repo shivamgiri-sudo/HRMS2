@@ -6,6 +6,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -308,17 +309,24 @@ const Employees = () => {
   const activeEmployees = filteredStats?.active_employees ?? 0;
   const inactiveEmployees = filteredStats?.inactive_employees ?? 0;
   const filteredDepartmentCount = filteredStats?.department_count ?? departments.length;
+  const chartMode = statusFilter === "inactive" || statusFilter === "offboarded" ? "Inactive" : "Active";
+  // Only processes that actually have a headcount in the mode being charted. The backend's
+  // breakdown groups every process the filtered set touches and orders by total_count, so a
+  // process with 40 leavers and 0 actives still came back and still got an x-axis label — which
+  // is what turned the axis into a wall of ~90 rotated names above mostly-empty plot area.
   const processChartData = useMemo(
     () =>
-      (directoryAnalytics?.processBreakdown ?? []).map((row) => ({
-        process: row.process_name,
-        Active: row.active_count,
-        Inactive: row.inactive_count,
-        Total: row.total_count,
-      })),
-    [directoryAnalytics?.processBreakdown],
+      (directoryAnalytics?.processBreakdown ?? [])
+        .map((row) => ({
+          processId: row.process_id ?? null,
+          process: row.process_name,
+          Active: row.active_count,
+          Inactive: row.inactive_count,
+          Total: row.total_count,
+        }))
+        .filter((row) => Number(row[chartMode]) > 0),
+    [directoryAnalytics?.processBreakdown, chartMode],
   );
-  const chartMode = statusFilter === "inactive" || statusFilter === "offboarded" ? "Inactive" : "Active";
 
   useEffect(() => {
     setCurrentPage(1);
@@ -960,6 +968,7 @@ const Employees = () => {
               </h2>
               <p className="text-xs text-slate-500">
                 Chart follows the same search, status, department, process and branch filters as the list.
+                Click a bar to show only that process below; click it again to clear.
               </p>
             </div>
             <div className="rounded-full bg-[#e8f2fc] px-3 py-1 text-xs font-bold text-[#1B6AB5]">
@@ -972,7 +981,20 @@ const Employees = () => {
           {processChartData.length > 0 ? (
             <div className="h-72">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={processChartData} margin={{ top: 8, right: 16, left: 0, bottom: 36 }}>
+                {/* Clicking a bar drives the same processFilter the dropdown does, so the
+                    Employee List below (and every other filtered count on this page) narrows to
+                    that process. Clicking the already-selected bar clears it again. Bars whose
+                    process_id is null are the 'Unassigned' bucket, which has no id to filter by. */}
+                <BarChart
+                  data={processChartData}
+                  margin={{ top: 8, right: 16, left: 0, bottom: 36 }}
+                  onClick={(state: any) => {
+                    const clicked = state?.activePayload?.[0]?.payload;
+                    const processId = clicked?.processId;
+                    if (!processId) return;
+                    setProcessFilter((current) => (current === processId ? "all" : processId));
+                  }}
+                >
                   <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                   <XAxis
                     dataKey="process"
@@ -991,7 +1013,25 @@ const Employees = () => {
                       color: "#0f172a",
                     }}
                   />
-                  <Bar dataKey={chartMode} fill={chartMode === "Active" ? "#3BAD49" : "#f59e0b"} radius={[8, 8, 0, 0]} />
+                  <Bar
+                    dataKey={chartMode}
+                    fill={chartMode === "Active" ? "#3BAD49" : "#f59e0b"}
+                    radius={[8, 8, 0, 0]}
+                    cursor="pointer"
+                  >
+                    {processChartData.map((row) => (
+                      <Cell
+                        key={row.process}
+                        fill={
+                          processFilter !== "all" && row.processId !== processFilter
+                            ? "#cbd5e1"
+                            : chartMode === "Active"
+                              ? "#3BAD49"
+                              : "#f59e0b"
+                        }
+                      />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             </div>

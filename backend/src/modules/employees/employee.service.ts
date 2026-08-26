@@ -377,10 +377,15 @@ export const employeeService = {
            e.id, e.employee_code,
            e.first_name, e.last_name,
            e.mobile, e.avatar_url, e.photo_url,
-           e.date_of_joining, e.employment_status, e.employment_type,
+           e.date_of_joining, e.salary_start_date, e.employment_status, e.employment_type,
            e.designation_id, e.department_id, e.branch_id, e.process_id, e.cost_centre_id,
            e.reporting_manager_id,
            COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
+           -- The directory now shows personal and official addresses in their own columns, so
+           -- both are carried raw alongside the coalesced `email` above (which the existing
+           -- mapper still uses for the row subtitle and the officialEmailCompliant test).
+           e.email          AS personal_email,
+           e.official_email AS official_email,
            -- gender is captured by both onboarding paths' first step (candidate journey's
            -- EmployeeForm and the new EmployeeProfileCompletion flow) and by nothing else,
            -- so its absence is a cheap, join-free proxy for "never completed a profile step"
