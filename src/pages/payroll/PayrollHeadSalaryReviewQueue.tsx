@@ -940,7 +940,9 @@ function SectionPopup({
                           .toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
                       : undefined}
                   />
-                  {status === 'pending_review' && isReviewer && review?.package_accepted && (
+                  {/* !! for the same tinyint reason as canQuickApprove above: a bare
+                      `review?.package_accepted &&` renders "0" instead of nothing. */}
+                  {!!(status === 'pending_review' && isReviewer && review?.package_accepted) && (
                     <Button disabled={busy} onClick={() => void approve()}
                       className="w-full cursor-pointer bg-emerald-600 hover:bg-emerald-700 rounded-xl text-sm gap-2">
                       {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
@@ -1851,7 +1853,12 @@ export default function PayrollHeadSalaryReviewQueue() {
               const Icon = cfg.icon;
               const isOverdue = row.status === 'pending_review' && row.pending_hours >= 48;
               const initials = row.full_name?.split(' ').slice(0, 2).map((w) => w[0]).join('').toUpperCase() ?? '?';
-              const canQuickApprove = isReviewer && row.status === 'pending_review' && row.package_accepted;
+              // !! matters: package_accepted is a MySQL tinyint, so it arrives as the
+              // NUMBER 0, not false. Without the coercion this expression evaluates to
+              // 0 and `{canQuickApprove && <Button/>}` renders a bare "0" into the row --
+              // which is exactly the stray 0 that appeared between the status chips and
+              // the Review link on every row whose package was not yet accepted.
+              const canQuickApprove = !!(isReviewer && row.status === 'pending_review' && row.package_accepted);
 
               return (
                 <div
