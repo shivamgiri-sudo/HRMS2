@@ -169,7 +169,12 @@ const ROLES_WFM = ["super_admin", "admin", "hr", "wfm", "manager", "process_mana
 const ROLES_COMPLIANCE = ["super_admin", "admin", "hr", "hr_head", "finance", "payroll"];
 const ROLES_ATS = ["super_admin", "admin", "hr", "hr_head", "recruiter", "recruitment_head"];
 const ROLES_OPERATIONS = ["super_admin", "admin", "operations", "quality", "manager", "process_manager"];
-const ROLES_ALL_MANAGEMENT = ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo"];
+// 'coo' added alongside 'ceo': reporting.scope.ts grants coo the same org-wide SCOPE as ceo
+// (SUPER_ADMIN_ROLES / SENSITIVE_ROLES both already carry 'coo'), but
+// reportCatalogAccessMiddleware runs BEFORE scope resolution and 403s on viewRoles -- without
+// 'coo' here that scope grant is unreachable and a COO is refused every one of these ~130
+// reports before the scope fix is ever consulted.
+const ROLES_ALL_MANAGEMENT = ["super_admin", "admin", "hr", "hr_head", "finance", "payroll", "wfm", "manager", "process_manager", "branch_head", "ceo", "coo"];
 
 // ─── Report Definitions ────────────────────────────────────────────────────────
 
