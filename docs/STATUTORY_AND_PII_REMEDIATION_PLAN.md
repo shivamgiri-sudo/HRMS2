@@ -1,7 +1,7 @@
 # Statutory Filing and PII-at-Rest — Remediation Plan
 
 **Written:** 2026-08-26
-**Basis:** every count below was measured read-only against live `mas_hrms` on 2026-08-26. No figure here is taken from a prior document.
+**Basis:** every count below was measured read-only against live `mas_hrms` and `db_bill` on 2026-08-26. No figure here is taken from a prior document.
 **Status:** plan only. No code in this document has been written, and no data operation has been run.
 
 ---
@@ -60,13 +60,45 @@ regardless of how much code is written:
 
 1. **PF establishment code(s)** — one per registered establishment. Populates
    `pf_establishment_master`. Without it ECR generation has no employer identity.
+   *Largely answered by db_bill — see 1.3a. `DL/32026` and `DS/NHP` need confirming as the
+   current registered codes before they are seeded, but they are not unknown.*
 2. **TAN** (Tax Deduction and Collection Account Number) — populates `tds_deductor`.
    Without it no 24Q/Form 138 return and no Part A certificate can be produced.
 3. **ESIC employer code** and the sub-codes per covered branch.
 4. **PT registration numbers per state** — `professional-tax-states.ts` carries the slabs,
    but a return is filed against a registration number we do not hold.
-5. **Missing UAN for 702 active employees** — either supplied by the employees or raised
+5. **Missing UAN for 702 active employees** — reduced to **442** by the db_bill trace in 1.3a — either supplied by the employees or raised
    as fresh UANs through the EPFO portal.
+
+### 1.3a Traced against db_bill, 2026-08-26 — what the legacy system can and cannot supply
+
+db_bill (MySQL 5.5.44, LAN `192.168.10.22`, 403 tables) was searched column-by-column for
+every blocked item. Result: **one of the five is largely answered, one is partly answered,
+three are genuinely absent.**
+
+| Blocked item | In db_bill? | Evidence |
+|---|---|---|
+| **PF establishment code** | **YES** | `employee_master.EpfNo` is in `<region>/<estab>/<member>` form on 7,466 rows. Two establishments: **`DL/32026`** (6,716 members) and **`DS/NHP`** (750). |
+| **UAN for the 702** | **PARTLY — 260 of 702** | `masjclrentry.EmpCode` joins HRMS `employee_code` directly. All 260 are clean 12-digit, unique within the set, and none is a placeholder. |
+| **TAN** | **NO** | `company_master` holds `pan_no` (MAS Callnet `AAACM5866H`) and a service-tax number, no TAN. A regex sweep for `^[A-Z]{4}[0-9]{5}[A-Z]$` across every text column of every table under 200 rows returned **zero** hits. |
+| **ESIC employer code** | **NO** | `EsicNo` is populated on only 118 of 35,902 rows and is mostly the literal `NA`. |
+| **PT registration numbers** | **NO** | `ProfessionalTax` is a *money* column — 19,908 rows hold `0`, 15,993 are NULL. No registration number exists anywhere. |
+
+**A trap worth recording: `EPFCO` / `ESICCO` are not establishment codes.** The names read like
+"EPF company code" and "ESIC company code", and both appear on eight tables. They are employer
+*contribution amounts* — the distinct values are 144, 264, 180, 540, 780, 1200. Anything that
+imports them as identifiers will silently load rupee figures into a code field.
+
+**UAN data quality caveat for any wider import.** Across `masjclrentry` as a whole there are
+12,882 rows with a clean 12-digit UAN but only 12,070 distinct values — 812 duplicates, one of
+them (`101925000000`, five trailing zeros) shared by 16 employees. The 260 we need are clean,
+but a bulk import must filter duplicates and trailing-zero placeholders rather than trust the
+regex alone.
+
+**`employee_master.UAN` is unusable — do not read it.** All 2,825 populated values are
+Excel-mangled into scientific notation (`1.00143E+11`), which keeps six significant digits of a
+twelve-digit number. **Zero** are recoverable. Same failure mode as the bank-account column.
+The clean values live in `masjclrentry`, not `employee_master`.
 
 ### 1.4 Sequence
 
@@ -75,7 +107,8 @@ Each phase is independently shippable. Do not start a later phase before its blo
 | Phase | Work | Blocked on | Rough size |
 |---|---|---|---|
 | S1 | Load establishment/TAN/ESIC/PT master data; seed `pf_establishment_master`, `tds_deductor` | Client data (1.3) | Days once data arrives |
-| S2 | UAN capture drive for the 702 active employees without one; reuse the existing EPF validation path | Employee data | Weeks, mostly chasing |
+| S2a | Import the 260 UANs recoverable from `masjclrentry` (see 1.3a) — filter duplicates and trailing-zero placeholders, match on `EmpCode` = `employee_code` | — | Small, data-only |
+| S2b | UAN capture drive for the remaining **442** active employees | Employee data | Weeks, mostly chasing |
 | S3 | Wire the filing register into a real monthly cycle — generate the EPF/ESIC/PT/TDS rows per month instead of the current 4 hand-made rows, mark filed with challan | S1 | Small; the table and 6 endpoints exist |
 | S4 | TDS from zero: declaration → computation → challan → 24Q/138 → Part A. Also close the dormant ambiguous-slab bug where a bare catch swallows the fail-closed guard | S1 (TAN) | Largest single piece |
 | S5 | F&F reconciliation — make `full_final_calculation` the real settlement path rather than a 1-row curiosity | — | Medium |
