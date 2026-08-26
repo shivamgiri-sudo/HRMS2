@@ -30,6 +30,7 @@ import {
   dateParam,
 } from "./types.js";
 import { AON_REFERENCE_JOIN_DATE_SQL } from "./aon.executor.js";
+import { AON_DAYS_SQL, IN_TRAINING_SQL } from "../workforce-population.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
@@ -48,20 +49,25 @@ const MIN_DAYS_FOR_RATE = 5;
 
 function aonBucketClause(bucket: unknown): string | null {
   switch (bucket) {
-    case "0-30": return `DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30`;
-    case "31-60": return `DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) BETWEEN 31 AND 60`;
-    case "61-90": return `DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) BETWEEN 61 AND 90`;
-    case "90+": return `DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) > 90`;
+    // Joined and on the floor but not yet on payroll. Must come first -- these rows would
+    // otherwise fall into 0-30 and the drawer would disagree with the cell that was clicked.
+    case "In Training": return IN_TRAINING_SQL("e", "CURDATE()");
+    case "0-30": return `${AON_DAYS_SQL("e", "CURDATE()")} <= 30`;
+    case "31-60": return `${AON_DAYS_SQL("e", "CURDATE()")} BETWEEN 31 AND 60`;
+    case "61-90": return `${AON_DAYS_SQL("e", "CURDATE()")} BETWEEN 61 AND 90`;
+    case "90+": return `${AON_DAYS_SQL("e", "CURDATE()")} > 90`;
     default: return null;
   }
 }
 
 function aonBucketAtExitClause(bucket: unknown): string | null {
   switch (bucket) {
-    case "0-30": return `DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) <= 30`;
-    case "31-60": return `DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) BETWEEN 31 AND 60`;
-    case "61-90": return `DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) BETWEEN 61 AND 90`;
-    case "90+": return `DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) > 90`;
+    // Left before payroll started -- quit during training.
+    case "In Training": return IN_TRAINING_SQL("e", "e.date_of_exit");
+    case "0-30": return `${AON_DAYS_SQL("e", "e.date_of_exit")} <= 30`;
+    case "31-60": return `${AON_DAYS_SQL("e", "e.date_of_exit")} BETWEEN 31 AND 60`;
+    case "61-90": return `${AON_DAYS_SQL("e", "e.date_of_exit")} BETWEEN 61 AND 90`;
+    case "90+": return `${AON_DAYS_SQL("e", "e.date_of_exit")} > 90`;
     default: return null;
   }
 }
