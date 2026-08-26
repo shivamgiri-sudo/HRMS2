@@ -1,3 +1,4 @@
+import fsSync from "fs";
 import { Router } from "express";
 import type { Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
@@ -5,9 +6,10 @@ import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
-import { detectFaceBbox } from "./face-match.service.js";
+import { detectFaceBbox, compareFaces } from "./face-match.service.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { recalculateNameMatch } from "./name-consistency.routes.js";
+import { getLatestDigilockerFile } from "../integrations/luckpay/luckpay-status.service.js";
 
 const router = Router();
 
@@ -97,7 +99,7 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
     );
   }
 
-  const [[alerts], [faceMatches], [docs], [profileRows], [bgvNames], [nameSummaryRows], [nameDetails], [bankPennyRows]] = await Promise.all([
+  const [[alerts], [faceMatches], [docs], [profileRows], [bgvNames], [nameSummaryRows], [nameDetails], [bankPennyRows], digilockerFile] = await Promise.all([
     db.execute<RowDataPacket[]>(
       // matched_candidate_name joined in (same as the GET / list endpoint) so
       // the comparison panel can show which candidate a duplicate-identity
@@ -146,7 +148,7 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
       [candidateId]
     ),
     db.execute<RowDataPacket[]>(
-      `SELECT check_type, matched_name, status, verified_at
+      `SELECT check_type, matched_name, status, verified_at, provider_key
          FROM candidate_bgv_check
         WHERE candidate_id = ? AND check_type IN ('aadhaar','aadhaar_offline','pan','bank_account')
         ORDER BY updated_at DESC`,
@@ -168,7 +170,67 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
         WHERE candidate_id = ? ORDER BY initiated_at DESC LIMIT 1`,
       [candidateId]
     ),
+    // DigiLocker never writes to candidate_onboarding_document — the
+    // downloaded KYC file's path only ever lands in
+    // candidate_digilocker_session.returned_documents_json, which nothing
+    // here read before. Without this, the panel could never show a
+    // DigiLocker photo even for a candidate who completed it successfully.
+    getLatestDigilockerFile(candidateId),
   ]);
+
+  // Whether THIS candidate's DigiLocker download is confirmed to include PAN,
+  // per the same evidence rule autoCreateDigilockerVerifiedChecks already
+  // applies (aadhaar is assumed from session completion; pan only when
+  // positively named) — see digilocker-evidence.ts. Reuses that decision
+  // rather than re-guessing from the filename here, which the panel cannot
+  // do reliably: the raw-binary download path names every file generically
+  // (digilocker-kyc-document.pdf), so there is no signal left in the file
+  // itself by the time it reaches this endpoint.
+  const digilockerPanConfirmed = bgvNames.some(
+    (b) => b.check_type === "pan" && b.provider_key === "digilocker" && b.status === "verified"
+  );
+
+  // Score the DigiLocker photo against the live selfie, the same way any
+  // uploaded ID document is scored — this never ran before because
+  // compareFaces() is only ever triggered from document-upload events, and
+  // the DigiLocker file was never a document row those events fire on. Only
+  // possible when the download is an image (it is usually a PDF, which face
+  // detection cannot read); skipped once a row already exists for this pair
+  // so a page view never re-runs the model.
+  if (digilockerFile?.contentType.startsWith("image/")) {
+    try {
+      const [existingMatch] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM candidate_face_match WHERE candidate_id = ? AND id_document_id = ? LIMIT 1`,
+        [candidateId, digilockerFile.sessionId]
+      );
+      if (!existingMatch.length) {
+        const selfieDoc = docs.find((d) => /selfie|live_photo|live/i.test(d.doc_type ?? ""));
+        if (selfieDoc) {
+          const [[selfieRow]] = await db.execute<RowDataPacket[]>(
+            `SELECT file_path FROM candidate_onboarding_document WHERE id = ? LIMIT 1`,
+            [selfieDoc.id]
+          );
+          const selfiePath = selfieRow ? resolveOnboardingDocumentFile(selfieRow.file_path) : null;
+          const digilockerPath = resolveOnboardingDocumentFile(digilockerFile.filePath);
+          if (selfiePath && digilockerPath) {
+            const result = await compareFaces(candidateId, selfiePath, digilockerPath, selfieDoc.id, digilockerFile.sessionId);
+            faceMatches.unshift({
+              id: "pending-refresh",
+              candidate_id: candidateId,
+              photo_document_id: selfieDoc.id,
+              id_document_id: digilockerFile.sessionId,
+              photo_doc_type: selfieDoc.doc_type,
+              id_doc_type: "digilocker",
+              match_score: result.score,
+              match_status: result.status,
+            } as unknown as RowDataPacket);
+          }
+        }
+      }
+    } catch (err: unknown) {
+      console.error("[fraud-alerts/comparison] digilocker face-match failed for", candidateId, err instanceof Error ? err.message : err);
+    }
+  }
 
   res.json({
     alerts,
@@ -179,6 +241,15 @@ router.get("/candidate/:candidateId/comparison", requireAuth, requireRole("super
     nameSummary: nameSummaryRows[0] ?? null,
     nameDetails,
     bankPennyDrop: bankPennyRows[0] ?? null,
+    digilocker: digilockerFile
+      ? {
+          fileName: digilockerFile.fileName,
+          contentType: digilockerFile.contentType,
+          updatedAt: digilockerFile.updatedAt,
+          sessionId: digilockerFile.sessionId,
+          panConfirmed: digilockerPanConfirmed,
+        }
+      : null,
   });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -201,6 +272,46 @@ router.get("/documents/face-detect/:documentId", requireAuth, requireRole("super
     if (!doc) return res.status(404).json({ error: "Document not found" });
 
     const resolvedPath = resolveOnboardingDocumentFile(doc.file_path);
+    if (!resolvedPath) return res.json({ bbox: null });
+    const bbox = await detectFaceBbox(resolvedPath).catch(() => null);
+    res.json({ bbox });
+  } catch (err: unknown) {
+    res.json({ bbox: null });
+  }
+});
+
+// Streams the single downloaded DigiLocker KYC file for a candidate — same
+// storage root as candidate_onboarding_document, but it never gets a row
+// there (see getLatestDigilockerFile), so it needs its own preview route
+// rather than reusing /documents/preview/:documentId.
+router.get("/documents/digilocker-preview/:candidateId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const file = await getLatestDigilockerFile(req.params.candidateId);
+    if (!file) return res.status(404).json({ error: "No DigiLocker document on file" });
+
+    const resolvedPath = resolveOnboardingDocumentFile(file.filePath);
+    if (!resolvedPath) return res.status(404).json({ error: "File not found on disk" });
+
+    res.setHeader("Content-Type", file.contentType || "application/octet-stream");
+    res.setHeader("Content-Disposition", `inline; filename="${file.fileName.replace(/[\r\n"]/g, "_")}"`);
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    fsSync.createReadStream(resolvedPath).pipe(res);
+  } catch (err: unknown) {
+    res.status(500).json({ error: "Could not load DigiLocker document" });
+  }
+});
+
+// Face bbox for the DigiLocker file — only meaningful when it is an image.
+// The KYC download is a PDF far more often than not (see digilocker-kyc-document
+// naming in luckpay.client.ts), which detectFaceBbox cannot read, so this is
+// short-circuited rather than left to fail silently like the generic route above.
+router.get("/documents/digilocker-face-detect/:candidateId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const file = await getLatestDigilockerFile(req.params.candidateId);
+    if (!file || !file.contentType.startsWith("image/")) return res.json({ bbox: null, isPdf: file?.contentType === "application/pdf" });
+
+    const resolvedPath = resolveOnboardingDocumentFile(file.filePath);
     if (!resolvedPath) return res.json({ bbox: null });
     const bbox = await detectFaceBbox(resolvedPath).catch(() => null);
     res.json({ bbox });
