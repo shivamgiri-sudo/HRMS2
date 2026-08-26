@@ -148,11 +148,12 @@ function DrawerSalaryRow({ label, value, bold, separator }: {
 // drawer (unchanged) and inside the new per-section popups — one implementation, two places.
 
 export function OfferedSalarySection({
-  os, sc, review, status, isReviewer, effectiveDate, setEffectiveDate, busy, onApprove, payrollHrValidation, onEffectiveDateBlur,
+  os, sc, review, status, isReviewer, effectiveDate, setEffectiveDate, busy, onApprove, payrollHrValidation, onEffectiveDateBlur, exceptionProposal,
 }: {
   os: any; sc: any; review: any; status: string | undefined; isReviewer: boolean;
   effectiveDate: string; setEffectiveDate: (v: string) => void; busy: boolean;
   onApprove: () => void; payrollHrValidation?: any; onEffectiveDateBlur?: (date: string) => Promise<void>;
+  exceptionProposal?: any;
 }) {
   if (!os) return <p className="text-xs text-slate-400 py-1">No offer on file for this candidate.</p>;
   return (
@@ -165,6 +166,35 @@ export function OfferedSalarySection({
         }`}>{os.offer_status === 'bh_approved' ? 'BH Approved' : os.offer_status}</span>
       </div>
       <div className="p-3">
+        {/* Exception package banner — shown when Branch HR submitted an above-band salary proposal */}
+        {exceptionProposal && (
+          <div className="mb-3 rounded-lg border border-orange-300 bg-orange-50 p-2.5">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="flex items-center gap-1 text-[11px] font-bold text-orange-700 uppercase tracking-wide">
+                <AlertTriangle className="h-3 w-3" />Exception Package
+              </span>
+              <span className={`text-[10px] font-semibold rounded-full px-2 py-0.5 ${
+                exceptionProposal.status === 'approved' ? 'bg-emerald-100 text-emerald-700' :
+                exceptionProposal.status === 'rejected' ? 'bg-rose-100 text-rose-700' :
+                'bg-amber-100 text-amber-700'
+              }`}>
+                {exceptionProposal.status === 'approved' ? 'BH Approved' : exceptionProposal.status === 'rejected' ? 'Rejected' : 'Pending Approval'}
+              </span>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-orange-800 mb-1">
+              <span>Proposed gross: <strong>{inr(exceptionProposal.proposed_gross_salary)}/mo</strong></span>
+              {exceptionProposal.difference_amount > 0 && (
+                <span className="text-orange-600">(+{inr(exceptionProposal.difference_amount)} above band)</span>
+              )}
+            </div>
+            <p className="text-xs text-orange-900 leading-snug">
+              <span className="font-medium">Reason:</span> {exceptionProposal.proposal_reason}
+            </p>
+            {exceptionProposal.proposed_by_name && (
+              <p className="text-[10px] text-orange-500 mt-1">Proposed by {exceptionProposal.proposed_by_name}</p>
+            )}
+          </div>
+        )}
         <div className="grid grid-cols-2 gap-x-4">
           <div>
             <DrawerSalaryRow label="Basic" value={inr(os.basic)} />
@@ -175,10 +205,30 @@ export function OfferedSalarySection({
             <DrawerSalaryRow label="Gross" value={inr(os.gross)} bold separator />
           </div>
           <div>
-            {/* Explicit Yes/No — a bare "—" for a legitimately zero PF/ESIC value (opted out,
-                above wage ceiling, etc.) read as "missing/broken" rather than "not applicable". */}
-            <DrawerSalaryRow label={`PF (Emp) — ${Number(os.pf_employee) > 0 ? 'Yes' : 'No'}`} value={Number(os.pf_employee) > 0 ? `− ${inr(os.pf_employee)}` : '—'} />
-            <DrawerSalaryRow label={`ESIC (Emp) — ${Number(os.esic_employee) > 0 ? 'Yes' : 'No'}`} value={Number(os.esic_employee) > 0 ? `− ${inr(os.esic_employee)}` : '—'} />
+            {(() => {
+              // Use opt-out flags / eligibility flags for clearer labeling.
+              // pf_opt_out = statutory opt-out by HR; pf_eligible = false = HR unchecked the box.
+              const pfOptOut = !!os.pf_opt_out;
+              const pfEligible = os.pf_eligible !== undefined ? !!Number(os.pf_eligible) : Number(os.pf_employee) > 0;
+              const pfLabel = pfOptOut ? 'PF (Emp) — Opted Out' : !pfEligible ? 'PF (Emp) — Not Eligible' : Number(os.pf_employee) > 0 ? 'PF (Emp) — Yes' : 'PF (Emp) — No';
+              const pfValue = Number(os.pf_employee) > 0 ? `− ${inr(os.pf_employee)}` : pfOptOut ? 'Statutory Exemption' : '—';
+
+              const esicOptOut = !!os.esic_opt_out;
+              const esicEligible = os.esi_eligible !== undefined ? !!Number(os.esi_eligible) : Number(os.esic_employee) > 0;
+              const esicLabel = esicOptOut ? 'ESIC (Emp) — Opted Out' : !esicEligible ? 'ESIC (Emp) — Not Eligible' : Number(os.esic_employee) > 0 ? 'ESIC (Emp) — Yes' : 'ESIC (Emp) — No';
+              const esicValue = Number(os.esic_employee) > 0 ? `− ${inr(os.esic_employee)}` : esicOptOut ? 'Statutory Exemption' : '—';
+
+              return (<>
+                <div className={`flex items-center justify-between py-1.5 border-b border-slate-50 ${pfOptOut || !pfEligible ? 'text-amber-700' : ''}`}>
+                  <span className="text-xs">{pfLabel}</span>
+                  <span className="font-mono text-xs">{pfValue}</span>
+                </div>
+                <div className={`flex items-center justify-between py-1.5 border-b border-slate-50 ${esicOptOut || !esicEligible ? 'text-amber-700' : ''}`}>
+                  <span className="text-xs">{esicLabel}</span>
+                  <span className="font-mono text-xs">{esicValue}</span>
+                </div>
+              </>);
+            })()}
             <DrawerSalaryRow label="Net in Hand" value={inr(os.net_in_hand)} bold separator />
             <DrawerSalaryRow label="Offered CTC" value={inr(os.offered_ctc)} bold separator />
           </div>
@@ -772,6 +822,7 @@ function SectionPopup({
                   onApprove={() => void approveOfferedAndClose()}
                   payrollHrValidation={journey?.payroll_hr_validation}
                   onEffectiveDateBlur={handleEffectiveDateBlur}
+                  exceptionProposal={journey?.exception_proposal}
                 />
               )}
               {section === 'final' && (
@@ -1178,6 +1229,7 @@ function ReviewDrawer({
                   onApprove={() => void approveOfferedPackage()}
                   payrollHrValidation={journey?.payroll_hr_validation}
                   onEffectiveDateBlur={handleEffectiveDateBlur}
+                  exceptionProposal={journey?.exception_proposal}
                 />
               )}
 

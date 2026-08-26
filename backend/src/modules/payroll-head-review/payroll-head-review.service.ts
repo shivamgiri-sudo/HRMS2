@@ -238,6 +238,7 @@ export async function getEmployeeJourney(employeeId: string) {
     history,
     offeredSalaryRows,
     payrollHrValidationRows,
+    exceptionProposalRows,
   ] = await Promise.all([
     db.execute<RowDataPacket[]>(
       `SELECT e.*, b.branch_name, b.state AS branch_state, dm.designation_name,
@@ -339,6 +340,18 @@ export async function getEmployeeJourney(employeeId: string) {
         WHERE v.candidate_id = ? ORDER BY v.created_at DESC LIMIT 1`,
       [review.candidate_id]
     ).then(([r]) => r as RowDataPacket[]).catch(() => []) : Promise.resolve([]),
+    // Exception package proposal — if Branch Payroll HR created an above-band salary
+    // the Payroll Head needs to see the justification reason and approval status.
+    review.candidate_id ? db.execute<RowDataPacket[]>(
+      `SELECT sep.proposed_gross_salary, sep.proposal_reason, sep.status,
+              sep.difference_amount, sep.difference_percent, sep.created_at,
+              COALESCE(e.full_name, au.email) AS proposed_by_name
+         FROM salary_exception_proposal sep
+         LEFT JOIN auth_user au ON au.id = sep.proposed_by
+         LEFT JOIN employees e ON e.user_id = sep.proposed_by
+        WHERE sep.candidate_id = ? LIMIT 1`,
+      [review.candidate_id]
+    ).then(([r]) => r as RowDataPacket[]).catch(() => []) : Promise.resolve([]),
   ]);
 
   const employee = employeeRows[0] ?? null;
@@ -366,6 +379,7 @@ export async function getEmployeeJourney(employeeId: string) {
           validated_at: (payrollHrValidationRows[0].validated_at as string) || null,
         }
       : null,
+    exception_proposal: exceptionProposalRows[0] ?? null,
     history,
   };
 }
