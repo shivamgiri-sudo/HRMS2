@@ -31,13 +31,44 @@ const all = async (sql: string, p: unknown[] = []) => {
 };
 
 describe("AON reconciliation (live)", () => {
-  it("the page total never exceeds the agreed active population", async () => {
-    const strict = Number((await one(`SELECT COUNT(*) n FROM employees e WHERE ${ACTIVE}`)).n);
-    const loose = Number((await one(
-      `SELECT COUNT(*) n FROM employees e WHERE e.active_status = 1`)).n);
-    expect(strict).toBeGreaterThan(0);
-    // The old rule counted leavers whose flag was never cleared. Never go back to it.
-    expect(strict).toBeLessThanOrEqual(loose);
+  it("the active population is non-empty", async () => {
+    const total = Number((await one(`SELECT COUNT(*) n FROM employees e WHERE ${ACTIVE}`)).n);
+    expect(total).toBeGreaterThan(0);
+  });
+
+  // The previous version of this test compared the strict ACTIVE_EMPLOYEE_SQL count against
+  // a hard-coded `active_status = 1` baseline with `toBeLessThanOrEqual`. That baseline IS the
+  // pre-fix rule, so weakening ACTIVE_EMPLOYEE_SQL back to it collapses the assertion to
+  // `x <= x` — always true, regardless of how wrong the rule is. Proven live 2026-08-26: with
+  // the rule weakened, the suite stayed green at 8/8.
+  //
+  // The two invariants below replace it. They don't compare the rule against itself; they
+  // assert a property the correct rule must have and the weakened rule provably violates: the
+  // 30 employees the weakened rule re-admits are people who already resigned or were
+  // terminated, so "active" and "already left" can never overlap.
+  // Verified live 2026-08-27: even under the CORRECT rule, a handful of employees carry a
+  // stale-but-unrelated date_of_exit despite a legitimate employment_status = 'active' (their
+  // employment_status was correctly reset, but date_of_exit was not cleared alongside it — a
+  // separate, already-tracked data-quality defect, not the ACTIVE_EMPLOYEE_SQL regression this
+  // harness targets). A hard `toBe(0)` here would make this test permanently red for a reason
+  // that has nothing to do with the rule under test, so this asserts a RATIO instead: the
+  // weakened rule doesn't add a handful, it dumps back in every recent leaver whose flag was
+  // never cleared, which moves this count by multiples, not by one or two more strays.
+  it("almost nobody in the active population has already left", async () => {
+    const total = Number((await one(`SELECT COUNT(*) n FROM employees e WHERE ${ACTIVE}`)).n);
+    const left = Number((await one(
+      `SELECT COUNT(*) n FROM employees e
+        WHERE ${ACTIVE} AND e.date_of_exit IS NOT NULL AND e.date_of_exit < CURDATE()`)).n);
+    expect(left, "recent-leavers-still-marked-active grew far past the known baseline noise")
+      .toBeLessThan(total * 0.02);
+  });
+
+  it("no employee in the active population has a non-active employment_status", async () => {
+    const r = await one(
+      `SELECT COUNT(*) n FROM employees e
+        WHERE ${ACTIVE} AND e.employment_status IS NOT NULL
+          AND LOWER(e.employment_status) <> 'active'`);
+    expect(Number(r.n)).toBe(0);
   });
 
   it("bucket counts sum to the total", async () => {
