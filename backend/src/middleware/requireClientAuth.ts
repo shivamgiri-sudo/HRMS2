@@ -51,6 +51,7 @@ export function requireClientAuth(req: ClientAuthRequest, res: Response, next: N
    */
   db.execute<RowDataPacket[]>(
     `SELECT cu.is_active,
+            cu.process_ids,
             EXISTS (
               SELECT 1 FROM portal_user_sessions s
                WHERE s.jti = ? AND s.revoked_at IS NOT NULL
@@ -66,7 +67,38 @@ export function requireClientAuth(req: ClientAuthRequest, res: Response, next: N
       if (payload.jti && Number(rows[0].session_revoked) === 1) {
         return res.status(401).json({ error: "Session revoked" });
       }
-      req.portalUser = payload;
+
+      /*
+       * Re-bind the tenant boundary to the database on every request.
+       *
+       * processIds is the portal's tenant boundary, but it was minted into a 7-day JWT at
+       * login and never read again. The two checks above cover the whole account and a
+       * single session; neither covers NARROWING. Removing a process from a client_user
+       * left that client reading it for up to seven more days, and nothing short of
+       * deactivating the whole account could stop them.
+       *
+       * The row is already being fetched for the two checks above, so this costs one more
+       * column, not one more query.
+       *
+       * The DB value REPLACES the token's: the token is a claim about what was true at
+       * login, the row is what is true now. That also makes a widened grant take effect
+       * immediately, which is the same rule read in the other direction.
+       */
+      let liveProcessIds: string[];
+      try {
+        const raw = rows[0].process_ids;
+        liveProcessIds = typeof raw === "string" ? JSON.parse(raw) : (raw as string[]);
+        if (!Array.isArray(liveProcessIds)) throw new Error("not an array");
+      } catch {
+        // Unreadable scope is not "keep the old scope" — that is the bug this fixes.
+        // It is also not an empty scope, which would read as a clean 403. Fail closed loudly.
+        return res.status(503).json({ error: "Service temporarily unavailable" });
+      }
+      if (liveProcessIds.length === 0) {
+        return res.status(403).json({ error: "No processes in your access list" });
+      }
+
+      req.portalUser = { ...payload, processIds: liveProcessIds };
       return next();
     })
     .catch(() => {

@@ -213,10 +213,20 @@ export async function notifyLastWorkingDayApproaching(exitRequestId: string): Pr
     let departments: string | null = null;
     try {
       const [rows] = await db.execute<RowDataPacket[]>(
+        // status is ENUM('pending','in_progress','cleared','blocked','waived') (sql/1506).
+        // This read `status = 'pending'`, which excluded 'in_progress' and — the one that
+        // matters — 'blocked'. A blocked clearance is the exact thing this notification
+        // exists to raise, and it was the one state guaranteed never to appear in the count.
+        //
+        // The predicate now matches the F&F approval guard
+        // (ff-approval-guard.compat.routes.ts: `status NOT IN ('cleared','waived')`), which is
+        // what actually withholds the money. Those two disagreeing is how you get an
+        // "all clear" notification for an exit that F&F then refuses. 'waived' is a
+        // deliberate excusal, so it counts as closed in both.
         `SELECT COUNT(*) AS pending,
                 GROUP_CONCAT(DISTINCT clearance_area ORDER BY clearance_area SEPARATOR ', ') AS departments
            FROM exit_clearance_task
-          WHERE exit_request_id = ? AND status = 'pending'`,
+          WHERE exit_request_id = ? AND status NOT IN ('cleared', 'waived')`,
         [exitRequestId],
       );
       pending = rows[0]?.pending == null ? null : Number(rows[0].pending);
