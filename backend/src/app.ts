@@ -53,6 +53,8 @@ import { nocRouter } from "./modules/payroll/noc.routes.js";
 import { runningSalaryRouter } from "./modules/payroll/running-salary.routes.js";
 import salaryPackageRouter from "./modules/payroll/payroll-masters.routes.js";
 import { employeeRouter } from "./modules/employees/employee.routes.js";
+import { requireAuth as requireAuthForDpdpGuard } from "./middleware/authMiddleware.js";
+import { checkDpdpRestriction } from "./modules/privacy/dpdpRestrictionGuard.js";
 import { employeeReportMasterRouter } from "./modules/employees/employee.report-master.routes.js";
 import { employeeSecureRouter } from "./modules/employees/employee.secure.routes.js";
 import { employeeGovernanceRouter } from "./modules/employees/employee-governance.routes.js";
@@ -416,6 +418,21 @@ app.use("/api/payroll", runningSalaryRouter);
 app.use("/api/payroll-masters", salaryPackageRouter);
 app.use("/api/payroll-compliance", payrollComplianceRouter);
 app.use("/api/payroll/pf", pfCreationRouter);
+// DPDP Act 2023 §13. checkDpdpRestriction shipped in 45b13ab1 (2026-07-20) together with the
+// whole privacy-engine layer and was then referenced by nothing — the guard, privacyContext
+// and privacyAuthorization all had zero call sites, so an approved restriction order blocked
+// nothing outside the document vault (files.routes.ts -> documentVaultAuth -> isHoldActive).
+//
+// Mounted here rather than inside each router because req.params is only populated for a
+// path pattern; a bare router.use() would always see an empty params object and no-op. This
+// prefix also covers the nested employee routes (/:id/joining-documents, /:id/epf-compliance,
+// ...) since app.use matches on prefix. requireAuth runs first so an unauthenticated probe
+// cannot use the 403 to test whether a given id carries a restriction order.
+//
+// Live impact today is nil by construction: dpdp_consent_withdrawal and dpdp_processing_hold
+// are both empty, so the guard calls next() on every request until an order is actually
+// approved. Non-UUID segments short-circuit before the query — see the guard.
+app.use("/api/employees/:employeeId", requireAuthForDpdpGuard, checkDpdpRestriction);
 app.use("/api/employees", listEndpointLimiter, employeeReportMasterRouter);
 app.use("/api/employees", listEndpointLimiter, employeeSecureRouter);
 app.use("/api/employees", listEndpointLimiter, employeeGovernanceRouter);

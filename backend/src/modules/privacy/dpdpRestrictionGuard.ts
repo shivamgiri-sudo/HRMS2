@@ -13,7 +13,15 @@ import { db } from "../../db/mysql.js";
  *
  * The requester_id in dpdp_consent_withdrawal is the auth_user.id of the employee.
  * We resolve from employees.id via a JOIN when the param is an employee UUID.
+ *
+ * There is deliberately no owner bypass: a data subject under an approved restriction
+ * order is blocked from their own record too. That mirrors documentVaultAuth.ts, which
+ * runs its processing-hold check BEFORE its owner bypass for the same reason — a §13
+ * order stops processing, and serving the record is processing however initiated.
  */
+
+/** employees.id / auth_user.id are CHAR(36) UUIDs. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export async function checkDpdpRestriction(
   req: Request,
   res: Response,
@@ -26,6 +34,16 @@ export async function checkDpdpRestriction(
       (req.query.employeeId as string | undefined);
 
     if (!targetId) {
+      next();
+      return;
+    }
+
+    // Mounted on a path pattern (app.use("/api/employees/:employeeId", ...)), so this also
+    // matches literal sub-paths like /api/employees/bank-quality or /directory-masters.
+    // Those can never name an employee, and querying for them costs a round trip per
+    // request on the directory's hot endpoints. Anything that is not UUID-shaped is not
+    // an id this guard can restrict, so it is passed straight through.
+    if (!UUID_RE.test(targetId)) {
       next();
       return;
     }

@@ -28,12 +28,23 @@ describe("hasOrgWideScope is a real org-wide check, not a role check", () => {
     expect(SCOPE_ACCESS).toMatch(/export async function hasOrgWideScope\(/);
   });
 
-  it("requires an explicit scope_type='all' row for non-admin roles", () => {
+  it("requires an explicit scope_type='all' row for every role except super_admin", () => {
     const idx = SCOPE_ACCESS.indexOf("export async function hasOrgWideScope(");
     const body = SCOPE_ACCESS.slice(idx, idx + 600);
-    // super_admin/admin bypass, everyone else needs a scope row saying 'all'.
-    expect(body).toMatch(/hasAnyRole\(userId, "super_admin", "admin"\)/);
+    // super_admin bypasses; everyone else needs a scope row saying 'all'.
+    expect(body).toMatch(/hasAnyRole\(userId, "super_admin"\)/);
     expect(body).toMatch(/scope_type === "all"/);
+  });
+
+  it("does not short-circuit on bare `admin` membership", () => {
+    // This assertion used to read the other way round: it pinned
+    // hasAnyRole(userId, "super_admin", "admin"), locking in the shortcut that let a
+    // branch-scoped admin (admin + branch_admin, zero scope_type='all' rows) test as
+    // org-wide. hasExportScope in payroll.routes.ts already refused to trust bare
+    // `admin` — see the sibling assertion below — and hasOrgWideScope now matches it.
+    const idx = SCOPE_ACCESS.indexOf("export async function hasOrgWideScope(");
+    const body = SCOPE_ACCESS.slice(idx, idx + 600);
+    expect(body).not.toMatch(/hasAnyRole\(userId, "super_admin", "admin"\)/);
   });
 });
 

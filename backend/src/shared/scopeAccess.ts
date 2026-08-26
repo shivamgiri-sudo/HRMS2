@@ -198,11 +198,27 @@ export async function hasScopedAccess(
  * filtering with buildScopeWhereClause below; this is only for payment
  * instructions and anything else where silent truncation causes real-world harm.
  *
- * Org-wide means super_admin/admin, or an active user_assignment_scope row with
+ * Org-wide means super_admin, or an active user_assignment_scope row with
  * scope_type='all' for one of the allowed roles.
+ *
+ * `admin` is deliberately NOT a shortcut here. It used to short-circuit alongside
+ * super_admin, which skipped both the allowedRoles check and the scope-row
+ * requirement — so a branch-scoped admin (live example: `admin` + `branch_admin`
+ * holding only an admin:branch row and zero scope_type='all' rows) tested as
+ * org-wide. That is the opposite of what this function exists to decide, and it is
+ * why the NEFT/bank export endpoints each grew their own bespoke org-wide test
+ * rather than calling this one — see the comments in payroll.routes.ts,
+ * payroll-extended.routes.ts and bank-payment-readiness.routes.ts, which record it
+ * as a known unfixed follow-up.
+ *
+ * An admin who genuinely is org-wide holds a scope_type='all' row and still passes
+ * on the check below; the short-circuit only ever helped one who does not.
+ *
+ * buildScopeWhereClause() below already grants the unconditional bypass to
+ * super_admin alone, so the two are now consistent.
  */
 export async function hasOrgWideScope(userId: string, allowedRoles: string[]): Promise<boolean> {
-  if (await hasAnyRole(userId, "super_admin", "admin")) return true;
+  if (await hasAnyRole(userId, "super_admin")) return true;
   if (!(await hasAnyRole(userId, ...allowedRoles))) return false;
   const scopes = await getUserAssignmentScopes(userId, allowedRoles);
   return scopes.some((s) => s.scope_type === "all");
