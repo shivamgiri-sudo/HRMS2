@@ -617,8 +617,16 @@ export function sectionStatus(section: SectionKey, row: QueueRow): { text: strin
       return { text: s.offered.ctc ? `${label} · ${inr(s.offered.ctc)}` : label, tone: s.offered.status === 'bh_approved' ? 'good' : 'warn' };
     }
     case 'final': {
-      if (s.final.accepted) return { text: s.final.ctc ? `Accepted · ${inr(s.final.ctc)}` : 'Accepted', tone: 'good' };
-      if (s.final.assigned) return { text: 'Not accepted', tone: 'warn' };
+      // Same reasoning as the row figure: while the row is pending, report how far
+      // the package has got WITHOUT quoting an amount as final. The amount is
+      // still one click away in the drawer, where the Payroll Head decides on it.
+      const decided = row.status === 'approved';
+      if (s.final.accepted) {
+        return decided && s.final.ctc
+          ? { text: `Approved · ${inr(s.final.ctc)}`, tone: 'good' }
+          : { text: 'Accepted — awaiting approval', tone: 'warn' };
+      }
+      if (s.final.assigned) return { text: 'Assigned — not accepted', tone: 'warn' };
       return { text: 'Not assigned', tone: 'bad' };
     }
     case 'bgv': {
@@ -1860,14 +1868,34 @@ export default function PayrollHeadSalaryReviewQueue() {
                   )}
 
                   {/* Salary */}
-                  <div className="hidden sm:flex flex-col items-end min-w-[90px] ml-auto">
-                    <p className="text-sm font-bold text-slate-900 tabular-nums">
-                      {/* final_ctc/offered_ctc are already monthly figures (salary_component_assignments.ctc,
-                          ats_employment_offer.offered_ctc) — only ctc_annual needs the /12 that inrMo() does. */}
-                      {row.final_ctc ? `${inr(row.final_ctc)}/mo` : row.offered_ctc ? `${inr(row.offered_ctc)}/mo` : row.ctc_annual ? inrMo(row.ctc_annual) : '—'}
-                    </p>
-                    <p className="text-[10px] text-slate-400">monthly CTC</p>
-                  </div>
+                  {(() => {
+                    // The final figure is the Payroll Head's decision, so it must not
+                    // be presented as settled while the row is still awaiting one.
+                    // assignPackage() writes salary_component_assignments with
+                    // status='active' the instant a package is attached -- before
+                    // acceptance, before approval -- so final_ctc becomes non-null
+                    // long before anyone has approved it, and the row read as final.
+                    // Until approval the row shows what was OFFERED; the final
+                    // figure appears once the row reaches Approved.
+                    const showFinal = row.status === 'approved' && row.final_ctc != null;
+                    // final_ctc/offered_ctc are already monthly figures
+                    // (salary_component_assignments.ctc, ats_employment_offer.offered_ctc)
+                    // — only ctc_annual needs the /12 that inrMo() does.
+                    const amount = showFinal
+                      ? `${inr(row.final_ctc as number)}/mo`
+                      : row.offered_ctc ? `${inr(row.offered_ctc)}/mo`
+                      : row.ctc_annual ? inrMo(row.ctc_annual) : '—';
+                    return (
+                      <div className="hidden sm:flex flex-col items-end min-w-[90px] ml-auto">
+                        <p className={`text-sm font-bold tabular-nums ${showFinal ? 'text-slate-900' : 'text-slate-600'}`}>
+                          {amount}
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                          {showFinal ? 'final monthly CTC' : 'offered monthly CTC'}
+                        </p>
+                      </div>
+                    );
+                  })()}
 
                   {/* Status + aging */}
                   <div className="hidden md:flex flex-col items-center gap-1 min-w-[110px]">
