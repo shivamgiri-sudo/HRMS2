@@ -1,6 +1,15 @@
 import mysql from "mysql2/promise";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+
+// tests/setup.ts globally mocks ../src/db/mysql.js to always return empty results, so any
+// module reached from here that imports the shared `db` pool (aonDrilldownEmployees does, to
+// run the real query) would silently see zero rows instead of live data -- the reconciliation
+// assertions below need the REAL pool, hitting the same database as this file's own raw `conn`.
+vi.unmock("../../../db/mysql.js");
+
 import { ACTIVE_EMPLOYEE_SQL, AON_BUCKET_SQL } from "../workforce-population.js";
+import { aonDrilldownEmployees } from "../executors/aon-drilldown.executor.js";
+import type { ExecScope, ExecOptions } from "../executors/types.js";
 
 /**
  * Reconciliation invariants for the AON page, against the live database.
@@ -29,6 +38,44 @@ const all = async (sql: string, p: unknown[] = []) => {
   const [rows] = await conn.query(sql, p);
   return rows as Record<string, unknown>[];
 };
+
+// Unrestricted scope/options for calling the real drill-down executor directly, matching the
+// pattern used by aon-drilldown.executor.test.ts's own SCOPE/OPTIONS fixtures.
+const UNRESTRICTED_SCOPE: ExecScope = {
+  companyId: "co-1",
+  isSuperAdmin: true,
+  branchScope: { mode: "all", ids: [] },
+  processScope: { mode: "all", ids: [] },
+  departmentScope: { mode: "all", ids: [] },
+  costCentreScope: { mode: "all", ids: [] },
+  canViewAllEmployees: true,
+  canViewSensitiveFields: true,
+  canExportSensitiveReports: true,
+  roles: ["super_admin"],
+};
+const DRILLDOWN_OPTIONS: ExecOptions = {
+  limit: 5000, offset: 0, cursor: null, includeTotal: true, mode: "preview",
+};
+
+/**
+ * Finds one (bucket, branch) cell with a non-null branch_id so it can be reproduced as an
+ * `filters.branchId` equality filter against the real executor. Falls back to the
+ * whole-population cell for the bucket (no branch filter) if every occurrence of the bucket
+ * happens to have a null branch_id.
+ */
+async function cellForBucket(bucket: string): Promise<{ branchId: string | null; n: number }> {
+  const rows = await all(
+    `SELECT e.branch_id, COUNT(*) n FROM employees e
+      WHERE ${ACTIVE} AND ${BUCKET} = ? AND e.branch_id IS NOT NULL
+      GROUP BY e.branch_id ORDER BY n DESC LIMIT 1`,
+    [bucket]
+  );
+  if (rows.length) return { branchId: String(rows[0].branch_id), n: Number(rows[0].n) };
+  const total = Number(
+    (await one(`SELECT COUNT(*) n FROM employees e WHERE ${ACTIVE} AND ${BUCKET} = ?`, [bucket])).n
+  );
+  return { branchId: null, n: total };
+}
 
 describe("AON reconciliation (live)", () => {
   it("the active population is non-empty", async () => {
@@ -131,7 +178,31 @@ describe("AON reconciliation (live)", () => {
     }
   });
 
-  it("a drill-down list is exactly as long as the cell it came from", async () => {
+  // This test used to re-implement the drill-down's SQL from ACTIVE/BUCKET instead of calling
+  // the real executor -- it was asserting the executor's SQL against a copy of itself, which is
+  // exactly why it stayed green through the "In Training leaks into 0-30" and "drill-down still
+  // uses active_status = 1 alone" regressions. It also always picked the LARGEST cell, which
+  // happened to be 90+, the one bucket where those two divergences cancel out. It now calls the
+  // real `aonDrilldownEmployees` executor for a specific (bucket, branch) cell and checks its row
+  // count against the aggregate -- covering "In Training" and "0-30" specifically, since those
+  // are the buckets where the divergence actually lives (see workforce-population.ts /
+  // aon-drilldown.executor.ts history).
+  it.each(["In Training", "0-30"])(
+    "a drill-down list for the \"%s\" bucket is exactly as long as the cell it came from",
+    async (bucket) => {
+      const cell = await cellForBucket(bucket);
+      expect(cell.n, `no live data in the "${bucket}" bucket to reconcile against`).toBeGreaterThan(0);
+
+      const filters: Record<string, unknown> = { metric: "headcount", aonBucket: bucket };
+      if (cell.branchId) filters.branchId = cell.branchId;
+
+      const result = await aonDrilldownEmployees(filters, UNRESTRICTED_SCOPE, DRILLDOWN_OPTIONS);
+      expect(result.rowCount, `drill-down row count for bucket "${bucket}" diverges from the aggregate cell`)
+        .toBe(cell.n);
+    }
+  );
+
+  it("a drill-down list is exactly as long as the cell it came from (largest cell, legacy coverage)", async () => {
     const cell = (await all(
       `SELECT e.branch_id, ${BUCKET} bucket, COUNT(*) n FROM employees e
         WHERE ${ACTIVE} GROUP BY e.branch_id, bucket ORDER BY n DESC LIMIT 1`))[0];
