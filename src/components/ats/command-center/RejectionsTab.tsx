@@ -18,39 +18,39 @@ import {
 
 type AnyRow = Record<string, unknown>;
 
+/**
+ * Rejection reasons are now grouped on the server.
+ *
+ * This tab used to receive every candidate row on the dashboard — 8,229 of them, 206 fields
+ * each — and group them in the browser to draw one chart and list 50 records. The grouping
+ * moved to commandCenterData(); the normalisation rule (hard reject reason, then VOC, then
+ * "Unspecified", case- and whitespace-insensitive) moved with it unchanged.
+ */
 interface RejectionsTabProps {
-  candidateRows: AnyRow[];
+  rejections: {
+    total: number;
+    distinctReasons: number;
+    reasons: { label: string; count: number }[];
+    rows: AnyRow[];
+  } | null;
   loading?: boolean;
 }
 
 const S = (v: unknown) => String(v ?? "");
 const CHART_GROUPS = 8;
 
-export function RejectionsTab({ candidateRows, loading }: RejectionsTabProps) {
+export function RejectionsTab({ rejections: source, loading }: RejectionsTabProps) {
   const model = useMemo(() => {
-    const rejections = (candidateRows || []).filter((r) => r._rejected || r._hardRejectReason);
-
-    // Normalise casing and whitespace before grouping — "Failed typing" and
-    // "failed typing " were previously two separate reasons.
-    const reasonMap = new Map<string, { label: string; count: number }>();
-    for (const r of rejections) {
-      const raw = S(r._hardRejectReason) || S(r.rejection_voc) || "Unspecified";
-      const label = raw.trim() || "Unspecified";
-      const key = label.toLowerCase();
-      const current = reasonMap.get(key) ?? { label, count: 0 };
-      current.count += 1;
-      reasonMap.set(key, current);
-    }
-
-    const all = [...reasonMap.values()].sort((a, b) => b.count - a.count);
+    const rejections = source?.rows ?? [];
+    const all = source?.reasons ?? [];
     const head = all.slice(0, CHART_GROUPS);
     const tail = all.slice(CHART_GROUPS);
     const tailCount = tail.reduce((sum, r) => sum + r.count, 0);
 
     return {
       rejections,
-      total: rejections.length,
-      distinctReasons: all.length,
+      total: source?.total ?? 0,
+      distinctReasons: source?.distinctReasons ?? 0,
       /**
        * Explicit "Other" bar. Slicing to the top eight while showing each share
        * against the full rejection total made the visible bars add to less than
@@ -63,7 +63,7 @@ export function RejectionsTab({ candidateRows, loading }: RejectionsTabProps) {
       tail,
       tailCount,
     };
-  }, [candidateRows]);
+  }, [source]);
 
   if (loading) {
     return (
@@ -161,7 +161,7 @@ export function RejectionsTab({ candidateRows, loading }: RejectionsTabProps) {
         subtitle="Individual records behind the counts above."
         action={
           <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
-            {rejections.length > 50 ? `First 50 of ${num(rejections.length)}` : `${num(rejections.length)} records`}
+            {total > rejections.length ? `First ${num(rejections.length)} of ${num(total)}` : `${num(total)} records`}
           </span>
         }
       >
@@ -195,9 +195,9 @@ export function RejectionsTab({ candidateRows, loading }: RejectionsTabProps) {
                 ))}
               </tbody>
             </table>
-            {rejections.length > 50 && (
+            {total > rejections.length && (
               <p className="border-t border-slate-100 bg-slate-50 px-3 py-1.5 text-[10px] text-slate-500">
-                Showing the first 50 of {num(rejections.length)} rejected candidates. Narrow the filters to see the rest.
+                Showing the first {num(rejections.length)} of {num(total)} rejected candidates. Narrow the filters to see the rest.
               </p>
             )}
           </div>

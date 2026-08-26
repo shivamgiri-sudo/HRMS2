@@ -1,0 +1,19 @@
+{
+  // Typecheck for the ATS Command Center (/ats/command-center).
+  //
+  // Scoped, because the root tsconfig declares `"files": []` plus project references and so
+  // compiles nothing and exits 0 regardless, while `tsc -p tsconfig.app.json` reports a few
+  // hundred pre-existing errors that bury anything new. Use this when touching this page:
+  //
+  //     npx tsc -p tsconfig.atscc-check.json
+  //
+  // Transitively included files are checked too, so a handful of pre-existing errors in shared
+  // layout components can still appear; everything under src/components/ats/command-center and
+  // the page itself is expected to stay clean.
+  "extends": "./tsconfig.app.json",
+  "include": [
+    "src/components/ats/command-center",
+    "src/pages/NativeATSFullParityCommandCenter.tsx",
+    "src/vite-env.d.ts"
+  ]
+}
