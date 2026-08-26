@@ -71,9 +71,33 @@ export async function syncCostCentreRelatedTables(opts: {
     );
   }
 
-  // ── process_master ─────────────────────────────────────────────────────────
-  // Only create a process row when process_id is absent — if the caller already
-  // linked to an existing process there is nothing to add.
+  // ── process_master: link an EXISTING process to its client ─────────────────
+  /*
+   * When the caller links the cost centre to a process that already exists, this used to do
+   * nothing at all — "there is nothing to add". But there was: the client.
+   *
+   * process_master.client_id is the FK that says which client a process belongs to, and it was
+   * NULL on all 132 live rows while process_master.client_name carried the real client on 40 of
+   * them. Every cost centre created against an existing process knew its client_id and threw it
+   * away, which is how the column stayed empty. That empty column is why manager and
+   * process_manager were cut from the inbound-quality dashboard in the 2026-08-18 RBAC audit —
+   * there was no way to scope them to a client.
+   *
+   * Only fills when the column is NULL. A process already pointing at a different client is
+   * left alone: re-pointing it from here would silently move a process between clients as a
+   * side effect of creating a cost centre. That needs a deliberate edit, not this.
+   */
+  if (process_id && client_id) {
+    await db.execute(
+      `UPDATE process_master
+          SET client_id = ?,
+              client_name = COALESCE(client_name, ?)
+        WHERE id = ? AND client_id IS NULL`,
+      [client_id, clientName, process_id]
+    );
+  }
+
+  // ── process_master: create the row when there is no process yet ────────────
   // Derive a stable code from the CC code: slashes/spaces → underscores.
   if (!process_id && branch_id) {
     const derivedCode = cost_centre_code
