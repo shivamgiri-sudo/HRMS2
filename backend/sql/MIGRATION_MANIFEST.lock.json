@@ -666,7 +666,8 @@
     "migrations/1608_salary_dispute_arrear_pending_status.sql",
     "migrations/1610_payroll_approval_status_page_catalog.sql",
     "migrations/1611_employee_salary_change_log.sql",
-    "migrations/1612_fix_festival_calendar_2026_rakhi_bhaidooj.sql"
+    "migrations/1612_fix_festival_calendar_2026_rakhi_bhaidooj.sql",
+    "migrations/1613_add_missing_festival_calendar_2026_entries.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
