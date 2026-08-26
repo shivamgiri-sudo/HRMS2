@@ -13167,6 +13167,8 @@
       "esi_applicable",
       "employer_pf",
       "employer_esi",
+      "pf_employee",
+      "esic_employee",
       "ctc",
       "net_estimate",
       "assigned_by",
