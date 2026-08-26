@@ -30,7 +30,7 @@ function frontendBaseUrl(): string {
 export type BlockedReason =
   | "feature_disabled" | "per_document_flow_active" | "draft_missing"
   | "placeholder_draft" | "hr_fill_pending" | "no_recipient_email"
-  | "provider_disabled" | "no_documents";
+  | "provider_disabled" | "no_documents" | "payroll_head_not_approved";
 
 export type DispatchOutcome = {
   kitId: string | null;
@@ -177,6 +177,21 @@ export async function dispatchJoiningKit(kitId: string, actorUserId: string | nu
   if (Number((live as RowDataPacket[])[0]?.n ?? 0) > 0) {
     return blockKit(kitId, employeeId, "per_document_flow_active",
       "This employee already has an active per-document signing link. Let it complete or expire before sending a kit.");
+  }
+
+  // Joining documents must not be sent before the Payroll Head has approved the
+  // employee's salary. The final remuneration figure printed in the contract
+  // appendix comes from salary_package_master, which is only written after the
+  // Payroll Head assigns and accepts a package. Sending before approval means
+  // the candidate signs a contract that may not reflect the final agreed salary.
+  const [reviewRows] = await db.execute<RowDataPacket[]>(
+    `SELECT status FROM employee_payroll_head_review WHERE employee_id = ? LIMIT 1`,
+    [employeeId],
+  ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+  const reviewStatus = String((reviewRows as RowDataPacket[])[0]?.status ?? "");
+  if (reviewStatus !== "approved") {
+    return blockKit(kitId, employeeId, "payroll_head_not_approved",
+      "Salary has not been approved by the Payroll Head. Joining documents can only be sent after salary approval.");
   }
 
   // Anything HR is still filling in would be signed half-finished — but only

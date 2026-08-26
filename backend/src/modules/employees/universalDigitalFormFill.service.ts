@@ -260,8 +260,8 @@ const DEFAULT_FIELDS_BY_DOCUMENT: Record<string, string[]> = {
   ],
   IT_COMPLIANCE: ["employee_name", "employee_code", "date_of_joining", "branch", "process", "current_date"],
   BAMS_DECLARATION: ["employee_name", "employee_code", "date_of_joining", "branch", "process", "designation", "department", "current_date", "attendance_system_name", "attendance_criterion", "attendance_login_hours"],
-  PI_PROCESSING_CONSENT: ["employee_name", "employee_code", "process", "mobile", "email", "current_date"],
-  ZERO_TOLERANCE_ACK: ["employee_name", "employee_code", "date_of_joining", "branch", "process", "current_date"],
+  PI_PROCESSING_CONSENT: ["employee_name", "employee_code", "process", "mobile", "email", "current_date", "pi_signature_date"],
+  ZERO_TOLERANCE_ACK: ["employee_name", "employee_code", "date_of_joining", "branch", "process", "current_date", "zero_tolerance_signature_date"],
   EPF_DECLARATION: ["employee_name", "father_name", "date_of_birth", "date_of_joining", "mobile", "email", "pan_masked", "aadhaar_masked", "uan", "current_date"],
   EMPLOYMENT_CONTRACT: ["employee_name", "employee_code", "date_of_joining", "designation", "department", "branch", "process", "current_date", "father_name", "relation_prefix", "employee_address", "monthly_remuneration", "monthly_remuneration_words", "payroll_hr_name", "payroll_hr_designation"],
 };
@@ -1005,18 +1005,26 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
 
   // Gross is the contractual monthly remuneration the employee signs against.
   //
-  // Two things had to be got right here, and the first fix got the second one
-  // wrong. Every column on employee_salary_snapshot DEFAULTs to 0, so a snapshot
-  // written without a gross holds 0.00 rather than NULL — and 0 is not nullish,
-  // so a `??` fallback never fires. That is why a real contract printed
-  // "Rs. 0 (Rupees Zero only)". 16,136 of 33,443 rows are in that state.
-  //
-  // The fallback must be the sum of the components, NOT ctc_offered/12.
-  // ctc_offered on this table is a monthly figure — on 31,095 of the 31,118
-  // rows carrying one it is less than 2x the component sum — so annualising it
-  // would have put ₹1,382 on a contract whose real remuneration is ₹15,103.
-  // A wrong number that looks plausible is worse than the zero it replaced.
-  // 15,518 of the 16,136 zero-gross rows do carry components.
+  // Priority order (highest to lowest):
+  //   1. salary_package_master.gross — the authoritative offer figure assigned
+  //      by Payroll Head. This is exactly the number the appointment letter PDF
+  //      salary table already prints, so both documents now agree.
+  //   2. employee_salary_snapshot.gross — covers existing/legacy employees who
+  //      were never assigned through the package master flow.
+  //   3. Component sum — snapshot exists but gross column is 0 (DEFAULT 0 on
+  //      that table, so 0 ≠ null and a ?? fallback never fires). 15,518 rows.
+  //   4. ctc_offered (guarded) — last resort; see guard below.
+  //   5. null (blank on contract) — honest; fabricated zero is not.
+  const [[packageRow]] = await db.execute<RowDataPacket[]>(
+    `SELECT p.gross AS package_gross
+       FROM salary_component_assignments a
+       JOIN salary_package_master p ON p.id = a.package_id
+      WHERE a.employee_id = ? AND a.status = 'active' AND a.package_id IS NOT NULL
+      ORDER BY a.effective_date DESC
+      LIMIT 1`,
+    [employeeId],
+  ).catch(() => [[null] as unknown as RowDataPacket[], []]);
+
   const num = (value: unknown) => {
     const parsed = Number(value ?? 0);
     return Number.isFinite(parsed) ? parsed : 0;
@@ -1027,6 +1035,7 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
     salary?.mobile_allowance, salary?.special_allowance, salary?.other_allowance,
   ].reduce<number>((total, part) => total + num(part), 0);
 
+  const packageGross = num(packageRow?.package_gross);
   const snapshotGross = num(salary?.gross);
 
   // Last resort, and the one that needs a guard. ctc_offered is monthly on
@@ -1044,15 +1053,17 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
   const offered = num(salary?.ctc_offered);
   const offeredMonthly = offered > 0 && offered < UNCORROBORATED_MONTHLY_CEILING ? offered : 0;
 
-  // 594 rows carry no figure anywhere. A blank on the contract is honest; a
+  // 595 rows carry no figure anywhere. A blank on the contract is honest; a
   // fabricated one is not, so nothing is invented for them.
-  const grossRaw = snapshotGross > 0
-    ? snapshotGross
-    : componentSum > 0
-      ? componentSum
-      : offeredMonthly > 0
-        ? offeredMonthly
-        : null;
+  const grossRaw = packageGross > 0
+    ? packageGross
+    : snapshotGross > 0
+      ? snapshotGross
+      : componentSum > 0
+        ? componentSum
+        : offeredMonthly > 0
+          ? offeredMonthly
+          : null;
   const monthlyGross = grossRaw == null || !Number.isFinite(grossRaw) || grossRaw <= 0
     ? null
     : grossRaw;
@@ -1089,7 +1100,10 @@ export async function buildSourceContext(employeeId: string, candidateId?: strin
       // employees are Male and 15,139 Female, so it is nearly always known.
       // The 63 without one keep both forms rather than have the document
       // assert a relationship the record does not support.
-      relation_prefix: relationPrefix(employee?.gender),
+      // Falls back to onboarding and EPF sources so newly converted ATS
+      // candidates whose employees.gender is not yet populated still get
+      // the correct s/o or d/o on the first page of their contract.
+      relation_prefix: relationPrefix(employee?.gender ?? onboarding?.gender ?? epf?.gender),
       // "r/o" on the employment agreement means place of residence, so prefer
       // the permanent address and fall back to the current one.
       // Falls back to the address the candidate typed during onboarding when the
