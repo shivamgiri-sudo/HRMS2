@@ -15,6 +15,26 @@
  * Covers all modules: Payroll, Leave, Attendance, WFM/Roster, ATS/Recruitment,
  * Employee Management, Exit, Performance/KPI, Quality, Operations, Finance/ERP,
  * Assets/Documents, Admin/Platform, Support, LMS. (2026-08-23 full sweep)
+ *
+ * INVARIANT: every entry must be reachable by its own `title`.
+ * answerHowToQuestion() takes the FIRST catalog entry whose aliases match, so an
+ * entry whose title its own aliases do not cover is dead — the question falls
+ * through to the external LLM, which has no navigation knowledge and invents
+ * plausible steps instead. ai-howto.service.test.ts asserts this per entry per
+ * role, which is how ten dead entries surfaced on 2026-08-26:
+ *
+ *   - Eight matched nothing at all, almost all because an alias was anchored on a
+ *     singular noun (salary\s*package) while the title reads naturally in the
+ *     plural ("View or assign salary packages"), and  will not span the "s".
+ *     Widened to `s?` rather than dropping the boundary, which would let
+ *     "packages" match inside unrelated words.
+ *   - Two were shadowed by a more general entry sitting EARLIER in the array:
+ *     hr_dashboard's hr\s*dashboard matched inside "payroll hr dashboard" and
+ *     won on first-match. Fixed with a negative lookbehind on the general entry,
+ *     not by reordering — order here is precedence for every other query too.
+ *
+ * So: when adding an entry, check its title against the whole catalog, not just
+ * that its own aliases fire. A new general alias can strand an existing entry.
  */
 
 export type HowToStatus = 'verified' | 'needs_verification';
@@ -446,7 +466,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'salary_package_view',
     title: 'View or assign salary packages',
-    aliases: [/\bsalary\s*package\b/i, /\bctc\s*(structure|package|breakdown)\b/i, /\b(assign|view|edit)\b.*\bsalary\s*(structure|package)\b/i],
+    aliases: [/\bsalary\s*packages?\b/i, /\bctc\s*(structure|package|breakdown)s?\b/i, /\b(assign|view|edit)\b.*\bsalary\s*(structure|package)s?\b/i],
     steps: [
       '1. Go to Payroll → Salary Packages.',
       '2. Search for an employee to view their current CTC and salary structure breakdown.',
@@ -538,7 +558,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'roster_preference',
     title: 'Submit shift or roster preferences',
-    aliases: [/\broster\s*preference\b/i, /\bshift\s*preference\b/i, /\b(preferred|request)\b.*\b(shift|roster)\b/i],
+    aliases: [/\broster\s*preferences?\b/i, /\bshift\s*preferences?\b/i, /\bsubmit\b.*\b(shift|roster)\b.*\bpreferences?\b/i, /\b(preferred|request)\b.*\b(shift|roster)\b/i],
     steps: [
       '1. Go to Roster Preference.',
       '2. Select your preferred shifts and week-off days.',
@@ -921,7 +941,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'letters_generate',
     title: 'Generate or view official HR letters',
-    aliases: [/\b(generate|create|view|issue)\b.*\bletter\b/i, /\bappointment\s*letter\b/i, /\bexperience\s*letter\b/i, /\bincrement\s*letter\b/i, /\bletter\s*generation\b/i, /\bgeneration\b.*\bletter\b/i],
+    aliases: [/\b(generate|create|view|issue)\b.*\bletters?\b/i, /\bappointment\s*letter\b/i, /\bexperience\s*letter\b/i, /\bincrement\s*letter\b/i, /\bletter\s*generation\b/i, /\bgeneration\b.*\bletter\b/i],
     steps: [
       '1. Go to Letters.',
       '2. Select the letter type (appointment, increment, experience, warning, etc.).',
@@ -965,7 +985,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'org_masters',
     title: 'Manage organisation masters — branches, processes, designations',
-    aliases: [/\borg\s*master\b/i, /\b(branch|designation|department)\b.*\b(master|config|add|create)\b/i, /\badd\s*(new\s*)?(branch|designation)\b/i, /\bnew\s+branch\b/i, /\bnew\s+designation\b/i, /\b(add|create)\b.*\b(branch|department|designation)\b/i],
+    aliases: [/\borg(?:anisation|anization)?\s*masters?\b/i, /\b(branch|designation|department)\b.*\b(master|config|add|create)\b/i, /\badd\s*(new\s*)?(branch|designation)\b/i, /\bnew\s+branch\b/i, /\bnew\s+designation\b/i, /\b(add|create)\b.*\b(branch|department|designation)\b/i],
     steps: [
       '1. Go to Org Masters.',
       '2. Navigate to the relevant section: Branch, Process, Designation, Department, etc.',
@@ -1009,7 +1029,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'work_inbox',
     title: 'View all pending approvals and tasks',
-    aliases: [/\bwork\s*inbox\b/i, /\bpending\s*(approval|task|action)\b/i, /\bmy\s*(tasks|approvals|inbox|pending)\b/i, /\bwhat\s*(is|are)\s*(pending|waiting)\b/i, /\btasks?\b.*\bpending\b.*\b(action|me)\b/i],
+    aliases: [/\bwork\s*inbox\b/i, /\bpending\s*(approvals?|tasks?|actions?)\b/i, /\bmy\s*(tasks|approvals|inbox|pending)\b/i, /\bwhat\s*(is|are)\s*(pending|waiting)\b/i, /\btasks?\b.*\bpending\b.*\b(action|me)\b/i],
     steps: [
       '1. Go to Work Inbox.',
       '2. All items pending your action are listed — leaves, regularizations, exits, reimbursements, etc.',
@@ -1042,7 +1062,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
     code: 'reports_center',
     title: 'Access reports and download data',
     // Narrow enough to not shadow "direct reports", "EPF compliance report", "my team", etc.
-    aliases: [/\breports?\s*(center|section|page)\b/i, /\breporting\s*center\b/i, /\b(download|export)\b.*\b(report|data)\b.*\b(hrms|from|center)\b/i, /\bhr\s*reports?\b/i, /\bpayroll\s*reports?\b/i, /\battendance\s*reports?\b/i, /\b(download|export|get)\b.*\b(hr|payroll|attendance)\s*reports?\b/i],
+    aliases: [/\breports?\s*(center|section|page)\b/i, /\breporting\s*center\b/i, /\b(access|open)\s+reports?\b/i, /\b(download|export)\b.*\b(report|data)\b.*\b(hrms|from|center)\b/i, /\bhr\s*reports?\b/i, /\bpayroll\s*reports?\b/i, /\battendance\s*reports?\b/i, /\b(download|export|get)\b.*\b(hr|payroll|attendance)\s*reports?\b/i],
     steps: [
       '1. Go to Reports.',
       '2. Browse by category — Payroll, Attendance, Leave, Employee, etc.',
@@ -1068,7 +1088,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'hr_dashboard',
     title: 'View HR dashboard',
-    aliases: [/\bhr\s*dashboard\b/i, /\bhuman\s*resource\s*dashboard\b/i],
+    aliases: [/(?<!payroll[\s-])\bhr\s*dashboard\b/i, /\bhuman\s*resource\s*dashboard\b/i],
     steps: ['1. Go to HR → Dashboard.', '2. See headcount, attrition, pending approvals, leave summary, and onboarding pipeline.'],
     route: '/hr/dashboard',
     auth: { mode: 'page_code', pageCode: 'HR_DASHBOARD' },
@@ -1339,7 +1359,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'attendance_lookup_admin',
     title: 'Look up any employee\'s attendance (HR/Admin)',
-    aliases: [/\b(hr|admin)\b.*\battendance\s*(lookup|view|check)\b/i, /\battendance\s*lookup\b/i, /\bcheck\s*attendance\s*of\b/i, /\bcheck\b.*\battendance\b.*\b(of|for)\b.*\bemployees?\b/i, /\battendance\b.*\b(any|all)\b.*\bemployees?\b/i],
+    aliases: [/\b(hr|admin)\b.*\battendance\s*(lookup|view|check)\b/i, /\battendance\s*lookup\b/i, /\blook\s*up\b.*\bemployees?\b.*\battendance\b/i, /\bcheck\s*attendance\s*of\b/i, /\bcheck\b.*\battendance\b.*\b(of|for)\b.*\bemployees?\b/i, /\battendance\b.*\b(any|all)\b.*\bemployees?\b/i],
     steps: [
       '1. Go to HR → Attendance Lookup.',
       '2. Search for any employee by name or code.',
@@ -1547,7 +1567,7 @@ export const HOWTO_CATALOG: HowToEntry[] = [
   {
     code: 'process_config',
     title: 'Configure processes and LOBs',
-    aliases: [/\bprocess\s*config(uration)?\b/i, /\blob\s*(config|setup|add)\b/i, /\b(add|create|edit)\b.*\bprocess\b.*\blob\b/i, /\bconfigure\b.*\bprocess\b/i, /\bnew\s*process\b/i, /\badd\b.*\blob\b/i],
+    aliases: [/\bprocess\s*config(uration)?\b/i, /\blob\s*(config|setup|add)\b/i, /\b(add|create|edit)\b.*\bprocess\b.*\blob\b/i, /\bconfigure\b.*\bprocess(?:es)?\b/i, /\bnew\s*process\b/i, /\badd\b.*\blob\b/i],
     steps: [
       '1. Go to Process Config.',
       '2. Add or edit processes, LOBs, and their branch/client mapping.',
