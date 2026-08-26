@@ -295,6 +295,53 @@ export function Step1Welcome({
 
 // ── Step 2: Personal Details ───────────────────────────────────────────────────
 
+/**
+ * Fields marked `required` (a red asterisk) inside Step2Personal below. That
+ * asterisk was purely cosmetic -- the "Next Step" footer button on the parent
+ * page called onb.advanceStep() with no field validation at all, so a
+ * candidate could leave any of these blank and still proceed. That gap is how
+ * an empty-string Marital Status reached the DB and later broke offer
+ * approval with a strict-mode ENUM truncation error (ref 4a8f9b07, 2026-08-26).
+ *
+ * Exported so the parent page can gate the footer's "Next Step" click for
+ * this step. Keep this list in sync with the `required` props below.
+ */
+export const STEP2_REQUIRED_FIELDS: { key: keyof EmployeeForm; label: string }[] = [
+  { key: "employeeName", label: "Full Name" },
+  { key: "fatherHusbandName", label: "Father / Guardian Name" },
+  { key: "dateOfBirth", label: "Date of Birth" },
+  { key: "gender", label: "Gender" },
+  { key: "maritalStatus", label: "Marital Status" },
+  { key: "mobileNumber", label: "Mobile Number" },
+  { key: "personalEmailId", label: "Personal Email" },
+  { key: "emergencyContactName", label: "Emergency Contact Name" },
+  { key: "emergencyContactMobile", label: "Emergency Contact Mobile Number" },
+  { key: "nominee", label: "Nominee Full Name" },
+  { key: "nomineeRelation", label: "Nominee Relation" },
+];
+
+/** Returns a user-facing error, or null if Step 2 is complete and consistent. */
+export function validateStep2Personal(employee: EmployeeForm): string | null {
+  const missing = STEP2_REQUIRED_FIELDS.filter((f) => !String(employee[f.key] ?? "").trim());
+  if (missing.length) {
+    return `Please fill in the required field${missing.length > 1 ? "s" : ""}: ${missing.map((f) => f.label).join(", ")}`;
+  }
+  const age = employee.dateOfBirth
+    ? Math.floor((Date.now() - new Date(employee.dateOfBirth).getTime()) / (365.25 * 24 * 3600 * 1000))
+    : null;
+  if (age !== null && (age < 16 || age > 60)) {
+    return `Age must be between 16–60 (currently ${age})`;
+  }
+  const normPhone = (v: string) => (v || "").replace(/\D/g, "").slice(-10);
+  if (
+    employee.mobileNumber && employee.emergencyContactMobile &&
+    normPhone(employee.mobileNumber) === normPhone(employee.emergencyContactMobile)
+  ) {
+    return "Emergency Contact Mobile Number must be different from your own Mobile Number";
+  }
+  return null;
+}
+
 export function Step2Personal({
   employee, setEmployee, saving, onSave,
 }: {

@@ -19,6 +19,7 @@ import {
   Step4Documents,
   Step5Bgv,
   Step6Bank,
+  validateStep2Personal,
 } from "@/components/onboarding-full/OnboardingSteps1to5";
 import {
   Step7Education,
@@ -143,6 +144,21 @@ export default function CandidateOnboardingFullPage() {
   const currentStep = STEPS.find(s => s.id === onb.step)!;
   const stepColor = STEP_COLORS[currentStep.color];
   const progress = (onb.step / 10) * 100;
+
+  // The footer's "Next Step →" button calls onb.advanceStep() directly with
+  // no field validation of its own -- a required-looking field (red asterisk)
+  // could be left blank and the candidate would still proceed. Gate it per
+  // step; currently only Step 2 (Personal) has a validator, since that is the
+  // step whose gap actually broke offer approval (ref 4a8f9b07, 2026-08-26).
+  // Other steps have the same cosmetic-only "required" gap and should get the
+  // same treatment in a follow-up pass.
+  const handleNext = () => {
+    if (onb.step === 2) {
+      const err = validateStep2Personal(onb.employee);
+      if (err) { onb.setError(err); return; }
+    }
+    onb.advanceStep();
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-100 to-slate-50">
@@ -387,7 +403,7 @@ export default function CandidateOnboardingFullPage() {
           {onb.step < 10 ? (
             <Button
               disabled={onb.saving}
-              onClick={onb.advanceStep}
+              onClick={handleNext}
               className={`min-h-[48px] px-8 font-bold rounded-xl shadow-lg bg-gradient-to-r ${stepColor.gradient} text-white`}
             >
               {onb.saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
