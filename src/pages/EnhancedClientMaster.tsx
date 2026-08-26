@@ -11,6 +11,8 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -66,6 +68,8 @@ interface PortalUser {
   designation?: string;
   client_id: string;
   access_level: string;
+  /** The portal's actual tenant boundary — which processes this client may open. */
+  process_ids?: string[];
   last_login_at?: string;
   login_count: number;
   is_active: boolean;
@@ -92,6 +96,87 @@ interface KpiTemplate {
 interface ProcessItem {
   id: string;
   process_name: string;
+  process_code?: string;
+  /**
+   * The denormalised client name on process_master. This — not client_id — is where a
+   * process's client actually lives: client_id is NULL on all 132 live rows, while
+   * client_name carries the real client on the 40 that have one. Showing it in the picker
+   * is the only way to tell two similarly-named processes apart.
+   */
+  client_name?: string | null;
+}
+
+/**
+ * Multi-select over live processes — the portal's tenant boundary.
+ *
+ * A client user's `process_ids` decides which process cards appear on /portal and which
+ * /portal/processes/:id requests are honoured. Until now the backend accepted it
+ * (UpdatePortalUserInput.process_ids) but no screen ever sent it, so scoping a client was a
+ * manual UPDATE against client_user.
+ */
+function ProcessScopePicker({
+  processes, selected, onChange,
+}: { processes: ProcessItem[]; selected: string[]; onChange: (ids: string[]) => void }) {
+  const [filter, setFilter] = useState("");
+  const needle = filter.trim().toLowerCase();
+  const visible = needle
+    ? processes.filter((p) =>
+        p.process_name.toLowerCase().includes(needle) ||
+        (p.client_name ?? "").toLowerCase().includes(needle) ||
+        (p.process_code ?? "").toLowerCase().includes(needle))
+    : processes;
+
+  const toggle = (id: string) =>
+    onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label>Process Access <span className="text-destructive">*</span></Label>
+        <span className="text-xs text-muted-foreground">{selected.length} selected</span>
+      </div>
+      <Input
+        placeholder="Filter by process, client or code..."
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+      />
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" size="sm"
+          onClick={() => onChange(Array.from(new Set([...selected, ...visible.map((p) => p.id)])))}>
+          Select shown
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => onChange([])}>
+          Clear all
+        </Button>
+      </div>
+      <ScrollArea className="h-56 rounded-md border p-2">
+        {visible.length === 0 ? (
+          <p className="text-sm text-muted-foreground p-2">No processes match.</p>
+        ) : visible.map((p) => (
+          <label key={p.id} className="flex items-start gap-2 py-1.5 px-1 cursor-pointer hover:bg-muted/50 rounded">
+            <Checkbox
+              checked={selected.includes(p.id)}
+              onCheckedChange={() => toggle(p.id)}
+              className="mt-0.5"
+            />
+            <span className="text-sm leading-tight">
+              {p.process_name}
+              {/* client_name is NULL on most rows — say so rather than render a blank. */}
+              <span className="block text-xs text-muted-foreground">
+                {p.client_name || "no client name on record"}
+                {p.process_code ? ` · ${p.process_code}` : ""}
+              </span>
+            </span>
+          </label>
+        ))}
+      </ScrollArea>
+      {selected.length === 0 && (
+        <p className="text-xs text-destructive">
+          A portal user with no processes cannot sign in — the login is refused, not shown an empty page.
+        </p>
+      )}
+    </div>
+  );
 }
 
 export default function EnhancedClientMaster() {
@@ -104,6 +189,11 @@ export default function EnhancedClientMaster() {
 
   // User dialog state — lifted out of table row
   const [showUserDialog, setShowUserDialog] = useState(false);
+  const [showCreateUserDialog, setShowCreateUserDialog] = useState(false);
+  /** process_ids being edited on the selected user, and on the create form. */
+  const [editScopeIds, setEditScopeIds] = useState<string[]>([]);
+  const [createScopeIds, setCreateScopeIds] = useState<string[]>([]);
+  const [newUser, setNewUser] = useState({ clientId: "", email: "", name: "", designation: "" });
   const [selectedUser, setSelectedUser] = useState<PortalUser | null>(null);
 
   // Deactivate dialog state — replaces prompt()
@@ -188,16 +278,26 @@ export default function EnhancedClientMaster() {
     enabled: activeTab === "kpi-assignments",
   });
 
-  // Fetch processes for dropdown
+  /*
+   * Fetch processes for the KPI dropdown and the portal-user scope picker.
+   *
+   * This called "/api/processes?fields=id,process_name", which resolves to nothing: the bare
+   * "/api" mount belongs to clientRouter, which does not declare /processes, and the real
+   * routes are /api/org/processes and /api/access/processes. The KPI-assignment dropdown has
+   * therefore been silently empty. /api/org/processes returns pm.*, which includes the
+   * client_name the scope picker needs, so both callers use it.
+   *
+   * The `fields=` parameter was invented — no endpoint here honours it — so it is dropped.
+   */
   const { data: processList = [] } = useQuery<ProcessItem[]>({
     queryKey: ["process-list-simple"],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: ProcessItem[] }>(
-        "/api/processes?fields=id,process_name"
+        "/api/org/processes?active_status=1&limit=500"
       );
       return res.data ?? [];
     },
-    enabled: activeTab === "kpi-assignments",
+    enabled: activeTab === "kpi-assignments" || activeTab === "users",
   });
 
   // Mutations — clients
@@ -229,6 +329,25 @@ export default function EnhancedClientMaster() {
   });
 
   // Mutations — portal users
+  const createUserMutation = useMutation({
+    // POST /api/portal/internal/client-users (admin/hr). The endpoint has existed since the
+    // portal was built and nothing in the frontend called it, so every client portal login
+    // had to be created directly in the database.
+    mutationFn: async (data: {
+      clientId: string; email: string; name: string; designation?: string; processIds: string[];
+    }) => hrmsApi.post("/api/portal/internal/client-users", data),
+    onSuccess: () => {
+      toast.success("Portal user created");
+      queryClient.invalidateQueries({ queryKey: ["portal-users"] });
+      setShowCreateUserDialog(false);
+      setNewUser({ clientId: "", email: "", name: "", designation: "" });
+      setCreateScopeIds([]);
+    },
+    onError: (error: any) => {
+      toast.error(error.response?.data?.message || error.response?.data?.error || "Failed to create portal user");
+    },
+  });
+
   const updateUserMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: any }) =>
       hrmsApi.put(`/api/portal-users/${id}`, data),
@@ -315,8 +434,33 @@ export default function EnhancedClientMaster() {
     e.preventDefault();
     if (!selectedUser) return;
     const formData = new FormData(e.currentTarget);
-    const data = Object.fromEntries(formData.entries());
+    const data: Record<string, unknown> = Object.fromEntries(formData.entries());
+    // process_ids is the tenant boundary and cannot come from a form field — it is an array.
+    // updatePortalUser only writes the column when the key is present, so sending it here is
+    // what makes the scope editable at all.
+    data.process_ids = editScopeIds;
     updateUserMutation.mutate({ id: selectedUser.id, data });
+  };
+
+  const handleCreateUserSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    // The API requires at least one process (createClientUserSchema: processIds.min(1)).
+    // Refusing here gives a usable message instead of a 400 with a Zod dump.
+    if (!newUser.clientId) { toast.error("Select a client"); return; }
+    if (createScopeIds.length === 0) { toast.error("Select at least one process — a portal user with no scope cannot sign in"); return; }
+    createUserMutation.mutate({
+      clientId: newUser.clientId,
+      email: newUser.email.trim(),
+      name: newUser.name.trim(),
+      designation: newUser.designation.trim() || undefined,
+      processIds: createScopeIds,
+    });
+  };
+
+  const openEditUser = (user: PortalUser) => {
+    setSelectedUser(user);
+    setEditScopeIds(Array.isArray(user.process_ids) ? user.process_ids : []);
+    setShowUserDialog(true);
   };
 
   const handleDeactivateConfirm = () => {
@@ -645,6 +789,66 @@ export default function EnhancedClientMaster() {
 
           {/* Tab: Portal Users */}
           <TabsContent value="users" className="space-y-4">
+            <div className="flex justify-end">
+              <Button onClick={() => setShowCreateUserDialog(true)}>Add Portal User</Button>
+            </div>
+
+            {/* Create user dialog */}
+            <Dialog open={showCreateUserDialog} onOpenChange={setShowCreateUserDialog}>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Add Portal User</DialogTitle>
+                  <DialogDescription>
+                    Creates a client login for the portal at /portal/login. They sign in by email OTP
+                    and see only the processes selected below.
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleCreateUserSubmit} className="space-y-4">
+                  <div>
+                    <Label htmlFor="new_client">Client <span className="text-destructive">*</span></Label>
+                    <Select value={newUser.clientId} onValueChange={(v) => setNewUser({ ...newUser, clientId: v })}>
+                      <SelectTrigger id="new_client">
+                        <SelectValue placeholder="Select client..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {clients.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>{c.client_name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="new_email">Email <span className="text-destructive">*</span></Label>
+                    <Input id="new_email" type="email" required value={newUser.email}
+                      onChange={(e) => setNewUser({ ...newUser, email: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="new_name">Full Name <span className="text-destructive">*</span></Label>
+                    <Input id="new_name" required value={newUser.name}
+                      onChange={(e) => setNewUser({ ...newUser, name: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label htmlFor="new_designation">Designation</Label>
+                    <Input id="new_designation" value={newUser.designation}
+                      onChange={(e) => setNewUser({ ...newUser, designation: e.target.value })} />
+                  </div>
+                  <ProcessScopePicker
+                    processes={processList}
+                    selected={createScopeIds}
+                    onChange={setCreateScopeIds}
+                  />
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={() => setShowCreateUserDialog(false)}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" disabled={createUserMutation.isPending}>
+                      Create User
+                    </Button>
+                  </div>
+                </form>
+              </DialogContent>
+            </Dialog>
+
             {/* Edit user dialog — rendered once at component level, outside the table */}
             <Dialog open={showUserDialog} onOpenChange={(open) => { setShowUserDialog(open); if (!open) setSelectedUser(null); }}>
               <DialogContent>
@@ -679,6 +883,11 @@ export default function EnhancedClientMaster() {
                         </SelectContent>
                       </Select>
                     </div>
+                    <ProcessScopePicker
+                      processes={processList}
+                      selected={editScopeIds}
+                      onChange={setEditScopeIds}
+                    />
                     <div className="flex justify-end gap-2">
                       <Button type="button" variant="outline" onClick={() => setShowUserDialog(false)}>
                         Cancel
@@ -781,7 +990,7 @@ export default function EnhancedClientMaster() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => { setSelectedUser(user); setShowUserDialog(true); }}
+                                onClick={() => openEditUser(user)}
                               >
                                 <Edit2 className="h-3 w-3 mr-1" />
                                 Edit
