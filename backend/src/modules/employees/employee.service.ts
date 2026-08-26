@@ -381,10 +381,15 @@ export const employeeService = {
            e.designation_id, e.department_id, e.branch_id, e.process_id, e.cost_centre_id,
            e.reporting_manager_id,
            COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
-           -- The directory now shows personal and official addresses in their own columns, so
-           -- both are carried raw alongside the coalesced email alias above (which the existing
-           -- mapper still uses for the row subtitle and the officialEmailCompliant test).
-           e.email          AS personal_email,
+           -- The directory now shows personal and official addresses in their own columns,
+           -- alongside the coalesced email alias above (which the existing mapper still uses for
+           -- the row subtitle and the officialEmailCompliant test).
+           --
+           -- Personal prefers personal_email over the legacy email column: personal_email is what
+           -- updateEmployee writes (input.personalEmail) and is the better populated of the two
+           -- (live, active employees: 1068 vs 976; only 15 rows disagree). email still backfills
+           -- the 6 rows that have it and no personal_email.
+           COALESCE(NULLIF(TRIM(e.personal_email),''), e.email) AS personal_email,
            e.official_email AS official_email,
            -- gender is captured by both onboarding paths' first step (candidate journey's
            -- EmployeeForm and the new EmployeeProfileCompletion flow) and by nothing else,
