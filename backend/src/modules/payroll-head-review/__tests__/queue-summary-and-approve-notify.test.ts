@@ -54,10 +54,51 @@ describe("getQueue() summary enrichment", () => {
       offered: { status: "bh_approved", ctc: 45000 },
       final: { accepted: false, assigned: false, ctc: null },
       bgv: { overall_status: "clear" },
-      bank: { employee_id: "e1", payable: true },
+      // penny_drop is the overlay read alongside the readiness classification:
+      // classifyBankReadiness can never reach READY for a new hire (no db_bill
+      // salary history to verify against), so the confirmation that does exist
+      // is carried separately. Null here because the penny-drop lookup is a
+      // second db.execute call and this test mocks only the first.
+      bank: { employee_id: "e1", payable: true, penny_drop: null },
     });
     // Bank report computed once for the whole batch, not once per row.
     expect(buildBankReadinessReport).toHaveBeenCalledTimes(1);
+  });
+
+  it("carries a penny-drop confirmation through without touching the classification", async () => {
+    execute
+      .mockResolvedValueOnce([[
+        {
+          review_id: "r1", employee_id: "e1", status: "pending_review", package_accepted: 0,
+          final_ctc: null, offer_status: "bh_approved", offered_ctc: 45000,
+        },
+      ]])
+      // fetchPennyDropByEmployee's lookup.
+      .mockResolvedValueOnce([[
+        {
+          employee_id: "e1", verification_status: "verified", verification_method: "penny_drop",
+          verified_at: "2026-08-20 10:00:00", provider_account_holder_name: "RAHUL SHARMA",
+          name_match_score: "100.00",
+        },
+      ]]);
+    getEmployeeBgvStatus.mockResolvedValueOnce({ overall_status: "clear" });
+    // The classifier still says not payable — a new hire has no payment history.
+    buildBankReadinessReport.mockResolvedValueOnce({
+      rows: [{ employee_id: "e1", payable: false, readiness_class: "BLOCKED" }],
+    });
+
+    const rows = await getQueue({ status: "pending_review" }, "caller-1") as any[];
+    const bank = rows[0].summary.bank;
+
+    expect(bank.penny_drop).toEqual({
+      verified: true, status: "verified", method: "penny_drop",
+      verified_at: "2026-08-20 10:00:00", account_holder_name: "RAHUL SHARMA", name_match_score: 100,
+    });
+    // The overlay must not promote the row to payable: the payment file is built
+    // from readiness_class === "READY", and a penny drop alone must not put a new
+    // hire into a payroll run.
+    expect(bank.payable).toBe(false);
+    expect(bank.readiness_class).toBe("BLOCKED");
   });
 
   it("skips BGV/bank enrichment entirely for approved/rejected (no summary field)", async () => {
