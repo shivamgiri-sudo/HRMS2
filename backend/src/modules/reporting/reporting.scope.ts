@@ -10,7 +10,18 @@ export interface BranchScope {
   branchIds: string[];  // empty = all only for super admin or explicit all-scope users
 }
 
-const SUPER_ADMIN_ROLES = ['super_admin', 'admin', 'ceo'];
+/*
+ * Roles that see the whole organisation in every report.
+ *
+ * 'coo' added 2026-08-26. It was absent, so a COO fell through to the `emp?.branch_id`
+ * fallback and would have been branch-restricted — the opposite of the intent, and
+ * inconsistent with SENSITIVE_ROLES below, which already listed coo. No coo users existed at
+ * the time, so this was latent rather than a live breach.
+ *
+ * This is an explicit allow-list. branch_admin in this system also carries admin and
+ * finance_head grants, so org-wide access must never be inferred from another role.
+ */
+const SUPER_ADMIN_ROLES = ['super_admin', 'admin', 'ceo', 'coo'];
 
 export async function resolveBranchScope(userId: string): Promise<BranchScope> {
   const [roleRows] = await db.execute<RowDataPacket[]>(
