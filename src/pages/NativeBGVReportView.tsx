@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Printer, Download } from 'lucide-react';
 import { formatISTDate, formatISTTime } from '@/lib/utils';
 import QRCode from 'qrcode';
-import { downloadBGVReportPDF, qualificationRow } from '@/lib/bgvReportPdfGenerator';
+import { downloadBGVReportPDF, fetchDigilockerPhotoBase64, qualificationRow } from '@/lib/bgvReportPdfGenerator';
 
 export default function NativeBGVReportView() {
   const { candidateId } = useParams<{ candidateId: string }>();
@@ -13,6 +13,10 @@ export default function NativeBGVReportView() {
   const [loading, setLoading] = useState(true);
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
   const [exporting, setExporting] = useState(false);
+  // Recovered DigiLocker Aadhaar face photo, for HTML preview + PDF parity.
+  // Not every candidate has completed DigiLocker, so this can stay undefined
+  // with no error shown — the photo block simply doesn't render.
+  const [digilockerPhoto, setDigilockerPhoto] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (!candidateId) return;
@@ -34,6 +38,7 @@ export default function NativeBGVReportView() {
       }
     };
     void load();
+    void fetchDigilockerPhotoBase64(candidateId).then(setDigilockerPhoto);
   }, [candidateId]);
 
   const handlePrint = () => {
@@ -44,7 +49,7 @@ export default function NativeBGVReportView() {
     if (!data) return;
     setExporting(true);
     try {
-      await downloadBGVReportPDF(data);
+      await downloadBGVReportPDF({ ...data, digilockerPhotoBase64: digilockerPhoto });
     } catch (e: any) {
       alert(e?.message || 'PDF download failed');
     } finally {
@@ -209,9 +214,21 @@ export default function NativeBGVReportView() {
 
           {/* PAGE 2: CANDIDATE PROFILE */}
           <div className="p-12 print:p-8 page-break-after">
-            <h2 className="text-2xl font-bold text-slate-800 mb-6 border-b-2 border-slate-300 pb-2" style={{ fontFamily: 'EB Garamond, serif' }}>
-              CANDIDATE INFORMATION
-            </h2>
+            <div className="flex items-start justify-between gap-4 mb-6 border-b-2 border-slate-300 pb-2">
+              <h2 className="text-2xl font-bold text-slate-800" style={{ fontFamily: 'EB Garamond, serif' }}>
+                CANDIDATE INFORMATION
+              </h2>
+              {digilockerPhoto && (
+                <div className="text-center shrink-0">
+                  <img
+                    src={digilockerPhoto}
+                    alt="Aadhaar photo (DigiLocker verified)"
+                    className="w-24 h-24 object-cover rounded border border-slate-300"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">Aadhaar Photo<br />(DigiLocker Verified)</p>
+                </div>
+              )}
+            </div>
 
             {/* Personal Details */}
             <h3 className="text-lg font-bold text-slate-700 mb-3">Personal Details</h3>

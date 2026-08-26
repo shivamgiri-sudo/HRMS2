@@ -18,7 +18,7 @@ import {
   Send, ExternalLink, RefreshCw,
 } from 'lucide-react';
 import { formatIST, formatISTDate } from '@/lib/utils';
-import { downloadBGVReportPDF } from '@/lib/bgvReportPdfGenerator';
+import { downloadBGVReportPDF, fetchDigilockerPhotoBase64 } from '@/lib/bgvReportPdfGenerator';
 import { useToast } from '@/hooks/use-toast';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -153,6 +153,10 @@ export default function BGVReportTab({ candidateId, candidateEmail, candidateNam
   const [verifying, setVerifying] = useState('');
   const [initiatingPortal, setInitiatingPortal] = useState(false);
   const [confirmPortalOpen, setConfirmPortalOpen] = useState(false);
+  // Recovered DigiLocker Aadhaar face photo — thumbnail next to the
+  // Photograph checklist row, and reused for the PDF export below. Not every
+  // candidate has completed DigiLocker, so this can stay undefined.
+  const [digilockerPhoto, setDigilockerPhoto] = useState<string | undefined>(undefined);
 
   const loadReport = useCallback(async (id: string) => {
     setLoading(true);
@@ -172,6 +176,11 @@ export default function BGVReportTab({ candidateId, candidateEmail, candidateNam
     if (!candidateId) { setReport(null); return; }
     void loadReport(candidateId);
   }, [candidateId, loadReport]);
+
+  useEffect(() => {
+    if (!candidateId) { setDigilockerPhoto(undefined); return; }
+    void fetchDigilockerPhotoBase64(candidateId).then(setDigilockerPhoto);
+  }, [candidateId]);
 
   const setF = (key: keyof BGVReport, value: unknown) => {
     setReport(p => {
@@ -255,7 +264,7 @@ export default function BGVReportTab({ candidateId, candidateEmail, candidateNam
     setExporting(true);
     try {
       const fullData = await hrmsApi.get<any>(`/api/ats/bgv/report/full?candidateId=${candidateId}`);
-      await downloadBGVReportPDF(fullData.data);
+      await downloadBGVReportPDF({ ...fullData.data, digilockerPhotoBase64: digilockerPhoto });
     } catch (e: any) {
       toast({ title: 'PDF export failed', description: e?.message ?? 'Unknown error', variant: 'destructive' });
     } finally {
@@ -436,6 +445,14 @@ export default function BGVReportTab({ candidateId, candidateEmail, candidateNam
               <label key={key} className={`flex items-center gap-2 rounded-xl border p-3 cursor-pointer transition-colors ${report[key] ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 bg-white'} ${report.locked ? 'opacity-70 cursor-not-allowed' : ''}`}>
                 <input type="checkbox" checked={Boolean(report[key])} disabled={report.locked} onChange={e => setF(key, e.target.checked)} className="w-4 h-4" />
                 <span className="text-sm font-medium">{label}</span>
+                {key === 'photo_received' && digilockerPhoto && (
+                  <img
+                    src={digilockerPhoto}
+                    alt="DigiLocker Aadhaar photo"
+                    title="Recovered DigiLocker Aadhaar photo"
+                    className="w-6 h-6 rounded object-cover border border-slate-300 ml-1"
+                  />
+                )}
                 {report[key] ? <CheckCircle2 className="w-4 h-4 text-emerald-500 ml-auto" /> : null}
               </label>
             ))}

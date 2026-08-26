@@ -7,7 +7,7 @@
  *  /employees/bgv-status            → employee self-view (GET /api/bgv/employee/me)
  *  /employees/bgv-status/:employeeId → HR/admin lookup (GET /api/bgv/employee/:id)
  */
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import {
@@ -77,6 +77,7 @@ interface DigilockerStatus {
   created_at: string;
   updated_at: string;
   documents_received: string[];
+  photo_available: boolean;
 }
 
 interface EmployeeBgvData {
@@ -271,6 +272,27 @@ export default function NativeEmployeeBGVStatus() {
   const verdict = data?.overall_status ?? data?.status ?? "pending";
   const verdictCfg = VERDICT_CONFIG[verdict] ?? VERDICT_CONFIG.pending;
 
+  // Recovered DigiLocker Aadhaar face photo thumbnail — only fetched when the
+  // service has confirmed one exists (photo_available), via the same
+  // self/HR-lookup branching as apiPath above. Not every employee has
+  // completed DigiLocker, so this can stay undefined with no error shown.
+  const [digilockerPhoto, setDigilockerPhoto] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!data?.digilocker?.photo_available) { setDigilockerPhoto(undefined); return; }
+    const photoPath = isSelfView
+      ? "/api/bgv/employee/me/digilocker-photo"
+      : `/api/bgv/employee/${activeEmployeeId || routeEmployeeId}/digilocker-photo`;
+    let cancelled = false;
+    hrmsApi.getBlob(photoPath).then((blob) => {
+      if (cancelled) return;
+      const reader = new FileReader();
+      reader.onloadend = () => { if (!cancelled) setDigilockerPhoto(reader.result as string); };
+      reader.onerror = () => { if (!cancelled) setDigilockerPhoto(undefined); };
+      reader.readAsDataURL(blob);
+    }).catch(() => { if (!cancelled) setDigilockerPhoto(undefined); });
+    return () => { cancelled = true; };
+  }, [data?.digilocker?.photo_available, isSelfView, activeEmployeeId, routeEmployeeId]);
+
   function handlePrint() {
     window.print();
   }
@@ -426,6 +448,14 @@ export default function NativeEmployeeBGVStatus() {
                 <div className="px-5 py-3 border-b bg-slate-50 flex items-center gap-2">
                   <Fingerprint className="size-4 text-[#073f78]" />
                   <h2 className="text-sm font-semibold text-slate-700">DigiLocker Verification</h2>
+                  {digilockerPhoto && (
+                    <img
+                      src={digilockerPhoto}
+                      alt="DigiLocker Aadhaar photo"
+                      title="Recovered DigiLocker Aadhaar photo"
+                      className="size-8 rounded-lg object-cover border border-slate-300 ml-2"
+                    />
+                  )}
                   <span className={`ml-auto inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                     data.digilocker.session_status === "completed"
                       ? "bg-emerald-100 text-emerald-700"

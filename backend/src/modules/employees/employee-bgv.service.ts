@@ -56,6 +56,7 @@ export interface DigilockerStatus {
   created_at: string;
   updated_at: string;
   documents_received: string[];
+  photo_available: boolean;
 }
 
 export interface BgvConsent {
@@ -224,6 +225,26 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
     [candidateId]
   );
   const digiRow = digiRows[0];
+
+  // Cheap existence check for the recovered DigiLocker Aadhaar face photo —
+  // JSON_EXTRACT verified against the live MySQL 8.0.42 instance (read-only,
+  // 2026-08-26) to confirm this syntax works. Deliberately parenthesized
+  // (unlike an unparenthesized AND/OR mix, which would evaluate as
+  // `(a AND b) OR c` due to operator precedence and could match rows
+  // outside check_type='digilocker'). Only checks for presence — the full
+  // buffer is fetched separately by getDigilockerFacePhotoBuffer when a page
+  // actually needs the image.
+  const [photoRows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1
+       FROM candidate_bgv_check
+      WHERE candidate_id = ? AND check_type = 'digilocker'
+        AND (JSON_EXTRACT(result_json, '$.data.image') IS NOT NULL
+             OR JSON_EXTRACT(result_json, '$.image') IS NOT NULL)
+      LIMIT 1`,
+    [candidateId]
+  ).catch(() => [[] as RowDataPacket[]]);
+  const photoAvailable = (photoRows as RowDataPacket[]).length > 0;
+
   const digilocker: DigilockerStatus | null = digiRow
     ? {
         session_status: digiRow.session_status,
@@ -238,6 +259,7 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
             return Array.isArray(docs) ? docs.map((d: { type?: string; docType?: string }) => d.type ?? d.docType ?? "doc") : [];
           } catch { return []; }
         })(),
+        photo_available: photoAvailable,
       }
     : null;
 
@@ -299,6 +321,30 @@ export async function getEmployeeBgvStatus(employeeId: string): Promise<Employee
     report,
     digilocker,
   };
+}
+
+/**
+ * Resolve an employee's linked candidate_id, mirroring the same resolution
+ * order used inside getEmployeeBgvStatus above: employees.candidate_id first,
+ * falling back to ats_onboarding_bridge for employees created via ATS whose
+ * employees row was never back-filled with candidate_id.
+ */
+export async function resolveCandidateIdForEmployee(employeeId: string): Promise<string | null> {
+  const [empRows] = await db.execute<RowDataPacket[]>(
+    `SELECT candidate_id FROM employees WHERE id = ? LIMIT 1`,
+    [employeeId]
+  );
+  if (!empRows.length) return null;
+
+  let candidateId = empRows[0].candidate_id ?? null;
+  if (!candidateId) {
+    const [bridgeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT candidate_id FROM ats_onboarding_bridge WHERE employee_id = ? LIMIT 1`,
+      [employeeId]
+    ).catch(() => [[] as RowDataPacket[]]);
+    candidateId = (bridgeRows as RowDataPacket[])[0]?.candidate_id ?? null;
+  }
+  return candidateId;
 }
 
 /**

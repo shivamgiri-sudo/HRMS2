@@ -213,19 +213,75 @@ interface FacePhotoCellProps {
   faceDetectUrl?: string;
   /** The source is a PDF: skip face-cropping entirely and show a document tile instead. */
   isPdf?: boolean;
+  /**
+   * Recovered DigiLocker Aadhaar eKYC face photo (already a face crop, not a
+   * full document scan). When present this takes priority over previewUrl /
+   * documentId / isPdf entirely and is rendered directly — no PDF-icon
+   * branch, no bbox face-detect call, since the photo is already just a
+   * face. Not every candidate has completed a DigiLocker session yet, so a
+   * failed fetch (404) silently falls back to the previewUrl/documentId/isPdf
+   * resolution below rather than showing an error.
+   */
+  photoUrl?: string;
 }
 
-function FacePhotoCell({ documentId, label, subLabel, isTrusted, noFaceText, previewUrl, faceDetectUrl, isPdf }: FacePhotoCellProps) {
+function FacePhotoCell({ documentId, label, subLabel, isTrusted, noFaceText, previewUrl, faceDetectUrl, isPdf, photoUrl }: FacePhotoCellProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [hasImage, setHasImage] = useState(false);
   const [fullBlobUrl, setFullBlobUrl] = useState<string | null>(null);
   const [zoomOpen, setZoomOpen] = useState(false);
+  // Tracks whether the priority photoUrl fetch has failed (404/error), so the
+  // effect below can fall back to the legacy previewUrl/documentId resolution.
+  const [photoUrlFailed, setPhotoUrlFailed] = useState(false);
 
+  useEffect(() => { setPhotoUrlFailed(false); }, [photoUrl]);
+
+  const usePhotoUrl = !!photoUrl && !photoUrlFailed;
   const src = previewUrl ?? (documentId ? `/api/ats/onboarding-full/documents/preview/${documentId}` : null);
 
   useEffect(() => {
+    if (usePhotoUrl) {
+      let blobUrl: string | null = null;
+      let cancelled = false;
+      setLoading(true);
+      setError(null);
+      setHasImage(false);
+
+      hrmsApi.getBlob(photoUrl!).then((blob) => {
+        if (cancelled) return;
+        blobUrl = URL.createObjectURL(blob);
+        setFullBlobUrl(blobUrl);
+        const img = new Image();
+        img.onload = () => {
+          if (cancelled) return;
+          const canvas = canvasRef.current;
+          if (!canvas) return;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) return;
+          canvas.width = 160;
+          canvas.height = 200;
+          // The recovered photo is already a face crop (not a full document
+          // scan needing bbox detection) — just cover-fit it into the frame.
+          const scale = Math.max(160 / img.width, 200 / img.height);
+          const sw = 160 / scale;
+          const sh = 200 / scale;
+          const sx = (img.width - sw) / 2;
+          const sy = (img.height - sh) / 2;
+          ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 160, 200);
+          setHasImage(true);
+          setLoading(false);
+        };
+        img.onerror = () => { if (!cancelled) setPhotoUrlFailed(true); };
+        img.src = blobUrl!;
+      }).catch(() => {
+        if (!cancelled) setPhotoUrlFailed(true);
+      });
+
+      return () => { cancelled = true; if (blobUrl) URL.revokeObjectURL(blobUrl); };
+    }
+
     if (!src) { setError(noFaceText ?? "No document"); return; }
 
     let blobUrl: string | null = null;
@@ -295,7 +351,7 @@ function FacePhotoCell({ documentId, label, subLabel, isTrusted, noFaceText, pre
     });
 
     return () => { cancelled = true; if (blobUrl) URL.revokeObjectURL(blobUrl); };
-  }, [src, faceDetectUrl, documentId, noFaceText, isPdf]);
+  }, [usePhotoUrl, photoUrl, src, faceDetectUrl, documentId, noFaceText, isPdf]);
 
   const canZoom = hasImage && !loading && !!fullBlobUrl;
 
@@ -317,7 +373,7 @@ function FacePhotoCell({ documentId, label, subLabel, isTrusted, noFaceText, pre
             <span className="text-[11px]">{error}</span>
           </div>
         )}
-        {isPdf ? (
+        {isPdf && !usePhotoUrl ? (
           hasImage && (
             <div className="flex flex-col items-center gap-1.5 text-slate-500">
               <FileText className="h-12 w-12" />
@@ -672,7 +728,16 @@ export function FraudComparisonPanel({
               All faces are auto-detected and vertically aligned for comparison. The DigiLocker source is government-verified (ground truth). Face match score is selfie vs DigiLocker.
             </p>
 
-            {/* Primary comparison: Selfie vs DigiLocker Aadhaar vs Manual Aadhaar */}
+            {/*
+              Primary comparison: Selfie vs DigiLocker Aadhaar vs Manual Aadhaar.
+              The DigiLocker Aadhaar cell renders the recovered eKYC face photo
+              (photoUrl) when available, falling back to the previewUrl/isPdf
+              document-scan resolution otherwise. Note: the match-score badge
+              above (primaryMatch) is NOT recomputed against this new photo
+              source yet — compareFaces/detectFaceBbox operate on a file path
+              on disk, not this fetched Buffer response, so live scoring
+              against the recovered photo is a separate follow-up.
+            */}
             <div>
               <SectionHeader>Aadhaar face comparison</SectionHeader>
               <div className="flex flex-wrap gap-6 justify-start">
@@ -696,9 +761,10 @@ export function FraudComparisonPanel({
                   previewUrl={digilockerUrls?.previewUrl}
                   faceDetectUrl={digilockerUrls?.faceDetectUrl}
                   isPdf={digilockerUrls?.isPdf}
+                  photoUrl={`/api/ats/fraud-alerts/documents/digilocker-face-photo/${candidateId}`}
                   label="DigiLocker Aadhaar"
                   subLabel="Govt-verified · ground truth"
-                  isTrusted
+                  isTrusted={!!digilockerFile}
                   noFaceText="DigiLocker not completed"
                 />
                 <div className="flex items-center self-center">
@@ -745,7 +811,7 @@ export function FraudComparisonPanel({
                     isPdf={showDigilockerForPan ? digilockerUrls?.isPdf : undefined}
                     label="DigiLocker PAN"
                     subLabel="Govt-verified"
-                    isTrusted
+                    isTrusted={showDigilockerForPan}
                     noFaceText="PAN not in DigiLocker"
                   />
                   <div className="flex items-center self-center">

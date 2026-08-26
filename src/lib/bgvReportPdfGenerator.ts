@@ -2,6 +2,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { buildQrCodeUrl } from "@/integrations/apis/qrCode.api";
 import { formatISTDate, formatISTTime } from "@/lib/utils";
+import { hrmsApi } from "@/lib/hrmsApi";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,14 @@ interface BGVReportData {
   bgvChecks: any[];
   candidate: any;
   completedByName?: string | null;
+  /**
+   * The recovered DigiLocker Aadhaar eKYC face photo, as a data: URI (fetched
+   * from GET /api/ats/bgv/report/digilocker-photo?candidateId= and converted
+   * via FileReader, same pattern as loadLogoBase64 below). Optional — not
+   * every candidate has completed a DigiLocker session, and callers should
+   * simply omit this field rather than error when the endpoint 404s.
+   */
+  digilockerPhotoBase64?: string;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -126,6 +135,32 @@ async function loadLogoBase64(): Promise<string | null> {
   } catch (error) {
     console.error('Failed to load logo:', error);
     return null;
+  }
+}
+
+/**
+ * Fetches the recovered DigiLocker Aadhaar eKYC face photo for a candidate,
+ * as a base64 data: URI ready to hand to jsPDF's addImage / an <img src>.
+ *
+ * Mirrors loadLogoBase64's fetch → blob → FileReader.readAsDataURL pattern,
+ * but goes through hrmsApi (not a bare fetch) because this endpoint is
+ * auth-gated (requireAuth + requireRole), unlike the public /mcn-logo.png
+ * asset. Never throws: a missing photo (404 — not every candidate has
+ * completed DigiLocker) or any other failure resolves to `undefined` so the
+ * report generates normally without it.
+ */
+export async function fetchDigilockerPhotoBase64(candidateId: string): Promise<string | undefined> {
+  if (!candidateId) return undefined;
+  try {
+    const blob = await hrmsApi.getBlob(`/api/ats/bgv/report/digilocker-photo?candidateId=${candidateId}`);
+    return await new Promise<string | undefined>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve(undefined);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return undefined;
   }
 }
 
@@ -310,12 +345,36 @@ export async function generateBGVReportPDF(data: BGVReportData): Promise<jsPDF> 
   currentY = 15;
   drawWatermark(doc);
 
+  // DigiLocker Aadhaar face photo — top-right of Page 2, additive only (not
+  // every candidate has completed DigiLocker). Drawn before the flowing
+  // content below so the Personal Details table can be pushed past it and
+  // never rendered underneath it.
+  let candidatePhotoBottomY = currentY;
+  if (data.digilockerPhotoBase64) {
+    try {
+      const photoSize = 28; // mm square
+      const photoX = pageWidth - 15 - photoSize;
+      const photoY = 15;
+      doc.addImage(data.digilockerPhotoBase64, 'JPEG', photoX, photoY, photoSize, photoSize);
+      doc.setFontSize(7);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 100, 100);
+      doc.text("Aadhaar Photo", photoX + photoSize / 2, photoY + photoSize + 3, { align: 'center' });
+      doc.text("(DigiLocker Verified)", photoX + photoSize / 2, photoY + photoSize + 6.5, { align: 'center' });
+      doc.setTextColor(0, 0, 0);
+      candidatePhotoBottomY = photoY + photoSize + 9;
+    } catch (e) {
+      console.warn("Failed to embed DigiLocker photo in BGV report:", e);
+    }
+  }
+
   doc.setFontSize(16);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(30, 41, 59);
   doc.text("CANDIDATE INFORMATION", 15, currentY);
   doc.setTextColor(0, 0, 0);
   currentY += 8;
+  currentY = Math.max(currentY, candidatePhotoBottomY);
 
   // Personal Details
   doc.setFontSize(12);

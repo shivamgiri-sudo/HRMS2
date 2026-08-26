@@ -43,6 +43,7 @@ import { db } from "../../db/mysql.js";
 import type { RowDataPacket } from "mysql2";
 import { atsService } from "./ats.service.js";
 import { resolveRecruiterForActor } from "../ats-full-parity/recruiterInterview.service.js";
+import { getDigilockerFacePhotoBuffer } from "./digilocker-face-photo.js";
 
 const router = Router();
 if (!env.BGV_WEBHOOK_SECRET) {
@@ -704,6 +705,22 @@ router.get("/report/full", requireAuth, requireRole("admin", "hr"), h(async (req
       completedByName,
     },
   });
+}));
+
+// ── DigiLocker Aadhaar face photo (for the PDF generator + HTML preview) ──────
+router.get("/report/digilocker-photo", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+  const candidateId = String(req.query.candidateId ?? "");
+  if (!candidateId) return res.status(400).json({ success: false, message: "candidateId required" });
+  await requireBgvCandidateScope(req, candidateId);
+
+  const buffer = await getDigilockerFacePhotoBuffer(candidateId);
+  if (!buffer) return res.status(404).json({ error: "No DigiLocker photo on file" });
+
+  res.setHeader("Content-Type", "image/jpeg");
+  res.setHeader("Content-Disposition", "inline");
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.send(buffer);
 }));
 
 // ── BGV API Monitor Routes ────────────────────────────────────────────────────

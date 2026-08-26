@@ -10,6 +10,7 @@ import { detectFaceBbox, compareFaces } from "./face-match.service.js";
 import { resolveOnboardingDocumentFile } from "./onboardingDocumentPath.js";
 import { recalculateNameMatch } from "./name-consistency.routes.js";
 import { getLatestDigilockerFile } from "../integrations/luckpay/luckpay-status.service.js";
+import { getDigilockerFacePhotoBuffer } from "./digilocker-face-photo.js";
 
 const router = Router();
 
@@ -317,6 +318,25 @@ router.get("/documents/digilocker-face-detect/:candidateId", requireAuth, requir
     res.json({ bbox });
   } catch (err: unknown) {
     res.json({ bbox: null });
+  }
+});
+
+// Serves the face photo recovered from the DigiLocker Aadhaar eKYC response
+// (candidate_bgv_check.result_json for check_type='digilocker'), independent
+// of the raw KYC document file above — this is the extracted photo, not the
+// downloaded document.
+router.get("/documents/digilocker-face-photo/:candidateId", requireAuth, requireRole("super_admin", "admin", "hr", "payroll_hr", "payroll_head"), async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const buffer = await getDigilockerFacePhotoBuffer(req.params.candidateId);
+    if (!buffer) return res.status(404).json({ error: "No DigiLocker photo on file" });
+
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Content-Disposition", "inline");
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.send(buffer);
+  } catch (err: unknown) {
+    res.status(500).json({ error: "Could not load DigiLocker photo" });
   }
 });
 
