@@ -83,10 +83,20 @@ describe("importEmployeeMasterBatch — batched rewrite", () => {
     expect(provisionLmsIdentityForEmployee).toHaveBeenCalledWith({ employeeCode: "MAS001", createdBy: "user-1" });
   });
 
-  it("does not resolve an org code against an INACTIVE process/lob/cost-centre record", async () => {
-    // The bulk lookup query itself filters WHERE active_status = 1 — an inactive
-    // record simply never appears in the SELECT result, so the map lookup misses
-    // and the column is left NULL rather than attaching to a closed process.
+  it("refuses an org code that resolves against no ACTIVE process/lob/cost-centre record", async () => {
+    // The bulk lookup filters WHERE active_status = 1, so an inactive or unknown record never
+    // comes back and the map lookup misses. This must never attach the employee to a closed
+    // process — that part is unchanged.
+    //
+    // What changed (2026-08-26) is the disposition on a miss. It used to import the row with
+    // process_id NULL. That silent NULL is how one batch on 2026-08-19 created 60 active
+    // employees with no process at all — 61 of the 128 August joiners, 48%, against 0 for
+    // every month Jan-Jun, and 62 of the 63 were client-facing OPERATIONS staff. An employee
+    // with no process joins to no client and is missing from process/client headcount, P&L
+    // allocation by process, and the client portal's headcount and attrition.
+    //
+    // So a miss is now a reported error naming the row and the offending code, and nothing is
+    // written. The value the uploader supplied is no longer thrown away in silence.
     mockBySql(
       [row("row-1", 1, { employee_code: "MAS001", first_name: "Amit", process_code: "CLOSED_PROC" })],
       { process: [] }, // inactive/nonexistent process_code never comes back from the filtered lookup
@@ -94,11 +104,11 @@ describe("importEmployeeMasterBatch — batched rewrite", () => {
 
     const result = await importEmployeeMasterBatch("batch-1", "user-1");
 
-    expect(result.importedRows).toBe(1);
+    expect(result.importedRows).toBe(0);
+    expect(result.errorRows).toBe(1);
+    expect(result.errors[0]).toContain('process_code "CLOSED_PROC"');
     const insertCall = execute.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO employees"));
-    // buildParams order: employee_code, first_name, last_name, mobile, email, gender, doj,
-    // branch_id, department_id, designation_id, cost_centre_id, process_id(11), lob_id, ...
-    expect(insertCall![1][11]).toBeNull();
+    expect(insertCall, "a row that resolves nothing must not be written at all").toBeUndefined();
   });
 
   it("isolates one bad row when the chunked INSERT fails, without losing the rest of the chunk", async () => {
@@ -106,10 +116,13 @@ describe("importEmployeeMasterBatch — batched rewrite", () => {
     execute.mockImplementation(async (sql: string, params: unknown[]) => {
       if (sql.includes("SELECT id, row_no, normalized_data")) {
         return [[
-          row("row-1", 1, { employee_code: "MAS001", first_name: "Amit" }),
-          row("row-2", 2, { employee_code: "MAS002", first_name: "Priya" }),
+          // process_code is required as of 2026-08-26, so these fixtures carry one — this
+          // test is about chunk-failure isolation, not about master resolution.
+          row("row-1", 1, { employee_code: "MAS001", first_name: "Amit", process_code: "P1" }),
+          row("row-2", 2, { employee_code: "MAS002", first_name: "Priya", process_code: "P1" }),
         ], []];
       }
+      if (sql.includes("FROM process_master")) return [[{ id: "p-1", code: "P1" }], []];
       if (sql.includes("_master")) return [[], []];
       if (sql.includes("INSERT INTO employees")) {
         insertCalls++;
@@ -133,7 +146,11 @@ describe("importEmployeeMasterBatch — batched rewrite", () => {
   });
 
   it("does not fail the row when LMS provisioning throws — it's best-effort", async () => {
-    mockBySql([row("row-1", 1, { employee_code: "MAS001", first_name: "Amit" })], {});
+    // process_code required as of 2026-08-26; this test is about LMS being best-effort.
+    mockBySql(
+      [row("row-1", 1, { employee_code: "MAS001", first_name: "Amit", process_code: "P1" })],
+      { process: [{ id: "p-1", code: "P1" }] },
+    );
     provisionLmsIdentityForEmployee.mockRejectedValue(new Error("LMS unreachable"));
 
     const result = await importEmployeeMasterBatch("batch-1", "user-1");

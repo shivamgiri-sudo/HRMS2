@@ -142,6 +142,69 @@ export async function importEmployeeMasterBatch(
     bulkLookup(`SELECT id, lob_code AS code FROM lob_master WHERE active_status = 1 AND lob_code`, lobCodes),
   ]);
 
+  /*
+   * Reject rows whose masters did not resolve, instead of importing a silent NULL.
+   *
+   * Two separate failures were possible here, and both were silent:
+   *
+   *   1. process_code absent -> process_id NULL. On 2026-08-19 a single bulk batch created
+   *      60 active employees with no process at all; by 2026-08-26 that was 61 of the 128
+   *      people who joined in August (48%), against 0 for every month Jan-Jun. 62 of the 63
+   *      are OPERATIONS staff, i.e. client-facing. An employee with no process joins to no
+   *      client, so they are invisible to process/client headcount, to P&L allocation by
+   *      process, and to the client portal's own headcount and attrition figures.
+   *
+   *   2. A code that was SUPPLIED but matched no master row was mapped through
+   *      `?? null` and dropped. That is worse than a blank: somebody typed a value, the
+   *      import reported success, and the value was thrown away. The same pattern is why
+   *      cost_centre_id is empty on so much of this table.
+   *
+   * process is required because every employee has one — the internal functions (HR
+   * Operations, IT, Finance-Corporate) exist as process_master rows in their own right, so
+   * "back-office staff have no process" is not a real case.
+   *
+   * For the other five masters a blank stays allowed, exactly as before; only a supplied
+   * value that does not resolve is now an error. This deliberately turns some previously
+   * "successful" imports into reported errors — that is the point, and the row is named so
+   * it can be corrected and re-uploaded rather than silently landing wrong.
+   *
+   * Note the lookups for cost_centre/process/lob are restricted to active_status = 1, so a
+   * code that exists but is inactive is reported here too.
+   */
+  const RESOLVERS: Array<{ label: string; code: (r: ParsedRow) => string | null; map: Map<string, string> }> = [
+    { label: "branch_code",      code: (r) => r.branchCode,      map: branchIds },
+    { label: "department_code",  code: (r) => r.departmentCode,  map: departmentIds },
+    { label: "designation_code", code: (r) => r.designationCode, map: designationIds },
+    { label: "cost_centre_code", code: (r) => r.costCentreCode,  map: costCentreIds },
+    { label: "lob_code",         code: (r) => r.lobCode,         map: lobIds },
+  ];
+
+  const importable: ParsedRow[] = [];
+  for (const r of parsed) {
+    const problems: string[] = [];
+
+    if (!r.processCode) {
+      problems.push("process_code is required");
+    } else if (!processIds.has(r.processCode)) {
+      problems.push(`process_code "${r.processCode}" does not match any active process`);
+    }
+    for (const res of RESOLVERS) {
+      const code = res.code(r);
+      if (code && !res.map.has(code)) {
+        problems.push(`${res.label} "${code}" does not match any active record`);
+      }
+    }
+
+    if (problems.length) {
+      const msg = `Row ${r.rowNo}: ${problems.join("; ")}`;
+      errors.push(msg);
+      errorUpdates.push({ rowId: r.rowId, message: msg.slice(0, 500) });
+      errorRows++;
+      continue;
+    }
+    importable.push(r);
+  }
+
   let importedRows = 0;
   const importedRowIds: string[] = [];
   const provisionQueue: string[] = [];
@@ -185,7 +248,7 @@ export async function importEmployeeMasterBatch(
        lob_id = COALESCE(VALUES(lob_id), lob_id),
        employment_type = VALUES(employment_type)`;
 
-  for (const rowsInChunk of chunk(parsed, CHUNK_SIZE)) {
+  for (const rowsInChunk of chunk(importable, CHUNK_SIZE)) {
     const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active',?)").join(", ");
     const params = rowsInChunk.flatMap(buildParams);
 
