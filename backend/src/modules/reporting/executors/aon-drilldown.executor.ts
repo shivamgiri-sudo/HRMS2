@@ -30,7 +30,7 @@ import {
   dateParam,
 } from "./types.js";
 import { AON_REFERENCE_JOIN_DATE_SQL } from "./aon.executor.js";
-import { AON_DAYS_SQL, IN_TRAINING_SQL } from "../workforce-population.js";
+import { ACTIVE_EMPLOYEE_SQL, AON_DAYS_SQL, IN_TRAINING_SQL } from "../workforce-population.js";
 
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
@@ -52,10 +52,14 @@ function aonBucketClause(bucket: unknown): string | null {
     // Joined and on the floor but not yet on payroll. Must come first -- these rows would
     // otherwise fall into 0-30 and the drawer would disagree with the cell that was clicked.
     case "In Training": return IN_TRAINING_SQL("e", "CURDATE()");
-    case "0-30": return `${AON_DAYS_SQL("e", "CURDATE()")} <= 30`;
-    case "31-60": return `${AON_DAYS_SQL("e", "CURDATE()")} BETWEEN 31 AND 60`;
-    case "61-90": return `${AON_DAYS_SQL("e", "CURDATE()")} BETWEEN 61 AND 90`;
-    case "90+": return `${AON_DAYS_SQL("e", "CURDATE()")} > 90`;
+    // AON_DAYS_SQL clamps a future reference date to 0, and 0 <= 30 -- so every tenure case
+    // below must explicitly exclude In Training or its people leak into 0-30 as well as their
+    // own bucket. Live-verified: the aggregate's 0-30 cell showed 153 while this predicate
+    // (before the NOT-guard) returned 165, the same 12 In Training employees counted twice.
+    case "0-30": return `NOT (${IN_TRAINING_SQL("e", "CURDATE()")}) AND ${AON_DAYS_SQL("e", "CURDATE()")} <= 30`;
+    case "31-60": return `NOT (${IN_TRAINING_SQL("e", "CURDATE()")}) AND ${AON_DAYS_SQL("e", "CURDATE()")} BETWEEN 31 AND 60`;
+    case "61-90": return `NOT (${IN_TRAINING_SQL("e", "CURDATE()")}) AND ${AON_DAYS_SQL("e", "CURDATE()")} BETWEEN 61 AND 90`;
+    case "90+": return `NOT (${IN_TRAINING_SQL("e", "CURDATE()")}) AND ${AON_DAYS_SQL("e", "CURDATE()")} > 90`;
     default: return null;
   }
 }
@@ -64,10 +68,11 @@ function aonBucketAtExitClause(bucket: unknown): string | null {
   switch (bucket) {
     // Left before payroll started -- quit during training.
     case "In Training": return IN_TRAINING_SQL("e", "e.date_of_exit");
-    case "0-30": return `${AON_DAYS_SQL("e", "e.date_of_exit")} <= 30`;
-    case "31-60": return `${AON_DAYS_SQL("e", "e.date_of_exit")} BETWEEN 31 AND 60`;
-    case "61-90": return `${AON_DAYS_SQL("e", "e.date_of_exit")} BETWEEN 61 AND 90`;
-    case "90+": return `${AON_DAYS_SQL("e", "e.date_of_exit")} > 90`;
+    // Same NOT-guard as aonBucketClause above, mirrored onto the at-exit reference date.
+    case "0-30": return `NOT (${IN_TRAINING_SQL("e", "e.date_of_exit")}) AND ${AON_DAYS_SQL("e", "e.date_of_exit")} <= 30`;
+    case "31-60": return `NOT (${IN_TRAINING_SQL("e", "e.date_of_exit")}) AND ${AON_DAYS_SQL("e", "e.date_of_exit")} BETWEEN 31 AND 60`;
+    case "61-90": return `NOT (${IN_TRAINING_SQL("e", "e.date_of_exit")}) AND ${AON_DAYS_SQL("e", "e.date_of_exit")} BETWEEN 61 AND 90`;
+    case "90+": return `NOT (${IN_TRAINING_SQL("e", "e.date_of_exit")}) AND ${AON_DAYS_SQL("e", "e.date_of_exit")} > 90`;
     default: return null;
   }
 }
@@ -145,7 +150,7 @@ export async function aonDrilldownEmployees(
     // "who is currently active in this AON bucket" and keeps the active_status filter exactly
     // as before -- this branch does not change that call's behaviour or row count.
     if (!cohortMonth) {
-      clauses.push("e.active_status = 1");
+      clauses.push(ACTIVE_EMPLOYEE_SQL("e"));
     }
     const bucketClause = aonBucketClause(filters.aonBucket);
     if (bucketClause) clauses.push(bucketClause);
@@ -220,7 +225,7 @@ export async function aonDrilldownEmployees(
              -- already-exited employee, which is nonsensical. e.active_status is already
              -- available on every row here regardless of whether the active_status = 1
              -- clause above was applied, so this costs nothing to add.
-             (e.active_status = 1) AS is_active
+             (${ACTIVE_EMPLOYEE_SQL("e")}) AS is_active
         FROM employees e
         LEFT JOIN branch_master b       ON b.id  = e.branch_id
         LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id

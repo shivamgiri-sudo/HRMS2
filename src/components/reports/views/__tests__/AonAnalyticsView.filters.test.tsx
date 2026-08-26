@@ -21,10 +21,18 @@ describe("AON filters", () => {
   });
 
   it("loads each dropdown from a real endpoint", () => {
+    // CRITICAL-3 (final whole-branch review): the cost-centre dropdown used to point at
+    // /api/finance/cost-centres, which is role-gated to a narrower set than the AON page itself
+    // (super_admin/admin/finance_head/accounts_head/finance/branch_head/branch_admin) -- every
+    // other AON-eligible role (hr, hr_head, payroll, wfm, manager, process_manager, ceo) got a
+    // silent 403 and an empty dropdown. /api/org/cost-centres is auth-only, honours
+    // active_status, and returns the same { data: [...] } shape this file already expects.
     for (const url of ["/api/org/branches", "/api/org/processes",
-                       "/api/org/departments", "/api/finance/cost-centres"]) {
+                       "/api/org/departments", "/api/org/cost-centres"]) {
       expect(SRC, `${url} not called`).toContain(url);
     }
+    expect(SRC, "must no longer call the role-gated finance endpoint")
+      .not.toContain("/api/finance/cost-centres");
   });
 
   it("passes every filter into the report params", () => {

@@ -1258,7 +1258,7 @@ export default function AonAnalyticsView() {
   const costCentres = useQuery({
     queryKey: ["finance-cost-centres-aon"],
     queryFn: () => hrmsApi.get<{ data: { id: string; cost_centre_name: string }[] }>(
-      "/api/finance/cost-centres?active_status=1&limit=1000"),
+      "/api/org/cost-centres?active_status=1&limit=1000"),
   });
 
   const headline = useReport("aon-overall-attrition-rate", {
