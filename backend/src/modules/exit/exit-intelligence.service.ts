@@ -189,10 +189,28 @@ export async function getExitCommandCenter(filters: { managerEmployeeId?: string
        SUM(CASE WHEN er.exit_type = 'voluntary' THEN 1 ELSE 0 END) AS voluntary,
        SUM(CASE WHEN er.exit_type = 'involuntary' THEN 1 ELSE 0 END) AS involuntary,
        COUNT(*) AS total,
+       /*
+        * MAX() rather than a bare er.created_at.
+        *
+        * This is the denominator of the monthly attrition rate: headcount that had joined by
+        * the end of the month being reported. The correlated subquery referenced
+        * er.created_at directly, which is not in GROUP BY and which MySQL cannot prove is
+        * functionally dependent on DATE_FORMAT(er.created_at, '%Y-%m') — so under
+        * sql_mode=only_full_group_by the whole statement was rejected with
+        * ER_WRONG_FIELD_WITH_GROUP, taking getExitCommandCenter() down with it and making
+        * /api/exit/command-center return 500 on every call. The page swallowed that and
+        * rendered "0 records / No exit records found", which reads as a real zero rather
+        * than a broken query.
+        *
+        * Every row in a group shares one month, so LAST_DAY(MAX(...)) is the same date the
+        * bare column produced — the value is unchanged, only its legality. Verified against
+        * production 2026-08-27: the bare form errors, this form returns
+        * 2026-06 = 2 exits / 0.23% and 2026-08 = 1 exit / 0.09%.
+        */
        ROUND(COUNT(*) * 100.0 / NULLIF((
          SELECT COUNT(*) FROM employees e2
          WHERE e2.active_status = 1
-           AND e2.date_of_joining <= LAST_DAY(er.created_at)
+           AND e2.date_of_joining <= LAST_DAY(MAX(er.created_at))
        ), 0), 2) AS rate
      FROM exit_request er
      WHERE er.created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)

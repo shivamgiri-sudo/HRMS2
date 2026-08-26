@@ -628,7 +628,17 @@
     "migrations/1607_performance_scorecard_page_catalog.sql",
     "migrations/1608_salary_dispute_arrear_pending_status.sql",
     "migrations/1610_payroll_approval_status_page_catalog.sql",
-    "migrations/1611_employee_salary_change_log.sql"
+    "migrations/1611_employee_salary_change_log.sql",
+    "migrations/1612_fix_festival_calendar_2026_rakhi_bhaidooj.sql",
+    "migrations/1613_add_missing_festival_calendar_2026_entries.sql",
+    "1614_user_roles_grant_provenance.sql",
+    "1615_vendor_bank_details.sql",
+    "1616_missing_page_catalog_entries_dispute_budget.sql",
+    "1617_snapshot_tables_collation_repair.sql",
+    "1618_payroll_branch_readiness_collation.sql",
+    "1619_attendance_regularization_queue_indexes.sql",
+    "1620_enable_wired_notification_events.sql",
+    "migrations/440_salary_date_revision_requests.sql"
   ],
   "approvedDeletions": [
     {
@@ -667,7 +677,8 @@
     "migrations/1610_payroll_approval_status_page_catalog.sql",
     "migrations/1611_employee_salary_change_log.sql",
     "migrations/1612_fix_festival_calendar_2026_rakhi_bhaidooj.sql",
-    "migrations/1613_add_missing_festival_calendar_2026_entries.sql"
+    "migrations/1613_add_missing_festival_calendar_2026_entries.sql",
+    "migrations/440_salary_date_revision_requests.sql"
   ],
   "knownUnlisted": [
     "000_ai_supplemental.sql",
