@@ -141,9 +141,12 @@ export async function activateEmployee(
         );
         const resolvedUserId: string = (existingRows[0] as any)?.id ?? newUserId;
 
+        // System grant with no human actor: granted_by NULL, granted_at stamped (migration 1614).
+        // INSERT IGNORE never touches an existing row, so unlike the ON DUPLICATE KEY sites
+        // this needs no active_status guard — it cannot overwrite provenance already there.
         await db.execute(
-          `INSERT IGNORE INTO user_roles (id, user_id, role_key, active_status, created_at)
-           VALUES (UUID(), ?, 'Employee', 1, NOW())`,
+          `INSERT IGNORE INTO user_roles (id, user_id, role_key, active_status, created_at, granted_by, granted_at)
+           VALUES (UUID(), ?, 'Employee', 1, NOW(), NULL, NOW())`,
           [resolvedUserId]
         );
 

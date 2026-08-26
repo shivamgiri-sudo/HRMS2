@@ -83,9 +83,16 @@ export async function assignRole(userId: string, roleKey: string, actorUserId: s
   if ((catalog as RowDataPacket[]).length === 0) {
     throw Object.assign(new Error(`Role not in catalog: ${roleKey}`), { statusCode: 400 });
   }
+  // granted_by/granted_at are re-stamped on the ON DUPLICATE KEY branch as well as the
+  // INSERT. That branch is a REACTIVATION of a previously revoked grant, which is a new
+  // grant decision by a new actor — carrying the original one forward would attribute
+  // today's access to whoever made the superseded one. created_at deliberately keeps the
+  // original insert time; granted_at is the column that describes access held now.
   await db.execute(
-    "INSERT INTO user_roles (id, user_id, role_key, active_status) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE active_status = 1",
-    [randomUUID(), userId, roleKey]
+    `INSERT INTO user_roles (id, user_id, role_key, active_status, granted_by, granted_at)
+     VALUES (?, ?, ?, 1, ?, NOW())
+     ON DUPLICATE KEY UPDATE active_status = 1, granted_by = VALUES(granted_by), granted_at = VALUES(granted_at)`,
+    [randomUUID(), userId, roleKey, actorUserId]
   );
   await logSensitiveAction({ actor_user_id: actorUserId, action_type: "ROLE_ASSIGNED", module_key: "ACCESS_CONTROL", entity_type: "user", entity_id: userId, change_summary: { role_key: roleKey }, req });
 }

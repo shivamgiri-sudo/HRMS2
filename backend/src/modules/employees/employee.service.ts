@@ -106,8 +106,25 @@ const createAuthUserForEmployee = async (employeeId: string, email: string): Pro
       ['employee']
     );
     if (roleCheck.length > 0) {
+      // System grant: no human actor, so granted_by stays NULL while granted_at is
+      // stamped. NULL granted_by + non-NULL granted_at reads as "attached by the
+      // platform"; both NULL means the row predates migration 1614.
+      //
+      // The reactivation branch is GUARDED on active_status = 0, and the order of the
+      // assignments is load-bearing. This runs on EVERY login, so an unconditional
+      // re-stamp would reset granted_at to the last sign-in and blank out a granted_by
+      // that an administrator had deliberately set — turning the provenance column into
+      // a login timestamp. MySQL evaluates ON DUPLICATE KEY UPDATE assignments left to
+      // right and a bare column reference yields its not-yet-updated value, so both
+      // IF()s must appear BEFORE `active_status = 1` to still see the OLD status.
+      // Reordering them silently disables the guard.
       await db.execute(
-        'INSERT INTO user_roles (id, user_id, role_key, active_status) VALUES (UUID(), ?, ?, 1) ON DUPLICATE KEY UPDATE active_status = 1',
+        `INSERT INTO user_roles (id, user_id, role_key, active_status, granted_by, granted_at)
+         VALUES (UUID(), ?, ?, 1, NULL, NOW())
+         ON DUPLICATE KEY UPDATE
+           granted_at = IF(active_status = 0, NOW(), granted_at),
+           granted_by = IF(active_status = 0, NULL, granted_by),
+           active_status = 1`,
         [userId, 'employee']
       );
     }

@@ -41,6 +41,21 @@ const ORG_WIDE_REQUIRED_MSG =
  * Same helper/logic as bank-payment-readiness.routes.ts's hasExportScope and
  * payroll.routes.ts's — duplicated per-file rather than shared, to keep this a minimal,
  * targeted fix on the files that were still vulnerable rather than a cross-file refactor.
+ *
+ * STATUS 2026-08-26 — the shortcut this helper was written to avoid is GONE.
+ * hasOrgWideScope() no longer short-circuits on `admin`; it now reads
+ *   super_admin -> true; else require an allowed role; else require a
+ *   scope_type='all' row against those roles
+ * which is character-for-character the logic below when called as
+ * hasOrgWideScope(userId, PAYROLL_EXPORT_ROLES). This helper is therefore a
+ * duplicate rather than a divergence, and the paragraphs above are kept as the
+ * record of WHY it exists, not as a live warning about the shared function.
+ *
+ * It is deliberately NOT collapsed into hasOrgWideScope(). Doing so would edit the
+ * gate on a live full-account-number/payment export for zero behavioural gain, and
+ * this file's own history is the argument against that trade. Anyone consolidating
+ * later must diff both implementations again first — do not assume this note is
+ * still true.
  */
 async function hasExportScope(userId: string): Promise<boolean> {
   if (await hasAnyRoleAsync(userId, "super_admin")) return true;

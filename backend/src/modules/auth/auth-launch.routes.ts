@@ -97,7 +97,7 @@ function inviteEmailText(input: { name: string; employeeCode?: string | null; li
  */
 const BOOTSTRAP_GRANTABLE_ROLES: ReadonlySet<string> = new Set(["employee"]);
 
-async function assignRole(userId: string, roleKey: string, _actorUserId: string) {
+async function assignRole(userId: string, roleKey: string, actorUserId: string) {
   // Hard allowlist. A privileged role must never be reachable from here, no
   // matter what a future caller passes in.
   if (!BOOTSTRAP_GRANTABLE_ROLES.has(roleKey)) {
@@ -109,12 +109,16 @@ async function assignRole(userId: string, roleKey: string, _actorUserId: string)
   // this to the baseline role. It previously ran for inferred privileged roles,
   // which silently revived 27 grants that had been deliberately revoked.
   //
-  // _actorUserId is still unused: user_roles has no granted_by/granted_at column
-  // (id, user_id, role_key, active_status, created_at). Recording the actor needs
-  // a migration — do not write a column that does not exist.
+  // actorUserId is now recorded: migration 1614 added user_roles.granted_by /
+  // granted_at, so the bootstrap no longer has to discard the actor it was given.
+  // Re-stamped on the reactivation branch too — reviving a revoked grant is a new
+  // grant decision, and attributing it to the superseded one would misreport who
+  // reopened the access.
   await db.execute(
-    "INSERT INTO user_roles (id, user_id, role_key, active_status) VALUES (?, ?, ?, 1) ON DUPLICATE KEY UPDATE active_status=1",
-    [randomUUID(), userId, roleKey]
+    `INSERT INTO user_roles (id, user_id, role_key, active_status, granted_by, granted_at)
+     VALUES (?, ?, ?, 1, ?, NOW())
+     ON DUPLICATE KEY UPDATE active_status = 1, granted_by = VALUES(granted_by), granted_at = VALUES(granted_at)`,
+    [randomUUID(), userId, roleKey, actorUserId]
   );
 }
 
