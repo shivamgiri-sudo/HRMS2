@@ -197,11 +197,12 @@ export function PublicPayslipVerify() {
             employee_code: json.employee_code ?? "",
             month: Number((json.run_month ?? "").split("-")[1] ?? 0),
             year: Number((json.run_month ?? "").split("-")[0] ?? 0),
-            net_salary: json.net_salary ?? 0,
-            net_pay: json.net_salary ?? 0,
+            // No salary figure is read here: /api/payroll/verify/payslip is
+            // unauthenticated and keyed on sequential employee codes, so it no
+            // longer discloses one. The holder reads the amount off the slip they
+            // are verifying. See payroll.public.routes.ts.
             payslip_ref: json.payslip_ref ?? "",
             generated_at: json.generated_at ?? "",
-            is_migrated: json.is_migrated ?? false,
           } as PayslipVerifyData);
         } else {
           setError(json.message ?? "Payslip not found.");
@@ -255,22 +256,18 @@ export function PublicPayslipVerify() {
               </div>
               <div className="rounded-2xl bg-slate-50 border border-slate-100 p-4 flex justify-between items-center">
                 <div>
-                  <p className="text-xs text-slate-400 font-medium uppercase tracking-wide">Net Pay</p>
-                  <p className="text-2xl font-black text-slate-900 mt-0.5">{INR(data.net_pay ?? data.net_salary ?? 0)}</p>
+                  <p className="text-xs text-slate-400 font-medium uppercase tracking-wide">Payslip Reference</p>
+                  <p className="text-lg font-black text-slate-900 mt-0.5 font-mono">{data.payslip_ref || "—"}</p>
                 </div>
-                {data.is_migrated ? (
-                  <span className="px-3 py-1.5 rounded-full text-xs font-bold uppercase bg-amber-100 text-amber-700">Legacy Record</span>
-                ) : (
-                  <span className={`px-3 py-1.5 rounded-full text-xs font-bold uppercase ${
-                    data.status === "acknowledged" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"
-                  }`}>{data.status ?? "Verified"}</span>
-                )}
+                <span className="px-3 py-1.5 rounded-full text-xs font-bold uppercase bg-emerald-100 text-emerald-700">
+                  Verified
+                </span>
               </div>
-              {data.is_migrated && (
-                <div className="rounded-xl bg-amber-50 border border-amber-100 px-3 py-2 text-xs text-amber-800">
-                  This payslip is from a period processed in the legacy payroll system and migrated to PeopleOS. It is authentic and verified.
-                </div>
-              )}
+              <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2 text-xs text-slate-500">
+                Amounts are not shown on this public page. Check the figures against the
+                payslip you are holding — the name, employee code, period and reference above
+                confirm it was issued by us.
+              </div>
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                 <p className="text-xs text-slate-500">This payslip is authentic and was issued by Mas Callnet India Pvt. Ltd.</p>

@@ -62,10 +62,9 @@ payrollPublicRouter.get("/verify/payslip/:empCode/:monthYear", h(async (req: any
   // Primary: look up via salary_payslip (exists for all months after backfill migration).
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT sp.payslip_ref, sp.generated_at, sp.generated_by,
-            spr.run_month, spr.status AS run_status,
+            spr.run_month,
             CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-            e.employee_code,
-            spl.net_salary, spl.gross_salary
+            e.employee_code
        FROM salary_payslip sp
        JOIN salary_prep_line spl ON spl.id = sp.prep_line_id
        JOIN salary_prep_run spr  ON spr.id = spl.run_id
@@ -79,13 +78,11 @@ payrollPublicRouter.get("/verify/payslip/:empCode/:monthYear", h(async (req: any
   // Fallback: payslip record may not exist yet (race between QR scan and backfill completing).
   // Read directly from salary_prep_line in that case so the scan never hard-fails.
   let rec = (rows as any[])[0];
-  let fromFallback = false;
   if (!rec) {
     const [fallback] = await db.execute<RowDataPacket[]>(
-      `SELECT spr.run_month, spr.status AS run_status,
+      `SELECT spr.run_month,
               CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
-              e.employee_code,
-              spl.net_salary, spl.gross_salary
+              e.employee_code
          FROM salary_prep_line spl
          JOIN salary_prep_run spr ON spr.id = spl.run_id
          JOIN employees e         ON e.id   = spl.employee_id
@@ -95,14 +92,11 @@ payrollPublicRouter.get("/verify/payslip/:empCode/:monthYear", h(async (req: any
       [empCode, runMonth]
     );
     rec = (fallback as any[])[0];
-    fromFallback = true;
   }
 
   if (!rec) {
     return res.json({ verified: false, message: "Payslip not found for this employee and period" });
   }
-
-  const isMigrated = fromFallback || String(rec.generated_by ?? "").startsWith("system-migration");
 
   return res.json({
     verified: true,
@@ -111,10 +105,20 @@ payrollPublicRouter.get("/verify/payslip/:empCode/:monthYear", h(async (req: any
     run_month: rec.run_month,
     payslip_ref: rec.payslip_ref ?? `PS-${runMonth}-${empCode}`,
     generated_at: rec.generated_at ?? null,
-    // Net salary is shown on the verification page so the recipient can confirm the slip is genuine.
-    // Gross is deliberately omitted — only the take-home figure is needed for spot-check purposes.
-    net_salary: rec.net_salary != null ? Number(rec.net_salary) : null,
-    is_migrated: isMigrated,
-    run_status: rec.run_status ?? "finalized",
+    // NO SALARY FIGURE HERE, DELIBERATELY.
+    //
+    // This route is mounted at app.ts:380, ahead of every authenticated payroll router,
+    // and takes no token: anyone may call it. It previously returned net_salary so the
+    // holder could eyeball the amount, but employee codes are sequential (MAS47814,
+    // MAS62951, …), so that turned an unauthenticated endpoint into a company-wide
+    // salary directory — walk the codes, harvest ~58,000 net pays. CLAUDE.md forbids
+    // exposing payroll figures on any non-payroll surface, and the sibling test
+    // "never leaks salary figures on the public endpoint" has always encoded that rule;
+    // it was failing, not stale.
+    //
+    // Verification does not need the amount. Name, code, period, payslip ref and
+    // generated date already prove the slip in the holder's hand is genuine, and the
+    // holder can read the amount off that slip. run_status and is_migrated are dropped
+    // for the same reason — internal state is not the public's business.
   });
 }));

@@ -16,8 +16,16 @@ const ROUTES = readFileSync(
   resolve(process.cwd(), "src/modules/payroll/bank-payment-readiness.routes.ts"), "utf8");
 const SERVICE = readFileSync(
   resolve(process.cwd(), "src/modules/payroll/bank-payment-readiness.service.ts"), "utf8");
+/**
+ * The page these guards cover was BankPaymentReadiness.tsx until 8eca63c2 consolidated
+ * eight payroll pages into four tab-based surfaces and folded it into
+ * PaymentDisbursalCenter.tsx. The path here was never updated, so readFileSync threw at
+ * import time, vitest reported the file as "0 test", and every assertion below — the
+ * account-masking guards included — silently stopped running. Repointed at the surviving
+ * page, which satisfies all of them.
+ */
 const PAGE = readFileSync(
-  resolve(process.cwd(), "..", "src/pages/payroll/BankPaymentReadiness.tsx"), "utf8");
+  resolve(process.cwd(), "..", "src/pages/payroll/PaymentDisbursalCenter.tsx"), "utf8");
 const BACKFILL = readFileSync(
   resolve(process.cwd(), "scripts/bank-detail-db-bill-backfill.ts"), "utf8");
 

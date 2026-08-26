@@ -120,7 +120,7 @@ router.put("/structures/:id", requireRole("admin", "super_admin", "finance", "pa
 router.delete("/structures/:id", requireRole("admin", "super_admin"), h(c.deleteStructure));
 
 // ─── Employee Salaries (per-employee assignment with full CTC breakup from components) ─
-router.get("/employee-salaries", requireRole("admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/employee-salaries", requireRole("ceo", "admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const scoped = await buildScopeWhereClause(
     req.authUser!.id,
     ["hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"],
@@ -261,7 +261,7 @@ router.get("/salary-assignments/:employeeId/history",
 
 const PAYROLL_SCOPE_ROLES = ["hr", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"] as const;
 
-router.get("/runs", requireRole("admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req, res) => {
+router.get("/runs", requireRole("ceo", "admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req, res) => {
   let scoped: { sql: string; params: unknown[] };
   try {
     scoped = await buildScopeWhereClause(
@@ -276,7 +276,7 @@ router.get("/runs", requireRole("admin", "hr", "super_admin", "finance", "payrol
   (req as any).scopeFilter = scoped;
   return c.listRuns(req, res);
 }));
-router.get("/records", requireRole("admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req, res) => {
+router.get("/records", requireRole("ceo", "admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req, res) => {
   let scoped: { sql: string; params: unknown[] };
   try {
     scoped = await buildScopeWhereClause(
@@ -390,7 +390,7 @@ router.post(
 );
 
 // ─── Cascading filter options for payroll workspace dropdowns ──
-router.get("/filter-options", requireRole("admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/filter-options", requireRole("ceo", "admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
   const branchId = typeof req.query.branchId === "string" ? req.query.branchId : undefined;
 
   const scoped = await buildScopeWhereClause(
@@ -789,7 +789,7 @@ router.get("/advances/:employeeId", h(async (req: AuthenticatedRequest, res: Res
 
 // GET /api/payroll/advances — paginated advances list scoped to the caller's branch/process
 router.get("/advances",
-  requireRole("admin", "hr", "super_admin", "finance", "payroll", "payroll_head"),
+  requireRole("ceo", "admin", "hr", "super_admin", "finance", "payroll", "payroll_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const page  = Math.max(1, Number(req.query.page  ?? 1));
     const limit = Math.min(100, Math.max(1, Number(req.query.limit ?? 50)));

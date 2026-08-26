@@ -37,6 +37,7 @@
     "src"
   ],
   "exclude": [
-    "src/components/dashboard/layouts"
+    "src/components/dashboard/layouts",
+    "src/components/onboarding-full/backup-2026-08-23"
   ]
 }
