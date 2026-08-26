@@ -382,7 +382,7 @@ export const employeeService = {
            e.reporting_manager_id,
            COALESCE(NULLIF(TRIM(e.official_email),''), e.email) AS email,
            -- The directory now shows personal and official addresses in their own columns, so
-           -- both are carried raw alongside the coalesced `email` above (which the existing
+           -- both are carried raw alongside the coalesced email alias above (which the existing
            -- mapper still uses for the row subtitle and the officialEmailCompliant test).
            e.email          AS personal_email,
            e.official_email AS official_email,
