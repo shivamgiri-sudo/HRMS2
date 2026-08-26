@@ -1,20 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
-import {
-  ActivitySquare,
-  AlertTriangle,
-  CheckCircle2,
-  FileText,
-  Loader2,
-  RefreshCcw,
-  Search,
-  Wrench,
-  Zap,
-} from "lucide-react";
+import { AlertTriangle, FileText, Loader2, RefreshCcw, Wrench, Zap } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { SkeletonCard } from "@/components/ui/skeletons";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CoverTab } from "@/components/ats/command-center/CoverTab";
 import { DashboardTab } from "@/components/ats/command-center/DashboardTab";
@@ -30,13 +19,20 @@ import { ProvenanceBar } from "@/components/analytics/analytics-kit";
 
 type AnyRow = Record<string, unknown>;
 
-type WebData = {
+/**
+ * The /command-center payload.
+ *
+ * This page used to read /web-data, which returns every candidate row in full: 8,229 rows x
+ * 206 fields = 44.7MB against hrmsApi's 30s timeout. The aggregates below are computed by the
+ * same server-side helpers over the same rows; what changed is that only the rows the tabs
+ * render come back, projected to the fields they render.
+ */
+type CommandCenterData = {
   ok: boolean;
-  orgName: string;
+  truncated: boolean;
+  rowLimit: number;
+  rowsLoaded: number;
   refreshTime: string;
-  todayISO: string;
-  summary: AnyRow;
-  trends: Record<string, AnyRow>;
   options: {
     branches: string[];
     processes: string[];
@@ -47,93 +43,29 @@ type WebData = {
     months: string[];
     slots: string[];
   };
-  queueRows: AnyRow[];
-  candidateRows: AnyRow[];
+  summary: AnyRow;
   dashboardRows: AnyRow[];
+  queueRows: AnyRow[];
+  queueTotal: number;
   branchTable: AnyRow[];
   processTable: AnyRow[];
-  roleTable: AnyRow[];
   recruiterTable: AnyRow[];
   sourceTable: AnyRow[];
   slotTable: AnyRow[];
+  rejections: {
+    total: number;
+    distinctReasons: number;
+    reasons: { label: string; count: number }[];
+    rows: AnyRow[];
+  };
   reusablePool: AnyRow[];
 };
 
 const periods = ["ALL", "FTD", "WTD", "MTD"];
 const TAB_IDS = ["Cover", "Dashboard", "Trends", "Rejections", "Recruiters", "Sourcing", "Live Queue", "Journey", "Health", "BMI"];
 
-const n = (v: unknown) => Number(v || 0).toLocaleString("en-IN");
-const pct = (v: unknown) => `${Number(v || 0).toFixed(Number(v || 0) % 1 ? 1 : 0)}%`;
-const mins = (v: unknown) => {
-  const min = Number(v || 0);
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return h ? `${h}h ${m}m` : `${m}m`;
-};
-
-function Kpi({ label, value, foot, loading }: { label: string; value: string; foot?: string; loading?: boolean }) {
-  if (loading) {
-    return <div className="animate-pulse rounded-2xl border border-slate-200 bg-white p-4 shadow-sm h-[88px]" />;
-  }
-  return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="text-xs font-bold uppercase tracking-wider text-slate-500">{label}</div>
-      <div className="mt-2 text-3xl font-black text-slate-900">{value}</div>
-      {foot && <div className="mt-1 text-sm text-slate-500">{foot}</div>}
-    </div>
-  );
-}
-
-function SimpleTable({
-  rows,
-  columns,
-  empty = "No data",
-}: {
-  rows: AnyRow[];
-  columns: { key: string; label: string; render?: (row: AnyRow) => ReactNode }[];
-  empty?: string;
-}) {
-  return (
-    <div className="overflow-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <table className="min-w-full text-sm">
-        <thead className="bg-slate-50 text-xs uppercase tracking-wider text-slate-500">
-          <tr>
-            {columns.map((c) => (
-              <th key={c.key} className="whitespace-nowrap px-3 py-3 text-left font-bold">
-                {c.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.length ? (
-            rows.map((row, i) => (
-              <tr
-                key={String(row.id ?? row.CandidateID ?? i)}
-                className="border-t border-slate-100 hover:bg-slate-50"
-              >
-                {columns.map((c) => (
-                  <td key={c.key} className="whitespace-nowrap px-3 py-3 text-slate-700">
-                    {c.render ? c.render(row) : String(row[c.key] ?? "-")}
-                  </td>
-                ))}
-              </tr>
-            ))
-          ) : (
-            <tr>
-              <td colSpan={columns.length} className="px-3 py-8 text-center text-slate-500">
-                {empty}
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 export default function NativeATSFullParityCommandCenter() {
-  const [data, setData] = useState<WebData | null>(null);
+  const [data, setData] = useState<CommandCenterData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -142,12 +74,6 @@ export default function NativeATSFullParityCommandCenter() {
   const [branch, setBranch] = useState("");
   const [process, setProcess] = useState("");
   const [recruiter, setRecruiter] = useState("");
-  const [journeyQuery, setJourneyQuery] = useState("");
-  const [journeyLoading, setJourneyLoading] = useState(false);
-  const [journeyError, setJourneyError] = useState("");
-  const [journey, setJourney] = useState<AnyRow | null>(null);
-  const [health, setHealth] = useState<AnyRow | null>(null);
-  const [healthLoading, setHealthLoading] = useState(false);
   const [jobRunning, setJobRunning] = useState<Record<string, boolean>>({});
   const didInitLoad = useRef(false);
 
@@ -161,7 +87,7 @@ export default function NativeATSFullParityCommandCenter() {
       if (branch) q.set("branch", branch);
       if (process) q.set("process", process);
       if (recruiter) q.set("recruiter", recruiter);
-      const res = await hrmsApi.get<WebData>(`/api/ats-full-parity/web-data?${q.toString()}`);
+      const res = await hrmsApi.get<CommandCenterData>(`/api/ats-full-parity/command-center?${q.toString()}`);
       setData(res);
     } catch (e: unknown) {
       setError((e as { message?: string })?.message || String(e));
@@ -172,53 +98,23 @@ export default function NativeATSFullParityCommandCenter() {
     }
   }, [period, branch, process, recruiter]);
 
+  /**
+   * Debounced because `load` is keyed on all four filters, so before this every dropdown
+   * change fired its own full request — and stepping through a select with the keyboard fired
+   * one per option. The first load is not delayed; only subsequent filter changes are.
+   */
   useEffect(() => {
-    void load();
+    if (!didInitLoad.current) {
+      void load();
+      return;
+    }
+    const t = setTimeout(() => void load(), 350);
+    return () => clearTimeout(t);
   }, [load]);
 
-  const loadHealth = useCallback(async () => {
-    setHealthLoading(true);
-    try {
-      const res = await hrmsApi.get<{ success: boolean; data: AnyRow }>(`/api/ats-full-parity/health`);
-      setHealth(res.data);
-    } catch (e: unknown) {
-      toast.error((e as { message?: string })?.message || "Health check failed.");
-    } finally {
-      setHealthLoading(false);
-    }
-  }, []);
-
-  // Refresh health whenever Health tab is activated
-  useEffect(() => {
-    if (tab === "Health") void loadHealth();
-  }, [tab, loadHealth]);
-
+  // HealthTab fetches /health itself on mount. A second copy here meant every activation of
+  // that tab fired the probe twice.
   const summary = data?.summary || {};
-  const criticalQueue = useMemo(
-    () =>
-      [...(data?.queueRows || [])]
-        .sort((a, b) => Number(b.WaitingMinutes || 0) - Number(a.WaitingMinutes || 0))
-        .slice(0, 15),
-    [data]
-  );
-
-  async function runJourney() {
-    if (!journeyQuery.trim()) return;
-    setJourneyLoading(true);
-    setJourneyError("");
-    setJourney(null);
-    try {
-      const res = await hrmsApi.get<{ success: boolean; data: AnyRow }>(
-        `/api/ats-full-parity/journey?query=${encodeURIComponent(journeyQuery.trim())}`
-      );
-      setJourney(res.data);
-      if (!res.data) setJourneyError("Candidate not found.");
-    } catch (e: unknown) {
-      setJourneyError((e as { message?: string })?.message || "Search failed.");
-    } finally {
-      setJourneyLoading(false);
-    }
-  }
 
   async function runJob(jobKey: string, fn: () => Promise<void>) {
     if (jobRunning[jobKey]) return;
@@ -295,6 +191,25 @@ export default function NativeATSFullParityCommandCenter() {
             <div className="text-xs text-rose-900">
               <p className="font-bold">Command Center data failed to load</p>
               <p className="mt-1">{error}</p>
+            </div>
+          </div>
+        )}
+
+        {/*
+          A hit row cap understates every figure on every tab. The backend has reported
+          `truncated` since the cap was raised to 25,000; nothing read it, so the warning it
+          was meant to carry did not exist. It does now.
+        */}
+        {data?.truncated && (
+          <div role="alert" className="flex items-start gap-2.5 rounded-xl border-2 border-amber-200 bg-amber-50 px-4 py-3">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div className="text-xs text-amber-900">
+              <p className="font-bold">Showing a partial dataset</p>
+              <p className="mt-1">
+                This load hit the {data.rowLimit.toLocaleString("en-IN")}-row cap, so every figure below
+                counts only the {data.rowsLoaded.toLocaleString("en-IN")} most recent candidates. Narrow the
+                period or branch for complete numbers.
+              </p>
             </div>
           </div>
         )}
@@ -416,7 +331,7 @@ export default function NativeATSFullParityCommandCenter() {
           {/* Rejections tab */}
           <TabsContent value="Rejections" className="mt-4">
             <RejectionsTab
-              candidateRows={data?.candidateRows || []}
+              rejections={data?.rejections ?? null}
               loading={loading}
             />
           </TabsContent>
