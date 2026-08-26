@@ -25,6 +25,7 @@ import {
   BarChart,
 } from "recharts";
 import { CalendarClock, Send, TrendingDown, Users } from "lucide-react";
+import { AON_BUCKETS } from "../../../backend/src/modules/reporting/workforce-population";
 import {
   Select,
   SelectContent,
@@ -362,7 +363,12 @@ function PublishSection({ filters }: { filters: Filters }) {
 
 /* ── Section 3: Attrition ──────────────────────────────────────────────────── */
 
-const AON_BUCKETS = ["0-30", "31-60", "61-90", "90+"] as const;
+// IMPORTANT-1 (final whole-branch review): this used to hard-code only the four tenure buckets,
+// silently dropping the "In Training" bucket added alongside it -- Active headcount here showed
+// 1,078, matching neither the pre-fix 1,121 nor the corrected 1,090, because 13 In-Training rows
+// were never summed. Imported from the shared module rather than mirrored locally so the two
+// lists cannot drift: backend/src/modules/reporting/workforce-population.ts's AON_BUCKETS is the
+// single source of truth.
 
 function AttritionSection({ filters }: { filters: Filters }) {
   const base: Record<string, string> = {};
