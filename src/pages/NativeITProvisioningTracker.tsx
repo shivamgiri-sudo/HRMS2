@@ -1300,7 +1300,29 @@ export default function NativeITProvisioningTracker() {
                       <TableCell><TypeBadge type={req.request_type} /></TableCell>
                       <TableCell className="text-sm text-muted-foreground">{ROLE_LABELS[req.assigned_role] ?? req.assigned_role}</TableCell>
                       <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatISTDate(req.requested_at)}</TableCell>
-                      <TableCell><StatusBadge status={req.status} locked={req.locked} /></TableCell>
+                      <TableCell>
+                        <StatusBadge status={req.status} locked={req.locked} />
+                        {/*
+                          "Actioned" alone cannot distinguish a finished admin task from a
+                          half-finished one — both sub-tasks report the same status, and the
+                          stats tile counts both as "Completed". Name what is still outstanding
+                          so the queue can be worked, rather than leaving it to be found by
+                          opening rows one at a time.
+                        */}
+                        {req.status === "actioned" && req.task_code === "ADMIN_BIOMETRIC_ID_CARD" && (() => {
+                          const outstanding = [
+                            !req.biometric_enrolled && "biometric",
+                            !req.id_card_printed && "ID card",
+                          ].filter(Boolean) as string[];
+                          if (!outstanding.length) return null;
+                          return (
+                            <span className="mt-1 flex items-center gap-1 text-xs text-amber-700">
+                              <AlertCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
+                              {outstanding.join(" and ")} still pending
+                            </span>
+                          );
+                        })()}
+                      </TableCell>
                       <TableCell className="text-right">
                         {req.locked ? (
                           <span className="text-xs text-muted-foreground flex items-center justify-end gap-1">
@@ -1314,14 +1336,28 @@ export default function NativeITProvisioningTracker() {
                                 No {req.assigned_role?.toUpperCase()} user found for this branch
                               </span>
                             )}
-                            {req.status === "pending" && (
+                            {/*
+                              An actioned request stays editable until it is locked.
+
+                              ADMIN_BIOMETRIC_ID_CARD is two independent sub-tasks, and the ID
+                              card is refused outright while the employee has no photo — so
+                              submitting the biometric half and returning later is the normal
+                              path, not an error. Rendering this button only for 'pending'
+                              made that path a dead end: 12 live requests were stuck actioned
+                              with the card still unprinted and nothing on the row would
+                              reopen them. Waive was wrong (the work was not waived) and Lock
+                              Now was worse (it freezes the evidence half-finished).
+                            */}
+                            {(req.status === "pending" || req.status === "actioned") && (
                               <Button
-                                variant="default"
+                                variant={req.status === "pending" ? "default" : "outline"}
                                 onClick={() => openDialog(req, "action")}
-                                aria-label={`${isITQueue ? "Submit IT details for" : isAdminQueue ? "Mark admin actions done for" : "Mark actioned for"} ${req.employee_name}`}
+                                aria-label={`${req.status === "actioned" ? "Update provisioning details for" : isITQueue ? "Submit IT details for" : isAdminQueue ? "Mark admin actions done for" : "Mark actioned for"} ${req.employee_name}`}
                                 className="min-h-[44px]"
                               >
-                                {isITQueue ? "Submit Details" : isAdminQueue ? "Mark Done" : "Mark Actioned"}
+                                {req.status === "actioned"
+                                  ? "Update Details"
+                                  : isITQueue ? "Submit Details" : isAdminQueue ? "Mark Done" : "Mark Actioned"}
                               </Button>
                             )}
                             {(req.status === "pending" || req.status === "actioned") && (
