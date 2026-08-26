@@ -395,7 +395,7 @@ export async function createEmployeeFromCandidate(
         candRow?.gender ?? null,
         candRow?.date_of_birth ?? null,
         toStoredName(candRow?.father_name),
-        candRow?.marital_status ?? null,
+        candRow?.marital_status || null,
         candRow?.current_address ?? null,
         candRow?.permanent_address ?? null,
         resolvedBranchId,
