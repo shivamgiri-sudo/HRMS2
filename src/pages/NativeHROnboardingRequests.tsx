@@ -288,6 +288,64 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+/**
+ * Status chip for the candidate-detail sections.
+ *
+ * The BGV section reported its statuses as plain text ("Given", "not_started"),
+ * so a reviewer had to read every row to find the one that was not in order --
+ * while the eSign row beside it already used a coloured pill. Colour semantics
+ * match the BGV Review tab's statusCls in this same file (emerald verified,
+ * red failed/mismatch, amber in-progress, purple waived) so the two views of
+ * the same candidate cannot disagree about what a colour means.
+ */
+const CHIP_TONES = {
+  good:    'bg-emerald-50 text-emerald-700 border-emerald-200',
+  bad:     'bg-red-50 text-red-700 border-red-200',
+  warn:    'bg-amber-50 text-amber-700 border-amber-200',
+  info:    'bg-purple-50 text-purple-700 border-purple-200',
+  neutral: 'bg-slate-50 text-slate-500 border-slate-200',
+} as const;
+
+type ChipTone = keyof typeof CHIP_TONES;
+
+/** Maps a raw backend status onto a tone. Unknown values stay neutral rather than guessing. */
+function toneForStatus(raw: unknown): ChipTone {
+  const v = String(raw ?? '').toLowerCase().trim();
+  if (!v) return 'neutral';
+  if (['verified', 'clear', 'given', 'signed', 'completed', 'documents_received', 'success', 'passed', 'yes'].includes(v)) return 'good';
+  if (['failed', 'mismatch', 'rejected', 'hold', 'error', 'expired'].includes(v)) return 'bad';
+  if (['pending', 'in_progress', 'initiated', 'manual_review', 'conditional', 'refer', 'partial'].includes(v)) return 'warn';
+  if (['waived', 'override', 'skipped', 'not_applicable'].includes(v)) return 'info';
+  return 'neutral';
+}
+
+/** Turns snake_case backend statuses into something readable, leaving real labels alone. */
+function prettyStatus(raw: unknown): string {
+  const v = String(raw ?? '').trim();
+  if (!v) return '—';
+  return v.includes('_') ? v.replace(/_/g, ' ').replace(/\w/g, (m) => m.toUpperCase()) : v;
+}
+
+function StatusChip({ value, tone }: { value: unknown; tone?: ChipTone }) {
+  const label = prettyStatus(value);
+  if (label === '—') return <span className="text-xs text-slate-400">—</span>;
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${CHIP_TONES[tone ?? toneForStatus(value)]}`}>
+      {label}
+    </span>
+  );
+}
+
+/** InfoRow whose value renders as a status chip instead of plain text. */
+function InfoRowChip({ label, value, tone }: { label: string; value: unknown; tone?: ChipTone }) {
+  return (
+    <div className="flex gap-3 border-b border-slate-50 py-2 last:border-0">
+      <span className="w-40 shrink-0 text-xs font-medium text-slate-400">{label}</span>
+      <StatusChip value={value} tone={tone} />
+    </div>
+  );
+}
+
 function StepHeader({ n, label, complete, open, toggle }: { n: number; label: string; complete: boolean; open: boolean; toggle: () => void }) {
   return (
     <button
@@ -1988,8 +2046,9 @@ export default function NativeHROnboardingRequests() {
 
                   {/* 5 — BGV & Verification */}
                   <SectionCard n={5} label={STEP_LABELS[4]} complete={stepComplete[4]}>
-                    <InfoRow label="BGV Consent" value={dp.bgv_consent ? 'Given' : 'Not given'} />
-                    <InfoRow label="DigiLocker Status" value={digi.status} />
+                    <InfoRowChip label="BGV Consent" value={dp.bgv_consent ? 'Given' : 'Not given'} tone={dp.bgv_consent ? 'good' : 'bad'} />
+                    <InfoRowChip label="DigiLocker Status" value={digi.status} />
+                    {/* Provider is an identity, not a status — a colour here would imply a verdict. */}
                     <InfoRow label="DigiLocker Provider" value={digi.provider} />
                     {/* eSign status + download */}
                     <div className="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
