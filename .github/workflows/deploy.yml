@@ -1,9 +1,9 @@
 name: Deploy to Production
 
 on:
-  push:
-    branches:
-      - main
+  # Auto-deploy-on-push permanently disabled 2026-08-26 at the user's explicit
+  # request -- deploys are manual only from here on. Trigger via
+  # `gh workflow run deploy.yml` or the Actions tab "Run workflow" button.
   workflow_dispatch:
 
 concurrency:
