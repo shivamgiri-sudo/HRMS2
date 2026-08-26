@@ -53,6 +53,8 @@ const PayrollReadinessDashboard = lazy(() => import("@/pages/payroll/PayrollRead
 const SalaryPackageManager      = lazy(() => import("@/pages/payroll/SalaryPackageManager"));
 const NativeSalaryPackageManager = lazy(() => import("@/pages/NativeSalaryPackageManager"));
 const StatutoryCenter           = lazy(() => import("@/pages/payroll/StatutoryCenter"));
+const PayrollVarianceAnalysis   = lazy(() => import("@/pages/payroll/PayrollVarianceAnalysis"));
+const PayrollRunLifecycle       = lazy(() => import("@/pages/payroll/PayrollRunLifecycle"));
 
 /**
  * Roles entitled to the org-wide admin Payslip Center. Everyone else — including
@@ -141,6 +143,8 @@ export const payrollRouteElements = (
       <Route path="/payroll/statutory-filing"    element={<Navigate to="/payroll/statutory?tab=filing" replace />} />
       <Route path="/payroll/audit-trail"         element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin']}><Gate pageCode="PAYROLL_AUDIT_TRAIL"><PayrollAuditTrail /></Gate></ProtectedRoute>} />
       <Route path="/payroll/variance"            element={<Navigate to="/reports?view=library&report=payroll-variance" replace />} />
+      <Route path="/payroll/variance-analysis"   element={<ProtectedRoute><Gate pageCode="PAYROLL_VARIANCE"><PayrollVarianceAnalysis /></Gate></ProtectedRoute>} />
+      <Route path="/payroll/run-lifecycle"       element={<ProtectedRoute><Gate pageCode="PAYROLL_SIGN_OFF"><PayrollRunLifecycle /></Gate></ProtectedRoute>} />
       <Route path="/payroll/bulk-outputs"        element={<ProtectedRoute roles={['super_admin','payroll_head','admin']}><Gate pageCode="PAYROLL_BULK_OUTPUTS"><BulkOutputs /></Gate></ProtectedRoute>} />
       <Route path="/payroll/loans"               element={<ProtectedRoute roles={['super_admin','payroll_head','finance','admin','hr','employee']}><Gate pageCode="PAYROLL_LOANS"><LoanManagement /></Gate></ProtectedRoute>} />
       <Route path="/payroll/sign-off"            element={<ProtectedRoute roles={['super_admin','payroll_head','finance','ceo','admin']}><Gate pageCode="PAYROLL_SIGN_OFF"><PayrollSignOff /></Gate></ProtectedRoute>} />

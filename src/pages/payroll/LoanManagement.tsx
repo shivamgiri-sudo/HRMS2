@@ -1094,6 +1094,161 @@ function AllLoansTab({ showAdminActions }: AllLoansTabProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Employee-facing advance request dialog.
+//
+// Posts to POST /api/payroll/loans/request, which resolves the employee from the
+// caller's own login — so unlike the admin "Add New Loan / Advance" dialog this
+// form deliberately has no employee picker. The request lands in
+// 'pending_approval' and surfaces on the existing Pending Approval tab for a
+// Finance/Payroll head to action. Repayment terms shown here are the same ones
+// the server derives; they are displayed, not sent, so the two cannot drift.
+// ---------------------------------------------------------------------------
+
+const SELF_REQUEST_TYPES = ["Salary Advance", "Emergency Advance"] as const;
+const MAX_REQUEST_INSTALLMENTS = 24;
+
+function RequestAdvanceDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [loanType, setLoanType] = useState<string>(SELF_REQUEST_TYPES[0]);
+  const [amount, setAmount] = useState("");
+  const [installments, setInstallments] = useState("3");
+  const [reason, setReason] = useState("");
+
+  const amt = Number(amount);
+  const inst = Number(installments);
+  const validAmount = Number.isFinite(amt) && amt > 0 && amt <= 9_999_999;
+  const validInst = Number.isInteger(inst) && inst >= 1 && inst <= MAX_REQUEST_INSTALLMENTS;
+  const canSubmit = validAmount && validInst;
+  const perMonth = canSubmit ? Math.ceil((amt / inst) * 100) / 100 : 0;
+
+  // Deductions begin with the next payroll run — mirrors the server's start_date.
+  const firstDeduction = (() => {
+    const n = new Date();
+    return new Date(n.getFullYear(), n.getMonth() + 1, 1)
+      .toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+  })();
+
+  const reset = () => {
+    setLoanType(SELF_REQUEST_TYPES[0]);
+    setAmount("");
+    setInstallments("3");
+    setReason("");
+  };
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      hrmsApi.post("/api/payroll/loans/request", {
+        loan_type: loanType,
+        amount: amt,
+        installments: inst,
+        reason: reason.trim() || undefined,
+      }),
+    onSuccess: () => {
+      toast.success("Advance request submitted for approval.");
+      void qc.invalidateQueries({ queryKey: ["loans-mine"] });
+      reset();
+      onClose();
+    },
+    onError: (err: unknown) => {
+      toast.error((err as Error)?.message || "Could not submit your request.");
+    },
+  });
+
+  const handleClose = () => {
+    if (mutation.isPending) return;
+    reset();
+    onClose();
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && handleClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <BadgeIndianRupee className="h-5 w-5 text-blue-600" />
+            Request Salary Advance
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 py-1">
+          <div className="space-y-1">
+            <Label>Advance Type *</Label>
+            <Select value={loanType} onValueChange={setLoanType}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SELF_REQUEST_TYPES.map((t) => (
+                  <SelectItem key={t} value={t}>{t}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1">
+            <Label>Amount (₹) *</Label>
+            <Input
+              type="number"
+              min={1}
+              placeholder="e.g. 15000"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+            />
+            {amount !== "" && !validAmount && (
+              <p className="text-xs font-medium text-red-600">Enter an amount above 0.</p>
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <Label>Repay over (months) *</Label>
+            <Input
+              type="number"
+              min={1}
+              max={MAX_REQUEST_INSTALLMENTS}
+              value={installments}
+              onChange={(e) => setInstallments(e.target.value)}
+            />
+            {installments !== "" && !validInst && (
+              <p className="text-xs font-medium text-red-600">
+                Choose between 1 and {MAX_REQUEST_INSTALLMENTS} months.
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <Label>Reason</Label>
+            <Input
+              placeholder="Optional — helps the approver decide"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+            />
+          </div>
+
+          {canSubmit && (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm">
+              <p className="font-semibold text-blue-900">
+                ₹{perMonth.toLocaleString("en-IN")} will be deducted each month
+              </p>
+              <p className="mt-0.5 text-xs text-blue-800">
+                for {inst} month{inst === 1 ? "" : "s"}, starting {firstDeduction}.
+                Final terms are confirmed by your approver.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" onClick={handleClose} disabled={mutation.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={() => mutation.mutate()} disabled={!canSubmit || mutation.isPending}>
+            {mutation.isPending ? "Submitting…" : "Submit Request"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Tab: My Loans (employee self-view)
 // ---------------------------------------------------------------------------
 
@@ -1109,6 +1264,8 @@ function MyLoansTab({ employeeId }: MyLoansTabProps) {
     enabled: !!employeeId,
     staleTime: 30_000,
   });
+
+  const [requestOpen, setRequestOpen] = useState(false);
 
   if (!employeeId) {
     return (
@@ -1139,6 +1296,18 @@ function MyLoansTab({ employeeId }: MyLoansTabProps) {
 
   return (
     <div className="mt-4 space-y-4">
+      {/* Raise a new advance request — the employee-side entry point into the
+          existing pending_approval gate. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-slate-500">
+          Your advances and loans, and how much is left to repay.
+        </p>
+        <Button size="sm" onClick={() => setRequestOpen(true)}>
+          <PlusCircle className="mr-2 h-4 w-4" />
+          Request Advance
+        </Button>
+      </div>
+
       {/* Summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card>
@@ -1179,6 +1348,8 @@ function MyLoansTab({ employeeId }: MyLoansTabProps) {
         onPaymentClick={() => undefined}
         showProgress
       />
+
+      <RequestAdvanceDialog open={requestOpen} onClose={() => setRequestOpen(false)} />
     </div>
   );
 }

@@ -408,7 +408,9 @@ export async function getManagerTeamDrilldown(req: Request, res: Response) {
              AND a3.late_mark > 0
              AND a3.record_date >= DATE_SUB(NOW(), INTERVAL 30 DAY)
          )                                                                      AS late_marks_30d,
-         /* Prediction score: compound formula consistent with attritionRisk.service */
+         /* Prediction score: compound tenure/attendance/quality formula. The scored,
+            documented version of this lives in predictive-attrition.service.ts — the
+            never-mounted attritionRisk.service.ts this used to cite was removed. */
          ROUND(
            CASE
              WHEN (SELECT ROUND(AVG(cq2.quality_percentage), 2)

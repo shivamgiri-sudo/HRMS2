@@ -46,7 +46,7 @@ function categorize(curr: any, prev: any): VarCategory {
 // ─── GET /api/payroll/variance?month=YYYY-MM&compare_to=YYYY-MM ───────────────
 payrollVarianceRouter.get(
   "/",
-  requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "finance_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { month, compare_to } = req.query as { month?: string; compare_to?: string };
 
@@ -235,7 +235,7 @@ payrollVarianceRouter.get(
 // Component-level breakdown for one employee across two months
 payrollVarianceRouter.get(
   "/employee/:employeeId",
-  requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"),
+  requireRole("admin", "super_admin", "finance", "payroll", "payroll_head", "finance_head"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { employeeId } = req.params;
     const { month, compare_to } = req.query as { month?: string; compare_to?: string };

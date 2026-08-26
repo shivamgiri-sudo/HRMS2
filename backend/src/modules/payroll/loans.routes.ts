@@ -268,6 +268,158 @@ loansRouter.post(
 );
 
 // ---------------------------------------------------------------------------
+// POST /request
+// Employee-initiated salary-advance request (self-service).
+//
+// The approval machinery — status='pending_approval', POST /:id/approve and
+// /:id/reject gated to finance_head/payroll_head, self-approval blocked — already
+// existed, but nothing could originate a request from the employee side: POST /
+// requires admin/payroll_head/finance/super_admin, so an advance could only ever be
+// raised FOR an employee, never BY one. This is that missing entry point.
+//
+// Security model: the employee is resolved from the caller's own user_id and any
+// employee_id in the body is ignored outright, so this route cannot be used to raise
+// a request against someone else. Money-shaped fields the requester must not control
+// are derived server-side, not read from the body:
+//   - status stays 'pending_approval'; approved_by/approved_at stay NULL
+//   - deduction_per_month = amount / installments, so a requester cannot stretch
+//     repayment indefinitely by sending deduction_per_month = 1
+//   - start_date is the 1st of next month — deductions begin at the next payroll
+//     run, and the request cannot be backdated into a closed month
+// An approver can still adjust any of it via PATCH /:id before approving.
+// ---------------------------------------------------------------------------
+
+/** Advance types an employee may raise for themselves. Personal Loan is deliberately
+ *  excluded — it carries guarantor requirements that only payroll can capture. */
+const SELF_REQUESTABLE_TYPES = ["Salary Advance", "Emergency Advance"] as const;
+
+const MAX_SELF_REQUEST_INSTALLMENTS = 24;
+
+loansRouter.post(
+  "/request",
+  requireAuth,
+  h(async (req, res) => {
+    const userId = req.authUser!.id;
+    const body = req.body as Record<string, unknown>;
+    const { loan_type, amount, installments, reason } = body;
+
+    // Resolve the caller's OWN employee record. body.employee_id is never consulted.
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, employee_code, branch_name
+         FROM employees
+        WHERE user_id = ? AND active_status = 1
+        LIMIT 1`,
+      [userId]
+    );
+    type EmpRow = RowDataPacket & { id: string; employee_code: string; branch_name: string | null };
+    const emp = (empRows as EmpRow[])[0];
+    if (!emp) {
+      return res.status(403).json({
+        success: false,
+        message: "Your login is not linked to an active employee record. Contact HR.",
+      });
+    }
+
+    const type = String(loan_type ?? "");
+    if (!(SELF_REQUESTABLE_TYPES as readonly string[]).includes(type)) {
+      return res.status(400).json({
+        success: false,
+        message: `loan_type must be one of: ${SELF_REQUESTABLE_TYPES.join(", ")}`,
+      });
+    }
+
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0 || amt > 9_999_999) {
+      return res.status(400).json({ success: false, message: "amount must be a positive number under 1,00,00,000" });
+    }
+
+    const inst = Number(installments);
+    if (!Number.isInteger(inst) || inst < 1 || inst > MAX_SELF_REQUEST_INSTALLMENTS) {
+      return res.status(400).json({
+        success: false,
+        message: `installments must be a whole number between 1 and ${MAX_SELF_REQUEST_INSTALLMENTS}`,
+      });
+    }
+
+    // One open request at a time — otherwise a requester can queue up unbounded
+    // pending rows and the approval tab becomes unusable.
+    const [openRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM employee_loans
+        WHERE employee_id = ? AND status = 'pending_approval'
+        LIMIT 1`,
+      [emp.id]
+    );
+    if ((openRows as RowDataPacket[])[0]) {
+      return res.status(409).json({
+        success: false,
+        message: "You already have an advance request awaiting approval.",
+      });
+    }
+
+    // Deductions start with the next payroll run, never a closed month.
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + inst, 1);
+    const ymd = (d: Date): string =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+    // Derived, not client-supplied. Rounded to paise; the final instalment absorbs
+    // any rounding remainder when payroll settles pending_amount to zero.
+    const perMonth = Math.ceil((amt / inst) * 100) / 100;
+
+    const loanId = randomUUID();
+    await db.execute<ResultSetHeader>(
+      `INSERT INTO employee_loans
+         (id, employee_id, employee_code, loan_type, amount, start_date, end_date,
+          installments, deduction_per_month, deducted_amount, pending_amount, status,
+          reason, created_by, branch_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'pending_approval', ?, ?, ?)`,
+      [
+        loanId,
+        emp.id,
+        emp.employee_code,
+        type,
+        amt,
+        ymd(start),
+        ymd(end),
+        inst,
+        perMonth,
+        amt,
+        reason ? String(reason).slice(0, 2000) : null,
+        userId,
+        emp.branch_name ?? null,
+      ]
+    );
+
+    void logSensitiveAction({
+      actor_user_id: userId,
+      actor_role: req.authUser!.role,
+      action_type: "loan_self_requested",
+      module_key: "payroll_loans",
+      entity_type: "employee_loan",
+      entity_id: loanId,
+      new_value_json: {
+        employee_id: emp.id,
+        loan_type: type,
+        amount: amt,
+        installments: inst,
+        deduction_per_month: perMonth,
+        start_date: ymd(start),
+        status: "pending_approval",
+        self_requested: true,
+      } as Record<string, unknown>,
+      req,
+    });
+
+    const [newRows] = await db.execute<RowDataPacket[]>(
+      "SELECT * FROM employee_loans WHERE id = ? LIMIT 1",
+      [loanId]
+    );
+    return res.status(201).json({ success: true, data: (newRows as RowDataPacket[])[0] });
+  })
+);
+
+// ---------------------------------------------------------------------------
 // POST /:id/approve
 // Activate a pending_approval loan. Head-level roles only, mirroring
 // payroll.service.ts::updateRunStatus's closing-role tier. Self-approval by

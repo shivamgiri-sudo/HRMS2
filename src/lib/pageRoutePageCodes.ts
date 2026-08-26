@@ -138,11 +138,13 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/payroll/salary-certificates": "SALARY_CERTIFICATE",
   "/payroll/salary-packages": "SALARY_PACKAGES",
   "/payroll/sign-off": "PAYROLL_SIGN_OFF",
+  "/payroll/run-lifecycle": "PAYROLL_SIGN_OFF",
   "/payroll/statutory-config": "STATUTORY_CONFIG",
   "/payroll/statutory-filing": "PAYROLL_STATUTORY_FILING",
   "/payroll/tax-declaration": "TAX_DECLARATION",
   "/payroll/validation": "PAYROLL_VALIDATION",
   "/payroll/variance": "PAYROLL_VARIANCE",
+  "/payroll/variance-analysis": "PAYROLL_VARIANCE",
   "/people-experience/command-center": "PEOPLE_EXPERIENCE_COMMAND_CENTER",
   // Was missing entirely, which is why the page-access contract test never noticed
   // that page_catalog pointed WORKFORCE_COMMAND_CENTER at '/workforce/command-center'
