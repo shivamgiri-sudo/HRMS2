@@ -50,6 +50,8 @@ import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption
 import { registerEmployeeInCosec } from "../integrations/cosec/cosec-registration.service.js";
 import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
 import { inboxService } from "../inbox/inbox.service.js";
+import { encryptField } from "../../shared/fieldEncryption.js";
+import { computeAccountBlindIndex } from "../../shared/bankAccountDuplicate.js";
 
 export interface EmployeeCreationInput {
   candidateId: string;
@@ -1383,5 +1385,48 @@ async function createRelatedEmployeeRecords(
         onboardingEmergencyMobile,
       ]
     );
+  }
+
+  // Verified bank account carried over from the onboarding penny-drop check
+  // (onboarding_penny_drop_requests), so payroll's Bank Readiness has something to read from
+  // day one. Before this, a successful onboarding penny drop verified an account that then went
+  // nowhere: onboarding_penny_drop_requests is candidate-scoped and nothing ever copied it into
+  // employee_bank_detail, which is the only table bank-payment-readiness.service.ts (and payroll
+  // itself) reads. Every new hire showed MISSING regardless of what was verified during hiring.
+  //
+  // Only the latest 'success' row is used, and only when the employee doesn't already have an
+  // active primary bank row — this runs inside employee creation, so on the very first call that
+  // is always true, but the guard keeps this block idempotent on a retried transaction too.
+  // account_seq starts at 1 for the same reason: this is necessarily the employee's first-ever
+  // bank_detail row.
+  const [pennyDropRows] = await conn.execute<RowDataPacket[]>(
+    `SELECT account_no, ifsc_code, account_holder_name
+       FROM onboarding_penny_drop_requests
+      WHERE candidate_id = ? AND status = 'success'
+      ORDER BY completed_at DESC LIMIT 1`,
+    [candidateId]
+  );
+  const verifiedAccount = pennyDropRows[0];
+  if (verifiedAccount?.account_no) {
+    const [existingPrimary] = await conn.execute<RowDataPacket[]>(
+      `SELECT id FROM employee_bank_detail WHERE employee_id = ? AND active_status = 1 AND is_primary = 1 LIMIT 1`,
+      [employeeId]
+    );
+    if (!existingPrimary.length) {
+      const accountNoStr = String(verifiedAccount.account_no);
+      await conn.execute(
+        `INSERT INTO employee_bank_detail
+           (id, employee_id, is_primary, account_seq, account_holder_name,
+            account_number_enc, account_number_blind_index, ifsc_code, account_type, verified, active_status)
+         VALUES (?, ?, 1, 1, ?, ?, ?, ?, 'savings', 1, 1)`,
+        [
+          randomUUID(), employeeId,
+          verifiedAccount.account_holder_name ?? null,
+          encryptField(accountNoStr),
+          computeAccountBlindIndex(accountNoStr),
+          verifiedAccount.ifsc_code ?? null,
+        ]
+      );
+    }
   }
 }
