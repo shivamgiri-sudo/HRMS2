@@ -5,6 +5,7 @@ import { emailService } from '../communication/email.service.js';
 import { getConfiguredRecipients } from './notification-recipients.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { env } from '../../config/env.js';
+import { nonReactivatableSqlList } from '../exit/exitEmploymentStatus.js';
 
 const OFFICIAL_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/;
 export { OFFICIAL_EMAIL_REGEX };
@@ -648,6 +649,146 @@ export async function dispatchExitProvisioningTasks(params: {
       users, 'it_provisioning', title, desc, requestId, task.actionUrl, exitRecipients.cc,
     );
   }
+}
+
+// ── Re-resolution of unassigned requests ──────────────────────────────────────
+
+/**
+ * Re-resolve provisioning requests that were created with no owner.
+ *
+ * When dispatch cannot find a user for a role, createRequest() stamps
+ * `pending_unassigned` (migration 420) rather than skipping the task, so the work
+ * stays visible. Nothing ever re-resolved those rows afterwards:
+ *
+ *  - provisioning-retry.job.ts only picks up employees with NO
+ *    IT_EMAIL_DOMAIN_ASSET row at all (`NOT EXISTS`). An unassigned request HAS a
+ *    row, so it was excluded from the retry forever.
+ *  - There is no reassign endpoint. Both this file and NativeITProvisioningTracker
+ *    carry comments saying the UI "gates its reassign action on exactly this
+ *    status", but that action was never built — the tracker renders the text
+ *    "No <ROLE> user found for this branch" and no button.
+ *
+ * The result on 2026-08-26 was 34 requests stuck in `pending_unassigned`, 44-56
+ * days past SLA, for four roles that all have active holders today (wfm 5, it 3,
+ * admin 3, hr 16). The owners existed; nothing went back to look.
+ *
+ * Capped per run because clearing the backlog notifies real people: 34 rows
+ * clearing at once is the shape of the storm that dispatchNotifications' own
+ * "emailed 51 people about a single joiner" comment describes. At the hourly
+ * cadence of the lifecycle worker the current backlog drains in ~4 hours, and
+ * whatever is deferred is logged rather than silently dropped.
+ */
+export async function reresolveUnassignedRequests(limit = 10): Promise<{
+  scanned: number;
+  assigned: number;
+  stillUnassigned: number;
+  remaining: number;
+}> {
+  const TASKS_BY_CODE = new Map<string, ProvisioningTask>(
+    [...JOIN_TASKS, ...EXIT_TASKS].map((t) => [t.taskCode, t]),
+  );
+
+  // limit + 1 so the leftover can be reported instead of looking like "all done".
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT r.id, r.employee_id, r.task_code, r.assigned_role, r.request_type,
+            e.employee_code, e.first_name, e.branch_id
+       FROM it_provisioning_request r
+       JOIN employees e ON e.id = r.employee_id
+      WHERE r.status = 'pending_unassigned'
+        AND r.locked = 0
+        -- same "don't act on someone who left" guard the retry job and the
+        -- nightly activation job use
+        AND LOWER(COALESCE(e.employment_status, '')) NOT IN (${nonReactivatableSqlList()})
+      ORDER BY r.sla_due_at IS NULL, r.sla_due_at ASC
+      LIMIT ${Number(limit) + 1}`,
+  );
+
+  const all = rows as any[];
+  const remaining = Math.max(0, all.length - limit);
+  const batch = all.slice(0, limit);
+
+  let assigned = 0;
+  let stillUnassigned = 0;
+
+  for (const req of batch) {
+    try {
+      const recipients = await resolveTaskRecipients(
+        req.assigned_role,
+        req.branch_id ?? null,
+        req.task_code,
+      );
+      const users = recipients.to;
+
+      if (users.length === 0 || recipients.unassigned) {
+        stillUnassigned++;
+        continue;
+      }
+
+      // Guarded on the status so a concurrent reassign or waive wins rather than
+      // being overwritten — this job is not the only writer of these rows.
+      const [res] = await db.execute(
+        `UPDATE it_provisioning_request
+            SET assigned_user_id = ?, status = 'pending', assignment_exception = 0,
+                updated_at = NOW()
+          WHERE id = ? AND status = 'pending_unassigned'`,
+        [users[0]?.userId ?? null, req.id],
+      );
+      if (!(res as any)?.affectedRows) { stillUnassigned++; continue; }
+
+      assigned++;
+
+      await logSensitiveAction({
+        actor_user_id: 'system_reresolve',
+        action_type: 'it_provisioning_reassigned',
+        module_key: 'it_provisioning',
+        entity_type: 'it_provisioning_request',
+        entity_id: String(req.id),
+        change_summary: {
+          employee_id: req.employee_id,
+          task_code: req.task_code,
+          assigned_role: req.assigned_role,
+          assigned_user_id: users[0]?.userId ?? null,
+          basis: recipients.basis,
+          previous_status: 'pending_unassigned',
+        },
+      });
+
+      const task = TASKS_BY_CODE.get(req.task_code);
+      if (task) {
+        // Non-fatal: the row is already assigned and visible in the tracker. A
+        // mail failure must not roll that back or abort the rest of the batch.
+        await dispatchNotifications(
+          users,
+          'it_provisioning',
+          task.titleFn(req.first_name, req.employee_code),
+          task.descFn(req.first_name, req.employee_code),
+          String(req.id),
+          task.actionUrl,
+          recipients.cc,
+        ).catch((err) => {
+          console.error(
+            `[reresolveUnassignedRequests] notify failed for ${req.id}:`,
+            (err as Error).message,
+          );
+        });
+      }
+    } catch (err) {
+      // One bad row must not abort the sweep; the next run retries it.
+      stillUnassigned++;
+      console.error(
+        `[reresolveUnassignedRequests] request ${req.id}:`,
+        (err as Error).message,
+      );
+    }
+  }
+
+  if (remaining > 0) {
+    console.warn(
+      `[reresolveUnassignedRequests] CAP_REACHED — ${remaining} unassigned request(s) deferred to the next run`,
+    );
+  }
+
+  return { scanned: batch.length, assigned, stillUnassigned, remaining };
 }
 
 // ── Action / Waive ─────────────────────────────────────────────────────────────

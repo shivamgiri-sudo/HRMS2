@@ -9,13 +9,15 @@
 
 import { RowDataPacket } from 'mysql2';
 import { db } from '../db/mysql.js';
-import { dispatchJoinProvisioningTasks } from '../modules/it-provisioning/it-provisioning.service.js';
+import { dispatchJoinProvisioningTasks, reresolveUnassignedRequests } from '../modules/it-provisioning/it-provisioning.service.js';
 import { nonReactivatableSqlList } from '../modules/exit/exitEmploymentStatus.js';
 
 export interface RetryReport {
   attempted: number;
   succeeded: number;
   failed: Array<{ employeeId: string; employeeCode: string; error: string }>;
+  /** Requests recovered from pending_unassigned by the second pass. */
+  reresolved: { scanned: number; assigned: number; stillUnassigned: number; remaining: number };
   runAt: string;
 }
 
@@ -24,6 +26,7 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
     attempted: 0,
     succeeded: 0,
     failed: [],
+    reresolved: { scanned: 0, assigned: 0, stillUnassigned: 0, remaining: 0 },
     runAt: new Date().toISOString(),
   };
 
@@ -87,6 +90,28 @@ export async function runProvisioningRetryJob(): Promise<RetryReport> {
       report.failed.push({ employeeId: emp.id, employeeCode: emp.employee_code, error: msg });
       console.error(`[ProvisioningRetry] Failed for ${emp.employee_code}:`, msg);
     }
+  }
+
+  // Second pass: requests that WERE dispatched but landed with no owner.
+  //
+  // The loop above can never reach these — its NOT EXISTS clause skips any
+  // employee that already has an IT_EMAIL_DOMAIN_ASSET row, and a
+  // pending_unassigned request is exactly that: a row that exists and has no
+  // assignee. Without this pass there is no path back for them at all, since the
+  // tracker UI shows 'No <ROLE> user found for this branch' as text with no
+  // reassign action behind it.
+  //
+  // Non-fatal: a failure here must not mask the dispatch retries above, which are
+  // the job's primary purpose.
+  try {
+    report.reresolved = await reresolveUnassignedRequests();
+    if (report.reresolved.assigned > 0) {
+      console.log(
+        `[ProvisioningRetry] Re-resolved ${report.reresolved.assigned} unassigned request(s)`,
+      );
+    }
+  } catch (err) {
+    console.error('[ProvisioningRetry] Re-resolution pass failed:', err instanceof Error ? err.message : String(err));
   }
 
   return report;
