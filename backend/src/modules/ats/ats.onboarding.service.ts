@@ -939,7 +939,27 @@ export async function listPendingApprovals(scopeFilter: { sql: string; params: u
                  WHERE pv.candidate_id = c.id AND pv.validation_status = 'validated'
               )
               OR (o.gross IS NOT NULL AND o.date_of_joining IS NOT NULL)
-            ) AS payroll_validated
+            ) AS payroll_validated,
+            -- The two dates Payroll HR actually commits to, which are NOT the
+            -- same field as o.date_of_joining above. That column is whatever was
+            -- typed into the Employment Offer form -- in practice the ATS
+            -- walk-in date -- and the UI now labels it as such. These are the
+            -- operative ones: joining_date is day 1 in office and
+            -- salary_start_date is when salary generation begins, both written
+            -- by POST /api/ats/payroll-hr/validate.
+            --
+            -- Scalar subqueries for the reason given above: candidate_id carries
+            -- only INDEX idx_candidate, with no unique constraint, so a join
+            -- would fan the candidate out once per validation row the day a
+            -- second one is written. Ordered so the newest validation wins.
+            (SELECT pv2.joining_date FROM ats_payroll_hr_validation pv2
+              WHERE pv2.candidate_id = c.id
+              ORDER BY pv2.validated_at DESC, pv2.created_at DESC
+              LIMIT 1) AS payroll_joining_date,
+            (SELECT pv3.salary_start_date FROM ats_payroll_hr_validation pv3
+              WHERE pv3.candidate_id = c.id
+              ORDER BY pv3.validated_at DESC, pv3.created_at DESC
+              LIMIT 1) AS payroll_salary_start_date
      FROM ats_employment_offer o
      JOIN ats_onboarding_request r ON r.id = o.onboarding_request_id
      JOIN ats_candidate c ON c.id = r.candidate_id

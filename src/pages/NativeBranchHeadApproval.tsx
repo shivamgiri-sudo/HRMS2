@@ -31,7 +31,16 @@ interface PendingOffer {
   gross: number;
   net_in_hand: number;
   emp_type: string;
+  /**
+   * Whatever was typed into the Employment Offer form's "Date of Joining" field,
+   * which in practice is the ATS walk-in date -- hence the "ATS Walkin" column
+   * label. The dates Payroll HR actually commits to are the two below.
+   */
   date_of_joining: string;
+  /** Day 1 in office, per ats_payroll_hr_validation. Null until Payroll HR validates. */
+  payroll_joining_date?: string | null;
+  /** When salary generation begins, per ats_payroll_hr_validation. */
+  payroll_salary_start_date?: string | null;
   salary_band: string;
   branch_name: string;
   /** Cost centre the head is being approved against. Null when the offer carries none. */
@@ -186,6 +195,14 @@ function OfferRow({
 
       <TableCell className="py-3 text-sm whitespace-nowrap text-slate-700">
         {shortDate(offer.date_of_joining)}
+      </TableCell>
+
+      <TableCell className="py-3 text-sm whitespace-nowrap text-slate-700">
+        {offer.payroll_joining_date ? shortDate(offer.payroll_joining_date) : <span className="text-slate-400">—</span>}
+      </TableCell>
+
+      <TableCell className="py-3 text-sm whitespace-nowrap text-slate-700">
+        {offer.payroll_salary_start_date ? shortDate(offer.payroll_salary_start_date) : <span className="text-slate-400">—</span>}
       </TableCell>
 
       <TableCell className="py-3 text-center">
@@ -547,7 +564,9 @@ export default function NativeBranchHeadApproval() {
                           ['Branch & Type', 'min-w-[140px]'],
                           ['Cost Centre',   'min-w-[120px]'],
                           ['Process',       'min-w-[110px]'],
-                          ['Joining',       'min-w-[90px]'],
+                          ['ATS Walkin',    'min-w-[90px]'],
+                          ['Joining (Payroll HR)', 'min-w-[110px]'],
+                          ['Salary Start',  'min-w-[100px]'],
                           ['Band',          'w-14 text-center'],
                           ['CTC / Gross',   'text-right min-w-[130px]'],
                           ['Net in Hand',   'text-right min-w-[100px]'],
