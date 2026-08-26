@@ -56,7 +56,7 @@ async function main() {
     host: '14.97.30.236',
     port: 3306,
     user: 'shivam_user',
-    password: 'qwersdfg!@#hjk',
+    password: process.env.DB_PASSWORD,
     database: 'db_bill',
     connectTimeout: 30000,
   });

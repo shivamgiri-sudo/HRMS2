@@ -1,4 +1,13 @@
 import mysql from './node_modules/mysql2/promise.js';
+// The database password is read from the environment, never written here. This file was one
+// of 13 that had it as a source literal; the repository is public and the same value
+// authenticates mas_hrms, dialer_db, db_bill and mcn_lms. Pasting it back is exactly what
+// backend/src/db/__tests__/no-hardcoded-credentials.contract.test.ts exists to catch.
+// Run: node --env-file=backend/.env <this script>
+if (!process.env.DB_PASSWORD) {
+  throw new Error('DB_PASSWORD is not set. Run with: node --env-file=backend/.env <script>');
+}
+
 import { readFileSync } from 'fs';
 
 const env = readFileSync('./backend/.env','utf8');
@@ -8,7 +17,7 @@ const conn = await mysql.createConnection({
   host: '122.184.128.90',
   port: 3306,
   user: 'shivam_user',
-  password: '"qwersdfg!@#hjk"',
+  password: process.env.DB_PASSWORD,
   database: 'mas_hrms',
   connectTimeout: 8000,
 });

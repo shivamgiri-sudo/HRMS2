@@ -6,7 +6,16 @@
 import nodemailer from 'nodemailer';
 import mysql from 'mysql2/promise';
 
-const DB = { host: '122.184.128.90', user: 'shivam_user', password: 'qwersdfg!@#hjk', database: 'mas_hrms' };
+// The database password is read from the environment, never written here. This file was one
+// of 13 that had it as a source literal; the repository is public and the same value
+// authenticates mas_hrms, dialer_db, db_bill and mcn_lms. Pasting it back is exactly what
+// backend/src/db/__tests__/no-hardcoded-credentials.contract.test.ts exists to catch.
+// Run: node --env-file=backend/.env <this script>
+if (!process.env.DB_PASSWORD) {
+  throw new Error('DB_PASSWORD is not set. Run with: node --env-file=backend/.env <script>');
+}
+
+const DB = { host: '122.184.128.90', user: 'shivam_user', password: process.env.DB_PASSWORD, database: 'mas_hrms' };
 const SMTP = { host: 'smtp.gmail.com', port: 587, user: 'careers@teammas.in', pass: 'tpimnpkbqsltavbd' };
 const YESTERDAY = '2026-08-24';
 const WEEK_START = '2026-08-18'; // Monday of that week
