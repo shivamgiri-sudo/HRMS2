@@ -633,7 +633,22 @@ export function sectionStatus(section: SectionKey, row: QueueRow): { text: strin
       const overall = s.bgv?.overall_status ?? s.bgv?.status;
       if (s.bgv?.error || !overall) return { text: 'Unavailable', tone: 'neutral' };
       if (overall === 'clear') return { text: 'Clear', tone: 'good' };
-      if (overall === 'refer') return { text: 'Refer', tone: 'warn' };
+      // 'refer' never reaches here: getEmployeeBgvStatus maps the report's
+      // overall_status of 'refer' onto 'conditional' before returning, so the
+      // old `overall === 'refer'` branch was dead and every conditional row fell
+      // through to the red 'bad' tone below. Conditional means checks are still
+      // awaiting manual review -- not that anything failed -- so it is amber.
+      if (overall === 'conditional' || overall === 'refer') {
+        // Bare "Conditional" told the reviewer nothing: live, 21 of 22 candidates
+        // in this queue read exactly that, because the DB enum has no
+        // 'conditional' value and they are all 'refer' with checks pending. Say
+        // how many, so the row states what is actually outstanding.
+        const pending = (s.bgv?.checks ?? []).filter(
+          (c: any) => c.status === 'manual_review' || c.status === 'queued' || c.status === 'not_started',
+        ).length;
+        return { text: pending ? `Conditional · ${pending} pending` : 'Conditional', tone: 'warn' };
+      }
+      if (overall === 'pending') return { text: 'Not started', tone: 'neutral' };
       return { text: overall, tone: 'bad' };
     }
     case 'bank': {
