@@ -377,7 +377,9 @@ app.use("/api/leave", leaveSecureRouter);
 app.use("/api/leave", leaveRouter);
 // PUBLIC payslip QR verification — must precede every other /api/payroll router,
 // since those apply requireAuth at router level and would 401 the scan first.
-app.use("/api/payroll", payrollPublicRouter);
+// Rate-limited: this router is unauthenticated and its payslip-verification route is
+// keyed on sequential employee codes, so an unthrottled caller could walk the range.
+app.use("/api/payroll", publicRegistrationLimiter, payrollPublicRouter);
 // PUBLIC DPDP grievance officer — the site footer requests this on every page, including
 // the landing page and the privacy policy, where there is no token to send. It must precede
 // clientRouter, which is mounted on the bare "/api" prefix and applies requireAuth at router
