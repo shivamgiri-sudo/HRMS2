@@ -26,8 +26,15 @@ interface OrgChartNodeProps {
   currentEmployeeId?: string | null;
   isLast?: boolean;
   searchQuery?: string;
-  /** Opens the employee drawer. NativeOrgChartEnhanced has always passed this, but the prop did
-   *  not exist, so clicking a node did nothing at all. */
+  /**
+   * Opens the employee drawer.
+   *
+   * Added for NativeOrgChartEnhanced, which passed it before the prop existed so clicking a
+   * node did nothing. That page was never routed in any commit and is being retired, so
+   * nothing passes this today — the live NativeOrgChart renders nodes without it. Kept
+   * because it is optional and is the hook a drawer would use; it is not dead weight the
+   * component has to work around.
+   */
   onClick?: () => void;
 }
 

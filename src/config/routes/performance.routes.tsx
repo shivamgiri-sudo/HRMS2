@@ -15,6 +15,7 @@ const KpiTargetMatrix                = lazy(() => import("@/pages/KpiTargetMatri
 const MyKpiDashboard                 = lazy(() => import("@/pages/MyKpiDashboard"));
 const NativeAgentPerformanceDashboard = lazy(() => import("@/pages/NativeAgentPerformanceDashboard"));
 const NativeProcessMetricConfig = lazy(() => import("@/pages/NativeProcessMetricConfig"));
+const ProcessPerformancePage = lazy(() => import("@/pages/ProcessPerformancePage"));
 const NativeQAFileAudit = lazy(() => import("@/pages/NativeQAFileAudit"));
 const NativeQAFormBuilder = lazy(() => import("@/pages/NativeQAFormBuilder"));
 const NativeCallMasterDashboard      = lazy(() => import("@/pages/NativeCallMasterDashboard"));
@@ -102,6 +103,11 @@ export const performanceRouteElements = (
       <Route path="/quality/executive"    element={<ProtectedRoute><Gate pageCode="QUALITY_EXECUTIVE"><ExecutiveQualityDashboard /></Gate></ProtectedRoute>} />
       <Route path="/quality/team"         element={<Navigate to="/quality-dashboard" replace />} />
       <Route path="/quality/my-dashboard" element={<Navigate to="/quality-dashboard" replace />} />
+      {/* Gated on OPERATIONS_DASHBOARD: it already grants the 11 roles this page is
+          for. PROCESS_MANAGER_DASHBOARD would have been the obvious code but carries
+          only 3 grants (accounts_head/super_admin/tq_head) and would have blocked
+          process managers from their own report card. */}
+      <Route path="/performance/process-performance" element={<ProtectedRoute roles={['super_admin','admin','ceo','coo','manager','process_manager','operations_manager','branch_head','qa','quality_analyst','tq_head']}><Gate pageCode="OPERATIONS_DASHBOARD"><ProcessPerformancePage /></Gate></ProtectedRoute>} />
       <Route path="/kpi/process-metrics" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head','process_manager']}><Gate pageCode="KPI_CONFIG"><NativeProcessMetricConfig /></Gate></ProtectedRoute>} />
       <Route path="/quality/file-audit" element={<ProtectedRoute roles={['super_admin','admin','qa','quality_analyst','tq_head']}><Gate pageCode="QUALITY_DASHBOARD"><NativeQAFileAudit /></Gate></ProtectedRoute>} />
       <Route path="/quality/audit-forms" element={<ProtectedRoute roles={['super_admin','admin','qa','tq_head']}><Gate pageCode="QA_EVALUATION"><NativeQAFormBuilder /></Gate></ProtectedRoute>} />

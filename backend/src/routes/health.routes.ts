@@ -6,17 +6,13 @@ import { requireRole } from "../middleware/requireRole.js";
 
 export const healthRouter = Router();
 
-// TEMP TEST ENDPOINT - REMOVE AFTER TESTING
-// Simple fixed endpoint
-healthRouter.get("/send-test-report-shivam", async (_req, res) => {
-  try {
-    const { runDailyHiringReport } = await import("../modules/ats/ats-reminders.cron.js");
-    const result = await runDailyHiringReport('2026-08-24', 'shivam.giri@teammas.in');
-    return res.json({ emailSent: true, ...result });
-  } catch (error: any) {
-    return res.status(500).json({ emailSent: false, error: error.message });
-  }
-});
+// REMOVED 2026-08-27: "TEMP TEST ENDPOINT - REMOVE AFTER TESTING", never removed.
+//
+// GET /api/health/send-test-report-shivam ran the full branch/recruiter hiring report and
+// emailed it out, from a router mounted at app.ts with NO auth middleware. Anyone who
+// could reach the host could trigger it: recruitment data leaving by mail on demand, and
+// a set of heavy aggregate queries usable as an amplifier. The same capability now lives
+// behind auth on POST /api/test-report/trigger.
 
 // BuildInfo/readBuildInfo moved to shared/buildInfo.ts so the worker entrypoint reports the
 // SAME stamp rather than carrying a second copy that could drift. Re-exported because other
@@ -125,17 +121,10 @@ healthRouter.get("/live", (_req, res) => {
  * common healthy one.
  */
 healthRouter.get("/", async (req, res) => {
-  // TEMP: Check for test parameter
-  const testReport = req.query.testReport;
-  if (testReport === 'sendDailyReport2024') {
-    try {
-      const { runDailyHiringReport } = await import("../modules/ats/ats-reminders.cron.js");
-      const result = await runDailyHiringReport('2026-08-24', 'shivam.giri@teammas.in');
-      return res.json({ ...result, triggered: true, date: '2026-08-24' });
-    } catch (error: any) {
-      return res.status(500).json({ success: false, error: error.message, triggered: true });
-    }
-  }
+  // REMOVED 2026-08-27: ?testReport=sendDailyReport2024 turned the unauthenticated health
+  // check into a mail trigger for the hiring report. A health endpoint is the one route
+  // guaranteed to be reachable — load balancers and uptime monitors poll it — so it is the
+  // worst possible place to hang a side effect. Use POST /api/test-report/trigger.
 
   const dbStatus = await getDatabaseStatus();
   let schemaStatus = getSchemaVerificationState();

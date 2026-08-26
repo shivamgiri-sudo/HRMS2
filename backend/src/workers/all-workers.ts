@@ -51,6 +51,7 @@ import { startAttendanceReconciliationWorker, stopAttendanceReconciliationWorker
 import { startManagerDailyBriefScheduler, stopManagerDailyBriefScheduler } from "../modules/management/daily-brief/daily-brief.cron.js";
 import { startRetentionCron } from "./privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "../modules/ats/ats-reminders.cron.js";
+import { startAtsDailyReportScheduler, stopAtsDailyReportScheduler } from "../modules/ats/ats-daily-report.cron.js";
 import { startPayrollWindowClosureScheduler, stopPayrollWindowClosureScheduler } from "../modules/payroll/payroll-window.cron.js";
 import { startPerformanceIngestionScheduler } from "../modules/performance-ingestion/performance-scheduler.service.js";
 import { startBreachSlaCron, stopBreachSlaCron } from "../modules/privacy/dpdp-breach-sla.cron.js";
@@ -228,6 +229,8 @@ const WORKERS: Array<{ name: string; start: () => Promise<void> }> = [
     name: "ats-reminders",
     start: () => {
       if (process.env.ATS_REMINDERS_ENABLED === "true") startAtsRemindersScheduler();
+      // Separate switch — see ats-daily-report.cron.ts for why it is not the one above.
+      if (process.env.ATS_DAILY_REPORT_ENABLED === "true") startAtsDailyReportScheduler();
       return Promise.resolve();
     },
   },
@@ -465,6 +468,7 @@ function shutdown(): void {
   stopReportEmailDeliveryWorker();
   stopReportStaleRecoveryWorker();
   stopTatEscalationWorker();
+  stopAtsDailyReportScheduler();
   stopReportSubscriptionWorker();
   stopAutoRosterSchedulerWorker();
   stopUatJobRunner();

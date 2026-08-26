@@ -70,6 +70,8 @@ describe("GET /dpdp-withdrawal/stats", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.data).toEqual({ id: "real-uuid-123", status: "pending" });
-    expect(getById).toHaveBeenCalledWith("real-uuid-123", "u-hr-1", true);
+    // 4th arg is the DPDP_WITHDRAWAL_VIEWED opt-in: the detail route records the view,
+    // the audit route (which also calls getById, purely for its access check) does not.
+    expect(getById).toHaveBeenCalledWith("real-uuid-123", "u-hr-1", true, true);
   });
 });

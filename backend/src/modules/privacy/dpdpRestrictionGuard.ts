@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { insertAuditLog } from "./dpdp-withdrawal.service.js";
 
 /**
  * DPDP Act 2023 §13 enforcement.
@@ -74,6 +75,20 @@ export async function checkDpdpRestriction(
     );
 
     if (rows.length > 0) {
+      /**
+       * The hold being ENFORCED is a distinct auditable event from the hold being applied.
+       * DPDP_PROCESSING_HOLD_APPLIED is written once, when HR starts review; without this,
+       * the record showed that a restriction existed but never that it actually stopped
+       * anyone — which is the only evidence that the restriction did its job.
+       *
+       * Fire-and-forget: an audit-write failure must never convert this 403 into a 500,
+       * because the guard's whole contract is to fail closed.
+       */
+      const actor = (req as Request & { authUser?: { id?: string } }).authUser?.id ?? "anonymous";
+      void insertAuditLog(String(rows[0].id), "DPDP_PROCESSING_HOLD_ENFORCED", actor, {
+        remarks: `Access to ${req.method} ${req.originalUrl ?? req.path} blocked by active restriction`,
+      }).catch(() => undefined);
+
       res.status(403).json({
         success: false,
         message:

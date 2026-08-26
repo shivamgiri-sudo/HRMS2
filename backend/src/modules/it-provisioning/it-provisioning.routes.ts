@@ -379,6 +379,43 @@ router.post('/tasks/:id/complete', requireRole(...PROVISIONING_ROLES), h(async (
   const actorUserId = req.authUser!.id;
   const body = req.body as Record<string, unknown>;
 
+  /*
+   * Read status BEFORE dispatching, because a task can legitimately be submitted more than
+   * once and the two cases must be told apart.
+   *
+   * ADMIN_BIOMETRIC_ID_CARD is two independent sub-tasks — biometric enrolment and the ID
+   * card — and completeAdminProvisioningTask() refuses the ID card with a 422 when the
+   * employee has no photo. So the normal way to work that queue is: tick biometric, submit,
+   * come back for the card once the photo is up. Measured live 2026-08-26, 12 requests are
+   * sitting in exactly that state, all 12 for employees with no photo_url, all actioned
+   * within three minutes of each other.
+   *
+   * They could not be finished. The queue only rendered its action button for status
+   * 'pending', and this handler skipped persistStructuredFields() once the row was
+   * 'actioned' — so even reaching the endpoint again would sync master data while leaving
+   * the task row still saying the card was never printed.
+   */
+  const [taskRows] = await db.execute<RowDataPacket[]>(
+    `SELECT task_code, status, locked FROM it_provisioning_request WHERE id = ? LIMIT 1`,
+    [taskId],
+  );
+  const taskRow = (taskRows as RowDataPacket[])[0];
+  if (!taskRow) throw Object.assign(new Error('Provisioning request not found'), { statusCode: 404 });
+
+  /*
+   * Locked evidence is immutable, and this is the only place that says so.
+   *
+   * getRequest() in the service rejects a locked row, but dispatchTaskCompletion() and its
+   * handlers never look at the flag — they write biometric enrolments, ID card documents,
+   * employees.official_email and auth_user rows regardless. That was masked only by the UI
+   * hiding every button on a locked row. Re-submission is now a supported path, so the
+   * guard has to be real. Note autoLockConfirmedRequests() locks any actioned row 48h after
+   * actioned_at, which is the window a half-finished task has to be completed in.
+   */
+  if (taskRow.locked) {
+    throw Object.assign(new Error('Request is locked and cannot be modified'), { statusCode: 403 });
+  }
+
   // Dispatch to role-specific handler that syncs master data
   // IT: syncs employees.official_email + creates auth_user
   // Admin: creates biometric + ID card records
@@ -386,18 +423,18 @@ router.post('/tasks/:id/complete', requireRole(...PROVISIONING_ROLES), h(async (
   // Others: falls through to existing actionProvisioningRequest
   await dispatchTaskCompletion(taskId, body, actorUserId);
 
-  // Always persist structured fields to task record and mark actioned
-  // (dispatchTaskCompletion marks actioned for IT/Admin/WFM;
-  //  this handles APPOINTMENT_LETTER and any other task codes)
-  const [taskRows] = await db.execute<RowDataPacket[]>(
-    `SELECT task_code, status FROM it_provisioning_request WHERE id = ? LIMIT 1`,
-    [taskId],
-  );
-  const taskCode: string = (taskRows as RowDataPacket[])[0]?.task_code ?? '';
-  const alreadyActioned = (taskRows as RowDataPacket[])[0]?.status === 'actioned';
+  const taskCode: string = taskRow.task_code ?? '';
+  const alreadyActioned = taskRow.status === 'actioned';
 
+  /*
+   * Persist unconditionally. The handlers are idempotent by construction (each does a
+   * SELECT-then-UPDATE-or-INSERT), so a second submission corrects the record rather than
+   * duplicating it, and the task row must end up agreeing with the master data it just
+   * wrote. Only the state transition is guarded: re-stamping actioned_at would restart the
+   * 48h auto-lock clock and re-fire the completion notification for work already reported.
+   */
+  await persistStructuredFields(taskId, body);
   if (!alreadyActioned) {
-    await persistStructuredFields(taskId, body);
     await actionProvisioningRequest({ requestId: taskId, actionedBy: actorUserId, evidenceNote: String(body.evidence_note ?? 'Completed from provisioning queue') });
   }
 
