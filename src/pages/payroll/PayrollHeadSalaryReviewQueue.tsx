@@ -679,17 +679,34 @@ export function SectionCard({ section, row, onClick }: { section: SectionKey; ro
   const Icon = meta.icon;
   const { text, tone } = sectionStatus(section, row);
   const c = TONE_CLASSES[tone];
+  // The four tiles share the row's spare width as equal grid columns rather than
+  // each holding a fixed 120px and wrapping. Previously they stayed narrow while
+  // the row kept slack beside them -- congested tiles next to empty space -- and
+  // a wrap threw the row onto two ragged lines.
+  //
+  // Two columns at lg, four at xl: once the fixed parts of the row are taken out
+  // (avatar, the 220px identity block, salary, status, actions) an lg viewport
+  // leaves roughly 280px here, which four columns would cut to ~66px each and
+  // truncate everything. Two columns of ~140px stay readable, and the fourth
+  // column only appears when there is width to justify it.
   return (
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className={`flex flex-col items-start gap-1 rounded-lg border px-2.5 py-2 text-left cursor-pointer transition-colors hover:border-indigo-300 hover:shadow-sm min-w-[120px] ${c.border}`}
+      className={`flex min-w-0 flex-col items-start gap-1 rounded-lg border px-2.5 py-2 text-left cursor-pointer transition-colors hover:border-indigo-300 hover:shadow-sm ${c.border}`}
+      title={`${meta.label}: ${text}`}
     >
-      <span className="flex items-center gap-1 text-[9px] font-bold text-slate-500 uppercase tracking-wide">
-        <Icon className="h-3 w-3 text-slate-400" />{meta.label}
+      <span className="flex w-full items-center gap-1 text-[9px] font-bold text-slate-500 uppercase tracking-wide">
+        <Icon className="h-3 w-3 flex-shrink-0 text-slate-400" />
+        <span className="truncate">{meta.label}</span>
       </span>
-      <span className={`flex items-center gap-1 text-[11px] font-semibold truncate max-w-[130px] ${c.text}`}>
-        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${c.dot}`} />{text}
+      {/* min-w-0 rather than a fixed max-width: the status text can now use
+          whatever the column gives it, so "Conditional · 3 pending" and
+          "Penny-drop verified" read in full on a wide screen and truncate only
+          when they genuinely must. The title above keeps the full text reachable. */}
+      <span className={`flex w-full min-w-0 items-center gap-1 text-[11px] font-semibold ${c.text}`}>
+        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${c.dot}`} />
+        <span className="truncate">{text}</span>
       </span>
     </button>
   );
@@ -1874,7 +1891,7 @@ export default function PayrollHeadSalaryReviewQueue() {
                   {/* Section summary cards — fills the space that used to sit empty, Pending
                       Review tab only (Approved/Rejected keep this simpler row layout). */}
                   {tab === 'pending_review' && (
-                    <div className="hidden lg:flex flex-1 items-center gap-2 flex-wrap">
+                    <div className="hidden lg:grid flex-1 min-w-0 grid-cols-2 xl:grid-cols-4 items-stretch gap-2">
                       {(Object.keys(SECTION_META) as SectionKey[]).map((section) => (
                         <SectionCard key={section} section={section} row={row}
                           onClick={() => openSectionPopup(section, row.employee_id)} />
