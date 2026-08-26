@@ -185,7 +185,9 @@ export async function aonDrilldownEmployees(
            COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
            DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m-%d') AS join_date,
            DATE_FORMAT(e.date_of_exit, '%Y-%m-%d')     AS date_of_exit,
-           DATEDIFF(e.date_of_exit, ${AON_REFERENCE_JOIN_DATE_SQL}) AS tenure_at_exit_days,
+           -- Clamped: an In Training leaver has date_of_exit before salary_start_date, so a raw
+           -- DATEDIFF here goes negative, and a negative "tenure at exit" is nonsensical.
+           ${AON_DAYS_SQL("e", "e.date_of_exit")} AS tenure_at_exit_days,
            COALESCE(NULLIF(TRIM(m.full_name),''),
                     TRIM(CONCAT(m.first_name,' ',COALESCE(m.last_name,'')))) AS reporting_manager_name
       FROM employees e
@@ -206,7 +208,11 @@ export async function aonDrilldownEmployees(
              COALESCE(cc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
              COALESCE(p.process_name, 'UNASSIGNED')      AS process_name,
              DATE_FORMAT(${AON_REFERENCE_JOIN_DATE_SQL}, '%Y-%m-%d') AS join_date,
-             DATEDIFF(CURDATE(), ${AON_REFERENCE_JOIN_DATE_SQL}) AS aon_days,
+             -- Clamped: for an In Training employee the reference date (salary_start_date) is
+             -- still in the future, so a raw DATEDIFF here goes negative -- and a negative value
+             -- satisfies aon_days <= 30 below, which would silently assign the HIGHEST risk
+             -- tier (45) to someone who hasn't even started payroll yet.
+             ${AON_DAYS_SQL("e", "CURDATE()")} AS aon_days,
              -- IMPORTANT-3 (final whole-branch review): a cohort-month drill deliberately
              -- includes since-left employees alongside active ones (see the cohortMonth
              -- comment block above), but this shape had no column telling the caller which

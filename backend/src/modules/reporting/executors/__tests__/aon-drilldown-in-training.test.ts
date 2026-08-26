@@ -29,7 +29,45 @@ describe("aon drill-down bucket predicates", () => {
     // here would just re-create the divergence that helper exists to eliminate. So the property
     // under test is "the drill-down delegates its tenure math to that helper", proven two ways:
     // the source wires through it, and the helper itself is the one place GREATEST() lives.
-    expect(SRC).toContain("AON_DAYS_SQL(");
+    //
+    // A file-wide "AON_DAYS_SQL( appears somewhere" check would stay green even if a single
+    // case regressed to a hand-rolled `DATEDIFF(...) > 90` -- the other seven calls would carry
+    // it. So extract each switch function's own body and check it in isolation: no bare
+    // DATEDIFF anywhere in it, and one AON_DAYS_SQL( call per tenure bucket (the four buckets
+    // other than "In Training", which uses IN_TRAINING_SQL instead).
     expect(AON_DAYS_SQL()).toContain("GREATEST(");
+
+    const extractFunctionBody = (fnName: string): string => {
+      const start = SRC.indexOf(`function ${fnName}`);
+      expect(start, `function ${fnName} not found`).toBeGreaterThanOrEqual(0);
+      const braceStart = SRC.indexOf("{", start);
+      let depth = 0;
+      for (let i = braceStart; i < SRC.length; i++) {
+        if (SRC[i] === "{") depth++;
+        else if (SRC[i] === "}") {
+          depth--;
+          if (depth === 0) return SRC.slice(braceStart, i + 1);
+        }
+      }
+      throw new Error(`unterminated function body for ${fnName}`);
+    };
+
+    const tenureBucketCount = AON_BUCKETS.length - 1; // all but "In Training"
+
+    for (const fnName of ["aonBucketClause", "aonBucketAtExitClause"]) {
+      const body = extractFunctionBody(fnName);
+      expect(body, `${fnName} must not hand-roll a raw DATEDIFF`).not.toMatch(/\bDATEDIFF\(/);
+      const calls = body.split("AON_DAYS_SQL(").length - 1;
+      expect(calls, `${fnName} must call AON_DAYS_SQL once per tenure bucket`).toBe(
+        tenureBucketCount
+      );
+    }
+  });
+
+  it("has no raw DATEDIFF in the SELECT column lists (display columns must be clamped too)", () => {
+    // tenure_at_exit_days and aon_days are read straight off these SELECTs and (for aon_days)
+    // feed the risk_score CASE below them -- a raw DATEDIFF here goes negative for an In
+    // Training employee and silently satisfies `aon_days <= 30`, the highest risk tier.
+    expect(SRC).not.toMatch(/\bDATEDIFF\(/);
   });
 });
