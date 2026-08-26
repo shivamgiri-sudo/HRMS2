@@ -212,6 +212,10 @@ export default function PayrollHeadSalaryReviewDetail() {
   const status   = review?.status as string | undefined;
   const bgvCandidateId = journey?.bgv?.candidateId as string | null | undefined;
 
+  // Live preview for Fix B — the package the Select is currently pointed at,
+  // found in the already-loaded `packages` list (no extra API call).
+  const selectedPackagePreview = packages.find((p) => p.id === selectedPkgId) ?? null;
+
   async function run(fn: () => Promise<unknown>, ok?: string) {
     setBusy(true); setError(null); setNotice(null);
     try {
@@ -616,6 +620,34 @@ export default function PayrollHeadSalaryReviewDetail() {
                     Assign Package
                   </Button>
                 </div>
+
+                {/* Preview of the currently-selected package, before "Assign Package" is
+                    clicked — derived from the already-loaded packages list (salary_package_master
+                    rows fetched for this branch), no extra API call. Read-only; committing still
+                    requires clicking Assign Package above. */}
+                {selectedPackagePreview && (
+                  <div className="rounded-xl border border-purple-100 bg-purple-50/40 p-4 mt-3">
+                    <p className="text-xs font-bold uppercase tracking-widest text-purple-700 mb-3">
+                      Package Preview — {selectedPackagePreview.name ?? selectedPackagePreview.band_name ?? `Band ${selectedPackagePreview.band_code}`}
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8">
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Earnings</p>
+                        <SalaryRow label="Basic" value={inr(selectedPackagePreview.basic)} />
+                        <SalaryRow label="HRA" value={inr(selectedPackagePreview.hra)} />
+                        <SalaryRow label="Conveyance" value={inr(selectedPackagePreview.conveyance)} />
+                        <SalaryRow label="Gross" value={inr(selectedPackagePreview.gross)} bold separator />
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Deductions</p>
+                        <SalaryRow label="PF (Emp)" value={selectedPackagePreview.epf_employee ? `− ${inr(selectedPackagePreview.epf_employee)}` : '—'} />
+                        <SalaryRow label="ESIC (Emp)" value={selectedPackagePreview.esic_employee ? `− ${inr(selectedPackagePreview.esic_employee)}` : '—'} />
+                        <SalaryRow label="Net in Hand" value={inr(selectedPackagePreview.net_in_hand)} bold separator />
+                        <SalaryRow label="CTC" value={inr(selectedPackagePreview.ctc)} bold separator />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Build new */}

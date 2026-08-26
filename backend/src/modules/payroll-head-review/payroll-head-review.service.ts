@@ -285,9 +285,21 @@ export async function getEmployeeJourney(employeeId: string) {
     // exactly what payroll will read once this employee is approved.
     // net_estimate is the stored column name; net_in_hand alias keeps the frontend
     // field consistent with salary_package_master which uses net_in_hand.
+    // pf_employee/esic_employee (migration 445) are the real per-row source now;
+    // COALESCE falls back to the pm join for pre-migration rows where they're
+    // still NULL — sca.* is listed first so the COALESCE aliases below override
+    // the raw (possibly-NULL) sca.pf_employee/sca.esic_employee columns in the
+    // final result object, matching what the frontend reads (sc.pf_employee /
+    // sc.esic_employee).
+    // pf_employee_amt/esic_employee_amt are kept alongside pf_employee/esic_employee —
+    // PayrollHeadSalaryReviewQueue.tsx's FinalSalarySection reads the "_amt" names on
+    // this same salary_components object, so both must be populated additively.
     db.execute<RowDataPacket[]>(
       `SELECT sca.*, sca.net_estimate AS net_in_hand,
-              pm.epf_employee AS pf_employee_amt, pm.esic_employee AS esic_employee_amt
+              COALESCE(sca.pf_employee, pm.epf_employee) AS pf_employee,
+              COALESCE(sca.esic_employee, pm.esic_employee) AS esic_employee,
+              COALESCE(sca.pf_employee, pm.epf_employee) AS pf_employee_amt,
+              COALESCE(sca.esic_employee, pm.esic_employee) AS esic_employee_amt
          FROM salary_component_assignments sca
          LEFT JOIN salary_package_master pm ON pm.id = sca.package_id
         WHERE sca.employee_id = ? AND sca.status = 'active'
@@ -540,13 +552,15 @@ async function writeComponentAssignment(
     `INSERT INTO salary_component_assignments
        (id, employee_id, effective_date, package_id, basic, hra, conveyance,
         special_allowance, gross, pf_applicable, esi_applicable, employer_pf,
-        employer_esi, ctc, net_estimate, assigned_by, assigned_at, approval_reference, status)
-     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
+        employer_esi, pf_employee, esic_employee, ctc, net_estimate, assigned_by,
+        assigned_at, approval_reference, status)
+     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
     [
       employeeId, effectiveDate, pkg.id,
       pkg.basic, pkg.hra, pkg.conveyance, pkg.special_allowance, pkg.gross,
       Number(pkg.epf_employee) > 0 ? 1 : 0, Number(pkg.esic_employee) > 0 ? 1 : 0,
-      pkg.epf_employer, pkg.esic_employer, pkg.ctc, pkg.net_in_hand,
+      pkg.epf_employer, pkg.esic_employer, pkg.epf_employee, pkg.esic_employee,
+      pkg.ctc, pkg.net_in_hand,
       actorUserId, approvalReference,
     ]
   );
@@ -657,14 +671,16 @@ export async function approveOfferedPackage(employeeId: string, effectiveDate: s
     `INSERT INTO salary_component_assignments
        (id, employee_id, effective_date, package_id, basic, hra, conveyance,
         special_allowance, gross, pf_applicable, esi_applicable, employer_pf,
-        employer_esi, ctc, net_estimate, assigned_by, assigned_at, approval_reference, status)
-     VALUES (UUID(), ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
+        employer_esi, pf_employee, esic_employee, ctc, net_estimate, assigned_by,
+        assigned_at, approval_reference, status)
+     VALUES (UUID(), ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
     [
       employeeId, effectiveDate,
       offer.basic ?? 0, offer.hra ?? 0, offer.conveyance ?? 0, offer.special_allowance ?? 0,
       offer.gross ?? 0,
       Number(offer.pf_employee) > 0 ? 1 : 0, Number(offer.esic_employee) > 0 ? 1 : 0,
-      offer.pf_employer ?? 0, offer.esic_employer ?? 0, offer.offered_ctc ?? 0, offer.net_in_hand ?? 0,
+      offer.pf_employer ?? 0, offer.esic_employer ?? 0, offer.pf_employee ?? 0, offer.esic_employee ?? 0,
+      offer.offered_ctc ?? 0, offer.net_in_hand ?? 0,
       actorUserId, review.id,
     ]
   );

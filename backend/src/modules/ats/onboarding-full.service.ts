@@ -869,7 +869,7 @@ async function triggerRealBgvChecksAsync(
  * (rotated key, row written elsewhere) falls back to the legacy column and the
  * check lands in manual review exactly as before.
  */
-function decryptPanForProvider(encrypted: unknown): string | null {
+export function decryptPanForProvider(encrypted: unknown): string | null {
   const value = nonEmptyString(encrypted);
   if (!value) return null;
   try {

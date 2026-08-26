@@ -5,7 +5,7 @@ import { getConfiguredBgvProviderAdapter, type AddressDocInput, type EducationVe
 import { withProviderFailureLogged, getBgvApiCostReport } from "./bgv-api-log.service.js";
 import { receiptFlagsFromDocuments } from "./bgv-document-receipt.js";
 import { syncBridgePennyDropStatus } from "./onboarding-bridge-status.js";
-import { loadAsyncBgvTriggerContext, validateOnboardingToken } from "./onboarding-full.service.js";
+import { loadAsyncBgvTriggerContext, validateOnboardingToken, decryptPanForProvider } from "./onboarding-full.service.js";
 import { resolveBankNameVariance } from "./bank-name-corroboration.js";
 import { digilockerVerifiedCheckTypes, type DigilockerEvidence } from "./digilocker-evidence.js";
 import { propagateIdentityVerification } from "../../shared/identityVerificationPropagation.js";
@@ -97,7 +97,8 @@ async function ensureConsent(candidateId: string) {
 async function getCandidateIdentity(candidateId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.id, c.full_name, c.email, c.mobile, c.date_of_birth, c.pan_number, c.aadhar_number,
-            p.employee_name, p.pan_number_hash, p.aadhaar_number_hash, p.pan_number_masked, p.aadhaar_number_masked
+            p.employee_name, p.pan_number_hash, p.aadhaar_number_hash, p.pan_number_masked, p.aadhaar_number_masked,
+            p.pan_number_encrypted
        FROM ats_candidate c
        LEFT JOIN candidate_onboarding_profile p ON p.candidate_id = c.id
       WHERE c.id = ? LIMIT 1`,
@@ -474,7 +475,15 @@ export async function verifyPanForCandidate(candidateId: string, input: { panNum
     return getBgvStatusForCandidate(candidateId);
   }
   const candidate = await getCandidateIdentity(candidateId);
-  const pan = String(input.panNumber || candidate.pan_number || "").trim().toUpperCase();
+  // candidate_onboarding_profile.pan_number_encrypted (migration 425) is the real PAN for an
+  // onboarding-wizard candidate — ats_candidate.pan_number is frequently empty for these
+  // candidates, so verification used to fall straight through to manual_review with nothing
+  // to check. decryptPanForProvider is the same function loadAsyncBgvTriggerContext already
+  // uses for this exact column; a decrypt failure (rotated key, absent ciphertext) returns
+  // null and falls through to the pre-existing ats_candidate.pan_number source below, same as
+  // before this change.
+  const decryptedPan = decryptPanForProvider(candidate.pan_number_encrypted);
+  const pan = String(input.panNumber || decryptedPan || candidate.pan_number || "").trim().toUpperCase();
   if (!pan) throw Object.assign(new Error("PAN number is required — please save your PAN in the Personal details step first"), { statusCode: 400 });
   const adapter = await getConfiguredBgvProviderAdapter();
   const started = Date.now();
