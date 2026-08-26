@@ -23,6 +23,12 @@ export const MANDATORY_DOCUMENT_RULES: MandatoryDocRule[] = [
   { label: "PAN Card", matches: ["pan"] },
   { label: "Address Proof", matches: ["address proof"] },
   { label: "Passport Size Photo", matches: ["passport photo", "passport size", "photo"] },
+  // Live Selfie is deliberately its own rule and NOT folded into the photo rule
+  // above: a gallery-uploaded passport photo must not satisfy a *live* capture,
+  // which exists to prove the candidate was physically present. Every live
+  // capture writes doc_type "Live Selfie" (55/55 rows in production), so the
+  // "selfie" substring is sufficient and no exact-match special case is needed.
+  { label: "Live Selfie", matches: ["selfie"] },
   { label: "10th Marksheet", matches: ["10th"] },
   { label: "12th Marksheet / Diploma", matches: ["12th", "diploma"] },
 ];

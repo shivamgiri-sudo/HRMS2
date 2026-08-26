@@ -26,6 +26,41 @@ const EXP_DOC_TYPES = ["Experience Letter", "Appointment Letter", "Relieving Let
 
 // ── Step 7: Education ─────────────────────────────────────────────────────────
 
+/**
+ * Returns a user-facing error, or null if Step 7 is complete.
+ *
+ * Exported so the parent page can gate the footer's "Next Step" click, the same
+ * way validateStep2Personal gates Step 2. Without this, Step 7 was skippable
+ * entirely: on production 15 candidates reached "profile_submitted" or beyond
+ * with zero qualification rows, which is why the HR review page shows
+ * "No education records." for so many profiles.
+ *
+ * Two distinct failures are reported separately, because they need different
+ * corrective actions from the candidate:
+ *  1. Nothing added at all — they never engaged with the step.
+ *  2. Details typed into the form but "Add Qualification" never pressed. This is
+ *     the more common trap: that button POSTs on its own, independently of the
+ *     footer's Next, so a filled-in form is silently discarded on advance.
+ */
+export function validateStep7Education(
+  status: StatusData | null,
+  qual: QualForm,
+): string | null {
+  const added = status?.qualifications?.length ?? 0;
+  // Ignore whitespace-only leftovers so "Clear Form" genuinely clears the gate.
+  const formDirty = Object.values(qual).some((v) => String(v ?? "").trim());
+
+  if (!added) {
+    return formDirty
+      ? "You have filled in a qualification but not added it yet — click 'Add Qualification' to save it before continuing."
+      : "Add at least your 10th / SSC qualification before continuing.";
+  }
+  if (formDirty) {
+    return "You have an unsaved qualification in the form — click 'Add Qualification' to save it, or 'Clear Form' to discard it.";
+  }
+  return null;
+}
+
 export function Step7Education({
   qual, setQual, status, saving, onAdd,
 }: {

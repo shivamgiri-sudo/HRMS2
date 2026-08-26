@@ -1769,6 +1769,12 @@ const MANDATORY_DOCUMENTS: Array<{ label: string; matches: string[] }> = [
   { label: "PAN Card", matches: ["pan"] },
   { label: "Address Proof", matches: ["address proof"] },
   { label: "Passport Size Photo", matches: ["passport photo", "passport size", "photo"] },
+  // Live Selfie is deliberately its own rule and NOT folded into the photo rule
+  // above: a gallery-uploaded passport photo must not satisfy a *live* capture,
+  // which exists to prove the candidate was physically present. Every live
+  // capture writes doc_type "Live Selfie" (55/55 rows in production), so the
+  // "selfie" substring is sufficient and no exact-match special case is needed.
+  { label: "Live Selfie", matches: ["selfie"] },
   { label: "10th Marksheet", matches: ["10th"] },
   { label: "12th Marksheet / Diploma", matches: ["12th", "diploma"] },
 ];
@@ -1805,13 +1811,26 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
 
   const [profileRows] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_name, mobile_number, personal_email_id, pan_number_hash, aadhaar_number_hash,
-            bgv_consent, dpdp_consent
+            bgv_consent, dpdp_consent, marital_status
        FROM candidate_onboarding_profile WHERE candidate_id = ? LIMIT 1`,
     [candidateId]
   );
   if (!profileRows.length) throw Object.assign(new Error("Employee details are required before submit"), { statusCode: 400 });
 
   const profile = profileRows[0];
+
+  // Marital Status is enforced here rather than in saveEmployeeDetails, which is
+  // a progressive draft-save called on every step and must keep accepting
+  // partial rows. The client gates it at Step 2 (validateStep2Personal, ref
+  // 4a8f9b07), but that gate is invisible to anyone calling the API directly,
+  // and an empty value later breaks offer approval with a strict-mode ENUM
+  // truncation error.
+  if (!String(profile.marital_status ?? "").trim()) {
+    throw Object.assign(
+      new Error("Marital Status is required before submission. Please go to the Personal Details step and select your marital status."),
+      { statusCode: 400, code: "MISSING_MARITAL_STATUS" },
+    );
+  }
 
   if (!profile.dpdp_consent) {
     throw Object.assign(
@@ -1853,6 +1872,24 @@ export async function submitFullOnboarding(token: string, meta?: { ip?: string; 
     throw Object.assign(
       new Error(`Please upload these required documents before submitting: ${missingDocuments.join(", ")}.`),
       { statusCode: 400, code: "MISSING_REQUIRED_DOCUMENTS" },
+    );
+  }
+
+  // At least one qualification is required. The client gates this too
+  // (validateStep7Education), but the gate has to exist here as well: Step 7's
+  // "Add Qualification" button POSTs on its own, so a candidate who never
+  // pressed it — or who calls this endpoint directly — would otherwise submit
+  // with no education at all. That is exactly how 15 candidates reached
+  // "profile_submitted" or beyond with zero qualification rows, leaving the HR
+  // review page showing "No education records."
+  const [qualRows] = await db.execute<RowDataPacket[]>(
+    `SELECT 1 FROM candidate_onboarding_qualification WHERE candidate_id = ? LIMIT 1`,
+    [candidateId],
+  );
+  if (!qualRows.length) {
+    throw Object.assign(
+      new Error("At least one qualification is required before submitting. Please go to the Education & Qualifications step and add your 10th / SSC qualification."),
+      { statusCode: 400, code: "MISSING_QUALIFICATIONS" },
     );
   }
 

@@ -23,6 +23,7 @@ import {
 } from "@/components/onboarding-full/OnboardingSteps1to5";
 import {
   Step7Education,
+  validateStep7Education,
   Step8Experience,
   Step9FamilyLang,
   Step10Statutory,
@@ -148,13 +149,19 @@ export default function CandidateOnboardingFullPage() {
   // The footer's "Next Step →" button calls onb.advanceStep() directly with
   // no field validation of its own -- a required-looking field (red asterisk)
   // could be left blank and the candidate would still proceed. Gate it per
-  // step; currently only Step 2 (Personal) has a validator, since that is the
-  // step whose gap actually broke offer approval (ref 4a8f9b07, 2026-08-26).
-  // Other steps have the same cosmetic-only "required" gap and should get the
-  // same treatment in a follow-up pass.
+  // step. Step 2 (Personal) came first, since that is the step whose gap
+  // actually broke offer approval (ref 4a8f9b07, 2026-08-26); Step 7
+  // (Education) followed, because 15 candidates had reached
+  // "profile_submitted" or beyond with no qualification rows at all.
+  // The remaining steps still have the same cosmetic-only "required" gap and
+  // should get the same treatment in a follow-up pass.
   const handleNext = () => {
     if (onb.step === 2) {
       const err = validateStep2Personal(onb.employee);
+      if (err) { onb.setError(err); return; }
+    }
+    if (onb.step === 7) {
+      const err = validateStep7Education(onb.status, onb.qual);
       if (err) { onb.setError(err); return; }
     }
     onb.advanceStep();
