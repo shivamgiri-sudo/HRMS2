@@ -1261,7 +1261,13 @@ export default function AonAnalyticsView() {
       "/api/finance/cost-centres?active_status=1&limit=1000"),
   });
 
-  const headline = useReport("aon-overall-attrition-rate", branchId ? { branchId, from, to } : { from, to });
+  const headline = useReport("aon-overall-attrition-rate", {
+    ...(branchId ? { branchId } : {}),
+    ...(processId ? { processId } : {}),
+    ...(departmentId ? { departmentId } : {}),
+    ...(costCentreId ? { costCentreId } : {}),
+    from, to,
+  });
 
   return (
     <div className="space-y-4 p-6">

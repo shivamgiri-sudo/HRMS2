@@ -38,4 +38,15 @@ describe("AON filters", () => {
   it("does not pretend the date range filters headcount", () => {
     expect(SRC).toMatch(/as of today/i);
   });
+
+  it("includes all four dimension filters in the headline query", () => {
+    // The headline query must pass all four filters to the backend, not just branchId.
+    // Extract the headline useReport call and verify it spreads all four filters.
+    const headlineMatch = /const headline\s*=\s*useReport\([^)]*\{[\s\S]{0,800}?\}\s*\);/.exec(SRC)?.[0] ?? "";
+    expect(headlineMatch, "headline query not found").toContain("useReport");
+    expect(headlineMatch, "branchId not in headline filters").toContain("branchId");
+    expect(headlineMatch, "processId not in headline filters").toContain("processId");
+    expect(headlineMatch, "departmentId not in headline filters").toContain("departmentId");
+    expect(headlineMatch, "costCentreId not in headline filters").toContain("costCentreId");
+  });
 });
