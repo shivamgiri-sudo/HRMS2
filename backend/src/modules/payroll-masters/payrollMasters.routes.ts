@@ -77,8 +77,14 @@ payrollMastersRouter.delete('/bands/:id', requireRole('admin'), h(async (req, re
 
 // ── PACKAGES ──────────────────────────────────────────────────────────────────
 payrollMastersRouter.get('/packages', h(async (req, res) => {
-  const { band, branch, costCentre } = req.query as Record<string, string>;
-  const data = await svc.listPackages({ band, branch, costCentre });
+  const { band, branch, costCentre, includeInactive } = req.query as Record<string, string>;
+  // Default excludes retired packages, because this endpoint fills every package
+  // dropdown in the product. Only the package-admin screen opts in, so it can
+  // show retired rows in order to reactivate them.
+  const data = await svc.listPackages({
+    band, branch, costCentre,
+    includeInactive: includeInactive === '1' || includeInactive === 'true',
+  });
   res.json({ success: true, data });
 }));
 
@@ -94,7 +100,10 @@ payrollMastersRouter.post('/packages', requireRole('admin', 'finance'), h(async 
   res.status(201).json({ success: true, data });
 }));
 
-payrollMastersRouter.put('/packages/:id', requireRole('admin', 'finance'), h(async (req, res) => {
+// payroll_head added so the Payroll Head can retire a package from the admin
+// screen. super_admin is not listed because requireRole short-circuits for it.
+// admin/finance keep the access they already had.
+payrollMastersRouter.put('/packages/:id', requireRole('admin', 'finance', 'payroll_head'), h(async (req, res) => {
   const parsed = UpdatePackageSchema.parse(req.body);
   const data = await svc.updatePackage(req.params.id, parsed);
   res.json({ success: true, data });

@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  Loader2, Plus, Pencil, Trash2, IndianRupee, Building2, Layers, Save, X, CheckCircle2,
+  Loader2, Plus, Pencil, ToggleLeft, ToggleRight, IndianRupee, Building2, Layers, Save, X, CheckCircle2,
   Calculator,
 } from 'lucide-react';
 import { calcFromCtc, calcFromInHand, PT_BY_STATE, type PkgCalcOptions } from '@/lib/salaryCalculator';
@@ -91,6 +91,10 @@ export default function NativeSalaryPackageAdmin() {
     const params = new URLSearchParams({ branch: pkgBranch });
     if (pkgBand) params.set('band', pkgBand);
     if (pkgCC) params.set('costCentre', pkgCC);
+    // This screen is the one place that must show retired packages -- otherwise a
+    // package could be deactivated and never reactivated. Every other caller gets
+    // the filtered default, so retired packages disappear from the dropdowns.
+    params.set('includeInactive', '1');
     const r = await hrmsApi.get<any>(`/api/payroll-masters/packages?${params}`);
     setPackages(r?.data ?? []);
     setLoading(false);
@@ -168,11 +172,36 @@ export default function NativeSalaryPackageAdmin() {
     finally { setSaving(false); }
   };
 
-  const deletePkg = async (id: string) => {
-    if (!confirm('Deactivate this package?')) return;
-    await hrmsApi.delete(`/api/payroll-masters/packages/${id}`);
-    await loadPackages();
-    setMsg('Package deactivated');
+  /**
+   * Retire or restore a package.
+   *
+   * This button used to call DELETE while telling the user it would "deactivate"
+   * -- it destroyed the row outright, taking the component breakup of a package
+   * employees may already be on with it. It now sets active_status, which is what
+   * the wording always promised.
+   *
+   * Deactivating only removes the package from selection: listPackages filters on
+   * active_status for every dropdown, while getPackageById stays unfiltered, so
+   * anyone already assigned keeps resolving their package and their salary is
+   * untouched.
+   */
+  const togglePkgActive = async (p: Package) => {
+    const next = p.active_status ? 0 : 1;
+    const verb = next ? 'Reactivate' : 'Deactivate';
+    if (!confirm(
+      next
+        ? `Reactivate this package? It will become selectable again.`
+        : `Deactivate this package?
+
+It will stop appearing in salary package dropdowns. Employees already assigned to it keep their salary unchanged.`
+    )) return;
+    setSaving(true); setMsg('');
+    try {
+      await hrmsApi.put(`/api/payroll-masters/packages/${p.id}`, { active_status: next });
+      await loadPackages();
+      setMsg(`Package ${next ? 'reactivated' : 'deactivated'}`);
+    } catch (e: any) { setMsg(e?.message || `${verb} failed`); }
+    finally { setSaving(false); }
   };
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -536,13 +565,13 @@ export default function NativeSalaryPackageAdmin() {
                   <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
                     <table className="w-full text-xs">
                       <thead className="sticky top-0 bg-white z-10"><tr className="bg-slate-50 border-b">
-                        {['Band', 'CC', 'Pkg Amt', 'Basic', 'HRA', 'LTA', 'Conv', 'Bonus', 'Gross', 'PF', 'ESI', 'Net', 'CTC', ''].map(h => (
+                        {['Band', 'CC', 'Pkg Amt', 'Basic', 'HRA', 'LTA', 'Conv', 'Bonus', 'Gross', 'PF', 'ESI', 'Net', 'CTC', 'Status', ''].map(h => (
                           <th key={h} className="px-2 py-2 text-left font-semibold text-slate-600 whitespace-nowrap">{h}</th>
                         ))}
                       </tr></thead>
                       <tbody className="divide-y">
                         {packages.map(p => (
-                          <tr key={p.id} className="hover:bg-blue-50/30">
+                          <tr key={p.id} className={`hover:bg-blue-50/30 ${p.active_status ? '' : 'bg-slate-50/60 text-slate-400'}`}>
                             <td className="px-2 py-1.5 font-bold">{p.band_code}</td>
                             <td className="px-2 py-1.5 font-mono text-[10px] max-w-[120px] truncate" title={p.cost_centre_code}>{p.cost_centre_code || '—'}</td>
                             <td className="px-2 py-1.5 font-bold text-blue-700">{fmt(p.package_amount)}</td>
@@ -557,9 +586,29 @@ export default function NativeSalaryPackageAdmin() {
                             <td className="px-2 py-1.5 font-bold text-emerald-700">{fmt(p.net_in_hand)}</td>
                             <td className="px-2 py-1.5">{fmt(p.ctc)}</td>
                             <td className="px-2 py-1.5">
+                              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
+                                p.active_status
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : 'bg-slate-100 text-slate-500 border-slate-200'
+                              }`}>{p.active_status ? 'Active' : 'Inactive'}</span>
+                            </td>
+                            <td className="px-2 py-1.5">
                               <div className="flex gap-1">
-                                <button onClick={() => { setCalcMode('ctc'); setCtcInput(String(p.ctc || '')); setInHandInput(''); setEditPkg(p); }} className="p-1 hover:bg-slate-200 rounded"><Pencil className="h-3 w-3 text-slate-500" /></button>
-                                <button onClick={() => deletePkg(p.id)} className="p-1 hover:bg-red-100 rounded"><Trash2 className="h-3 w-3 text-red-400" /></button>
+                                <button
+                                  title="Edit package"
+                                  onClick={() => { setCalcMode('ctc'); setCtcInput(String(p.ctc || '')); setInHandInput(''); setEditPkg(p); }}
+                                  className="p-1 hover:bg-slate-200 rounded cursor-pointer"><Pencil className="h-3 w-3 text-slate-500" /></button>
+                                <button
+                                  title={p.active_status
+                                    ? 'Deactivate — hides it from salary package dropdowns. Employees already on it are unaffected.'
+                                    : 'Reactivate — makes it selectable again.'}
+                                  disabled={saving}
+                                  onClick={() => void togglePkgActive(p)}
+                                  className={`p-1 rounded cursor-pointer ${p.active_status ? 'hover:bg-amber-100' : 'hover:bg-emerald-100'}`}>
+                                  {p.active_status
+                                    ? <ToggleRight className="h-3.5 w-3.5 text-amber-500" />
+                                    : <ToggleLeft className="h-3.5 w-3.5 text-slate-400" />}
+                                </button>
                               </div>
                             </td>
                           </tr>

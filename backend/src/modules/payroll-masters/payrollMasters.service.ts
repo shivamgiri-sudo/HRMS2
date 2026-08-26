@@ -127,7 +127,7 @@ function calcGrossAndCtc(data: {
 }
 
 export async function listPackages(filters: {
-  band?: string; branch?: string; costCentre?: string;
+  band?: string; branch?: string; costCentre?: string; includeInactive?: boolean;
 } = {}) {
   let sql = `
     SELECT spm.*,
@@ -136,6 +136,16 @@ export async function listPackages(filters: {
     LEFT JOIN salary_band_master sbm ON sbm.band_code = spm.band_code AND sbm.active_status = 1
     WHERE 1=1`;
   const params: unknown[] = [];
+  // Retired packages must not be offerable. This endpoint is what fills every
+  // package dropdown -- both of the Payroll Head review page's, and the
+  // onboarding offer form's -- so without this filter active_status was a flag
+  // nothing honoured: a package could be marked inactive and still be picked.
+  //
+  // Only the package-admin screen passes includeInactive, because it has to show
+  // retired rows in order to reactivate them. getPackageById is deliberately NOT
+  // filtered: employees already assigned to a package keep resolving it, so
+  // retiring one stops new selections without rewriting anyone's salary.
+  if (!filters.includeInactive) sql += ' AND spm.active_status = 1';
   // salary_package_master's own table comment: "Lookup: branch + CC + band →
   // available packages" — these are the three columns it's actually keyed by
   // (band_code/branch_name/cost_centre_code), not the grade_id/slab_id/

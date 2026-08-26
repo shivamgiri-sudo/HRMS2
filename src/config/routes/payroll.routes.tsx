@@ -109,7 +109,15 @@ export const payrollRouteElements = (
       {/* Salary Package Manager — merged page with tabs for packages + admin */}
       <Route path="/payroll/salary-packages" element={<ProtectedRoute><Gate pageCode="SALARY_PACKAGES"><SalaryPackageManager /></Gate></ProtectedRoute>} />
       <Route path="/payroll/salary-package-manager" element={<ProtectedRoute roles={['super_admin','admin','payroll','payroll_hr','hr']}><Gate pageCode="SALARY_PACKAGES"><NativeSalaryPackageManager /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/package-admin"  element={<Navigate to="/payroll/salary-packages?tab=admin" replace />} />
+      {/*
+        * NativeSalaryPackageAdmin was imported but never rendered -- this path
+        * redirected to SalaryPackageManager instead. It is the only package screen
+        * written entirely against the live salary_package_master columns
+        * (band_code / branch_name / basic / bonus); the two reachable ones still
+        * reference basic_amt / grade_id / slab_id, which that table does not have.
+        * It is therefore where package activation lives.
+        */}
+      <Route path="/payroll/package-admin"  element={<ProtectedRoute roles={['super_admin','admin','payroll_head','finance']}><Gate pageCode="SALARY_PACKAGES"><NativeSalaryPackageAdmin /></Gate></ProtectedRoute>} />
       <Route path="/payroll/incentives"     element={<ProtectedRoute><Gate pageCode="PAYROLL_INCENTIVES"><NativeIncentives /></Gate></ProtectedRoute>} />
       <Route path="/payroll/overtime"       element={<ProtectedRoute roles={['admin','super_admin','wfm','payroll','payroll_head']}><Gate pageCode="PAYROLL_OVERTIME"><PayrollOvertimeManagement /></Gate></ProtectedRoute>} />
       {/* Payment Disbursal Center — merged page with tabs for bank + disbursal */}
