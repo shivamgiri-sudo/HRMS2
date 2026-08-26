@@ -54,26 +54,28 @@ export type AonBucket = (typeof AON_BUCKETS)[number];
 /**
  * Tenure in days, floored at zero.
  *
- * The clamp is load-bearing. The previous bucket test was `DATEDIFF(...) <= 30 THEN '0-30'`,
- * and a NEGATIVE DATEDIFF satisfies `<= 30` — which is how employees whose reference date had
- * not arrived were silently counted as the newest joiners.
+ * This is the only sanctioned way to compute tenure days. The clamp is load-bearing.
+ * The previous bucket test was `DATEDIFF(...) <= 30 THEN '0-30'`, and a NEGATIVE DATEDIFF
+ * satisfies `<= 30` — which is how employees whose reference date had not arrived were
+ * silently counted as the newest joiners. Task 3 drill-down predicates depend on this
+ * expression as the single source of truth.
  */
-const AON_DAYS = (alias: string, asOf: string): string =>
+export const AON_DAYS_SQL = (alias: string = A, asOf: string = "CURDATE()"): string =>
   `GREATEST(DATEDIFF(${asOf}, ${AON_REFERENCE_DATE_SQL(alias)}), 0)`;
 
 export const AON_BUCKET_SQL = (alias: string = A, asOf: string = "CURDATE()"): string => `CASE
              WHEN ${IN_TRAINING_SQL(alias, asOf)} THEN '${IN_TRAINING_LABEL}'
-             WHEN ${AON_DAYS(alias, asOf)} <= 30 THEN '0-30'
-             WHEN ${AON_DAYS(alias, asOf)} <= 60 THEN '31-60'
-             WHEN ${AON_DAYS(alias, asOf)} <= 90 THEN '61-90'
+             WHEN ${AON_DAYS_SQL(alias, asOf)} <= 30 THEN '0-30'
+             WHEN ${AON_DAYS_SQL(alias, asOf)} <= 60 THEN '31-60'
+             WHEN ${AON_DAYS_SQL(alias, asOf)} <= 90 THEN '61-90'
              ELSE '90+'
            END`;
 
 /** Sort key. A string sort puts '90+' ahead of '0-30'; every report orders by this instead. */
 export const AON_BUCKET_ORDER_SQL = (alias: string = A, asOf: string = "CURDATE()"): string => `CASE
              WHEN ${IN_TRAINING_SQL(alias, asOf)} THEN 0
-             WHEN ${AON_DAYS(alias, asOf)} <= 30 THEN 1
-             WHEN ${AON_DAYS(alias, asOf)} <= 60 THEN 2
-             WHEN ${AON_DAYS(alias, asOf)} <= 90 THEN 3
+             WHEN ${AON_DAYS_SQL(alias, asOf)} <= 30 THEN 1
+             WHEN ${AON_DAYS_SQL(alias, asOf)} <= 60 THEN 2
+             WHEN ${AON_DAYS_SQL(alias, asOf)} <= 90 THEN 3
              ELSE 4
            END`;

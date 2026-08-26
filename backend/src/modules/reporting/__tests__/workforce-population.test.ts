@@ -4,6 +4,7 @@ import {
   AON_BUCKETS,
   AON_BUCKET_ORDER_SQL,
   AON_BUCKET_SQL,
+  AON_DAYS_SQL,
   IN_TRAINING_LABEL,
   IN_TRAINING_SQL,
 } from "../workforce-population.js";
@@ -11,8 +12,7 @@ import {
 describe("workforce population definition", () => {
   it("requires BOTH flags for an active employee", () => {
     const sql = ACTIVE_EMPLOYEE_SQL("e");
-    expect(sql).toContain("e.active_status = 1");
-    expect(sql).toContain("employment_status");
+    expect(sql).toMatch(/e\.active_status\s*=\s*1\s+AND\s+LOWER\(/i);
   });
 
   it("lower-cases employment_status", () => {
@@ -57,5 +57,14 @@ describe("workforce population definition", () => {
     const sql = AON_BUCKET_SQL("e", "e.date_of_exit");
     expect(sql).toContain("e.date_of_exit");
     expect(sql).toContain(IN_TRAINING_LABEL);
+  });
+
+  it("clamps negative tenure in AON_DAYS_SQL so future joiners cannot be counted as newest", () => {
+    // AON_DAYS_SQL is the only sanctioned way to compute tenure days.
+    // An unclamped DATEDIFF(<= 30 comparison) is satisfied by negative values,
+    // silently counting not-yet-started staff as the newest joiners.
+    const sql = AON_DAYS_SQL("e", "CURDATE()");
+    expect(sql).toContain("GREATEST(");
+    expect(sql).toMatch(/COALESCE\(e\.salary_start_date/);
   });
 });
