@@ -277,13 +277,20 @@ export function FinalSalarySection({
               <DrawerSalaryRow label="Gross" value={inr(sc.gross_monthly ?? sc.gross)} bold separator />
             </div>
             <div>
-              {/* salary_component_assignments stores applicability flags (pf_applicable/
-                  esi_applicable), not a per-component employee-side ₹ amount — the old
-                  sc.pf_employee/sc.esic_employee fields don't exist on this table and always
-                  read as falsy, so this always showed "No" even when PF/ESIC were actually
-                  deducted (visible only as a gap between Gross and Net in Hand below). */}
-              <DrawerSalaryRow label={`PF (Emp) — ${sc.pf_applicable ? 'Yes' : 'No'}`} value={sc.pf_applicable ? 'Included in Net' : '—'} />
-              <DrawerSalaryRow label={`ESIC (Emp) — ${sc.esi_applicable ? 'Yes' : 'No'}`} value={sc.esi_applicable ? 'Included in Net' : '—'} />
+              {(() => {
+                // pf_employee_amt / esic_employee_amt come from the salary_package_master join;
+                // fall back to statutory rates if the package row is absent.
+                const pfAmt = sc.pf_applicable
+                  ? (Number(sc.pf_employee_amt) > 0 ? Number(sc.pf_employee_amt) : Math.min(Math.round(Number(sc.basic) * 0.12), 1800))
+                  : null;
+                const esicAmt = sc.esi_applicable
+                  ? (Number(sc.esic_employee_amt) > 0 ? Number(sc.esic_employee_amt) : Math.round(Number(sc.gross_monthly ?? sc.gross) * 0.0075))
+                  : null;
+                return (<>
+                  <DrawerSalaryRow label={`PF (Emp) — ${sc.pf_applicable ? 'Yes' : 'No'}`} value={pfAmt != null ? inr(pfAmt) : '—'} />
+                  <DrawerSalaryRow label={`ESIC (Emp) — ${sc.esi_applicable ? 'Yes' : 'No'}`} value={esicAmt != null ? inr(esicAmt) : '—'} />
+                </>);
+              })()}
               <DrawerSalaryRow label="Net in Hand" value={inr(sc.net_in_hand ?? sc.net_estimate)} bold separator />
               <DrawerSalaryRow label="CTC" value={inr(sc.ctc)} bold separator />
             </div>

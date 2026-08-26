@@ -286,9 +286,12 @@ export async function getEmployeeJourney(employeeId: string) {
     // net_estimate is the stored column name; net_in_hand alias keeps the frontend
     // field consistent with salary_package_master which uses net_in_hand.
     db.execute<RowDataPacket[]>(
-      `SELECT *, net_estimate AS net_in_hand FROM salary_component_assignments
-        WHERE employee_id = ? AND status = 'active'
-        ORDER BY effective_date DESC LIMIT 1`,
+      `SELECT sca.*, sca.net_estimate AS net_in_hand,
+              pm.epf_employee AS pf_employee_amt, pm.esic_employee AS esic_employee_amt
+         FROM salary_component_assignments sca
+         LEFT JOIN salary_package_master pm ON pm.id = sca.package_id
+        WHERE sca.employee_id = ? AND sca.status = 'active'
+        ORDER BY sca.effective_date DESC LIMIT 1`,
       [employeeId]
     ).then(([r]) => r as RowDataPacket[]),
     db.execute<RowDataPacket[]>(
