@@ -34,7 +34,10 @@ vi.mock("../../inbox/inbox.service.js", () => ({ inboxService: { createItem } })
 vi.mock("../../communication/email.service.js", () => ({ emailService: { send } }));
 vi.mock("../../../config/env.js", () => ({ env: { FRONTEND_URL: "https://hrms.example" } }));
 
-import { reresolveUnassignedRequests } from "../it-provisioning.service.js";
+const { notify } = vi.hoisted(() => ({ notify: vi.fn() }));
+vi.mock("../../communication/notification.gateway.js", () => ({ notificationGateway: { notify } }));
+
+import { reresolveUnassignedRequests, notifyOverdueProvisioning } from "../it-provisioning.service.js";
 
 function unassignedRow(over: Record<string, unknown> = {}) {
   return {
@@ -54,6 +57,7 @@ beforeEach(() => {
   execute.mockReset();
   logSensitiveAction.mockClear();
   getConfiguredRecipients.mockReset();
+  notify.mockReset();
   createItem.mockClear();
   send.mockClear();
 });
@@ -157,5 +161,108 @@ describe("provisioning-retry.job.ts — why the second pass is required", () => 
     const around = job.slice(idx - 400, idx + 400);
     expect(around).toContain("try {");
     expect(around).toContain("catch");
+  });
+});
+
+// ── overdue notification ──────────────────────────────────────────────────────
+
+/**
+ * `sla_due_at` was written on every request and read in a dozen pull surfaces, but
+ * nothing ever pushed it. `provisioning_overdue` sat registered in
+ * notification_event_config with zero producers — the same shape TAT_BREACH had.
+ */
+describe("notifyOverdueProvisioning", () => {
+  function overdueRow(over: Record<string, unknown> = {}) {
+    return {
+      id: "req-9",
+      employee_id: "emp-9",
+      task_code: "IT_EMAIL_DOMAIN_ASSET",
+      assigned_role: "it",
+      assigned_user_id: "user-it-1",
+      status: "pending",
+      sla_due_at: "2026-08-20 10:00:00",
+      hours_overdue: 148,
+      employee_code: "MAS009",
+      first_name: "Neha",
+      branch_id: "br-1",
+      ...over,
+    };
+  }
+
+  it("emits one provisioning_overdue event per breached request, keyed so an hourly rescan cannot double-send", async () => {
+    execute.mockResolvedValueOnce([[{ floor: "2026-07-31 10:19:16" }], []]);
+    execute.mockResolvedValueOnce([[overdueRow()], []]);
+    notify.mockResolvedValueOnce({ outcome: "shadow" });
+
+    const out = await notifyOverdueProvisioning();
+
+    expect(out).toMatchObject({ scanned: 1, notified: 1, skipped: 0, remaining: 0 });
+    expect(notify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventCode: "provisioning_overdue",
+        dedupeKey: "it_provisioning_request:req-9:overdue",
+        entityType: "it_provisioning_request",
+        data: expect.objectContaining({ hours_overdue: 148, unassigned: false }),
+      }),
+    );
+  });
+
+  it("honours the registry backfill floor rather than scanning all history", async () => {
+    execute.mockResolvedValueOnce([[{ floor: "2026-07-31 10:19:16" }], []]);
+    execute.mockResolvedValueOnce([[], []]);
+
+    await notifyOverdueProvisioning();
+
+    const [sql, params] = execute.mock.calls[1];
+    expect(sql).toContain("AND r.sla_due_at >= ?");
+    expect((params as any[])[0]).toBeInstanceOf(Date);
+    expect(((params as any[])[0] as Date).toISOString()).toContain("2026-07-31");
+  });
+
+  it("falls back to a 7-day floor, never all history, when the registry has none", async () => {
+    execute.mockResolvedValueOnce([[], []]);
+    execute.mockResolvedValueOnce([[], []]);
+
+    await notifyOverdueProvisioning();
+
+    const params = execute.mock.calls[1][1] as any[];
+    const ageDays = (Date.now() - (params[0] as Date).getTime()) / 86_400_000;
+    expect(ageDays).toBeGreaterThan(6.9);
+    expect(ageDays).toBeLessThan(7.1);
+  });
+
+  it("counts a gateway refusal as skipped rather than notified", async () => {
+    execute.mockResolvedValueOnce([[{ floor: "2026-07-31 10:19:16" }], []]);
+    execute.mockResolvedValueOnce([[overdueRow()], []]);
+    notify.mockResolvedValueOnce({ outcome: "disabled", reason: "event is disabled" });
+
+    const out = await notifyOverdueProvisioning();
+
+    expect(out.notified).toBe(0);
+    expect(out.skipped).toBe(1);
+  });
+
+  it("caps the batch and reports the deferred remainder", async () => {
+    execute.mockResolvedValueOnce([[{ floor: "2026-07-31 10:19:16" }], []]);
+    execute.mockResolvedValueOnce([
+      Array.from({ length: 4 }, (_, i) => overdueRow({ id: `req-${i}` })),
+      [],
+    ]);
+    notify.mockResolvedValue({ outcome: "shadow" });
+
+    const out = await notifyOverdueProvisioning(3);
+
+    expect(out).toMatchObject({ scanned: 3, notified: 3, remaining: 1 });
+  });
+
+  it("excludes actioned and locked rows, so a completed task cannot be chased", async () => {
+    execute.mockResolvedValueOnce([[{ floor: "2026-07-31 10:19:16" }], []]);
+    execute.mockResolvedValueOnce([[], []]);
+
+    await notifyOverdueProvisioning();
+
+    const sql = String(execute.mock.calls[1][0]);
+    expect(sql).toContain("r.status IN ('pending', 'pending_unassigned')");
+    expect(sql).toContain("r.locked = 0");
   });
 });

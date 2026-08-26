@@ -138,7 +138,7 @@ jobs:
           # Schema only, and synthetic scale fixtures for the performance assertions.
           # EXPLAIN against empty tables cannot prove production-scale cardinality behaviour,
           # and real data must never be present in an environment that runs generated code.
-          npm --prefix backend run migrate:fresh:test
+          npm --prefix backend run migrate:fresh:test -- --allow-destructive-test-db
           node backend/scripts/uat-seed-scale-fixtures.mjs || \
             echo "::warning::No scale fixtures; performance budgets will be indicative only."
 
@@ -347,7 +347,7 @@ jobs:
             docker exec uatdb mysqladmin ping -uroot -puat --silent && break
             sleep 2
           done
-          npm --prefix backend run migrate:fresh:test
+          npm --prefix backend run migrate:fresh:test -- --allow-destructive-test-db
           node backend/scripts/uat-seed-scale-fixtures.mjs || true
 
       - name: The gauntlet

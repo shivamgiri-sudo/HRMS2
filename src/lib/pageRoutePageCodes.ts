@@ -77,6 +77,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/expenses/new": "EXPENSE_CREATE",
   "/expenses/reports": "EXPENSE_REPORTS",
   "/goals": "GOALS",
+  "/finance/vendor-bank-details": "VENDOR_BANK_DETAILS",
   "/governance/tat-dashboard": "TAT_DASHBOARD",
   "/governance/tat-matrix": "TAT_MATRIX",
   "/hr/attendance-lookup": "ATTENDANCE_LOOKUP",

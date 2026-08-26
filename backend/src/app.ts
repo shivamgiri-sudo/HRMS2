@@ -238,6 +238,7 @@ import bgvVerificationRouter from "./modules/ats/bgv-verification.routes.js";
 import { candidatePortalRouter } from "./modules/ats/candidate-portal.routes.js";
 import { superAdminRouter } from "./modules/ats/super-admin.routes.js";
 import { vendorPaymentRouter } from "./modules/finance/vendor-payment.routes.js";
+import { vendorBankRouter } from "./modules/finance/vendor-bank.routes.js";
 import { gstExportRouter } from "./modules/gst/gst-export.routes.js";
 import { grnRouter } from "./modules/finance/grn.routes.js";
 import { vendorApprovalRouter } from "./modules/finance/vendor-approval.routes.js";
@@ -563,6 +564,11 @@ app.use("/api/erp", erpRouter);
 app.use("/api/client-billing", clientBillingRouter);
 app.use("/api/finance/annual-budget-summary", annualBudgetSummaryRouter);
 app.use("/api/finance/unlinked-grn-review", unlinkedGrnReviewRouter);
+// Mounted BEFORE the other /api/finance routers so nothing can shadow it later.
+// Its paths ("/vendors/:vendorId/bank", "/vendor-bank/requests") do not collide with
+// the existing /vendors/:vendorId/{expense-mappings,applicability,ship-to,ledger}, and
+// an unmatched request falls through to the routers below as before.
+app.use("/api/finance", vendorBankRouter);
 app.use("/api/finance", vendorPaymentRouter);
 // Its own /api/gst prefix, not bare /api/finance: every path here is period-and-registration
 // scoped, and mounting it alongside grnRouter's "/grns/:id"-shaped routes would expose it to the

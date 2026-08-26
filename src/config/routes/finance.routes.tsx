@@ -8,6 +8,7 @@ const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactN
 
 const NativeERP                    = lazy(() => import("@/pages/NativeERP"));
 const NativeVendorManagement       = lazy(() => import("@/pages/NativeVendorManagement"));
+const NativeVendorBankDetails = lazy(() => import("@/pages/NativeVendorBankDetails"));
 const NativeProcurementPage        = lazy(() => import("@/pages/NativeProcurementPage"));
 const NativeVendorPaymentTracking  = lazy(() => import("@/pages/NativeVendorPaymentTracking"));
 const NativeGRNManagement          = lazy(() => import("@/pages/NativeGRNManagement"));
@@ -52,6 +53,9 @@ export const financeRouteElements = (
       {/* ERP / Vendors / Procurement */}
       <Route path="/erp"        element={<ProtectedRoute><Gate pageCode="ERP"><NativeERP /></Gate></ProtectedRoute>} />
       <Route path="/vendors"    element={<ProtectedRoute roles={['admin','super_admin','finance','manager']}><Gate pageCode="VENDOR_MANAGEMENT"><NativeVendorManagement /></Gate></ProtectedRoute>} />
+      {/* Payee bank accounts. finance_head/accounts_head only — deliberately NOT admin,
+          since hasOrgWideScope() lets `admin` past org-wide checks with no scope row. */}
+      <Route path="/finance/vendor-bank-details" element={<ProtectedRoute roles={['finance_head','accounts_head']}><Gate pageCode="VENDOR_BANK_DETAILS"><NativeVendorBankDetails /></Gate></ProtectedRoute>} />
       <Route path="/procurement" element={<ProtectedRoute><Gate pageCode="PROCUREMENT"><NativeProcurementPage /></Gate></ProtectedRoute>} />
 
       {/* Finance Masters — expense heads/sub-heads, vendor approval, vendor→head mapping */}
