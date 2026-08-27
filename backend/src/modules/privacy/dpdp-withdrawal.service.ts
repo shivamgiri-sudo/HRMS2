@@ -17,11 +17,7 @@ function makeRef(): string {
   return `WDRAW-${Date.now().toString(36).toUpperCase()}`;
 }
 
-/**
- * Exported so dpdpRestrictionGuard.ts can record enforcement against the same table
- * with the same shape, rather than growing a second copy of this INSERT.
- */
-export async function insertAuditLog(
+async function insertAuditLog(
   withdrawalId: string,
   action: string,
   performedBy: string,
@@ -161,18 +157,7 @@ export async function listAll(filters: WithdrawalFilters): Promise<RowDataPacket
 export async function getById(
   id: string,
   requesterId?: string,
-  isHr = false,
-  /**
-   * Record a DPDP_WITHDRAWAL_VIEWED entry for this read.
-   *
-   * Opt-in rather than automatic: getById is also called by the audit-log endpoint purely
-   * to run its access check, and logging there would record a phantom "view" for every
-   * audit fetch. Only the detail route passes true.
-   *
-   * A data principal reading their own request is not logged — the DPDP interest is in who
-   * ELSE looked at it, so only HR/DPO reads produce an entry.
-   */
-  logView = false
+  isHr = false
 ): Promise<RowDataPacket | null> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT dcw.*,
@@ -191,13 +176,6 @@ export async function getById(
   if (!rows.length) return null;
   const record = rows[0];
   if (!isHr && requesterId && record.requester_id !== requesterId) return null;
-
-  if (logView && isHr && requesterId) {
-    // Never let an audit-write failure turn a successful read into an error.
-    void insertAuditLog(id, "DPDP_WITHDRAWAL_VIEWED", requesterId, {
-      remarks: "Withdrawal record opened by HR/DPO",
-    }).catch(() => undefined);
-  }
   return record;
 }
 
@@ -365,7 +343,7 @@ export async function releaseHold(id: string, releasedBy: string): Promise<void>
 /**
  * Return full audit trail for a withdrawal request.
  */
-export async function getAudit(id: string, viewedBy?: string): Promise<RowDataPacket[]> {
+export async function getAudit(id: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT dwal.*,
             COALESCE(
@@ -380,13 +358,6 @@ export async function getAudit(id: string, viewedBy?: string): Promise<RowDataPa
      ORDER BY dwal.performed_at DESC`,
     [id]
   );
-  if (viewedBy) {
-    // Reading the audit trail of someone's withdrawal is itself an access event a regulator
-    // will ask about. Fire-and-forget so an audit-write failure cannot break the read.
-    void insertAuditLog(id, "DPDP_WITHDRAWAL_AUDIT_VIEWED", viewedBy, {
-      remarks: "Withdrawal audit trail opened",
-    }).catch(() => undefined);
-  }
   return rows;
 }
 
@@ -411,28 +382,6 @@ export async function completeTask(
      WHERE id = ?`,
     [completedBy, notes ?? null, taskId]
   );
-
-  /**
-   * Completing a per-module task IS the "module action completed" step of the withdrawal —
-   * it was the one already-implemented workflow action in this service that wrote no audit
-   * entry at all, so the record showed a withdrawal moving to closed with no evidence of the
-   * work done in between.
-   *
-   * The withdrawal id is read back from the task because callers hold only the task id.
-   */
-  const [taskRows] = await db.execute<RowDataPacket[]>(
-    `SELECT withdrawal_id, module_key FROM dpdp_withdrawal_task WHERE id = ? LIMIT 1`,
-    [taskId]
-  );
-  const task = taskRows[0];
-  if (task?.withdrawal_id) {
-    void insertAuditLog(
-      String(task.withdrawal_id),
-      "DPDP_WITHDRAWAL_MODULE_ACTION_COMPLETED",
-      completedBy,
-      { remarks: `Task completed${task.module_key ? ` for module ${String(task.module_key)}` : ""}` },
-    ).catch(() => undefined);
-  }
 }
 
 // ── Evidence ─────────────────────────────────────────────────────────────────

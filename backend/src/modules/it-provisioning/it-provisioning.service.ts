@@ -6,7 +6,6 @@ import { getConfiguredRecipients } from './notification-recipients.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { env } from '../../config/env.js';
 import { nonReactivatableSqlList } from '../exit/exitEmploymentStatus.js';
-import { notificationGateway } from '../communication/notification.gateway.js';
 
 const OFFICIAL_EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@(teammas\.in|teammas\.co\.in)$/;
 export { OFFICIAL_EMAIL_REGEX };
@@ -790,131 +789,6 @@ export async function reresolveUnassignedRequests(limit = 10): Promise<{
   }
 
   return { scanned: batch.length, assigned, stillUnassigned, remaining };
-}
-
-// ── Overdue notification ──────────────────────────────────────────────────────
-
-/**
- * Tell someone when a provisioning task has blown its SLA.
- *
- * `sla_due_at` has been written on every request since migration 420 and is read in a
- * dozen places — the provisioning routes' overdue list, employee-activation.service.ts,
- * reconciliation.service.ts, the business-actions signal sync, dashboards and the report
- * suite. All of them are pull: the number is visible to anyone who opens the page. Nothing
- * ever pushed it, so a task could sit breached indefinitely as long as nobody looked.
- *
- * `provisioning_overdue` was already registered in notification_event_config (max_per_run
- * 50, backfill floor 2026-07-31) with **zero producers anywhere in the app** — the same
- * shape as TAT_BREACH before triggerTatBreach() got a call site. This is that call site.
- *
- * Live on 2026-08-26: 69 open requests past SLA (35 pending, 34 pending_unassigned), plus
- * 11 more actioned after their deadline.
- *
- * Delivery is the gateway's decision, not this function's. The event ships
- * `enabled = 0, dispatch_mode = 'shadow'`, so notify() resolves and claims but delivers
- * nothing until an operator turns it on — which is what makes it safe to land a producer
- * against a 69-item backlog. Three further guards behind that:
- *
- *   1. backfill floor — read from the event registry, never "all history". Anything that
- *      came due before it is INVISIBLE to the query rather than throttled.
- *   2. dedupe — one notification per request, ever, via dedupeKey. The hourly cron may
- *      re-scan the same breached row forever; it notifies once.
- *   3. cap + visible remainder — the leftover is logged, not silently dropped.
- */
-export async function notifyOverdueProvisioning(limit = 25): Promise<{
-  scanned: number;
-  notified: number;
-  skipped: number;
-  remaining: number;
-}> {
-  // Never "everything ever overdue". Mirrors tat-escalation.worker.ts's floor, and falls
-  // back to 7 days rather than all history when the registry row has none.
-  let floor: Date;
-  try {
-    const [[row]] = await db.execute<RowDataPacket[]>(
-      `SELECT backfill_floor_at AS floor
-         FROM notification_event_config
-        WHERE event_code = 'provisioning_overdue' AND backfill_floor_at IS NOT NULL
-        LIMIT 1`,
-    );
-    floor = (row as any)?.floor ? new Date((row as any).floor) : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  } catch {
-    floor = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  }
-
-  // limit + 1 so the leftover is reportable rather than looking like "all clear".
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT r.id, r.employee_id, r.task_code, r.assigned_role, r.assigned_user_id,
-            r.status, r.sla_due_at,
-            TIMESTAMPDIFF(HOUR, r.sla_due_at, NOW()) AS hours_overdue,
-            e.employee_code, e.first_name, e.branch_id
-       FROM it_provisioning_request r
-       JOIN employees e ON e.id = r.employee_id
-      WHERE r.status IN ('pending', 'pending_unassigned')
-        AND r.locked = 0
-        AND r.sla_due_at IS NOT NULL
-        AND r.sla_due_at < NOW()
-        AND r.sla_due_at >= ?
-        AND LOWER(COALESCE(e.employment_status, '')) NOT IN (${nonReactivatableSqlList()})
-      ORDER BY r.sla_due_at ASC
-      LIMIT ${Number(limit) + 1}`,
-    [floor],
-  );
-
-  const all = rows as any[];
-  const remaining = Math.max(0, all.length - limit);
-  const batch = all.slice(0, limit);
-
-  let notified = 0;
-  let skipped = 0;
-
-  for (const req of batch) {
-    try {
-      const result = await notificationGateway.notify({
-        eventCode: 'provisioning_overdue',
-        // One per request, ever. The cron rescans the same breached row every hour.
-        dedupeKey: `it_provisioning_request:${req.id}:overdue`,
-        context: {
-          employeeId: req.employee_id,
-          userId: req.assigned_user_id ?? undefined,
-          branchId: req.branch_id ?? undefined,
-        },
-        entityType: 'it_provisioning_request',
-        entityId: String(req.id),
-        data: {
-          employee_code: req.employee_code,
-          employee_name: req.first_name,
-          task_code: req.task_code,
-          assigned_role: req.assigned_role,
-          status: req.status,
-          sla_due_at: req.sla_due_at,
-          // analytics strip
-          hours_overdue: req.hours_overdue,
-          unassigned: req.status === 'pending_unassigned',
-        },
-        correlationId: `provisioning:${req.id}`,
-      });
-
-      if (result.outcome === 'sent' || result.outcome === 'shadow') notified++;
-      else skipped++;
-    } catch (err) {
-      // One bad row must not abort the sweep; the dedupe key means the next run
-      // retries it without risking a double send.
-      skipped++;
-      console.error(
-        `[notifyOverdueProvisioning] request ${req.id}:`,
-        (err as Error).message,
-      );
-    }
-  }
-
-  if (remaining > 0) {
-    console.warn(
-      `[notifyOverdueProvisioning] CAP_REACHED — ${remaining} overdue request(s) deferred to the next run`,
-    );
-  }
-
-  return { scanned: batch.length, notified, skipped, remaining };
 }
 
 // ── Action / Waive ─────────────────────────────────────────────────────────────

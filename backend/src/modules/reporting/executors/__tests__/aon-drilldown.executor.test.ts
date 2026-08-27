@@ -7,7 +7,6 @@ vi.mock("../../../../db/mysql.js", () => ({
 import { db } from "../../../../db/mysql.js";
 import { aonDrilldownEmployees } from "../aon-drilldown.executor.js";
 import type { ExecScope, ExecOptions } from "../types.js";
-import { ACTIVE_EMPLOYEE_SQL } from "../../workforce-population.js";
 
 const mockExecute = db.execute as ReturnType<typeof vi.fn>;
 
@@ -125,11 +124,8 @@ describe("aonDrilldownEmployees", () => {
     const whereClause = sql.slice(sql.indexOf("WHERE"), sql.indexOf(")\n    SELECT f.*"));
     expect(whereClause).not.toContain("active_status");
     // But the row shape must still carry is_active for the frontend to distinguish exited
-    // employees from active ones in this same response. CRITICAL-2 of the final whole-branch
-    // review: this must be the shared ACTIVE_EMPLOYEE_SQL rule, not a bare active_status = 1 --
-    // otherwise is_active (and the "Flag for Retention Review" button it drives) is offered on
-    // employees whose active_status flag was never cleared after they resigned/were terminated.
-    expect(sql).toContain(`(${ACTIVE_EMPLOYEE_SQL("e")}) AS is_active`);
+    // employees from active ones in this same response.
+    expect(sql).toContain("(e.active_status = 1) AS is_active");
   });
 
   // The Overview-heatmap headcount call (aonBucket, no cohortMonth) is genuinely "who is

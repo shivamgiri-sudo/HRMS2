@@ -1,9 +1,9 @@
 /**
  * AON (Age on Network) & Attrition Analytics
  *
- * AON (Age on Network) is days since joining, bucketed In Training / 0-30 / 31-60 / 61-90 / 90+.
- * "In Training" is joined-but-not-yet-on-payroll. Everything else is derived from the joining
- * date on every read, so a new joiner appears the same day — nothing is stored.
+ * AON is days since date_of_joining, bucketed 0-30 / 31-60 / 61-90 / 90+. Nothing is
+ * stored — the backend derives every bucket at read time, so a new joiner appears in
+ * 0-30 the moment their joining date exists.
  *
  * Three tabs, because they answer three different questions:
  *   Overview   — where the people are now, and where the losses and shrinkage sit
@@ -54,17 +54,15 @@ import { EmployeeDetailDrawer } from "@/components/analytics/drilldown/EmployeeD
 
 /* ── Shared vocabulary ─────────────────────────────────────────────────────── */
 
-/*
- * Five buckets as of 2026-08-26. "In Training" is people who have joined and are on the floor
- * but whose salary has not started — 13 of them live when this shipped. They used to land in
- * 0-30 because a negative DATEDIFF satisfies `<= 30`, which made staff who had not started
- * being paid look like the newest joiners.
+/**
+ * Bucket order is fixed here rather than sorted from the data. A string sort puts "90+"
+ * ahead of "0-30" and the axis reads backwards; the backend orders correctly but the
+ * client re-groups, so the order has to be restated.
  */
-const BUCKETS = ["In Training", "0-30", "31-60", "61-90", "90+"] as const;
+const BUCKETS = ["0-30", "31-60", "61-90", "90+"] as const;
 type Bucket = (typeof BUCKETS)[number];
 
 const BUCKET_COLOR: Record<Bucket, string> = {
-  "In Training": SERIES[4],  // distinct from the tenure ramp — this is a state, not a tenure
   "0-30": SERIES[7],  // red — the bucket that loses 43% of all leavers
   "31-60": SERIES[1], // orange
   "61-90": SERIES[3], // yellow
@@ -349,21 +347,11 @@ function AnomalyJumpHandler({
   return <>{children(onJumpTo)}</>;
 }
 
-function Overview({ from, to, branchId, processId, departmentId, costCentreId, headlineRate }: {
-  from: string; to: string; branchId: string; processId: string; departmentId: string;
-  costCentreId: string; headlineRate: ReturnType<typeof useReport>;
-}) {
+function Overview({ from, to, branchId, headlineRate }: { from: string; to: string; branchId: string; headlineRate: ReturnType<typeof useReport> }) {
   const [groupBy, setGroupBy] = useState<GroupBy>("cost_centre_name");
   const [metric, setMetric] = useState<"headcount" | "exits" | "shrinkage">("headcount");
 
-  // Every filter must be in `base`, and `base` is part of the react-query key, so changing any
-  // one of them refetches instead of serving the previous cell.
-  const base = {
-    ...(branchId ? { branchId } : {}),
-    ...(processId ? { processId } : {}),
-    ...(departmentId ? { departmentId } : {}),
-    ...(costCentreId ? { costCentreId } : {}),
-  };
+  const base = branchId ? { branchId } : {};
   const hc = useReport("aon-bucket-headcount", base);
   const at = useReport("aon-bucket-attrition", { ...base, from, to });
   /*
@@ -810,16 +798,8 @@ function Overview({ from, to, branchId, processId, departmentId, costCentreId, h
 
 /* ── Cohort survival ───────────────────────────────────────────────────────── */
 
-function CohortSurvival({ from, to, branchId, processId, departmentId, costCentreId }: {
-  from: string; to: string; branchId: string; processId: string; departmentId: string; costCentreId: string;
-}) {
-  const q = useReport("aon-cohort-survival", {
-    from, to,
-    ...(branchId ? { branchId } : {}),
-    ...(processId ? { processId } : {}),
-    ...(departmentId ? { departmentId } : {}),
-    ...(costCentreId ? { costCentreId } : {}),
-  });
+function CohortSurvival({ from, to, branchId }: { from: string; to: string; branchId: string }) {
+  const q = useReport("aon-cohort-survival", { from, to, ...(branchId ? { branchId } : {}) });
 
   /**
    * Cohorts are rolled up across branch and cost centre here. Survival must be
@@ -1071,17 +1051,9 @@ function DeepDiveRow({
   );
 }
 
-function DeepDive({ from, to, branchId, processId, departmentId, costCentreId }: {
-  from: string; to: string; branchId: string; processId: string; departmentId: string; costCentreId: string;
-}) {
+function DeepDive({ from, to, branchId }: { from: string; to: string; branchId: string }) {
   const [dimension, setDimension] = useState<string>("source");
-  const q = useReport("attrition-deep-dive", {
-    from, to, dimension,
-    ...(branchId ? { branchId } : {}),
-    ...(processId ? { processId } : {}),
-    ...(departmentId ? { departmentId } : {}),
-    ...(costCentreId ? { costCentreId } : {}),
-  });
+  const q = useReport("attrition-deep-dive", { from, to, dimension, ...(branchId ? { branchId } : {}) });
 
   /* early_quit_rate is constant across a value's four bucket rows by construction, so it
      is read from the first row rather than recomputed. Ranked by deviation from the average
@@ -1237,37 +1209,13 @@ export default function AonAnalyticsView() {
   const [from, setFrom] = useState(isoLocal(new Date(today.getFullYear() - 1, today.getMonth(), today.getDate())));
   const [to, setTo] = useState(isoLocal(today));
   const [branchId, setBranchId] = useState("");
-  const [processId, setProcessId] = useState("");
-  const [departmentId, setDepartmentId] = useState("");
-  const [costCentreId, setCostCentreId] = useState("");
 
   const branches = useQuery({
     queryKey: ["org-branches-aon"],
     queryFn: () => hrmsApi.get<{ data: { id: string; branch_name: string }[] }>("/api/org/branches"),
   });
-  const processes = useQuery({
-    queryKey: ["org-processes-aon"],
-    queryFn: () => hrmsApi.get<{ data: { id: string; process_name: string }[] }>(
-      "/api/org/processes?active_status=1&limit=500"),
-  });
-  const departments = useQuery({
-    queryKey: ["org-departments-aon"],
-    queryFn: () => hrmsApi.get<{ data: { id: string; dept_name: string }[] }>(
-      "/api/org/departments?active_status=1&limit=500"),
-  });
-  const costCentres = useQuery({
-    queryKey: ["finance-cost-centres-aon"],
-    queryFn: () => hrmsApi.get<{ data: { id: string; cost_centre_name: string }[] }>(
-      "/api/org/cost-centres?active_status=1&limit=1000"),
-  });
 
-  const headline = useReport("aon-overall-attrition-rate", {
-    ...(branchId ? { branchId } : {}),
-    ...(processId ? { processId } : {}),
-    ...(departmentId ? { departmentId } : {}),
-    ...(costCentreId ? { costCentreId } : {}),
-    from, to,
-  });
+  const headline = useReport("aon-overall-attrition-rate", branchId ? { branchId, from, to } : { from, to });
 
   return (
     <div className="space-y-4 p-6">
@@ -1287,39 +1235,11 @@ export default function AonAnalyticsView() {
         <Field label={tab === "cohort" ? "Joined to" : "To"}>
           <input type="date" className={inputCls} value={to} onChange={e => setTo(e.target.value)} />
         </Field>
-        <p className="w-full text-[11px] text-slate-500">
-          Headcount is as of today — the date range applies to Exits, Shrinkage, Cohort Survival
-          and the Deep Dive.
-        </p>
         <Field label="Branch">
           <select className={inputCls} value={branchId} onChange={e => setBranchId(e.target.value)}>
             <option value="">All branches</option>
             {(branches.data?.data ?? []).map(b => (
               <option key={b.id} value={b.id}>{b.branch_name}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Process">
-          <select className={inputCls} value={processId} onChange={e => setProcessId(e.target.value)}>
-            <option value="">All processes</option>
-            {(processes.data?.data ?? []).map(p => (
-              <option key={p.id} value={p.id}>{p.process_name}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Department">
-          <select className={inputCls} value={departmentId} onChange={e => setDepartmentId(e.target.value)}>
-            <option value="">All departments</option>
-            {(departments.data?.data ?? []).map(d => (
-              <option key={d.id} value={d.id}>{d.dept_name}</option>
-            ))}
-          </select>
-        </Field>
-        <Field label="Cost Centre">
-          <select className={inputCls} value={costCentreId} onChange={e => setCostCentreId(e.target.value)}>
-            <option value="">All cost centres</option>
-            {(costCentres.data?.data ?? []).map(cc => (
-              <option key={cc.id} value={cc.id}>{cc.cost_centre_name}</option>
             ))}
           </select>
         </Field>
@@ -1330,9 +1250,9 @@ export default function AonAnalyticsView() {
         </div>
       </div>
 
-      {tab === "overview" && <Overview from={from} to={to} branchId={branchId} processId={processId} departmentId={departmentId} costCentreId={costCentreId} headlineRate={headline} />}
-      {tab === "cohort" && <CohortSurvival from={from} to={to} branchId={branchId} processId={processId} departmentId={departmentId} costCentreId={costCentreId} />}
-      {tab === "deep" && <DeepDive from={from} to={to} branchId={branchId} processId={processId} departmentId={departmentId} costCentreId={costCentreId} />}
+      {tab === "overview" && <Overview from={from} to={to} branchId={branchId} headlineRate={headline} />}
+      {tab === "cohort" && <CohortSurvival from={from} to={to} branchId={branchId} />}
+      {tab === "deep" && <DeepDive from={from} to={to} branchId={branchId} />}
     </div>
   );
 }

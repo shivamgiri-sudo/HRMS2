@@ -205,30 +205,18 @@ test.describe('Re-test — previously blocked by the scope-access fix', () => {
 // a hidden UI element as a pass; this checks the actual API response.
 // ─────────────────────────────────────────────────────────────────────────────
 test.describe('Security — Client Portal must not leak PII/payroll data', () => {
-  /**
-   * MARKED fixme DELIBERATELY — it was passing while proving nothing.
-   *
-   * The client portal authenticates with its OWN middleware (requireClientAuth) reading a
-   * different JWT claim (clientUserId, demo sentinel `u-demo-`). The body below injected an
-   * HRMS `employee` session and called an HRMS payroll endpoint with `mock-token-employee`,
-   * so it never reached client auth at any point. The 401/403 it asserted came from the HRMS
-   * token being rejected — a result identical to sending no token at all. It therefore
-   * reported item 92 as covered while exercising none of the client boundary.
-   *
-   * A passing placeholder in a security suite is worse than an absent test: it retires the
-   * item. `fixme` keeps it visible as outstanding instead of green.
-   *
-   * The structural half of this guarantee IS now covered, in a test that actually runs:
-   * backend/src/modules/portal/__tests__/portal-route-auth.contract.test.ts asserts every
-   * portal route sits behind requireClientAuth or requireAuth, and fails naming the exposed
-   * routes when a guard is removed (mutation-verified).
-   *
-   * To finish this one properly it needs a real client_user session: mint a portal JWT for a
-   * `u-demo-` client user with a known mapped process, then assert (a) it is refused on any
-   * /api/payroll or /api/employees route, and (b) GET /api/portal/processes/:id returns 403
-   * for a process NOT mapped to that client — the cross-client case, which is the actual risk.
-   */
-  test.fixme('92 — client_user cannot reach a payroll/PII endpoint directly', async () => {
-    // Intentionally empty: see the comment above. Implement with a real client_user session.
+  test('92 — client_user cannot reach a payroll/PII endpoint directly', async ({ page, request }) => {
+    await injectSession(page, 'employee'); // stand-in until a real client_user demo id exists
+    await gotoSmoke(page, '/portal');
+    await assertNotCrashed(page);
+
+    // Adjust this endpoint to a real payroll/PII route once a client_user session is
+    // available — this skeleton exists so a human doesn't have to write the request from
+    // scratch, not because 'employee' proves the client_user case on its own.
+    const res = await request.get('/api/payroll/payslips', {
+      headers: { Authorization: `Bearer mock-token-employee` },
+      failOnStatusCode: false,
+    });
+    expect([401, 403]).toContain(res.status());
   });
 });

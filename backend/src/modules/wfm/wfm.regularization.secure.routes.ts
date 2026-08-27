@@ -3,7 +3,7 @@ import type { RowDataPacket } from "mysql2";
 import { requireAuth } from "../../middleware/authMiddleware.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
-import { buildScopeWhereClause, getUserAssignmentScopes, hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
+import { buildScopeWhereClause, hasAnyRole, hasScopedAccess } from "../../shared/scopeAccess.js";
 import { regularizationSchema } from "./wfm.validation.js";
 import { wfmService } from "./wfm.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
@@ -23,74 +23,6 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 // own APPROVER_ROLES granting them the bulk-approve/per-row approve UI.
 const WFM_VIEW_SCOPE_ROLES = ["wfm", "hr", "payroll_hr", "payroll_branch", "branch_head", "manager", "assistant_manager", "tl", "team_leader", "process_manager"];
 const WFM_APPROVAL_SCOPE_ROLES = ["wfm"];
-
-/**
- * Who may BULK-approve regularizations, and over which branches.
- *
- * Owner ruling, 2026-08-27: bulk approval is limited to Branch WFM and Branch Payroll
- * HR over their OWN branch only, plus Payroll Head and Super Admin across all branches.
- * One branch must never be able to clear another branch's queue in bulk.
- *
- * This is deliberately NARROWER than the per-row PATCH /regularizations/:id/review
- * path, which is left untouched. A reporting manager still reviews their own team's
- * requests one at a time — that is stage 1 of the workflow and is not a branch-wide
- * action. What is being restricted here is the sweep.
- *
- * Before this, PATCH /regularizations/bulk-review carried NO role gate at all: it
- * looped straight into _performReview per id, so anyone whose row scope happened to
- * cover a request could sweep it, and the frontend's own APPROVER_ROLES list offered
- * the control to ten roles including hr, manager, team_leader, tl, process_manager,
- * branch_head and admin.
- *
- * ALL_BRANCH_BULK_APPROVAL_ROLES are org-wide BY ROLE, not by scope row, because the
- * ruling names them as all-branch authorities. BRANCH_BULK_APPROVAL_ROLES get exactly
- * the branches their active user_assignment_scope rows name and nothing else — a role
- * held with no scope row grants no bulk authority, which is fail-closed by design.
- */
-const ALL_BRANCH_BULK_APPROVAL_ROLES = ["super_admin", "payroll_head"];
-/**
- * `payroll` is listed alongside `payroll_hr` because that is where the branch scope
- * rows actually live. Verified on mas_hrms 2026-08-27: the two branch payroll HR
- * users — Sheelu Verma (NOIDA-2) and Sandeep Patel (AHMEDABAD-JALDARSHAN) — each hold
- * BOTH role keys, and their scope_type='branch' rows are filed under `payroll`, while
- * their `payroll_hr` grant carries no scope row at all. Checking `payroll_hr` alone
- * would have returned an empty scope set for exactly the people this ruling is meant
- * to enable and refused them with a 403.
- *
- * This widens nothing in practice: `payroll` is held by those same two users and
- * nobody else.
- */
-const BRANCH_BULK_APPROVAL_ROLES = ["wfm", "payroll_hr", "payroll"];
-const BULK_APPROVAL_ROLES = [...ALL_BRANCH_BULK_APPROVAL_ROLES, ...BRANCH_BULK_APPROVAL_ROLES];
-
-/**
- * Branches this caller may bulk-approve over.
- *
- * Returns "all" for the org-wide roles, a non-empty Set of branch ids for a
- * branch-scoped one, or null when the caller holds no bulk authority at all.
- *
- * Branch identity is taken from employees.branch_id, never attendance_regularization
- * .branch_id: that column is NULL on 131,301 of 131,353 live rows (verified
- * 2026-08-27), so a filter keyed on it would wave nearly every request through the
- * branch check.
- */
-async function resolveBulkApprovalBranches(userId: string): Promise<"all" | Set<string> | null> {
-  if (await hasAnyRole(userId, ...ALL_BRANCH_BULK_APPROVAL_ROLES)) return "all";
-  if (!(await hasAnyRole(userId, ...BRANCH_BULK_APPROVAL_ROLES))) return null;
-
-  const scopes = await getUserAssignmentScopes(userId, BRANCH_BULK_APPROVAL_ROLES);
-  // A scope_type='all' row on a branch role still means org-wide — that is what the
-  // row says, and narrowing it belongs in the data, not here.
-  if (scopes.some((s) => s.scope_type === "all")) return "all";
-
-  const branches = new Set(
-    scopes
-      .filter((s) => s.scope_type === "branch" || s.scope_type === "branch_process")
-      .map((s) => (s.branch_id == null ? "" : String(s.branch_id)))
-      .filter(Boolean),
-  );
-  return branches.size > 0 ? branches : null;
-}
 
 async function employeeTarget(employeeId: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
@@ -124,51 +56,6 @@ async function canAccessEmployee(userId: string, employeeId: string, allowSelf =
   );
 }
 
-/**
- * Rows a reporting manager may see purely by virtue of being someone's manager.
- *
- * This exists because user_assignment_scope cannot express it in practice.
- * buildScopeWhereClause() only emits its managerEmployeeId clause for a row with
- * scope_type='team', and there are ZERO such rows live — verified against mas_hrms
- * on 2026-08-27, where the only active scope types are all (23), branch (24),
- * process (20) and self (1), none carrying manager_employee_id. So every one of the
- * 161 distinct reporting managers fell straight through to listScope()'s `e.id = ?`
- * self-only fallback and saw ONLY THEIR OWN requests — never their team's pending
- * ones. All 10 live pending rows carry a non-null reporting_manager_id, so every
- * one of them was invisible to the person meant to action it.
- *
- * The asymmetry that makes this a bug rather than a policy: regularizationReviewRole()
- * below resolves the approver through resolveEffectiveApprover() and DOES return
- * "manager", so a reporting manager was already AUTHORISED to approve a request that
- * the list endpoint would never show them. They could act on it; they could not find it.
- *
- * Mirrors resolveEffectiveApprover() exactly, both legs:
- *  - direct    — COALESCE(reporting_manager_id, manager_id) is the caller
- *  - skip-level — the direct manager is on approved leave TODAY and their own manager
- *                 is the caller. Without this leg the escalation target would inherit
- *                 the authority to approve and the same inability to see the row.
- * Kept as a live clause rather than backfilled scope_type='team' rows so it tracks
- * employees.reporting_manager_id as reporting lines change, with nothing to maintain.
- */
-function reportingManagerScopeSql(): string {
-  return `(
-      COALESCE(e.reporting_manager_id, e.manager_id) = ?
-      OR EXISTS (
-           SELECT 1
-             FROM employees mgr
-            WHERE mgr.id = COALESCE(e.reporting_manager_id, e.manager_id)
-              AND COALESCE(mgr.reporting_manager_id, mgr.manager_id) = ?
-              AND EXISTS (
-                    SELECT 1
-                      FROM leave_request lr
-                     WHERE lr.employee_id = mgr.id
-                       AND lr.status IN ('approved', 'branch_head_approved')
-                       AND lr.from_date <= CURDATE()
-                       AND lr.to_date   >= CURDATE())
-         )
-    )`;
-}
-
 async function listScope(userId: string) {
   if (await hasAnyRole(userId, "super_admin")) return { sql: "1=1", params: [] as unknown[] };
   const scoped = await buildScopeWhereClause(
@@ -183,29 +70,10 @@ async function listScope(userId: string) {
     },
     { allowAdminBypass: false, allowCeoAllRead: false },
   );
-
-  const ors: string[] = [];
-  const params: unknown[] = [];
-
-  // A scope row and a reporting line are additive, not alternatives. Previously the
-  // manager legs were only reachable when buildScopeWhereClause returned "1=0", so a
-  // branch-scoped manager got their branch and silently lost any direct report sitting
-  // outside it.
-  if (scoped.sql !== "1=0") {
-    ors.push(`(${scoped.sql})`);
-    params.push(...scoped.params);
-  }
-
+  if (scoped.sql !== "1=0") return scoped;
   const emp = await getEmployeeForUser(userId);
-  if (emp?.id) {
-    ors.push(reportingManagerScopeSql());
-    params.push(emp.id, emp.id);
-    ors.push("e.id = ?");
-    params.push(emp.id);
-  }
-
-  if (ors.length === 0) return { sql: "1=0", params: [] as unknown[] };
-  return { sql: ors.join(" OR "), params };
+  if (emp?.id) return { sql: "e.id = ?", params: [emp.id] as unknown[] };
+  return { sql: "1=0", params: [] as unknown[] };
 }
 
 /**
@@ -246,20 +114,7 @@ async function isPayrollFrozenForDate(sessionDate: string): Promise<boolean> {
   return rows.length > 0;
 }
 
-/**
- * @param approvalScopeRoles roles that may give the stage-2 sign-off. Defaults to
- *   WFM_APPROVAL_SCOPE_ROLES (Branch WFM alone), which is what the per-row
- *   PATCH /regularizations/:id/review path passes — that path is unchanged.
- *   The bulk path widens it to BRANCH_BULK_APPROVAL_ROLES so Branch Payroll HR can
- *   clear its own branch's queue per the 2026-08-27 ruling. Passed in rather than
- *   added to the shared constant so granting bulk authority cannot silently widen
- *   single-row approval as a side effect.
- */
-async function regularizationReviewRole(
-  userId: string,
-  regularizationId: string,
-  approvalScopeRoles: string[] = WFM_APPROVAL_SCOPE_ROLES,
-): Promise<"super_admin" | "manager" | "wfm" | "payroll" | null> {
+async function regularizationReviewRole(userId: string, regularizationId: string): Promise<"super_admin" | "manager" | "wfm" | "payroll" | null> {
   if (await hasAnyRole(userId, "super_admin")) return "super_admin";
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ar.employee_id,
@@ -293,7 +148,7 @@ async function regularizationReviewRole(
   }
   const wfmScoped = await hasScopedAccess(
     userId,
-    approvalScopeRoles,
+    WFM_APPROVAL_SCOPE_ROLES,
     {
       branchId: target.branch_id,
       processId: target.process_id,
@@ -495,12 +350,8 @@ interface ReviewResult {
   payload: Record<string, unknown>;
 }
 
-async function _performReview(
-  req: any,
-  regularizationId: string,
-  approvalScopeRoles: string[] = WFM_APPROVAL_SCOPE_ROLES,
-): Promise<ReviewResult> {
-  const reviewRole = await regularizationReviewRole(req.authUser.id, regularizationId, approvalScopeRoles);
+async function _performReview(req: any, regularizationId: string): Promise<ReviewResult> {
+  const reviewRole = await regularizationReviewRole(req.authUser.id, regularizationId);
   if (!reviewRole) {
     return { httpStatus: 403, payload: { success: false, message: "Forbidden: regularization is outside your approval scope" } };
   }
@@ -1139,66 +990,16 @@ wfmRegularizationSecureRouter.get("/regularizations/mine", h(async (req: any, re
   return res.json({ success: true, data });
 }));
 
-/**
- * Hard ceiling on one page. The endpoint used to return the WHOLE table: no status
- * filter, no date window and no LIMIT, and AttendanceRegularization.tsx called it with
- * no query parameters at all, then filtered and paged the result in the browser at 20
- * rows a page.
- *
- * Measured against live mas_hrms on 2026-08-27, 131,353 rows of which 131,336 are
- * already `approved` and 10 are pending:
- *
- *   as the page sent it (unfiltered)   did not return within 120 s
- *   same query, LIMIT 200              3,494 ms   316 KB
- *   same query, status='pending'          292 ms    15 KB
- *
- * Seven LEFT JOINs and two correlated subqueries per row, then a decision_support
- * object built in JS per row and serialised — for a super_admin, across all 131k.
- * The endpoint is now always bounded, so no caller can ask for that again.
- */
-const REGULARIZATION_PAGE_LIMIT_DEFAULT = 100;
-const REGULARIZATION_PAGE_LIMIT_MAX = 500;
-
 wfmRegularizationSecureRouter.get("/regularizations", h(async (req: any, res: any) => {
   const scope = await listScope(req.authUser.id);
   const conds: string[] = [`(${scope.sql})`];
   const params: unknown[] = [...scope.params];
   if (req.query.employeeId) { conds.push("ar.employee_id = ?"); params.push(String(req.query.employeeId)); }
-  if (req.query.status) {
-    // Comma-separated, e.g. "pending,manager_approved,payroll_pending" — the approval
-    // queue needs every open status in one call. A plain `=` matched zero rows for any
-    // multi-status filter, the same defect already fixed in leave.secure.routes.ts.
-    const statuses = String(req.query.status).split(",").map((s: string) => s.trim()).filter(Boolean);
-    if (statuses.length > 0) {
-      conds.push(`ar.status IN (${statuses.map(() => "?").join(",")})`);
-      params.push(...statuses);
-    }
-  }
+  if (req.query.status) { conds.push("ar.status = ?"); params.push(String(req.query.status)); }
   if (req.query.fromDate) { conds.push("ar.session_date >= ?"); params.push(String(req.query.fromDate)); }
   if (req.query.toDate) { conds.push("ar.session_date <= ?"); params.push(String(req.query.toDate)); }
 
-  const limit = Math.min(
-    Math.max(1, Number(req.query.limit) || REGULARIZATION_PAGE_LIMIT_DEFAULT),
-    REGULARIZATION_PAGE_LIMIT_MAX,
-  );
-  const page = Math.max(1, Number(req.query.page) || 1);
-  const offset = Number(req.query.offset) >= 0 && req.query.offset !== undefined
-    ? Math.max(0, Number(req.query.offset))
-    : (page - 1) * limit;
-
   const where = `WHERE ${conds.join(" AND ")}`;
-
-  // Counted over ar + employees only. `employees` is required because the scope
-  // predicate is written against e.*; none of the other six joins narrow the row set,
-  // so pulling them into the count would pay for them twice.
-  const [countRows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS total
-       FROM attendance_regularization ar
-       LEFT JOIN employees e ON e.id = ar.employee_id
-       ${where}`,
-    params,
-  );
-  const total = Number((countRows[0] as any)?.total ?? 0);
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ar.*,
             COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name,
@@ -1240,67 +1041,21 @@ wfmRegularizationSecureRouter.get("/regularizations", h(async (req: any, res: an
        LEFT JOIN wfm_roster_assignment wra
               ON wra.employee_id = ar.employee_id AND wra.roster_date = ar.session_date
        ${where}
-      ORDER BY ar.created_at DESC
-      LIMIT ${limit} OFFSET ${offset}`,
+      ORDER BY ar.created_at DESC`,
     params,
   );
   const data = await enrichRegularizationRows(rows);
-  // `data` keeps its existing shape so every current caller is unaffected; the paging
-  // fields are additive.
-  return res.json({ success: true, data, total, page, limit, hasMore: offset + rows.length < total });
+  return res.json({ success: true, data });
 }));
 
 wfmRegularizationSecureRouter.patch("/regularizations/bulk-review", h(async (req: any, res: any) => {
   const ids = Array.isArray(req.body.ids) ? req.body.ids.map(String).filter(Boolean) : [];
   if (!ids.length) return res.status(400).json({ success: false, message: "ids array is required" });
 
-  // ── Branch RBAC (owner ruling, 2026-08-27) ─────────────────────────────────
-  // Bulk approval is Branch WFM / Branch Payroll HR over their own branch, plus
-  // Payroll Head and Super Admin across all branches. Enforced here rather than
-  // left to per-row scope alone, so one branch can never sweep another's queue.
-  const allowedBranches = await resolveBulkApprovalBranches(req.authUser.id);
-  if (allowedBranches === null) {
-    return res.status(403).json({
-      success: false,
-      message: "Forbidden: bulk approval is limited to Branch WFM, Branch Payroll HR, Payroll Head and Super Admin",
-    });
-  }
-
-  // Resolve every target's branch in ONE query rather than per id. employees.branch_id
-  // is the source: attendance_regularization.branch_id is NULL on 131,301 of 131,353
-  // live rows, so keying the branch check on it would pass nearly everything.
-  const branchById = new Map<string, string | null>();
-  if (allowedBranches !== "all") {
-    const [branchRows] = await db.execute<RowDataPacket[]>(
-      `SELECT ar.id, COALESCE(ar.branch_id, e.branch_id) AS branch_id
-         FROM attendance_regularization ar
-         LEFT JOIN employees e ON e.id = ar.employee_id
-        WHERE ar.id IN (${ids.map(() => "?").join(",")})`,
-      ids,
-    );
-    for (const row of branchRows) {
-      branchById.set(String((row as any).id), (row as any).branch_id == null ? null : String((row as any).branch_id));
-    }
-  }
-
   const results: Array<{ id: string; success: boolean; httpStatus: number; message?: string }> = [];
   for (const id of ids) {
-    if (allowedBranches !== "all") {
-      const branchId = branchById.get(id);
-      // An unresolvable branch is refused, not waved through — a request whose
-      // employee row is missing or carries no branch cannot be proven in-scope.
-      if (!branchId || !allowedBranches.has(branchId)) {
-        results.push({
-          id,
-          success: false,
-          httpStatus: 403,
-          message: "Forbidden: request belongs to another branch",
-        });
-        continue;
-      }
-    }
     try {
-      const r = await _performReview(req, id, BRANCH_BULK_APPROVAL_ROLES);
+      const r = await _performReview(req, id);
       results.push({
         id,
         success: r.httpStatus >= 200 && r.httpStatus < 300 && (r.payload as any)?.success !== false,

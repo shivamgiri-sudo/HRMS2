@@ -51,7 +51,6 @@ import { startBreachSlaCron } from "./modules/privacy/dpdp-breach-sla.cron.js";
 import { startHelpdeskSlaCron } from "./modules/helpdesk/helpdesk-sla.cron.js";
 import { startRetentionCron } from "./workers/privacy-retention.worker.js";
 import { startAtsRemindersScheduler } from "./modules/ats/ats-reminders.cron.js";
-import { startAtsDailyReportScheduler } from "./modules/ats/ats-daily-report.cron.js";
 import { startEmployeeLifecycleWorker } from "./workers/employee-lifecycle.worker.js";
 import { startTatEscalationWorker } from "./workers/tat-escalation.worker.js";
 import { startReportSubscriptionWorker } from "./workers/report-subscription.worker.js";
@@ -258,13 +257,6 @@ function startServer() {
         // of a schema fix.
         if (process.env.ATS_REMINDERS_ENABLED === "true") {
           startAtsRemindersScheduler();
-        }
-        // Its own switch, deliberately NOT ATS_REMINDERS_ENABLED: that flag also
-        // releases the onboarding reminder burst across ~299 stale bridge rows, which
-        // is why it is unset. The daily report has no such backlog — it reports on the
-        // current day — so it can run without that decision being made.
-        if (process.env.ATS_DAILY_REPORT_ENABLED === "true") {
-          startAtsDailyReportScheduler();
         }
         // Activates employees whose joining date has arrived, and retries failed
         // provisioning. Previously only registered in workers/all-workers.ts,

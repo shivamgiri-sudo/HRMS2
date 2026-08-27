@@ -22,6 +22,7 @@ interface RegContextRow extends RowDataPacket {
   requested_status: string | null;
   current_attendance_status: string | null;
   reason: string | null;
+  reviewer_name: string | null;
 }
 
 async function loadRegContext(regularizationId: string): Promise<RegContextRow | null> {
@@ -31,11 +32,14 @@ async function loadRegContext(regularizationId: string): Promise<RegContextRow |
             COALESCE(NULLIF(TRIM(e.full_name), ''), e.employee_code) AS employee_name,
             e.branch_id, e.process_id,
             ar.session_date, ar.requested_status, ar.reason,
-            adr.attendance_status AS current_attendance_status
+            adr.attendance_status AS current_attendance_status,
+            COALESCE(NULLIF(TRIM(rev.full_name), ''), rev.employee_code) AS reviewer_name
        FROM attendance_regularization ar
        JOIN employees e ON e.id = ar.employee_id
        LEFT JOIN attendance_daily_record adr
               ON adr.employee_id = ar.employee_id AND adr.record_date = ar.session_date
+       LEFT JOIN users u ON u.id = ar.reviewed_by
+       LEFT JOIN employees rev ON rev.id = u.employee_id
       WHERE ar.id = ?
       LIMIT 1`,
     [regularizationId],
@@ -104,9 +108,12 @@ export async function notifyRegularizationDecision(
         employee_name: ctx.employee_name,
         employee_code: ctx.employee_code,
         decision: status,
+        date: String(ctx.session_date).slice(0, 10),
         session_date: String(ctx.session_date).slice(0, 10),
         requested_status: ctx.requested_status,
         reviewer_note: reviewerNote ?? null,
+        remarks: reviewerNote ?? '',
+        reviewer_name: ctx.reviewer_name ?? '',
         // analytics strip (catalogue 6.3): days corrected · attendance % after
         days_corrected: status === 'approved' ? 1 : 0,
         attendance_pct_mtd: att.pct,
