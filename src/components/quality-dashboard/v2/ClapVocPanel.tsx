@@ -87,7 +87,9 @@ export function ClapVocPanel({ from, to, clientId, queryKey }: Props) {
           {[
             { label: "Positive VOC",  val: intel.summary.positive_voc_count, color: "bg-emerald-50 border-emerald-100 text-emerald-700" },
             { label: "Negative VOC",  val: intel.summary.negative_voc_count, color: "bg-red-50 border-red-100 text-red-700" },
-            { label: "Avg CQ Score",  val: `${intel.summary.avg_cq_score.toFixed(1)}%`, color: "bg-blue-50 border-blue-100 text-blue-700" },
+            // safeNum, not a bare .toFixed: getClapIntelligence returns this straight from
+            // ROUND(AVG(quality_percentage), 1), which mysql2 delivers as a string.
+            { label: "Avg CQ Score",  val: `${safeNum(intel.summary.avg_cq_score).toFixed(1)}%`, color: "bg-blue-50 border-blue-100 text-blue-700" },
             { label: "Total Audits",  val: intel.summary.total_audits, color: "bg-slate-50 border-slate-100 text-slate-700" },
           ].map(({ label, val, color }) => (
             <div key={label} className={`rounded-xl border p-3 ${color.split(" ").slice(0, 2).join(" ")}`}>
