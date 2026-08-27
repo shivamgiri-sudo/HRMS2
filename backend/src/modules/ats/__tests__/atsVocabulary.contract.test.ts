@@ -11,6 +11,7 @@ import {
   suspectedDuplicateRecruiters,
   RECRUITER_ALIAS,
   SOURCE_CANONICAL,
+  canonicalRole,
 } from "../ats-vocabulary.js";
 
 /**
@@ -136,6 +137,43 @@ describe("recruiter identity", () => {
     // which spelling arrived first.
     for (const target of Object.values(RECRUITER_ALIAS)) {
       expect(RECRUITER_ALIAS[target.toLowerCase()], target).toBeUndefined();
+    }
+  });
+});
+
+describe("job role vocabulary", () => {
+  it("merges the two Back Office spellings", () => {
+    // The same split the sourcing channel had, in a dimension nothing had checked:
+    // Backoffice on 1,344 rows and Back Office on 418, ranked as first and fourth.
+    expect(canonicalRole("Backoffice")).toBe("Back Office");
+    expect(canonicalRole("Back Office")).toBe("Back Office");
+    expect(canonicalRole("back-office")).toBe("Back Office");
+  });
+
+  it("keeps genuinely different roles apart", () => {
+    expect(canonicalRole("Inbound Agent")).not.toBe(canonicalRole("Outbound Agent"));
+    expect(canonicalRole("Sales")).not.toBe(canonicalRole("Support"));
+  });
+
+  it("passes through an unmapped role rather than blanking it", () => {
+    expect(canonicalRole("Trainer")).toBe("Trainer");
+    expect(canonicalRole("")).toBe("Unspecified");
+  });
+});
+
+describe("region coverage", () => {
+  it("places the branches that had no region", () => {
+    // branch_master carries `Head Office` with city Mumbai / state Maharashtra. Pune has no
+    // master row and is placed by geography, which is why it is recorded explicitly.
+    expect(branchRegion("Mumbai")).toBe("Maharashtra");
+    expect(branchRegion("Pune")).toBe("Maharashtra");
+  });
+
+  it("covers every branch the aliases can produce", () => {
+    // A branch with no region silently becomes an "Unspecified" row in the region table.
+    const branches = ["Okaya Centre", "Trapezoid", "Jaldarshan", "Neelkanth", "NOIDA", "NOIDA-2", "Delhi", "Mumbai", "Pune"];
+    for (const b of branches) {
+      expect(branchRegion(b), b).not.toBe("Unspecified");
     }
   });
 });

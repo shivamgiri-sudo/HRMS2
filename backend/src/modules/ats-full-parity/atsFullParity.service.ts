@@ -5,7 +5,7 @@ import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { excludeEmployeeShapedCandidatesSql, excludeOtherEntityCandidatesSql } from "../ats/ats-reporting-scope.js";
-import { canonicalBranch, branchRegion, sourceLabel, recruiterKey, preferredRecruiterName, normalizeRecruiterName, suspectedDuplicateRecruiters } from "../ats/ats-vocabulary.js";
+import { canonicalBranch, branchRegion, canonicalRole, sourceLabel, recruiterKey, preferredRecruiterName, normalizeRecruiterName, suspectedDuplicateRecruiters } from "../ats/ats-vocabulary.js";
 
 type CandidateRow = Record<string, unknown>;
 
@@ -359,7 +359,15 @@ function rejectionReasons(row: CandidateRow): string[] {
   if (voc) return splitRejectionValue(voc);
   const legacy = normalizeLower(row._hardRejectReason);
   if (legacy) return [LEGACY_REASON_TO_VOC[legacy] ?? normalizeText(row._hardRejectReason)];
-  return ["Unspecified"];
+  /**
+   * 506 rejections carry no reason in any of the five VOC columns, nor in any remarks field.
+   * The reason genuinely is not recorded — but the STAGE is, on all 506. "No reason recorded"
+   * says that plainly instead of "Unspecified", which reads like a value, and the payload
+   * carries the per-stage split so the tab can show where reason capture is failing rather
+   * than presenting one opaque bucket: 277 at Round 1 HR Screening, 90 at Round 2 Op's,
+   * 54 at Arrival, 44 at the skill test, 34 at Round 3 Client.
+   */
+  return ["No reason recorded"];
 }
 
 function qualityLabel(score: number): string {
@@ -506,7 +514,12 @@ function enrichCandidate(row: CandidateRow): CandidateRow {
     _dateKey: createdAt ? formatDateKey(createdAt) : "",
     _monthKey: createdAt ? monthKey(createdAt) : "",
     _weekKey: createdAt ? formatDateKey(startOfWeek(createdAt)) : "",
-    _role: row.role_applied || row.applied_for_process || "Unspecified",
+    // Resolved process name before the raw column, or the six process UUIDs leak into the role
+    // dimension exactly as they did into the process one — the filter listed
+    // `04f20ddc-67ba-11f1-…` as a job role.
+    _role: canonicalRole(
+      row.role_applied || row.process_text || row.resolved_process_name || row.applied_for_process,
+    ),
     /**
      * Branch, process and source are resolved through the masters and the shared vocabulary
      * rather than grouped on whatever string the row happens to carry.
@@ -530,7 +543,10 @@ function enrichCandidate(row: CandidateRow): CandidateRow {
     // Region above branch, from branch_master.state. Without it Gujarat and Noida operations sit
     // side by side in one flat list with nothing saying they are different geographies.
     _region: branchRegion(row.branch_text || row.resolved_branch_name || row.applied_for_branch),
-    _process: row.process_text || row.resolved_process_name || row.applied_for_process || "Unspecified",
+    // role_applied last: 15 candidates carry no process at all but do carry a role
+    // ("Backoffice", all at Okaya Centre on 2026-03-21), which is the process they applied to.
+    _process: row.process_text || row.resolved_process_name || row.applied_for_process
+      || canonicalRole(row.role_applied) || "Unspecified",
     // Label and key derive from the SAME field, in the same order. Deriving the label from one
     // and the key from the other put two rows on the leaderboard both reading "KHUSHI MISHRA".
     _recruiter: normalizeRecruiterName(row.recruiter_assigned_name || row.recruiter_name) || "Unassigned",
@@ -1289,6 +1305,19 @@ export const atsFullParityService = {
         // Reported separately so the chart can say which number its bars add up to.
         reasonTotal: [...reasonMap.values()].reduce((a, r) => a + r.count, 0),
         distinctReasons: reasonMap.size,
+        /**
+         * Where reason capture is failing. One flat "no reason" count is not actionable; a
+         * count per stage names the step in the process that needs fixing.
+         */
+        reasonGapByStage: Object.entries(
+          rejected
+            .filter((r) => rejectionReasons(r)[0] === "No reason recorded")
+            .reduce<Record<string, number>>((acc, r) => {
+              const stage = normalizeText(r._endStage || r.CurrentStage) || "Unrecorded stage";
+              acc[stage] = (acc[stage] ?? 0) + 1;
+              return acc;
+            }, {}),
+        ).map(([stage, count]) => ({ stage, count })).sort((a, b) => b.count - a.count),
         reasons: [...reasonMap.values()].sort((a, b) => b.count - a.count),
         /**
          * Newest first, then capped — the cap used to be applied to whatever order the rows
@@ -1826,6 +1855,10 @@ export const atsFullParityService = {
     await countOf("emails_skipped_no_recipient", "notification",
       `SELECT COUNT(*) AS cnt FROM ats_command_email_log WHERE status = 'skipped' AND notes LIKE '%Missing TO%'`,
       (n) => n === 0, "Alerts raised but dropped because no recipient address could be resolved.");
+
+    await countOf("demo_created_candidates_in_production", "data_integrity",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped} AND created_by LIKE 'demo-%'`,
+      (n) => n === 0, "A demo account created a live candidate record; it counts in every real figure.");
 
     await countOf("recruiters_with_personal_email_on_roster", "data_integrity",
       `SELECT COUNT(*) AS cnt FROM ats_recruiter_roster

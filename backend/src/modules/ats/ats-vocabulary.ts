@@ -164,7 +164,45 @@ export const BRANCH_REGION: Readonly<Record<string, string>> = {
   "NOIDA-DIALDESK": "Uttar Pradesh",
   "HEAD OFFICE": "Uttar Pradesh",
   "Delhi Office": "Delhi",
+  // branch_master carries `Head Office` with city Mumbai / state Maharashtra (inactive, 0
+  // employees). Pune has no master row at all; it is placed by geography, which is a fact
+  // rather than a business rule, and noted so nobody mistakes it for a configured branch.
+  "Mumbai": "Maharashtra",
+  "Pune": "Maharashtra",
 };
+
+/**
+ * Job-role spellings that mean the same role.
+ *
+ * The same split the sourcing channel had, in a dimension nothing had checked: `role_applied`
+ * carries Backoffice on 1,344 rows and Back Office on 418. Ranked separately they are the
+ * first and fourth most common roles; merged they are comfortably the largest.
+ */
+export const ROLE_CANONICAL: Readonly<Record<string, string>> = {
+  backoffice: "Back Office",
+  "back office": "Back Office",
+  "back-office": "Back Office",
+  bo: "Back Office",
+  "customer service": "Customer Service",
+  "customer support": "Customer Service",
+  "inbound agent": "Inbound Agent",
+  inbound: "Inbound Agent",
+  "outbound agent": "Outbound Agent",
+  outbound: "Outbound Agent",
+  "quality analyst": "Quality Analyst",
+  qa: "Quality Analyst",
+  "team leader": "Team Leader",
+  tl: "Team Leader",
+  sales: "Sales",
+  support: "Support",
+  executive: "Executive",
+};
+
+export function canonicalRole(value: unknown): string {
+  const text = String(value ?? "").trim();
+  if (!text) return "Unspecified";
+  return ROLE_CANONICAL[text.toLowerCase()] ?? text;
+}
 
 export function branchRegion(value: unknown): string {
   return BRANCH_REGION[canonicalBranch(value)] ?? "Unspecified";
