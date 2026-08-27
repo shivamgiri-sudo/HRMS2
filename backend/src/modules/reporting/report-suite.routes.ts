@@ -32,6 +32,7 @@ import {
   businessMonth,
 } from "./leave-balance-format.js";
 import { buildCatalogWorkbook } from "./catalog-workbook.js";
+import { withDayColumnLabels } from "./attendance-register-columns.js";
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from "./report-audit.service.js";
 
 /** Report codes that render through the business-mandated Leave Balance workbook. */
@@ -42,7 +43,7 @@ const LEAVE_BALANCE_CODES = new Set(["leave-balance", "leave-balance-export"]);
  * carries the catalog's exact labels ("SR#", "LEAVE TYPE", "LEAVE REQUST DATE")
  * instead of the generic builder's uppercased row keys.
  */
-const CATALOG_FORMAT_CODES = new Set(["leave-utilization"]);
+export const CATALOG_FORMAT_CODES = new Set(["leave-utilization", "attendance-register-monthly"]);
 
 export const reportSuiteRouter = Router();
 reportSuiteRouter.use(requireAuth);
@@ -323,9 +324,13 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
 
   // ── Catalog-driven exact-label workbook ─────────────────────────────────────
   if (CATALOG_FORMAT_CODES.has(code)) {
+    const exportColumns = code === "attendance-register-monthly"
+      ? withDayColumnLabels(catalogEntry.columns, filters.month)
+      : catalogEntry.columns;
+
     const catalogBuffer = await buildCatalogWorkbook({
       rows,
-      columns: catalogEntry.columns,
+      columns: exportColumns,
       sheetName: catalogEntry.name,
     });
 
