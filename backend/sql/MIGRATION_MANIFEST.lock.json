@@ -771,6 +771,7 @@
     "1234_imprest_allocation_accounting_period.sql",
     "1239_cost_centre_avore_ahmedabad.sql",
     "1247_restore_cost_centre_display_names.sql",
+    "1622_vendor_head_subhead_backfill.sql",
     "127_ats_candidate_unique_constraints.sql",
     "133_phase2_security_fixes.sql",
     "136_incentive_module.sql",
