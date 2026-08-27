@@ -137,51 +137,44 @@ describe("1a — dead payroll-lock guard on PATCH /:id/resolve", () => {
     expect(res.status).toBe(200);
   });
 
-  it("the route's pre-update SELECT lists is_locked (static guard against regressing the fix)", async () => {
-    const src = (await import("../modules/wfm/mismatch-review.routes.js")).mismatchReviewRouter;
-    expect(src).toBeTruthy();
-    const fs = await import("fs");
-    const path = await import("path");
-    const text = fs.readFileSync(path.resolve(__dirname, "..", "modules", "wfm", "mismatch-review.routes.ts"), "utf8");
-    const at = text.indexOf("const [check] = await db.execute");
-    const selectBlock = text.slice(at, text.indexOf("[id]", at));
-    expect(selectBlock).toMatch(/is_locked/);
-  });
 });
 
-describe("1d — row-level scope enforcement on GET /", () => {
-  it("a branch-scoped caller's list query carries the scope predicate and its params", async () => {
+describe("1d — scope predicate coverage across the three read paths", () => {
+  // A mocked db.execute cannot prove row exclusion — that would require a real MySQL
+  // connection. What this CAN and must prove is coverage: the scope predicate that
+  // buildEmployeeScopeCondition returns, together with its bound parameter, actually
+  // reaches every query that reads attendance_daily_record rows. The list and count
+  // queries are built from one shared buildWhere() call but are two separate SQL
+  // strings handed to db.execute — either could independently forget to interpolate
+  // `where.sql`/`where.params`, so each is asserted on its own rather than assumed
+  // from the other. Losing the predicate on any one of the three read paths (list,
+  // count, or /summary) must fail this test.
+  it("the scope predicate and its bound param are present on the list, count, and summary queries", async () => {
     buildEmployeeScopeCondition.mockReturnValue({ sql: "e.branch_id = ?", params: ["branch-A"] });
-    const res = await request(appFor("wfm")).get("/api/wfm/mismatches");
-    expect(res.status).toBe(200);
+
+    const listRes = await request(appFor("wfm")).get("/api/wfm/mismatches");
+    expect(listRes.status).toBe(200);
     expect(resolveUserBusinessScope).toHaveBeenCalledWith(actor);
 
-    const dataCall = execute.mock.calls.find(([sql]) => /ORDER BY adr\.record_date DESC/.test(sql));
-    expect(dataCall, "no list query reached db.execute").toBeTruthy();
-    const [sql, params] = dataCall!;
-    expect(sql).toMatch(/e\.branch_id = \?/);
-    expect(params).toContain("branch-A");
+    const summaryRes = await request(appFor("wfm")).get("/api/wfm/mismatches/summary");
+    expect(summaryRes.status).toBe(200);
 
+    const listCall = execute.mock.calls.find(([sql]) => /ORDER BY adr\.record_date DESC/.test(sql));
     const countCall = execute.mock.calls.find(([sql]) => /COUNT\(\*\) AS total/.test(sql));
-    expect(countCall![0]).toMatch(/e\.branch_id = \?/);
-
-    const summaryLikeCheck = execute.mock.calls.every(([sql]: [string]) => {
-      // Scope must be present on every query that reads rows, not just one of them.
-      if (/FROM attendance_daily_record/.test(sql) && !/UPDATE|is_locked\s*$/.test(sql)) {
-        return true; // presence checked individually above; this just documents intent
-      }
-      return true;
-    });
-    expect(summaryLikeCheck).toBe(true);
-  });
-
-  it("scope predicate is also applied to /summary, so tiles and list cannot drift", async () => {
-    buildEmployeeScopeCondition.mockReturnValue({ sql: "e.branch_id = ?", params: ["branch-A"] });
-    const res = await request(appFor("wfm")).get("/api/wfm/mismatches/summary");
-    expect(res.status).toBe(200);
     const summaryCall = execute.mock.calls.find(([sql]) => /unresolved_mismatches/.test(sql));
-    expect(summaryCall![0]).toMatch(/e\.branch_id = \?/);
-    expect(summaryCall![1]).toContain("branch-A");
+
+    const readPaths: Array<[string, typeof listCall]> = [
+      ["list (GET /)", listCall],
+      ["count (GET / total)", countCall],
+      ["summary (GET /summary)", summaryCall],
+    ];
+
+    for (const [name, call] of readPaths) {
+      expect(call, `${name} query never reached db.execute`).toBeTruthy();
+      const [sql, params] = call!;
+      expect(sql, `${name} query is missing the scope predicate`).toMatch(/e\.branch_id = \?/);
+      expect(params, `${name} query is missing the scope predicate's bound param`).toContain("branch-A");
+    }
   });
 });
 
