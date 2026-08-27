@@ -384,3 +384,9 @@ Task 7: complete (commits 29c386bc, 7de0b6a6, base d282856b, review clean — sp
 # Branch start commit: e77d60b72157450a34e0ae28e30f89c4c7fd7796
 
 ## Tasks
+Task 1: complete (commits e77d60b7..e0508059, review clean — 3 minor accepted: LIKE wildcards unescaped (matches existing convention), duplicate scope resolution per request, mocked-db cannot prove row exclusion)
+Task 2: complete (landed inside sweep commit 6566e77e — implementer killed by session limit before committing; controller verified + wrote report). Review clean.
+  OPEN (Important, plan-mandated, needs user ruling): COSEC_RUN_ROLES keeps admin/hr/ceo per brief 2a "union",
+  but admin's WFM_LIVE_TRACKER grant is inactive and hr has none -> API access with no page = Constraint 3 gap.
+  Pre-existing, not introduced. Narrowing would break ReferenceRoleDashboard.tsx:294 which calls /sync-status. Recommend leave.
+  OPEN (Minor): GET /billing-config/:id still finance_head/super_admin/admin — wfm/hr can list but not drill down.
