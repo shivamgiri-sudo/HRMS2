@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/finance/vendor-bank.routes.ts",
+    "src/modules/finance/vendor-bank.service.ts"
+  ]
+}
