@@ -2009,10 +2009,22 @@ export function BudgetLinkedGrnForm({
 
       await hrmsApi.post(`/api/finance/grns/${current.id}/revalidate`, {});
       if (submit && !current.submitted) {
-        await hrmsApi.post(`/api/finance/grns/${current.id}/submit`, {
-          remarks: form.remarks || undefined,
-        });
-        current = { ...current, submitted: true };
+        // The GRN number is minted HERE, not at draft creation — an abandoned draft must not
+        // burn a sequence slot. So the create response's grnNumber is empty and the number only
+        // exists once this call returns it; without reading it back the "GRN Raised" modal and
+        // the submitted toast both rendered "GRN " with nothing after it.
+        const submitResult = await hrmsApi.post<{ grnNumber?: string | null }>(
+          `/api/finance/grns/${current.id}/submit`,
+          { remarks: form.remarks || undefined }
+        );
+        const assignedNumber = String(
+          (submitResult as any)?.grnNumber ?? (submitResult as any)?.data?.grnNumber ?? ""
+        ).trim();
+        current = {
+          ...current,
+          submitted: true,
+          grnNumber: assignedNumber || current.grnNumber,
+        };
         setCreated(current);
       }
       return current;
