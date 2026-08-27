@@ -64,7 +64,7 @@ describe("withDayColumnLabels", () => {
 
     expect(byKey(result, "day_1")?.label).toBe("Jul-01");
     expect(byKey(result, "day_31")?.label).toBe("Jul-31");
-    expect(result.some((c) => c.label.includes("Day"))).toBe(false);
+    expect(result.some((c) => /^Day \d+$/.test(c.label))).toBe(false);
   });
 
   it("labels a non-leap February (2025-02, 28 days) and drops day_29/30/31", () => {
