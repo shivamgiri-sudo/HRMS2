@@ -349,8 +349,12 @@ export const navGroups: NavGroup[] = [
           { label: "Salary Increment",     href: "/salary-increment",                 icon: ic(TrendingUp),   pageCode: "SALARY_INCREMENT",                                                                 description: "Salary revision workflow" },
           { label: "Salary Disputes",      href: "/payroll/salary-disputes",          icon: ic(AlertCircle),  roles: ["employee","wfm","payroll_hr","payroll","payroll_head","manager","branch_head","process_manager","super_admin","admin","hr","hr_admin"], pageCode: "SALARY_DISPUTE", description: "Raise, review and resolve salary disputes" },
           // ── CONFIGURATION & COMPLIANCE ───────────────────────────────────
-          { label: "Salary Packages",      href: "/payroll/salary-packages",          icon: ic(Wallet),       roles: ["admin","finance","super_admin","payroll"],                                                            description: "Pay matrix, bands, cost centres" },
-          { label: "Package Admin",        href: "/payroll/package-admin",            icon: ic(Wallet),       roles: ["admin","super_admin","payroll_head","finance"],                                                       pageCode: "OPERATIONS_DASHBOARD", description: "View package components, retire a package from selection" },
+          // One entry, pointing at the package page that actually writes. "Salary Packages"
+          // used to open SalaryPackageManager, whose save posts grade_id/slab_id/basic_amt —
+          // columns salary_package_master does not have — so creating a package from it has
+          // never worked. /payroll/salary-packages now redirects here. pageCode also corrected:
+          // this entry carried OPERATIONS_DASHBOARD, which is not a payroll page code.
+          { label: "Salary Packages",      href: "/payroll/package-admin",            icon: ic(Wallet),       roles: ["admin","super_admin","payroll_head","finance","payroll"],                                            pageCode: "SALARY_PACKAGES", description: "Branch/band packages, bands and cost centres" },
           { label: "Payroll Masters",      href: "/payroll/masters",                  icon: ic(Settings2),    roles: ["admin","super_admin","payroll","finance"],                                                            description: "Salary slabs, bands, min wages" },
           { label: "Statutory & Filing",   href: "/payroll/statutory",                icon: ic(Landmark),     roles: ["admin","hr","finance","super_admin","payroll_head"],                                                  description: "Statutory config, EPF/ESIC/PT + filing tracker" },
           { label: "PF Management",        href: "/payroll/pf-management",            icon: ic(FileCheck),    roles: ["admin","super_admin","payroll_hr","payroll"],                                                         description: "PF creation queue & EPFO batches" },

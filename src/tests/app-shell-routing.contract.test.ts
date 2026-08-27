@@ -198,6 +198,11 @@ describe("application shell routing contracts", () => {
       "/onboard-v1",
       "/onboarding-requests",
       "/payroll/cheque-validation",
+      // Redirect-only since 2026-08-27: SalaryPackageManager writes phantom columns
+      // (grade_id/slab_id/basic_amt) that salary_package_master does not have, so its save
+      // never worked. The sidebar entry now points at /payroll/package-admin, which posts
+      // the real columns; this URL redirects there for bookmarks.
+      "/payroll/salary-packages",
       "/payroll/holiday-work-approvals",
       "/payroll/holiday-work-requests",
       "/payroll/pf-batches",

@@ -49,7 +49,6 @@ const PfManagement              = lazy(() => import("@/pages/payroll/PfManagemen
 // Merged consolidated pages
 const PaymentDisbursalCenter    = lazy(() => import("@/pages/payroll/PaymentDisbursalCenter"));
 const PayrollReadinessDashboard = lazy(() => import("@/pages/payroll/PayrollReadinessDashboard"));
-const SalaryPackageManager      = lazy(() => import("@/pages/payroll/SalaryPackageManager"));
 const StatutoryCenter           = lazy(() => import("@/pages/payroll/StatutoryCenter"));
 const PayrollVarianceAnalysis   = lazy(() => import("@/pages/payroll/PayrollVarianceAnalysis"));
 const PayrollRunLifecycle       = lazy(() => import("@/pages/payroll/PayrollRunLifecycle"));
@@ -105,7 +104,31 @@ export const payrollRouteElements = (
       <Route path="/payroll/statutory-config" element={<Navigate to="/payroll/statutory?tab=config" replace />} />
       <Route path="/payroll/masters"        element={<ProtectedRoute><Gate pageCode="PAYROLL_MASTERS"><NativePayrollMasters /></Gate></ProtectedRoute>} />
       {/* Salary Package Manager — merged page with tabs for packages + admin */}
-      <Route path="/payroll/salary-packages" element={<ProtectedRoute><Gate pageCode="SALARY_PACKAGES"><SalaryPackageManager /></Gate></ProtectedRoute>} />
+      {/*
+        * Redirected 2026-08-27, and this one is the opposite way round from how it looks.
+        *
+        * SalaryPackageManager was the sidebar's "canonical" package page, but it is built on
+        * a schema salary_package_master does not have. Its save posts grade_id, slab_id,
+        * basic_amt, conveyance_type and effective_from and NONE of branch_name, band_code or
+        * package_amount — the three the table is actually keyed by. Its read is broken the
+        * same way: GET returns spm.* keyed on band_code while the page renders a
+        * grade_id/slab_id matrix. salaryPackageColumns.contract.test.ts names those columns
+        * PHANTOM and records the consequence measured on production — all 295 rows carry
+        * source_db='db_bill' and created_by NULL, i.e. nothing has ever been created through
+        * this API.
+        *
+        * NativeSalaryPackageAdmin at /payroll/package-admin posts the real columns and is the
+        * one that works; it also covers 6 of the 8 endpoints this page called, including
+        * bands, cost-centres and branch-states. The two it does not — /api/org/grade-bands
+        * and /api/payroll-masters/slabs — are exactly the grade/slab half that cannot join to
+        * a package anyway, because the join keys are the phantom columns. So nothing that
+        * functioned is lost here.
+        *
+        * Same SALARY_PACKAGES page code on both sides, so no one's access changes. The page
+        * component is left in the tree: rewriting its form onto the real columns is the
+        * larger fix and wants its own approval and its own test.
+        */}
+      <Route path="/payroll/salary-packages" element={<Navigate to="/payroll/package-admin" replace />} />
       {/*
         * Consolidated 2026-08-27. NativeSalaryPackageManager rendered a second, 2,642-line
         * salary-package UI whose API surface was IDENTICAL to SalaryPackageManager's — all
