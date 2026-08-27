@@ -23,7 +23,7 @@ type EmployeeAccessTarget = {
   manager_id: string | null;
 };
 
-const PEOPLE_SCOPE_ROLES = ["hr", "manager", "branch_head", "process_manager", "assistant_manager", "tl"];
+const PEOPLE_SCOPE_ROLES = ["hr", "manager", "branch_head", "process_manager", "assistant_manager", "tl", "payroll_head", "finance_head"];
 const STAT_CARD_SCOPE_ROLES = [...PEOPLE_SCOPE_ROLES, "finance", "payroll"];
 const UUID_ROUTE = "/:id([0-9a-fA-F-]{36})";
 
@@ -262,6 +262,26 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
             e.working_hours_end, e.working_days, e.active_status,
             e.photo_url, e.avatar_url, e.blood_group, e.city, e.state,
             e.country, e.pincode,
+            -- Both addresses. employees.address1/address2 + city/state/pincode is the
+            -- CURRENT address (30,209 populated rows); permanent_address1/2 + permanent_*
+            -- is the PERMANENT one, written by ATS onboarding conversion and read by the
+            -- letters / form-fill layer. employee_address holds one migrated 'permanent'
+            -- row for a further 28,426 employees whose employees.* address columns are
+            -- empty, so it is joined as a fallback rather than left invisible — without it
+            -- roughly half the workforce shows "Not recorded" while the address exists.
+            e.address1, e.address2,
+            e.permanent_address1, e.permanent_address2,
+            e.permanent_city, e.permanent_state, e.permanent_pincode,
+            ea_cur.address_line1  AS ea_current_line1,
+            ea_cur.address_line2  AS ea_current_line2,
+            ea_cur.city           AS ea_current_city,
+            ea_cur.state          AS ea_current_state,
+            ea_cur.pincode        AS ea_current_pincode,
+            ea_perm.address_line1 AS ea_permanent_line1,
+            ea_perm.address_line2 AS ea_permanent_line2,
+            ea_perm.city          AS ea_permanent_city,
+            ea_perm.state         AS ea_permanent_state,
+            ea_perm.pincode       AS ea_permanent_pincode,
             d.designation_name, b.branch_name, b.call_centre_code,
             COALESCE(b.address, '')    AS branch_address,
             b.city                     AS branch_city,
@@ -284,6 +304,9 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
        LEFT JOIN department_master dept ON dept.id = e.department_id
        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
        LEFT JOIN employees manager ON manager.id = COALESCE(e.reporting_manager_id, e.manager_id)
+       -- At most one row each: employee_address has UNIQUE (employee_id, address_type).
+       LEFT JOIN employee_address ea_cur  ON ea_cur.employee_id  = e.id AND ea_cur.address_type  = 'current'
+       LEFT JOIN employee_address ea_perm ON ea_perm.employee_id = e.id AND ea_perm.address_type = 'permanent'
        LEFT JOIN employee_emergency_contact eec
          ON eec.employee_id = e.id
         AND eec.id = (
@@ -469,11 +492,33 @@ router.get(`${UUID_ROUTE}/stat-card`, h(async (req: any, res: any) => {
   const resolvedAwaitingVerify = clTotal > 0 ? Number(clDocRow?.checklist_awaiting ?? 0) : Number(docRow?.awaiting_verification ?? 0);
   const resolvedVerifiedDocs   = clTotal > 0 ? Number(clDocRow?.checklist_verified ?? 0) : Number(docRow?.verified_docs ?? 0);
 
+  /**
+   * One-line postal addresses, composed here rather than in each consumer so the Employee
+   * 360 dialog, the full stat-card page and anything else added later all read the same
+   * string. Blank parts are dropped instead of leaving ", , ," in the middle.
+   *
+   * Source order per address: the employees.* columns first (what HR edits and what the
+   * letters / form-fill layer reads), then the migrated employee_address row. Returns null
+   * when neither holds anything, so a consumer can say "Not recorded" and mean it.
+   */
+  const joinParts = (...parts: unknown[]) => {
+    const line = parts.map((part) => String(part ?? "").trim()).filter(Boolean).join(", ");
+    return line || null;
+  };
+  const currentAddress =
+    joinParts(emp.address1, emp.address2, emp.city, emp.state, emp.pincode)
+    ?? joinParts(emp.ea_current_line1, emp.ea_current_line2, emp.ea_current_city, emp.ea_current_state, emp.ea_current_pincode);
+  const permanentAddress =
+    joinParts(emp.permanent_address1, emp.permanent_address2, emp.permanent_city, emp.permanent_state, emp.permanent_pincode)
+    ?? joinParts(emp.ea_permanent_line1, emp.ea_permanent_line2, emp.ea_permanent_city, emp.ea_permanent_state, emp.ea_permanent_pincode);
+
   return res.json({
     success: true,
     data: {
       employee: {
         ...emp,
+        current_address: currentAddress,
+        permanent_address: permanentAddress,
         emergency_contact: emp.emergency_name ? {
           name: emp.emergency_name,
           relationship: emp.emergency_relationship,
