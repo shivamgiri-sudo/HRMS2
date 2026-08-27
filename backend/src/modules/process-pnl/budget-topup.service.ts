@@ -831,14 +831,23 @@ export const budgetTopupService = {
               COALESCE(l.head, t.head) AS head,
               COALESCE(l.sub_head, t.sub_head) AS sub_head,
               l.item_name,
+              COALESCE(l.unit, t.unit) AS unit,
               COALESCE(l.unit_rate, t.unit_rate) AS unit_rate,
               h.budget_number, h.branch_id, h.period_code, bm.branch_name,
-              NULLIF(TRIM(CONCAT_WS(' ', rq.first_name, rq.last_name)), '') AS requested_by_name
+              NULLIF(TRIM(CONCAT_WS(' ', rq.first_name, rq.last_name)), '') AS requested_by_name,
+              -- The row already carried branch_head_reviewed_by / finance_head_reviewed_by, but
+              -- those are user_ids: BudgetTopupPanel's per-stage approval track could name WHEN
+              -- each stage acted and never WHO. Same LEFT JOIN shape as rq above, so a reviewer
+              -- whose user_id has no employees row degrades to NULL rather than dropping the row.
+              NULLIF(TRIM(CONCAT_WS(' ', bh.first_name, bh.last_name)), '') AS branch_head_reviewed_by_name,
+              NULLIF(TRIM(CONCAT_WS(' ', fh.first_name, fh.last_name)), '') AS finance_head_reviewed_by_name
          FROM finance_budget_topup_request t
          LEFT JOIN finance_budget_line l ON l.id = t.budget_line_id
          JOIN finance_budget_header h ON h.id = t.budget_id
          LEFT JOIN branch_master bm ON bm.id = h.branch_id
          LEFT JOIN employees rq ON rq.user_id = t.requested_by
+         LEFT JOIN employees bh ON bh.user_id = t.branch_head_reviewed_by
+         LEFT JOIN employees fh ON fh.user_id = t.finance_head_reviewed_by
          ${where}
         ORDER BY t.created_at DESC
         LIMIT 200`,

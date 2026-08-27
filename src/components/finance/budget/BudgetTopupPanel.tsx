@@ -1,7 +1,7 @@
 // src/components/finance/budget/BudgetTopupPanel.tsx
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, PlusCircle, XCircle } from "lucide-react";
+import { CheckCircle2, Circle, Clock, PlusCircle, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,6 +36,25 @@ export type BudgetTopupRequest = {
   period_code: string | null;
   branch_head_reviewed_by: string | null;
   finance_head_reviewed_by: string | null;
+  /** Stage timestamps + notes. All four columns have existed on finance_budget_topup_request
+   *  since 1061, and list() has always returned them under `t.*` — they were simply never
+   *  declared here, so the row could show a single end-state Badge and nothing about the two
+   *  approvals that produced it. The per-stage track reads these. */
+  branch_head_reviewed_at: string | null;
+  branch_head_review_note: string | null;
+  finance_head_reviewed_at: string | null;
+  finance_head_review_note: string | null;
+  applied_at: string | null;
+  /** Joined in budget-topup.service.ts list() alongside requested_by_name — the *_reviewed_by
+   *  columns themselves are user_ids and must never be rendered. Null when the reviewer's
+   *  user_id has no employees row. */
+  branch_head_reviewed_by_name: string | null;
+  finance_head_reviewed_by_name: string | null;
+  /** Unit economics of the request, already selected by list() (COALESCE of the line's rate and
+   *  the request's own, for a new-line request). Shown as the qty × rate sub-line under the
+   *  amount so a reviewer can sanity-check the number without opening the line. */
+  unit_rate: number | null;
+  unit: string | null;
   rejection_reason: string | null;
   created_at: string;
   requested_by: string | null;
@@ -123,6 +142,164 @@ export function validateTopupSplits(
 
 function money(value: unknown) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(Number(value ?? 0));
+}
+
+/** Tone tokens per end-state, so the row's headline badge stops being an undifferentiated grey
+ *  outline across five very different outcomes. Mirrors the dashboard tone system: amber =
+ *  waiting on someone, blue = mid-flight, emerald = money actually moved, rose = refused. */
+const STATUS_TONE: Record<string, string> = {
+  submitted: "border-amber-200 bg-amber-50 text-amber-800",
+  branch_head_approved: "border-blue-200 bg-blue-50 text-blue-800",
+  finance_head_approved: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  applied: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  rejected: "border-rose-200 bg-rose-50 text-rose-800",
+};
+
+/** "12 Aug, 3:40 pm" — short enough to sit under a three-across stage track without wrapping,
+ *  and explicitly en-IN so a stage stamp never renders as a US date beside a rupee amount. */
+function shortDateTime(value: string | null | undefined) {
+  if (!value) return null;
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return null;
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit", month: "short", hour: "numeric", minute: "2-digit", hour12: true,
+  }).format(date);
+}
+
+type StageState = "done" | "current" | "rejected" | "upcoming";
+
+type ApprovalStage = {
+  key: string;
+  label: string;
+  state: StageState;
+  who: string | null;
+  at: string | null;
+  note: string | null;
+};
+
+/**
+ * The three real stages of a top-up, derived entirely from columns the list endpoint already
+ * returns.
+ *
+ * There is deliberately no fourth "Applied" node. finance-workflow-role.ts documents that
+ * Finance Head approval writes status='applied' in the same UPDATE that stamps
+ * finance_head_reviewed_at (budget-topup.service.ts, the `SET status = 'applied', applied_at =
+ * NOW()` branch of review()) — 'finance_head_approved' is a legacy resting state no service
+ * writes any more. A separate Applied node would therefore always light up at the same instant
+ * as Finance Head, and teach a reviewer a stage that does not exist.
+ *
+ * Which stage a rejection belongs to is derived, not stored: review() only ever stamps
+ * branch_head_reviewed_at on an approve, so a rejected request with no branch stamp was refused
+ * at the branch stage, and one with a stamp was refused by Finance.
+ */
+function buildApprovalStages(request: BudgetTopupRequest): ApprovalStage[] {
+  const rejected = request.status === "rejected";
+  const rejectedAtBranch = rejected && !request.branch_head_reviewed_at;
+
+  return [
+    {
+      key: "raised",
+      label: "Raised",
+      state: "done",
+      who: request.requested_by_name,
+      at: request.created_at,
+      note: null,
+    },
+    {
+      key: "branch_head",
+      label: "Branch Head",
+      state: rejectedAtBranch
+        ? "rejected"
+        : request.branch_head_reviewed_at
+          ? "done"
+          : request.status === "submitted"
+            ? "current"
+            : "upcoming",
+      who: request.branch_head_reviewed_by_name,
+      at: request.branch_head_reviewed_at,
+      note: rejectedAtBranch ? request.rejection_reason : request.branch_head_review_note,
+    },
+    {
+      key: "finance_head",
+      label: "Finance Head",
+      state: rejected && !rejectedAtBranch
+        ? "rejected"
+        : request.finance_head_reviewed_at
+          ? "done"
+          : rejected
+            ? "upcoming"
+            : request.status === "branch_head_approved" || request.status === "finance_head_approved"
+              ? "current"
+              : "upcoming",
+      who: request.finance_head_reviewed_by_name,
+      at: request.finance_head_reviewed_at ?? (request.status === "applied" ? request.applied_at : null),
+      note: rejected && !rejectedAtBranch ? request.rejection_reason : request.finance_head_review_note,
+    },
+  ];
+}
+
+const STAGE_BAR: Record<StageState, string> = {
+  done: "bg-emerald-500",
+  current: "bg-amber-400",
+  rejected: "bg-rose-500",
+  upcoming: "bg-slate-200",
+};
+
+const STAGE_TEXT: Record<StageState, string> = {
+  done: "text-emerald-700",
+  current: "text-amber-700",
+  rejected: "text-rose-700",
+  upcoming: "text-slate-400",
+};
+
+function StageIcon({ state }: { state: StageState }) {
+  if (state === "done") return <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden />;
+  if (state === "rejected") return <XCircle className="h-3.5 w-3.5 shrink-0 text-rose-600" aria-hidden />;
+  if (state === "current") return <Clock className="h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden />;
+  return <Circle className="h-3.5 w-3.5 shrink-0 text-slate-300" aria-hidden />;
+}
+
+/**
+ * The per-stage approval track that used to be missing entirely: the row carried one end-state
+ * Badge, so "who has already signed this off, and who is sitting on it now" was unanswerable
+ * without opening the record.
+ *
+ * Every stage is always rendered — an un-reached stage stays on screen greyed out rather than
+ * being omitted, because the point of the control is to show the whole chain and where in it
+ * this request currently sits. Ordered-list markup, not divs, so a screen reader reads it as a
+ * sequence; state is carried by icon plus text, never by the colour bar alone.
+ */
+function ApprovalTrack({ stages }: { stages: ApprovalStage[] }) {
+  return (
+    <ol className="flex items-stretch gap-2" aria-label="Approval progress">
+      {stages.map((stage) => {
+        const stamp = shortDateTime(stage.at);
+        const detail =
+          stage.state === "upcoming"
+            ? "Not yet reached"
+            : stage.state === "current"
+              ? "Awaiting decision"
+              : [stage.who, stamp].filter(Boolean).join(" \u00b7 ")
+                || (stage.state === "rejected" ? "Rejected" : "Approved");
+        return (
+          <li key={stage.key} className="min-w-0 flex-1">
+            <div className={cn("h-1 rounded-full transition-colors duration-200", STAGE_BAR[stage.state])} />
+            <div className="mt-1.5 flex items-center gap-1">
+              <StageIcon state={stage.state} />
+              <span className={cn("truncate text-[10px] font-bold uppercase tracking-wide", STAGE_TEXT[stage.state])}>
+                {stage.label}
+              </span>
+            </div>
+            {/* title= carries the untruncated value for a long reviewer name. The reviewer's
+                remark is never hidden here — it is printed in full beneath the track. */}
+            <p className="mt-0.5 truncate text-[11px] leading-tight text-slate-500" title={detail}>
+              {detail}
+            </p>
+          </li>
+        );
+      })}
+    </ol>
+  );
 }
 
 function statusLabel(status: string) {
@@ -553,69 +730,142 @@ export function BudgetTopupPanel({
             No top-up requests for this branch yet.
           </p>
         )}
-        {requests.map((request) => (
-          <div key={request.id} className="rounded-2xl border border-slate-200 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2">
-                  <p className="font-semibold">{request.head}{request.sub_head ? ` · ${request.sub_head}` : ""}</p>
-                  <Badge variant="outline">{statusLabel(request.status)}</Badge>
-                </div>
-                <p className="mt-1 text-xs text-slate-500">
-                  {request.item_name} · {request.budget_number}
-                  {request.period_code ? ` · ${request.period_code} budget` : ""}
-                  {" "}· requested {money(request.requested_amount)}
-                </p>
-                <p className="mt-1 text-xs text-slate-600">{request.reason}</p>
-                {request.status === "rejected" && request.rejection_reason && (
-                  <p className="mt-1 text-xs text-rose-600">Rejected: {request.rejection_reason}</p>
-                )}
-              </div>
-              {canReviewRow(request) && (
-                <div className="flex flex-col items-end gap-2">
-                  <Input
-                    placeholder="Remarks (required to reject)"
-                    className="h-8 w-56 text-xs"
-                    disabled={isOwnRequest(request)}
-                    value={reviewNotes[request.id] ?? ""}
-                    onChange={(event) => setReviewNotes((prev) => ({ ...prev, [request.id]: event.target.value }))}
-                  />
-                  <div className="flex gap-2">
-                    <Button
-                      size="sm"
-                      // P0P1-4: prevent self-approval — mirror backend maker-checker.
-                      disabled={reviewMutation.isPending || isOwnRequest(request)}
-                      title={isOwnRequest(request) ? MAKER_CHECKER_HINT : undefined}
-                      onClick={() => reviewMutation.mutate({ id: request.id, decision: "approve" })}
+        {requests.map((request) => {
+          /* Everything the row needs to answer "how much, and where is it stuck?" without the
+             reviewer opening the record. Both were previously absent or buried: the amount was
+             the tail clause of a grey run-on caption, and per-stage approval was not shown at
+             all -- one end-state Badge stood in for a two-stage chain. */
+          const stages = buildApprovalStages(request);
+          const unitRate = Number(request.unit_rate ?? 0);
+          const quantity = Number(request.requested_quantity ?? 0);
+          /* Only worth printing when it is a real derivation, not 1 × the whole amount. */
+          const showUnitEconomics = unitRate > 0 && quantity > 0 && quantity !== 1;
+          /* The remark the current end-state actually rests on. review() has captured approval
+             notes since migration 1061 and nothing in the UI has ever read them back. */
+          const decisionNote =
+            request.status === "rejected"
+              ? request.rejection_reason
+              : request.finance_head_review_note ?? request.branch_head_review_note;
+          const decisionNoteLabel = request.status === "rejected" ? "Rejected" : "Reviewer remark";
+
+          return (
+            <div
+              key={request.id}
+              className="rounded-2xl border border-slate-200 bg-white p-4 transition-shadow duration-200 hover:shadow-md"
+            >
+              {/* Two columns from lg up, stacked below it. The right column is what fills the
+                  dead space this row used to leave at every width above a phone: the amount,
+                  then the approval chain, then the review controls that were previously the
+                  only thing over there -- and only for the one reviewer who could act. */}
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-semibold">{request.head}{request.sub_head ? ` · ${request.sub_head}` : ""}</p>
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "font-semibold",
+                        STATUS_TONE[request.status] ?? "border-slate-200 bg-slate-50 text-slate-700"
+                      )}
                     >
-                      <CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      disabled={reviewMutation.isPending || isOwnRequest(request)}
-                      title={isOwnRequest(request) ? MAKER_CHECKER_HINT : undefined}
-                      onClick={() => reviewMutation.mutate({ id: request.id, decision: "reject" })}
-                    >
-                      <XCircle className="mr-1 h-3.5 w-3.5" />Reject
-                    </Button>
+                      {statusLabel(request.status)}
+                    </Badge>
+                    {/* Pendency is the one thing a queue exists to surface. decorateTopup() has
+                        always computed it server-side and no caller rendered it on this row. */}
+                    {request.is_pending && request.pending_with && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                        <Clock className="h-3 w-3" aria-hidden />
+                        With {request.pending_with}
+                      </span>
+                    )}
                   </div>
-                  {/* A disabled button explains itself only on hover, and not at all on touch.
-                      Say who the request is actually waiting for, so the raiser chases the right
-                      person instead of assuming the screen is broken. */}
-                  {isOwnRequest(request) && (
-                    <p className="max-w-[15rem] text-right text-xs text-amber-700">
-                      You raised this request, so you cannot review it. It is waiting for{" "}
-                      {request.status === "submitted" ? "another Branch Head" : "the Finance Head"}.
+                  <p className="mt-1 text-xs text-slate-500">
+                    {request.item_name} · {request.budget_number}
+                    {request.period_code ? ` · ${request.period_code} budget` : ""}
+                  </p>
+                  <p className="mt-2 text-xs text-slate-600">{request.reason}</p>
+                  {decisionNote && (
+                    <p
+                      className={cn(
+                        "mt-2 rounded-lg border px-2.5 py-1.5 text-xs",
+                        request.status === "rejected"
+                          ? "border-rose-200 bg-rose-50 text-rose-700"
+                          : "border-slate-200 bg-slate-50 text-slate-600"
+                      )}
+                    >
+                      <span className="font-semibold">{decisionNoteLabel}:</span> {decisionNote}
                     </p>
                   )}
                 </div>
-              )}
-            </div>
-          </div>
-        ))}
-      </CardContent>
 
+                <div className="flex flex-col gap-3 lg:border-l lg:border-slate-100 lg:pl-4">
+                  {/* The amount is the decision being asked for. It was the last clause of an
+                      11px grey caption, indistinguishable from the budget number beside it. */}
+                  <div className="rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50 to-indigo-50 px-3 py-2">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-blue-700/70">
+                      Requested increase
+                    </p>
+                    <p className="text-xl font-bold leading-tight tabular-nums text-blue-900">
+                      {money(request.requested_amount)}
+                    </p>
+                    {showUnitEconomics && (
+                      <p className="mt-0.5 text-[11px] tabular-nums text-slate-500">
+                        {quantity.toLocaleString("en-IN", { maximumFractionDigits: 4 })}
+                        {request.unit ? ` ${request.unit}` : ""} × {money(unitRate)}
+                      </p>
+                    )}
+                  </div>
+
+                  <ApprovalTrack stages={stages} />
+
+                  {canReviewRow(request) && (
+                    <div className="flex flex-col gap-2 border-t border-slate-100 pt-3">
+                      <Input
+                        placeholder="Remarks (required to reject)"
+                        className="h-8 w-full text-xs"
+                        disabled={isOwnRequest(request)}
+                        value={reviewNotes[request.id] ?? ""}
+                        onChange={(event) => setReviewNotes((prev) => ({ ...prev, [request.id]: event.target.value }))}
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          className="flex-1"
+                          // P0P1-4: prevent self-approval -- mirror backend maker-checker.
+                          disabled={reviewMutation.isPending || isOwnRequest(request)}
+                          title={isOwnRequest(request) ? MAKER_CHECKER_HINT : undefined}
+                          onClick={() => reviewMutation.mutate({ id: request.id, decision: "approve" })}
+                        >
+                          <CheckCircle2 className="mr-1 h-3.5 w-3.5" />Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="flex-1"
+                          disabled={reviewMutation.isPending || isOwnRequest(request)}
+                          title={isOwnRequest(request) ? MAKER_CHECKER_HINT : undefined}
+                          onClick={() => reviewMutation.mutate({ id: request.id, decision: "reject" })}
+                        >
+                          <XCircle className="mr-1 h-3.5 w-3.5" />Reject
+                        </Button>
+                      </div>
+                      {/* A disabled button explains itself only on hover, and not at all on
+                          touch. Say who the request is actually waiting for, so the raiser
+                          chases the right person instead of assuming the screen is broken. */}
+                      {isOwnRequest(request) && (
+                        <p className="text-xs text-amber-700">
+                          You raised this request, so you cannot review it. It is waiting for{" "}
+                          {request.status === "submitted" ? "another Branch Head" : "the Finance Head"}.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </CardContent>
       <Dialog
         open={createOpen}
         onOpenChange={(open) => {
