@@ -69,15 +69,8 @@ describe("importEmployeeMasterBatch — batched rewrite", () => {
 
   it("resolves org codes via bulk lookups and inserts in one chunked statement", async () => {
     mockBySql(
-      [row("row-1", 1, {
-        employee_code: "MAS001", first_name: "Amit", branch_code: "OKAYA",
-        process_code: "ONF_KYC", designation_code: "EXECUTIVE",
-      })],
-      {
-        branch: [{ id: "branch-1", code: "OKAYA" }],
-        process: [{ id: "process-1", code: "ONF_KYC" }],
-        designation: [{ id: "desig-1", code: "EXECUTIVE" }],
-      },
+      [row("row-1", 1, { employee_code: "MAS001", first_name: "Amit", branch_code: "OKAYA", process_code: "ONF_KYC" })],
+      { branch: [{ id: "branch-1", code: "OKAYA" }], process: [{ id: "process-1", code: "ONF_KYC" }] },
     );
 
     const result = await importEmployeeMasterBatch("batch-1", "user-1");
@@ -123,15 +116,13 @@ describe("importEmployeeMasterBatch — batched rewrite", () => {
     execute.mockImplementation(async (sql: string, params: unknown[]) => {
       if (sql.includes("SELECT id, row_no, normalized_data")) {
         return [[
-          // process_code (2026-08-26) and designation_code (2026-08-27) are both required, so
-          // these fixtures carry them — this test is about chunk-failure isolation, not about
-          // master resolution.
-          row("row-1", 1, { employee_code: "MAS001", first_name: "Amit", process_code: "P1", designation_code: "D1" }),
-          row("row-2", 2, { employee_code: "MAS002", first_name: "Priya", process_code: "P1", designation_code: "D1" }),
+          // process_code is required as of 2026-08-26, so these fixtures carry one — this
+          // test is about chunk-failure isolation, not about master resolution.
+          row("row-1", 1, { employee_code: "MAS001", first_name: "Amit", process_code: "P1" }),
+          row("row-2", 2, { employee_code: "MAS002", first_name: "Priya", process_code: "P1" }),
         ], []];
       }
       if (sql.includes("FROM process_master")) return [[{ id: "p-1", code: "P1" }], []];
-      if (sql.includes("FROM designation_master")) return [[{ id: "d-1", code: "D1" }], []];
       if (sql.includes("_master")) return [[], []];
       if (sql.includes("INSERT INTO employees")) {
         insertCalls++;
@@ -155,12 +146,10 @@ describe("importEmployeeMasterBatch — batched rewrite", () => {
   });
 
   it("does not fail the row when LMS provisioning throws — it's best-effort", async () => {
-    // process_code and designation_code are required; this test is about LMS being best-effort.
+    // process_code required as of 2026-08-26; this test is about LMS being best-effort.
     mockBySql(
-      [row("row-1", 1, {
-        employee_code: "MAS001", first_name: "Amit", process_code: "P1", designation_code: "D1",
-      })],
-      { process: [{ id: "p-1", code: "P1" }], designation: [{ id: "d-1", code: "D1" }] },
+      [row("row-1", 1, { employee_code: "MAS001", first_name: "Amit", process_code: "P1" })],
+      { process: [{ id: "p-1", code: "P1" }] },
     );
     provisionLmsIdentityForEmployee.mockRejectedValue(new Error("LMS unreachable"));
 

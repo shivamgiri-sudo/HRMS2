@@ -638,6 +638,11 @@
     "1618_payroll_branch_readiness_collation.sql",
     "1619_attendance_regularization_queue_indexes.sql",
     "1620_enable_wired_notification_events.sql",
+    "1621_payroll_head_org_wide_scope.sql",
+    "1623_team_roster_page_access_for_managers.sql",
+    "1624_employee_manager_history.sql",
+    "1625_client_billing_seed_number_sequences.sql",
+    "1626_vendor_payment_due_date_backfill.sql",
     "migrations/440_salary_date_revision_requests.sql"
   ],
   "approvedDeletions": [
@@ -771,10 +776,10 @@
     "1234_imprest_allocation_accounting_period.sql",
     "1239_cost_centre_avore_ahmedabad.sql",
     "1247_restore_cost_centre_display_names.sql",
-    "1622_vendor_head_subhead_backfill.sql",
     "127_ats_candidate_unique_constraints.sql",
     "133_phase2_security_fixes.sql",
     "136_incentive_module.sql",
+    "1622_vendor_head_subhead_backfill.sql",
     "175_clean_department_master.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",

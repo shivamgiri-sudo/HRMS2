@@ -38,17 +38,12 @@ export function OrgNodeDetailsDrawer({
   onJumpToManager,
   onJumpToEmployee,
 }: OrgNodeDetailsDrawerProps) {
-  // GET /api/org-chart/node/:id answers `{ success, data: {...} }`, and hrmsApi hands back the
-  // whole envelope. Reading `.employee` off the envelope gave undefined, so the first property
-  // access threw and the drawer white-screened — which no one had hit, because until now
-  // nothing in the app opened it.
-  const { data: envelope, isLoading, isError } = useQuery({
+  const { data, isLoading, isError } = useQuery({
     queryKey: ["org-chart-node", employeeId],
-    queryFn: () => hrmsApi.get<{ data: NodeDetailData }>(`/api/org-chart/node/${employeeId}`),
+    queryFn: () => hrmsApi.get<NodeDetailData>(`/api/org-chart/node/${employeeId}`),
     enabled: !!employeeId && isOpen,
     staleTime: 30_000,
   });
-  const data = envelope?.data;
 
   if (!isOpen || !employeeId) {
     return null;

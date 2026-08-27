@@ -36,7 +36,11 @@ describe("canonical dashboard metric contract", () => {
         trend: "down",
         drilldownApi: "/api/example",
         actionUrl: null,
-        detail: { present: 0, expectedToWork: 10 },
+        // attendedDays, not present, is ATTENDANCE's numeratorKey — it is the value the
+        // percentage is actually computed from (present + half a day per half day), so the
+        // published numerator matches the published rate. Kept at 0 alongside present so
+        // this still exercises a genuine zero rather than an unavailable metric.
+        detail: { present: 0, attendedDays: 0, expectedToWork: 10 },
       },
       scope,
       new Date("2026-07-23T10:00:00.000Z"),

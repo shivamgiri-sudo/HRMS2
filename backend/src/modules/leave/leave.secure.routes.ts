@@ -88,7 +88,24 @@ leaveSecureRouter.get("/requests", h(async (req: any, res: any) => {
   const where = `WHERE ${conds.join(" AND ")}`;
   const fromSql = `FROM leave_request lr LEFT JOIN employees e ON e.id = lr.employee_id LEFT JOIN department_master dept ON dept.id = e.department_id LEFT JOIN branch_master bm ON bm.id = e.branch_id LEFT JOIN process_master pm ON pm.id = e.process_id LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id LEFT JOIN leave_approval_log approval ON approval.id = (SELECT latest.id FROM leave_approval_log latest WHERE latest.leave_request_id = lr.id ORDER BY latest.action_at DESC LIMIT 1) LEFT JOIN employees rev ON rev.user_id = approval.action_by`;
   const [rows] = await db.execute<RowDataPacket[]>(`SELECT lr.*, COALESCE(NULLIF(TRIM(e.full_name), ''), TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')))) AS employee_name, e.first_name, e.last_name, e.employee_code, e.avatar_url, dept.dept_name AS department_name, bm.branch_name, pm.process_name, lt.leave_name AS leave_type_name, lt.leave_code, COALESCE(NULLIF(TRIM(rev.full_name), ''), TRIM(CONCAT(rev.first_name, ' ', COALESCE(rev.last_name, '')))) AS reviewer_name, approval.action_at AS reviewed_at, approval.remarks AS review_notes ${fromSql} ${where} ORDER BY lr.applied_at DESC LIMIT ${limit} OFFSET ${offset}`, params);
-  const [countRows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total ${fromSql} ${where}`, params);
+  // The count only needs the two tables the WHERE can reference: lr (every filter above)
+  // and e (every branch of leaveListScope). The display joins — department, branch,
+  // process, leave type, latest-approval and reviewer — cannot change how many leave
+  // requests match, so running them for a COUNT is pure cost.
+  //
+  // It was 8.6x the cost: the full join counted 8,084 rows for one branch in 11.7s where
+  // lr+e counted the same 8,084 in 1.4s, because `approval` joins through a correlated
+  // ORDER BY … LIMIT 1 subquery evaluated per candidate row. This endpoint 500s in
+  // production after ~70s, and the Manager dashboard rendered that failure as "0 pending,
+  // 0 approved" — see ManagerLayout.
+  //
+  // It was also a latent correctness bug. `rev` joins employees on user_id, which is NOT
+  // unique — 7 user_ids map to more than one employee row — so a reviewer with a duplicate
+  // employee record would multiply that request's rows and inflate `total` above the number
+  // of requests that exist. It does not happen on today's data (verified: 29,887 org-wide
+  // both ways) but it is one duplicate reviewer away from doing so.
+  const countFromSql = `FROM leave_request lr LEFT JOIN employees e ON e.id = lr.employee_id`;
+  const [countRows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS total ${countFromSql} ${where}`, params);
   return res.json({ success: true, data: rows, total: Number(countRows[0]?.total ?? 0), page, limit });
 }));
 

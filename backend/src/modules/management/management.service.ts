@@ -578,6 +578,11 @@ export const managementService = {
     const empScopeJoinWhere = scopeConds.length
       ? " AND " + scopeConds.map(c => "e." + c).join(" AND ")
       : "";
+    // For tables that carry branch_id/process_id themselves instead of reaching them
+    // through employees — work_item is the one on this dashboard.
+    const workItemScopeWhere = scopeConds.length
+      ? " AND " + scopeConds.map(c => "wi." + c).join(" AND ")
+      : "";
 
     const [
       workforceResult,
@@ -672,14 +677,22 @@ export const managementService = {
       // written day made this status breakdown report a wall of missing_punch:
       // on 2026-07-30 at 15:00 today held 431 missing_punch against 1 present,
       // while the completed day before it held 631 present and 4 missing_punch.
+      // Scoped to the caller's branch/process like every other tile on this dashboard.
+      // Without the join this counted the whole company while `active_headcount` two
+      // queries up counted one branch, so a NOIDA branch head saw 441 total employees
+      // beside 724 rostered and 457 present — more people present than employed.
+      // Everything derived from these rows (attendance_pct, shrinkage_pct,
+      // expected_to_work and the Today's Attendance breakdown) inherited the leak.
       db.execute<RowDataPacket[]>(
         `SELECT
-           record_date,
-           attendance_status AS status,
+           adr.record_date,
+           adr.attendance_status AS status,
            COUNT(*) AS value
-         FROM attendance_daily_record
-         WHERE record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}
-         GROUP BY record_date, attendance_status`,
+         FROM attendance_daily_record adr
+         JOIN employees e ON e.id = adr.employee_id
+         WHERE adr.record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL}${empScopeJoinWhere}
+         GROUP BY adr.record_date, adr.attendance_status`,
+        [...scopeParams],
       ),
       db.execute<RowDataPacket[]>(
         `SELECT
@@ -848,19 +861,29 @@ export const managementService = {
       [teamMembersResult],
     ] = await Promise.all([
       db.execute<RowDataPacket[]>(
-        `SELECT COUNT(DISTINCT employee_id) as count
-         FROM leave_request
-         WHERE status = 'approved'
-           AND CURDATE() BETWEEN start_date AND end_date`
+        `SELECT COUNT(DISTINCT lr.employee_id) as count
+         FROM leave_request lr
+         JOIN employees e ON e.id = lr.employee_id
+         WHERE lr.status = 'approved'
+           AND CURDATE() BETWEEN lr.start_date AND lr.end_date${empScopeJoinWhere}`,
+        [...scopeParams],
       ),
       db.execute<RowDataPacket[]>(
         `SELECT COUNT(*) as count FROM branch_master WHERE active_status = 1`
       ),
+      // Scoped, and the 90-day window is now reported alongside the rows.
+      //
+      // Unscoped this returned the whole company's last 90 days while the "Pending Leave"
+      // tile beside it returned the caller's branch across all time — so the same panel
+      // showed 14 pending and 1,033 approved next to a tile reading 16, with nothing on
+      // screen explaining that they count different people over different windows.
       db.execute<RowDataPacket[]>(
-        `SELECT status, COUNT(*) as count
-         FROM leave_request
-         WHERE start_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
-         GROUP BY status`
+        `SELECT lr.status, COUNT(*) as count
+         FROM leave_request lr
+         JOIN employees e ON e.id = lr.employee_id
+         WHERE lr.start_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)${empScopeJoinWhere}
+         GROUP BY lr.status`,
+        [...scopeParams],
       ),
       // The layout renders `designation_name`; this returned only designation_id, so
       // every joiner showed the literal fallback subtitle "Employee". The join to
@@ -919,13 +942,19 @@ export const managementService = {
       // those rows are migrated vendor bills and imprest, which are settled through
       // the GRN / vendor-payment flow and are not a manager's expense queue.
       db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) as count FROM expense_claim
-          WHERE status = 'submitted' AND expense_type = 'employee_claim'`
+        `SELECT COUNT(*) as count FROM expense_claim ec
+         JOIN employees e ON e.id = ec.employee_id
+          WHERE ec.status = 'submitted' AND ec.expense_type = 'employee_claim'${empScopeJoinWhere}`,
+        [...scopeParams],
       ).catch(() => [[{ count: 0 }]] as any),
       // null, not 0, on failure. A zero here reads as "nothing is overdue", which is
       // the reassuring answer, and it would be produced by a query that never ran.
+      // work_item carries its own branch_id/process_id — it has no employee_id, so it is
+      // scoped on its own columns rather than through a join to employees.
       db.execute<RowDataPacket[]>(
-        `SELECT COUNT(*) as overdue FROM work_item WHERE status NOT IN ('completed','cancelled') AND due_at < NOW()`
+        `SELECT COUNT(*) as overdue FROM work_item wi
+         WHERE wi.status NOT IN ('completed','cancelled') AND wi.due_at < NOW()${workItemScopeWhere}`,
+        [...scopeParams],
       ).catch(() => [[{ overdue: null }]] as any),
       // Pending timesheets.
       //
@@ -1014,7 +1043,17 @@ export const managementService = {
          ORDER BY headcount DESC
          LIMIT 15`
       ).catch(() => [[]] as any),
-      // Team members snapshot for Manager dashboard roster panel
+      // Team members snapshot for Manager dashboard roster panel.
+      //
+      // Scoped. This selected every active employee in the company, sorted by name and
+      // took twenty — so a NOIDA branch head's "My Team" opened with staff from NOIDA-2
+      // and AHMEDABAD-JALDARSHAN, and the twenty shown were simply whoever sorted first
+      // alphabetically rather than anyone reporting to them.
+      //
+      // today_status also read CURDATE() while every attendance figure on this dashboard
+      // is anchored to the last fully processed day. Today is still being written, so the
+      // roster reported 'missing_punch' for people whose day merely had not been processed
+      // yet. Anchored to the same day as the rest of the page.
       db.execute<RowDataPacket[]>(
         `SELECT
            e.id, e.employee_code, e.full_name as employee_name,
@@ -1023,15 +1062,17 @@ export const managementService = {
            COALESCE(dm.designation_name, e.designation_id) as designation_name,
            COALESCE(
              (SELECT adr.attendance_status FROM attendance_daily_record adr
-              WHERE adr.employee_id = e.id AND adr.record_date = CURDATE() LIMIT 1),
+              WHERE adr.employee_id = e.id
+                AND adr.record_date = ${LATEST_COMPLETE_ATTENDANCE_DATE_SQL} LIMIT 1),
              'not_marked'
            ) as today_status
          FROM employees e
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN designation_master dm ON dm.id = e.designation_id
-         WHERE e.employment_status = 'active'
+         WHERE e.employment_status = 'active'${empScopeJoinWhere}
          ORDER BY e.full_name ASC
-         LIMIT 20`
+         LIMIT 20`,
+        [...scopeParams],
       ).catch(() => [[]] as any),
     ]);
     const onLeaveCount = numberValue(onLeaveResult[0]?.count);
@@ -1066,7 +1107,10 @@ export const managementService = {
       total_branches: totalBranches,
       pending_leave_requests: numberValue(approvals.pending_leave_approvals),
       pending_expense_claims: numberValue(expenseResult[0]?.count),
-      projects_at_risk: 0,
+      // null, not 0. Nothing computes this — there is no project-risk source wired up —
+      // and a literal zero renders as "no projects at risk", which is a claim this
+      // dashboard has never had the data to make. null renders as "—".
+      projects_at_risk: null,
       // null passes through as "—". See the query: a 0 here would be produced by a
       // failed lookup and would read as "nothing overdue".
       overdue_tasks: overtaskResult[0]?.overdue == null ? null : numberValue(overtaskResult[0].overdue),

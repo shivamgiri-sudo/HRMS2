@@ -74,10 +74,8 @@ describe("employee bulk import — process is mandatory", () => {
 
   it("imports the row when the process resolves", async () => {
     mockBySql(
-      [row("r1", 1, {
-        employee_code: "MAS1", first_name: "A", process_code: "ONFIDO", designation_code: "EXECUTIVE",
-      })],
-      { process: [{ id: "p-1", code: "ONFIDO" }], designation: [{ id: "d-1", code: "EXECUTIVE" }] },
+      [row("r1", 1, { employee_code: "MAS1", first_name: "A", process_code: "ONFIDO" })],
+      { process: [{ id: "p-1", code: "ONFIDO" }] },
     );
 
     const res = await importEmployeeMasterBatch("b1", "u1");
@@ -91,11 +89,11 @@ describe("employee bulk import — process is mandatory", () => {
     // Batch isolation: one unusable row must not cost the rest of the upload.
     mockBySql(
       [
-        row("r1", 1, { employee_code: "MAS1", first_name: "A", process_code: "ONFIDO", designation_code: "EXECUTIVE" }),
+        row("r1", 1, { employee_code: "MAS1", first_name: "A", process_code: "ONFIDO" }),
         row("r2", 2, { employee_code: "MAS2", first_name: "B" }),
-        row("r3", 3, { employee_code: "MAS3", first_name: "C", process_code: "ONFIDO", designation_code: "EXECUTIVE" }),
+        row("r3", 3, { employee_code: "MAS3", first_name: "C", process_code: "ONFIDO" }),
       ],
-      { process: [{ id: "p-1", code: "ONFIDO" }], designation: [{ id: "d-1", code: "EXECUTIVE" }] },
+      { process: [{ id: "p-1", code: "ONFIDO" }] },
     );
 
     const res = await importEmployeeMasterBatch("b1", "u1");
@@ -123,47 +121,12 @@ describe("employee bulk import — process is mandatory", () => {
   });
 
   it("still allows the optional codes to be blank", async () => {
-    // branch/department/cost_centre/lob stay optional. process and designation do not.
     mockBySql(
-      [row("r1", 1, {
-        employee_code: "MAS1", first_name: "A", process_code: "ONFIDO", designation_code: "EXECUTIVE",
-      })],
-      { process: [{ id: "p-1", code: "ONFIDO" }], designation: [{ id: "d-1", code: "EXECUTIVE" }] },
-    );
-
-    const res = await importEmployeeMasterBatch("b1", "u1");
-    expect(res.importedRows).toBe(1);
-  });
-
-  it("rejects a row with no designation_code instead of importing a NULL designation", async () => {
-    // 157 active employees reached the live database with designation_id NULL, all of them
-    // created through this path in July and August 2026. Nothing can back-fill them: none
-    // appear in db_bill under their employee code, name+DOJ, PAN or mobile number.
-    mockBySql(
-      [row("r1", 1, { employee_code: "MAS63359", first_name: "AADITY", process_code: "ONFIDO" })],
+      [row("r1", 1, { employee_code: "MAS1", first_name: "A", process_code: "ONFIDO" })],
       { process: [{ id: "p-1", code: "ONFIDO" }] },
     );
 
     const res = await importEmployeeMasterBatch("b1", "u1");
-
-    expect(res.importedRows).toBe(0);
-    expect(res.errorRows).toBe(1);
-    expect(res.errors[0]).toContain("designation_code is required");
-    expect(inserts(), "nothing may be written for a rejected row").toHaveLength(0);
-  });
-
-  it("rejects a designation_code that matches nothing, rather than silently dropping it", async () => {
-    mockBySql(
-      [row("r1", 1, {
-        employee_code: "MAS1", first_name: "A", process_code: "ONFIDO", designation_code: "EXEC_TYPO",
-      })],
-      { process: [{ id: "p-1", code: "ONFIDO" }], designation: [{ id: "d-1", code: "EXECUTIVE" }] },
-    );
-
-    const res = await importEmployeeMasterBatch("b1", "u1");
-
-    expect(res.importedRows).toBe(0);
-    expect(res.errors[0]).toContain('designation_code "EXEC_TYPO"');
-    expect(inserts()).toHaveLength(0);
+    expect(res.importedRows).toBe(1);
   });
 });

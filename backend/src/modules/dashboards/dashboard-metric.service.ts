@@ -468,6 +468,13 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
 
     const result = await wrapEnriched("ATTENDANCE", attendanceRate, {
       present,
+      // The numerator the percentage is actually built from: present + half a day for
+      // each half day. `present` alone was published as the metric's numerator, so the
+      // envelope advertised 214/308 = 69% beside a value of 81% and anyone checking the
+      // tile's arithmetic — or building a drilldown off numerator/denominator — got a
+      // different answer than the tile. See ATTENDANCE numeratorKey in
+      // dashboard-definition.service.ts.
+      attendedDays,
       halfDay,
       livePresent,
       absent,
