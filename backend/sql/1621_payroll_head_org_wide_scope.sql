@@ -8,9 +8,14 @@
 -- Inserts scope_type='all' for every active user who holds payroll_head or
 -- finance_head in user_roles but has no existing scope row for that role.
 -- Idempotent: WHERE NOT EXISTS guard prevents duplicate inserts.
+--
+-- 2026-08-27: this listed an `updated_at` column that user_assignment_scope does not have, so the
+-- migration failed with "Unknown column 'updated_at' in 'field list'", was recorded success = 0,
+-- and was retried and failed again on every restart — holding /api/health at 503 and leaving the
+-- one scope row it exists to create unwritten. Column list corrected; what it does is unchanged.
 
 INSERT INTO user_assignment_scope
-  (id, user_id, role_key, scope_type, branch_id, process_id, lob_id, department_id, manager_employee_id, active_status, created_at, updated_at)
+  (id, user_id, role_key, scope_type, branch_id, process_id, lob_id, department_id, manager_employee_id, active_status, created_at)
 SELECT
   UUID(),
   ur.user_id,
@@ -18,7 +23,6 @@ SELECT
   'all',
   NULL, NULL, NULL, NULL, NULL,
   1,
-  NOW(),
   NOW()
 FROM user_roles ur
 WHERE ur.role_key IN ('payroll_head', 'finance_head')
