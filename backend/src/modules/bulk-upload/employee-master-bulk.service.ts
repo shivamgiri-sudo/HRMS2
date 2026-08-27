@@ -163,7 +163,15 @@ export async function importEmployeeMasterBatch(
    * Operations, IT, Finance-Corporate) exist as process_master rows in their own right, so
    * "back-office staff have no process" is not a real case.
    *
-   * For the other five masters a blank stays allowed, exactly as before; only a supplied
+   * designation is required for the same reason, added 2026-08-27. Leaving it optional
+   * produced 157 active employees with no designation at all, every one of them created in
+   * July and August 2026 through this path. A person with no designation has no grade band,
+   * no APR eligibility rule and no seat rate, shows on the org chart as an unlabelled card,
+   * and cannot be recovered after the fact — none of the 157 exist in db_bill under their
+   * code, name+DOJ, PAN or mobile, and only one has an ATS candidate record, so there is
+   * nothing to back-fill from. The value has to be captured at import or it is gone.
+   *
+   * For the other four masters a blank stays allowed, exactly as before; only a supplied
    * value that does not resolve is now an error. This deliberately turns some previously
    * "successful" imports into reported errors — that is the point, and the row is named so
    * it can be corrected and re-uploaded rather than silently landing wrong.
@@ -174,7 +182,6 @@ export async function importEmployeeMasterBatch(
   const RESOLVERS: Array<{ label: string; code: (r: ParsedRow) => string | null; map: Map<string, string> }> = [
     { label: "branch_code",      code: (r) => r.branchCode,      map: branchIds },
     { label: "department_code",  code: (r) => r.departmentCode,  map: departmentIds },
-    { label: "designation_code", code: (r) => r.designationCode, map: designationIds },
     { label: "cost_centre_code", code: (r) => r.costCentreCode,  map: costCentreIds },
     { label: "lob_code",         code: (r) => r.lobCode,         map: lobIds },
   ];
@@ -187,6 +194,12 @@ export async function importEmployeeMasterBatch(
       problems.push("process_code is required");
     } else if (!processIds.has(r.processCode)) {
       problems.push(`process_code "${r.processCode}" does not match any active process`);
+    }
+
+    if (!r.designationCode) {
+      problems.push("designation_code is required");
+    } else if (!designationIds.has(r.designationCode)) {
+      problems.push(`designation_code "${r.designationCode}" does not match any active designation`);
     }
     for (const res of RESOLVERS) {
       const code = res.code(r);

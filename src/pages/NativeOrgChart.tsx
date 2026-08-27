@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { OrgChartNodeCard } from "@/components/orgchart/OrgChartNode";
+import { OrgNodeDetailsDrawer } from "@/components/org-chart/OrgNodeDetailsDrawer";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { useEmployeeDirectoryMasters } from "@/hooks/useEmployees";
@@ -15,8 +16,6 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
-/** Levels opened for a viewer with no employee record to centre on. */
-const DEFAULT_OPEN_DEPTH = 2;
 
 interface NodeIndexEntry {
   node: OrgTreeNode;
@@ -59,7 +58,7 @@ export default function NativeOrgChart() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [showUnassigned, setShowUnassigned] = useState(false);
   const [showIssues, setShowIssues] = useState(false);
-  const [selected, setSelected] = useState<OrgTreeNode | null>(null);
+  const [drilldownId, setDrilldownId] = useState<string | null>(null);
 
   const shellRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -138,21 +137,26 @@ export default function NativeOrgChart() {
 
   // On first load, open the chart on the viewer rather than at an arbitrary root — "where do
   // I sit" is the question this page exists to answer.
+  //
+  // Deliberately narrow: opening every branch two levels deep sounds friendlier but on the
+  // live tree that is six roots times up to twelve visible reports, a row roughly 15,000px
+  // wide that opens scrolled to the middle of nowhere. One open path beats a wall of cards.
   useEffect(() => {
     if (didAutoFocus.current || index.size === 0) return;
     didAutoFocus.current = true;
 
     const seed = new Set<string>();
-    for (const entry of index.values()) {
-      if (entry.depth < DEFAULT_OPEN_DEPTH && entry.node.children.length) seed.add(entry.node.id);
-    }
     if (selfId && index.has(selfId)) {
       for (const ancestorId of ancestorsOf(index, selfId)) seed.add(ancestorId);
       if (index.get(selfId)!.node.children.length) seed.add(selfId);
+    } else if (treeNodes.length > 0) {
+      // Roots arrive sorted largest-first, so this opens the main hierarchy and leaves the
+      // smaller ones as single cards the viewer can open themselves.
+      seed.add(treeNodes[0].id);
     }
     setExpandedIds(seed);
     if (selfId && index.has(selfId)) scrollNodeIntoView(selfId);
-  }, [index, selfId, scrollNodeIntoView]);
+  }, [index, selfId, treeNodes, scrollNodeIntoView]);
 
   // Filter changes rebuild the forest, so the focus pass has to run again for the new tree.
   useEffect(() => { didAutoFocus.current = false; }, [processFilter, branchFilter]);
@@ -426,7 +430,11 @@ export default function NativeOrgChart() {
             <table className="w-full text-[11px]">
               <tbody>
                 {dataIssues.map((issue) => (
-                  <tr key={`${issue.type}-${issue.employeeId}`} className="border-b border-slate-50 last:border-0">
+                  <tr
+                    key={`${issue.type}-${issue.employeeId}`}
+                    onClick={() => setDrilldownId(issue.employeeId)}
+                    className="cursor-pointer border-b border-slate-50 last:border-0 hover:bg-slate-50"
+                  >
                     <td className="py-1 pr-3 font-mono text-slate-400">{issue.employeeCode}</td>
                     <td className="py-1 pr-3 font-semibold text-slate-700">{issue.name}</td>
                     <td className="py-1 text-slate-500">{issue.detail}</td>
@@ -500,7 +508,7 @@ export default function NativeOrgChart() {
                     expandedIds={expandedIds}
                     onToggle={toggleNode}
                     matchIds={matchIds}
-                    onSelect={setSelected}
+                    onSelect={(node) => setDrilldownId(node.id)}
                   />
                 ))}
               </div>
@@ -523,9 +531,11 @@ export default function NativeOrgChart() {
               <div className="max-h-52 overflow-y-auto border-t border-slate-100 px-5 py-3">
                 <div className="flex flex-wrap gap-2">
                   {unassigned.map((person) => (
-                    <div
+                    <button
                       key={person.id}
-                      className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5"
+                      type="button"
+                      onClick={() => setDrilldownId(person.id)}
+                      className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-left transition-colors hover:border-[#1B3A5C]/40 hover:bg-white"
                     >
                       <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-300 text-[9px] font-bold text-white">
                         {person.name.split(" ").map((w) => w[0]).join("").slice(0, 2)}
@@ -536,7 +546,7 @@ export default function NativeOrgChart() {
                           {person.designation || "Designation not set"} · {person.branch_name || "—"}
                         </span>
                       </span>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -544,36 +554,18 @@ export default function NativeOrgChart() {
           </div>
         )}
 
-        {/* ── Detail card ─────────────────────────────────────────────────── */}
-        {selected && (
-          <div className="absolute bottom-4 right-4 z-40 w-72 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
-            <button
-              onClick={() => setSelected(null)}
-              className="absolute right-3 top-3 rounded-full p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-            <p className="pr-6 text-sm font-bold text-slate-900">{selected.name}</p>
-            <p className="mt-0.5 font-mono text-[10px] text-slate-400">{selected.employee_code}</p>
-            <dl className="mt-3 space-y-1.5 text-[11px]">
-              {[
-                ["Designation", selected.designation],
-                ["Department", selected.department_name],
-                ["Process", selected.process_name],
-                ["Branch", selected.branch_name],
-                ["Direct reports", selected.direct_reports ? String(selected.direct_reports) : "0"],
-                ["Total reports", selected.total_reports ? String(selected.total_reports) : "0"],
-              ].map(([label, value]) => (
-                <div key={label} className="flex justify-between gap-3">
-                  <dt className="shrink-0 text-slate-400">{label}</dt>
-                  <dd className={`truncate text-right font-medium ${value ? "text-slate-700" : "text-amber-600"}`}>
-                    {value || "Not set"}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        )}
+        {/* ── Drill-down drawer ───────────────────────────────────────────
+            CLAUDE.md drill-down mandate: a row/card click opens a right-side slide-over with
+            the full record, its reporting chain, its direct reports and its data-quality
+            issues — not a summary of what the card already showed. */}
+        <OrgNodeDetailsDrawer
+          employeeId={drilldownId}
+          isOpen={!!drilldownId}
+          onClose={() => setDrilldownId(null)}
+          onJumpToManager={(managerId) => { setDrilldownId(null); revealNode(managerId); }}
+          onJumpToEmployee={(id) => { setDrilldownId(null); revealNode(id); }}
+        />
+
       </div>
     </DashboardLayout>
   );
