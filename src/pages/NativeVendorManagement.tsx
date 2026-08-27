@@ -60,6 +60,10 @@ interface VendorMappingSummary {
   vendor_type: VendorType; is_active: number; mapping_count: number;
 }
 
+/** Rows per page in the vendors table. The list used to fetch a flat 200 with no paging, so
+ *  1,330 of 1,530 active vendors were simply unreachable. */
+const VENDOR_PAGE_SIZE = 100;
+
 export default function NativeVendorManagement() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<'vendors' | 'contracts' | 'mapping'>('vendors');
@@ -94,20 +98,34 @@ export default function NativeVendorManagement() {
   });
   const branches = branchesData ?? [];
 
-  const { data: vendorsData, isLoading: loadingV, refetch: refV } = useQuery({
-    queryKey: ['erp-vendors', filterType, debouncedSearch, filterBranchId],
+  // Any filter change must return to page 1 — otherwise a search narrowing 1,530 vendors to 3
+  // while sitting on page 4 renders an empty table that looks like "no results".
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [filterType, debouncedSearch, filterBranchId]);
+
+  const { data: vendorsPage, isLoading: loadingV, refetch: refV } = useQuery({
+    queryKey: ['erp-vendors', filterType, debouncedSearch, filterBranchId, page],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (filterType) params.set('vendor_type', filterType);
       else params.set('is_active', '1');
       if (debouncedSearch) params.set('q', debouncedSearch);
       if (filterBranchId) params.set('branchId', filterBranchId);
-      params.set('limit', '200');
+      params.set('limit', String(VENDOR_PAGE_SIZE));
+      params.set('offset', String((page - 1) * VENDOR_PAGE_SIZE));
       const r = await hrmsApi.get<any>(`/api/erp/vendors?${params.toString()}`);
-      return ((r as any)?.data ?? r ?? []) as Vendor[];
+      const rows = ((r as any)?.data ?? r ?? []) as Vendor[];
+      // `total` is the server's own count for these filters. Fall back to the page length only
+      // for an older backend that does not send it, so the page degrades to the previous
+      // (wrong-but-harmless) behaviour rather than rendering NaN.
+      const total = Number((r as any)?.total ?? rows.length);
+      return { rows, total };
     },
     placeholderData: (previous) => previous,
   });
+  const vendorsData = vendorsPage?.rows;
+  const vendorTotal = vendorsPage?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(vendorTotal / VENDOR_PAGE_SIZE));
 
   const { data: contractsData, isLoading: loadingC, refetch: refC } = useQuery({
     queryKey: ['erp-contracts'],
@@ -179,15 +197,13 @@ export default function NativeVendorManagement() {
         <div className="flex items-center justify-between border-b px-4 h-12 shrink-0 gap-3">
           <h1 className="text-sm font-semibold shrink-0">Vendor Management</h1>
           <div className="flex items-center gap-2 flex-wrap">
-            {vendorsData && (
-              <>
-                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
-                  {vendorsData.filter((v: Vendor) => v.is_active).length} active
-                </span>
-                <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
-                  {vendorsData.length} total
-                </span>
-              </>
+            {/* Server-side total for the current filters, not the length of the fetched page.
+                These badges used to read "200 active / 200 total" against 1,530 live active
+                vendors, because both counted the capped array the page happened to hold. */}
+            {vendorsPage && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">
+                {vendorTotal.toLocaleString('en-IN')} {filterType ? 'matching' : 'active'}
+              </span>
             )}
             {contractsData && (
               <span className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
@@ -349,6 +365,38 @@ export default function NativeVendorManagement() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+
+            {/* Paging. Before this the page fetched a flat 200 with no offset, so 1,330 of the
+                1,530 active vendors could only be reached by guessing a search term. */}
+            {vendorTotal > 0 && (
+              <div className="flex items-center justify-between border-t px-4 py-2 text-xs text-slate-500">
+                <span>
+                  Showing{' '}
+                  <span className="font-semibold text-slate-700">
+                    {((page - 1) * VENDOR_PAGE_SIZE + 1).toLocaleString('en-IN')}–
+                    {Math.min(page * VENDOR_PAGE_SIZE, vendorTotal).toLocaleString('en-IN')}
+                  </span>{' '}
+                  of <span className="font-semibold text-slate-700">{vendorTotal.toLocaleString('en-IN')}</span>
+                </span>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm" variant="outline" className="h-7 text-xs"
+                    disabled={page <= 1 || loadingV}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    Prev
+                  </Button>
+                  <span className="tabular-nums">{page} / {totalPages.toLocaleString('en-IN')}</span>
+                  <Button
+                    size="sm" variant="outline" className="h-7 text-xs"
+                    disabled={page >= totalPages || loadingV}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    Next
+                  </Button>
+                </div>
               </div>
             )}
           </TabsContent>

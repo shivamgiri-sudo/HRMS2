@@ -5,57 +5,69 @@ import { vendorApplicabilityService } from "../finance/vendor-applicability.serv
 
 // ─── Vendors ────────────────────────────────────────────────────────────────
 
+export interface VendorListFilters {
+  is_active?: string;
+  vendor_type?: string;
+  q?: string;
+  limit?: string | number;
+  offset?: string | number;
+  /** Legal entity and branch the vendor must be applicable to. Both optional. */
+  companyCode?: string | null;
+  branchId?: string | null;
+}
+
+/**
+ * Shared WHERE builder for `vendorService.list` and `vendorService.count`, so the page of
+ * rows and the total that describes it can never disagree — the same reasoning as
+ * client-billing.routes.ts's buildInvoiceListQuery. A count computed from a different
+ * predicate than the list is worse than no count at all: it looks authoritative and is wrong.
+ */
+function buildVendorWhere(filters: VendorListFilters): { where: string; params: unknown[] } {
+  const conds: string[] = [];
+  const params: unknown[] = [];
+  if (filters.is_active !== undefined) { conds.push("is_active = ?"); params.push(filters.is_active); }
+  if (filters.vendor_type)             { conds.push("vendor_type = ?"); params.push(filters.vendor_type); }
+
+  /*
+   * Vendor applicability, ENFORCED — legal entity and branch (Vendor Master, three concepts).
+   *
+   * This predicate existed, was tested and was called by nothing: a vendor could be restricted
+   * to IDC or to one branch in the UI and would still appear for everyone, which is a
+   * restriction feature that silently does not restrict.
+   *
+   * "No rows means unrestricted" is expressed as NOT EXISTS inside the clause, so all vendors
+   * with no applicability rows keep appearing exactly as before, and the query only narrows
+   * once somebody opts a vendor in.
+   */
+  if (filters.companyCode || filters.branchId) {
+    // Aliased "v", not "vendor_master": the de-dup subquery aliases the table as v, and once a
+    // table is aliased, MySQL requires every reference inside that query to use the alias — a
+    // bare "vendor_master.id" here would throw "Unknown table 'vendor_master'".
+    const applicability = vendorApplicabilityService.vendorFilterClause("v", {
+      companyCode: filters.companyCode,
+      branchId: filters.branchId,
+    });
+    if (applicability.sql !== "1=1") {
+      conds.push(applicability.sql);
+      params.push(...applicability.params);
+    }
+  }
+
+  // Type-ahead search. Without this the whole vendor_master is returned and the
+  // caller has to filter client-side.
+  const term = String(filters.q ?? "").trim();
+  if (term) {
+    conds.push("(vendor_name LIKE ? OR vendor_code LIKE ? OR gst_number LIKE ?)");
+    const like = `%${term.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
+    params.push(like, like, like);
+  }
+
+  return { where: conds.length ? `WHERE ${conds.join(" AND ")}` : "", params };
+}
+
 export const vendorService = {
-  async list(filters: {
-    is_active?: string;
-    vendor_type?: string;
-    q?: string;
-    limit?: string | number;
-    offset?: string | number;
-    /** Legal entity and branch the vendor must be applicable to. Both optional. */
-    companyCode?: string | null;
-    branchId?: string | null;
-  }) {
-    const conds: string[] = [];
-    const params: unknown[] = [];
-    if (filters.is_active !== undefined) { conds.push("is_active = ?"); params.push(filters.is_active); }
-    if (filters.vendor_type)             { conds.push("vendor_type = ?"); params.push(filters.vendor_type); }
-
-    /*
-     * Vendor applicability, ENFORCED — legal entity and branch (Vendor Master, three concepts).
-     *
-     * This predicate existed, was tested and was called by nothing: a vendor could be restricted
-     * to IDC or to one branch in the UI and would still appear for everyone, which is a
-     * restriction feature that silently does not restrict.
-     *
-     * "No rows means unrestricted" is expressed as NOT EXISTS inside the clause, so all 1,821
-     * vendors with no applicability rows keep appearing exactly as before, and the query only
-     * narrows once somebody opts a vendor in.
-     */
-    if (filters.companyCode || filters.branchId) {
-      // Aliased "v", not "vendor_master": the de-dup subquery below aliases the table as v, and
-      // once a table is aliased, MySQL requires every reference inside that query to use the
-      // alias — a bare "vendor_master.id" here would throw "Unknown table 'vendor_master'".
-      const applicability = vendorApplicabilityService.vendorFilterClause("v", {
-        companyCode: filters.companyCode,
-        branchId: filters.branchId,
-      });
-      if (applicability.sql !== "1=1") {
-        conds.push(applicability.sql);
-        params.push(...applicability.params);
-      }
-    }
-
-    // Type-ahead search. Without this the whole vendor_master is returned and the
-    // caller has to filter client-side.
-    const term = String(filters.q ?? "").trim();
-    if (term) {
-      conds.push("(vendor_name LIKE ? OR vendor_code LIKE ? OR gst_number LIKE ?)");
-      const like = `%${term.replace(/[%_\\]/g, (ch) => `\\${ch}`)}%`;
-      params.push(like, like, like);
-    }
-
-    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+  async list(filters: VendorListFilters) {
+    const { where, params } = buildVendorWhere(filters);
 
     // Paging is opt-in. Several existing callers (NativeERP, NativeVendorManagement,
     // NativeProcurementPage) request no limit and rely on the full list, so the
@@ -88,6 +100,37 @@ export const vendorService = {
       params
     );
     return rows as RowDataPacket[];
+  },
+
+  /**
+   * How many vendors the caller's filters actually match, ignoring `limit`/`offset`.
+   *
+   * Added 2026-08-27. Without it `GET /api/erp/vendors` returned only a `data` array, so the
+   * Vendor Management page had nothing to report but `vendorsData.length` — and since it
+   * requests `limit=200`, the header read "200 active / 200 total" against 1,530 live active
+   * vendors. 1,330 of them (87%) were unreachable, and nothing on screen said so: the count
+   * was not merely missing, it asserted a wrong number confidently.
+   *
+   * Counts `rn = 1` rows so the total matches what `list` actually yields — that query
+   * de-duplicates by normalised vendor_name (vendor_master carries duplicate names from
+   * historical db_bill syncs), so a plain COUNT(*) over vendor_master would overstate the
+   * list by the 22 rows dedup removes and the "showing X of Y" would never reach Y.
+   */
+  async count(filters: VendorListFilters): Promise<number> {
+    const { where, params } = buildVendorWhere(filters);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM (
+         SELECT ROW_NUMBER() OVER (
+           PARTITION BY UPPER(TRIM(v.vendor_name))
+           ORDER BY v.updated_at DESC, v.id ASC
+         ) AS rn
+         FROM vendor_master v
+         ${where}
+       ) ranked
+       WHERE rn = 1`,
+      params
+    );
+    return Number(rows[0]?.total ?? 0);
   },
 
   async getById(id: string) {

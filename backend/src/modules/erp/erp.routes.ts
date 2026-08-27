@@ -34,14 +34,22 @@ router.get(
       companyCode?: string;
       branchId?: string;
     };
-    const data = await vendorService.list({
+    const listFilters = {
       ...query,
       // Applicability narrows the list only when the caller asks for a company or branch. A
       // plain /vendors call is unchanged, which is what every existing screen sends.
       companyCode: query.companyCode?.trim() || undefined,
       branchId: query.branchId?.trim() || undefined,
-    });
-    res.json({ success: true, data });
+    };
+    const data = await vendorService.list(listFilters);
+    // `total` is how many vendors the filters match irrespective of limit/offset, so a capped
+    // page can say so instead of presenting its own length as the whole population. Purely
+    // additive — every existing caller reads `data` and is unaffected. Counted only when the
+    // caller actually paginates; an unbounded call already has the full set in `data`.
+    const total = listFilters.limit !== undefined && String(listFilters.limit).trim() !== ""
+      ? await vendorService.count(listFilters)
+      : data.length;
+    res.json({ success: true, data, total });
   })
 );
 
