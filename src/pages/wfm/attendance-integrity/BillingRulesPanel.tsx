@@ -9,7 +9,6 @@
 // useWorkforceAccess, so New Rule / Edit rendered for hr, wfm and admin and Deactivate
 // rendered for finance_head — all wider than what the API (billing-config.routes.ts)
 // actually accepts (POST/PATCH: finance_head, super_admin; DELETE: super_admin only).
-<<<<<<< HEAD
 //
 // Review fix (2026-08-27): role_page_access grants `admin` can_edit=1 on this page code,
 // so `canEditPage("ATTENDANCE_BILLING_CONFIG")` alone still said yes for admin — a role
@@ -23,14 +22,6 @@
 // multiple roles at once; `primaryRole` collapses that to a single highest-priority role
 // and would wrongly deny a user whose primary role isn't the granting one (e.g. someone
 // whose primaryRole resolves to `hr` but who also holds `finance_head`).
-=======
-// Every write control below is now gated on `isResolved && canEditPage("ATTENDANCE_BILLING_CONFIG")`.
-//
-// Residual gap (recorded, not fixed here): role_page_access still grants admin
-// can_edit=1 on this page code, so admin will still see these controls even after this
-// fix — canEditPage is a straight read of that grant row. Correcting the row is a
-// separate migration, out of scope for this frontend-only task.
->>>>>>> 1b0c8b66 (feat(wfm): extract attendance-integrity panels for merged console (Task 3))
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
@@ -156,17 +147,12 @@ const EMPTY_FORM = {
 
 export default function BillingRulesPanel() {
   const { toast } = useToast();
-<<<<<<< HEAD
   const { isResolved, canEditPage, hasAnyRole } = useWorkforceAccess();
-=======
-  const { isResolved, canEditPage } = useWorkforceAccess();
->>>>>>> 1b0c8b66 (feat(wfm): extract attendance-integrity panels for merged console (Task 3))
   // 3c: the write surface (Add Rule / Edit / Deactivate) is narrower than view access.
   // `canEditPage` returns false for every code until `isResolved` is true, so gating on
   // `isResolved && canEditPage(...)` avoids flickering the controls on for a frame before
   // the role data lands, matching the same caveat ExceptionsPanel/MismatchesPanel don't
   // need but this panel's write controls do.
-<<<<<<< HEAD
   //
   // canEditPage alone is not enough: the page grant (role_page_access) is stale for
   // `admin`, so it must be intersected with the API's real per-route roles (see the
@@ -174,9 +160,6 @@ export default function BillingRulesPanel() {
   const canWrite = isResolved && canEditPage("ATTENDANCE_BILLING_CONFIG");
   const canCreateOrEdit = canWrite && hasAnyRole("finance_head", "super_admin");
   const canDeactivate = canWrite && hasAnyRole("super_admin");
-=======
-  const canEdit = isResolved && canEditPage("ATTENDANCE_BILLING_CONFIG");
->>>>>>> 1b0c8b66 (feat(wfm): extract attendance-integrity panels for merged console (Task 3))
 
   const [entries, setEntries] = useState<BillingConfigEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -338,11 +321,7 @@ export default function BillingRulesPanel() {
           </Button>
           {/* 3c: New Rule is a write action — only render it for a role the API's
               POST /api/attendance/billing-config actually accepts. */}
-<<<<<<< HEAD
           {canCreateOrEdit && (
-=======
-          {canEdit && (
->>>>>>> 1b0c8b66 (feat(wfm): extract attendance-integrity panels for merged console (Task 3))
             <Button size="sm" onClick={openCreate}>
               <Plus className="w-4 h-4 mr-2" /> Add Rule
             </Button>
@@ -461,7 +440,6 @@ export default function BillingRulesPanel() {
                             </TableCell>
                             <TableCell>
                               <div className="flex gap-1">
-<<<<<<< HEAD
                                 {/* 3c: Edit (PATCH) is gated on canCreateOrEdit (finance_head,
                                     super_admin — matches POST/PATCH). Deactivate (PATCH
                                     active_status=0, but backed by the DELETE-shaped API
@@ -476,22 +454,6 @@ export default function BillingRulesPanel() {
                                   <Button size="icon" variant="ghost" className="text-rose-500 hover:text-rose-700" aria-label="Deactivate billing rule" onClick={() => { setDeactivateId(entry.id); setDeactivateReason(""); }}>
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </Button>
-=======
-                                {/* 3c: Edit (PATCH) and Deactivate (PATCH active_status=0) both hit
-                                    endpoints the API restricts to finance_head/super_admin — gate
-                                    both on the same canEdit as Add Rule above. */}
-                                {entry.active_status === 1 && canEdit && (
-                                  <>
-                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEdit(entry)}>
-                                      <Pencil className="w-3.5 h-3.5" />
-                                    </Button>
-                                    {entry.scope_type !== "global" && (
-                                      <Button size="icon" variant="ghost" className="h-7 w-7 text-rose-500 hover:text-rose-700" onClick={() => { setDeactivateId(entry.id); setDeactivateReason(""); }}>
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </Button>
-                                    )}
-                                  </>
->>>>>>> 1b0c8b66 (feat(wfm): extract attendance-integrity panels for merged console (Task 3))
                                 )}
                               </div>
                             </TableCell>
