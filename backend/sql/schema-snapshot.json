@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1023,
-  "columnCount": 14611,
+  "tableCount": 1024,
+  "columnCount": 14622,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -6155,6 +6155,19 @@
       "rejected_by",
       "rejected_at",
       "rejection_reason"
+    ],
+    "employee_manager_history": [
+      "id",
+      "employee_id",
+      "manager_id",
+      "process_id",
+      "branch_id",
+      "effective_from",
+      "effective_to",
+      "provenance",
+      "changed_by",
+      "reason",
+      "created_at"
     ],
     "employee_lob_assignment": [
       "id",
