@@ -54,11 +54,18 @@ type CommandCenterData = {
   slotTable: AnyRow[];
   rejections: {
     total: number;
+    /** Reason mentions. Exceeds `total` where a candidate carries more than one reason. */
+    reasonTotal?: number;
     distinctReasons: number;
     reasons: { label: string; count: number }[];
     rows: AnyRow[];
+    rowLimit?: number;
   };
   reusablePool: AnyRow[];
+  /** Size of the whole reusable pool; `reusablePool` is the capped page of it. */
+  reusableTotal?: number;
+  /** Recruiter names that may be one person under two conventions, for human confirmation. */
+  recruiterDuplicateSuspects?: { a: string; b: string; reason: string }[];
 };
 
 const periods = ["ALL", "FTD", "WTD", "MTD"];
@@ -349,6 +356,7 @@ export default function NativeATSFullParityCommandCenter() {
             <SourcingTab
               sourceTable={data?.sourceTable || []}
               reusablePool={data?.reusablePool || []}
+              reusableTotal={data?.reusableTotal}
               loading={loading}
             />
           </TabsContent>

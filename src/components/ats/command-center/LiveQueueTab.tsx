@@ -21,6 +21,18 @@ interface LiveQueueTabProps {
 const N = (v: unknown) => Number(v || 0);
 const S = (v: unknown) => String(v ?? "");
 
+/**
+ * Whether a queue row is actually in SLA breach.
+ *
+ * The payload carries `SLAFlag` as "Yes"/"No" and `_slaBreached` as a real boolean; both are
+ * checked so this stays correct if a caller sends one and not the other. What it must never do
+ * again is treat the presence of the field as the answer.
+ */
+function isBreached(row: Record<string, unknown>): boolean {
+  if (typeof row._slaBreached === "boolean") return row._slaBreached;
+  return String(row.SLAFlag ?? "").trim().toLowerCase() === "yes";
+}
+
 function mins(v: unknown) {
   const m = Math.round(N(v));
   return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
@@ -29,7 +41,16 @@ function mins(v: unknown) {
 export function LiveQueueTab({ queueRows, loading }: LiveQueueTabProps) {
   const model = useMemo(() => {
     const sorted = [...(queueRows || [])].sort((a, b) => N(b.WaitingMinutes) - N(a.WaitingMinutes));
-    const breaches = sorted.filter((r) => r.SLAFlag);
+    /**
+     * SLAFlag is the STRING "Yes" or "No", not a boolean.
+     *
+     * `filter((r) => r.SLAFlag)` is therefore true for every row that has the field at all —
+     * "No" is a non-empty string and non-empty strings are truthy. So the tile read
+     * "SLA BREACH 5 · 100.0% of the queue", every row in the table was tinted red and stamped
+     * BREACH, and the banner announced five candidates past target, while the API had returned
+     * SLAFlag:"No" and sla_breached:0 for all five of them.
+     */
+    const breaches = sorted.filter((r) => isBreached(r));
     const totalWait = sorted.reduce((sum, r) => sum + N(r.WaitingMinutes), 0);
     return {
       sorted,
@@ -86,7 +107,7 @@ export function LiveQueueTab({ queueRows, loading }: LiveQueueTabProps) {
           label="Longest Wait"
           value={mins(longest?.WaitingMinutes)}
           denominator={longest ? `${S(longest.FullName) || "Unnamed"} · ${S(longest.Branch) || "no branch"}` : "Queue empty"}
-          intent={longest?.SLAFlag ? "critical" : "neutral"}
+          intent={longest && isBreached(longest) ? "critical" : "neutral"}
           icon={<TimerReset className="h-4 w-4" />}
         />
       </div>
@@ -135,7 +156,7 @@ export function LiveQueueTab({ queueRows, loading }: LiveQueueTabProps) {
                   <tr
                     key={`${S(row.CandidateID)}-${i}`}
                     className={`border-b border-slate-100 last:border-0 transition-colors duration-150 ${
-                      row.SLAFlag ? "bg-rose-50/70 hover:bg-rose-50" : "hover:bg-slate-50/60"
+                      isBreached(row) ? "bg-rose-50/70 hover:bg-rose-50" : "hover:bg-slate-50/60"
                     }`}
                   >
                     <td className="px-3 py-2 font-mono text-slate-600">{S(row.QToken) || "—"}</td>
@@ -148,14 +169,14 @@ export function LiveQueueTab({ queueRows, loading }: LiveQueueTabProps) {
                     <td className="px-3 py-2 text-slate-600">{S(row.CurrentStage) || "—"}</td>
                     <td
                       className={`px-3 py-2 text-right font-bold tabular-nums ${
-                        row.SLAFlag ? "text-rose-700" : "text-slate-900"
+                        isBreached(row) ? "text-rose-700" : "text-slate-900"
                       }`}
                     >
                       {mins(row.WaitingMinutes)}
                     </td>
                     <td className="px-3 py-2 text-center">
                       {/* Status carries an icon and a word, never colour alone. */}
-                      {row.SLAFlag ? (
+                      {isBreached(row) ? (
                         <span className="inline-flex items-center gap-1 rounded bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-800">
                           <AlertTriangle className="h-3 w-3" /> BREACH
                         </span>

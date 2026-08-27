@@ -93,7 +93,7 @@ export function RejectionsTab({ rejections: source, loading }: RejectionsTabProp
         <StatTile
           label="Distinct Reasons"
           value={num(distinctReasons)}
-          denominator="After case and spacing normalisation"
+          denominator="Multi-select values split into their parts"
         />
         <StatTile
           label="Top Reason"
@@ -107,7 +107,7 @@ export function RejectionsTab({ rejections: source, loading }: RejectionsTabProp
 
       <ChartCard
         title="Rejection Reasons"
-        subtitle="Ranked by volume. Bars sum to the total rejection count above."
+        subtitle="Ranked by volume. A candidate can carry more than one reason, so the bars can exceed the rejection count."
         footer={
           <CoverageNote
             shownGroups={head.length}
@@ -197,7 +197,7 @@ export function RejectionsTab({ rejections: source, loading }: RejectionsTabProp
             </table>
             {total > rejections.length && (
               <p className="border-t border-slate-100 bg-slate-50 px-3 py-1.5 text-[10px] text-slate-500">
-                Showing the first {num(rejections.length)} of {num(total)} rejected candidates. Narrow the filters to see the rest.
+                Showing the {num(rejections.length)} most recent of {num(total)} rejected candidates. Narrow the filters to reach older records.
               </p>
             )}
           </div>

@@ -45,10 +45,24 @@ export function RecruitersTab({ recruiterTable, loading }: RecruitersTabProps) {
     );
   }
 
-  const rows = recruiterTable || [];
+  const allRows = recruiterTable || [];
+  /**
+   * "Unassigned" is not a recruiter and must not be ranked as one.
+   *
+   * It carried 2,745 candidates — 33.3% of all volume — so it took first place on the podium,
+   * first row of the table and the tallest bar on the chart, with a 0% selection rate and a
+   * 95.6% SLA score attached to a bucket that represents nobody. Positions two and three then
+   * showed the two halves of a single split identity, so the "top three recruiters" were a null
+   * bucket and one person listed twice.
+   *
+   * It is separated out and reported above the ranking as the attribution gap it actually is.
+   */
+  const unattributed = allRows.filter((r) => r.IsUnattributed);
+  const rows = allRows.filter((r) => !r.IsUnattributed);
   const head = rows.slice(0, CHART_GROUPS);
   const tail = rows.slice(CHART_GROUPS);
-  const totalSourced = rows.reduce((sum, r) => sum + N(r.SourcedCount), 0);
+  const totalSourced = allRows.reduce((sum, r) => sum + N(r.SourcedCount), 0);
+  const unassignedCount = unattributed.reduce((sum, r) => sum + N(r.SourcedCount), 0);
 
   const chartData = head.map((r) => ({
     name: S(r.Recruiter).length > 14 ? `${S(r.Recruiter).slice(0, 13)}…` : S(r.Recruiter),
@@ -60,6 +74,20 @@ export function RecruitersTab({ recruiterTable, loading }: RecruitersTabProps) {
 
   return (
     <div className="space-y-4">
+      {/* ── Unassigned volume, stated rather than ranked ─────────────────── */}
+      {unassignedCount > 0 && (
+        <div role="note" className="rounded-xl border-2 border-amber-200 bg-amber-50 px-4 py-3">
+          <h3 className="text-xs font-bold text-amber-900">
+            {num(unassignedCount)} candidate{unassignedCount === 1 ? "" : "s"} have no recruiter recorded
+            {totalSourced > 0 && ` — ${((unassignedCount / totalSourced) * 100).toFixed(1)}% of all sourcing`}
+          </h3>
+          <p className="mt-1 text-[11px] text-amber-800">
+            Excluded from the ranking below, which covers the {num(rows.length)} named recruiters. These
+            candidates cannot be credited to anyone and are not counted in any recruiter&apos;s rates.
+          </p>
+        </div>
+      )}
+
       {/* ── Podium ──────────────────────────────────────────────────────── */}
       {rows.length > 0 && (
         <div className="grid gap-3 sm:grid-cols-3">

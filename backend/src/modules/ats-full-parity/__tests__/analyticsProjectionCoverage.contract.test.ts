@@ -47,8 +47,20 @@ const RAW_ROW_HELPERS = [
  * read stays a deliberate decision with the evidence attached.
  *
  * `candidate_id` is a SQL alias the projection already emits via COALESCE, not a column.
+ *
+ * `resolved_process_name` and `resolved_branch_name` are likewise aliases, emitted by the
+ * LEFT JOINs onto process_master and branch_master. They exist because applied_for_process and
+ * applied_for_branch hold a master UUID on some rows and free text on others, so six raw
+ * `04f20ddc-67ba-11f1-…` values were being shown to users as process names. Adding them to
+ * CANDIDATE_ANALYTICS_COLUMNS would emit `c.resolved_process_name` and fail with
+ * ER_BAD_FIELD_ERROR — they are joined columns, not columns of `c`.
  */
-const NOT_COLUMNS = new Set(["final_remarks", "candidate_id"]);
+const NOT_COLUMNS = new Set([
+  "final_remarks",
+  "candidate_id",
+  "resolved_process_name",
+  "resolved_branch_name",
+]);
 
 function helperBody(src: string, name: string): string {
   const start = src.indexOf(`function ${name}(`);

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { excludeEmployeeShapedCandidatesSql } from './ats-reporting-scope.js';
+import { canonicalSourceSql, SOURCE_BMI_TYPE } from './ats-vocabulary.js';
 import type { Request, Response } from 'express';
 import type { RowDataPacket } from 'mysql2';
 import { db } from '../../db/mysql.js';
@@ -10,8 +11,16 @@ export /**
  * ats_candidate holds 29,926 legacy EMPLOYEE records beside 7,760 genuine candidates. This
  * benchmark board counted them in every sourced/stage figure, so its funnel described the
  * employee roster rather than the hiring pipeline.
+ *
+ * Two forms, because the predicate has to name the table the way the query in hand names it.
+ * MySQL rejects the original table name once an alias exists, so the aliased main queries
+ * (`FROM ats_candidate ac`) need `ac.` and the un-aliased `IN (SELECT id FROM ats_candidate …)`
+ * subqueries need the bare name. Emitting the bare form into the aliased query is what made
+ * every BMI request 500 with ER_BAD_FIELD_ERROR; ats.service.ts carries the same warning after
+ * the same bug took out the candidate list.
  */
-const EXCLUDE_AC = excludeEmployeeShapedCandidatesSql('ats_candidate');
+const EXCLUDE_AC = excludeEmployeeShapedCandidatesSql('ac');
+const EXCLUDE_BARE = excludeEmployeeShapedCandidatesSql('ats_candidate');
 
 export const bmiBenchmarkRouter = Router();
 
@@ -125,50 +134,85 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
       sourced_walk_in: {},
     };
 
+    /**
+     * Grouped on the canonical channel rather than joined to `ats_sourcing_channel`.
+     *
+     * That join was an INNER JOIN on `channel_code = sourcing_channel`, and the two sides share
+     * no value at all: the master holds WALK_IN/REFERRAL/NAUKRI/AGENCY while candidates carry
+     * WALKIN/Walk-In/Reference/Recruiter/Other. Every one of these four rows was therefore
+     * empty on every branch and every month — not an error, just a permanently blank funnel.
+     *
+     * canonicalSourceSql() folds the spellings onto the master's own codes, so WALKIN and
+     * Walk-In both land on WALK_IN and Reference lands on REFERRAL. Channels with no BMI row
+     * (Recruiter, Other) fall out of SOURCE_BMI_TYPE and are not counted here, which is the
+     * pre-existing shape of the board — it has four channel rows, not six.
+     */
     const [sourcedRows] = await db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(ac.created_at, '%Y-%m') AS mo,
-              asc2.channel_type,
+              ${canonicalSourceSql('ac.sourcing_channel')} AS channel_code,
               COUNT(DISTINCT ac.id) AS cnt
        FROM ats_candidate ac
-       -- COUNT(DISTINCT ac.id): ats_sourcing_channel.channel_code is not guaranteed unique,
-       -- and a duplicate channel row would otherwise count the same candidate once per match.
-       JOIN ats_sourcing_channel asc2 ON asc2.channel_code = ac.sourcing_channel
        WHERE ac.created_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
          AND ${EXCLUDE_AC}
          ${branchId ? 'AND ac.applied_for_branch = ?' : ''}
-       GROUP BY mo, asc2.channel_type`,
+       GROUP BY mo, channel_code`,
       branchName ? [branchName] : []
     );
     for (const r of sourcedRows) {
-      const ct = r.channel_type as string;
+      const bmiType = SOURCE_BMI_TYPE[r.channel_code as string];
+      if (!bmiType) continue;
       const mo = r.mo as string;
       for (const [key, type] of Object.entries(channelTypes)) {
-        if (ct === type) { sourcedMaps[key][mo] = (sourcedMaps[key][mo] ?? 0) + Number(r.cnt); }
+        if (bmiType === type) { sourcedMaps[key][mo] = (sourcedMaps[key][mo] ?? 0) + Number(r.cnt); }
       }
     }
 
-    // 6. Screened by HR (moved past 'applied' stage)
+    /**
+     * Stage names below are the vocabulary `ats_candidate_stage_log` actually stores, taken from
+     * a live census on 2026-08-27 rather than from the pipeline as designed. The previous
+     * predicates here (`from_stage = 'applied'`, and a PASSED list of `shortlisted`,
+     * `interview_1`, `interview_2`, `joined`, …) described a stage model this table has never
+     * used: `shortlisted`/`interview_1`/`interview_2`/`joined`/`bgv_verified`/`offer_pending`/
+     * `offer_accepted` appear on zero rows, and `from_stage='applied'` covers 48 of 2,947. Both
+     * rows therefore reported near-zero regardless of hiring activity — a silent wrong answer,
+     * not an error.
+     *
+     * The live vocabulary is mixed-case and mixed-convention (`Round 2- Op's` beside
+     * `offer_approved`), so the legacy snake_case values are kept alongside the current ones:
+     * older rows still carry them, and dropping them would re-introduce the same undercount for
+     * historical months. MySQL's default collation makes the comparison case-insensitive.
+     */
+    const SCREENED_STAGES = "'Round 1- HR Screening','HR Interview','Screening','screening'";
+    const PASSED_STAGES = [
+      // current vocabulary — everything downstream of HR screening
+      "'Round 2- Op''s'", "'Interview - Skill Test'", "'Round 3- Client'", "'Selection Discussion'",
+      "'Selected'", "'Offer Submitted'", "'Offer'", "'BGV In Progress'", "'BGV'",
+      "'Onboarding Link Sent'", "'Onboarding'", "'Joining'", "'Converted'", "'Profile Submitted'",
+      // legacy snake_case still present on historical rows
+      "'offer_approved'", "'bgv_pending'", "'bgv_verified'", "'payroll_validated'",
+      "'offer_pending'", "'offer_accepted'", "'joined'", "'shortlisted'",
+    ].join(",");
+
+    // 6. Screened by HR (reached an HR screening stage)
     const [screenedRows] = await db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(sl.stage_date, '%Y-%m') AS mo, COUNT(DISTINCT sl.candidate_id) AS cnt
        FROM ats_candidate_stage_log sl
-       WHERE sl.from_stage = 'applied'
+       WHERE sl.to_stage IN (${SCREENED_STAGES})
          AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
+         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
        GROUP BY mo`,
       branchName ? [branchName] : []
     );
     const screenedMap: CellMap = {};
     for (const r of screenedRows) screenedMap[r.mo as string] = Number(r.cnt);
 
-    // 7. Passed HR screening (reached shortlisted+)
-    const PASSED_STAGES = "'shortlisted','interview_1','interview_2','selected','bgv_pending','bgv_verified','payroll_validated','offer_pending','offer_accepted','offer_approved','joined'";
+    // 7. Passed HR screening (reached any stage downstream of screening)
     const [passedRows] = await db.execute<RowDataPacket[]>(
       `SELECT DATE_FORMAT(sl.stage_date, '%Y-%m') AS mo, COUNT(DISTINCT sl.candidate_id) AS cnt
        FROM ats_candidate_stage_log sl
        WHERE sl.to_stage IN (${PASSED_STAGES})
-         AND sl.from_stage IN ('applied','screening')
          AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
+         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
        GROUP BY mo`,
       branchName ? [branchName] : []
     );
@@ -180,7 +224,7 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
       `SELECT DATE_FORMAT(ir.interviewed_at, '%Y-%m') AS mo, COUNT(DISTINCT ir.candidate_id) AS cnt
        FROM ats_interview_result ir
        WHERE ir.interviewed_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND ir.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
+         ${branchId ? `AND ir.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
        GROUP BY mo`,
       branchName ? [branchName] : []
     );
@@ -193,7 +237,7 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
        FROM ats_interview_result ir
        WHERE ir.interview_status = 'selected'
          AND ir.interviewed_at >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND ir.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
+         ${branchId ? `AND ir.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
        GROUP BY mo`,
       branchName ? [branchName] : []
     );
@@ -206,7 +250,7 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
        FROM ats_candidate_stage_log sl
        WHERE sl.to_stage = 'offer_pending'
          AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
+         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
        GROUP BY mo`,
       branchName ? [branchName] : []
     );
@@ -219,7 +263,7 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
        FROM ats_candidate_stage_log sl
        WHERE sl.to_stage = 'offer_accepted'
          AND sl.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
-         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
+         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
        GROUP BY mo`,
       branchName ? [branchName] : []
     );
@@ -370,7 +414,7 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
          AND sl.candidate_id NOT IN (
            SELECT candidate_id FROM ats_onboarding_bridge WHERE candidate_id IS NOT NULL
          )
-         ${branchId ? 'AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
+         ${branchId ? `AND sl.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
        GROUP BY mo`,
       branchName ? [branchName] : []
     );
@@ -393,7 +437,7 @@ bmiBenchmarkRouter.get('/', async (req: Request, res: Response) => {
        WHERE sh.to_stage = 'shortlisted'
          AND sh.stage_date >= DATE_FORMAT(DATE_SUB(NOW(), INTERVAL 7 MONTH), '%Y-%m-01')
          AND iv.candidate_id IS NULL
-         ${branchId ? 'AND sh.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_AC})' : ''}
+         ${branchId ? `AND sh.candidate_id IN (SELECT id FROM ats_candidate WHERE applied_for_branch = ? AND ${EXCLUDE_BARE})` : ''}
        GROUP BY mo`,
       branchName ? [branchName] : []
     );

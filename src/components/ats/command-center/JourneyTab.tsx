@@ -101,6 +101,37 @@ export function JourneyTab({ onSearch }: JourneyTabProps) {
     });
   }, [stageLogs]);
 
+  /** Minutes → "3d 4h" / "5h 12m" / "18m". Raw minutes are unreadable past an hour or two. */
+  const waitingLabel = useMemo(() => {
+    const mins = Number(candidate.WaitingMinutes ?? candidate._totalMinutes ?? 0);
+    if (!Number.isFinite(mins) || mins <= 0) return "—";
+    const d = Math.floor(mins / 1440);
+    const h = Math.floor((mins % 1440) / 60);
+    const m = Math.round(mins % 60);
+    if (d) return `${d}d ${h}h`;
+    if (h) return `${h}h ${m}m`;
+    return `${m}m`;
+  }, [candidate.WaitingMinutes, candidate._totalMinutes]);
+
+  /**
+   * Follow-up date, with the implausible ones called out rather than printed straight.
+   * Two candidates carry a follow-up dated 2015 — eleven years before the record was created.
+   */
+  const { followUpLabel, followUpHint } = useMemo(() => {
+    if (!candidate.followup_required) return { followUpLabel: "None", followUpHint: "No follow-up flagged" };
+    const raw = S(candidate.followup_date);
+    if (!raw) return { followUpLabel: "Flagged", followUpHint: "No date set" };
+    const when = new Date(raw);
+    if (Number.isNaN(when.getTime())) return { followUpLabel: "Flagged", followUpHint: `Unreadable date: ${raw}` };
+    const created = new Date(S(candidate.created_at));
+    const label = when.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+    if (!Number.isNaN(created.getTime()) && when < created) {
+      return { followUpLabel: label, followUpHint: "Dated before the candidate existed — check this record" };
+    }
+    if (when < new Date()) return { followUpLabel: label, followUpHint: "Overdue" };
+    return { followUpLabel: label, followUpHint: S(candidate.followup_reason) || "Scheduled" };
+  }, [candidate.followup_required, candidate.followup_date, candidate.created_at, candidate.followup_reason]);
+
   const displayName = S(candidate.FullName) || S(candidate.full_name) || "Unknown";
   const status = S(candidate.Status) || S(candidate.status) || "Pending";
   const statusTone =
@@ -223,10 +254,50 @@ export function JourneyTab({ onSearch }: JourneyTabProps) {
               denominator="Position on the application"
               icon={<CheckCircle2 className="h-4 w-4" />}
             />
+            {/*
+              Reads the fields the payload actually carries.
+
+              This tile read `candidate.Source ?? candidate.source ?? "Direct"`. Neither key
+              exists on the record — the stored column is `sourcing_channel` and the derived one
+              is `_source` — so every candidate journey ever looked up fell through to the
+              hardcoded literal and reported "Direct". The candidate used to verify this is
+              `sourcing_channel: "Reference"`, referred by Khushi. "Direct" is not even one of
+              the channels the Sourcing tab of this same page lists.
+            */}
             <StatTile
               label="Source"
-              value={S(candidate.Source) || S(candidate.source) || "Direct"}
-              denominator="Sourcing channel"
+              value={S(candidate._source) || S(candidate.sourcing_channel) || S(candidate.source_details) || "Not recorded"}
+              denominator={S(candidate.referred_by) ? `Referred by ${S(candidate.referred_by)}` : "Sourcing channel"}
+            />
+          </div>
+
+          {/*
+            Fields the endpoint already returns and the card used to drop on the floor. A
+            candidate can sit fourteen days in queue with a follow-up flagged and none of it was
+            visible here — the recruiter, why they were reassigned, how long the candidate has
+            been waiting, whether BGV has started, or that the follow-up date is in 2015.
+          */}
+          <div className="grid gap-3 grid-cols-2 xl:grid-cols-4">
+            <StatTile
+              label="Recruiter"
+              value={S(candidate.RecruiterAssignedName) || S(candidate.recruiter_assigned_name) || "Unassigned"}
+              denominator={S(candidate.assignment_reason) || "Assigned recruiter"}
+              icon={<UserRound className="h-4 w-4" />}
+            />
+            <StatTile
+              label="Waiting"
+              value={waitingLabel}
+              denominator={S(candidate.SLAFlag) === "Yes" ? "SLA breached" : "Within SLA target"}
+            />
+            <StatTile
+              label="BGV"
+              value={S(candidate.bgv_status) || "Not started"}
+              denominator={S(candidate.offer_status) ? `Offer: ${S(candidate.offer_status)}` : "No offer raised"}
+            />
+            <StatTile
+              label="Follow-up"
+              value={followUpLabel}
+              denominator={followUpHint}
             />
           </div>
 

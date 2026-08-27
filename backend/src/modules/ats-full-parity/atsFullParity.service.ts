@@ -4,7 +4,8 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
-import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
+import { excludeEmployeeShapedCandidatesSql, excludeOtherEntityCandidatesSql } from "../ats/ats-reporting-scope.js";
+import { canonicalBranch, sourceLabel, recruiterKey, preferredRecruiterName, normalizeRecruiterName, suspectedDuplicateRecruiters } from "../ats/ats-vocabulary.js";
 
 type CandidateRow = Record<string, unknown>;
 
@@ -58,8 +59,36 @@ interface CandidateIdRow extends RowDataPacket {
 }
 
 const STATUS_WAITING = "Waiting";
-const OPEN_STATUSES = new Set(["Waiting", "In Progress", "Hold", "Selected"]);
-const OPEN_QUEUE_STAGES = new Set(["", "Arrival", "HR Screening", "Assessment", "OP's Round", "Ops Round", "Client Round", "New", "Screening"]);
+const OPEN_STATUSES = new Set(["waiting", "in progress", "hold", "client round - pending", "pending", "new"]);
+
+/**
+ * Stages a candidate can still be moving through, matched as substrings against the stage
+ * vocabulary `walkin_end_stage` actually stores.
+ *
+ * The previous version was an exact-match Set of "HR Screening", "Assessment", "OP's Round",
+ * "Ops Round", "Client Round". None of those strings appear in the column. A live census on
+ * 2026-08-27 found "Round 1- HR Screening" (2,579 rows), "Round 2- Op's" (1,354),
+ * "Interview - Skill Test" (359), "Selection Discussion" (365), "Round 3- Client" (249) — so
+ * only the literal "Arrival" and the empty string ever matched, and the Live Queue showed 5
+ * candidates while the Branch Summary on the same page totalled 216 and the database held 217.
+ * Anyone mid-pipeline was invisible to the queue.
+ *
+ * Substrings rather than exact values because the same stage is written several ways across the
+ * candidate web form, the recruiter app and the legacy import, and an exact list is exactly what
+ * failed here. `OPEN_STATUSES` is lower-cased for the same reason.
+ */
+const OPEN_QUEUE_STAGE_PATTERNS = [
+  "arrival", "arrived", "screening", "assessment", "skill test", "interview",
+  "op's", "ops", "client", "selection discussion", "new",
+];
+
+function isOpenQueueRow(r: CandidateRow): boolean {
+  if (r._selected || r._rejected || r._noShow || r._walkout || r._dormant) return false;
+  const status = normalizeLower(r.status || r.current_stage || STATUS_WAITING);
+  if (!OPEN_STATUSES.has(status)) return false;
+  const stage = normalizeLower(r.walkin_end_stage || r.current_stage || "");
+  return stage === "" || OPEN_QUEUE_STAGE_PATTERNS.some((p) => stage.includes(p));
+}
 
 const transporter = nodemailer.createTransport({
   host: env.SMTP_HOST || "",
@@ -143,17 +172,52 @@ function formatDuration(min: number): string {
   return h ? `${h}h ${m}m` : `${m}m`;
 }
 
-function slotLabel(value: unknown): string {
-  const text = normalizeText(value);
-  const match = text.match(/(\d{1,2}):(\d{2})/);
-  if (!match) return "Unspecified";
-  const hour = Number(match[1]);
+/** Bucket an arrival hour into the reporting slot. One scheme, used for every row. */
+function slotFromHour(hour: number): string {
+  if (!Number.isFinite(hour) || hour < 0 || hour > 23) return "Unspecified";
   if (hour < 10) return "Before 10 AM";
   if (hour < 12) return "10 AM - 12 PM";
   if (hour < 14) return "12 PM - 2 PM";
   if (hour < 16) return "2 PM - 4 PM";
   if (hour < 18) return "4 PM - 6 PM";
   return "After 6 PM";
+}
+
+/**
+ * The arrival slot, from whichever stored value is actually a time.
+ *
+ * This dimension used to carry two incompatible taxonomies at once. `walkin_slot` is written by
+ * the SLA repair job and holds a BARE HOUR — "9" through "19", nothing else, on 3,569 rows —
+ * while rows without it fell through to a function returning named ranges. So the Trends tab
+ * listed "After 6 PM" beside "12" and "13", labels from different schemes that overlap in
+ * meaning, and a reader had no way to know "12" meant noon rather than midnight. Both forms are
+ * now bucketed the same way.
+ *
+ * `created_time` is deliberately consulted AFTER `created_at`. It defaults to exactly 09:00:00
+ * on 1,891 rows — a stored default, not an observed arrival — and reading it first put all of
+ * them in "Before 10 AM", which is why that bucket held 1,893 arrivals and looked like a genuine
+ * morning peak. `created_at` carries the real insertion timestamp.
+ */
+function slotLabel(value: unknown): string {
+  const text = normalizeText(value);
+  if (!text) return "Unspecified";
+  const hhmm = text.match(/(\d{1,2}):(\d{2})/);
+  if (hhmm) return slotFromHour(Number(hhmm[1]));
+  if (/^\d{1,2}$/.test(text)) return slotFromHour(Number(text));
+  return "Unspecified";
+}
+
+const DEFAULTED_CREATED_TIME = "09:00:00";
+
+/** The arrival slot for a candidate row, preferring the real timestamp over the defaulted one. */
+function rowSlot(row: CandidateRow): string {
+  const stored = normalizeText(row.walkin_slot);
+  if (stored) return slotLabel(stored);
+  const createdAt = parseDate(row.created_at);
+  if (createdAt) return slotFromHour(createdAt.getHours());
+  const createdTime = normalizeText(row.created_time);
+  if (createdTime && !createdTime.startsWith(DEFAULTED_CREATED_TIME)) return slotLabel(createdTime);
+  return "Unspecified";
 }
 
 function roundSuccessCount(row: CandidateRow): number {
@@ -172,6 +236,104 @@ function hardRejectReason(row: CandidateRow): string {
   ].join(" ").toLowerCase();
   const patterns = ["not interested", "salary mismatch", "document", "documents", "communication", "behavior", "behaviour", "location issue", "location not okay", "abscond", "fake", "fraud"];
   return patterns.find((p) => text.includes(p)) || "";
+}
+
+/**
+ * The controlled rejection vocabulary, taken from a census of `ats_candidate.rejection_voc` on
+ * production 2026-08-27. Ordered longest-first because REJECTION_SPLIT matches greedily.
+ */
+const REJECTION_VOCABULARY: readonly string[] = [
+  "Undergraduate / Qualification Issue",
+  "Salary / Shift / Location Issue",
+  "Poor Sales / Customer Handling",
+  "Communication Not Client Ready",
+  "Poor Reading / Comprehension",
+  "Process / Role Fitment Issue",
+  "Behavioral / Attitude Issue",
+  "Computer / System Skill Gap",
+  "Stability / Joining Concern",
+  "Vocabulary / Grammar Issue",
+  "Undergraduate Qualification",
+  "Poor Communication Skill",
+  "Candidate Not Interested",
+  "Location / Travel Issue",
+  "Role / Process Mismatch",
+  "Typing Accuracy Issue",
+  "Shift / Timing Issue",
+  "Documentation Issue",
+  "Typing Speed Issue",
+  "Stability Concern",
+  "Client Rejected",
+  "Salary Issue",
+  "Age Barrier",
+  "No Show",
+];
+
+/** Legacy free-text keywords (hard_reject_reason) mapped onto the controlled vocabulary. */
+const LEGACY_REASON_TO_VOC: Readonly<Record<string, string>> = {
+  communication: "Poor Communication Skill",
+  "not interested": "Candidate Not Interested",
+  "salary mismatch": "Salary Issue",
+  "location issue": "Location / Travel Issue",
+  "location not okay": "Location / Travel Issue",
+  document: "Documentation Issue",
+  documents: "Documentation Issue",
+  behavior: "Behavioral / Attitude Issue",
+  behaviour: "Behavioral / Attitude Issue",
+  abscond: "Stability Concern",
+  fake: "Documentation Issue",
+  fraud: "Documentation Issue",
+};
+
+/**
+ * Split a stored rejection value into the reasons it actually contains.
+ *
+ * Multi-select rejections are written to the column by string concatenation with no separator,
+ * so the raw data holds values like `Salary IssuePoor Sales / Customer Handling`,
+ * `No ShowNo Show` and `Vocabulary / Grammar IssueNo ShowNo Show`. Fourteen such values exist.
+ * Grouping on the raw string turned each into its own "distinct reason", which is how a tab
+ * headed "25 distinct reasons — after case and spacing normalisation" ended up listing
+ * `Salary IssuePoor Sales / Customer Handling` as a reason in its own right.
+ *
+ * Greedy longest-first, because `Salary Issue` is a prefix of nothing but `Stability Concern`
+ * and `Stability / Joining Concern` overlap — matching the longer one first keeps them apart.
+ * Anything left unmatched is returned as-is rather than dropped, so a new vocabulary value
+ * shows up in the chart instead of vanishing into "Unspecified".
+ */
+function splitRejectionValue(raw: string): string[] {
+  const out: string[] = [];
+  let rest = raw.trim();
+  let guard = 0;
+  while (rest && guard++ < 12) {
+    const hit = REJECTION_VOCABULARY.find((v) => rest.toLowerCase().startsWith(v.toLowerCase()));
+    if (!hit) break;
+    out.push(hit);
+    rest = rest.slice(hit.length).trim();
+  }
+  if (rest) out.push(rest);
+  return out.length ? out : [raw.trim()];
+}
+
+/**
+ * Every reason recorded against one rejected candidate.
+ *
+ * Ranks the controlled vocabulary first and the derived keyword only as a fallback — the
+ * opposite of the old order, which took `_hardRejectReason` first. That mattered: the derived
+ * value is a loose keyword scan across remarks, decision and stage, so 953 candidates matched
+ * the bare word "communication" and were ranked under it, while `Poor Communication Skill` —
+ * the controlled value on 476 rows and the single largest real rejection driver — never
+ * appeared in the list at all.
+ *
+ * Returns an array because a candidate can carry more than one reason, so reason counts can
+ * legitimately exceed the rejection count. The payload reports both figures rather than letting
+ * the chart imply the bars sum to the total.
+ */
+function rejectionReasons(row: CandidateRow): string[] {
+  const voc = normalizeText(row.rejection_voc);
+  if (voc) return splitRejectionValue(voc);
+  const legacy = normalizeLower(row._hardRejectReason);
+  if (legacy) return [LEGACY_REASON_TO_VOC[legacy] ?? normalizeText(row._hardRejectReason)];
+  return ["Unspecified"];
 }
 
 function qualityLabel(score: number): string {
@@ -210,14 +372,42 @@ function handlingQualityScore(row: CandidateRow): number {
   return Math.max(0, Math.min(100, Math.round(score * 10) / 10));
 }
 
+/**
+ * Why a candidate is worth re-approaching — or an empty string if they are not.
+ *
+ * The last branch used to return "General pool candidate" for everyone who matched nothing else,
+ * so every one of the 8,244 candidates carried a reusable reason and "the reusable pool" was
+ * simply the whole table. The tile then displayed 100, which was the size of the `.slice(0, 100)`
+ * the payload applied, and the panel read as "100 candidates worth re-approaching" when the real
+ * answer was "everyone, which is the same as no one".
+ *
+ * A pool is only useful if it excludes people. It now holds candidates who got somewhere and
+ * did not convert, and is empty for everyone else:
+ *   - selected but not yet joined      — keep warm
+ *   - on hold                          — the decision is genuinely open
+ *   - no-show                          — worth one more confirmation call
+ *   - rejected on a resolvable reason  — salary, shift, location, travel: circumstances change
+ *   - passed two or more rounds        — proven, just not placed
+ * Rejections on non-resolvable grounds (communication, comprehension, typing, qualification,
+ * documentation, behaviour) are excluded rather than listed as "not reusable unless resolved",
+ * which is what put explicitly-not-reusable candidates inside a panel headed "worth
+ * re-approaching".
+ */
+const RESOLVABLE_REJECTIONS = ["salary", "shift", "timing", "location", "travel", "not interested"];
+
 function reusableReason(row: CandidateRow): string {
   if (contains(row.final_decision || row.status, ["selected"])) return "Selected candidate - keep warm till joining";
   if (contains(row.final_decision || row.status, ["hold"])) return "Hold candidate - reusable after follow-up";
-  if (contains(row.walkin_end_stage, ["no show"])) return "No show - reattempt confirmation call";
-  const hard = hardRejectReason(row);
-  if (hard) return `Not reusable unless resolved: ${hard}`;
+  if (contains(row.status || row.walkin_end_stage, ["no show"])) return "No show - reattempt confirmation call";
+  if (contains(row.final_decision || row.status, ["rejected"])) {
+    const reason = normalizeText(row.rejection_voc) || normalizeText(hardRejectReason(row));
+    if (reason && RESOLVABLE_REJECTIONS.some((p) => reason.toLowerCase().includes(p))) {
+      return `Rejected on a resolvable reason - recheck: ${reason}`;
+    }
+    return "";
+  }
   if (roundSuccessCount(row) >= 2) return "Passed multiple rounds - reusable for similar process";
-  return "General pool candidate";
+  return "";
 }
 
 function enrichCandidate(row: CandidateRow): CandidateRow {
@@ -231,8 +421,34 @@ function enrichCandidate(row: CandidateRow): CandidateRow {
   const rejected = contains(finalDecision || status, ["rejected"]);
   const onHold = contains(finalDecision || status, ["hold"]);
   const waiting = contains(status, ["waiting", "new", "screening"]);
-  const noShow = contains(endStage, ["no show", "noshow"]);
-  const walkout = contains(endStage, ["walkout", "dropout", "walk out", "drop out"]);
+  /**
+   * No-show and client-round come off `status`, with `walkin_end_stage` only as a fallback.
+   *
+   * They used to be read from the end stage alone, and neither state is recorded there: on
+   * production 2026-08-27 the status column holds 557 'No Show' and 58 'Client Round - Pending'
+   * candidates while the end stage holds zero of either. Both counters therefore reported 0 on
+   * every tile, every branch row and every source row — 615 candidates in states the dashboard
+   * asserted did not exist. It also silenced two of this module's own recommendations, which
+   * only fire above a threshold of 3 (see buildInsights).
+   */
+  const noShow = contains(status || endStage, ["no show", "noshow"]);
+  const clientRoundPending = contains(status || endStage, ["client round"]) && !selected && !rejected;
+  const walkout = contains(status || endStage, ["walkout", "dropout", "walk out", "drop out"]);
+  /**
+   * A dormant row is a candidate the pipeline has finished with but which carries no outcome:
+   * status 'Inactive', no branch, no source, no process, no decision. There are 2,624 of them,
+   * all from one import, and they are 32% of every arrival count on this page. They are flagged
+   * rather than deleted so `summary.dormant` can state the number instead of burying it in
+   * every denominator.
+   */
+  const dormant = contains(status, ["inactive"]) && !selected && !rejected && !waiting && !onHold;
+  /**
+   * 453 candidates carry a creation date in the future — the furthest is 2026-12-04, and 226 of
+   * them are already marked rejected. Flagged rather than dropped: they are real rows and
+   * belong in the counts, but they must not be allowed to occupy the top of a newest-first list
+   * and push the actual latest activity out of view.
+   */
+  const futureDated = !!createdAt && createdAt.getTime() > now.getTime();
   const qScore = candidateQualityScore(row);
   const hScore = handlingQualityScore({ ...row, _totalMinutes: totalMinutes });
   return {
@@ -248,7 +464,16 @@ function enrichCandidate(row: CandidateRow): CandidateRow {
     RecruiterMobile: row.recruiter_mobile,
     CurrentStage: row.walkin_end_stage || row.current_stage,
     Status: status || "Waiting",
-    WaitingMinutes: waiting ? totalMinutes : 0,
+    /**
+     * Elapsed time for anything still open, not only for status 'Waiting'.
+     *
+     * The old ternary zeroed every other status, and the live queue is built from open rows
+     * rather than from waiting ones — so all five rows in it reported a 0m wait, including a
+     * candidate who had been at 'Arrival' for 48 days. Median, mean and longest-wait all read
+     * 0m off the back of it. The elapsed figure was never missing; it was in `_totalMinutes` on
+     * the same record the whole time.
+     */
+    WaitingMinutes: waiting || onHold || clientRoundPending ? totalMinutes : 0,
     SLAFlag: row.sla_breached ? "Yes" : "No",
     Email: row.email,
     _createdAt: createdAt ? createdAt.toISOString() : null,
@@ -256,12 +481,34 @@ function enrichCandidate(row: CandidateRow): CandidateRow {
     _monthKey: createdAt ? monthKey(createdAt) : "",
     _weekKey: createdAt ? formatDateKey(startOfWeek(createdAt)) : "",
     _role: row.role_applied || row.applied_for_process || "Unspecified",
-    _branch: row.branch_text || row.applied_for_branch || "Unspecified",
-    _process: row.process_text || row.applied_for_process || "Unspecified",
-    _recruiter: row.recruiter_assigned_name || row.recruiter_name || "Unassigned",
+    /**
+     * Branch, process and source are resolved through the masters and the shared vocabulary
+     * rather than grouped on whatever string the row happens to carry.
+     *
+     * `applied_for_process` holds a process UUID on some rows, so six raw
+     * `04f20ddc-67ba-11f1-…` values were being offered to the user as process names in the
+     * filter and ranked as processes in the table. `resolved_process_name` is the master's name
+     * for exactly those rows (they resolve to Onfido, Exicom, DU Digital, IDAM Natural Wellness,
+     * Guardian Healthcare and Eresolution), joined by id because two distinct processes share
+     * the name BSS-OTHERS and a name join would merge them.
+     *
+     * `_branch` folds Jaldarshan into AHMEDABAD-JALDARSHAN; `_site` keeps Okaya Centre,
+     * Trapezoid and Neelkanth, which are buildings inside Noida rather than branches, so the
+     * distinction recruiters use is preserved instead of being renamed away.
+     *
+     * `_source` folds WALKIN/Walk-In/walk-in onto one channel. They were three separate rows
+     * competing in the same ranking, which is what decided the "best converting channel" verdict.
+     */
+    _branch: canonicalBranch(row.branch_text || row.resolved_branch_name || row.applied_for_branch),
+    _site: normalizeText(row.branch_text || row.applied_for_branch) || "Unspecified",
+    _process: row.process_text || row.resolved_process_name || row.applied_for_process || "Unspecified",
+    // Label and key derive from the SAME field, in the same order. Deriving the label from one
+    // and the key from the other put two rows on the leaderboard both reading "KHUSHI MISHRA".
+    _recruiter: normalizeRecruiterName(row.recruiter_assigned_name || row.recruiter_name) || "Unassigned",
+    _recruiterKey: recruiterKey(row.recruiter_assigned_id, row.recruiter_assigned_name || row.recruiter_name),
     _sourcer: row.recruiter_selected || row.referred_by || "Unspecified",
-    _source: row.source_details || row.sourcing_channel || row.recruiter_selected || row.referred_by || "Unspecified",
-    _slot: row.walkin_slot || slotLabel(row.created_time || row.created_at),
+    _source: sourceLabel(row.source_details || row.sourcing_channel),
+    _slot: rowSlot(row),
     _status: status,
     _finalDecision: finalDecision,
     _endStage: endStage,
@@ -272,7 +519,10 @@ function enrichCandidate(row: CandidateRow): CandidateRow {
     _onHold: onHold,
     _waiting: waiting,
     _noShow: noShow,
+    _clientRoundPending: clientRoundPending,
+    _futureDated: futureDated,
     _walkout: walkout,
+    _dormant: dormant,
     _roundSuccessCount: roundSuccessCount(row),
     _hardRejectReason: hardRejectReason(row),
     _candidateQualityScore: qScore,
@@ -301,9 +551,62 @@ function summarizeRows(rows: CandidateRow[]) {
   const waiting = rows.filter((r) => r._waiting).length;
   const noShow = rows.filter((r) => r._noShow).length;
   const walkout = rows.filter((r) => r._walkout).length;
-  const clientRoundPending = rows.filter((r) => contains(r._endStage || r.CurrentStage, ["client round"] ) && !r._selected && !r._rejected).length;
+  const clientRoundPending = rows.filter((r) => r._clientRoundPending).length;
+  const dormant = rows.filter((r) => r._dormant).length;
   const slaBreach = rows.filter((r) => r._slaBreached).length;
-  const avgWaitMinutes = rows.length ? Math.round(rows.reduce((a, r) => a + Number(r._totalMinutes || 0), 0) / rows.length) : 0;
+  /**
+   * Averaged over candidates who are actually waiting, not over every row ever loaded.
+   *
+   * The old mean divided total elapsed time by all rows, which folded in every closed candidate
+   * plus the 2,624 dormant ones. Those have no end event, so their elapsed time is measured
+   * against now() and grows by 1,440 minutes a day forever — the headline read 32,763 minutes
+   * (22.8 days) and was rising daily. `avgWaitAllRows` keeps the old figure so nothing that
+   * depended on it silently changes shape.
+   */
+  const openRows = rows.filter((r) => r._waiting || r._onHold || r._clientRoundPending);
+  const avgWaitMinutes = openRows.length
+    ? Math.round(openRows.reduce((a, r) => a + Number(r._totalMinutes || 0), 0) / openRows.length)
+    : 0;
+  const avgWaitAllRows = rows.length ? Math.round(rows.reduce((a, r) => a + Number(r._totalMinutes || 0), 0) / rows.length) : 0;
+  /**
+   * Median alongside the mean. A handful of candidates open for forty days drags the mean far
+   * above anything a recruiter would recognise as "the usual wait", and a tile showing only the
+   * mean reads as though every candidate waits that long.
+   */
+  const waits = openRows.map((r) => Number(r._totalMinutes || 0)).sort((a, b) => a - b);
+  const medianWaitMinutes = waits.length
+    ? (waits.length % 2 ? waits[(waits.length - 1) / 2] : Math.round((waits[waits.length / 2 - 1] + waits[waits.length / 2]) / 2))
+    : 0;
+  const futureDated = rows.filter((r) => r._futureDated).length;
+  /**
+   * How much of the funnel is attributed to nothing. Each of these was previously the largest
+   * entry in its own ranked table, competing with real branches, processes and recruiters as
+   * though it were one of them. Stated as a gap so it reads as a data problem to fix rather
+   * than as a top performer.
+   */
+  const unattributed = {
+    branch: rows.filter((r) => isPlaceholderDimension(r._branch)).length,
+    process: rows.filter((r) => isPlaceholderDimension(r._process)).length,
+    source: rows.filter((r) => isPlaceholderDimension(r._source)).length,
+    recruiter: rows.filter((r) => isPlaceholderDimension(r._recruiter)).length,
+  };
+  /**
+   * Candidates carrying no outcome at all. Selected + rejected + waiting + on-hold + no-show
+   * accounted for 4,788 of 8,240 arrivals, and nothing on the page named the missing 3,452 — they
+   * simply sat in every denominator. Stated explicitly so a reader can see the gap rather than
+   * infer it by subtraction.
+   */
+  const unaccounted = rows.filter((r) =>
+    !r._selected && !r._rejected && !r._waiting && !r._onHold &&
+    !r._noShow && !r._clientRoundPending && !r._walkout && !r._dormant).length;
+  /**
+   * Rows counted in more than one bucket — a rejected no-show is both. Reported because the
+   * buckets are not mutually exclusive, so selected+rejected+waiting+… can exceed arrivals and
+   * a reader reconciling the tiles by addition would otherwise find 5 rows they cannot explain.
+   */
+  const multiBucket = rows.filter((r) =>
+    [r._selected, r._rejected, r._waiting, r._onHold, r._noShow, r._clientRoundPending, r._walkout]
+      .filter(Boolean).length > 1).length;
   return {
     totalArrival,
     totalSelection,
@@ -315,9 +618,16 @@ function summarizeRows(rows: CandidateRow[]) {
     noShow,
     walkout,
     clientRoundPending,
+    dormant,
+    unaccounted,
+    multiBucket,
     pending: waiting + clientRoundPending,
     slaBreach,
+    unattributed,
     avgWaitMinutes,
+    medianWaitMinutes,
+    avgWaitAllRows,
+    futureDated,
     selectionRate: totalArrival ? Math.round((totalSelection / totalArrival) * 1000) / 10 : 0,
     rejectionRate: totalArrival ? Math.round((totalRejection / totalArrival) * 1000) / 10 : 0,
     slaBreachRate: totalArrival ? Math.round((slaBreach / totalArrival) * 1000) / 10 : 0,
@@ -332,6 +642,24 @@ function groupBy<T extends Record<string, unknown>>(rows: T[], key: string): Rec
   }, {} as Record<string, T[]>);
 }
 
+/**
+ * The placeholder buckets: rows the pipeline never attributed to anything.
+ *
+ * "Unassigned" recruiter (2,745 rows), "Unspecified" branch (2,735), "Unspecified" process
+ * (2,750) and "Unspecified" source (2,735) are not a recruiter, a branch, a process or a
+ * channel. They are the absence of one. Ranked alongside real entities they win — "Unassigned"
+ * was the number-one recruiter on the leaderboard with 33.3% of all volume, a 0% selection rate
+ * and a 95.6% SLA score, and "Unspecified" was the largest branch and the largest process.
+ *
+ * They are kept in the tables (removing them would break every total) but flagged and sorted
+ * last, so the ranking ranks real things and the gap is reported as a gap.
+ */
+const PLACEHOLDER_DIMENSIONS = new Set(["unassigned", "unspecified", "", "unknown", "n/a", "none"]);
+
+function isPlaceholderDimension(name: unknown): boolean {
+  return PLACEHOLDER_DIMENSIONS.has(String(name ?? "").trim().toLowerCase());
+}
+
 function dimensionTable(rows: CandidateRow[], key: string, nameKey = "Name") {
   return Object.entries(groupBy(rows, key)).map(([name, items]) => ({
     [nameKey]: name,
@@ -341,32 +669,85 @@ function dimensionTable(rows: CandidateRow[], key: string, nameKey = "Name") {
     Rejection: items.filter((r) => r._rejected).length,
     Waiting: items.filter((r) => r._waiting).length,
     OnHold: items.filter((r) => r._onHold).length,
-    ClientRoundPending: items.filter((r) => contains(r._endStage || r.CurrentStage, ["client round"]) && !r._selected && !r._rejected).length,
+    ClientRoundPending: items.filter((r) => r._clientRoundPending).length,
     NoShow: items.filter((r) => r._noShow).length,
+    Dormant: items.filter((r) => r._dormant).length,
     SlaBreach: items.filter((r) => r._slaBreached).length,
-    AvgWaitMinutes: items.length ? Math.round(items.reduce((a, r) => a + Number(r._totalMinutes || 0), 0) / items.length) : 0,
+    // Open rows only — see summarizeRows(). Over every row this reported 94,417 minutes (65
+    // days) for the Unspecified branch and grew by a day every day.
+    AvgWaitMinutes: (() => {
+      const open = items.filter((r) => r._waiting || r._onHold || r._clientRoundPending);
+      return open.length ? Math.round(open.reduce((a, r) => a + Number(r._totalMinutes || 0), 0) / open.length) : 0;
+    })(),
     SelectionRate: items.length ? Math.round((items.filter((r) => r._selected).length / items.length) * 1000) / 10 : 0,
     PendingRate: items.length ? Math.round(((items.filter((r) => r._waiting).length) / items.length) * 1000) / 10 : 0,
-  })).sort((a, b) => Number(b.TotalArrival) - Number(a.TotalArrival));
+    IsUnattributed: isPlaceholderDimension(name),
+  })).sort((a, b) =>
+    Number(a.IsUnattributed) - Number(b.IsUnattributed) ||
+    Number(b.TotalArrival) - Number(a.TotalArrival));
 }
 
+/**
+ * Recruiter leaderboard, grouped on recruiter identity rather than on the name string.
+ *
+ * Grouping on `_recruiter` split eleven people into twenty-two rows, because the legacy import
+ * writes SOFIYA SULTAN and the current app writes Sofiya Sultan, and a JavaScript Map is
+ * case-sensitive where MySQL's collation is not. Both halves then competed in the same ranking
+ * with half the volume each: Sofiya Sultan showed at 519 and 512 instead of 1,031, and the
+ * genuine number-two recruiter (686) appeared at rank six. `_recruiterKey` prefers the foreign
+ * key and case-folds the name only where no key exists.
+ */
 function recruiterProductivity(rows: CandidateRow[]) {
-  return Object.entries(groupBy(rows, "_recruiter")).map(([recruiter, items]) => {
+  return Object.entries(groupBy(rows, "_recruiterKey")).map(([, items]) => {
+    const recruiter = preferredRecruiterName(items.map((r) => normalizeText(r._recruiter)));
     const attended = items.filter((r) => !r._waiting || r._selected || r._rejected || r._onHold).length;
     const sourced = items.length;
     const selection = items.filter((r) => r._selected).length;
     const breach = items.filter((r) => r._slaBreached).length;
-    const avgWait = sourced ? Math.round(items.reduce((a, r) => a + Number(r._totalMinutes || 0), 0) / sourced) : 0;
+    /**
+     * Averaged over rows still open, matching summarizeRows(). Over every row it folded in
+     * closed candidates whose elapsed time keeps growing against now(), which pushed every
+     * recruiter past the 120-minute threshold below and stamped all 32 of them "High Attention"
+     * — a flag on everyone is a flag on no one.
+     */
+    const openItems = items.filter((r) => r._waiting || r._onHold || r._clientRoundPending);
+    const avgWait = openItems.length
+      ? Math.round(openItems.reduce((a, r) => a + Number(r._totalMinutes || 0), 0) / openItems.length)
+      : 0;
     const selectionRate = sourced ? Math.round((selection / sourced) * 1000) / 10 : 0;
     const slaCompliancePercent = sourced ? Math.round(((sourced - breach) / sourced) * 1000) / 10 : 0;
     const handlingQualityScore = sourced ? Math.round(items.reduce((a, r) => a + Number(r._handlingQualityScore || 0), 0) / sourced) : 0;
     const qualityScore = sourced ? Math.round(items.reduce((a, r) => a + Number(r._candidateQualityScore || 0), 0) / sourced) : 0;
+    /**
+     * Breach RATE, not a raw breach count. `breach >= 3` made the flag a proxy for volume: any
+     * recruiter who had ever handled a few dozen candidates tripped it, while someone with two
+     * candidates and both breached did not.
+     */
+    const breachRate = sourced ? Math.round((breach / sourced) * 1000) / 10 : 0;
     let attentionFlag = "Stable";
-    if (breach >= 3 || avgWait >= 120) attentionFlag = "High Attention";
-    else if (slaCompliancePercent < 70 || selectionRate < 15) attentionFlag = "Needs Coaching";
+    if (breachRate >= 25 || avgWait >= 120) attentionFlag = "High Attention";
+    else if (slaCompliancePercent < 85 || selectionRate < 15) attentionFlag = "Needs Coaching";
+
+    /**
+     * The MTD_* figures are computed over the month-to-date subset. They previously carried the
+     * all-time values verbatim — `MTD_SelectionRate` was assigned `selectionRate` and
+     * `MTD_BreachRate` was `100 - SlaCompliancePercent` — so on every row of every load the
+     * "this month" column equalled the "all time" column exactly, which is how a recruiter with
+     * 27 candidates this month showed the same 76% rate as across all 50 they have ever handled.
+     */
+    const mtd = items.filter((r) => inPeriod(r, "MTD"));
+    const mtdSelection = mtd.filter((r) => r._selected).length;
+    const mtdBreach = mtd.filter((r) => r._slaBreached).length;
+    const mtdOpen = mtd.filter((r) => r._waiting || r._onHold || r._clientRoundPending);
+
     return {
       Recruiter: recruiter,
-      Branch: normalizeText(items[0]?._branch) || "Unspecified",
+      /**
+       * Every branch this recruiter sourced into, not the first row's. A single branch cell was
+       * how the split identities looked like different people working at different sites.
+       */
+      Branch: Array.from(new Set(items.map((r) => normalizeText(r._branch)).filter(Boolean))).sort().join(", ") || "Unspecified",
+      Sites: Array.from(new Set(items.map((r) => normalizeText(r._site)).filter(Boolean))).sort(),
       SourcedCount: sourced,
       AttendedCount: attended,
       SlaCompliancePercent: slaCompliancePercent,
@@ -377,12 +758,19 @@ function recruiterProductivity(rows: CandidateRow[]) {
       HandlingScore: handlingQualityScore,
       FTD_Assigned: items.filter((r) => inPeriod(r, "FTD")).length,
       WTD_Assigned: items.filter((r) => inPeriod(r, "WTD")).length,
-      MTD_Assigned: items.filter((r) => inPeriod(r, "MTD")).length,
-      MTD_SelectionRate: selectionRate,
-      MTD_BreachRate: sourced ? Math.round((breach / sourced) * 1000) / 10 : 0,
-      MTD_HandlingScore: handlingQualityScore,
+      MTD_Assigned: mtd.length,
+      MTD_SelectionRate: mtd.length ? Math.round((mtdSelection / mtd.length) * 1000) / 10 : 0,
+      MTD_BreachRate: mtd.length ? Math.round((mtdBreach / mtd.length) * 1000) / 10 : 0,
+      MTD_HandlingScore: mtd.length ? Math.round(mtd.reduce((a, r) => a + Number(r._handlingQualityScore || 0), 0) / mtd.length) : 0,
+      MTD_AvgWaitMinutes: mtdOpen.length ? Math.round(mtdOpen.reduce((a, r) => a + Number(r._totalMinutes || 0), 0) / mtdOpen.length) : 0,
+      BreachRate: breachRate,
+      // "Unassigned" is the absence of a recruiter, not a recruiter. Flagged so the leaderboard
+      // can rank the people and report the unassigned volume separately instead of crowning it.
+      IsUnattributed: isPlaceholderDimension(recruiter),
     };
-  }).sort((a, b) => b.SourcedCount - a.SourcedCount);
+  }).sort((a, b) =>
+    Number(a.IsUnattributed) - Number(b.IsUnattributed) ||
+    b.SourcedCount - a.SourcedCount);
 }
 
 function buildOptions(candidates: CandidateRow[], queue: CandidateRow[]) {
@@ -464,6 +852,15 @@ async function sendTemplateEmail(code: string, candidateId: string | null, to: s
 const WEB_DATA_ROW_LIMIT = 25000;
 
 /**
+ * Rejected rows shipped to the Rejections tab. 50 was too few to be usable — the tab is the only
+ * place a recruiter can review why candidates were turned away, and 50 of 2,875 with no paging
+ * meant most of the queue was unreachable. 500 rows of six projected fields is ~60KB, against
+ * the 44.7MB this endpoint used to send, so the cost is negligible and the tab becomes a tool
+ * rather than a sample. The payload states the cap so a truncated list can say so.
+ */
+const REJECTION_ROW_LIMIT = 500;
+
+/**
  * The columns the command-center analytics actually read.
  *
  * webData() selects `c.*` — all 165 columns of ats_candidate — and every figure on the
@@ -492,6 +889,9 @@ export const CANDIDATE_ANALYTICS_COLUMNS = [
   "branch_text", "applied_for_branch", "process_text", "applied_for_process", "role_applied",
   "recruiter_assigned_name", "recruiter_name", "recruiter_email", "recruiter_mobile",
   "recruiter_selected", "referred_by", "recruiter_id",
+  // recruiter_assigned_id is the identity the leaderboard groups on. Without it the grouping
+  // falls back to the display name and splits one person across their spellings.
+  "recruiter_assigned_id",
   "source_details", "sourcing_channel", "walkin_slot",
   "sla_breached", "aht_minutes",
   "round1_result", "skilltest_result", "round2_result", "round3_result",
@@ -510,8 +910,19 @@ async function candidateSelectAnalytics(where = "1=1", params: unknown[] = [], l
   const cols = CANDIDATE_ANALYTICS_COLUMNS.map((c) => `c.\`${c}\``).join(", ");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ${cols},
+            pm.process_name AS resolved_process_name,
+            bm.branch_name  AS resolved_branch_name,
             COALESCE(c.candidate_code, c.id) AS candidate_id
        FROM ats_candidate c
+       /**
+        * applied_for_process and applied_for_branch are free text on most rows and a master UUID
+        * on some — 21 candidates carry a process id, 19 a branch id. Grouped raw, those ids were
+        * rendered to the user as process and branch names. Joined by id, not by name: two
+        * distinct processes are both called BSS-OTHERS, so a name join would merge them.
+        * LEFT JOIN, so the free-text majority is untouched and resolution is purely additive.
+        */
+       LEFT JOIN process_master pm ON pm.id = c.applied_for_process
+       LEFT JOIN branch_master  bm ON bm.id = c.applied_for_branch
       WHERE ${where}
       ORDER BY COALESCE(c.created_date, c.created_at) DESC, c.created_at DESC
       LIMIT ${safeLimit}`,
@@ -524,8 +935,19 @@ async function candidateSelect(where = "1=1", params: unknown[] = [], limit = 50
   const safeLimit = Math.max(1, Math.floor(limit));
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT c.*,
+            pm.process_name AS resolved_process_name,
+            bm.branch_name  AS resolved_branch_name,
             COALESCE(c.candidate_code, c.id) AS candidate_id
        FROM ats_candidate c
+       /**
+        * applied_for_process and applied_for_branch are free text on most rows and a master UUID
+        * on some — 21 candidates carry a process id, 19 a branch id. Grouped raw, those ids were
+        * rendered to the user as process and branch names. Joined by id, not by name: two
+        * distinct processes are both called BSS-OTHERS, so a name join would merge them.
+        * LEFT JOIN, so the free-text majority is untouched and resolution is purely additive.
+        */
+       LEFT JOIN process_master pm ON pm.id = c.applied_for_process
+       LEFT JOIN branch_master  bm ON bm.id = c.applied_for_branch
       WHERE ${where}
       ORDER BY COALESCE(c.created_date, c.created_at) DESC, c.created_at DESC
       LIMIT ${safeLimit}`,
@@ -595,7 +1017,32 @@ async function buildCandidateFilters(filters: CandidateFilters): Promise<{ where
   // which is also used to fetch a single candidate by id and to run candidateJourney's
   // search — both of which must still find an ex-employee's record.
   conds.push(excludeEmployeeShapedCandidatesSql("c"));
+  // IDC is a separate legal entity. Its 2,738 imported profiles carry no branch, process,
+  // source or recruiter because they were never MAS recruitment — they were the whole of every
+  // "Unspecified" and "Unassigned" bucket on this dashboard. See the helper for the census.
+  conds.push(excludeOtherEntityCandidatesSql("c"));
   return { where: conds.join(" AND "), params };
+}
+
+/**
+ * How many rows the entity scope held out.
+ *
+ * Lives here rather than inside commandCenterData() so the exclusion predicates stay in one
+ * place — webDataLegacyExclusion.contract.test.ts asserts the service methods never build their
+ * own copy of a scope rule, which is exactly how four rival funnel implementations already
+ * drifted apart in this module family.
+ *
+ * Reported, not silently dropped: a dashboard that quietly loses 2,738 rows misleads as surely
+ * as one that quietly counts them.
+ */
+async function countOtherEntityCandidates(): Promise<number> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT COUNT(*) AS cnt FROM ats_candidate c
+      WHERE c.active_status = 1
+        AND ${excludeEmployeeShapedCandidatesSql("c")}
+        AND NOT (${excludeOtherEntityCandidatesSql("c")})`,
+  );
+  return Number(rows[0]?.cnt ?? 0);
 }
 
 export const atsFullParityService = {
@@ -610,11 +1057,9 @@ export const atsFullParityService = {
     const truncated = allRows.length >= WEB_DATA_ROW_LIMIT;
     const period = filters.period || "ALL";
     const candidateRows = allRows.filter((r) => inPeriod(r, period));
-    const queueRows = allRows.filter((r) => {
-      const status = normalizeText(r.status || r.current_stage || "Waiting");
-      const stage = normalizeText(r.walkin_end_stage || r.current_stage || "");
-      return OPEN_STATUSES.has(status) && OPEN_QUEUE_STAGES.has(stage) && !r._selected && !r._rejected;
-    }).sort((a, b) => Number(b.WaitingMinutes || 0) - Number(a.WaitingMinutes || 0));
+    const queueRows = allRows
+      .filter(isOpenQueueRow)
+      .sort((a, b) => Number(b.WaitingMinutes || 0) - Number(a.WaitingMinutes || 0));
     const dashboardRows = ["FTD", "WTD", "MTD"].map((p) => {
       const rows = allRows.filter((r) => inPeriod(r, p as Period));
       const s = summarizeRows(rows);
@@ -629,9 +1074,13 @@ export const atsFullParityService = {
         "Un-attended": s.waiting,
         "SLA Breach": s.slaBreach,
         "Avg Time": s.avgWaitMinutes,
-        "HR Screening": rows.filter((r) => contains(r._endStage, ["hr screening", "screening"])).length,
-        Assessment: rows.filter((r) => contains(r._endStage, ["assessment"])).length,
-        "OP's Round": rows.filter((r) => contains(r._endStage, ["op", "ops"])).length,
+        // "op" as a substring matched anything containing those two letters — Offer, Dropout,
+        // Operations — so this column counted stages that are not the Ops round. The live stage
+        // string is "Round 2- Op's"; "assessment" appears on no row at all, the skill test is
+        // recorded as "Interview - Skill Test".
+        "HR Screening": rows.filter((r) => contains(r._endStage, ["hr screening"])).length,
+        Assessment: rows.filter((r) => contains(r._endStage, ["assessment", "skill test"])).length,
+        "OP's Round": rows.filter((r) => contains(r._endStage, ["op's", "ops round", "round 2"])).length,
         "Client Round": rows.filter((r) => contains(r._endStage, ["client"])).length,
       };
     });
@@ -683,13 +1132,12 @@ export const atsFullParityService = {
     const { where, params } = await buildCandidateFilters(filters);
     const allRows = await candidateSelectAnalytics(where, params, WEB_DATA_ROW_LIMIT);
     const truncated = allRows.length >= WEB_DATA_ROW_LIMIT;
+    const excludedOtherEntity = await countOtherEntityCandidates();
     const period = filters.period || "ALL";
     const candidateRows = allRows.filter((r) => inPeriod(r, period));
-    const queueRows = allRows.filter((r) => {
-      const status = normalizeText(r.status || r.current_stage || "Waiting");
-      const stage = normalizeText(r.walkin_end_stage || r.current_stage || "");
-      return OPEN_STATUSES.has(status) && OPEN_QUEUE_STAGES.has(stage) && !r._selected && !r._rejected;
-    }).sort((a, b) => Number(b.WaitingMinutes || 0) - Number(a.WaitingMinutes || 0));
+    const queueRows = allRows
+      .filter(isOpenQueueRow)
+      .sort((a, b) => Number(b.WaitingMinutes || 0) - Number(a.WaitingMinutes || 0));
     const dashboardRows = ["FTD", "WTD", "MTD"].map((p) => {
       const rows = allRows.filter((r) => inPeriod(r, p as Period));
       const s = summarizeRows(rows);
@@ -704,9 +1152,13 @@ export const atsFullParityService = {
         "Un-attended": s.waiting,
         "SLA Breach": s.slaBreach,
         "Avg Time": s.avgWaitMinutes,
-        "HR Screening": rows.filter((r) => contains(r._endStage, ["hr screening", "screening"])).length,
-        Assessment: rows.filter((r) => contains(r._endStage, ["assessment"])).length,
-        "OP's Round": rows.filter((r) => contains(r._endStage, ["op", "ops"])).length,
+        // "op" as a substring matched anything containing those two letters — Offer, Dropout,
+        // Operations — so this column counted stages that are not the Ops round. The live stage
+        // string is "Round 2- Op's"; "assessment" appears on no row at all, the skill test is
+        // recorded as "Interview - Skill Test".
+        "HR Screening": rows.filter((r) => contains(r._endStage, ["hr screening"])).length,
+        Assessment: rows.filter((r) => contains(r._endStage, ["assessment", "skill test"])).length,
+        "OP's Round": rows.filter((r) => contains(r._endStage, ["op's", "ops round", "round 2"])).length,
         "Client Round": rows.filter((r) => contains(r._endStage, ["client"])).length,
       };
     });
@@ -719,15 +1171,21 @@ export const atsFullParityService = {
      * exactly — _hardRejectReason, then rejection_voc, then "Unspecified", lowercased and
      * trimmed — so the bars do not move.
      */
-    const rejected = candidateRows.filter((r) => r._rejected || r._hardRejectReason);
+    /**
+     * Rejected means rejected. The filter used to be `_rejected || _hardRejectReason`, which
+     * swept in 23 candidates who carry a stored reason without having been rejected — so this
+     * tab reported 2,875 while the Cover and Sourcing tiles, built from `_rejected` alone,
+     * reported 2,852 for the same scope on the same page.
+     */
+    const rejected = candidateRows.filter((r) => r._rejected);
     const reasonMap = new Map<string, { label: string; count: number }>();
     for (const r of rejected) {
-      const raw = normalizeText(r._hardRejectReason) || normalizeText(r.rejection_voc) || "Unspecified";
-      const label = raw.trim() || "Unspecified";
-      const key = label.toLowerCase();
-      const current = reasonMap.get(key) ?? { label, count: 0 };
-      current.count += 1;
-      reasonMap.set(key, current);
+      for (const label of rejectionReasons(r)) {
+        const key = label.toLowerCase();
+        const current = reasonMap.get(key) ?? { label, count: 0 };
+        current.count += 1;
+        reasonMap.set(key, current);
+      }
     }
 
     const queueCard = (r: CandidateRow) => ({
@@ -741,6 +1199,8 @@ export const atsFullParityService = {
       truncated,
       rowLimit: WEB_DATA_ROW_LIMIT,
       rowsLoaded: allRows.length,
+      /** IDC rows held out of scope — reported so the totals can be reconciled. */
+      excludedOtherEntity,
       refreshTime: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
       options: buildOptions(allRows, queueRows),
       summary: summarizeRows(candidateRows),
@@ -758,16 +1218,50 @@ export const atsFullParityService = {
       processTable: dimensionTable(candidateRows, "_process"),
       sourceTable: dimensionTable(candidateRows, "_source"),
       recruiterTable: recruiterProductivity(candidateRows),
+      /**
+       * Name pairs that look like one person under two conventions. Case-duplicates are merged
+       * outright by recruiterKey(); these are the ones only a human can confirm, so the tab can
+       * show "these two rows may be the same recruiter" instead of quietly ranking them apart.
+       */
+      recruiterDuplicateSuspects: suspectedDuplicateRecruiters(recruiterProductivity(candidateRows).map((r) => r.Recruiter)),
       slotTable: dimensionTable(candidateRows, "_slot"),
       rejections: {
         total: rejected.length,
+        // Reason mentions, which exceed `total` where a candidate carries more than one reason.
+        // Reported separately so the chart can say which number its bars add up to.
+        reasonTotal: [...reasonMap.values()].reduce((a, r) => a + r.count, 0),
         distinctReasons: reasonMap.size,
         reasons: [...reasonMap.values()].sort((a, b) => b.count - a.count),
-        rows: rejected.slice(0, 50).map((r) => ({
-          CandidateID: r.CandidateID, FullName: r.FullName, Branch: r.Branch,
-          _endStage: r._endStage, _hardRejectReason: r._hardRejectReason, rejection_voc: r.rejection_voc,
-        })),
+        /**
+         * Newest first, then capped — the cap used to be applied to whatever order the rows
+         * arrived in. `candidateRows` is ordered by created date descending, but the rejection
+         * subset was re-sliced without re-sorting, so "First 50 of 2,875" landed on a block
+         * spanning 12 May to 12 June and stopped: none of the current month's 465 rejections
+         * were reachable, and the row ids ran out of sequence between loads. Sorting on the
+         * rejection's own date makes the first page the most recent one.
+         */
+        rows: [...rejected]
+          // Future-dated rows sort last. 226 rejections carry a creation date after today —
+          // newest-first alone would fill the whole first page with them and hide the rejections
+          // that actually happened this week.
+          .sort((a, b) =>
+            Number(!!a._futureDated) - Number(!!b._futureDated) ||
+            String(b._createdAt ?? "").localeCompare(String(a._createdAt ?? "")))
+          .slice(0, REJECTION_ROW_LIMIT)
+          .map((r) => ({
+            CandidateID: r.CandidateID, FullName: r.FullName, Branch: r.Branch,
+            _createdAt: r._createdAt, _dateKey: r._dateKey,
+            _endStage: r._endStage, _hardRejectReason: r._hardRejectReason,
+            rejection_voc: r.rejection_voc, _reasons: rejectionReasons(r),
+          })),
+        rowLimit: REJECTION_ROW_LIMIT,
       },
+      /**
+       * `reusableTotal` is the size of the pool; `reusablePool` is the page of it that ships.
+       * The tile read "100 · Prior candidates worth re-approaching" off the length of a
+       * `.slice(0, 100)`, presenting the cap as the measurement.
+       */
+      reusableTotal: candidateRows.filter((r) => r._reusableReason).length,
       reusablePool: candidateRows.filter((r) => r._reusableReason).slice(0, 100).map((r) => ({
         CandidateID: r.CandidateID, FullName: r.FullName, Branch: r.Branch,
         _candidateQualityLabel: r._candidateQualityLabel, _reusableReason: r._reusableReason,
@@ -1103,21 +1597,122 @@ export const atsFullParityService = {
   },
 
   async healthCheck() {
-    const checks: Array<{ type: string; name: string; ok: boolean; count?: number }> = [];
+    const checks: Array<{ type: string; name: string; ok: boolean; count?: number; detail?: string }> = [];
+    // Schema probes keep their own category so they stop masquerading as health. They answer
+    // "is this deployed", which is worth knowing and is not the same question.
     const tableNames = ["ats_candidate", "ats_recruiter_roster", "ats_command_config", "ats_email_template", "ats_command_email_log", "ats_command_audit_log", "ats_voc_lookup", "ats_forms_catalog", "ats_form_field_mapping", "ats_candidate_confirmation", "ats_bgv_response", "ats_doc_upload_response", "ats_recruiter_device", "ats_notification_log"];
     for (const table of tableNames) {
       const [rows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS cnt FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`, [table]);
-      checks.push({ type: "table", name: table, ok: Number(rows[0]?.cnt ?? 0) > 0 });
+      checks.push({ type: "schema", name: table, ok: Number(rows[0]?.cnt ?? 0) > 0 });
     }
     const requiredCandidateCols = ["q_token", "status", "walkin_end_stage", "sla_breached", "candidate_confirm_link", "bgv_form_link", "day1_doc_form_link", "candidate_quality_score", "handling_quality_score"];
     for (const col of requiredCandidateCols) {
       const [rows] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS cnt FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'ats_candidate' AND COLUMN_NAME = ?`, [col]);
-      checks.push({ type: "column", name: `ats_candidate.${col}`, ok: Number(rows[0]?.cnt ?? 0) > 0 });
+      checks.push({ type: "schema", name: `ats_candidate.${col}`, ok: Number(rows[0]?.cnt ?? 0) > 0 });
     }
     const [missingRecruiterEmails] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS cnt FROM ats_recruiter_roster WHERE active_status = 1 AND available_today = 'Y' AND (email IS NULL OR email = '')`);
-    checks.push({ type: "data", name: "available_recruiters_missing_email", ok: Number(missingRecruiterEmails[0]?.cnt ?? 0) === 0, count: Number(missingRecruiterEmails[0]?.cnt ?? 0) });
+    checks.push({ type: "integration", name: "available_recruiters_missing_email", ok: Number(missingRecruiterEmails[0]?.cnt ?? 0) === 0, count: Number(missingRecruiterEmails[0]?.cnt ?? 0) });
     const [templates] = await db.execute<RowDataPacket[]>(`SELECT COUNT(*) AS cnt FROM ats_email_template WHERE active_status = 1`);
-    checks.push({ type: "data", name: "email_templates_configured", ok: Number(templates[0]?.cnt ?? 0) >= 3, count: Number(templates[0]?.cnt ?? 0) });
+    checks.push({ type: "integration", name: "email_templates_configured", ok: Number(templates[0]?.cnt ?? 0) >= 3, count: Number(templates[0]?.cnt ?? 0) });
+
+    /**
+     * The checks the banner has always claimed to run.
+     *
+     * Everything above this point asks "does this table exist" and "does this column exist".
+     * That is a deployment check, not a health check, and it answered "25 of 25 passing across
+     * data integrity, SLA, notifications and integrations" on a page that was simultaneously
+     * reporting a queue of 5 against a real 217, a rejection count that disagreed with its own
+     * tiles, and 615 candidates in states it rendered as zero. None of those categories had a
+     * single check in it — every check fell into the tab's "category is not one of the four
+     * known types" fallback bucket, which is a defensive branch that had quietly become the
+     * whole tab.
+     *
+     * These run against the data. They are allowed to fail; a health tab that cannot go amber
+     * is decoration.
+     */
+    // Scoped to MAS. Without the entity filter these probes report IDC's 2,735 unattributed
+    // rows as MAS data-quality failures in perpetuity — a permanent red that no MAS action can
+    // ever clear, which is how a health tab teaches people to ignore it.
+    const scoped = `active_status = 1 AND record_type = 'candidate' AND candidate_code NOT LIKE 'IDC%'`;
+    const countOf = async (label: string, type: string, sql: string, isOk: (n: number) => boolean, detail: string) => {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(sql);
+        const n = Number(rows[0]?.cnt ?? 0);
+        checks.push({ type, name: label, ok: isOk(n), count: n, detail });
+      } catch (err) {
+        // A probe that cannot run is a failed probe, never a silent pass.
+        checks.push({ type, name: label, ok: false, detail: `probe failed: ${(err as Error).message}` });
+      }
+    };
+
+    await countOf("candidates_without_branch", "data_integrity",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped} AND (applied_for_branch IS NULL OR applied_for_branch = '')`,
+      (n) => n === 0, "Arrivals with no branch cannot be attributed to a site and dilute every branch rate.");
+
+    await countOf("candidates_without_source", "data_integrity",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped} AND (sourcing_channel IS NULL OR sourcing_channel = '')`,
+      (n) => n === 0, "Arrivals with no sourcing channel make channel effectiveness unmeasurable.");
+
+    await countOf("unresolved_process_ids", "data_integrity",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate c LEFT JOIN process_master pm ON pm.id = c.applied_for_process
+        WHERE ${scoped.replace(/active_status/g, "c.active_status").replace(/record_type/g, "c.record_type").replace(/candidate_code/g, "c.candidate_code")}
+          AND c.applied_for_process REGEXP '^[0-9a-f]{8}-' AND pm.id IS NULL`,
+      (n) => n === 0, "A process id with no master row renders to the user as a raw UUID.");
+
+    await countOf("future_dated_candidates", "data_integrity",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped} AND COALESCE(created_date, DATE(created_at)) > CURDATE()`,
+      (n) => n === 0, "A candidate created in the future sorts above real activity in every newest-first list.");
+
+    await countOf("rejections_without_reason", "data_integrity",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped} AND status = 'Rejected' AND (rejection_voc IS NULL OR rejection_voc = '')`,
+      (n) => n === 0, "A rejection with no reason cannot be learned from.");
+
+    await countOf("concatenated_rejection_values", "data_integrity",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped} AND rejection_voc REGEXP 'Issue[A-Z]|Skill[A-Z]|Show[A-Z]|Concern[A-Z]|Comprehension[A-Z]|Interested[A-Z]'`,
+      (n) => n === 0, "Multi-select reasons written without a separator become fake distinct reasons.");
+
+    await countOf("recruiter_name_spelling_variants", "data_integrity",
+      `SELECT COUNT(*) AS cnt FROM (
+         SELECT LOWER(TRIM(COALESCE(recruiter_assigned_name, recruiter_name))) nm
+           FROM ats_candidate WHERE ${scoped} AND COALESCE(recruiter_assigned_name, recruiter_name) IS NOT NULL
+          GROUP BY nm HAVING COUNT(DISTINCT BINARY TRIM(COALESCE(recruiter_assigned_name, recruiter_name))) > 1) t`,
+      (n) => n === 0, "One recruiter stored under several spellings splits their leaderboard row.");
+
+    await countOf("open_queue_beyond_7_days", "sla",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped}
+         AND LOWER(status) IN ('waiting','hold','client round - pending')
+         AND COALESCE(created_date, DATE(created_at)) < DATE_SUB(CURDATE(), INTERVAL 7 DAY)`,
+      (n) => n === 0, "Candidates still open a week after arriving.");
+
+    await countOf("open_queue_beyond_30_days", "sla",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped}
+         AND LOWER(status) IN ('waiting','hold','client round - pending')
+         AND COALESCE(created_date, DATE(created_at)) < DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
+      (n) => n === 0, "Candidates open for a month or more — almost certainly abandoned, not waiting.");
+
+    await countOf("breach_flag_never_computed", "sla",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped} AND sla_breached IS NULL`,
+      (n) => n === 0, "A null breach flag is counted as compliant by every SLA figure on this page.");
+
+    await countOf("notifications_sent_last_7_days", "notification",
+      `SELECT COUNT(*) AS cnt FROM ats_notification_log WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`,
+      (n) => n > 0, "No ATS notification in a week means the delivery path is dead, not quiet.");
+
+    await countOf("overdue_followups", "notification",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped} AND followup_required = 1 AND followup_date < CURDATE()`,
+      (n) => n === 0, "Follow-ups flagged and past their date, with nothing surfacing them.");
+
+    await countOf("impossible_followup_dates", "notification",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped} AND followup_required = 1 AND followup_date < '2020-01-01'`,
+      (n) => n === 0, "A follow-up dated before the product existed is corrupt, not overdue.");
+
+    await countOf("sourcing_channels_absent_from_master", "integration",
+      `SELECT COUNT(DISTINCT c.sourcing_channel) AS cnt FROM ats_candidate c
+        WHERE c.active_status = 1 AND c.record_type = 'candidate' AND c.candidate_code NOT LIKE 'IDC%'
+          AND c.sourcing_channel IS NOT NULL AND c.sourcing_channel <> ''
+          AND NOT EXISTS (SELECT 1 FROM ats_sourcing_channel s WHERE s.channel_code = c.sourcing_channel)`,
+      (n) => n === 0, "Channels candidates are recorded under that the channel master does not define.");
+
     return { ok: checks.every((c) => c.ok), checks };
   },
 

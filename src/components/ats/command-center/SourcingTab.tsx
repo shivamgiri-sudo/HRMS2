@@ -21,6 +21,8 @@ type AnyRow = Record<string, unknown>;
 interface SourcingTabProps {
   sourceTable: AnyRow[];
   reusablePool: AnyRow[];
+  /** Size of the whole pool. `reusablePool` is only the page of it that ships. */
+  reusableTotal?: number;
   loading?: boolean;
 }
 
@@ -29,7 +31,7 @@ const S = (v: unknown) => String(v ?? "");
 const MIX_GROUPS = 6;
 const BAR_GROUPS = 10;
 
-export function SourcingTab({ sourceTable, reusablePool, loading }: SourcingTabProps) {
+export function SourcingTab({ sourceTable, reusablePool, reusableTotal, loading }: SourcingTabProps) {
   const model = useMemo(() => {
     const rows = sourceTable || [];
     const total = rows.reduce((sum, r) => sum + N(r.TotalArrival), 0);
@@ -44,7 +46,11 @@ export function SourcingTab({ sourceTable, reusablePool, loading }: SourcingTabP
 
     // Best converting channel among those with meaningful volume — a channel with
     // one arrival and one selection is 100% and tells nobody anything.
-    const meaningful = rows.filter((r) => N(r.TotalArrival) >= 5);
+    //
+    // "Unspecified" is excluded too: it is the absence of a channel, it holds 2,735 arrivals
+    // with zero selections, and leaving it in the comparison means the ranking is partly a
+    // ranking of a data gap.
+    const meaningful = rows.filter((r) => N(r.TotalArrival) >= 5 && !r.IsUnattributed);
     const best = [...meaningful].sort(
       (a, b) => (ratio(N(b.Selection), N(b.TotalArrival)) ?? 0) - (ratio(N(a.Selection), N(a.TotalArrival)) ?? 0)
     )[0];
@@ -109,7 +115,10 @@ export function SourcingTab({ sourceTable, reusablePool, loading }: SourcingTabP
         />
         <StatTile
           label="Reusable Pool"
-          value={num((reusablePool || []).length)}
+          // The pool size, not the slice length. This read the length of a 100-row page and
+          // presented it as the measurement: "100 candidates worth re-approaching" when the
+          // backend had simply capped the list at 100.
+          value={num(reusableTotal ?? (reusablePool || []).length)}
           denominator="Prior candidates worth re-approaching"
         />
       </div>
@@ -302,7 +311,7 @@ export function SourcingTab({ sourceTable, reusablePool, loading }: SourcingTabP
           subtitle="Candidates from earlier cycles worth re-approaching before fresh sourcing."
           action={
             <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-semibold text-slate-600">
-              {reusablePool.length > 30 ? `First 30 of ${num(reusablePool.length)}` : `${num(reusablePool.length)} candidates`}
+              {`Showing ${num(Math.min(30, reusablePool.length))} of ${num(reusableTotal ?? reusablePool.length)}`}
             </span>
           }
         >
@@ -331,7 +340,7 @@ export function SourcingTab({ sourceTable, reusablePool, loading }: SourcingTabP
             </table>
             {reusablePool.length > 30 && (
               <p className="border-t border-slate-100 bg-slate-50 px-3 py-1.5 text-[10px] text-slate-500">
-                Showing the first 30 of {num(reusablePool.length)} reusable candidates.
+                Showing the first 30 of {num(reusableTotal ?? reusablePool.length)} reusable candidates.
               </p>
             )}
           </div>

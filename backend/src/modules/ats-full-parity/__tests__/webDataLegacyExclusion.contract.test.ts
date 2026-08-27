@@ -51,7 +51,9 @@ describe("web-data excludes legacy employee records", () => {
   it("imports the shared exclusion helper rather than hand-rolling the predicate", () => {
     // A second, hand-written NOT EXISTS would drift from the canonical one; there are already
     // four rival funnel implementations in this module family.
-    expect(src).toMatch(/import\s*\{\s*excludeEmployeeShapedCandidatesSql\s*\}/);
+    // Allows other names in the same import — the module also pulls in the entity-scope rule,
+    // which is the same shared-helper pattern rather than a second hand-rolled predicate.
+    expect(src).toMatch(/import\s*\{[^}]*excludeEmployeeShapedCandidatesSql[^}]*\}/);
   });
 
   /**

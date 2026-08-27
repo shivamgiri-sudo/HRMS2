@@ -58,3 +58,44 @@ export function recordTypeDriftSql(): string {
             FROM ats_candidate ac
             LEFT JOIN employees e ON e.employee_code = ac.candidate_code`;
 }
+
+/**
+ * IDC records, excluded from MAS recruitment reporting.
+ *
+ * `ats_candidate` holds 2,738 rows whose candidate_code begins `IDC` — a June-2026 bulk import
+ * of registered profiles belonging to IDC, the sister entity. They are not MAS recruitment and
+ * they are not in `mas_hrms.employees` at all (salary-voucher-bill.service.ts records the same
+ * boundary from the payroll side: "mas_hrms holds zero IDC employees. IDC's monthly payroll
+ * lives in db_bill.salary_data"). This codebase already splits MAS from IDC wherever the two
+ * meet — db_bill voucher reconciliation keys on the `MAS/` vs `IDC/` VchNo prefix, and the
+ * db_bill→HRMS employee migration excluded IDC outright. The ATS Command Center was the one
+ * surface that did not.
+ *
+ * The evidence that these are a separate population rather than MAS rows with missing fields,
+ * measured on production 2026-08-27:
+ *
+ *              rows    no branch   no source   no recruiter   no process   selected
+ *   C2026…    3,569        0           0            0             15        1,241
+ *   CND-      1,903        0           0           10              0          417
+ *   MAS          37        0           0            0              0           19
+ *   IDC       2,738    2,735       2,735        2,735          2,735            0
+ *
+ * Every unattributed row on the dashboard was an IDC row, and every MAS row is attributed. So
+ * the "Unspecified" branch, the "Unspecified" process, the "Unspecified" source and the
+ * "Unassigned" recruiter were never a data-quality gap to be filled — they were another
+ * company's records being counted as MAS arrivals. They contributed 2,738 to the denominator of
+ * every rate on the page (holding the selection rate at 20.9% instead of 31.2%), supplied all
+ * 111 of the stale multi-week queue entries that made the average wait read 22 days, and were
+ * the entirety of four "largest" table rows.
+ *
+ * Excluded by default and reported, never silently dropped: the count travels in the payload as
+ * `summary.excludedOtherEntity` so the dashboard can state what it left out.
+ */
+export function excludeOtherEntityCandidatesSql(candidateAlias: string): string {
+  return `${candidateAlias}.candidate_code NOT LIKE 'IDC%'`;
+}
+
+/** True when a candidate row belongs to a different legal entity than MAS. */
+export function isOtherEntityCandidateCode(code: unknown): boolean {
+  return /^IDC/i.test(String(code ?? "").trim());
+}

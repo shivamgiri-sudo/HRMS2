@@ -46,6 +46,21 @@ interface CoverTabProps {
 }
 
 const N = (v: unknown) => Number(v || 0);
+
+/**
+ * Minutes as something a person can read. The Cover tiles printed raw minutes while the
+ * Dashboard tab printed "33h 46m" for the same family of metric — the same number in two units
+ * on two tabs of one page.
+ */
+function durationLabel(minutes: number): string {
+  if (!Number.isFinite(minutes) || minutes <= 0) return "0m";
+  const d = Math.floor(minutes / 1440);
+  const h = Math.floor((minutes % 1440) / 60);
+  const m = Math.round(minutes % 60);
+  if (d) return `${d}d ${h}h`;
+  if (h) return `${h}h ${m}m`;
+  return `${m}m`;
+}
 const S = (v: unknown) => String(v ?? "");
 
 /** Groups charted individually before the tail folds into an explicit "Other". */
@@ -156,23 +171,24 @@ export function CoverTab({
           intent="critical"
           icon={<XCircle className="h-4 w-4" />}
         />
+        {/*
+          "Pending" is waiting + client-round-pending. Client-round-pending was hardcoded to 0
+          by a bug in the row classifier, so Pending was arithmetically identical to Waiting and
+          the two tiles beside each other always showed the same number under different names.
+          With that fixed they differ again, and the sub-label says what the difference is.
+        */}
         <StatTile
           label="Pending"
           value={num(N(summary.pending))}
-          denominator={`${pct(ratio(N(summary.pending), totalArrival) ?? 0)} of arrivals`}
+          denominator={`${num(N(summary.waiting))} waiting + ${num(N(summary.clientRoundPending))} client round`}
           intent="warning"
           icon={<Clock className="h-4 w-4" />}
         />
-        {/*
-          Previously an "Un-attended" tile repeated summary.waiting, which was
-          already the sub-label of Pending — the same number twice under two
-          names. It now stands alone as the queue-waiting figure.
-        */}
         <StatTile
-          label="Waiting in Queue"
-          value={num(N(summary.waiting))}
-          denominator="Arrived, not yet attended"
-          intent="warning"
+          label="No Show"
+          value={num(N(summary.noShow))}
+          denominator={`${pct(ratio(N(summary.noShow), totalArrival) ?? 0)} of arrivals`}
+          intent={N(summary.noShow) > 0 ? "warning" : "good"}
           icon={<UserRound className="h-4 w-4" />}
         />
         <StatTile
@@ -182,10 +198,18 @@ export function CoverTab({
           intent={N(summary.slaBreach) > 0 ? "critical" : "good"}
           icon={<AlertTriangle className="h-4 w-4" />}
         />
+        {/*
+          Median, with the mean beside it — and both in readable units.
+          This tile printed raw minutes ("32763m"), which is 22.8 days, because the mean was
+          taken over every row ever loaded including closed and dormant ones whose elapsed time
+          is measured against now() and grows daily. It is now the median over open rows, which
+          is what "how long is someone waiting" actually means, and the mean is shown alongside
+          so a long tail is visible rather than hidden.
+        */}
         <StatTile
-          label="Avg Wait"
-          value={`${Math.round(N(summary.avgWaitMinutes))}m`}
-          denominator={`${num(N(summary.onHold))} on hold`}
+          label="Median Wait"
+          value={durationLabel(N(summary.medianWaitMinutes))}
+          denominator={`mean ${durationLabel(N(summary.avgWaitMinutes))} · ${num(N(summary.onHold))} on hold`}
           icon={<TimerReset className="h-4 w-4" />}
         />
       </div>
@@ -195,7 +219,10 @@ export function CoverTab({
         <div role="alert" className="rounded-xl border-2 border-rose-200 bg-rose-50 px-4 py-3">
           <h3 className="flex items-center gap-2 text-xs font-bold text-rose-900">
             <AlertTriangle className="h-4 w-4" />
-            SLA breached — {num(slaBreachQueue.length)} candidate{slaBreachQueue.length === 1 ? "" : "s"} waiting beyond target
+            {/* "Currently open" distinguishes this from the SLA Breach tile above, which counts
+                every breach ever recorded including candidates long since closed. Two different
+                true numbers under one word was the confusing part, not either number. */}
+            SLA breached — {num(slaBreachQueue.length)} currently-open candidate{slaBreachQueue.length === 1 ? "" : "s"} past target
             {slaBreachQueue.length > 5 && (
               <span className="font-semibold text-rose-700">· longest 5 shown</span>
             )}
@@ -209,7 +236,7 @@ export function CoverTab({
                 <span className="font-mono font-semibold text-rose-700">{S(row.QToken) || "—"}</span>
                 <span className="min-w-0 flex-1 truncate text-slate-700">{S(row.FullName)}</span>
                 <span className="shrink-0 font-bold tabular-nums text-rose-700">
-                  {Math.round(N(row.WaitingMinutes))}m
+                  {durationLabel(N(row.WaitingMinutes))}
                 </span>
               </div>
             ))}
@@ -428,7 +455,7 @@ export function CoverTab({
               </table>
               {(processTable || []).length > 10 && (
                 <p className="border-t border-slate-100 bg-slate-50 px-3 py-1.5 text-[10px] text-slate-500">
-                  Showing 10 of {num((processTable || []).length)} — full list on the Trends tab.
+                  Showing 10 of {num((processTable || []).length)} — ranked by arrivals.
                 </p>
               )}
             </div>

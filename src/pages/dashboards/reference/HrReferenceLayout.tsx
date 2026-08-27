@@ -35,7 +35,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
-import { asNumber, metricDetail, metricUnavailableReason, metricValue } from "../reference-dashboard-model";
+import { asArray, asNumber, asRecord, metricDetail, metricUnavailableReason, metricValue } from "../reference-dashboard-model";
 import { ReferenceWorkInbox } from "./ReferenceOperationalPanels";
 import {
   AnimNum,
@@ -168,7 +168,9 @@ function GlassPanel({ title, icon: Icon, iconColor, badge, action, children, cla
 
 export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardData; filters?: React.ReactNode }) {
   const m = data.metrics;
-  const drill = data.drilldownFor ?? (() => ({}));
+  // Typed fallback. `(() => ({}))` infers `{}`, which widens the union and made every
+  // `drill(...).onDrilldown` a type error even though the runtime behaviour was fine.
+  const drill: NonNullable<ReferenceDashboardData["drilldownFor"]> = data.drilldownFor ?? (() => ({}));
 
   // Extract real data from APIs
   const selected = asNumber(data.ats.selected_candidates ?? data.ats.selectedCandidates ?? data.ats.total_selected);
@@ -191,6 +193,19 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
   const exits30d = asNumber(wfSummary?.exits_30d ?? wfSummary?.exits30d ?? data.workforce.exits_30d);
   const attritionRate = asNumber(wfSummary?.attrition_rate_30d ?? wfSummary?.attritionRate30d ?? data.workforce.attrition_rate_30d);
   const workforceAttendancePct = asNumber(wfSummary?.attendance_pct ?? wfSummary?.attendancePct ?? data.workforce.attendance_pct);
+
+  /**
+   * Metrics the summary endpoint returns that had no home on this page. `docCompliance` is the
+   * one that matters: 1,100 employees with no document against 1,120 active is 98.2%, and it was
+   * being fetched every load and thrown away.
+   */
+  const docsMissing = metricValue(m, "docCompliance");
+  const docGapLabel = docsMissing !== null && headcount
+    ? `${docsMissing.toLocaleString()} (${Math.round((docsMissing / headcount) * 100)}%)`
+    : docsMissing !== null ? docsMissing.toLocaleString() : "—";
+  const trainingPct = metricValue(m, "training");
+  const shrinkagePct = asNumber(wfSummary?.shrinkage_pct ?? wfSummary?.shrinkagePct);
+
 
   const variance = (current: number | null, previous: number | null): { trend: "up" | "down" | "neutral"; change: string } | null => {
     if (current === null || previous === null || previous === 0) return null;
@@ -220,25 +235,67 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
   // Attendance summary from workforce API - NO FAKE HEATMAP DATA
   // The API returns today's attendance status, not weekly historical data
   const teamMembersRaw = data.workforce.team_members ?? data.workforce.teamMembers;
+  /**
+   * Today's attendance, from the organisation-wide aggregate.
+   *
+   * This used to be derived by counting statuses across `team_members` — a 20-row sample the
+   * API returns for the roster strip, not an attendance dataset. So the panel reported
+   * "Present 0 · Absent 8 · Missing Punch 4 · Total tracked: 20" on a day when 457 of 724
+   * employees were present. That is worse than the empty state it replaced: it was confidently
+   * wrong rather than blank.
+   *
+   * `workforce.attendance` is the real figure and carries `record_date`, so the panel can also
+   * say which day it is describing — the source is processed attendance and runs a day behind.
+   */
   const attendanceSummary = (() => {
-    if (!Array.isArray(teamMembersRaw) || teamMembersRaw.length === 0) return null;
-    const counts: Record<string, number> = { present: 0, absent: 0, missing_punch: 0, not_marked: 0, on_leave: 0 };
-    teamMembersRaw.forEach((m: Record<string, unknown>) => {
-      const status = String(m.attendance_status ?? m.attendanceStatus ?? m.today_status ?? 'not_marked').toLowerCase();
-      if (status.includes('present')) counts.present++;
-      else if (status.includes('absent')) counts.absent++;
-      else if (status.includes('leave')) counts.on_leave++;
-      else if (status.includes('missing')) counts.missing_punch++;
-      else counts.not_marked++;
-    });
-    return { total: teamMembersRaw.length, ...counts };
+    const agg = asRecord(data.workforce.attendance);
+    const statuses = asArray(agg.statuses);
+    if (statuses.length > 0) {
+      const pick = (name: string) => {
+        const hit = statuses.find((s) => String(asRecord(s).label ?? '').toLowerCase() === name);
+        return hit ? (asNumber(asRecord(hit).value) ?? 0) : 0;
+      };
+      return {
+        total: asNumber(agg.total) ?? 0,
+        present: pick('present'),
+        halfDay: pick('half_day'),
+        absent: pick('absent'),
+        missing_punch: pick('missing_punch'),
+        on_leave: pick('on_leave'),
+        not_marked: pick('not_marked'),
+        recordDate: String(agg.record_date ?? ''),
+        dataAgeDays: asNumber(agg.data_age_days),
+      };
+    }
+    return null;
   })();
   // Empty array - we don't have weekly historical data from the API
   const attendanceData: { day: string; data: AttendanceStatus[] }[] = [];
 
   // Leave balance - REAL DATA ONLY
-  const leaveStats = data.workforce.leave_summary ?? data.workforce.leaveSummary;
-  const hasLeaveData = leaveStats && typeof leaveStats === 'object';
+  /**
+   * Leave summary. The API returns an ARRAY of `{status, count}`, not an object.
+   *
+   * `typeof [] === 'object'`, so the old guard passed, and the three donuts then read
+   * `.on_leave_today`, `.pending_approval` and `.approved_today` off an array — properties that
+   * cannot exist on one. All three rendered 0 against a real 1,033 approved and 14 pending,
+   * with a separate `pending_leave_requests: 170` sitting beside them in the same payload.
+   * Both figures are shown now: they count different things (14 is today's queue, 170 is the
+   * open backlog) and showing one while the metric tile shows the other is how they got
+   * mistaken for a contradiction.
+   */
+  const leaveByStatus = (() => {
+    const rows = asArray(data.workforce.leave_summary ?? data.workforce.leaveSummary);
+    const out: Record<string, number> = {};
+    for (const row of rows) {
+      const r = asRecord(row);
+      const key = String(r.status ?? '').toLowerCase();
+      if (key) out[key] = asNumber(r.count) ?? 0;
+    }
+    return out;
+  })();
+  const pendingLeaveBacklog = asNumber(data.workforce.pending_leave_requests) ?? metricValue(m, 'leaveApprovals');
+  const hasLeaveData = Object.keys(leaveByStatus).length > 0 || pendingLeaveBacklog !== null;
 
   // Department/Branch breakdown - REAL DATA ONLY
   // API returns `branches` with branch_name/employee_count, or `process_breakdown` with process_name/headcount
@@ -338,6 +395,46 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
         <QuickStat icon={TrendingDown} label="Attrition" value={`${Math.round((attritionRate ?? 0) * 100) / 100}%`} sub="from workforce API" color="#F59E0B" bg="from-amber-500/10 to-orange-500/5" />
       </div>
 
+      {/*
+        Compliance and engagement figures the summary endpoint has always returned and this page
+        has never rendered. The first is the largest exposure on the dashboard: 1,100 of 1,120
+        active employees hold no document at all. It was being fetched on every load and dropped.
+      */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+        <QuickStat
+          icon={FileX2}
+          label="No Documents on File"
+          value={docGapLabel}
+          sub="employees with no document"
+          color="#DC2626"
+          bg="from-red-500/10 to-rose-500/5"
+        />
+        <QuickStat
+          icon={Hourglass}
+          label="Pending Leave"
+          value={(pendingLeaveBacklog ?? 0).toLocaleString()}
+          sub="awaiting approval"
+          color="#F59E0B"
+          bg="from-amber-500/10 to-orange-500/5"
+        />
+        <QuickStat
+          icon={FileCheck2}
+          label="Training Complete"
+          value={trainingPct !== null ? `${trainingPct}%` : "—"}
+          sub="LMS completion rate"
+          color="#0EA5E9"
+          bg="from-sky-500/10 to-cyan-500/5"
+        />
+        <QuickStat
+          icon={TriangleAlert}
+          label="Shrinkage"
+          value={shrinkagePct !== null ? `${shrinkagePct}%` : "—"}
+          sub="workforce shrinkage"
+          color="#8B5CF6"
+          bg="from-purple-500/10 to-violet-500/5"
+        />
+      </div>
+
       {/* Main Bento Grid - Pattern #39 */}
       <div className="grid grid-cols-12 gap-4 mb-4">
         {/* Employee Growth + Hiring Funnel */}
@@ -375,11 +472,32 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
 
           <GlassPanel title="Hiring Funnel" icon={Target} iconColor="#F59E0B">
             {(() => {
-              const applications = asNumber(data.ats.total_applications ?? data.ats.applications);
-              const screened = asNumber(data.ats.screened);
-              const interviewed = asNumber(data.ats.interviewed);
-              const offered = asNumber(data.ats.offered);
-              const joined = selected;
+              /**
+               * Built from the stage breakdown the ATS actually returns.
+               *
+               * These five bars read `total_applications`, `applications`, `screened`,
+               * `interviewed` and `offered`. Not one of those keys exists on the payload — it
+               * carries `total_candidates`, `by_stage`, `by_source`, `conversion_rate` and
+               * `selected_candidates`. So every bar resolved to null, the guard below reported
+               * "no data", and a complete funnel (Applied 5,039 · Offered 1,247 · HR Screening
+               * 863 · Ops Round 491) was discarded on every page load.
+               *
+               * Stage names are matched as substrings because the same stage is written several
+               * ways across the candidate form, the recruiter app and the legacy import —
+               * "Round 1- HR Screening" and "Screening" are the same step.
+               */
+              const byStage = asRecord(data.ats.by_stage);
+              const stageSum = (...needles: string[]) =>
+                Object.entries(byStage).reduce((sum, [name, count]) => {
+                  const n = name.toLowerCase();
+                  return needles.some((x) => n.includes(x)) ? sum + (asNumber(count) ?? 0) : sum;
+                }, 0);
+              const totalCandidates = asNumber(data.ats.total_candidates ?? data.ats.total_applications);
+              const applications = totalCandidates;
+              const screened = stageSum("screening") || null;
+              const interviewed = stageSum("interview", "skill test", "op's", "round 2", "round 3", "client") || null;
+              const offered = stageSum("offer") || null;
+              const joined = stageSum("onboard", "joined", "converted", "payroll_validated") || null;
               const hasAtsData = applications !== null || screened !== null || interviewed !== null || offered !== null || joined !== null;
               const maxVal = Math.max(applications ?? 0, screened ?? 0, interviewed ?? 0, offered ?? 0, joined ?? 0, 1);
 
@@ -451,16 +569,18 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
                     <p className="text-[10px] text-gray-500">Absent</p>
                   </div>
                   <div className="bg-amber-50 rounded-lg p-2 text-center">
-                    <p className="text-xl font-bold text-amber-600">{attendanceSummary.missing_punch}</p>
-                    <p className="text-[10px] text-gray-500">Missing Punch</p>
+                    <p className="text-xl font-bold text-amber-600">{attendanceSummary.halfDay.toLocaleString()}</p>
+                    <p className="text-[10px] text-gray-500">Half Day</p>
                   </div>
                   <div className="bg-purple-50 rounded-lg p-2 text-center">
-                    <p className="text-xl font-bold text-purple-600">{attendanceSummary.on_leave}</p>
-                    <p className="text-[10px] text-gray-500">On Leave</p>
+                    <p className="text-xl font-bold text-purple-600">{attendanceSummary.missing_punch.toLocaleString()}</p>
+                    <p className="text-[10px] text-gray-500">Missing Punch</p>
                   </div>
                 </div>
                 <div className="text-center text-[10px] text-gray-400">
-                  Total tracked: {attendanceSummary.total} employees
+                  {attendanceSummary.total.toLocaleString()} employees expected
+                  {attendanceSummary.recordDate ? ` · ${new Date(attendanceSummary.recordDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}` : ''}
+                  {attendanceSummary.dataAgeDays ? ` (${attendanceSummary.dataAgeDays}d behind)` : ''}
                 </div>
               </div>
             ) : (
@@ -479,15 +599,18 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600">Onboarding Rate</span>
-                <Gauge value={submitted && pending ? Math.round((submitted / (submitted + pending)) * 100) : 85} color="#10B981" />
+                {/* No invented fallbacks. These read `: 85`, `: 77` and `: 81` when the real value
+                    was missing, so an unavailable metric rendered as a plausible-looking number
+                    — the one thing a dashboard must never do. */}
+                <Gauge value={submitted !== null && pending !== null && (submitted + pending) > 0 ? Math.round((submitted / (submitted + pending)) * 100) : 0} color="#10B981" />
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600">Attendance</span>
-                <Gauge value={Math.round(attendanceRate ?? 77)} color="#6366F1" />
+                <Gauge value={attendanceRate !== null ? Math.round(attendanceRate) : 0} color="#6366F1" />
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600">BGV Clear Rate</span>
-                <Gauge value={bgv && headcount ? Math.round(Math.max(0, 100 - (bgv / headcount) * 100)) : 81} color="#F59E0B" />
+                <Gauge value={bgv !== null && headcount ? Math.round(Math.max(0, 100 - (bgv / headcount) * 100)) : 0} color="#F59E0B" />
               </div>
             </div>
           </GlassPanel>
@@ -496,9 +619,9 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
             {hasLeaveData ? (
               <div className="space-y-3">
                 {[
-                  { type: 'On Leave Today', value: asNumber((leaveStats as Record<string, unknown>).on_leave_today ?? (leaveStats as Record<string, unknown>).onLeaveToday) ?? 0, color: '#8B5CF6' },
-                  { type: 'Pending Approval', value: asNumber((leaveStats as Record<string, unknown>).pending_approval ?? (leaveStats as Record<string, unknown>).pendingApproval) ?? 0, color: '#F59E0B' },
-                  { type: 'Approved Today', value: asNumber((leaveStats as Record<string, unknown>).approved_today ?? (leaveStats as Record<string, unknown>).approvedToday) ?? 0, color: '#10B981' },
+                  { type: 'Pending Approval', value: leaveByStatus.pending ?? 0, color: '#F59E0B' },
+                  { type: 'Open Backlog', value: pendingLeaveBacklog ?? 0, color: '#8B5CF6' },
+                  { type: 'Approved', value: leaveByStatus.approved ?? 0, color: '#10B981' },
                 ].map((item, i) => (
                   <div key={i} className="flex items-center gap-3">
                     <div className="relative">
@@ -579,10 +702,16 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
             </div>
             <div>
               <h3 className="text-sm font-semibold text-gray-900">Pending Approvals Summary</h3>
-              <p className="text-xs text-gray-500">Onboarding • BGV • eSign • Exit</p>
+              {/* Names the four stages actually shown. It read "Onboarding • BGV • eSign • Exit",
+                  promising Exit — which is not one of them — and omitting Joining Docs, which is. */}
+              <p className="text-xs text-gray-500">Onboarding • BGV • eSign • Joining Docs</p>
             </div>
           </div>
-          <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200">{(pending ?? 0) + (bgv ?? 0) + (appointmentEsign ?? 0)} Total</Badge>
+          {/* Totals all four stages it displays. The sum omitted Joining Docs, so the card showed
+              "781 Total" above four numbers adding to 992 — a total that excluded one of its own. */}
+          <Badge className="bg-indigo-100 text-indigo-700 border-indigo-200">
+            {((pending ?? 0) + (bgv ?? 0) + (appointmentEsign ?? 0) + (joiningDocs ?? 0)).toLocaleString()} Total
+          </Badge>
         </div>
 
         {/* Timeline */}
