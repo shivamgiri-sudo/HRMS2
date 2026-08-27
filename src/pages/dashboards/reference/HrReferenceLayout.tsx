@@ -178,6 +178,7 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
   const pending = metricDetail(m, "onb", "pending") ?? metricValue(m, "onb");
   const stuck = metricDetail(m, "onb", "stuck");
   const bgv = metricDetail(m, "bgv", "pending") ?? metricValue(m, "bgv");
+  const bgvCleared = metricDetail(m, "bgv", "cleared");
   const headcount = metricDetail(m, "hc", "active") ?? metricValue(m, "hc");
   const attendanceRate = metricDetail(m, "att", "attendanceRate") ?? metricValue(m, "att");
   const appointmentEsign = metricDetail(m, "appointmentEsign", "pending") ?? metricValue(m, "appointmentEsign");
@@ -631,7 +632,22 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-600">BGV Clear Rate</span>
-                <Gauge value={bgv !== null && headcount ? Math.round(Math.max(0, 100 - (bgv / headcount) * 100)) : 0} color="#F59E0B" />
+                {/* cleared / (cleared + pending) — both from the BGV metric itself.
+                    This read `100 - (bgv / headcount) * 100`, dividing pending background
+                    checks by employees on the payroll: two unrelated populations, one of
+                    candidates and one of staff. With 84 pending against 441 employees it
+                    rendered 81%, while the real clear rate sitting in the same payload
+                    (87 cleared, 84 pending) was 51% — a 30-point overstatement. It went
+                    unnoticed because 81% happened to match the Attendance gauge directly
+                    above it, so the two looked corroborating. */}
+                <Gauge
+                  value={
+                    bgvCleared !== null && bgv !== null && (bgvCleared + bgv) > 0
+                      ? Math.round((bgvCleared / (bgvCleared + bgv)) * 100)
+                      : 0
+                  }
+                  color="#F59E0B"
+                />
               </div>
             </div>
           </GlassPanel>

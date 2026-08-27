@@ -5,6 +5,32 @@ import { excludeEmployeeShapedCandidatesSql } from './ats-reporting-scope.js';
 const EXCLUDE_EMPLOYEE_SHAPED = excludeEmployeeShapedCandidatesSql('ats_candidate');
 
 /**
+ * The stages that mean "this candidate became an employee".
+ *
+ * Nine queries in this file were keyed to a stage literal spelled "joined". No row in
+ * ats_candidate has ever held that value — the live vocabulary is Onboarded (28),
+ * converted (16) and payroll_validated (4), verified against production 2026-08-27 on
+ * 38,191 candidates.
+ *
+ * So these were not merely inaccurate, they were arithmetically incapable of returning
+ * anything but zero or null on any dataset: conversion rate always 0.00%, and the whole
+ * of getTimeToHireMetrics() (overall, by role, by source, by branch, fastest, slowest)
+ * plus the hiring forecast's monthly-hires and candidate-journey figures always empty.
+ * A permanent zero on a conversion rate reads as "nothing converts" rather than "this is
+ * not being measured", and it shipped beside a funnel showing 1,272 live offers.
+ *
+ * Matched case-insensitively because the column is free varchar and mixes conventions
+ * ('Onboarded' vs 'converted'). Kept as one constant so a future stage rename breaks in
+ * one place instead of silently zeroing every one of these again.
+ */
+const JOINED_STAGES = ['onboarded', 'converted', 'payroll_validated'] as const;
+const JOINED_STAGE_LIST = JOINED_STAGES.map(s => `'${s}'`).join(', ');
+/** Boolean form, for a WHERE clause. */
+const JOINED_STAGE_PREDICATE = `LOWER(TRIM(current_stage)) IN (${JOINED_STAGE_LIST})`;
+/** 1/0 form, for SUM() inside an aggregate. */
+const JOINED_STAGE_SQL = `CASE WHEN ${JOINED_STAGE_PREDICATE} THEN 1 ELSE 0 END`;
+
+/**
  * ATS Analytics Service
  * Real queries against ats_candidate, ats_interview_submission, ats_recruiter_roster.
  * Old-system cross-DB queries removed — mas_hrms is the single source of truth.
@@ -152,8 +178,8 @@ export async function getSourceChannelROI(): Promise<{
     `SELECT
       COALESCE(sourcing_channel, 'Walk-in') as source_channel,
       COUNT(*) as total_candidates,
-      SUM(CASE WHEN current_stage = 'joined' THEN 1 ELSE 0 END) as total_hired,
-      ROUND((SUM(CASE WHEN current_stage = 'joined' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2) as conversion_rate,
+      SUM(${JOINED_STAGE_SQL}) as total_hired,
+      ROUND((SUM(${JOINED_STAGE_SQL}) / COUNT(*)) * 100, 2) as conversion_rate,
       AVG(DATEDIFF(updated_at, created_at)) as avg_time_to_hire_days
     FROM ats_candidate
     WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
@@ -214,7 +240,7 @@ export async function getPredictiveAnalytics(): Promise<{
       DATE_FORMAT(created_at, '%Y-%m') as month,
       COUNT(*) as hires
     FROM ats_candidate
-    WHERE current_stage = 'joined'
+    WHERE ${JOINED_STAGE_PREDICATE}
     AND created_at >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
     AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY month
@@ -233,7 +259,8 @@ export async function getPredictiveAnalytics(): Promise<{
       COUNT(*) as stuck_count,
       AVG(DATEDIFF(CURDATE(), updated_at)) as avg_days_stuck
     FROM ats_candidate
-    WHERE current_stage NOT IN ('joined', 'rejected', 'rejected_by_branch_head')
+    WHERE NOT (${JOINED_STAGE_PREDICATE})
+    AND LOWER(TRIM(current_stage)) NOT IN ('rejected', 'rejected_by_branch_head')
     AND active_status = 1
     AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY current_stage
@@ -245,7 +272,7 @@ export async function getPredictiveAnalytics(): Promise<{
   const [journeyTime] = await db.execute<AvgRow[]>(
     `SELECT AVG(DATEDIFF(updated_at, created_at)) as avg_days
     FROM ats_candidate
-    WHERE current_stage = 'joined' AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+    WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}`
   );
 
   // Calculate actual peak months from data (top 3 months by hire volume)
@@ -285,7 +312,7 @@ export async function getTimeToHireMetrics(): Promise<{
   const [overall] = await db.execute<AvgRow[]>(
     `SELECT AVG(DATEDIFF(updated_at, created_at)) as avg_days
     FROM ats_candidate
-    WHERE current_stage = 'joined' AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+    WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}`
   );
 
   // By role
@@ -294,7 +321,7 @@ export async function getTimeToHireMetrics(): Promise<{
       COALESCE(role_applied, applied_for_process) as role,
       ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
     FROM ats_candidate
-    WHERE current_stage = 'joined' AND ${EXCLUDE_EMPLOYEE_SHAPED}
+    WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY COALESCE(role_applied, applied_for_process)
     ORDER BY avg_days`
   );
@@ -305,7 +332,7 @@ export async function getTimeToHireMetrics(): Promise<{
       COALESCE(sourcing_channel, 'Walk-in') as source,
       ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
     FROM ats_candidate
-    WHERE current_stage = 'joined' AND ${EXCLUDE_EMPLOYEE_SHAPED}
+    WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY sourcing_channel
     ORDER BY avg_days`
   );
@@ -316,7 +343,7 @@ export async function getTimeToHireMetrics(): Promise<{
       branch_display_name as branch,
       ROUND(AVG(DATEDIFF(updated_at, created_at))) as avg_days
     FROM ats_candidate
-    WHERE current_stage = 'joined' AND ${EXCLUDE_EMPLOYEE_SHAPED}
+    WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}
     GROUP BY branch_display_name
     ORDER BY avg_days`
   );
@@ -327,7 +354,7 @@ export async function getTimeToHireMetrics(): Promise<{
       MIN(DATEDIFF(updated_at, created_at)) as fastest,
       MAX(DATEDIFF(updated_at, created_at)) as slowest
     FROM ats_candidate
-    WHERE current_stage = 'joined' AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+    WHERE ${JOINED_STAGE_PREDICATE} AND ${EXCLUDE_EMPLOYEE_SHAPED}`
   );
 
   return {

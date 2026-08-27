@@ -516,7 +516,8 @@ export async function getUnifiedInboxSummary(
           AND (assigned_to_user_id = ? OR assigned_to_role IN (${rolePlaceholders}))
         GROUP BY item_type, priority
        UNION ALL
-       SELECT type, priority, COUNT(*) AS count, MIN(action_url) AS actionUrl
+       SELECT type, priority, COUNT(*) AS count,
+              CASE WHEN COUNT(*) = 1 THEN MIN(action_url) ELSE NULL END AS actionUrl
          FROM work_inbox_item
         WHERE user_id = ? AND is_actioned = 0
         GROUP BY type, priority
@@ -538,11 +539,24 @@ export async function getUnifiedInboxSummary(
     aged_count: Number(legacyRow.aged_count ?? 0) + Number(inboxRow.aged_count ?? 0),
     unread_count: Number(inboxRow.unread_count ?? 0),
     by_source: { work_item: legacyPending, work_inbox_item: inboxPending },
+    // A multi-item group links to the inbox, not to one arbitrary member of itself.
+    //
+    // The SQL used to take MIN(action_url) across the group, so the row reading "611
+    // attendance missing punch" deep-linked to a single employee on a single date
+    // (MAS01963, 2026-08-01) and the other 610 were unreachable from the tile. Reading
+    // that row, you cannot tell you are being sent to one of 611 rather than to all of
+    // them. A single-item group still deep-links, because there the member and the group
+    // are the same thing.
+    //
+    // Note this lands on the unfiltered inbox: /api/inbox/my-pending does not expose the
+    // `type` field this grouping uses (it carries `module` and `entity_type`, a different
+    // vocabulary), so a ?type= param would filter to zero rows and be worse than none.
+    // Pre-filtering the destination needs that field plumbed through first.
     by_type: (byType as RowDataPacket[]).map((row) => ({
       type: String(row.type),
       priority: String(row.priority),
       count: Number(row.count),
-      actionUrl: (row.actionUrl as string | null) ?? null,
+      actionUrl: (row.actionUrl as string | null) ?? "/work-inbox",
     })),
   };
 }

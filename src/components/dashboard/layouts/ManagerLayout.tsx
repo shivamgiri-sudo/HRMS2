@@ -29,7 +29,13 @@ export function ManagerLayout() {
   const { data: coachData } = useQuery<any>({ queryKey: ["coaching"], queryFn: () => hrmsApi.get("/api/management/coaching"), staleTime: 60000 * 5 });
   const { data: alertsData } = useQuery<any>({ queryKey: ["mgr-alerts"], queryFn: () => hrmsApi.get("/api/management/alerts"), staleTime: 60000 * 2 });
   const { data: summaryData } = useQuery<any>({ queryKey: ["dashboard-summary", "MANAGEMENT_DASHBOARD"], queryFn: () => hrmsApi.get("/api/dashboards/MANAGEMENT_DASHBOARD/summary"), staleTime: 60000 * 3 });
-  const { data: leaveReqs } = useQuery<any>({ queryKey: ["leave-requests-all"], queryFn: () => hrmsApi.get("/api/leave/requests"), staleTime: 60000 * 5 });
+  // isError is read below. /api/leave/requests currently 500s after ~70s in production,
+  // and a failed query fell through `Array.isArray(...) ? ... : []` to an empty array —
+  // so the panel rendered a confident "0 pending, 0 approved, 0 rejected, 0 total" over a
+  // branch holding 16 pending and 1,873 approved requests. A manager reading that concludes
+  // there is nothing waiting for them. "Could not load" and "nothing to approve" must not
+  // look the same.
+  const { data: leaveReqs, isError: leaveError } = useQuery<any>({ queryKey: ["leave-requests-all"], queryFn: () => hrmsApi.get("/api/leave/requests"), staleTime: 60000 * 5 });
   const { data: atsData } = useQuery<any>({ queryKey: ["ats-stats"], queryFn: () => hrmsApi.get("/api/ats/stats"), staleTime: 60000 * 5 });
   const { data: actionsData } = useQuery<any>({ queryKey: ["my-actions"], queryFn: () => hrmsApi.get("/api/engagement-intelligence/actions"), staleTime: 60000 * 5 });
 
@@ -45,23 +51,31 @@ export function ManagerLayout() {
   const approvedLeave = requests.filter((r: any) => r.status === "approved").length;
   const rejectedLeave = requests.filter((r: any) => r.status === "rejected").length;
 
-  const attPct = summary.attendance_pct ?? 0;
-  const presentCount = summary.present_count ?? Math.round((attPct / 100) * members.length);
-  const absentCount = summary.absent_count ?? Math.max(members.length - presentCount, 0);
+  const attPct = summary.attendance_pct ?? null;
+  // null, not a derived guess. These read
+  //   present_count ?? Math.round((attPct / 100) * members.length)
+  //   absent_count  ?? Math.max(members.length - presentCount, 0)
+  // which multiplied a branch-wide attendance percentage by however many roster rows
+  // happened to load, then derived absentees by subtracting that invention from the same
+  // row count. The output was a confident, plausible headcount with no attendance record
+  // behind it — and the second figure was a fabrication built on the first. An
+  // unavailable value must render as "—", never as a number a reader can act on.
+  const presentCount = summary.present_count ?? null;
+  const absentCount = summary.absent_count ?? null;
 
   const kpiTiles = [
     { label: "Team Members", value: members.length, helper: "Total", icon: <Users className="w-4 h-4" />, accent: "#1B6AB5" },
-    { label: "Present Today", value: presentCount, helper: `${attPct.toFixed(0)}%`, icon: <UserCheck className="w-4 h-4" />, accent: "#3BAD49", status: attPct >= 80 ? "ok" as const : "warn" as const },
+    { label: "Present Today", value: presentCount ?? "—", helper: attPct !== null ? `${attPct.toFixed(0)}%` : "—", icon: <UserCheck className="w-4 h-4" />, accent: "#3BAD49", status: attPct !== null && attPct >= 80 ? "ok" as const : "warn" as const },
     { label: "On Leave", value: pendingLeave + approvedLeave, helper: `${members.length > 0 ? (((pendingLeave + approvedLeave) / members.length) * 100).toFixed(1) : 0}%`, icon: <Umbrella className="w-4 h-4" />, accent: "#F59E0B" },
-    { label: "Absent", value: absentCount > 0 ? absentCount : 0, helper: `${members.length > 0 ? ((absentCount / members.length) * 100).toFixed(1) : 0}%`, icon: <UserX className="w-4 h-4" />, accent: "#E8231A" },
+    { label: "Absent", value: absentCount ?? "—", helper: absentCount !== null && members.length > 0 ? `${((absentCount / members.length) * 100).toFixed(1)}%` : "—", icon: <UserX className="w-4 h-4" />, accent: "#E8231A" },
     { label: "New Joiners", value: summary.new_joiners_30d ?? 0, helper: "+this month", icon: <UserPlus className="w-4 h-4" />, accent: "#22D3EE" },
     { label: "Open Positions", value: Object.values(atsData?.data?.by_stage ?? {}).reduce((s: number, p: any) => s + (p.value ?? 0), 0), helper: "View jobs", icon: <Briefcase className="w-4 h-4" />, accent: "#8B5CF6", href: "/ats/command-center" },
   ];
 
   const attDonut = [
-    { name: "Present", value: presentCount, fill: "#3BAD49" },
+    { name: "Present", value: presentCount ?? 0, fill: "#3BAD49" },
     { name: "On Leave", value: pendingLeave + approvedLeave, fill: "#F59E0B" },
-    { name: "Absent", value: Math.max(absentCount, 0), fill: "#E8231A" },
+    { name: "Absent", value: Math.max(absentCount ?? 0, 0), fill: "#E8231A" },
   ].filter(d => d.value > 0);
 
   const trendData = kpiList.slice(-14).map((k: any) => ({
@@ -113,7 +127,7 @@ export function ManagerLayout() {
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                  <span className="text-base font-black text-slate-900" style={{ fontFamily: "'Fira Code', monospace" }}>{attPct.toFixed(0)}%</span>
+                  <span className="text-base font-black text-slate-900" style={{ fontFamily: "'Fira Code', monospace" }}>{attPct !== null ? `${attPct.toFixed(0)}%` : "—"}</span>
                   <span className="text-[8px] text-slate-500">Present</span>
                 </div>
               </div>
@@ -138,10 +152,15 @@ export function ManagerLayout() {
             <Link to="/leaves" className="text-xs font-semibold text-[#1B6AB5] hover:underline">View All →</Link>
           </CardHeader>
           <CardContent className="p-5 space-y-3">
+            {leaveError && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                Leave requests could not be loaded. These counts are unavailable — they are not zero.
+              </p>
+            )}
             {[
-              { label: "Pending Approval", count: pendingLeave, icon: <Clock className="w-4 h-4 text-amber-500" />, color: "text-amber-600" },
-              { label: "Approved", count: approvedLeave, icon: <UserCheck className="w-4 h-4 text-emerald-500" />, color: "text-emerald-600" },
-              { label: "Rejected", count: rejectedLeave, icon: <UserX className="w-4 h-4 text-red-500" />, color: "text-red-600" },
+              { label: "Pending Approval", count: leaveError ? "—" : pendingLeave, icon: <Clock className="w-4 h-4 text-amber-500" />, color: "text-amber-600" },
+              { label: "Approved", count: leaveError ? "—" : approvedLeave, icon: <UserCheck className="w-4 h-4 text-emerald-500" />, color: "text-emerald-600" },
+              { label: "Rejected", count: leaveError ? "—" : rejectedLeave, icon: <UserX className="w-4 h-4 text-red-500" />, color: "text-red-600" },
             ].map((row, i) => (
               <div key={i} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer">
                 <div className="flex items-center gap-2.5">
@@ -154,7 +173,7 @@ export function ManagerLayout() {
                 </div>
               </div>
             ))}
-            <p className="text-xs text-slate-500 text-center">Total Requests: <span className="font-bold">{requests.length}</span></p>
+            <p className="text-xs text-slate-500 text-center">Total Requests: <span className="font-bold">{leaveError ? "—" : requests.length}</span></p>
           </CardContent>
         </Card>
 
