@@ -423,17 +423,7 @@ export const grnService = {
     }
 
     const quantity = Number(payload.quantity);
-    const availableQuantity =
-      Number(budgetLine.quantity ?? 0)
-      - Number(budgetLine.reserved_quantity ?? 0)
-      - Number(budgetLine.consumed_quantity ?? 0);
-    if (quantity > availableQuantity + 0.0001) {
-      throw new Error(
-        `GRN quantity exceeds available approved quantity by ${(
-          quantity - availableQuantity
-        ).toFixed(4)}`
-      );
-    }
+    // Quantity does not refuse — see budget-consumption.service.ts's file-level banner. The money check below is the limit.
 
     const unitRate = payload.unitRate == null
       ? Number(budgetLine.unit_rate)

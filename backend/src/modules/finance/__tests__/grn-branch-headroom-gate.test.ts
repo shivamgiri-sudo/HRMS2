@@ -386,7 +386,7 @@ describe("saveAllocations — branch-wide headroom gate (Group C step 2a)", () =
     expect(Number(rows[1].quantity)).toBeCloseTo(40, 6); // ₹800 / ₹20 per unit
   });
 
-  it("5. spillover draw's required quantity exceeds the sibling line's own available_quantity — throws, even though money headroom was sufficient", async () => {
+  it("5. spillover draw needs more UNITS than the sibling line has left — allowed now, because money is the only gate", async () => {
     const lineA: FakeBudgetLine = {
       id: "line-A", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Stationery",
       item_name: "Stationery Item A", cost_centre_id: "cc-A", cost_centre_name: "CC A", process_id: null,
@@ -401,6 +401,10 @@ describe("saveAllocations — branch-wide headroom gate (Group C step 2a)", () =
       unit: "nos", unit_rate: 20, tax_treatment: "exclusive", gst_rate: 0, gst_type: "none",
       recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
       // Plenty of MONEY (₹20000) but only 35 units of quantity — the spillover draw needs 40.
+      // That used to be a hard stop. It no longer is: whole-unit counts are a planning figure,
+      // not a spending control (see the banner atop budget-consumption.service.ts). 1,506 of the
+      // 1,553 live allocations book quantity 1 whatever they are worth, so a unit count runs out
+      // long before its money does and Rs 8.16 L of approved budget had become unreachable.
       quantity: 35, reserved_quantity: 0, consumed_quantity: 0,
       gross_amount: 20000, reserved_amount: 0, consumed_amount: 0,
     };
@@ -412,10 +416,45 @@ describe("saveAllocations — branch-wide headroom gate (Group C step 2a)", () =
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
 
+    await grnSmartService.saveAllocations(
+      "grn-1",
+      { allocations: [{ budgetLineId: "line-A", quantity: 100, unitRate: 10 }] },
+      "user-1",
+      "branch_head"
+    );
+
+    // Rs 1,000 needed: line A covers its remaining Rs 200, line B funds the other Rs 800 — 40
+    // units against a line with 35 left, which is exactly what used to be refused.
+    const rows = stateRef.current.insertedAllocations;
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r: any) => r.budget_line_id)).toEqual(["line-A", "line-B"]);
+    const total = rows.reduce((sum: number, r: any) => sum + Number(r.amount_with_tax), 0);
+    expect(total).toBeCloseTo(1000, 6);
+    expect(Number(rows[1].quantity)).toBeCloseTo(40, 6);
+  });
+
+  it("5b. the MONEY gate is untouched — a draw the whole branch cannot fund is still refused", async () => {
+    const lineC: FakeBudgetLine = {
+      id: "line-C", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Stationery",
+      item_name: "Stationery Item C", cost_centre_id: "cc-A", cost_centre_name: "CC A", process_id: null,
+      unit: "nos", unit_rate: 10, tax_treatment: "exclusive", gst_rate: 0, gst_type: "none",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
+      // Units to spare, money nearly gone: the opposite of test 5, and still a hard stop.
+      quantity: 10000, reserved_quantity: 0, consumed_quantity: 0,
+      gross_amount: 10000, reserved_amount: 9800, consumed_amount: 0, // available: Rs 200
+    };
+    stateRef.current = makeState({
+      grn: baseGrn(),
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
+      budgetLines: [lineC],
+      costCentres: [{ id: "cc-A", cost_centre_code: "CCA", cost_centre_name: "CC A", branch_id: "br-1", active_status: 1 }],
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+
     await expect(
       grnSmartService.saveAllocations(
         "grn-1",
-        { allocations: [{ budgetLineId: "line-A", quantity: 100, unitRate: 10 }] },
+        { allocations: [{ budgetLineId: "line-C", quantity: 100, unitRate: 10 }] },
         "user-1",
         "branch_head"
       )

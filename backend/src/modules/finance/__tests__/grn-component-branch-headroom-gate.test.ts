@@ -441,7 +441,7 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
     }
   });
 
-  it("5. spillover sub-row's recomputed quantity exceeds the funding line's own available_quantity — throws HEADROOM_EXCEEDED even though money-headroom was sufficient", async () => {
+  it("5. spillover sub-row needs more UNITS than the funding line has left — allowed now, because money is the only gate", async () => {
     const lineA: FakeBudgetLine = {
       id: "line-A", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Consumables",
       item_name: "Consumables A", cost_centre_id: "cc-A", cost_centre_name: "CC A", process_id: null,
@@ -456,6 +456,8 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
       unit: "nos", unit_rate: 20, tax_treatment: "exclusive", gst_rate: 0, gst_type: "cgst_sgst",
       recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
       // Plenty of MONEY, but the spillover draw of ~₹500 needs 25 units at ₹20/unit — only 5 left.
+      // No longer a stop: the whole-unit count is a planning figure, not a spending control.
+      // See the banner atop budget-consumption.service.ts.
       quantity: 5, reserved_quantity: 0, consumed_quantity: 0,
       gross_amount: 50000, reserved_amount: 0, consumed_amount: 0,
     };
@@ -467,13 +469,50 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
     });
     const { grnSmartService } = await import("../grn-smart.service.js");
 
+    await grnSmartService.saveComponentAllocations(
+      "grn-1",
+      {
+        declaredInvoiceTotal: 700,
+        components: [{ amountWithoutTax: 700, gstRate: 0 }],
+        costCentreSplits: [{ budgetLineId: "line-A", percentage: 100 }],
+      },
+      "user-1",
+      "branch_head"
+    );
+
+    // Rs 700 split: line A funds its remaining ~Rs 200, line B the rest — more units than B has
+    // left, which is exactly what used to be refused. The money still reconciles to the invoice.
+    const rows = stateRef.current.insertedAllocations;
+    expect(rows.length).toBeGreaterThan(1);
+    const total = rows.reduce((sum: number, r: any) => sum + Number(r.amount_with_tax), 0);
+    expect(total).toBeCloseTo(700, 6);
+  });
+
+  it("5b. the MONEY gate is untouched — a split the whole branch cannot fund is still refused", async () => {
+    const lineD: FakeBudgetLine = {
+      id: "line-D", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Consumables",
+      item_name: "Consumables D", cost_centre_id: "cc-A", cost_centre_name: "CC A", process_id: null,
+      unit: "nos", unit_rate: 10, tax_treatment: "exclusive", gst_rate: 0, gst_type: "cgst_sgst",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
+      // Units to spare, money nearly gone: the mirror image of test 5, and still a hard stop.
+      quantity: 10000, reserved_quantity: 0, consumed_quantity: 0,
+      gross_amount: 10000, reserved_amount: 0, consumed_amount: 9800, // available: Rs 200
+    };
+    stateRef.current = makeState({
+      grn: baseGrn(),
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
+      budgetLines: [lineD],
+      costCentres: [{ id: "cc-A", cost_centre_code: "CCA", cost_centre_name: "CC A", branch_id: "br-1", active_status: 1 }],
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+
     await expect(
       grnSmartService.saveComponentAllocations(
         "grn-1",
         {
           declaredInvoiceTotal: 700,
           components: [{ amountWithoutTax: 700, gstRate: 0 }],
-          costCentreSplits: [{ budgetLineId: "line-A", percentage: 100 }],
+          costCentreSplits: [{ budgetLineId: "line-D", percentage: 100 }],
         },
         "user-1",
         "branch_head"

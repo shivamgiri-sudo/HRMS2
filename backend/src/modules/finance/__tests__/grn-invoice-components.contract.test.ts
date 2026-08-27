@@ -156,12 +156,13 @@ describe("GRN invoice-GST-components (unified vendor-GRN flow)", () => {
     const overBudgetRegex = eval(regexMatch![1]) as RegExp;
     expect(overBudgetRegex.test(message)).toBe(true);
 
-    // The quantity-exceeded message is a SEPARATE case — still phrased "split allocation exceeds
-    // available quantity by" in grn-smart.service.ts (both saveAllocations() and
-    // saveComponentAllocations()) — which the frontend's budget-only regex does not (and should
-    // not) match; that is not a "request a budget increase" situation.
+    // There is no longer a SEPARATE quantity-exceeded message to distinguish this one from.
+    // Both save paths dropped their whole-unit hard stop on 2026-08-27 — the unit count is a
+    // planning figure, not a spending control (banner atop budget-consumption.service.ts) — so
+    // money-headroom is the only refusal a raiser can hit, and "request a budget increase" is
+    // always the right offer when they hit it.
     const service = read("src/modules/finance/grn-smart.service.ts");
-    expect(service).toContain("split allocation exceeds available quantity by");
+    expect(service).not.toContain("split allocation exceeds available quantity by");
   });
 
   it("getWorkspace always returns invoiceComponents (empty for legacy/imprest GRNs, never undefined)", () => {

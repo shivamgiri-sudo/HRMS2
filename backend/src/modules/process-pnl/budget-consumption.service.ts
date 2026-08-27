@@ -3,6 +3,31 @@ import type { PoolConnection } from "mysql2/promise";
 
 import { refuse } from "./finance-error.js";
 import { budgetClosureService } from "./budget-closure.service.js";
+
+/*
+ * QUANTITY IS NOT A SPENDING CONTROL — MONEY IS. (2026-08-27, owner decision)
+ *
+ * A budget line carries two ledgers: money (gross/reserved/consumed_amount) and quantity
+ * (quantity/reserved/consumed_quantity). Only the money one is trustworthy.
+ *
+ * Lines are planned in whole units — "1 Month @ Rs 1,19,000", "1 Connection @ Rs 1,20,000" — and
+ * every GRN books ONE unit against them regardless of its value: 1,506 of the 1,553 allocations
+ * on live budgets carry quantity = 1.0000. So the second invoice of the month exhausts a 1-unit
+ * line while most of the money is still unspent, and 74% of invoices come in UNDER the approved
+ * unit rate, which strands money on the line every time a unit is burned. On top of that the
+ * quantity ledger has drifted independently of its own allocations on 362 of 701 active lines
+ * (the money ledger: 23), including lines showing consumed_quantity > 0 with no allocation rows
+ * at all.
+ *
+ * Consequence before this change: availableLines() hid any line with no quantity left, so the
+ * raiser was told the head/sub-head had no budget and to request a top-up — for money that was
+ * approved and sitting there. Rs 8,16,707 across 24 lines and 3 branches was unreachable in
+ * 2026-08 alone, a quarter of every line that still had money on it.
+ *
+ * Quantity is still WRITTEN and still displayed, so the planning figure keeps updating and stays
+ * available for reporting. It simply never refuses a GRN any more. The money checks beside each
+ * removed quantity check are untouched and remain the hard limit on spend.
+ */
 function roundMoney(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
@@ -99,11 +124,7 @@ export const budgetConsumptionService = {
         `GRN exceeds available budget amount by ${(amount - available.amount).toFixed(2)}`
       );
     }
-    if (quantity > available.quantity + 0.0001) {
-      throw refuse(409, "GRN_EXCEEDS_BUDGET_QUANTITY",
-        `GRN exceeds available budget quantity by ${roundQuantity(quantity - available.quantity)}`
-      );
-    }
+    // Quantity deliberately does not refuse — see the banner at the top of this file.
 
     await connection.execute(
       `UPDATE finance_budget_line
@@ -126,13 +147,10 @@ export const budgetConsumptionService = {
     const amount = consumptionBasis(line, roundMoney(amountInput), netAmountInput);
     validatePositive(amount, quantity);
     const reservedAmount = Number(line.reserved_amount ?? 0);
-    const reservedQuantity = Number(line.reserved_quantity ?? 0);
     if (reservedAmount + 0.01 < amount) {
       throw refuse(409, "RESERVATION_INSUFFICIENT", "Reserved budget amount is lower than the GRN amount");
     }
-    if (reservedQuantity + 0.0001 < quantity) {
-      throw refuse(409, "RESERVATION_INSUFFICIENT", "Reserved budget quantity is lower than the GRN quantity");
-    }
+    // Quantity deliberately does not refuse — see the banner at the top of this file.
 
     await connection.execute(
       `UPDATE finance_budget_line
@@ -163,9 +181,7 @@ export const budgetConsumptionService = {
     if (Number(line.reserved_amount ?? 0) + 0.01 < amount) {
       throw refuse(409, "RELEASE_EXCEEDS_RESERVED", "Cannot release more budget amount than is reserved");
     }
-    if (Number(line.reserved_quantity ?? 0) + 0.0001 < quantity) {
-      throw refuse(409, "RELEASE_EXCEEDS_RESERVED", "Cannot release more budget quantity than is reserved");
-    }
+    // Quantity deliberately does not refuse — see the banner at the top of this file.
 
     await connection.execute(
       `UPDATE finance_budget_line
@@ -194,9 +210,7 @@ export const budgetConsumptionService = {
     if (Number(line.consumed_amount ?? 0) + 0.01 < amount) {
       throw refuse(409, "REVERSAL_EXCEEDS_CONSUMED", "Cannot reverse more budget amount than is consumed");
     }
-    if (Number(line.consumed_quantity ?? 0) + 0.0001 < quantity) {
-      throw refuse(409, "REVERSAL_EXCEEDS_CONSUMED", "Cannot reverse more budget quantity than is consumed");
-    }
+    // Quantity deliberately does not refuse — see the banner at the top of this file.
 
     await connection.execute(
       `UPDATE finance_budget_line

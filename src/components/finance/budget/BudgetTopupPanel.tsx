@@ -577,13 +577,12 @@ export function BudgetTopupPanel({
 
       if (!selectedLineId) throw new Error("Pick a budget line");
       const line = lines.find((l) => l.id === selectedLineId);
-      // A quantity of 0 is not a safe fallback. The applied top-up raises the line's rupee
-      // ceiling but not its unit ceiling, and a GRN is blocked by whichever runs out first
-      // (available_quantity as well as available_gross_amount) — so the request would be
-      // approved and the GRN that prompted it would still be blocked, with nothing on screen
-      // explaining why. This happens when the deep-linked preset line is not in `lines`, which
-      // is exactly the case a blocked GRN produces: availableLines() filters on
-      // available_quantity > 0, so the line that just ran out is excluded from the picker.
+      // A quantity of 0 is still not a safe fallback — it makes the requested unit ceiling
+      // meaningless — though it is no longer a blocking one: as of 2026-08-27 a GRN is gated on
+      // money alone and the unit count never refuses (see budget-consumption.service.ts's
+      // file-level banner). availableLines() filters on available_gross_amount only, so a line
+      // with money left is always in `lines`; a missing preset line now means the line really has
+      // no rupees left.
       if (!line) {
         throw new Error(
           "Select a budget line from the list. The line this request came from is no longer "
@@ -931,10 +930,12 @@ export function BudgetTopupPanel({
                 </Select>
                 {/* The old copy asserted one cause ("hasn't reached that stage yet") for what are
                     two quite different situations, and was simply wrong in the second: a fully
-                    approved budget whose lines are all consumed to zero also returns nothing here,
-                    because availableLines() filters on available_quantity > 0 AND
-                    available_gross_amount > 0. Telling someone their budget is unapproved when it
-                    is approved and exhausted sends them to the wrong person. */}
+                    approved budget whose lines are all spent to zero also returns nothing here,
+                    because availableLines() filters on available_gross_amount > 0. (It filtered
+                    on available_quantity too until 2026-08-27, which additionally hid lines that
+                    still had money — see budget-consumption.service.ts's banner.) Telling someone
+                    their budget is unapproved when it is approved and exhausted sends them to the
+                    wrong person. */}
                 {!linesQuery.isLoading && !lines.length && (
                   <p className="mt-1.5 text-xs text-amber-700">
                     No budget line with remaining headroom for {period}. Either this branch's budget for

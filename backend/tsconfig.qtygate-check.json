@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/process-pnl/budget-consumption.service.ts",
+    "src/modules/process-pnl/branch-budget.service.ts",
+    "src/modules/finance/grn-smart.service.ts",
+    "src/modules/finance/grn.service.ts"
+  ]
+}

@@ -213,7 +213,11 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     expect(service).toContain(
       "const linkedQuantity = roundQuantity(Number(allocation.amount_without_tax) / lineUnitRate);"
     );
-    expect(service).toContain("remain approved on that line");
+    // The re-derived quantity is STORED and reserved with, but it no longer decides whether the
+    // link is allowed — the whole-unit count stopped being a spending control on 2026-08-27 (see
+    // the banner atop budget-consumption.service.ts). The money check two assertions up
+    // ("exceeds the line's available budget of") is the surviving gate.
+    expect(service).not.toContain("remain approved on that line");
     expect(service).toContain("has no approved unit rate to derive a consumed quantity from");
     expect(service).toContain("quantity = ?, unit = ?, unit_rate = ?");
 

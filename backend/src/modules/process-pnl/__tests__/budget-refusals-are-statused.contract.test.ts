@@ -88,7 +88,11 @@ describe("budget refusals reach the user", () => {
 
     const messages = [...consumption.matchAll(/throw refuse\(\d{3}, "GRN_EXCEEDS_BUDGET_\w+",\s*([\s\S]{0,120}?)\);/g)]
       .map((m) => m[1]);
-    expect(messages.length).toBe(2);
+    // One, not two: GRN_EXCEEDS_BUDGET_QUANTITY was removed on 2026-08-27 — the whole-unit
+    // count is not a spending control and must never refuse a GRN (see the banner at the top of
+    // budget-consumption.service.ts). GRN_EXCEEDS_BUDGET_AMOUNT is the surviving hard limit and
+    // is the one the form's shortcut keys on.
+    expect(messages.length).toBe(1);
     for (const message of messages) {
       expect(message, "must still satisfy /exceeds (the )?available budget/i")
         .toMatch(/exceeds (the )?available budget/i);

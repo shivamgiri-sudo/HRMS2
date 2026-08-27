@@ -2219,7 +2219,11 @@ export const branchBudgetService = {
                 ON committed.budget_line_id = l.id
                AND committed.cost_centre_id = ?
         WHERE ${conditions.join(" AND ")}
-        HAVING available_quantity > 0 AND available_gross_amount > 0
+        -- Money only. Filtering on available_quantity too hid any line whose whole-unit
+        -- count had run out while its money had not — a quarter of all lines with money
+        -- left, Rs 8.16 L in 2026-08 — and the raiser was then told to raise a top-up for
+        -- budget that was already approved. See budget-consumption.service.ts's file-level banner.
+        HAVING available_gross_amount > 0
         ORDER BY l.head, l.sub_head, l.item_name`,
       // The two joined placeholders are bound first because they appear before the WHERE clause.
       // Passing null for both when no cost centre was asked about makes each join match nothing,

@@ -967,27 +967,11 @@ export const grnSmartService = {
           const fundingUnitRate = Number(fundingLine.unit_rate);
           const drawQuantity = fundingUnitRate > 0 ? roundQuantity(quotedAmount / fundingUnitRate) : 0;
 
-          // Quantity headroom is a SEPARATE check from the money split above. allocateAcrossLines
-          // only ever balances money (see its doc comment) — it has no visibility into physical
-          // unit quantity, so a draw that clears the money check can still ask for more of this
-          // specific line's own available_quantity than remains. This is a hard stop for the
-          // whole save: deliberately NOT re-run against the allocator excluding this line, since
-          // joint amount+quantity bin-packing across the branch is out of scope here. Netted
-          // against this same save's own earlier draws against this line (drawnQuantityByLineId),
-          // for the same reason the money side is netted above.
-          const alreadyDrawnQuantity = drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0;
-          const availableQuantity = Number(fundingLine.available_quantity) - alreadyDrawnQuantity;
-          if (drawQuantity > availableQuantity + 0.0001) {
-            const shortfall = roundQuantity(drawQuantity - availableQuantity);
-            throw Object.assign(
-              refuse(
-                409,
-                "HEADROOM_EXCEEDED",
-                `${fundingLine.item_name}: split allocation exceeds available quantity by ${shortfall} ${fundingLine.unit}`
-              ),
-              { shortfall }
-            );
-          }
+          // Quantity used to be a SECOND hard stop here, on top of the money split above. It no
+          // longer refuses: the whole-unit count is not a spending control (see budget-consumption.service.ts's file-level banner).
+          // allocateAcrossLines has already established that the branch aggregate covers the
+          // money, and money is the limit. drawnQuantityByLineId is still maintained below so the
+          // per-line running total stays available for the quantity written to each row.
 
           const amounts = calculateBudgetLine({
             head: String(fundingLine.head),
@@ -1583,22 +1567,8 @@ export const grnSmartService = {
             // against that line's own rate.
             const subQuantity = fundingUnitRate > 0 ? roundQuantity(scaledAmounts.baseAmount / fundingUnitRate) : 0;
 
-            // Quantity headroom is a SEPARATE check from the money split above, netted against
-            // this same save's own earlier draws against this line — a hard stop, not rebalanced
-            // further, exactly like step 2a.
-            const alreadyDrawnQuantity = drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0;
-            const availableQuantity = Number(fundingLine.available_quantity) - alreadyDrawnQuantity;
-            if (subQuantity > availableQuantity + 0.0001) {
-              const shortfall = roundQuantity(subQuantity - availableQuantity);
-              throw Object.assign(
-                refuse(
-                  409,
-                  "HEADROOM_EXCEEDED",
-                  `${fundingLine.item_name}: split allocation exceeds available quantity by ${shortfall} ${fundingLine.unit}`
-                ),
-                { shortfall }
-              );
-            }
+            // Quantity no longer refuses here either — same reasoning as the sibling draw loop
+            // in saveAllocations(). See budget-consumption.service.ts's file-level banner.
 
             const existingRemarks = cell.remarks;
             const remarks = drawIndex === 0
@@ -1632,7 +1602,10 @@ export const grnSmartService = {
               isUnbudgeted: Boolean(split.isUnbudgeted),
             });
 
-            drawnQuantityByLineId.set(String(fundingLine.id), alreadyDrawnQuantity + subQuantity);
+            drawnQuantityByLineId.set(
+              String(fundingLine.id),
+              (drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0) + subQuantity
+            );
           }
 
           drawnAmountByLineId.set(String(fundingLine.id), (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + draw.amount);
@@ -2203,16 +2176,8 @@ export const grnSmartService = {
           );
         }
         const linkedQuantity = roundQuantity(Number(allocation.amount_without_tax) / lineUnitRate);
-        const availableQuantity = roundQuantity(
-          Number(line.quantity || 0)
-          - Number(line.reserved_quantity || 0)
-          - Number(line.consumed_quantity || 0)
-        );
-        if (linkedQuantity > availableQuantity + 0.0001) {
-          throw new Error(
-            `${allocation.cost_centre_name || "Cost centre"}: this split needs ${linkedQuantity} ${line.unit} but only ${availableQuantity} ${line.unit} remain approved on that line`
-          );
-        }
+        // The quantity derived here is still stored on the allocation, but it no longer decides
+        // whether the link is allowed — reserve() below enforces the money. See budget-consumption.service.ts's file-level banner.
 
         await connection.execute(
           `UPDATE grn_cost_allocation
