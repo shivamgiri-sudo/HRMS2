@@ -38,6 +38,26 @@ const COST_CENTRE_DISPLAY_NAME_SQL = `
   END
 `.trim();
 
+/**
+ * CSV cell escaping for both export routes.
+ *
+ * Beyond the usual quote-doubling, this neutralises spreadsheet formula injection: Excel,
+ * LibreOffice and Google Sheets all evaluate a cell whose text begins with `=`, `+`, `-`,
+ * `@`, or a leading tab/CR as a formula, so a value like `=HYPERLINK(...)` or `=cmd|...`
+ * stored in a client name or line particular executes when the finance team opens the
+ * export. Several fields reaching these two exports are free text an operator typed
+ * (`category`, `month_label`) or that arrived from the legacy `db_bill` cutover
+ * (`billing_client_name`, `company_name`), so none of them can be assumed safe.
+ *
+ * Prefixing a single quote is the standard mitigation: the spreadsheet treats the cell as
+ * literal text and does not display the quote, so the exported value still reads correctly.
+ */
+function escape(value: unknown): string {
+  const raw = String(value ?? "");
+  const guarded = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+  return `"${guarded.replace(/"/g, '""')}"`;
+}
+
 router.post(
   "/proformas",
   requireRole(...ALLOWED_ROLES),
@@ -111,6 +131,24 @@ router.get(
     // intact for the frontend's current InvoiceRow shape; the two extra columns are
     // additive. Server-side filter + pagination added 2026-08-21 (Phase 2) — the page
     // used to fetch the entire table and filter client-side.
+    //
+    // ORDER BY fixed 2026-08-27 — two separate defects in one clause:
+    //
+    // 1. It sorted by `created_at`, which for 10,794 of 10,794 rows is the CUTOVER LOAD
+    //    timestamp, not a business date. The final backfill batch (migration 1309's
+    //    LEGACY-UNMAPPED-VODAFONE-2015-17 rows) loaded last, so page 1 of the Invoices tab
+    //    opened on 2015-16/2016-17 Vodafone bills — the OLDEST invoices in the book shown
+    //    as the newest — while this month's invoices sat somewhere inside 432 pages.
+    //    Confirmed live in the browser before the fix. `invoice_date` is what a finance
+    //    user means by "latest".
+    // 2. `created_at` is `datetime(0)` and the bulk load wrote up to 30 rows in the same
+    //    second, so the sort key was massively non-unique with NO tiebreaker. MySQL does
+    //    not guarantee a stable order across separate LIMIT/OFFSET queries when the
+    //    ORDER BY key ties, so paging could show one invoice twice and skip another
+    //    entirely. `ci.id` is the primary key, so appending it makes the order total.
+    //
+    // The export below uses the identical ordering — see buildInvoiceListQuery's note on
+    // why the two must never drift.
     const { where, params } = buildInvoiceListQuery(req.query as Record<string, unknown>);
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
@@ -126,7 +164,7 @@ router.get(
        FROM client_invoice ci
        LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
        ${where}
-       ORDER BY ci.created_at DESC
+       ORDER BY ci.invoice_date DESC, ci.created_at DESC, ci.id DESC
        LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
@@ -161,7 +199,7 @@ router.get(
        FROM client_invoice ci
        LEFT JOIN cost_centre_master cc ON cc.id = ci.cost_centre_id
        ${where}
-       ORDER BY ci.created_at DESC`,
+       ORDER BY ci.invoice_date DESC, ci.created_at DESC, ci.id DESC`,
       params
     );
 
@@ -170,7 +208,6 @@ router.get(
       "Cost Centre Code", "Cost Centre", "GST Type", "Taxable Value", "IGST", "CGST", "SGST",
       "Grand Total", "Created At",
     ];
-    const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
     const csvRows = [
       columns.map(escape).join(","),
       ...rows.map((r) =>
@@ -209,6 +246,21 @@ router.get(
          AND DATE_FORMAT(invoice_date, '%Y-%m') = DATE_FORMAT(CURDATE(), '%Y-%m')`
     );
 
+    // "Pending approval" must count only proformas somebody can ACT on. Both
+    // approveInvoice and rejectInvoice refuse any row with is_migrated = 1 (design §3 —
+    // a migrated historical record is read-only through the live workflow), so counting
+    // migrated proformas here produced a work queue that could never reach zero:
+    // verified live 2026-08-27 that both of the 2 rows in this tile were is_migrated = 1,
+    // and clicking Approve in the browser returned
+    // "...is a migrated historical record (is_migrated=1) and cannot be approved".
+    // The list endpoint still returns those rows — they are legitimate history to read —
+    // this only stops them being reported as outstanding work.
+    const [[pendingActionable]] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS count
+       FROM client_invoice
+       WHERE invoice_status = 'proforma' AND is_migrated = 0`
+    );
+
     const invoices: Record<string, { count: number; total: number }> = {
       proforma: { count: 0, total: 0 }, approved: { count: 0, total: 0 }, rejected: { count: 0, total: 0 },
     };
@@ -228,7 +280,7 @@ router.get(
         invoices,
         creditNotes,
         thisMonthBilled: { count: Number(thisMonth?.count ?? 0), total: Number(thisMonth?.total ?? 0) },
-        pendingApprovalCount: invoices.proforma.count,
+        pendingApprovalCount: Number(pendingActionable?.count ?? 0),
       },
     });
   })
@@ -402,7 +454,7 @@ router.get(
        LEFT JOIN cost_centre_master cc ON cc.id = ccn.cost_centre_id
        LEFT JOIN client_invoice ci ON ci.id = ccn.invoice_id
        ${where}
-       ORDER BY ccn.created_at DESC
+       ORDER BY ccn.credit_date DESC, ccn.created_at DESC, ccn.id DESC
        LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
@@ -439,7 +491,7 @@ router.get(
        LEFT JOIN cost_centre_master cc ON cc.id = ccn.cost_centre_id
        LEFT JOIN client_invoice ci ON ci.id = ccn.invoice_id
        ${where}
-       ORDER BY ccn.created_at DESC`,
+       ORDER BY ccn.credit_date DESC, ccn.created_at DESC, ccn.id DESC`,
       params
     );
 
@@ -448,7 +500,6 @@ router.get(
       "Credit Date", "Cost Centre Code", "Cost Centre", "GST Type", "Taxable Value", "IGST",
       "CGST", "SGST", "Grand Total", "Created At",
     ];
-    const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
     const csvRows = [
       columns.map(escape).join(","),
       ...rows.map((r) =>

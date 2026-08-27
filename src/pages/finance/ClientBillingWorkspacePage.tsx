@@ -89,6 +89,34 @@ const EMPTY_FILTERS = (status: string): ListFilterState => ({
   status, fromDate: "", toDate: "", costCentreId: "", search: "", page: 1,
 });
 
+/**
+ * Shown in the actions cell in place of Approve/Reject on a row the live workflow can
+ * never act on.
+ *
+ * Every one of the 10,794 invoices and 144 credit notes currently in this module came from
+ * the 2026-08-19 legacy cutover and carries `is_migrated = 1`. Both approval services
+ * refuse those rows outright (design §3 — a migrated historical record is read-only through
+ * the live workflow), but this page rendered Approve/Reject on them regardless, so the two
+ * pending proformas and 23 draft credit notes presented as actionable work that no click
+ * could ever clear. Confirmed live 2026-08-27: clicking Approve returned
+ * "...is a migrated historical record (is_migrated=1) and cannot be approved through the
+ * live workflow" — a developer-facing string, aimed at a finance user, naming an internal
+ * column and a raw UUID.
+ *
+ * The row stays fully visible and readable (Preview / Download PDF / detail are unchanged);
+ * only the two buttons that cannot succeed are replaced by an explanation of why.
+ */
+function HistoricalRecordTag() {
+  return (
+    <span
+      className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500"
+      title="Migrated from the legacy billing system — historical record, read-only. It cannot be approved or rejected here."
+    >
+      Historical
+    </span>
+  );
+}
+
 /** Compact stat tile — same visual language as BranchBudgetManagementWorkspace.tsx's
  *  `Metric` (border/tint per tone, uppercase label, bold value), kept file-local to match
  *  that page's own convention of not sharing this across pages. */
@@ -434,8 +462,13 @@ export default function ClientBillingWorkspacePage() {
       invalidateAll();
       setApproveTarget(null);
     },
+    // Dismiss the confirm dialog on failure too, not only on success. It used to stay open
+    // over the toast: the click appeared to do nothing, the error was hidden behind the
+    // dialog, and the still-live Approve button invited the user to try again forever.
+    // Observed live 2026-08-27 against a migrated proforma.
     onError: (error: Error) => {
       toast({ title: "Approval failed", description: error.message, variant: "destructive" });
+      setApproveTarget(null);
     },
   });
 
@@ -446,8 +479,10 @@ export default function ClientBillingWorkspacePage() {
       invalidateAll();
       setApproveCreditTarget(null);
     },
+    // Same reasoning as approveMutation above — close the dialog so the toast is visible.
     onError: (error: Error) => {
       toast({ title: "Approval failed", description: error.message, variant: "destructive" });
+      setApproveCreditTarget(null);
     },
   });
 
@@ -640,22 +675,26 @@ export default function ClientBillingWorkspacePage() {
                               </Button>
                               <DownloadPdfButton kind="proforma" id={row.id} docNumber={row.proforma_no ?? row.id} downloadingId={downloadingId} onDownload={handleDownload} />
                               {row.invoice_status === "proforma" && (
-                                <>
-                                  <Button
-                                    size="icon" variant="ghost" className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
-                                    title="Approve"
-                                    onClick={() => setApproveTarget({ id: row.id, label: row.proforma_no ?? row.id })}
-                                  >
-                                    <ThumbsUp className="h-3.5 w-3.5" />
-                                  </Button>
-                                  <Button
-                                    size="icon" variant="ghost" className="h-7 w-7 text-rose-600 hover:text-rose-700"
-                                    title="Reject"
-                                    onClick={() => setRejectInvoiceTarget({ id: row.id, label: row.proforma_no ?? row.id })}
-                                  >
-                                    <XCircle className="h-3.5 w-3.5" />
-                                  </Button>
-                                </>
+                                row.is_migrated
+                                  ? <HistoricalRecordTag />
+                                  : (
+                                    <>
+                                      <Button
+                                        size="icon" variant="ghost" className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
+                                        title="Approve"
+                                        onClick={() => setApproveTarget({ id: row.id, label: row.proforma_no ?? row.id })}
+                                      >
+                                        <ThumbsUp className="h-3.5 w-3.5" />
+                                      </Button>
+                                      <Button
+                                        size="icon" variant="ghost" className="h-7 w-7 text-rose-600 hover:text-rose-700"
+                                        title="Reject"
+                                        onClick={() => setRejectInvoiceTarget({ id: row.id, label: row.proforma_no ?? row.id })}
+                                      >
+                                        <XCircle className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </>
+                                  )
                               )}
                             </div>
                           </TableCell>
@@ -839,13 +878,17 @@ export default function ClientBillingWorkspacePage() {
                               </Button>
                               <DownloadPdfButton kind="credit-note" id={row.id} docNumber={row.credit_no ?? row.id} downloadingId={downloadingId} onDownload={handleDownload} />
                               {row.credit_status === "draft" && (
-                                <Button
-                                  size="icon" variant="ghost" className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
-                                  title="Approve"
-                                  onClick={() => setApproveCreditTarget({ id: row.id, label: row.credit_no ?? row.id })}
-                                >
-                                  <ThumbsUp className="h-3.5 w-3.5" />
-                                </Button>
+                                row.is_migrated
+                                  ? <HistoricalRecordTag />
+                                  : (
+                                    <Button
+                                      size="icon" variant="ghost" className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
+                                      title="Approve"
+                                      onClick={() => setApproveCreditTarget({ id: row.id, label: row.credit_no ?? row.id })}
+                                    >
+                                      <ThumbsUp className="h-3.5 w-3.5" />
+                                    </Button>
+                                  )
                               )}
                               <Button
                                 size="icon" variant="ghost" className="h-7 w-7"

@@ -13,17 +13,19 @@ import { Textarea } from "@/components/ui/textarea";
 import { SearchableSelect, type SearchableOption } from "@/components/ui/searchable-select";
 import { useToast } from "@/hooks/use-toast";
 import { useCostCentreList } from "@/hooks/useCostCentreManagement";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { createProforma, type CreateProformaPayload } from "@/lib/clientBillingApi";
 import { LineItemsEditor, emptyLine, type LineItemDraft } from "./LineItemsEditor";
+import {
+  BILLING_CATEGORY_OPTIONS, currentFinanceYear, financeYearOptions, monthLabelOptions, todayLocalISO,
+} from "./billingFieldOptions";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreated: () => void;
-}
-
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 export function CreateProformaSheet({ open, onOpenChange, onCreated }: Props) {
@@ -32,9 +34,9 @@ export function CreateProformaSheet({ open, onOpenChange, onCreated }: Props) {
 
   const [costCentreId, setCostCentreId] = useState("");
   const [category, setCategory] = useState("");
-  const [financeYear, setFinanceYear] = useState("");
+  const [financeYear, setFinanceYear] = useState(currentFinanceYear());
   const [monthLabel, setMonthLabel] = useState("");
-  const [invoiceDate, setInvoiceDate] = useState(todayISO());
+  const [invoiceDate, setInvoiceDate] = useState(todayLocalISO());
   const [description, setDescription] = useState("");
   const [applyGst, setApplyGst] = useState(true);
   const [lines, setLines] = useState<LineItemDraft[]>([emptyLine()]);
@@ -54,9 +56,9 @@ export function CreateProformaSheet({ open, onOpenChange, onCreated }: Props) {
     if (!open) {
       setCostCentreId("");
       setCategory("");
-      setFinanceYear("");
+      setFinanceYear(currentFinanceYear());
       setMonthLabel("");
-      setInvoiceDate(todayISO());
+      setInvoiceDate(todayLocalISO());
       setDescription("");
       setApplyGst(true);
       setLines([emptyLine()]);
@@ -123,32 +125,55 @@ export function CreateProformaSheet({ open, onOpenChange, onCreated }: Props) {
           </div>
 
           <div className="grid grid-cols-2 gap-3">
+            {/* Finance year, month and category are closed sets, not free text — see
+                billingFieldOptions.ts for why a typo in any of the three corrupts data
+                rather than merely looking untidy. */}
             <div>
               <Label className="text-xs">Finance year *</Label>
-              <Input
-                className="mt-1 h-8 text-sm"
-                placeholder="2026-27"
+              <Select
                 value={financeYear}
-                onChange={(e) => setFinanceYear(e.target.value)}
-              />
+                onValueChange={(v) => {
+                  setFinanceYear(v);
+                  // The month list is derived from the finance year, so a stale
+                  // "Mar-26" must not survive a switch to FY 2027-28.
+                  setMonthLabel("");
+                }}
+              >
+                <SelectTrigger className="mt-1 h-8 text-sm" aria-label="Finance year">
+                  <SelectValue placeholder="Select finance year" />
+                </SelectTrigger>
+                <SelectContent>
+                  {financeYearOptions().map((fy) => (
+                    <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="text-xs">Month label *</Label>
-              <Input
-                className="mt-1 h-8 text-sm"
-                placeholder="Aug-26"
-                value={monthLabel}
-                onChange={(e) => setMonthLabel(e.target.value)}
-              />
+              <Select value={monthLabel} onValueChange={setMonthLabel} disabled={!financeYear}>
+                <SelectTrigger className="mt-1 h-8 text-sm" aria-label="Month label">
+                  <SelectValue placeholder="Select month" />
+                </SelectTrigger>
+                <SelectContent>
+                  {monthLabelOptions(financeYear).map((m) => (
+                    <SelectItem key={m} value={m}>{m}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="text-xs">Category *</Label>
-              <Input
-                className="mt-1 h-8 text-sm"
-                placeholder="Subscription / Non Subscription"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-              />
+              <Select value={category} onValueChange={setCategory}>
+                <SelectTrigger className="mt-1 h-8 text-sm" aria-label="Category">
+                  <SelectValue placeholder="Select category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {BILLING_CATEGORY_OPTIONS.map((c) => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="text-xs">Invoice date *</Label>

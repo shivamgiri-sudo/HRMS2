@@ -15,8 +15,14 @@ import { useToast } from "@/hooks/use-toast";
 import {
   createCreditNote, type CreateCreditNotePayload, type InvoiceRow,
 } from "@/lib/clientBillingApi";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import { LineItemsEditor, emptyLine, type LineItemDraft } from "./LineItemsEditor";
 import { money } from "./shared";
+import {
+  BILLING_CATEGORY_OPTIONS, currentFinanceYear, financeYearOptions, monthLabelOptions, todayLocalISO,
+} from "./billingFieldOptions";
 
 interface Props {
   open: boolean;
@@ -29,9 +35,6 @@ interface Props {
   onCreated: () => void;
 }
 
-function todayISO(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export function CreateCreditNoteSheet({ open, onOpenChange, approvedInvoices, onCreated }: Props) {
   const { toast } = useToast();
@@ -39,9 +42,9 @@ export function CreateCreditNoteSheet({ open, onOpenChange, approvedInvoices, on
 
   const [invoiceId, setInvoiceId] = useState("");
   const [category, setCategory] = useState("");
-  const [financeYear, setFinanceYear] = useState("");
+  const [financeYear, setFinanceYear] = useState(currentFinanceYear());
   const [monthLabel, setMonthLabel] = useState("");
-  const [creditDate, setCreditDate] = useState(todayISO());
+  const [creditDate, setCreditDate] = useState(todayLocalISO());
   const [description, setDescription] = useState("");
   const [applyGst, setApplyGst] = useState(true);
   const [lines, setLines] = useState<LineItemDraft[]>([emptyLine()]);
@@ -57,9 +60,9 @@ export function CreateCreditNoteSheet({ open, onOpenChange, approvedInvoices, on
     if (!open) {
       setInvoiceId("");
       setCategory("");
-      setFinanceYear("");
+      setFinanceYear(currentFinanceYear());
       setMonthLabel("");
-      setCreditDate(todayISO());
+      setCreditDate(todayLocalISO());
       setDescription("");
       setApplyGst(true);
       setLines([emptyLine()]);
@@ -129,32 +132,50 @@ export function CreateCreditNoteSheet({ open, onOpenChange, approvedInvoices, on
           </div>
 
           <div className="grid grid-cols-2 gap-3">
+            {/* Closed sets, same reasoning as CreateProformaSheet — see
+                billingFieldOptions.ts. The credit-note number is scoped by finance year
+                too, so a typo here restarts that counter as well. */}
             <div>
               <Label className="text-xs">Finance year *</Label>
-              <Input
-                className="mt-1 h-8 text-sm"
-                placeholder="2026-27"
+              <Select
                 value={financeYear}
-                onChange={(e) => setFinanceYear(e.target.value)}
-              />
+                onValueChange={(v) => { setFinanceYear(v); setMonthLabel(""); }}
+              >
+                <SelectTrigger className="mt-1 h-8 text-sm" aria-label="Finance year">
+                  <SelectValue placeholder="Select finance year" />
+                </SelectTrigger>
+                <SelectContent>
+                  {financeYearOptions().map((fy) => (
+                    <SelectItem key={fy} value={fy}>{fy}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="text-xs">Month label *</Label>
-              <Input
-                className="mt-1 h-8 text-sm"
-                placeholder="Aug-26"
-                value={monthLabel}
-                onChange={(e) => setMonthLabel(e.target.value)}
-              />
+              <Select value={monthLabel} onValueChange={setMonthLabel} disabled={!financeYear}>
+                <SelectTrigger className="mt-1 h-8 text-sm" aria-label="Month label">
+                  <SelectValue placeholder="Select month" />
+                </SelectTrigger>
+                <SelectContent>
+                  {monthLabelOptions(financeYear).map((m) => (
+                    <SelectItem key={m} value={m}>{m}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="text-xs">Category *</Label>
-              <Input
-                className="mt-1 h-8 text-sm"
-                placeholder="Subscription / Non Subscription"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-              />
+              <Select value={category} onValueChange={setCategory}>
+                <SelectTrigger className="mt-1 h-8 text-sm" aria-label="Category">
+                  <SelectValue placeholder="Select category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {BILLING_CATEGORY_OPTIONS.map((c) => (
+                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="text-xs">Credit date *</Label>

@@ -235,6 +235,27 @@ Every table, list, or data grid in this platform **must** have a clickable row d
 ### Applies to all modules
 This rule applies to every existing and future module: Exit Pass, ATS, Employees, Payroll, Leave, Attendance, WFM/Roster, Assets, Visitors, IT Provisioning, Documents, and all ERP modules. When you touch a page that lacks a drill-down, add it — even if it was not the original task scope.
 
+## Form Input Rule — Closed Sets Must Be Dropdowns, Never Free Text
+
+**Any form field whose valid values are a known set MUST be a dropdown (`Select`, or `SearchableSelect` when the list is long). Never a free-text `Input`.**
+
+This is a data-integrity rule, not a styling preference. A free-text field on a closed set does not merely look untidy — it silently corrupts data, and the damage is usually invisible until reporting or a statutory filing disagrees with reality:
+
+- **It forks identity keys.** Anything used to build a scope key, sequence, or document number restarts a counter when a typo lands. Real example: `financeYear` was a free-text `Input` on the Client Billing proforma form and is part of the bill-number scope key `<state>|<company>|<financeYear>` — typing `2026-2027` instead of `2026-27` opens a brand-new numbering scope, restarts the bill counter at `01`, and re-issues an invoice number a client already holds.
+- **It fragments reporting dimensions.** `March-16` sitting among 10,793 `Mmm-YY` values splits a client's history across two buckets that no `GROUP BY` will ever reunite.
+- **It leaks internal codes and typos into client-facing documents.** The same legacy free-text category field produced both `first_bill` (a raw code) and `PlatForm Charges` (a casing typo) in live invoice data.
+
+### What this means in practice
+- Finance year, month/period label, category, type, status, GST type, state, branch, department, designation, cost centre, client, vendor, currency, UOM, reason codes — **always a dropdown**.
+- Derive dependent lists from the parent selection and **clear the child when the parent changes** (picking a new finance year must reset a stale month, not leave `Mar-26` under FY 2027-28).
+- Build option lists from the **real observed domain** in the database, not from imagination. Query the column first.
+- Do **not** offer legacy-only artefacts for new records. Existing rows keep displaying whatever they store; the dropdown governs only what a user can newly pick.
+- Free text stays legitimate for genuinely open fields: descriptions, remarks, particulars, names, rejection reasons.
+- If the set is genuinely open but mostly repeats, use a combobox that suggests known values while still allowing a new one — never a bare `Input`.
+
+### When you touch any form
+Audit every `Input` on it. If the field has a closed domain, convert it in the same change, even if it was not the original task scope — same standing as the Drill-Down Mandate above.
+
 ## Database Query Rule — Always Use Real MySQL, Never MCP
 
 **Never use the `mcp__hrms-db__*` MCP tools for database queries.** They time out and are unreliable.
