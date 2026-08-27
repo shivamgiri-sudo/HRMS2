@@ -116,17 +116,61 @@ export function canonicalSourceSql(column: string): string {
  * renamed. See `_site` on the analytics rows.
  */
 export const BRANCH_CANONICAL: Readonly<Record<string, string>> = {
+  // Ahmedabad. `Jaldarshan` and `AHMEDABAD-JALDARSHAN` are one site recorded under two
+  // conventions, proven by their recruiters rather than by their names: the first is staffed by
+  // Jagruti Patel, Monika Sharma and Sandeep Patel, the second by GAJJAR JAGRUTIBEN AKASHBHAI,
+  // MONIKA SANJAY SHARMA and SANDEEP BABULAL PATEL — the same three people, confirmed against
+  // ats_recruiter_roster emails (patel.jagrutiben@, monika.sharma@). branch_master carries
+  // `Jaldarshan` with city "Noida", which is a data-entry error: it has zero employees, while
+  // AHMEDABAD-JALDARSHAN (Gujarat) has 266.
   jaldarshan: "AHMEDABAD-JALDARSHAN",
   "ahmedabad-jaldarshan": "AHMEDABAD-JALDARSHAN",
   "ahmh-jd": "AHMEDABAD-JALDARSHAN",
-  "delhi office": "Delhi Office",
-  delhi: "Delhi Office",
+  // `Neelkanth` has a Gujarat twin in branch_master (AHMEDABAD-NEELAKANTH), an `AN-` queue-token
+  // prefix, and is staffed by the Ahmedabad recruiters. 17 candidates.
+  neelkanth: "AHMEDABAD-NEELAKANTH",
+  "ahmedabad-neelakanth": "AHMEDABAD-NEELAKANTH",
+  // Noida.
   noida: "NOIDA",
   "noida-2": "NOIDA-2",
+  "noida 2": "NOIDA-2",
   "noida-dialdesk": "NOIDA-DIALDESK",
+  "noida-dd": "NOIDA-DIALDESK",
+  // Okaya and Trapezoid are Noida SITES, not branches, and are deliberately not folded into
+  // NOIDA or NOIDA-2. Both are worked by staff from both branches — Sheelu and Shristi are
+  // rostered to NOIDA-2 and Mehar to NOIDA, yet all three take candidates at these sites — so
+  // any rollup would be a guess. They keep their own identity; `_region` gives the grouping.
+  "okaya centre": "Okaya Centre",
+  "okaya operations": "Okaya Centre",
+  okaya: "Okaya Centre",
+  trapezoid: "Trapezoid",
+  // Head office and the single-row entries.
   "head office": "HEAD OFFICE",
   corp: "HEAD OFFICE",
+  "delhi office": "Delhi Office",
+  delhi: "Delhi Office",
 };
+
+/**
+ * Region for a canonical branch, from `branch_master.state`. The useful grouping above branch:
+ * without it, Gujarat operations and Noida operations sit side by side in one flat list with
+ * nothing saying they are different geographies.
+ */
+export const BRANCH_REGION: Readonly<Record<string, string>> = {
+  "AHMEDABAD-JALDARSHAN": "Gujarat",
+  "AHMEDABAD-NEELAKANTH": "Gujarat",
+  "NOIDA": "Uttar Pradesh",
+  "NOIDA-2": "Uttar Pradesh",
+  "NOIDA-DIALDESK": "Uttar Pradesh",
+  "Okaya Centre": "Uttar Pradesh",
+  "Trapezoid": "Uttar Pradesh",
+  "HEAD OFFICE": "Uttar Pradesh",
+  "Delhi Office": "Delhi",
+};
+
+export function branchRegion(value: unknown): string {
+  return BRANCH_REGION[canonicalBranch(value)] ?? "Unspecified";
+}
 
 export function canonicalBranch(value: unknown): string {
   const text = String(value ?? "").trim();
@@ -172,10 +216,49 @@ export function normalizeRecruiterName(raw: unknown): string {
     .trim();
 }
 
+/**
+ * Recruiter identities confirmed as one person, resolved from `ats_recruiter_roster` emails.
+ *
+ * The legacy system stores a recruiter's full legal name in caps; the current app stores the
+ * name they go by. Case-folding merges the pairs that differ only in case, but not these — they
+ * are genuinely different strings. The roster's email address settles each one, which is why
+ * this map is evidence rather than name-similarity guesswork:
+ *
+ *   GAJJAR JAGRUTIBEN AKASHBHAI   patel.jagrutiben@teammas.co.in   = Jagruti Patel
+ *   MONIKA SANJAY SHARMA          monika.sharma@teammas.in         = Monika Sharma
+ *   MEHAR                         mehar.sheikh@teammas.in          = Mehar Sheikh
+ *   SHEELU VERMA                  sheelu.verma@teammas.in          = Sheelu
+ *   SRASHTI CHAUHAN               srashti.chauhan@teammas.co.in    = Shristi
+ *   SANDEEP BABULAL PATEL         hr.masahm@teammas.in (Ahmedabad) = Sandeep Patel
+ *
+ * The last is the weakest: a shared HR mailbox rather than a personal address. It is included
+ * because both names appear only at AHMEDABAD-JALDARSHAN, share a surname, and their date
+ * ranges do not overlap in a way that suggests two people.
+ *
+ * KHUSHI is deliberately NOT mapped to Khushi Mishra. A name-similarity check flags them as a
+ * likely pair and they are not: KHUSHI is khushichandaliya379@gmail.com at NOIDA-2, Khushi
+ * Mishra is khushi.mishra@teammas.in at NOIDA. Two people. RECRUITER_DISTINCT records that so a
+ * future pass does not "helpfully" merge them.
+ */
+export const RECRUITER_ALIAS: Readonly<Record<string, string>> = {
+  "gajjar jagrutiben akashbhai": "Jagruti Patel",
+  "monika sanjay sharma": "Monika Sharma",
+  "sandeep babulal patel": "Sandeep Patel",
+  mehar: "Mehar Sheikh",
+  "sheelu verma": "Sheelu",
+  "srashti chauhan": "Shristi",
+};
+
+/** Pairs a similarity check would flag that are confirmed to be different people. */
+export const RECRUITER_DISTINCT: ReadonlyArray<readonly [string, string]> = [
+  ["khushi", "khushi mishra"],
+];
+
 export function recruiterKey(_id: unknown, name: unknown): string {
   const nm = normalizeRecruiterName(name);
   if (!nm) return "unassigned";
-  return nm.toLowerCase();
+  const folded = nm.toLowerCase();
+  return (RECRUITER_ALIAS[folded] ?? nm).toLowerCase();
 }
 
 /**
@@ -194,6 +277,7 @@ export function suspectedDuplicateRecruiters(names: readonly string[]): Array<{ 
       const tb = tokens(list[j]);
       if (!ta.length || !tb.length) continue;
       const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+      if (isConfirmedDistinct(list[i], list[j])) continue;
       if (short.every((t) => long.includes(t))) {
         out.push({ a: list[i], b: list[j], reason: "one name's words are contained in the other" });
       } else if (short[0] === long[0] && short[short.length - 1] === long[long.length - 1]) {
@@ -220,4 +304,11 @@ export function preferredRecruiterName(names: readonly string[]): string {
 
 function quote(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+/** True when a name pair has been checked and confirmed to be two different people. */
+function isConfirmedDistinct(a: string, b: string): boolean {
+  const x = normalizeRecruiterName(a).toLowerCase();
+  const y = normalizeRecruiterName(b).toLowerCase();
+  return RECRUITER_DISTINCT.some(([p, q]) => (p === x && q === y) || (p === y && q === x));
 }

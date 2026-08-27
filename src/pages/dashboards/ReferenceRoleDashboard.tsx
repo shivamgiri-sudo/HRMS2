@@ -521,6 +521,8 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     itProvisioningAvailable: !itProvisioningQuery.isError,
     itDashboard: itDashboardQuery.data ?? {},
     loading: primaryLoading,
+    // True while any feed a KPI tile reads is still resolving — see ReferenceDashboardData.
+    secondaryLoading: activeQueryResults.some((query) => query.isLoading),
     refreshing: activeQueryResults.some((query) => query.isFetching),
     generatedAt: summary?.generatedAt,
   };

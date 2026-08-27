@@ -5,7 +5,7 @@ import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import { excludeEmployeeShapedCandidatesSql, excludeOtherEntityCandidatesSql } from "../ats/ats-reporting-scope.js";
-import { canonicalBranch, sourceLabel, recruiterKey, preferredRecruiterName, normalizeRecruiterName, suspectedDuplicateRecruiters } from "../ats/ats-vocabulary.js";
+import { canonicalBranch, branchRegion, sourceLabel, recruiterKey, preferredRecruiterName, normalizeRecruiterName, suspectedDuplicateRecruiters } from "../ats/ats-vocabulary.js";
 
 type CandidateRow = Record<string, unknown>;
 
@@ -501,6 +501,9 @@ function enrichCandidate(row: CandidateRow): CandidateRow {
      */
     _branch: canonicalBranch(row.branch_text || row.resolved_branch_name || row.applied_for_branch),
     _site: normalizeText(row.branch_text || row.applied_for_branch) || "Unspecified",
+    // Region above branch, from branch_master.state. Without it Gujarat and Noida operations sit
+    // side by side in one flat list with nothing saying they are different geographies.
+    _region: branchRegion(row.branch_text || row.resolved_branch_name || row.applied_for_branch),
     _process: row.process_text || row.resolved_process_name || row.applied_for_process || "Unspecified",
     // Label and key derive from the SAME field, in the same order. Deriving the label from one
     // and the key from the other put two rows on the leaderboard both reading "KHUSHI MISHRA".
@@ -1106,6 +1109,7 @@ export const atsFullParityService = {
       dashboardRows,
       candidateRows,
       branchTable: dimensionTable(candidateRows, "_branch"),
+      regionTable: dimensionTable(candidateRows, "_region"),
       processTable: dimensionTable(candidateRows, "_process"),
       roleTable: dimensionTable(candidateRows, "_role"),
       sourceTable: dimensionTable(candidateRows, "_source"),
@@ -1215,6 +1219,7 @@ export const atsFullParityService = {
       queueRows: queueRows.slice(0, 500).map(queueCard),
       queueTotal: queueRows.length,
       branchTable: dimensionTable(candidateRows, "_branch"),
+      regionTable: dimensionTable(candidateRows, "_region"),
       processTable: dimensionTable(candidateRows, "_process"),
       sourceTable: dimensionTable(candidateRows, "_source"),
       recruiterTable: recruiterProductivity(candidateRows),
@@ -1474,13 +1479,14 @@ export const atsFullParityService = {
         `INSERT INTO ats_command_sla_event (id, candidate_id, q_token, breach_minutes, threshold_minutes, recruiter_email, cc_emails)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE breach_minutes=VALUES(breach_minutes), recruiter_email=VALUES(recruiter_email), cc_emails=VALUES(cc_emails), event_status=IF(event_status='closed','closed',event_status)`,
-        [randomUUID(), rowText(row, "candidate_code") || rowText(row, "id"), rowText(row, "q_token") || null, diff, threshold, rowText(row, "recruiter_email") || null, await this.resolveSlaCc(row)]
+        [randomUUID(), rowText(row, "candidate_code") || rowText(row, "id"), rowText(row, "q_token") || null, diff, threshold, (await this.resolveSlaRecipient(row)) || null, await this.resolveSlaCc(row)]
       );
       const candidateKey = rowText(row, "candidate_code") || rowText(row, "id");
       const already = await this.hasEmailBeenSent(candidateKey, "SLA_BREACH");
       if (!already) {
         const cc = await this.resolveSlaCc(row);
-        await sendTemplateEmail("SLA_BREACH", candidateKey, rowText(row, "recruiter_email"), cc, {
+        const to = await this.resolveSlaRecipient(row);
+        await sendTemplateEmail("SLA_BREACH", candidateKey, to, cc, {
           Org_Name: cfg.Org_Name || "ATS Command Center",
           CandidateName: row.full_name,
           CandidateID: row.candidate_code || row.id,
@@ -1502,6 +1508,56 @@ export const atsFullParityService = {
   async hasEmailBeenSent(candidateId: string, emailType: string) {
     const [rows] = await db.execute<RowDataPacket[]>(`SELECT id FROM ats_command_email_log WHERE candidate_id = ? AND email_type = ? AND status IN ('sent','skipped') LIMIT 1`, [candidateId, emailType]);
     return rows.length > 0;
+  },
+
+  /**
+   * The address an SLA breach alert should go to.
+   *
+   * This used to be `row.recruiter_email` and nothing else. That column is populated on 2 of the
+   * 1,407 candidates the SLA scan covers, so every alert resolved to an empty TO and was logged
+   * `skipped / "Missing TO email"`. Production carries 1,454 such rows and ZERO sent ones: the
+   * breach alerting has run since the feature shipped and has never once reached a human.
+   *
+   * The address was always available. `ats_recruiter_roster` holds an email for all 26 active
+   * recruiters; the candidate row just does not carry it. So: try the candidate's own column,
+   * then the roster by recruiter id, then by name — through the same alias map the leaderboard
+   * uses, because the roster stores MEHAR while the candidate says Mehar Sheikh — and finally
+   * the branch's configured HR mailbox.
+   *
+   * Returns "" only when there is genuinely no recipient anywhere, which the caller logs with a
+   * reason that distinguishes it from a broken lookup.
+   */
+  async resolveSlaRecipient(row: CandidateRow): Promise<string> {
+    const direct = normalizeText(row.recruiter_email);
+    if (direct.includes("@")) return direct;
+
+    const byId = normalizeText(row.recruiter_assigned_id);
+    const rawName = normalizeText(row.recruiter_assigned_name || row.recruiter_name);
+    const canonical = normalizeRecruiterName(rawName);
+    if (byId || rawName) {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT email, name FROM ats_recruiter_roster
+          WHERE active_status = 1 AND email IS NOT NULL AND email <> ''
+            AND (id = ? OR recruiter_code = ? OR LOWER(TRIM(name)) = ? OR LOWER(TRIM(name)) = ?)
+          LIMIT 1`,
+        [byId || "", byId || "", rawName.toLowerCase(), canonical.toLowerCase()],
+      );
+      const hit = normalizeText(rows[0]?.email);
+      if (hit.includes("@")) return hit;
+    }
+
+    // Branch mailbox, same config the CC list already reads.
+    const cfg = await getConfigMap();
+    const branch = normalizeText(row.branch_text || row.applied_for_branch);
+    for (const map of [cfg.HR_Emails_By_Branch, cfg.Ops_Emails_By_Branch]) {
+      if (!map) continue;
+      for (const part of String(map).split(";")) {
+        const [k, ...rest] = part.split("=");
+        const val = rest.join("=").trim();
+        if (normalizeText(k) === branch && val.includes("@")) return val.split(/[;,]/)[0].trim();
+      }
+    }
+    return "";
   },
 
   async resolveSlaCc(row: CandidateRow) {
@@ -1694,9 +1750,27 @@ export const atsFullParityService = {
       `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped} AND sla_breached IS NULL`,
       (n) => n === 0, "A null breach flag is counted as compliant by every SLA figure on this page.");
 
-    await countOf("notifications_sent_last_7_days", "notification",
-      `SELECT COUNT(*) AS cnt FROM ats_notification_log WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`,
-      (n) => n > 0, "No ATS notification in a week means the delivery path is dead, not quiet.");
+    /**
+     * Points at the log the ATS actually writes.
+     *
+     * The first version of this check read `ats_notification_log`, which has never held a single
+     * row — its only writer is one branch of the payroll-HR salary-validation flow that has
+     * never fired. A check against it can only ever be red, and a permanently red check is one
+     * people learn to ignore. `ats_command_email_log` is the live path: 1,454 rows.
+     */
+    await countOf("candidate_emails_actually_sent", "notification",
+      `SELECT COUNT(*) AS cnt FROM ats_command_email_log WHERE status = 'sent'`,
+      (n) => n > 0, "Every email this module has ever attempted was skipped, not delivered.");
+
+    await countOf("emails_skipped_no_recipient", "notification",
+      `SELECT COUNT(*) AS cnt FROM ats_command_email_log WHERE status = 'skipped' AND notes LIKE '%Missing TO%'`,
+      (n) => n === 0, "Alerts raised but dropped because no recipient address could be resolved.");
+
+    await countOf("waiting_candidates_without_recruiter_email", "notification",
+      `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped}
+         AND LOWER(COALESCE(status, current_stage, 'waiting')) = 'waiting'
+         AND (recruiter_email IS NULL OR recruiter_email = '')`,
+      (n) => n === 0, "The SLA alert falls back to the roster for these; if that misses too, nobody is told.");
 
     await countOf("overdue_followups", "notification",
       `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped} AND followup_required = 1 AND followup_date < CURDATE()`,

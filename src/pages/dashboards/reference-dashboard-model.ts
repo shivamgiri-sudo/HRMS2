@@ -58,6 +58,16 @@ export interface ReferenceDashboardData {
   itProvisioningAvailable?: boolean;
   itDashboard?: JsonRecord;
   loading: boolean;
+  /**
+   * Whether the secondary feeds (workforce, ATS) are still in flight.
+   *
+   * `loading` tracks only the summary query, so it goes false while workforce and ATS are still
+   * fetching. Tiles fed by those then render `?? 0` and the page shows a confident 0 New Joins,
+   * 0 Exits and a blank attrition rate — badged "Live", with no skeleton — before correcting
+   * itself to 150 / 1 / 0.09 a moment later. A reader who looks during that window is simply
+   * told the wrong number.
+   */
+  secondaryLoading?: boolean;
   refreshing: boolean;
   generatedAt?: string;
 }

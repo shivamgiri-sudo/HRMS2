@@ -188,6 +188,14 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
   const previousSubmitted = asNumber(data.ats.previous_submitted ?? data.ats.last_30_submitted);
 
   // Workforce summary data from /api/management/workforce-dashboard
+  /**
+   * While the workforce and ATS feeds are still resolving, the values below are genuinely
+   * unknown. Rendering `?? 0` for them printed a confident "0 New Joins / 0 Exits" under a
+   * "Live" badge before correcting to 150 / 1 — so a reader who glanced during that window was
+   * told the wrong number with no signal that it was provisional. Unknown now renders as an
+   * em dash, which is honest and visibly not a value.
+   */
+  const settling = data.secondaryLoading === true;
   const wfSummary = data.workforce.summary as Record<string, unknown> | undefined;
   const newJoiners30d = asNumber(wfSummary?.new_joiners_30d ?? wfSummary?.newJoiners30d ?? data.workforce.new_joiners_30d);
   const exits30d = asNumber(wfSummary?.exits_30d ?? wfSummary?.exits30d ?? data.workforce.exits_30d);
@@ -205,6 +213,8 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
     : docsMissing !== null ? docsMissing.toLocaleString() : "—";
   const trainingPct = metricValue(m, "training");
   const shrinkagePct = asNumber(wfSummary?.shrinkage_pct ?? wfSummary?.shrinkagePct);
+  const expectedToWork = asNumber(wfSummary?.expected_to_work ?? wfSummary?.expectedToWork)
+    ?? metricDetail(m, "att", "expectedToWork");
 
 
   const variance = (current: number | null, previous: number | null): { trend: "up" | "down" | "neutral"; change: string } | null => {
@@ -334,9 +344,17 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
         </div>
         <div className="flex items-center gap-3">
           {filters}
-          <Badge variant="outline" className="gap-1.5 bg-white/80 border-emerald-200 text-emerald-700">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            Live
+          {/* Says "Loading" while feeds are still resolving. A green pulsing "Live" over
+              half-arrived data is the part that made the wrong first paint believable. */}
+          <Badge
+            variant="outline"
+            className={cn(
+              "gap-1.5 bg-white/80",
+              settling ? "border-amber-200 text-amber-700" : "border-emerald-200 text-emerald-700",
+            )}
+          >
+            <span className={cn("w-2 h-2 rounded-full animate-pulse", settling ? "bg-amber-500" : "bg-emerald-500")} />
+            {settling ? "Loading" : "Live"}
           </Badge>
           <Button size="sm" className="bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white shadow-lg shadow-indigo-500/25">
             <Download className="h-4 w-4 mr-1.5" />
@@ -389,10 +407,13 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
 
       {/* Quick Stats Row - REAL workforce data from API */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-        <QuickStat icon={UserCheck} label="New Joins (30d)" value={newJoiners30d ?? 0} sub="from workforce API" color="#10B981" bg="from-emerald-500/10 to-teal-500/5" />
-        <QuickStat icon={XCircle} label="Exits (30d)" value={exits30d ?? 0} sub="from workforce API" color="#EF4444" bg="from-red-500/10 to-rose-500/5" />
-        <QuickStat icon={TrendingUp} label="Attendance" value={`${Math.round(workforceAttendancePct ?? attendanceRate ?? 0)}%`} sub="from workforce API" color="#8B5CF6" bg="from-purple-500/10 to-violet-500/5" />
-        <QuickStat icon={TrendingDown} label="Attrition" value={`${Math.round((attritionRate ?? 0) * 100) / 100}%`} sub="from workforce API" color="#F59E0B" bg="from-amber-500/10 to-orange-500/5" />
+        <QuickStat icon={UserCheck} label="New Joins (30d)" value={settling || newJoiners30d === null ? "—" : newJoiners30d.toLocaleString()} sub="last 30 days" color="#10B981" bg="from-emerald-500/10 to-teal-500/5" />
+        <QuickStat icon={XCircle} label="Exits (30d)" value={settling || exits30d === null ? "—" : exits30d.toLocaleString()} sub="last 30 days" color="#EF4444" bg="from-red-500/10 to-rose-500/5" />
+        <QuickStat icon={TrendingUp} label="Attendance" value={settling || (workforceAttendancePct ?? attendanceRate) === null ? "—" : `${Math.round(workforceAttendancePct ?? attendanceRate ?? 0)}%`} sub="processed attendance" color="#8B5CF6" bg="from-purple-500/10 to-violet-500/5" />
+        {/* Was a second "Attrition" tile duplicating the KPI above it, to one more decimal place —
+            the same measure twice on one screen, disagreeing on rounding. Replaced with the
+            roster figure, which the payload already carried and nothing displayed. */}
+        <QuickStat icon={UsersRound} label="Rostered Today" value={settling || expectedToWork === null ? "—" : expectedToWork.toLocaleString()} sub="expected to work" color="#F59E0B" bg="from-amber-500/10 to-orange-500/5" />
       </div>
 
       {/*
@@ -404,7 +425,7 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
         <QuickStat
           icon={FileX2}
           label="No Documents on File"
-          value={docGapLabel}
+          value={settling ? "—" : docGapLabel}
           sub="employees with no document"
           color="#DC2626"
           bg="from-red-500/10 to-rose-500/5"
@@ -412,7 +433,7 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
         <QuickStat
           icon={Hourglass}
           label="Pending Leave"
-          value={(pendingLeaveBacklog ?? 0).toLocaleString()}
+          value={settling || pendingLeaveBacklog === null ? "—" : pendingLeaveBacklog.toLocaleString()}
           sub="awaiting approval"
           color="#F59E0B"
           bg="from-amber-500/10 to-orange-500/5"
@@ -420,7 +441,7 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
         <QuickStat
           icon={FileCheck2}
           label="Training Complete"
-          value={trainingPct !== null ? `${trainingPct}%` : "—"}
+          value={settling || trainingPct === null ? "—" : `${trainingPct}%`}
           sub="LMS completion rate"
           color="#0EA5E9"
           bg="from-sky-500/10 to-cyan-500/5"
@@ -428,7 +449,7 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
         <QuickStat
           icon={TriangleAlert}
           label="Shrinkage"
-          value={shrinkagePct !== null ? `${shrinkagePct}%` : "—"}
+          value={settling || shrinkagePct === null ? "—" : `${shrinkagePct}%`}
           sub="workforce shrinkage"
           color="#8B5CF6"
           bg="from-purple-500/10 to-violet-500/5"
@@ -453,11 +474,11 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-center">
                   <div className="bg-emerald-50 rounded-lg p-2">
-                    <p className="text-lg font-bold text-emerald-600">{newJoiners30d ?? 0}</p>
+                    <p className="text-lg font-bold text-emerald-600">{settling || newJoiners30d === null ? "—" : newJoiners30d.toLocaleString()}</p>
                     <p className="text-[10px] text-gray-500">New Joins (30d)</p>
                   </div>
                   <div className="bg-rose-50 rounded-lg p-2">
-                    <p className="text-lg font-bold text-rose-600">{exits30d ?? 0}</p>
+                    <p className="text-lg font-bold text-rose-600">{settling || exits30d === null ? "—" : exits30d.toLocaleString()}</p>
                     <p className="text-[10px] text-gray-500">Exits (30d)</p>
                   </div>
                 </div>
