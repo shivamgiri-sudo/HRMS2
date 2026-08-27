@@ -244,6 +244,7 @@ function hardRejectReason(row: CandidateRow): string {
  */
 const REJECTION_VOCABULARY: readonly string[] = [
   "Undergraduate / Qualification Issue",
+  "Sales Skills Not Up to the Mark",
   "Salary / Shift / Location Issue",
   "Poor Sales / Customer Handling",
   "Communication Not Client Ready",
@@ -252,10 +253,13 @@ const REJECTION_VOCABULARY: readonly string[] = [
   "Behavioral / Attitude Issue",
   "Computer / System Skill Gap",
   "Stability / Joining Concern",
+  "Not Comfortable in Sales",
   "Vocabulary / Grammar Issue",
   "Undergraduate Qualification",
   "Poor Communication Skill",
+  "Underconfident / Nervous",
   "Candidate Not Interested",
+  "Not Fit for the Process",
   "Location / Travel Issue",
   "Role / Process Mismatch",
   "Typing Accuracy Issue",
@@ -263,9 +267,11 @@ const REJECTION_VOCABULARY: readonly string[] = [
   "Documentation Issue",
   "Typing Speed Issue",
   "Stability Concern",
+  "Poor Sales Skill",
   "Client Rejected",
   "Salary Issue",
   "Age Barrier",
+  "MTI Issue",
   "No Show",
 ];
 
@@ -329,7 +335,27 @@ function splitRejectionValue(raw: string): string[] {
  * the chart imply the bars sum to the total.
  */
 function rejectionReasons(row: CandidateRow): string[] {
-  const voc = normalizeText(row.rejection_voc);
+  /**
+   * Falls through the per-round VOC columns, latest stage first.
+   *
+   * `rejection_voc` is the summary field and it is empty on 1,538 of 2,855 rejections. The
+   * reason is not missing on those — it is recorded against the round the candidate actually
+   * failed: round1_voc holds one for 738 of them, skilltest_voc for 143, round2_voc for 141,
+   * round3_voc for 16. Reading only the summary field reported 1,052 rejections (36.8%) as
+   * "Unspecified" while the database knew the answer for all but 506 of them, and it hid the
+   * scale of the real drivers: Poor Communication Skill is 1,418 across all five columns
+   * against the 476 the summary field alone shows.
+   *
+   * Latest stage first because that is where the candidate was rejected: someone who passed
+   * screening and failed the ops round carries a VOC in both, and round 2 is the operative
+   * reason. Stage order follows the live pipeline — Round 1 HR Screening, Interview Skill
+   * Test, Round 2 Op's, Round 3 Client.
+   */
+  const voc = normalizeText(row.rejection_voc)
+    || normalizeText(row.round3_voc)
+    || normalizeText(row.round2_voc)
+    || normalizeText(row.skilltest_voc)
+    || normalizeText(row.round1_voc);
   if (voc) return splitRejectionValue(voc);
   const legacy = normalizeLower(row._hardRejectReason);
   if (legacy) return [LEGACY_REASON_TO_VOC[legacy] ?? normalizeText(row._hardRejectReason)];
@@ -776,13 +802,40 @@ function recruiterProductivity(rows: CandidateRow[]) {
     b.SourcedCount - a.SourcedCount);
 }
 
+/**
+ * The filter dropdowns, built from the SAME canonical values the tables group on.
+ *
+ * `recruiters` was built from the raw per-row display name while the leaderboard groups on the
+ * alias-resolved key, so the dropdown offered 32 names against a table of 20 rows: picking
+ * `MEHAR` filtered on a name that no longer appears anywhere in the results. A filter whose
+ * options do not exist in the data it filters is worse than no filter — it returns an empty
+ * page and looks like "no candidates" rather than "wrong option".
+ *
+ * Deduped on the grouping key and labelled with the same display name the table shows, so
+ * every option corresponds to exactly one visible row.
+ */
 function buildOptions(candidates: CandidateRow[], queue: CandidateRow[]) {
-  const uniq = (key: string) => Array.from(new Set(candidates.concat(queue).map((r) => normalizeText(r[key])).filter(Boolean))).sort();
+  const all = candidates.concat(queue);
+  const uniq = (key: string) => Array.from(new Set(all.map((r) => normalizeText(r[key])).filter(Boolean))).sort();
+
+  const byKey = new Map<string, string[]>();
+  for (const r of all) {
+    const key = normalizeText(r._recruiterKey);
+    const label = normalizeText(r._recruiter);
+    if (!key || !label) continue;
+    const seen = byKey.get(key) ?? [];
+    if (!seen.includes(label)) seen.push(label);
+    byKey.set(key, seen);
+  }
+  const recruiters = Array.from(byKey.values()).map((labels) => preferredRecruiterName(labels)).sort();
+
   return {
     branches: uniq("_branch"),
+    regions: uniq("_region"),
+    sites: uniq("_site"),
     processes: uniq("_process"),
     roles: uniq("_role"),
-    recruiters: uniq("_recruiter"),
+    recruiters,
     sources: uniq("_source"),
     statuses: uniq("_status"),
     months: uniq("_monthKey"),
