@@ -3,7 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { hrmsApi, getHrmsApiErrorStatus, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Loader2, TrendingUp, ListTree, Users, ChevronLeft } from "lucide-react";
-import { formatValue, type PerformanceRow, type SectionValue, type PerfQuery } from "./ProcessPerformanceTable";
+import type { PerformanceRow, SectionValue, PerfQuery } from "./ProcessPerformanceTable";
+import { formatValue } from "./formatValue";
 
 /**
  * The detail behind one KPI cell: trend, root cause, and the records making it up.

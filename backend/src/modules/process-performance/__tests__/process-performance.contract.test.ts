@@ -93,7 +93,7 @@ describe("scope is enforced in SQL at every grain", () => {
     // MAX date. The moment it selects a row-level column it starts leaking, so
     // that is what is guarded rather than which tables it touches.
     const probe = queries.find((q) => q.includes("AS late_marks"))!;
-    expect(probe).not.toMatch(/(full_name|employee_code|e\.id|\*\s*FROM)/);
+    expect(probe).not.toMatch(/(full_name|employee_code|e\.id|\*\s*FROM)/);
     expect(probe.match(/SELECT/g)!.length).toBe(probe.match(/COUNT\(\*\)|MAX\(/g)!.length + 1);
   });
 });

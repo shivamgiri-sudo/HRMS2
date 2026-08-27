@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { hrmsApi, getHrmsApiErrorStatus, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { ChevronRight, ChevronDown, Loader2 } from "lucide-react";
 import KpiCellDetail from "./KpiCellDetail";
+import { formatValue } from "./formatValue";
 
 /**
  * Process → manager → agent, one KPI cell layout at every depth.
@@ -47,16 +48,6 @@ function qs(p: Record<string, string | null | undefined>) {
   const s = new URLSearchParams();
   Object.entries(p).forEach(([k, v]) => { if (v) s.set(k, v); });
   return s.toString();
-}
-
-export function formatValue(s: { value: number | null; unit: SectionValue["unit"] }): string {
-  if (s.value === null) return "—";
-  switch (s.unit) {
-    case "percent": return `${s.value}%`;
-    case "seconds": return `${s.value}s`;
-    case "currency": return `₹${Math.round(s.value).toLocaleString("en-IN")}`;
-    default: return String(s.value);
-  }
 }
 
 /**
