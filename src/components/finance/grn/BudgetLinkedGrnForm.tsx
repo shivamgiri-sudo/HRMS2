@@ -132,6 +132,9 @@ type AllocationDraft = {
   budgetLineId: string;
   quantity: number;
   unitRate: number;
+  /** Imprest only: the exact rupee share this row carries, sent alongside quantity so the server
+   *  never has to rebuild the amount out of a 4-dp quantity and a GST profile. */
+  grossAmount?: number;
   remarks: string;
 };
 
@@ -269,6 +272,28 @@ function newInvoiceComponent(): InvoiceComponentDraft {
 
 function roundMoney(value: number) {
   return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Splits `amount` across `percentages` into whole paise that sum back to `amount` exactly.
+ *
+ * Percentages rarely divide into paise — a third of ₹100 is ₹33.333… three times over, which
+ * rounds to ₹99.99 and leaves the GRN a paisa short of the invoice it claims to be. The residual
+ * goes to the last included row, the same "fold into the last one" convention the server already
+ * uses when a split spills across several funding lines.
+ *
+ * Used by BOTH the Cost panel and the submit payload so the figure the raiser is shown and the
+ * figure that is saved cannot drift apart.
+ */
+function splitIntoPaise(amount: number, percentages: number[]): number[] {
+  const total = roundMoney(amount);
+  const shares = percentages.map((pct) => roundMoney(total * (Number(pct) || 0) / 100));
+  if (!shares.length) return shares;
+  const residual = roundMoney(total - shares.reduce((sum, share) => sum + share, 0));
+  if (residual !== 0) {
+    shares[shares.length - 1] = roundMoney(shares[shares.length - 1] + residual);
+  }
+  return shares;
 }
 
 function financialYearFromPeriod(period: string) {
@@ -1264,13 +1289,14 @@ export function BudgetLinkedGrnForm({
    *  exactly why the Cost sidebar was stuck at ₹0.00 before this. */
   const costCentreSplitMoneyTotals = useMemo(() => {
     const amount = Number(form.amount || 0);
-    return costCentreSplits
-      .filter((row) => row.included)
+    const includedRows = costCentreSplits.filter((row) => row.included);
+    const shares = splitIntoPaise(amount, includedRows.map((row) => Number(row.percentage)));
+    return includedRows
       .reduce(
-        (sum, row) => {
+        (sum, row, rowIndex) => {
           const group = vendorCostCentreGroups.find((g) => g.costCentreKey === row.costCentreKey);
           const line = group?.lines.find((item) => item.id === row.budgetLineId);
-          const shareGross = amount * (Number(row.percentage) / 100);
+          const shareGross = shares[rowIndex] ?? 0;
           const perUnit = line ? computeLine(line, 1) : null;
           const basis = perUnit ? (isVendor ? Number(perUnit.base) : Number(perUnit.gross)) : 0;
           if (!line || !(shareGross > 0) || !(basis > 0)) {
@@ -1281,18 +1307,23 @@ export function BudgetLinkedGrnForm({
             sum.pnl += shareGross;
             return sum;
           }
-          const calc = computeLine(line, shareGross / basis);
           if (!isVendor) {
             // Imprest carries no GST — petty cash out of the branch float, no tax invoice, no
             // ITC. The budget line may be PLANNED as GST-inclusive (e.g. Tea/Coffee at 18%
             // recoverable), but that planning classification must not split a tax component out
             // of a voucher that has none: the whole amount is the cost and the whole amount hits
             // P&L. Mirrors applyImprestNoGst() on the server, which stores it the same way.
-            sum.base += Number(calc.gross);
-            sum.gross += Number(calc.gross);
-            sum.pnl += Number(calc.gross);
+            //
+            // The share is taken STRAIGHT, never re-derived as a fractional quantity of the
+            // budget line: pricing it through that line's planning profile rounded the base to
+            // paise and then charged 18% on the ROUNDED base, so a ₹2,112 voucher split 50/50
+            // read ₹2,112.02 here and was refused on submit by the server's ±₹0.01 split guard.
+            sum.base += shareGross;
+            sum.gross += shareGross;
+            sum.pnl += shareGross;
             return sum;
           }
+          const calc = computeLine(line, shareGross / basis);
           sum.base += Number(calc.base);
           sum.tax += Number(calc.tax);
           sum.gross += Number(calc.gross);
@@ -1733,12 +1764,17 @@ export function BudgetLinkedGrnForm({
         ? []
         : splitMode
           ? allocations
-          : costCentreSplits
-              .filter((row) => row.included)
-              .map((row) => {
+          : (() => {
+            const includedRows = costCentreSplits.filter((row) => row.included);
+            // Exact paise, summing to the typed amount — see splitIntoPaise. Percentage maths on
+            // its own leaves the rows a paisa or two short of the invoice, which the server
+            // refuses outright ("Cost-centre splits must equal the invoice total exactly").
+            const shares = splitIntoPaise(Number(form.amount), includedRows.map((row) => Number(row.percentage)));
+            return includedRows
+              .map((row, rowIndex) => {
                 const group = vendorCostCentreGroups.find((g) => g.costCentreKey === row.costCentreKey);
                 const line = group?.lines.find((item) => item.id === row.budgetLineId);
-                const shareGross = Number(form.amount) * (Number(row.percentage) / 100);
+                const shareGross = shares[rowIndex] ?? 0;
                 // Unbudgeted: no budget line to read a rate off, so the raw share IS the row —
                 // unit_rate 1, the same convention the vendor unbudgeted synthetic line uses.
                 const perUnitGross = line ? Number(computeLine(line, 1).gross) : 0;
@@ -1751,9 +1787,15 @@ export function BudgetLinkedGrnForm({
                   costCentreKey: row.costCentreKey,
                   quantity,
                   unitRate: line ? Number(line.unit_rate) : 1,
+                  // The money, stated outright. quantity above is a 4-dp approximation of it and
+                  // at a ₹8,500 unit rate one ten-thousandth of a unit is 85 paise, so the server
+                  // must not have to reconstruct the amount from it. Imprest only — see
+                  // SmartAllocationInput.grossAmount.
+                  grossAmount: shareGross,
                   remarks: "",
                 };
               });
+          })()
       // The two indexed reads below assume a row exists. Neither is guaranteed: a vendor/imprest
       // GRN with every cost centre unticked leaves costCentreSplits[0] undefined, and split mode
       // with no rows leaves rows[0] undefined. Both then threw a TypeError from inside a
@@ -1924,6 +1966,9 @@ export function BudgetLinkedGrnForm({
             costCentreId: !item.budgetLineId ? item.costCentreKey : undefined,
             quantity: Number(item.quantity),
             unitRate: Number(item.unitRate),
+            // Imprest rows state their own money; the legacy splitMode allocations UI does not
+            // and stays on the quantity maths, exactly as before.
+            grossAmount: item.grossAmount == null ? undefined : Number(item.grossAmount),
             remarks: item.remarks || undefined,
           })),
         });

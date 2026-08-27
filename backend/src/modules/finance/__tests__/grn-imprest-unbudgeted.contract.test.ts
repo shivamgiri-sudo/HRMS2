@@ -68,7 +68,10 @@ describe("unbudgeted Imprest GRN — raise, save, submit, approve", () => {
     // table drives), each row falling back to a synthetic unit_rate 1 / quantity = share
     // convention when it has no resolved budget line — the same convention the vendor
     // unbudgeted synthetic line already uses.
-    expect(form).toContain("costCentreSplits\n              .filter((row) => row.included)");
+    // The included rows are pulled out first so their exact paise shares can be computed in one
+    // go (splitIntoPaise) — same source state, same per-row fallback, just no longer a bare
+    // inline .filter().map() chain.
+    expect(form).toContain("const includedRows = costCentreSplits.filter((row) => row.included);");
     expect(form).toContain(
       "const quantity = line && perUnitGross > 0\n                  ? Number((shareGross / perUnitGross).toFixed(4))\n                  : Number(shareGross.toFixed(2));"
     );

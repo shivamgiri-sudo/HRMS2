@@ -36,6 +36,19 @@ export interface SmartAllocationInput {
   costCentreId?: string;
   quantity: number;
   unitRate?: number;
+  /** IMPREST ONLY: the exact rupee share this cost centre carries.
+   *
+   *  Imprest is petty cash — no tax invoice, no GST, no ITC — so the figure the raiser types IS
+   *  the money, and it must not be reconstructed from `quantity × unitRate` through the funding
+   *  budget line's PLANNING tax profile. Doing that rounded the share twice (base to paise, then
+   *  GST charged on the rounded base) and again through the 4-dp quantity, so a ₹2,112 voucher
+   *  split 50/50 against an exclusive-18% line came back as ₹2,112.02 and was refused by the
+   *  declared-total guard below.
+   *
+   *  quantity/unitRate stay populated for the stored quantity column, which is a 4-dp
+   *  approximation and always was. Ignored for vendor GRNs, whose money comes from the invoice's
+   *  own GST slabs via saveComponentAllocations(). */
+  grossAmount?: number;
   remarks?: string;
 }
 
@@ -899,17 +912,31 @@ export const grnSmartService = {
           // Priced against the ORIGINALLY SELECTED line's own tax profile purely to derive the
           // money target (grossTarget) this row needs funded — which line(s) actually end up
           // funding it, and their own tax profile, is decided below by allocateAcrossLines.
+          // Imprest: the raiser's own rupee share is the money target, full stop. The budget
+          // line's tax treatment is a PLANNING classification and must not manufacture — or
+          // round — a GST component on a voucher that has none (see SmartAllocationInput
+          // .grossAmount). Falls back to the quantity maths for any older caller that does not
+          // send it, priced with the imprest profile so no tax is invented either way.
+          const imprestShare = isImprest && allocation.grossAmount != null
+            ? roundMoney(Number(allocation.grossAmount))
+            : null;
           const targetAmounts = calculateBudgetLine({
             head: String(line.head),
             subHead: line.sub_head,
             itemName: String(line.item_name),
-            quantity,
+            quantity: imprestShare != null ? 1 : quantity,
             unit: String(line.unit),
-            unitRate,
-            taxTreatment: String(line.tax_treatment) as BudgetTaxTreatment,
-            gstRate: Number(line.gst_rate),
-            gstType: String(line.gst_type) as BudgetGstType,
-            recoverableTaxPct: Number(line.recoverable_tax_pct),
+            unitRate: imprestShare != null ? imprestShare : unitRate,
+            taxTreatment: isImprest
+              ? IMPREST_TAX_PROFILE.taxTreatment
+              : String(line.tax_treatment) as BudgetTaxTreatment,
+            gstRate: isImprest ? IMPREST_TAX_PROFILE.gstRate : Number(line.gst_rate),
+            gstType: isImprest
+              ? IMPREST_TAX_PROFILE.gstType
+              : String(line.gst_type) as BudgetGstType,
+            recoverableTaxPct: isImprest
+              ? IMPREST_TAX_PROFILE.recoverableTaxPct
+              : Number(line.recoverable_tax_pct),
             justification: String(line.justification || "Approved budget allocation"),
           });
           grossTarget = targetAmounts.grossAmount;
@@ -959,11 +986,16 @@ export const grnSmartService = {
 
           // Reproduce exactly draw.amount as this draw's own grossAmount, from the FUNDING line's
           // own tax profile (which can differ from the originally selected line's).
-          const quotedAmount = requiredQuotedAmount(
-            draw.amount,
-            String(fundingLine.tax_treatment),
-            Number(fundingLine.gst_rate)
-          );
+          // Imprest reproduces draw.amount as-is: with no GST there is nothing to gross up, so
+          // the money IS the quoted amount. Reversing the funding line's planning rate here and
+          // re-applying it below is what put a paisa a row into an imprest voucher.
+          const quotedAmount = isImprest
+            ? draw.amount
+            : requiredQuotedAmount(
+              draw.amount,
+              String(fundingLine.tax_treatment),
+              Number(fundingLine.gst_rate)
+            );
           const fundingUnitRate = Number(fundingLine.unit_rate);
           const drawQuantity = fundingUnitRate > 0 ? roundQuantity(quotedAmount / fundingUnitRate) : 0;
 
@@ -973,17 +1005,27 @@ export const grnSmartService = {
           // money, and money is the limit. drawnQuantityByLineId is still maintained below so the
           // per-line running total stays available for the quantity written to each row.
 
+          // Imprest prices the exact money (quantity 1 × the draw itself) rather than the 4-dp
+          // drawQuantity, which is a lossy re-expression of it — at a ₹8,500 unit rate one
+          // ten-thousandth of a unit is 85 paise. drawQuantity above is still what gets STORED in
+          // the quantity column; it is simply no longer allowed to decide the amount.
           const amounts = calculateBudgetLine({
             head: String(fundingLine.head),
             subHead: fundingLine.sub_head,
             itemName: String(fundingLine.item_name),
-            quantity: drawQuantity,
+            quantity: isImprest ? 1 : drawQuantity,
             unit: String(fundingLine.unit),
-            unitRate: fundingUnitRate,
-            taxTreatment: String(fundingLine.tax_treatment) as BudgetTaxTreatment,
-            gstRate: Number(fundingLine.gst_rate),
-            gstType: String(fundingLine.gst_type) as BudgetGstType,
-            recoverableTaxPct: Number(fundingLine.recoverable_tax_pct),
+            unitRate: isImprest ? quotedAmount : fundingUnitRate,
+            taxTreatment: isImprest
+              ? IMPREST_TAX_PROFILE.taxTreatment
+              : String(fundingLine.tax_treatment) as BudgetTaxTreatment,
+            gstRate: isImprest ? IMPREST_TAX_PROFILE.gstRate : Number(fundingLine.gst_rate),
+            gstType: isImprest
+              ? IMPREST_TAX_PROFILE.gstType
+              : String(fundingLine.gst_type) as BudgetGstType,
+            recoverableTaxPct: isImprest
+              ? IMPREST_TAX_PROFILE.recoverableTaxPct
+              : Number(fundingLine.recoverable_tax_pct),
             justification: String(fundingLine.justification || "Approved budget allocation"),
           });
           // Imprest carries no GST — the whole voucher amount is P&L cost. See applyImprestNoGst.

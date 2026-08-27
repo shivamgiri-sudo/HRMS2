@@ -149,6 +149,21 @@ describe("both GRN write paths apply the imprest rule", () => {
   it("the GRN form shows the full amount as P&L impact for imprest", () => {
     const form = readRepo("src/components/finance/grn/BudgetLinkedGrnForm.tsx");
     expect(form).toContain("if (!isVendor) {");
-    expect(form).toContain("sum.pnl += Number(calc.gross);");
+    // Taken straight from the raiser's own share, NOT re-derived as a fractional quantity of the
+    // budget line — pricing it through that line's planning profile rounded the base to paise and
+    // then charged GST on the rounded base, putting ₹0.01 a row into a voucher that has no GST at
+    // all (see grn-imprest-paise-exactness.test.ts).
+    expect(form).toContain("sum.pnl += shareGross;");
+    expect(form).not.toContain("sum.pnl += Number(calc.gross);");
+  });
+
+  it("the GRN form states the imprest money outright instead of leaving it to be rebuilt", () => {
+    const form = readRepo("src/components/finance/grn/BudgetLinkedGrnForm.tsx");
+    // Exact paise that sum to the typed amount, shared by the Cost panel and the submit payload.
+    expect(form).toContain("function splitIntoPaise(");
+    expect(form).toContain("grossAmount: shareGross,");
+    const service = read("src/modules/finance/grn-smart.service.ts");
+    // ...and the server honours it for imprest only.
+    expect(service).toContain("const imprestShare = isImprest && allocation.grossAmount != null");
   });
 });
