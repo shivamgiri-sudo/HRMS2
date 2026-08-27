@@ -44,6 +44,7 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { REPORT_CATALOG as CENTRAL_CATALOG, type ReportMeta, type ColumnDef, type ColumnFormat } from "@/lib/report-catalog";
+import { withDayColumnLabels } from "@/lib/attendance-register-columns";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -994,6 +995,14 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
     return visibleCatalog.filter(r => r.name.toLowerCase().includes(searchQ.toLowerCase()));
   }, [searchQ, visibleCatalog]);
 
+  // Derives "Mon-DD" day-column labels from the selected month filter. A no-op for every
+  // report other than attendance-register-monthly, since no other catalog entry declares
+  // day_N keys today.
+  const displayColumns = useMemo(
+    () => withDayColumnLabels(selectedReport?.columns ?? [], filterValues.month),
+    [selectedReport, filterValues.month]
+  );
+
   function selectReport(r: ReportDef) {
     setSelectedReport(r);
     setSelectedCat(r.category);
@@ -1418,10 +1427,10 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                             selectedReport.headerGroups ? "top-[33px]" : "top-0"
                           }`}
                         >
-                          {selectedReport.columns.map(col => (
+                          {displayColumns.map(col => (
                             <th
                               key={col.key}
-                              className={`px-3 py-2.5 font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap ${
+                              className={`px-3 py-2.5 font-semibold text-gray-500 ${/^day_\d+$/.test(col.key) ? "" : "uppercase"} tracking-wider whitespace-nowrap ${
                                 col.align === "right"
                                   ? "text-right"
                                   : col.align === "center"
@@ -1438,7 +1447,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                       <tbody className="divide-y divide-gray-50">
                         {rows.map((row, i) => (
                           <tr key={i} className={`hover:bg-blue-50/50 ${i % 2 === 0 ? "" : "bg-gray-50/50"}`}>
-                            {selectedReport.columns.map(col => (
+                            {displayColumns.map(col => (
                               <td
                                 key={col.key}
                                 className={`px-3 py-2 text-gray-700 whitespace-nowrap max-w-[220px] truncate ${

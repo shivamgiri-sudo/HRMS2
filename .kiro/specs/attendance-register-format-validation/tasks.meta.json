@@ -1,0 +1,187 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. Create frontend day-label helper module": [
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787841942473
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787841960279
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787842267008
+      }
+    ],
+    "2. Write unit tests for the frontend day-label helper": [
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787841942595
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787842273273
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787842409011
+      }
+    ],
+    "3. Create backend day-label helper module": [
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787841942692
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787842415023
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787842527956
+      }
+    ],
+    "4. Write unit tests for the backend day-label helper": [
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787841942775
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787842535109
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787842643739
+      }
+    ],
+    "5. Wire the frontend helper into ReportLibraryView.tsx": [
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787841942849
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787842650021
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787843152518
+      }
+    ],
+    "6. Extend the backend catalog's column list for attendance-register-monthly": [
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787841942940
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787843158927
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787843830578
+      }
+    ],
+    "7. Extend the backend export route to use label-verbatim export for attendance-register-monthly": [
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787841943020
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787843836805
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787844118847
+      }
+    ],
+    "8. Write the header-parity contract test": [
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787841943092
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787844125597
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787844510966
+      }
+    ],
+    "9. Write and run the data validation script against staging": [
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787841943169
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787844532375
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787845006517
+      }
+    ],
+    "10. Run the full test suite and typecheck": [
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787841943305
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787845017309
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787845538160
+      }
+    ],
+    "11. Extend the async report-generation worker for label-verbatim export parity": [
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787845210004
+      },
+      {
+        "executionId": "34100198-f7c6-488c-8107-a5f8db37553c",
+        "chatSessionId": "sess_0278180c-ba72-401f-aeab-5333916171d0",
+        "timestamp": 1787845515956
+      }
+    ]
+  }
+}
