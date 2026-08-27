@@ -101,16 +101,42 @@ describe("getQueue() summary enrichment", () => {
     expect(bank.readiness_class).toBe("BLOCKED");
   });
 
-  it("skips BGV/bank enrichment entirely for approved/rejected (no summary field)", async () => {
-    execute.mockResolvedValueOnce([[
-      { review_id: "r2", employee_id: "e2", status: "approved", package_accepted: 1 },
-    ]]);
+  // Enrichment used to stop at the Pending tab, which left the BGV and Bank tiles on the
+  // Approved/Rejected tabs with nothing to draw. It now runs on every tab — bounded by a row
+  // cap, so a tab holding years of history never costs one BGV round-trip per row.
+  it("enriches approved/rejected too, so their readiness tiles have data", async () => {
+    execute
+      .mockResolvedValueOnce([[
+        { review_id: "r2", employee_id: "e2", status: "approved", package_accepted: 1 },
+      ]])
+      .mockResolvedValueOnce([[]]); // fetchPennyDropByEmployee
+    getEmployeeBgvStatus.mockResolvedValueOnce({ overall_status: "clear" });
+    buildBankReadinessReport.mockResolvedValueOnce({ rows: [{ employee_id: "e2", payable: true }] });
 
     const rows = await getQueue({ status: "approved" }, "caller-1") as any[];
 
-    expect(rows[0].summary).toBeUndefined();
-    expect(getEmployeeBgvStatus).not.toHaveBeenCalled();
-    expect(buildBankReadinessReport).not.toHaveBeenCalled();
+    expect(rows[0].summary.bgv).toEqual({ overall_status: "clear" });
+    expect(rows[0].summary.bank.payable).toBe(true);
+  });
+
+  it("stops enriching past the row cap instead of paying one BGV call per row", async () => {
+    // 121 rows: one more than ENRICH_ROW_CAP.
+    const many = Array.from({ length: 121 }, (_, i) => ({
+      review_id: `r${i}`, employee_id: `e${i}`, status: "approved", package_accepted: 1,
+    }));
+    execute
+      .mockResolvedValueOnce([many])
+      .mockResolvedValueOnce([[]]);
+    getEmployeeBgvStatus.mockResolvedValue({ overall_status: "clear" });
+    buildBankReadinessReport.mockResolvedValueOnce({ rows: [] });
+
+    const rows = await getQueue({ status: "approved" }, "caller-1") as any[];
+
+    expect(getEmployeeBgvStatus).toHaveBeenCalledTimes(120);
+    expect(rows[119].summary).toBeDefined();
+    // The uncovered tail carries NO summary at all — the UI reads that as "Not evaluated"
+    // rather than as a check that came back empty.
+    expect(rows[120].summary).toBeUndefined();
   });
 
   it("scopes payroll_hr/branch_head via buildScopeWhereClause instead of seeing everything", async () => {

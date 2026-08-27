@@ -170,6 +170,13 @@ async function writeHistory(params: {
 
 // ── Queue ────────────────────────────────────────────────────────────────────
 
+/**
+ * How many queue rows get the (per-row) BGV + bank enrichment that feeds the readiness tiles.
+ * 120 covers every live tab today (23 rows total across all three) with headroom; beyond it
+ * the tiles read "Not evaluated" instead of the request taking one BGV round-trip per row.
+ */
+const ENRICH_ROW_CAP = 120;
+
 export async function getQueue(
   filters: { status?: string; q?: string; branch?: string },
   callerUserId: string
@@ -219,9 +226,60 @@ export async function getQueue(
               ORDER BY o.created_at DESC LIMIT 1) AS offer_status,
             (SELECT o.offered_ctc FROM ats_employment_offer o
               WHERE o.candidate_id = r.candidate_id
-              ORDER BY o.created_at DESC LIMIT 1) AS offered_ctc
+              ORDER BY o.created_at DESC LIMIT 1) AS offered_ctc,
+            -- Approval chain: the two stages that ran BEFORE this review row existed.
+            -- Both are joined on a PRIMARY KEY matched by a scalar subquery rather than on
+            -- candidate_id directly, so a second validation/approval row for the same
+            -- candidate can never multiply a queue row.
+            v.validation_status AS phr_status,
+            -- Payroll HR is the person who RAISED the offer, read off ats_employment_offer.
+            -- NOT ats_payroll_hr_validation.payroll_hr_id: three separate writers reset that
+            -- column to whoever last touched the row (payroll_hr_id = VALUES(payroll_hr_id)
+            -- in payroll-hr.service, payroll_hr_id = ? in joining-control-room.service), so
+            -- on 22 of 23 live records it holds the BRANCH HEAD who approved, and the row
+            -- would name the same person twice. offer.created_by is written once at offer
+            -- creation and never rewritten by the approval.
+            COALESCE(o.submitted_at, o.created_at) AS phr_at,
+            COALESCE(ocr.full_name, oau.email)     AS phr_by,
+            ocr.id                                 AS phr_by_employee_id,
+            bha.approval_status AS bh_status,
+            bha.approved_at     AS bh_at,
+            bhe.full_name       AS bh_by,
+            bha.branch_head_id  AS bh_by_employee_id,
+            bha.remarks         AS bh_remarks,
+            TIMESTAMPDIFF(MINUTE, COALESCE(o.submitted_at, o.created_at), bha.approved_at) AS stage1_minutes,
+            TIMESTAMPDIFF(MINUTE, bha.approved_at, COALESCE(r.reviewed_at, NOW())) AS stage2_minutes,
+            -- Correlated, NOT a join: 7 user_ids map to more than one employees row, so
+            -- "LEFT JOIN employees ON user_id = r.reviewed_by" would duplicate queue rows.
+            (SELECT COALESCE(phe.full_name, rau.email)
+               FROM auth_user rau
+               LEFT JOIN employees phe ON phe.user_id = rau.id
+              WHERE rau.id = r.reviewed_by LIMIT 1) AS ph_by
        FROM employee_payroll_head_review r
        JOIN employees e ON e.id = r.employee_id
+       -- Payroll HR validation, and the Branch Head approval that hangs off it.
+       -- ats_branch_head_approval.candidate_id is populated on only 3 of 31 rows, so the
+       -- link that actually holds is payroll_validation_id -> ats_payroll_hr_validation.id.
+       -- branch_head_id holds an employees.id (NOT a user_id); offer.created_by holds a
+       -- user_id, hence the two different employees joins below. employees.user_id is not
+       -- unique (7 user_ids map to more than one row), so the offer creator is resolved
+       -- through a LIMIT 1 subquery rather than a join that could duplicate queue rows.
+       LEFT JOIN ats_payroll_hr_validation v
+              ON v.id = (SELECT v2.id FROM ats_payroll_hr_validation v2
+                          WHERE v2.candidate_id = r.candidate_id
+                          ORDER BY v2.created_at DESC LIMIT 1)
+       LEFT JOIN ats_employment_offer o
+              ON o.id = (SELECT o2.id FROM ats_employment_offer o2
+                          WHERE o2.candidate_id = r.candidate_id
+                          ORDER BY o2.created_at DESC LIMIT 1)
+       LEFT JOIN auth_user oau ON oau.id = o.created_by
+       LEFT JOIN employees ocr ON ocr.id = (SELECT e2.id FROM employees e2
+                                             WHERE e2.user_id = o.created_by LIMIT 1)
+       LEFT JOIN ats_branch_head_approval bha
+              ON bha.id = (SELECT b2.id FROM ats_branch_head_approval b2
+                            WHERE b2.payroll_validation_id = v.id
+                            ORDER BY b2.created_at DESC LIMIT 1)
+       LEFT JOIN employees bhe ON bhe.id = bha.branch_head_id
        LEFT JOIN branch_master b ON b.id = e.branch_id
        LEFT JOIN designation_master dm ON dm.id = e.designation_id
        LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
@@ -232,14 +290,19 @@ export async function getQueue(
     params
   );
 
-  // Pending Review is the only actionable tab and always small (~16 live today) — bound the
-  // extra BGV/bank enrichment to it so Approved/Rejected (which can hold years of history) never
-  // pay for it. BGV reuses the real per-employee resolver as-is (candidate_id, with the
+  // BGV/bank enrichment used to be Pending-Review-only, which left the BGV and Bank tiles on
+  // the Approved/Rejected tabs with nothing to draw. It now runs for every tab but is BOUNDED
+  // to the first ENRICH_ROW_CAP rows — BGV costs one resolver call per row, and Approved holds
+  // years of history. Rows past the cap simply carry no `summary`, and the UI renders them as
+  // "Not evaluated" rather than inventing a state. This also caps the Pending path, which was
+  // previously unbounded up to the 500-row LIMIT.
+  // BGV reuses the real per-employee resolver as-is (candidate_id, with the
   // ats_onboarding_bridge fallback) rather than a second, drift-prone implementation. Bank calls
   // the org-wide report exactly ONCE for the whole batch, not once per row.
-  if (status === "pending_review" && rows.length > 0) {
+  const enrichRows = rows.slice(0, ENRICH_ROW_CAP);
+  if (enrichRows.length > 0) {
     const [bgvResults, bankReport, pennyDrop] = await Promise.all([
-      Promise.all(rows.map((r) =>
+      Promise.all(enrichRows.map((r) =>
         getEmployeeBgvStatus(r.employee_id as string).catch((e: unknown) => ({
           error: e instanceof Error ? e.message : String(e),
         }))
@@ -247,7 +310,7 @@ export async function getQueue(
       buildBankReadinessReport(null).catch((e: unknown) => ({
         error: e instanceof Error ? e.message : String(e),
       })),
-      fetchPennyDropByEmployee(rows.map((r) => r.employee_id as string)),
+      fetchPennyDropByEmployee(enrichRows.map((r) => r.employee_id as string)),
     ]);
     const bankByEmployee = new Map<string, unknown>();
     if ("rows" in bankReport) {
@@ -255,7 +318,7 @@ export async function getQueue(
         bankByEmployee.set(b.employee_id, b);
       }
     }
-    rows.forEach((r, i) => {
+    enrichRows.forEach((r, i) => {
       r.summary = {
         offered: { status: r.offer_status ?? null, ctc: r.offered_ctc ?? null },
         final: { accepted: !!r.package_accepted, assigned: !!r.final_ctc, ctc: r.final_ctc ?? null },
