@@ -17,6 +17,7 @@
  */
 
 'use strict';
+require('dotenv').config();
 const mysql = require('mysql2/promise');
 const { randomUUID } = require('crypto');
 
@@ -125,18 +126,25 @@ const SKIP_REASONS = {
 };
 
 async function main() {
+  // Credentials come from backend/.env only. The literal fallbacks that used to sit here put a
+  // live DB password in a committed file; a missing var must fail loudly, not connect quietly.
+  const need = (name) => {
+    const v = process.env[name];
+    if (!v) throw new Error(`Missing required env var ${name} - run from backend/ with .env loaded`);
+    return v;
+  };
   const billCfg = {
-    host: process.env.BILL_DB_HOST || '192.168.10.22',
+    host: need('BILL_DB_HOST'),
     port: Number(process.env.BILL_DB_PORT || 3306),
-    user: process.env.BILL_DB_USER || 'shivam_user',
-    password: process.env.BILL_DB_PASSWORD || 'qwersdfg!@#hjk',
+    user: need('BILL_DB_USER'),
+    password: need('BILL_DB_PASSWORD'),
     database: process.env.BILL_DB_NAME || 'db_bill',
   };
   const hrmsCfg = {
-    host: process.env.DB_HOST || '192.168.10.6',
+    host: need('DB_HOST'),
     port: Number(process.env.DB_PORT || 3306),
-    user: process.env.DB_USER || 'shivam_user',
-    password: process.env.DB_PASSWORD || 'qwersdfg!@#hjk',
+    user: need('DB_USER'),
+    password: need('DB_PASSWORD'),
     database: process.env.DB_NAME || 'mas_hrms',
   };
 
@@ -144,11 +152,64 @@ async function main() {
   const hrms = await mysql.createConnection(hrmsCfg);
   console.log(DRY_RUN ? '[DRY RUN] Connected to both DBs' : 'Connected to both DBs');
 
-  // 1. Get all active db_bill vendors with head/subhead
+  // 1. Get all active db_bill vendors with head/subhead.
+  //
+  //    tbl_vendormaster, NOT vendor_master. db_bill carries both: vendor_master holds 640 rows
+  //    (Id 18-660), while tbl_vendormaster holds 1,560 (Ids to 2077) and is the table mas_hrms'
+  //    DB_BILL_* vendor_code suffixes were imported from. Reading vendor_master left 206 of the
+  //    627 unmapped vendors with no source row at all, so they fell out through the
+  //    NOT_IN_DB_BILL_ACTIVE branch below and were reported as gaps rather than mapped.
   const [billVendors] = await bill.query(
     `SELECT Id, vendor, HeadId, COALESCE(SubHeadId,'') AS SubHeadId
-     FROM vendor_master WHERE active = 1`,
+     FROM tbl_vendormaster WHERE active = 1`,
   );
+
+  // 1b. db_bill numbers its expense heads TWICE, in two unrelated schemes that share names:
+  //     a zero-padded one ('000011' = Repair and Maintanance) and a legacy bare one
+  //     ('11' = Contract Fees Facilities). They are NOT the same head zero-padded - checked
+  //     across all 14 overlapping ids, 14 disagree. Padding a legacy id to reach MAPPING would
+  //     therefore file vendors under the wrong expense head, silently.
+  //
+  //     So legacy ids are translated by HEAD/SUB-HEAD NAME onto their zero-padded twin, and only
+  //     then looked up in the hand-verified MAPPING above. A legacy head with no padded twin of
+  //     the same name resolves to nothing and is reported as a gap - never guessed.
+  const [headRows] = await bill.query(
+    'SELECT HeadingId, HeadingDesc FROM tbl_bgt_expenseheadingmaster',
+  );
+  const [subRows] = await bill.query(
+    'SELECT SubHeadingId, SubHeadingDesc FROM tbl_bgt_expensesubheadingmaster',
+  );
+  const isPadded = (id) => /^0{3}/.test(String(id || ''));
+  const norm = (d) => String(d || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const paddedHeadByName = new Map();
+  for (const r of headRows) {
+    if (isPadded(r.HeadingId) && norm(r.HeadingDesc)) paddedHeadByName.set(norm(r.HeadingDesc), String(r.HeadingId));
+  }
+  const paddedSubByName = new Map();
+  for (const r of subRows) {
+    if (isPadded(r.SubHeadingId) && norm(r.SubHeadingDesc)) paddedSubByName.set(norm(r.SubHeadingDesc), String(r.SubHeadingId));
+  }
+  const legacyHeadName = new Map(
+    headRows.filter((r) => !isPadded(r.HeadingId)).map((r) => [String(r.HeadingId), r.HeadingDesc]),
+  );
+  const legacySubName = new Map(
+    subRows.filter((r) => !isPadded(r.SubHeadingId)).map((r) => [String(r.SubHeadingId), r.SubHeadingDesc]),
+  );
+
+  /** Translate a possibly-legacy (head, sub) pair into the zero-padded scheme MAPPING is keyed on.
+   *  Returns null when either half has no same-named padded twin, so the caller reports a gap. */
+  function toPaddedKey(headId, subId) {
+    const h = String(headId || '');
+    const sub = String(subId || '');
+    if (isPadded(h)) return `${h}|${sub}`;
+    const hName = legacyHeadName.get(h);
+    const sName = legacySubName.get(sub);
+    if (!hName || !sName) return null;
+    const ph = paddedHeadByName.get(norm(hName));
+    const ps = paddedSubByName.get(norm(sName));
+    if (!ph || !ps) return null;
+    return `${ph}|${ps}`;
+  }
 
   // 2. Get unmapped vendor IDs in mas_hrms
   const [unmapped] = await hrms.query(
@@ -186,15 +247,30 @@ async function main() {
 
     const key = `${bv.HeadId || ''}|${bv.SubHeadId || ''}`;
     const skipReason = SKIP_REASONS[key] || SKIP_REASONS[`${bv.HeadId}|`];
+    // NOTE: SKIP_REASONS is keyed on the padded scheme, so a legacy-id vendor in one of those
+    // four known-ambiguous buckets is not caught here; it falls through to toPaddedKey() and is
+    // reported as a gap either way. Both paths refuse to insert, which is the point.
     if (skipReason) {
       gapReport.push({ billId, vendor: bv.vendor, key, reason: skipReason });
       skipped++;
       continue;
     }
 
-    const hrmsTarget = LOOKUP.get(key);
+    const paddedKey = toPaddedKey(bv.HeadId, bv.SubHeadId);
+    if (!paddedKey) {
+      gapReport.push({
+        billId, vendor: bv.vendor, key,
+        reason: `LEGACY_ID_NO_PADDED_TWIN: ${key} - legacy head/sub-head has no same-named entry in the padded scheme; map by hand`,
+      });
+      noMatch++;
+      continue;
+    }
+    const hrmsTarget = LOOKUP.get(paddedKey);
     if (!hrmsTarget) {
-      gapReport.push({ billId, vendor: bv.vendor, key, reason: `UNMAPPED_COMBO: ${key}` });
+      gapReport.push({
+        billId, vendor: bv.vendor, key,
+        reason: `UNMAPPED_COMBO: ${key}${paddedKey === key ? '' : ' (padded ' + paddedKey + ')'}`,
+      });
       noMatch++;
       continue;
     }
