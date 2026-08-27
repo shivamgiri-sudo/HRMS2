@@ -1023,6 +1023,51 @@ export async function approve(employeeId: string, actorUserId: string) {
     }).catch((e) => console.warn('[payroll-head-review] approve notify employee failed:', e))] : []),
   ]);
 
+  // Release the joining kit this approval was blocking (2026-08-27).
+  //
+  // dispatchJoiningKit refuses to send while employee_payroll_head_review.status is not
+  // 'approved' — deliberately, because the contract appendix prints the final remuneration
+  // and must not be signed before salary is settled. But nothing ever re-ran dispatch once
+  // that gate opened. All three dispatch call sites (ats.convert, the creation orchestrator,
+  // and the manual send route) fire at or before employee creation, and no cron retries a
+  // blocked kit — so every kit blocked with 'payroll_head_not_approved' sat there
+  // permanently, and releasing it meant HR pressing "Send for eSign" once per employee.
+  // Approving a batch of salaries therefore appeared to dispatch nothing at all.
+  //
+  // Fire-and-forget and non-fatal, matching employee-creation-orchestrator's own call: an
+  // approval that is already committed above must not fail because an email provider is
+  // down. queueJoiningKit reuses the employee's existing open kit rather than opening a
+  // second one, so this cannot duplicate a kit or regenerate drafts on one already in
+  // flight. Every other block (hr_fill_pending, per_document_flow_active, no_documents)
+  // still applies — this only removes the one that approval itself just cleared.
+  //
+  // Imported dynamically to keep the employees module out of this file's static graph,
+  // matching employeeJoiningDocuments.service.ts's own late import of the same module.
+  void (async () => {
+    try {
+      const { queueJoiningKit, dispatchJoiningKit } =
+        await import("../employees/joiningKitDispatch.service.js");
+      const { kitId } = await queueJoiningKit({
+        employeeId,
+        candidateId: null,
+        actorUserId,
+        triggerSource: 'payroll_head_approved',
+      });
+      const outcome = await dispatchJoiningKit(kitId, actorUserId);
+      console.log('[payroll-head-review] joining kit after approval:', {
+        employeeId,
+        status: outcome.status,
+        blockedReason: outcome.blockedReason ?? null,
+      });
+    } catch (e) {
+      console.error('[payroll-head-review] joining kit after approval failed:', {
+        employeeId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  })();
+
+
   return { review: await getReviewRow(employeeId) };
 }
 
