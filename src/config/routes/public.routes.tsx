@@ -87,7 +87,19 @@ export const publicRouteElements = (
       <Route path="/onboard"      element={<CandidateOnboardingPage />} />
       <Route path="/onboard-full" element={<CandidateOnboardingFullPage />} />
       {/* V2 TEST — Redesigned UI, same backend */}
-      <Route path="/onboard-full-v2" element={<CandidateOnboardingFullPageV2 />} />
+      {/*
+        * Consolidated 2026-08-27. Two full candidate-onboarding flows existed side by side.
+        * Every link the backend actually sends a candidate — ats-reminders.cron,
+        * ats.onboarding.routes, ats.onboarding.service (x2), ats.service, and the DigiLocker
+        * redirect_uri — points at /onboard-full. Nothing anywhere sends /onboard-full-v2.
+        *
+        * FOR THE MODULE OWNER: the unreachable V2 is the NEWER file (26-Aug vs 23-Aug) and
+        * enforces education, live selfie and marital status at submit. That validation is
+        * worth porting into CandidateOnboardingFullPage. Redirecting rather than switching
+        * the canonical URL, because swapping the form a live candidate receives is a
+        * behaviour change that needs its own approval, not a de-duplication commit.
+        */}
+      <Route path="/onboard-full-v2" element={<Navigate to="/onboard-full" replace />} />
       {/* LEGACY: kept alive for existing email token links until token table is audited for zero active sessions */}
       <Route path="/onboard-full-legacy" element={<CandidateOnboardingV2 />} />
       {/* Duplicates eliminated → redirects to canonical */}

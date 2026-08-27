@@ -49,7 +49,17 @@ export const recruitmentRouteElements = (
       {/* ATS Dashboards — CANONICAL: /ats/command-center */}
       <Route path="/ats/command-center" element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSFullParityCommandCenter /></Gate></ProtectedRoute>} />
       {/* Legacy dashboard views — kept for role-specific bookmarks */}
-      <Route path="/ats/dashboard"      element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSDashboardReplica /></Gate></ProtectedRoute>} />
+      {/*
+        * Consolidated 2026-08-27. NativeATSDashboardReplica made ZERO API calls and rendered a
+        * hardcoded array — a static mock on a real route, reachable from five real places
+        * (AdminWorkforceDashboard, three reference dashboard layouts, ATSWaitingQueue). Anyone
+        * following those links saw invented numbers presented as ATS data, which is what
+        * CLAUDE.md's "no mock metrics in production flows" rule exists to prevent.
+        *
+        * /ats/command-center is the live page and carries the same ATS_DASHBOARD page code, so
+        * the five inbound links keep working and nobody's access changes.
+        */}
+      <Route path="/ats/dashboard"      element={<Navigate to="/ats/command-center" replace />} />
       <Route path="/ats/dashboard-v2"   element={<ProtectedRoute><Gate pageCode="ATS_DASHBOARD"><NativeATSDashboardV2 /></Gate></ProtectedRoute>} />
       {/* Old spelling — redirect to canonical */}
       <Route path="/ats/command-centre" element={

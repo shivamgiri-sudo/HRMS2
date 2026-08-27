@@ -90,8 +90,19 @@ export const peopleRouteElements = (
 
       {/* Employee lifecycle — CANONICAL: /employee-lifecycle */}
       <Route path="/employee-lifecycle" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_LIFECYCLE"><NativeLifecycle /></Gate></ProtectedRoute>} />
-      {/* LEGACY: /employee-lifecycle-v2 — separate component; kept pending convergence review */}
-      <Route path="/employee-lifecycle-v2" element={<ProtectedRoute><Gate pageCode="EMPLOYEE_LIFECYCLE"><NativeEmployeeLifecycle /></Gate></ProtectedRoute>} />
+      {/*
+        * Convergence resolved 2026-08-27. Both lifecycle pages sat on the EMPLOYEE_LIFECYCLE
+        * page code; /employee-lifecycle is in the sidebar, this one had no sidebar entry and
+        * no inbound link anywhere in src/, so it was reachable only by typing the URL.
+        *
+        * FOR THE MODULE OWNER: the hidden page was the RICHER of the two. It also called
+        * /api/lifecycle/probation-due, /api/mobility/transfers, /api/mobility/promotions and
+        * /api/lifecycle/employees/:id/confirm — none of which the sidebar page has. Those four
+        * capabilities are worth merging into NativeLifecycle rather than losing. This redirect
+        * removes the duplicate URL only; it does not settle that question, and the component
+        * file is deliberately left in the tree so the merge is still possible.
+        */}
+      <Route path="/employee-lifecycle-v2" element={<Navigate to="/employee-lifecycle" replace />} />
 
       {/* Exit */}
       <Route path="/exit/command-center" element={<ProtectedRoute><Gate pageCode="EXIT_COMMAND_CENTER"><NativeExitCommandCenter /></Gate></ProtectedRoute>} />

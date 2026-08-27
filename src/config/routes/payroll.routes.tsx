@@ -14,7 +14,6 @@ const NativePayslipCenter       = lazy(() => import("@/pages/NativePayslipCenter
 const NativeTaxDeclaration      = lazy(() => import("@/pages/NativeTaxDeclaration"));
 const NativeFullFinal           = lazy(() => import("@/pages/NativeFullFinal"));
 const NativePayrollMasters      = lazy(() => import("@/pages/NativePayrollMasters"));
-const NativeSalaryPackages      = lazy(() => import("@/pages/NativeSalaryPackages"));
 const NativeSalaryPackageAdmin  = lazy(() => import("@/pages/NativeSalaryPackageAdmin"));
 const NativeIncentives          = lazy(() => import("@/pages/NativeIncentives"));
 const PayrollOvertimeManagement = lazy(() => import("@/pages/PayrollOvertimeManagement"));
@@ -51,7 +50,6 @@ const PfManagement              = lazy(() => import("@/pages/payroll/PfManagemen
 const PaymentDisbursalCenter    = lazy(() => import("@/pages/payroll/PaymentDisbursalCenter"));
 const PayrollReadinessDashboard = lazy(() => import("@/pages/payroll/PayrollReadinessDashboard"));
 const SalaryPackageManager      = lazy(() => import("@/pages/payroll/SalaryPackageManager"));
-const NativeSalaryPackageManager = lazy(() => import("@/pages/NativeSalaryPackageManager"));
 const StatutoryCenter           = lazy(() => import("@/pages/payroll/StatutoryCenter"));
 const PayrollVarianceAnalysis   = lazy(() => import("@/pages/payroll/PayrollVarianceAnalysis"));
 const PayrollRunLifecycle       = lazy(() => import("@/pages/payroll/PayrollRunLifecycle"));
@@ -108,7 +106,19 @@ export const payrollRouteElements = (
       <Route path="/payroll/masters"        element={<ProtectedRoute><Gate pageCode="PAYROLL_MASTERS"><NativePayrollMasters /></Gate></ProtectedRoute>} />
       {/* Salary Package Manager — merged page with tabs for packages + admin */}
       <Route path="/payroll/salary-packages" element={<ProtectedRoute><Gate pageCode="SALARY_PACKAGES"><SalaryPackageManager /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/salary-package-manager" element={<ProtectedRoute roles={['super_admin','admin','payroll','payroll_hr','hr']}><Gate pageCode="SALARY_PACKAGES"><NativeSalaryPackageManager /></Gate></ProtectedRoute>} />
+      {/*
+        * Consolidated 2026-08-27. NativeSalaryPackageManager rendered a second, 2,642-line
+        * salary-package UI whose API surface was IDENTICAL to SalaryPackageManager's — all
+        * 8 endpoints, byte for byte — behind the same SALARY_PACKAGES page code, absent
+        * from the sidebar, with no inbound link anywhere in src/. Two different screens
+        * editing payroll master data through one set of endpoints is a divergence waiting
+        * to happen, and SalaryPackageManager is the one the sidebar and its own docblock
+        * call the merged hub.
+        *
+        * Redirected rather than deleted: the URL is in bookmarks and UAT matrices, and the
+        * page code is the same on both sides, so nobody's access changes.
+        */}
+      <Route path="/payroll/salary-package-manager" element={<Navigate to="/payroll/salary-packages" replace />} />
       {/*
         * NativeSalaryPackageAdmin was imported but never rendered -- this path
         * redirected to SalaryPackageManager instead. It is the only package screen

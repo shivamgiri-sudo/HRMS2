@@ -188,6 +188,10 @@ describe("application shell routing contracts", () => {
       "/management/ceo-command-center",
       "/master-reports",
       "/my-report-requests",
+      // Redirect-only since the 2026-08-27 de-duplication: its component made no network
+      // calls at all, so every toggle a user set there was discarded. The sidebar entry was
+      // removed and this URL now redirects to /communication/preferences, which saves.
+      "/notification-preferences",
       "/onboard",
       "/onboard-full",
       "/onboard-full-legacy",

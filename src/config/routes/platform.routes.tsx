@@ -16,9 +16,6 @@ const PageLoader = () => (
 const NativeConfigurationCenter     = lazy(() => import("@/pages/NativeConfigurationCenter"));
 const Settings                      = lazy(() => import("@/pages/Settings"));
 const Profile                       = lazy(() => import("@/pages/Profile"));
-const ProfileEnhanced               = lazy(() => import("@/pages/ProfileEnhanced"));
-const ProfileEnhancedV2             = lazy(() => import("@/pages/ProfileEnhancedV2"));
-const ProfileV3                     = lazy(() => import("@/pages/ProfileV3"));
 const NativeAssetsManager           = lazy(() => import("@/pages/NativeAssetsManager"));
 const NativeExitPass                = lazy(() => import("@/pages/NativeExitPass"));
 const NativeExitPassPrint           = lazy(() => import("@/pages/NativeExitPassPrint"));
@@ -82,7 +79,6 @@ const BulkUploadHub                 = lazy(() => import("@/pages/BulkUploadHub")
 const BulkUploadApprovals           = lazy(() => import("@/pages/BulkUploadApprovals"));
 const Departments                   = lazy(() => import("@/pages/Departments"));
 const CompanyCalendar               = lazy(() => import("@/pages/CompanyCalendar"));
-const NotificationPreferences       = lazy(() => import("@/pages/NotificationPreferences"));
 const Notifications                 = lazy(() => import("@/pages/Notifications"));
 const Changelog                     = lazy(() => import("@/pages/Changelog"));
 const ModuleLauncher                = lazy(() => import("@/pages/ModuleLauncher"));
@@ -117,13 +113,32 @@ export const platformRouteElements = (
       {/* Core platform */}
       <Route path="/settings"        element={<ProtectedRoute><Settings /></ProtectedRoute>} />
       <Route path="/profile"         element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><Profile /></Gate></ProtectedRoute>} />
-      <Route path="/profile-enhanced" element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><ProfileEnhanced /></Gate></ProtectedRoute>} />
-      <Route path="/profile-v2" element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><ProfileEnhancedV2 /></Gate></ProtectedRoute>} />
-      <Route path="/profile-v3" element={<ProtectedRoute><Gate pageCode="MY_PROFILE"><ProfileV3 /></Gate></ProtectedRoute>} />
+      {/*
+        * Consolidated 2026-08-27. Four components rendered "my profile" — Profile,
+        * ProfileEnhanced, ProfileEnhancedV2, ProfileV3 — all on the MY_PROFILE page code,
+        * all reading /api/employees/me and /api/employees/me/journey, and none of the three
+        * variants linked from the sidebar or anywhere else in src/. Design iterations that
+        * were never cleaned up; /profile is the one the sidebar points at.
+        *
+        * Redirected, not deleted: identical page code on both sides, so no access changes,
+        * and the URLs survive in bookmarks. ProfileV3 additionally called
+        * /api/leave/requests — that is a leave list, already on its own page, not a reason
+        * to keep a fourth profile.
+        */}
+      <Route path="/profile-enhanced" element={<Navigate to="/profile" replace />} />
+      <Route path="/profile-v2" element={<Navigate to="/profile" replace />} />
+      <Route path="/profile-v3" element={<Navigate to="/profile" replace />} />
       <Route path="/departments"     element={<ProtectedRoute><Departments /></ProtectedRoute>} />
       <Route path="/calendar"        element={<ProtectedRoute><CompanyCalendar /></ProtectedRoute>} />
       <Route path="/notifications"   element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
-      <Route path="/notification-preferences" element={<ProtectedRoute><NotificationPreferences /></ProtectedRoute>} />
+      {/*
+        * Consolidated 2026-08-27. NotificationPreferences.tsx made ZERO network calls of any
+        * kind — no useQuery, no hrmsApi, no fetch — so whatever a user toggled here was never
+        * saved anywhere. NativeNotificationPreferences at /communication/preferences is the
+        * working one (POSTs /api/communication/preferences). Two sidebar entries pointed at
+        * these two, one of which quietly discarded every change.
+        */}
+      <Route path="/notification-preferences" element={<Navigate to="/communication/preferences" replace />} />
       <Route path="/modules"         element={<ProtectedRoute><ModuleLauncher /></ProtectedRoute>} />
       <Route path="/changelog"       element={<ProtectedRoute><Changelog /></ProtectedRoute>} />
       <Route path="/bulk-upload"     element={<ProtectedRoute roles={['admin','hr','super_admin','wfm','payroll','payroll_hr']}><Gate pageCode="BULK_UPLOAD"><BulkUploadHub /></Gate></ProtectedRoute>} />

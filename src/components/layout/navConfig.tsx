@@ -97,9 +97,11 @@ export const navGroups: NavGroup[] = [
       },
       {
         label: "Comm. Prefs", href: "/communication/preferences", icon: ic(Bell), public: true, description: "Communication settings",
+        // One entry, not two. "Notification Prefs" pointed at /notification-preferences,
+        // whose component made no network calls at all — every toggle a user set there was
+        // silently discarded. That route now redirects here; this is the page that saves.
         children: [
-          { label: "Notification Prefs", href: "/notification-preferences",  icon: ic(Bell), public: true, description: "Alert settings" },
-          { label: "Comm. Preferences",  href: "/communication/preferences", icon: ic(Bell), public: true, description: "Comm preferences" },
+          { label: "Comm. Preferences",  href: "/communication/preferences", icon: ic(Bell), public: true, description: "Notification & communication settings" },
         ],
       },
       { label: "My Resignation",   href: "/exit/resignation",        icon: ic(UserMinus), public: true, pageCode: "RESIGNATION_MY_REQUEST", description: "Raise resignation request" },
