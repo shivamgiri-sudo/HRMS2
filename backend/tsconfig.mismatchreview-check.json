@@ -1,0 +1,18 @@
+{
+  // Typecheck for the WFM mismatch-review queue API (attendance-console merge, Task 1).
+  //
+  // Deliberately NOT the repo-wide `tsc -p tsconfig.json` — see global-constraints.md #9 and
+  // tsconfig.attendance-check.json for why. Scope to this route module instead:
+  //
+  //     npx tsc -p tsconfig.mismatchreview-check.json
+  //
+  // Transitively pulled-in modules are still checked, so pre-existing errors from other
+  // people's files may appear; mismatch-review.routes.ts itself is expected to stay clean.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "src/modules/wfm/mismatch-review.routes.ts"
+  ]
+}
