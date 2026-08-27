@@ -207,8 +207,33 @@ async function assertGatedUploader(rpc_name: string, userId: string): Promise<vo
   }
 }
 
+/**
+ * department_master writes are super_admin-only everywhere else (requireDepartmentWrite in
+ * org.routes.ts), and a spreadsheet is not an exemption.
+ *
+ * import_department_upload_batch INSERTs ... ON DUPLICATE KEY UPDATE dept_name = VALUES(dept_name),
+ * so a row carrying an existing dept_code does not just add a department — it RENAMES one. The
+ * generic import guard above admits admin/hr/wfm/wfm_analyst/payroll/payroll_hr, which would have
+ * left every role locked out of the Departments UI still able to rename a department by uploading
+ * a file. That is the same structure change by another door, so it takes the same gate.
+ *
+ * Deliberately stricter than assertGatedUploader: that one admits branch WFM alongside Super
+ * Admin, which is right for leave and deduction batches and wrong for the org chart.
+ */
+async function assertDepartmentStructureUploader(rpc_name: string, userId: string): Promise<void> {
+  if (rpc_name !== "import_department_upload_batch") return;
+  const { hasAnyRole } = await import("../../shared/scopeAccess.js");
+  if (!(await hasAnyRole(userId, "super_admin"))) {
+    throw Object.assign(
+      new Error("Only a Super Admin can create or rename departments, including by upload."),
+      { statusCode: 403 },
+    );
+  }
+}
+
 async function dispatchImport(rpc_name: string, id: string, userId: string, res: Response) {
   await assertGatedUploader(rpc_name, userId);
+  await assertDepartmentStructureUploader(rpc_name, userId);
 
   if (rpc_name === "import_attendance_regularization_batch") {
     const { importRegularizationBatch } = await import(
