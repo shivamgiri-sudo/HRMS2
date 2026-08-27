@@ -37,6 +37,29 @@ describe("org cost-centre create writes only columns the table has", () => {
     expect(columns).toContain("working_days_per_week");
   });
 
+
+  it("the UPDATE does not either — the worse of the two, since nothing gates it", () => {
+    const service = read("src/modules/org/org.service.ts");
+    const update = service.slice(service.indexOf("UPDATE cost_centre_master SET"));
+    const assignments = update.slice(0, update.indexOf("WHERE id = ?"));
+    for (const column of PHANTOM) {
+      expect(assignments).not.toContain(column);
+    }
+    expect(assignments).toContain("working_days_per_week");
+  });
+
+  it("every SQL statement in the file is free of them — comments and the method signatures may keep them", () => {
+    const service = read("src/modules/org/org.service.ts");
+    const sqlBlocks = service.match(/`[^`]*cost_centre_master[^`]*`/g) ?? [];
+    expect(sqlBlocks.length).toBeGreaterThan(0);
+    for (const block of sqlBlocks) {
+      for (const column of PHANTOM) {
+        expect(block).not.toContain(column);
+      }
+    }
+  });
+
+
   it("the schema snapshot no longer claims cost_centre_master has them", () => {
     const snapshot = JSON.parse(read("sql/schema-snapshot.json")) as {
       tables: Record<string, string[]>;
