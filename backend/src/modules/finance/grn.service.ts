@@ -13,13 +13,9 @@ import {
 import { financeBranchFilter, type FinanceBranchScope } from "./finance-access-scope.js";
 import { budgetConsumptionService } from "../process-pnl/budget-consumption.service.js";
 import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
-import { allocateGrnNumber } from "./grn-number.service.js";
-import {
-  allocateMonthlyGrnNumber,
-  resolveAccountingPeriod,
-  resolveGrnNumberFormat,
-} from "./grn-number-monthly.service.js";
+import { resolveAccountingPeriod } from "./grn-number-monthly.service.js";
 import { grnSmartService } from "./grn-smart.service.js";
+import { resolveGrnNumberOnSubmit } from "./grn-number-on-submit.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import { applyImprestNoGst, IMPREST_TAX_PROFILE } from "./grn-imprest-tax.js";
 
@@ -592,21 +588,11 @@ export const grnService = {
       throw new Error("Invoice / supporting attachment is required before submission");
     }
 
-    // Allocate GRN number here (at submission), not at draft creation.
-    // Drafts that are abandoned never consume a sequence slot — Finance sees contiguous numbers.
-    // If a number was somehow already set (legacy migration rows, or a re-submit after reopen),
-    // keep it — only assign if NULL.
-    let grnNumber = grn.grn_number as string | null | undefined;
-    if (!grnNumber) {
-      const accountingPeriod = String(grn.accounting_period ?? "");
-      const financialYear = grn.financial_year
-        ? String(grn.financial_year)
-        : financialYearFromPeriod(accountingPeriod);
-      const numberFormat = await resolveGrnNumberFormat();
-      grnNumber = numberFormat === "monthly_company"
-        ? await allocateMonthlyGrnNumber({ periodCode: accountingPeriod })
-        : await allocateGrnNumber(String(grn.branch_id), financialYear);
-    }
+    // Allocate at submission, not at draft creation: abandoned drafts must not consume a
+    // sequence slot. Shared with grnValidationControlService.submit() — which is the path that
+    // actually runs for GRNs raised through the current form — so the two can never disagree
+    // about when a number appears or what shape it takes. See grn-number-on-submit.ts.
+    const grnNumber = await resolveGrnNumberOnSubmit(grn);
 
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE grn_request

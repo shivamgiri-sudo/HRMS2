@@ -84,7 +84,11 @@ describe("a GRN records the period it books to", () => {
     expect(insert.slice(0, 900)).toContain("bill_date, accounting_period,");
     // The same resolved value must number the GRN and be stored on it.
     expect(service).toContain("const accountingPeriod = resolveAccountingPeriod({");
-    expect(service).toContain("allocateMonthlyGrnNumber({ periodCode: accountingPeriod })");
+    // Numbering moved to grn-number-on-submit.ts on 2026-08-27 (two submit paths, only the dead
+    // one allocated — see that file's header). It still numbers from the STORED accounting
+    // period, never from the vendor-controlled bill date, which is the property this pins.
+    const onSubmit = read(financeDir, "grn-number-on-submit.ts");
+    expect(onSubmit).toContain("allocateMonthlyGrnNumber({ periodCode: accountingPeriod })");
     expect(service).toContain("        accountingPeriod,\n");
   });
 

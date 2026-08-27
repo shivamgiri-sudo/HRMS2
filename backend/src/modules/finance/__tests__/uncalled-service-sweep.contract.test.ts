@@ -78,19 +78,32 @@ describe("finance services are actually invoked", () => {
 
 describe("the GRN numbering flag is genuinely switchable", () => {
   const GRN_SERVICE = readFileSync(at("../grn.service.ts"), "utf8");
+  // 2026-08-27: the numbering block moved OUT of grn.service.ts into grn-number-on-submit.ts.
+  // It had to: there are two submit paths and only this one allocated, while the one that
+  // actually runs (grnValidationControlService.submit, reached because smartGrnRouter is mounted
+  // on "/grns" above the legacy route) did not — so GRNs reached full approval with
+  // grn_number = NULL. Both call the shared helper now; these assertions follow the code.
+  const ON_SUBMIT = readFileSync(at("../grn-number-on-submit.ts"), "utf8");
 
-  it("reads the format at creation time rather than assuming one", () => {
-    expect(GRN_SERVICE).toContain("await resolveGrnNumberFormat()");
+  it("reads the format at submission rather than assuming one", () => {
+    expect(ON_SUBMIT).toContain("await resolveGrnNumberFormat()");
   });
 
   it("routes to the monthly allocator when the flag says so", () => {
-    expect(GRN_SERVICE).toContain('numberFormat === "monthly_company"');
-    expect(GRN_SERVICE).toContain("allocateMonthlyGrnNumber({");
+    expect(ON_SUBMIT).toContain('format === "monthly_company"');
+    expect(ON_SUBMIT).toContain("allocateMonthlyGrnNumber({");
   });
 
   it("still calls the legacy allocator otherwise, unchanged", () => {
-    // The flag ships as legacy_branch_fy, so this is the live path and must stay identical.
-    expect(GRN_SERVICE).toContain("await allocateGrnNumber(payload.branchId, financialYear)");
+    // Both formats stay reachable; flipping the flag never renumbers what already exists,
+    // because the two draw on different sequence tables.
+    expect(ON_SUBMIT).toContain("allocateGrnNumber(String(");
+  });
+
+  it("both submit paths go through it, so they cannot disagree", () => {
+    expect(GRN_SERVICE).toContain("await resolveGrnNumberOnSubmit(grn)");
+    expect(readFileSync(at("../grn-validation-control.service.ts"), "utf8"))
+      .toContain("await resolveGrnNumberOnSubmit(typeRows[0])");
   });
 
   it("numbers from the accounting period, not the vendor's bill date", () => {

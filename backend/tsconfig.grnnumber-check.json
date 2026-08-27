@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/finance/grn-number-on-submit.ts",
+    "src/modules/finance/grn-validation-control.service.ts",
+    "src/modules/finance/grn.service.ts"
+  ]
+}

@@ -3,6 +3,7 @@ import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { grnSmartService } from "./grn-smart.service.js";
+import { resolveGrnNumberOnSubmit } from "./grn-number-on-submit.js";
 
 const NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"]);
 
@@ -202,7 +203,8 @@ export const grnValidationControlService = {
   ) {
     // P0-2: Provision GRNs have no accounting lifecycle — fail closed before any validation.
     const [typeRows] = await db.execute<RowDataPacket[]>(
-      "SELECT grn_type FROM grn_request WHERE id = ? LIMIT 1",
+      `SELECT grn_type, grn_number, branch_id, accounting_period, financial_year
+         FROM grn_request WHERE id = ? LIMIT 1`,
       [grnId]
     );
     if (!typeRows[0]) throw new Error("GRN not found");
@@ -220,12 +222,20 @@ export const grnValidationControlService = {
           .join("; ")}`
       );
     }
+    // The GRN number is assigned HERE, on draft → submitted, and nowhere else. This method is
+    // the submit that actually runs — smartGrnRouter is mounted on "/grns" far above the legacy
+    // POST /grns/:id/submit, so Express never reaches grnService.submitForApproval() — and until
+    // now it never allocated one, so GRNs raised through the current form reached Branch Head and
+    // Finance Head approval with grn_number = NULL. See grn-number-on-submit.ts.
+    const grnNumber = await resolveGrnNumberOnSubmit(typeRows[0]);
+
     const [result] = await db.execute<ResultSetHeader>(
       `UPDATE grn_request
           SET status = 'submitted', submitted_by = ?, submitted_at = NOW(),
+              grn_number = COALESCE(grn_number, ?),
               remarks = COALESCE(?, remarks)
         WHERE id = ? AND status = 'draft'`,
-      [actorUserId, remarks?.trim() || null, grnId]
+      [actorUserId, grnNumber, remarks?.trim() || null, grnId]
     );
     if (result.affectedRows !== 1) {
       throw new Error("GRN status changed before submission; refresh and try again");
@@ -233,9 +243,10 @@ export const grnValidationControlService = {
     await audit("GRN_SUBMIT", grnId, actorUserId, actorRole, {
       validation_score: validation.score,
       effective_blocking_count: 0,
+      grn_number: grnNumber,
       remarks,
     });
-    return { success: true, newStatus: "submitted", validation };
+    return { success: true, newStatus: "submitted", grnNumber, validation };
   },
 
   async review(
