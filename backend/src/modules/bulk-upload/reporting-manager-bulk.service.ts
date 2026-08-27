@@ -1,6 +1,7 @@
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { logSensitiveAction } from '../../shared/auditLog.js';
+import { recordManagerChange } from '../management/manager-attribution.service.js';
 
 interface BatchRow extends RowDataPacket {
   id: string;
@@ -152,6 +153,20 @@ export async function importReportingManagerBatch(
        WHERE id IN (${ids.map(() => '?').join(',')})`,
       [...caseParams, ...ids],
     );
+
+    // Effective-dated history for every row in the batch. This is the highest-volume
+    // manager-change path in the platform, so it is also the one whose absence would do the
+    // most damage: without a history row, each of these reassignments silently moves the
+    // employee's entire past attrition onto their NEW manager and off the old one.
+    // Sequential and non-blocking — see manager-attribution.service.ts.
+    for (const [empId, mgrId] of dedupedUpdates) {
+      await recordManagerChange({
+        employeeId: empId,
+        newManagerId: mgrId,
+        changedBy: importedByUserId ?? null,
+        reason: 'Bulk reporting-manager upload',
+      });
+    }
   }
 
   // Audit trail is left one INSERT per change — it's a compliance record where

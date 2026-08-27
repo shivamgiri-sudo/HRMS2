@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { hrmsApi, getHrmsApiErrorStatus, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Loader2, TrendingUp, ListTree, Users, ChevronLeft } from "lucide-react";
-import type { PerformanceRow, SectionValue, PerfQuery } from "./ProcessPerformanceTable";
+import { formatValue, type PerformanceRow, type SectionValue, type PerfQuery } from "./ProcessPerformanceTable";
 
 /**
  * The detail behind one KPI cell: trend, root cause, and the records making it up.
@@ -18,14 +18,25 @@ import type { PerformanceRow, SectionValue, PerfQuery } from "./ProcessPerforman
  * than closing this view and opening a different one.
  */
 
+interface DetailRecord {
+  id: string;
+  name: string;
+  subtitle: string | null;
+  value: number | null;
+  /** Which filter this id belongs to. null means the list is a leaf. */
+  drillAs: "manager" | "employee" | null;
+}
+
 interface DetailPayload {
   section: string;
   label: string;
   availability: "ok" | "no_data" | "not_tracked";
+  unit: SectionValue["unit"];
   trend: Array<{ period: string; value: number | null }>;
   rootCause: Array<{ label: string; value: number; share: number }> | null;
   rootCauseNote: string | null;
-  records: Array<{ id: string; name: string; subtitle: string | null; value: number | null }>;
+  recordsLabel: string;
+  records: DetailRecord[];
 }
 
 interface Level {
@@ -82,12 +93,17 @@ export default function KpiCellDetail({
   baseQuery: PerfQuery;
 }) {
   // A stack, so "back" returns to the level above instead of closing.
+  //
+  // An agent row carries its OWN id as employeeId. Before, an agent's cell fell
+  // back to baseQuery.managerId, so opening a figure on a person showed their
+  // whole team's number under that person's name.
   const [stack, setStack] = useState<Level[]>([{
     label: row.name,
     query: {
       ...baseQuery,
       processId: row.grain === "process" ? row.id : baseQuery.processId,
       managerId: row.grain === "manager" ? row.id : row.grain === "agent" ? baseQuery.managerId : null,
+      employeeId: row.grain === "agent" ? row.id : null,
     },
   }]);
   const current = stack[stack.length - 1];
@@ -141,11 +157,17 @@ export default function KpiCellDetail({
 
           {d && d.availability === "not_tracked" && (
             <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-4">
-              {d.rootCauseNote ?? "This metric isn't tracked yet."}
+              {d.rootCauseNote ?? section.note ?? "This metric isn't reported at this level."}
             </p>
           )}
 
-          {d && d.availability !== "not_tracked" && (
+          {d && d.availability === "no_data" && (
+            <p className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-4">
+              {section.note ?? "No records in this period."}
+            </p>
+          )}
+
+          {d && d.availability === "ok" && (
             <>
               <section>
                 <h3 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
@@ -183,33 +205,51 @@ export default function KpiCellDetail({
 
               <section>
                 <h3 className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-400 mb-2">
-                  <Users className="h-3.5 w-3.5" />Records ({d.records.length})
+                  <Users className="h-3.5 w-3.5" />{d.recordsLabel} ({d.records.length})
                 </h3>
                 {d.records.length === 0 ? (
                   <p className="text-xs text-slate-400">No records in this period.</p>
                 ) : (
                   <div className="rounded-xl border border-slate-100 divide-y divide-slate-50 max-h-64 overflow-y-auto">
-                    {d.records.map((rec) => (
-                      <button
-                        key={rec.id}
-                        type="button"
-                        onClick={() => setStack((s) => [...s, {
-                          label: rec.name,
-                          // One level deeper in the SAME view: the manager's own
-                          // value for this metric, then an agent's.
-                          query: { ...current.query, managerId: rec.id },
-                        }])}
-                        className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-indigo-50/60 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                      >
-                        <span className="min-w-0">
-                          <span className="text-xs text-slate-700">{rec.name}</span>
-                          {rec.subtitle && <span className="ml-2 text-[10px] font-mono text-slate-400">{rec.subtitle}</span>}
-                        </span>
-                        <span className="text-xs tabular-nums font-semibold text-slate-800">
-                          {rec.value === null ? "—" : rec.value}
-                        </span>
-                      </button>
-                    ))}
+                    {d.records.map((rec) => {
+                      // Only drill where the id is actually a filter one level
+                      // down. The list used to push every row as a managerId —
+                      // so clicking an agent, a leaver or a cost centre opened
+                      // an empty level that looked like "no data".
+                      const drill = rec.drillAs
+                        ? () => setStack((s) => [...s, {
+                            label: rec.name,
+                            query: rec.drillAs === "manager"
+                              ? { ...current.query, managerId: rec.id, employeeId: null }
+                              : { ...current.query, employeeId: rec.id },
+                          }])
+                        : null;
+                      const Row = (
+                        <>
+                          <span className="min-w-0">
+                            <span className="text-xs text-slate-700">{rec.name}</span>
+                            {rec.subtitle && <span className="ml-2 text-[10px] font-mono text-slate-400">{rec.subtitle}</span>}
+                          </span>
+                          <span className="text-xs tabular-nums font-semibold text-slate-800">
+                            {formatValue({ value: rec.value, unit: d.unit })}
+                          </span>
+                        </>
+                      );
+                      return drill ? (
+                        <button
+                          key={rec.id}
+                          type="button"
+                          onClick={drill}
+                          className="w-full flex items-center justify-between px-3 py-2 text-left hover:bg-indigo-50/60 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                        >
+                          {Row}
+                        </button>
+                      ) : (
+                        <div key={rec.id} className="w-full flex items-center justify-between px-3 py-2">
+                          {Row}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </section>

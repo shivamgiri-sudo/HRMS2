@@ -9,7 +9,10 @@ import {
   getAssistantContext,
   getAttendanceExceptionSummary,
   getCeoCommandCenter,
-  getCosecMonitoring,
+  getCosecLatestPunches,
+  getCosecSyncErrors,
+  getCosecSyncRuns,
+  getCosecSyncStatus,
   getEmployee360,
   getEmployeeAssistantSummary,
   getEnterpriseReports,
@@ -98,16 +101,37 @@ attendanceExceptionRouter.post(
   h(async (req, res) => res.json(apiSuccess(await updateAttendanceExceptionStatus(actor(req), req.params.id, "reopened", req.body, req)))),
 );
 
+// Aligned with the page gate: role_page_access grants WFM_LIVE_TRACKER (this router's
+// pageCode) to super_admin, branch_head, branch_wfm, manager, process_manager and wfm in
+// the live DB (verified 2026-08-27). admin/hr/ceo are kept on top — admin's page grant
+// row exists but is inactive and hr has none at all, yet both already had API access
+// before this change, so the union only adds roles, never removes one.
+//
+// /sync-status, /sync-runs and /sync-errors are device/run health with no per-employee
+// rows, so the full union is safe for all three. /latest-punches DOES join to employees
+// and return per-employee rows, so it keeps the narrower pre-existing role list on the
+// route itself rather than inheriting the router-level union — a branch-scoped role
+// (branch_head, branch_wfm, manager, process_manager) must not read another branch's
+// punches through this merged console. requireRole runs router-level then route-level,
+// so a role outside the narrow list still gets 403 on this one route even though it
+// passed the router-level check.
+const COSEC_RUN_ROLES = [
+  "super_admin", "branch_head", "branch_wfm", "manager", "process_manager", "wfm",
+  "admin", "hr", "ceo",
+] as const;
+const COSEC_PUNCH_ROLES = ["admin", "hr", "ceo", "wfm", "super_admin"] as const;
+
 export const cosecMonitoringRouter = Router();
 cosecMonitoringRouter.use(requireAuth);
-cosecMonitoringRouter.use(requireRole("admin", "hr", "ceo", "wfm"));
-cosecMonitoringRouter.get("/sync-status", h(async (req, res) => {
-  const data = await getCosecMonitoring(actor(req));
-  return res.json(apiSuccess({ status: data.status, latest_run: data.latest_run, data_confidence: data.data_confidence }));
-}));
-cosecMonitoringRouter.get("/sync-runs", h(async (req, res) => res.json(apiSuccess((await getCosecMonitoring(actor(req))).sync_runs))));
-cosecMonitoringRouter.get("/sync-errors", h(async (req, res) => res.json(apiSuccess((await getCosecMonitoring(actor(req))).sync_errors))));
-cosecMonitoringRouter.get("/latest-punches", h(async (req, res) => res.json(apiSuccess((await getCosecMonitoring(actor(req))).latest_punches))));
+cosecMonitoringRouter.use(requireRole(...COSEC_RUN_ROLES));
+cosecMonitoringRouter.get("/sync-status", h(async (req, res) => res.json(apiSuccess(await getCosecSyncStatus(actor(req))))));
+cosecMonitoringRouter.get("/sync-runs", h(async (req, res) => res.json(apiSuccess(await getCosecSyncRuns(actor(req))))));
+cosecMonitoringRouter.get("/sync-errors", h(async (req, res) => res.json(apiSuccess(await getCosecSyncErrors(actor(req))))));
+cosecMonitoringRouter.get(
+  "/latest-punches",
+  requireRole(...COSEC_PUNCH_ROLES),
+  h(async (req, res) => res.json(apiSuccess(await getCosecLatestPunches(actor(req))))),
+);
 
 export const payrollReadinessRouter = Router();
 payrollReadinessRouter.use(requireAuth);

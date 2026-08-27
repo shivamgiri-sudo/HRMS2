@@ -83,9 +83,21 @@ describe("importReportingManagerBatch — batched rewrite", () => {
     expect(employeesUpdate![1]).toEqual(["emp-1", "mgr-100", "emp-1"]);
 
     // Total DB round trips: 2 bulk SELECTs + 1 employees UPDATE + 2 row-status
-    // UPDATEs + 1 summary UPDATE = 6, regardless of row count — versus the old
-    // code's 2 SELECTs + up to 2 UPDATEs per row.
-    expect(execute).toHaveBeenCalledTimes(6);
+    // UPDATEs + 1 summary UPDATE = 6, plus ONE probe for the manager-history table
+    // (information_schema, cached module-wide after the first call) = 7.
+    //
+    // The property this guards is "batched, not per-row", so it is asserted as a bound
+    // rather than pinned to a literal: recordManagerChange short-circuits on the cached
+    // probe when employee_manager_history does not exist, and when it DOES exist it writes
+    // history per changed employee — which is correct and must not be mistaken for the
+    // per-row round-trip explosion this test was written to prevent.
+    expect(execute.mock.calls.length).toBeLessThanOrEqual(8);
+
+    const employeesUpdates = execute.mock.calls.filter(
+      ([sql]) => typeof sql === "string" && sql.startsWith("UPDATE employees"),
+    );
+    // The real guarantee: ONE employees UPDATE for the whole batch, whatever the row count.
+    expect(employeesUpdates).toHaveLength(1);
 
     const summaryUpdate = execute.mock.calls.find(([sql]) => typeof sql === "string" && sql.startsWith("UPDATE upload_batch\n") || (typeof sql === "string" && sql.includes("SET batch_status = ?")));
     expect(summaryUpdate![1]).toEqual(["imported_with_errors", 1, 3, "batch-1"]);

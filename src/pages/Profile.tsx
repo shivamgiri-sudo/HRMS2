@@ -412,6 +412,17 @@ const Profile = () => {
                       </div>
                     </div>
 
+                    {/* Both addresses, composed by GET /me. Read-only here: the edit form
+                        below still owns the current address, and the permanent one is
+                        maintained by HR / onboarding. */}
+                    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+                      <SectionTitle>Address</SectionTitle>
+                      <div className="divide-y divide-slate-50">
+                        <InfoRow icon={MapPin} label="Current Address"   value={employee.current_address} />
+                        <InfoRow icon={MapPin} label="Permanent Address" value={employee.permanent_address} />
+                      </div>
+                    </div>
+
                     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
                       <SectionTitle>Work Info</SectionTitle>
                       <div className="divide-y divide-slate-50">

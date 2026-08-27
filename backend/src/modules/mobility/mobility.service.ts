@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { recordManagerChange, recordSupervisoryChange } from "../management/manager-attribution.service.js";
 
 /**
  * The pool wrapper or a single transaction-bound connection — whichever the caller has.
@@ -53,6 +54,12 @@ async function applyTransferOn(
       "branch_master"
     );
     await exec.execute("UPDATE employees SET branch_id = ? WHERE id = ?", [masterId, employee_id]);
+    // A branch move changes who is accountable for this person even when the named manager
+    // does not change — the branch head owns the outcome too.
+    void recordSupervisoryChange({
+      employeeId: employee_id, branchId: masterId, changedBy: null,
+      reason: "Branch transfer applied",
+    });
 
   } else if (transfer_type === "department") {
     const masterId = await resolveMaster(
@@ -77,6 +84,12 @@ async function applyTransferOn(
       "process_master"
     );
     await exec.execute("UPDATE employees SET process_id = ? WHERE id = ?", [masterId, employee_id]);
+    // Same for a process move: the process manager owns attendance, attrition and shrinkage
+    // for their process, so the old process must stop being charged for this person.
+    void recordSupervisoryChange({
+      employeeId: employee_id, processId: masterId, changedBy: null,
+      reason: "Process transfer applied",
+    });
 
   } else if (transfer_type === "cost_centre") {
     const masterId = await resolveMaster(
@@ -92,6 +105,14 @@ async function applyTransferOn(
       `UPDATE employees SET reporting_manager_id = ? WHERE id = ?`,
       [to_value, employee_id]
     );
+    // Effective-dated history — a reporting transfer IS a manager change, and without a row
+    // here the employee's whole past record silently follows them to the new manager.
+    void recordManagerChange({
+      employeeId: employee_id,
+      newManagerId: to_value ? String(to_value) : null,
+      changedBy: null,
+      reason: "Reporting transfer applied",
+    });
   }
 }
 
@@ -301,6 +322,12 @@ export const mobilityService = {
                 `UPDATE employees SET reporting_manager_id = ? WHERE id = ?`,
                 [new_reporting_manager_id, employee_id]
               );
+              void recordManagerChange({
+                employeeId: String(employee_id),
+                newManagerId: String(new_reporting_manager_id),
+                changedBy: null,
+                reason: "Cost-centre transfer RM cascade",
+              });
             }
 
             // 3. Insert job history with from_manager_id = old value (empSnap)
@@ -474,6 +501,12 @@ export const mobilityService = {
               `UPDATE employees SET reporting_manager_id = ? WHERE id = ?`,
               [new_rm, String(row.employee_id)]
             );
+            void recordManagerChange({
+              employeeId: String(row.employee_id),
+              newManagerId: new_rm,
+              changedBy: null,
+              reason: "Cost-centre transfer RM cascade (batch)",
+            });
           }
           // Read current employee snapshot for branch/dept/process context
           const [empRows] = await db.execute<RowDataPacket[]>(

@@ -72,6 +72,12 @@ export function invalidateHrHubCache(): void {
 
 router.use(requireAuth);
 
+/** A single postal line from its parts, skipping the blanks. null when every part is blank. */
+function joinAddressParts(...parts: unknown[]): string | null {
+  const line = parts.map((part) => String(part ?? "").trim()).filter(Boolean).join(", ");
+  return line || null;
+}
+
 // GET /api/employees/me — returns the employee record for the logged-in user with nested details
 router.get("/me", h(async (req: any, res: any) => {
   const userId = req.authUser?.id;
@@ -91,6 +97,26 @@ router.get("/me", h(async (req: any, res: any) => {
        -- employee's own profile showed a blank address almost always. Read from address1
        -- under the address_line1 alias so the wire contract (Profile.tsx) is unchanged.
        e.address1 AS address, e.address1 AS address_line1, e.city, e.state, e.country, e.pincode,
+       -- The rest of the CURRENT address, plus the PERMANENT one, for the read-only
+       -- address block on the Profile page. employee_address holds one migrated
+       -- 'permanent' row for 28,426 employees whose employees.* address columns are
+       -- empty, so it is joined as a fallback — without it roughly half the workforce
+       -- would see "—" on a screen where the address is on file. Composed into single
+       -- lines below; the address_line1/address/city wire fields above are untouched
+       -- because the edit form still writes through them.
+       e.address2,
+       e.permanent_address1, e.permanent_address2,
+       e.permanent_city, e.permanent_state, e.permanent_pincode,
+       ea_cur.address_line1  AS ea_current_line1,
+       ea_cur.address_line2  AS ea_current_line2,
+       ea_cur.city           AS ea_current_city,
+       ea_cur.state          AS ea_current_state,
+       ea_cur.pincode        AS ea_current_pincode,
+       ea_perm.address_line1 AS ea_permanent_line1,
+       ea_perm.address_line2 AS ea_permanent_line2,
+       ea_perm.city          AS ea_permanent_city,
+       ea_perm.state         AS ea_permanent_state,
+       ea_perm.pincode       AS ea_permanent_pincode,
        e.employment_status AS status, e.employment_status, e.employment_type,
        e.designation_id, e.department_id, e.branch_id, e.process_id,
        e.reporting_manager_id, e.manager_id,
@@ -119,6 +145,9 @@ router.get("/me", h(async (req: any, res: any) => {
      LEFT JOIN process_master     p    ON p.id    = e.process_id
      LEFT JOIN branch_master      b    ON b.id    = e.branch_id
      LEFT JOIN employees          mgr  ON mgr.id  = e.reporting_manager_id
+     -- At most one row each: employee_address has UNIQUE (employee_id, address_type).
+     LEFT JOIN employee_address   ea_cur  ON ea_cur.employee_id  = e.id AND ea_cur.address_type  = 'current'
+     LEFT JOIN employee_address   ea_perm ON ea_perm.employee_id = e.id AND ea_perm.address_type = 'permanent'
      WHERE e.user_id = ? AND e.active_status = 1
      LIMIT 1`,
     [userId]
@@ -272,6 +301,14 @@ router.get("/me", h(async (req: any, res: any) => {
       state:                    emp.state,
       country:                  emp.country,
       pincode:                  emp.pincode,
+      // One-line postal addresses, composed here so the Profile page and the Employee 360
+      // stat-card render the same string for the same employee. Blank parts are dropped
+      // rather than left as ", , ,". null when neither source holds anything, so "—" on
+      // the page means "not recorded" and not "we looked in the wrong column".
+      current_address:          joinAddressParts(emp.address, emp.address2, emp.city, emp.state, emp.pincode)
+                                ?? joinAddressParts(emp.ea_current_line1, emp.ea_current_line2, emp.ea_current_city, emp.ea_current_state, emp.ea_current_pincode),
+      permanent_address:        joinAddressParts(emp.permanent_address1, emp.permanent_address2, emp.permanent_city, emp.permanent_state, emp.permanent_pincode)
+                                ?? joinAddressParts(emp.ea_permanent_line1, emp.ea_permanent_line2, emp.ea_permanent_city, emp.ea_permanent_state, emp.ea_permanent_pincode),
       // Employment
       status:                   emp.status,
       employment_status:        emp.employment_status,

@@ -678,7 +678,12 @@ export default function NativeATSCandidateRegistration() {
       if (value.length < 3) return `📝 Enter ${3 - value.length} more character${3 - value.length > 1 ? 's' : ''}`;
       if (value.length > 100) return '📝 Name too long (max 100 characters)';
       if (!/^[a-zA-Z\s]+$/.test(value)) return '📝 Name can only contain letters and spaces';
-      if (value.trim().split(/\s+/).length < 2) return '📝 Please enter full name (first and last)';
+      // A single-word name is accepted. Requiring "first and last" gave a mononymous
+      // candidate no way to pass the field except to invent a surname, and they did:
+      // four candidates registered as "<name> NA"/"<name> na", one of whom is now an
+      // employee whose record reads "AVINASH NA" on every screen and document. The
+      // submit-time validator (validateForm) never enforced this rule either, so the
+      // only thing it achieved was pushing filler text into the name.
       return ''; // Valid!
     }
 

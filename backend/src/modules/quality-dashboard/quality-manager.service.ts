@@ -89,10 +89,18 @@ export class QualityManagerService {
          LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
          WHERE cqa.User IN (${placeholders})
            AND cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
-           AND cqa.Campaign LIKE CONCAT(?, '%')
+           -- Campaign is OPTIONAL, and a NULL campaign must not exclude the row.
+           -- This was "AND cqa.Campaign LIKE CONCAT(?, ...)" with a default of INBOUND.
+           -- Every one of the 14,356 assessments in the last 30 days carries
+           -- Campaign = NULL, and NULL never satisfies a LIKE — so this screen returned
+           -- ZERO rows for every manager, every day, while 9,561 scored rows sat in the
+           -- same window averaging 73.7%. The route's catch block then served a tidy
+           -- zeroed payload, which read as "nobody has been audited" rather than as a
+           -- broken filter. (Counted live 2026-08-27.)
+           AND (? = '' OR ? = '__ALL__' OR cqa.Campaign LIKE CONCAT(?, '%'))
          GROUP BY cqa.User, e.first_name, e.last_name
          ORDER BY quality_pct DESC`,
-        [...agentCodes, daysBack, process]
+        [...agentCodes, daysBack, process, process, process]
       );
 
       if (!qualityMetrics || qualityMetrics.length === 0) {

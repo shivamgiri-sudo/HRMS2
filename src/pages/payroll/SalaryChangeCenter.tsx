@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { PackageBuilderDialog } from '@/components/payroll/PackageBuilderDialog';
 import { inr, fmtDate } from './PayrollHeadSalaryReviewQueue';
+import { pfYesNo, esicYesNo } from '@/lib/salaryEligibility';
+import { earningRows, otherDeductionRows, employerCostRows } from '@/lib/salaryComponentRows';
 
 /**
  * Salary Change Center — Payroll Head searches any active employee, sees their full current
@@ -225,10 +227,21 @@ export default function SalaryChangeCenter() {
                 {sc ? (
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
                     {[
-                      ['Basic', inr(sc.basic)], ['HRA', inr(sc.hra)], ['Gross', inr(sc.gross)],
+                      // Same row list as the Salary Review screens — see salaryComponentRows.ts.
+                      // Bonus and admin charges reach this card through the
+                      // salary_package_master join added to getEmployeeSalaryProfile.
+                      ...earningRows(sc).map((r) => [r.label, inr(r.value)]),
+                      ['Gross', inr(sc.gross)],
+                      ...otherDeductionRows(sc).map((r) => [r.label, `− ${inr(r.value)}`]),
+                      ...employerCostRows(sc).map((r) => [r.label, inr(r.value)]),
                       ['CTC', inr(sc.ctc)], ['Net in Hand', inr(sc.net_in_hand)],
-                      ['PF', Number(sc.pf_employee) > 0 ? 'Yes' : 'No'],
-                      ['ESIC', Number(sc.esic_employee) > 0 ? 'Yes' : 'No'],
+                      // pf_applicable / esi_applicable are the enrolment flags. This card used
+                      // to read pf_employee / esic_employee — the DEDUCTION AMOUNTS, which are
+                      // NULL on 3,577 of the 4,290 active assignments because migration 445
+                      // added them and never backfilled. That is why PF and ESIC read "No" for
+                      // employees who are enrolled: 3,124 rows carry pf_applicable = 1.
+                      ['PF', pfYesNo(sc)],
+                      ['ESIC', esicYesNo(sc)],
                       ['Effective From', fmtDate(sc.effective_date)],
                     ].map(([l, v]) => (
                       <div key={l as string} className="rounded-lg bg-slate-50 px-3 py-2">
@@ -273,10 +286,14 @@ export default function SalaryChangeCenter() {
                 onClick={() => setPkgBuilderOpen(true)}
                 className="cursor-pointer bg-indigo-600 hover:bg-indigo-700 rounded-xl gap-2"
               >
-                <Calculator className="h-4 w-4" />Select / Build New Package
+                <Calculator className="h-4 w-4" />Select / Build Package
               </Button>
               <p className="text-[11px] text-slate-400">
-                Opens the same package builder used in Salary Review. Submitting takes effect immediately — you're the final approver — and writes a full audit trail (old vs new, who requested, who submitted).
+                Opens pre-filled with the current active package. Four ways to set the new one:
+                edit any component manually, apply an increment %, derive from a target CTC or
+                net in-hand, or pick an existing catalog package. Submitting takes effect
+                immediately — you're the final approver — and writes a full audit trail
+                (old vs new, who requested, who submitted).
               </p>
             </div>
 
@@ -311,6 +328,11 @@ export default function SalaryChangeCenter() {
         open={pkgBuilderOpen}
         onOpenChange={setPkgBuilderOpen}
         defaultBranch={employee?.branch_name ?? ''}
+        // Opens on the employee's current package instead of blank, which also unlocks
+        // the "% increment" mode (it needs a current CTC to raise from).
+        currentComponents={sc}
+        enablePickExisting
+        submitLabel="Save & Apply Salary Change"
         onPackageCreated={(pkgId) => void submitChange(pkgId)}
       />
     </DashboardLayout>

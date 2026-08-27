@@ -524,66 +524,25 @@ export async function updateAttendanceExceptionStatus(
   return queryOne("SELECT * FROM attendance_exception WHERE id = ? LIMIT 1", [id]);
 }
 
-export async function getCosecMonitoring(_actor: Actor) {
-  const [latestRun, runs, errors, punches] = await Promise.all([
-    queryOne(
-      `SELECT * FROM integration_sync_run
-       WHERE integration_key = 'cosec'
-       ORDER BY started_at DESC
-       LIMIT 1`,
-    ),
-    queryRows(
-      `SELECT * FROM integration_sync_run
-       WHERE integration_key = 'cosec'
-       ORDER BY started_at DESC
-       LIMIT 50`,
-    ),
-    queryRows(
-      `SELECT id, started_at, completed_at, status, error_summary, records_failed
-       FROM integration_sync_run
-       WHERE integration_key = 'cosec' AND (status = 'failed' OR records_failed > 0)
-       ORDER BY started_at DESC
-       LIMIT 50`,
-    ),
-    // biometric_punch has never existed in this database.
-    //
-    // The table is biometric_attendance_log (176,694 rows, current to today). Because
-    // the read was wrapped in tableExists(), nothing ever threw and nothing was logged —
-    // the guard returned [] forever, so GET /api/integrations/cosec/latest-punches has
-    // answered with an empty list since it was written. On a COSEC monitoring screen
-    // "no punches" reads as "the feed is dead", which is the opposite of true: the feed
-    // is healthy and this panel was blind to it.
-    //
-    // Joined to employees because the log carries cosec_user_id and often a NULL
-    // employee_code, so the raw rows cannot say who punched. All 2,166 rows in the last
-    // three days resolve to an employee, so the join costs nothing and answers the only
-    // question this screen is asked.
-    //
-    // These are per-day rollups (first in, last out, count), not individual punches —
-    // which is what the table stores. Named accordingly rather than pretending otherwise.
-    tableExists("biometric_attendance_log")
-      .then((exists) => exists
-        ? queryRows(
-            `SELECT COALESCE(NULLIF(TRIM(bal.employee_code), ''), e.employee_code) AS employee_code,
-                    COALESCE(NULLIF(TRIM(e.full_name), ''), CONCAT_WS(' ', e.first_name, e.last_name)) AS employee_name,
-                    bal.cosec_user_id,
-                    DATE_FORMAT(bal.punch_date, '%Y-%m-%d') AS punch_date,
-                    DATE_FORMAT(bal.first_punch_in, '%Y-%m-%d %H:%i:%s') AS first_punch_in,
-                    DATE_FORMAT(bal.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch_out,
-                    bal.total_punches, bal.raw_minutes, bal.device_id, bal.source_system
-               FROM biometric_attendance_log bal
-               LEFT JOIN employees e ON e.id = bal.employee_id
-              ORDER BY bal.punch_date DESC, bal.migrated_at DESC
-              LIMIT 100`,
-          )
-        : [])
-  ]);
+// getCosecMonitoring used to run all four of the reads below on every request regardless
+// of which of the four cosecMonitoringRouter endpoints was hit, so GET /sync-status (which
+// returns only status/latest_run/data_confidence) paid for the 50-row sync_runs query, the
+// 50-row sync_errors query and the 100-row punch join every single call. Split into one
+// reader per endpoint so each issues only the query its response actually uses.
+async function getCosecLatestRun() {
+  return queryOne(
+    `SELECT * FROM integration_sync_run
+     WHERE integration_key = 'cosec'
+     ORDER BY started_at DESC
+     LIMIT 1`,
+  );
+}
+
+export async function getCosecSyncStatus(_actor: Actor) {
+  const latestRun = await getCosecLatestRun();
   return {
     status: latestRun.status ?? "unknown",
     latest_run: latestRun,
-    sync_runs: runs,
-    sync_errors: errors,
-    latest_punches: punches,
     data_confidence: calculateDataConfidence({
       requiredFields: ["integration_sync_run"],
       availableFields: [latestRun.id ? "integration_sync_run" : ""].filter(Boolean),
@@ -592,6 +551,60 @@ export async function getCosecMonitoring(_actor: Actor) {
       lastUpdatedAt: latestRun.completed_at as string | undefined,
     }),
   };
+}
+
+export async function getCosecSyncRuns(_actor: Actor) {
+  return queryRows(
+    `SELECT * FROM integration_sync_run
+     WHERE integration_key = 'cosec'
+     ORDER BY started_at DESC
+     LIMIT 50`,
+  );
+}
+
+export async function getCosecSyncErrors(_actor: Actor) {
+  return queryRows(
+    `SELECT id, started_at, completed_at, status, error_summary, records_failed
+     FROM integration_sync_run
+     WHERE integration_key = 'cosec' AND (status = 'failed' OR records_failed > 0)
+     ORDER BY started_at DESC
+     LIMIT 50`,
+  );
+}
+
+export async function getCosecLatestPunches(_actor: Actor) {
+  // biometric_punch has never existed in this database.
+  //
+  // The table is biometric_attendance_log (176,694 rows, current to today). Because
+  // the read was wrapped in tableExists(), nothing ever threw and nothing was logged —
+  // the guard returned [] forever, so GET /api/integrations/cosec/latest-punches has
+  // answered with an empty list since it was written. On a COSEC monitoring screen
+  // "no punches" reads as "the feed is dead", which is the opposite of true: the feed
+  // is healthy and this panel was blind to it.
+  //
+  // Joined to employees because the log carries cosec_user_id and often a NULL
+  // employee_code, so the raw rows cannot say who punched. All 2,166 rows in the last
+  // three days resolve to an employee, so the join costs nothing and answers the only
+  // question this screen is asked.
+  //
+  // These are per-day rollups (first in, last out, count), not individual punches —
+  // which is what the table stores. Named accordingly rather than pretending otherwise.
+  return tableExists("biometric_attendance_log")
+    .then((exists) => exists
+      ? queryRows(
+          `SELECT COALESCE(NULLIF(TRIM(bal.employee_code), ''), e.employee_code) AS employee_code,
+                  COALESCE(NULLIF(TRIM(e.full_name), ''), CONCAT_WS(' ', e.first_name, e.last_name)) AS employee_name,
+                  bal.cosec_user_id,
+                  DATE_FORMAT(bal.punch_date, '%Y-%m-%d') AS punch_date,
+                  DATE_FORMAT(bal.first_punch_in, '%Y-%m-%d %H:%i:%s') AS first_punch_in,
+                  DATE_FORMAT(bal.last_punch_out, '%Y-%m-%d %H:%i:%s') AS last_punch_out,
+                  bal.total_punches, bal.raw_minutes, bal.device_id, bal.source_system
+             FROM biometric_attendance_log bal
+             LEFT JOIN employees e ON e.id = bal.employee_id
+            ORDER BY bal.punch_date DESC, bal.migrated_at DESC
+            LIMIT 100`,
+        )
+      : []);
 }
 
 export async function getPayrollReadiness(actor: Actor, filters: QueryFilters) {

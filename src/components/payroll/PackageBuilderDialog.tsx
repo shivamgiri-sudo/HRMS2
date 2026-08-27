@@ -29,7 +29,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Badge } from '@/components/ui/badge';
 import { Calculator, Loader2, CheckCircle2, AlertTriangle, Lock, Unlock, TrendingUp, ShieldCheck } from 'lucide-react';
 import {
-  calcFromCtc, calcFromInHand, getProfessionalTax, PT_BY_STATE,
+  calcFromCtc, calcFromInHand, getProfessionalTax, PT_BY_STATE, ADMIN_RATE,
   type PkgCalcOptions, type PkgComponents,
 } from '@/lib/salaryCalculator';
 
@@ -37,9 +37,27 @@ import {
 
 interface Band { id: string; band_code: string; band_name?: string; slab_from: number; slab_to: number; }
 interface BranchState { branch_name: string; state: string; }
-interface ExistingPkg { id: string; band_code: string; package_amount: number; name?: string; }
+/** listPackages returns spm.* — every component column — plus the band's slab range. */
+interface ExistingPkg {
+  id: string; band_code: string; package_amount: number; name?: string;
+  slab_from?: number | null; slab_to?: number | null;
+  basic?: number; hra?: number; conveyance?: number; special_allowance?: number;
+  other_allowance?: number; bonus?: number; lta?: number; portfolio?: number;
+  medical?: number; pli?: number; gross?: number; epf_employee?: number;
+  esic_employee?: number; professional_tax?: number; net_in_hand?: number;
+  epf_employer?: number; esic_employer?: number; admin_charges?: number; ctc?: number;
+}
 
-type Mode = 'ctc' | 'inhand' | 'manual';
+/**
+ * How the package is arrived at.
+ *   ctc / inhand — derive everything from one target figure
+ *   manual       — edit any component, gross rebuilds bottom-up
+ *   increment    — apply a % raise to the employee's CURRENT CTC, then derive
+ *   existing     — assign a package that already exists in the catalog, unchanged
+ * The last two are only offered when the caller passes currentComponents /
+ * enablePickExisting, so the onboarding review screens keep their original three.
+ */
+type Mode = 'ctc' | 'inhand' | 'manual' | 'increment' | 'existing';
 
 type Draft = PkgComponents & {
   branch_name: string; band_code: string; cost_centre_code: string;
@@ -56,7 +74,20 @@ const BLANK: Draft = {
 };
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/** MySQL DECIMAL columns arrive as strings over JSON — coerce before any arithmetic. */
+function numify(src: object): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(src)) {
+    if (v == null) continue;
+    if (typeof v === 'string' && v.trim() !== '' && !isNaN(Number(v))) out[k] = Number(v);
+    else out[k] = v;
+  }
+  return out;
+}
 const inr = (v: number) => v ? `₹${Math.round(v).toLocaleString('en-IN')}` : '—';
+/** Like inr but prints ₹0 instead of an em dash — for band floors, where 0 is a real value. */
+const inr0 = (v: number) => `₹${Math.round(v ?? 0).toLocaleString('en-IN')}`;
 const pct = (part: number, total: number) => total > 0 ? `${Math.round((part / total) * 100)}%` : '';
 
 // State minimum wages (monthly, 2024-25) — floor check only; actual varies by skill category
@@ -74,9 +105,25 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   defaultBranch?: string;
   onPackageCreated: (packageId: string, pkg: Draft) => void;
+  /**
+   * The employee's CURRENT active salary components, when there is one.
+   *
+   * Opening the builder blank on a salary CHANGE made the operator retype a package
+   * that already exists just to alter one line of it, with nothing on screen to compare
+   * the new figure against. When this is passed the draft opens pre-filled with it, in
+   * manual mode, and the "% increment" mode becomes available with this CTC as its base.
+   */
+  currentComponents?: Partial<Draft> | null;
+  /** Offer the "Pick existing package" mode (catalog packages for the branch). */
+  enablePickExisting?: boolean;
+  /** Footer button label. Defaults to "Create & Assign Package". */
+  submitLabel?: string;
 }
 
-export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPackageCreated }: Props) {
+export function PackageBuilderDialog({
+  open, onOpenChange, defaultBranch, onPackageCreated,
+  currentComponents = null, enablePickExisting = false, submitLabel,
+}: Props) {
   const [bands, setBands]               = useState<Band[]>([]);
   const [branchStates, setBranchStates] = useState<BranchState[]>([]);
   const [existingPkgs, setExistingPkgs] = useState<ExistingPkg[]>([]);
@@ -86,12 +133,17 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
   const [inHandInput, setInHand]        = useState('');
   const [includePf, setIncludePf]       = useState(true);
   const [includeEsic, setIncludeEsic]   = useState(true);
-  const [includeBonus, setIncludeBonus] = useState(false);
+  const [includeBonus, setIncludeBonus] = useState(true); // bonus is part of CTC — owner ruling 2026-08-27
   const [basicPct, setBasicPct]         = useState(40);
   const [hraPct, setHraPct]             = useState(40);
   const [lockBasic, setLockBasic]       = useState(false);
   const [saving, setSaving]             = useState(false);
   const [error, setError]               = useState<string | null>(null);
+  const [incrementPct, setIncrementPct] = useState('');
+  const [pickedPkgId, setPickedPkgId]   = useState('');
+
+  const hasCurrent = !!currentComponents && Number(currentComponents.ctc ?? 0) > 0;
+  const currentCtc = Number(currentComponents?.ctc ?? 0);
 
   // ── Load data ─────────────────────────────────────────────────────────────
 
@@ -108,10 +160,21 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
   }, [draft.branch_name]);
 
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    setCtcInput(''); setInHand(''); setError(null); setLockBasic(false);
+    setIncrementPct(''); setPickedPkgId('');
+    if (currentComponents && Object.keys(currentComponents).length > 0) {
+      // Open ON the current package, in manual mode, so the operator edits what the
+      // employee is actually on rather than rebuilding it from memory.
+      setDraft({ ...BLANK, branch_name: defaultBranch ?? '', ...numify(currentComponents) });
+      setMode('manual');
+    } else {
       setDraft({ ...BLANK, branch_name: defaultBranch ?? '' });
-      setCtcInput(''); setInHand(''); setMode('ctc'); setError(null); setLockBasic(false);
+      setMode('ctc');
     }
+  // currentComponents is a fresh object each render on the caller's side; keying the
+  // effect on `open` alone is deliberate, so typing in the dialog is not clobbered.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, defaultBranch]);
 
   // ── Derived ───────────────────────────────────────────────────────────────
@@ -164,7 +227,7 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
     const epf_employer  = o.includePf ? r2(pfBase * 0.12) : 0;
     const esic_employer = o.includeEsic && gross <= 21000 ? r2(gross * 0.0325) : 0;
     const gratuity      = r2((d.basic || 0) * (15 / 26 / 12));
-    const admin_charges = o.includePf ? r2(pfBase * 0.0101) : 0;
+    const admin_charges = o.includePf ? r2(pfBase * ADMIN_RATE) : 0;
     const ctc = r2(gross + epf_employer + esic_employer + gratuity + admin_charges);
     return { ...d, gross, epf_employee, esic_employee, professional_tax, net_in_hand, epf_employer, esic_employer, gratuity, admin_charges, ctc, package_amount: ctc };
   }, [getOpts]);
@@ -176,7 +239,18 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
       setDraft(d => deriveFromGross(d));
       return;
     }
+    if (mode === 'existing') return; // the picked package IS the answer — nothing to derive
     const o = getOpts();
+    if (mode === 'increment') {
+      const pctRaise = parseFloat(incrementPct);
+      if (!isNaN(pctRaise) && currentCtc > 0) {
+        const target = r2(currentCtc * (1 + pctRaise / 100));
+        const c = calcFromCtc(target, o);
+        const gratuity = r2(c.basic * (15 / 26 / 12));
+        setDraft(d => ({ ...d, ...c, gratuity, package_amount: c.ctc }));
+      }
+      return;
+    }
     if (mode === 'ctc') {
       const v = parseFloat(ctcInput);
       if (!isNaN(v) && v > 0) {
@@ -193,7 +267,7 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctcInput, inHandInput, includePf, includeEsic, includeBonus, basicPct, hraPct, mode, resolvedState]);
+  }, [ctcInput, inHandInput, incrementPct, currentCtc, includePf, includeEsic, includeBonus, basicPct, hraPct, mode, resolvedState]);
 
   // ── Component edit handler ────────────────────────────────────────────────
 
@@ -215,10 +289,22 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
 
   // ── Save ──────────────────────────────────────────────────────────────────
 
-  const canSave = !!draft.branch_name && !!draft.band_code && draft.package_amount > 0;
+  const pickedPkg = existingPkgs.find(p => p.id === pickedPkgId) ?? null;
+
+  const canSave = mode === 'existing'
+    ? !!pickedPkg
+    : !!draft.branch_name && !!draft.band_code && draft.package_amount > 0;
 
   const save = async () => {
     if (!canSave) return;
+    if (mode === 'existing' && pickedPkg) {
+      // Assign the catalog package as-is. Creating a duplicate row for a package that
+      // already exists is what the "similar package exists" warning has always been
+      // asking the operator not to do.
+      onPackageCreated(pickedPkg.id, { ...draft, ...(numify(pickedPkg) as Partial<Draft>) } as Draft);
+      onOpenChange(false);
+      return;
+    }
     setSaving(true); setError(null);
     try {
       const res: any = await hrmsApi.post('/api/payroll-masters/packages', {
@@ -247,6 +333,14 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
     ['medical',           'Medical'],
     ['other_allowance',   'Other Allowance'],
     ['pli',               'PLI'],
+  ];
+
+  const MODES: { key: Mode; label: string }[] = [
+    { key: 'ctc',    label: 'From CTC' },
+    { key: 'inhand', label: 'From Net In-Hand' },
+    { key: 'manual', label: 'Manual build' },
+    ...(hasCurrent      ? [{ key: 'increment' as Mode, label: 'Add increment %' }] : []),
+    ...(enablePickExisting ? [{ key: 'existing' as Mode, label: 'Pick existing package' }] : []),
   ];
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -295,6 +389,64 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
             </div>
           )}
 
+          {/* Current salary — the thing being changed, kept on screen while it is changed */}
+          {hasCurrent && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">Current active salary</p>
+              <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs tabular-nums">
+                {([
+                  ['Basic', currentComponents?.basic], ['HRA', currentComponents?.hra],
+                  ['Bonus', (currentComponents as any)?.bonus], ['Gross', currentComponents?.gross],
+                  ['Net', currentComponents?.net_in_hand], ['CTC', currentComponents?.ctc],
+                ] as [string, unknown][]).filter(([, v]) => Number(v ?? 0) > 0).map(([l, v]) => (
+                  <span key={l} className="text-slate-600">
+                    {l} <strong className="text-slate-900">{inr(Number(v))}</strong>
+                  </span>
+                ))}
+                {draft.ctc > 0 && currentCtc > 0 && (
+                  <span className={`font-semibold ${draft.ctc >= currentCtc ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    Change {draft.ctc >= currentCtc ? '+' : '−'}{inr(Math.abs(draft.ctc - currentCtc))}/mo
+                    {' '}({Math.round(((draft.ctc - currentCtc) / currentCtc) * 1000) / 10}%)
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Pick an existing catalog package instead of building one */}
+          {mode === 'existing' && (
+            <div className="rounded-xl border border-purple-100 bg-purple-50/40 px-4 py-3 space-y-2">
+              <Label className="text-xs">Catalog package for {draft.branch_name || 'this branch'}</Label>
+              <Select value={pickedPkgId || '__none__'} onValueChange={(v) => setPickedPkgId(v === '__none__' ? '' : v)}>
+                <SelectTrigger className="bg-white">
+                  <SelectValue placeholder={existingPkgs.length ? 'Choose a package…' : 'Select a branch first'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {existingPkgs.map(p => (
+                    <SelectItem key={p.id} value={p.id} className="text-xs">
+                      {p.name ?? `Band ${p.band_code}`} · CTC {inr(Number(p.ctc ?? p.package_amount))}/mo
+                      {p.slab_to != null ? ` (${inr0(Number(p.slab_from ?? 0))} – ${inr0(Number(p.slab_to))}/mo)` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {pickedPkg && (
+                <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs tabular-nums pt-1">
+                  {([
+                    ['Basic', pickedPkg.basic], ['HRA', pickedPkg.hra], ['Conveyance', pickedPkg.conveyance],
+                    ['Bonus', pickedPkg.bonus], ['Gross', pickedPkg.gross], ['Net', pickedPkg.net_in_hand],
+                    ['CTC', pickedPkg.ctc ?? pickedPkg.package_amount],
+                  ] as [string, unknown][]).filter(([, v]) => Number(v ?? 0) > 0).map(([l, v]) => (
+                    <span key={l} className="text-slate-600">{l} <strong className="text-slate-900">{inr(Number(v))}</strong></span>
+                  ))}
+                </div>
+              )}
+              <p className="text-[11px] text-slate-500">
+                Assigns this catalog package unchanged — no new package row is created.
+              </p>
+            </div>
+          )}
+
           {/* Branch + Band */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -319,14 +471,16 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
                 <SelectContent>
                   {bands.map(b => (
                     <SelectItem key={b.band_code} value={b.band_code}>
-                      Band {b.band_code}{b.slab_from ? ` · ${inr(b.slab_from)}–${inr(b.slab_to)}/mo` : ''}
+                      {/* slab_from != null, not truthiness — Band A's floor is 0, and a
+                          truthy check hid the range on the one band that starts at zero. */}
+                      Band {b.band_code}{b.slab_to != null ? ` (${inr0(b.slab_from)} – ${inr0(b.slab_to)}/mo)` : ''}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
               {selectedBand && draft.ctc > 0 && (
                 <p className={`text-[11px] mt-1 ${bandStatus === 'ok' ? 'text-emerald-600' : 'text-amber-600'}`}>
-                  Band range: {inr(selectedBand.slab_from)} – {inr(selectedBand.slab_to)}/mo
+                  Band range: {inr0(selectedBand.slab_from)} – {inr0(selectedBand.slab_to)}/mo
                 </p>
               )}
             </div>
@@ -335,20 +489,30 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
           {/* Calculator bar */}
           <div className="rounded-xl border border-blue-100 bg-blue-50/40 px-4 py-3 space-y-2">
             <div className="flex flex-wrap items-center gap-3">
-              <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
-                {(['ctc', 'inhand'] as const).map(m => (
-                  <button key={m} onClick={() => setMode(m)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer ${mode === m ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
-                    {m === 'ctc' ? 'From CTC' : 'From Net In-Hand'}
+              <div className="flex flex-wrap rounded-lg border border-slate-200 bg-white p-0.5">
+                {MODES.map(m => (
+                  <button key={m.key} onClick={() => setMode(m.key)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer ${mode === m.key ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+                    {m.label}
                   </button>
                 ))}
               </div>
-              {mode !== 'manual' && (
+              {(mode === 'ctc' || mode === 'inhand') && (
                 <div className="flex items-center gap-2">
                   <Label className="text-xs whitespace-nowrap">{mode === 'ctc' ? 'Monthly CTC (₹)' : 'Net In-Hand (₹)'}</Label>
                   <Input className="h-8 w-36 text-sm font-semibold" type="number" placeholder="e.g. 15000"
                     value={mode === 'ctc' ? ctcInput : inHandInput}
                     onChange={e => mode === 'ctc' ? setCtcInput(e.target.value) : setInHand(e.target.value)} />
+                </div>
+              )}
+              {mode === 'increment' && (
+                <div className="flex items-center gap-2">
+                  <Label className="text-xs whitespace-nowrap">Increment %</Label>
+                  <Input className="h-8 w-24 text-sm font-semibold" type="number" step="0.5" placeholder="e.g. 10"
+                    value={incrementPct} onChange={e => setIncrementPct(e.target.value)} />
+                  <span className="text-[11px] text-slate-500 tabular-nums">
+                    {inr(currentCtc)} → <strong className="text-blue-700">{draft.ctc ? inr(draft.ctc) : '—'}</strong>/mo
+                  </span>
                 </div>
               )}
               <label className="flex items-center gap-1.5 cursor-pointer text-xs font-medium select-none">
@@ -442,7 +606,7 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
               {[
                 ['epf_employer',  includePf ? 'PF Employer (12%)' : 'PF Employer (off)'],
                 ['esic_employer', includeEsic && draft.gross <= 21000 ? 'ESIC Employer (3.25%)' : 'ESIC Employer (off/exempt)'],
-                ['admin_charges', includePf ? 'Admin Charges (1.01%)' : 'Admin Charges (off)'],
+                ['admin_charges', includePf ? 'Admin Charges (1%)' : 'Admin Charges (off)'],
                 ['gratuity',      'Gratuity Monthly Provision'],
               ].map(([field, label]) => (
                 <div key={field} className="flex items-center gap-2">
@@ -490,7 +654,8 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
             onClick={() => {
               setDraft({ ...BLANK, branch_name: defaultBranch ?? '' });
               setCtcInput(''); setInHand(''); setMode('ctc'); setError(null); setLockBasic(false);
-              setIncludePf(true); setIncludeEsic(true); setIncludeBonus(false);
+              setIncrementPct(''); setPickedPkgId('');
+              setIncludePf(true); setIncludeEsic(true); setIncludeBonus(true);
               setBasicPct(40); setHraPct(40);
             }}
             className="cursor-pointer mr-auto"
@@ -501,7 +666,9 @@ export function PackageBuilderDialog({ open, onOpenChange, defaultBranch, onPack
           <Button disabled={saving || !canSave} onClick={() => void save()} className="cursor-pointer bg-blue-600 hover:bg-blue-700">
             {saving
               ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Saving…</>
-              : <><CheckCircle2 className="h-4 w-4 mr-2" />Create &amp; Assign Package</>
+              : <><CheckCircle2 className="h-4 w-4 mr-2" />{
+                  mode === 'existing' ? 'Assign Selected Package' : (submitLabel ?? 'Create & Assign Package')
+                }</>
             }
           </Button>
         </DialogFooter>

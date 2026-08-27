@@ -54,6 +54,52 @@ export interface ExecutiveSummaryResponse {
   };
 }
 
+// ─── Normalisation ────────────────────────────────────────────────────────────
+
+/**
+ * The interfaces above say `number`, but the API does not always send one.
+ *
+ * quality-executive.service.ts passes several fields straight out of MySQL —
+ * `ROUND(AVG(quality_percentage), 2)`, `ROUND(STDDEV(...), 2)` — and mysql2 hands DECIMALs
+ * back as *strings* ("73.45"). React renders a string fine, so this stayed invisible until
+ * a `.toFixed(1)` call site: `p.quality_score.toFixed(1)` throws "toFixed is not a function"
+ * and takes the whole page down. That is the same defect that blanked /quality-dashboard
+ * (see FailRatesBars and src/tests/quality-fail-rates.contract.test.tsx).
+ *
+ * Only the fields the service computes in JS (metrics.*, median_quality) are genuinely
+ * numbers. Rather than guard each of the five render sites, coerce once here so the rest of
+ * the page can trust the type it was already given.
+ */
+export function num(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+export function normalizeExecutiveSummary(raw: ExecutiveSummaryResponse): ExecutiveSummaryResponse {
+  const rank = (p: PerformerRank): PerformerRank => ({
+    ...p,
+    quality_score: num(p.quality_score),
+    calls_handled: num(p.calls_handled),
+  });
+
+  return {
+    ...raw,
+    top_performers: (raw.top_performers ?? []).map(rank),
+    bottom_performers: (raw.bottom_performers ?? []).map(rank),
+    process_performance: (raw.process_performance ?? []).map((r) => ({
+      ...r,
+      avg_quality: num(r.avg_quality),
+      agent_count: num(r.agent_count),
+      calls_handled: num(r.calls_handled),
+    })),
+    org_benchmarks: {
+      avg_quality: num(raw.org_benchmarks?.avg_quality),
+      median_quality: num(raw.org_benchmarks?.median_quality),
+      std_deviation: num(raw.org_benchmarks?.std_deviation),
+    },
+  };
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const EXEC_ROLES = new Set(["super_admin", "admin", "ceo", "coo"]);
@@ -79,7 +125,9 @@ export function useExecutiveQualitySummary(daysBack: 7 | 30 | 90 = 30, enabled =
       const res = await hrmsApi.get<{ success: boolean; data: ExecutiveSummaryResponse }>(
         `/api/executive/quality-summary?daysBack=${daysBack}`
       );
-      return (res as { success: boolean; data: ExecutiveSummaryResponse }).data;
+      return normalizeExecutiveSummary(
+        (res as { success: boolean; data: ExecutiveSummaryResponse }).data,
+      );
     },
     enabled: enabled && isAllowed,
     staleTime: STALE,
@@ -105,7 +153,13 @@ export function useExecutiveProcessBreakdown(daysBack: 7 | 30 | 90 = 30) {
       const res = await hrmsApi.get<{ success: boolean; data: ProcessPerformanceRow[] }>(
         `/api/executive/quality-summary/process-breakdown?daysBack=${daysBack}`
       );
-      return (res as { success: boolean; data: ProcessPerformanceRow[] }).data ?? [];
+      const rows = (res as { success: boolean; data: ProcessPerformanceRow[] }).data ?? [];
+      return rows.map((r) => ({
+        ...r,
+        avg_quality: num(r.avg_quality),
+        agent_count: num(r.agent_count),
+        calls_handled: num(r.calls_handled),
+      }));
     },
     enabled: isAllowed,
     staleTime: STALE,

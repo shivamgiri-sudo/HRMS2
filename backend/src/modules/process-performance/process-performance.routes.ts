@@ -25,17 +25,27 @@ const VIEWER_ROLES = [
   "branch_head", "qa", "quality_analyst", "tq_head",
 ] as const;
 
-/** Dates default to the current month rather than erroring, so the page loads unparameterised. */
+/**
+ * Dates default to the current month rather than erroring, so the page loads
+ * unparameterised.
+ *
+ * `iso` formats from the LOCAL calendar fields, never through toISOString().
+ * The server runs in Asia/Kolkata, where midnight local is 18:30 UTC the day
+ * before -- so toISOString() on a locally-built Date returns YESTERDAY. That
+ * silently shifted the whole default window by a day at both ends.
+ */
 function readFilters(req: AuthenticatedRequest): svc.PerfFilters {
   const q = req.query as Record<string, string | undefined>;
   const today = new Date();
   const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const iso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   return {
     from: q.from || iso(firstOfMonth),
     to: q.to || iso(today),
     processId: q.processId || null,
     managerId: q.managerId || null,
+    employeeId: q.employeeId || null,
   };
 }
 
@@ -49,6 +59,18 @@ const SECTION_KEYS: svc.SectionKey[] = [
 // same trap that made /my-processes need its own ordering test.
 router.get("/processes", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
   const data = await svc.getProcessRows(req.authUser!.id, readFilters(req));
+  res.json({ success: true, data });
+}));
+
+/**
+ * The two pickers at the top of the page.
+ *
+ * Declared before the grain routes so it can never be shadowed, and served from
+ * the same scope predicate the table uses -- see getFilterOptions for why the
+ * old /api/processes/my-processes source left the pickers empty for admins.
+ */
+router.get("/filters", requireAuth, requireRole(...VIEWER_ROLES), h(async (req, res) => {
+  const data = await svc.getFilterOptions(req.authUser!.id, readFilters(req));
   res.json({ success: true, data });
 }));
 

@@ -1,193 +1,259 @@
-import { useState, memo } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { ChevronDown, ChevronRight, Users } from "lucide-react";
+import { memo, useState } from "react";
+import { ChevronDown, ChevronRight, Building2, CameraOff, AlertTriangle, MapPin } from "lucide-react";
 import { normalizeMediaUrl } from "@/lib/mediaUrl";
 import type { OrgTreeNode } from "@/types/orgChart";
 
-// MCN brand-aligned level styles
-const LEVEL_STYLES: Record<number, { strip: string; badge: string; text: string; avatarBg: string }> = {
-  0: { strip: "bg-amber-500",   badge: "bg-amber-50 text-amber-700 border-amber-200",   text: "text-amber-700",   avatarBg: "bg-gradient-to-br from-amber-400 to-orange-500" },
-  1: { strip: "bg-[#1B3A5C]",   badge: "bg-blue-50 text-[#1B3A5C] border-blue-200",     text: "text-[#1B3A5C]",   avatarBg: "bg-gradient-to-br from-[#1B3A5C] to-[#2d5a8a]" },
-  2: { strip: "bg-[#4CAF50]",   badge: "bg-emerald-50 text-emerald-700 border-emerald-200", text: "text-emerald-700", avatarBg: "bg-gradient-to-br from-[#4CAF50] to-emerald-600" },
-  3: { strip: "bg-slate-400",   badge: "bg-slate-50 text-slate-600 border-slate-200",    text: "text-slate-600",   avatarBg: "bg-gradient-to-br from-slate-400 to-slate-500" },
-};
+/**
+ * How many direct reports render inline before the rest collapse behind a "show all" chip.
+ *
+ * One manager in the live data has 129 direct reports. Rendering that as a single row makes
+ * the row ~28,000px wide, which is the main reason the chart reads as unusable however far
+ * you zoom out. Beyond this cap the overflow is hidden until asked for.
+ */
+const INLINE_CHILD_LIMIT = 12;
 
-function getStyle(depth: number) {
-  return LEVEL_STYLES[Math.min(depth, 3)];
-}
+/** Card accent by depth, using the existing MCN palette. */
+const LEVEL = [
+  { bar: "bg-gradient-to-r from-amber-400 to-orange-500", ring: "ring-amber-200", avatar: "from-amber-400 to-orange-500", pill: "bg-amber-50 text-amber-700 border-amber-200" },
+  { bar: "bg-gradient-to-r from-[#1B3A5C] to-[#2d5a8a]", ring: "ring-blue-200", avatar: "from-[#1B3A5C] to-[#2d5a8a]", pill: "bg-blue-50 text-[#1B3A5C] border-blue-200" },
+  { bar: "bg-gradient-to-r from-[#4CAF50] to-emerald-600", ring: "ring-emerald-200", avatar: "from-[#4CAF50] to-emerald-600", pill: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  { bar: "bg-gradient-to-r from-violet-400 to-violet-600", ring: "ring-violet-200", avatar: "from-violet-400 to-violet-600", pill: "bg-violet-50 text-violet-700 border-violet-200" },
+  { bar: "bg-gradient-to-r from-slate-300 to-slate-400", ring: "ring-slate-200", avatar: "from-slate-400 to-slate-500", pill: "bg-slate-50 text-slate-600 border-slate-200" },
+];
 
-function getInitials(name: string): string {
+const levelOf = (depth: number) => LEVEL[Math.min(depth, LEVEL.length - 1)];
+
+function initialsOf(name: string): string {
   return name.split(" ").filter(Boolean).map((w) => w[0]).join("").toUpperCase().slice(0, 2);
 }
 
-interface OrgChartNodeProps {
+export interface OrgChartNodeProps {
   node: OrgTreeNode;
   depth?: number;
-  currentEmployeeId?: string | null;
-  isLast?: boolean;
-  searchQuery?: string;
-  /** Opens the employee drawer. NativeOrgChartEnhanced has always passed this, but the prop did
-   *  not exist, so clicking a node did nothing at all. */
-  onClick?: () => void;
+  selfEmployeeId?: string | null;
+  /** Ids whose children are shown. Held by the page so "jump to person" can open a whole path. */
+  expandedIds: Set<string>;
+  onToggle: (id: string) => void;
+  /** Ids matching the current search — matches stay lit, everything else dims. */
+  matchIds: Set<string> | null;
+  onSelect?: (node: OrgTreeNode) => void;
+  /** Set on the viewer's own card so the page can scroll it into view. */
+  selfRef?: (el: HTMLDivElement | null) => void;
 }
 
 export const OrgChartNodeCard = memo(function OrgChartNodeCard({
   node,
   depth = 0,
-  currentEmployeeId,
-  searchQuery = "",
-  onClick,
+  selfEmployeeId,
+  expandedIds,
+  onToggle,
+  matchIds,
+  onSelect,
+  selfRef,
 }: OrgChartNodeProps) {
-  const [expanded, setExpanded] = useState(depth < 3);
-  const hasChildren = node.children && node.children.length > 0;
-  const style = getStyle(depth);
-  const isMe = node.id === currentEmployeeId;
-  const photoUrl = normalizeMediaUrl(node.avatar_url ?? undefined);
+  const [showAllChildren, setShowAllChildren] = useState(false);
 
-  // Search dimming
-  const q = searchQuery.trim().toLowerCase();
-  const isMatch = !q || node.name.toLowerCase().includes(q) || (node.designation ?? "").toLowerCase().includes(q);
-  const dimmed = !!q && !isMatch;
+  const style = levelOf(depth);
+  const isMe = !!selfEmployeeId && node.id === selfEmployeeId;
+  const hasChildren = node.children.length > 0;
+  const expanded = expandedIds.has(node.id);
+  const photoUrl = normalizeMediaUrl(node.avatar_url ?? undefined);
+  const dimmed = !!matchIds && !matchIds.has(node.id);
+
+  const visibleChildren = showAllChildren
+    ? node.children
+    : node.children.slice(0, INLINE_CHILD_LIMIT);
+  const hiddenCount = node.children.length - visibleChildren.length;
 
   return (
     <div className="flex flex-col items-center">
-      {/* ── The Card ─────────────────────────────────────────────── */}
-      <motion.div
-        initial={{ opacity: 0, transform: "scale(0.92)" }}
-        animate={{ opacity: dimmed ? 0.25 : 1, transform: "scale(1)" }}
-        transition={{ duration: 0.3, ease: "easeOut" }}
+      <div
+        ref={isMe ? selfRef : undefined}
+        data-node-id={node.id}
+        onClick={() => onSelect?.(node)}
         className={[
-          "relative w-[210px] rounded-2xl border overflow-hidden",
-          "shadow-[0_2px_12px_rgba(0,0,0,0.06)]",
-          "transition-all duration-base hover:shadow-[0_6px_24px_rgba(0,0,0,0.1)] hover-pointer:-translate-y-0.5",
-          "bg-white",
-          isMe ? "ring-2 ring-[#1B3A5C] ring-offset-2" : "border-slate-200/80",
-          onClick ? "cursor-pointer" : "",
+          "relative w-[216px] shrink-0 rounded-2xl bg-white overflow-hidden select-none",
+          "border transition-[box-shadow,transform,opacity] duration-200",
+          "shadow-[0_1px_3px_rgba(15,23,42,0.06),0_8px_24px_-12px_rgba(15,23,42,0.18)]",
+          "hover:shadow-[0_2px_6px_rgba(15,23,42,0.08),0_16px_40px_-16px_rgba(15,23,42,0.28)]",
+          "hover:-translate-y-0.5",
+          onSelect ? "cursor-pointer" : "",
+          isMe
+            ? "border-[#1B3A5C] ring-2 ring-[#1B3A5C]/25 ring-offset-2 ring-offset-slate-50"
+            : "border-slate-200/80",
+          dimmed ? "opacity-25" : "opacity-100",
         ].join(" ")}
-        onClick={onClick}
       >
-        {/* Coloured top strip */}
-        <div className={`h-[5px] w-full ${style.strip}`} />
+        <div className={`h-1.5 w-full ${style.bar}`} />
 
-        <div className="px-4 py-3.5 flex flex-col items-center text-center gap-2">
-          {/* Avatar */}
+        {isMe && (
+          <span className="absolute right-2.5 top-3.5 rounded-full bg-[#1B3A5C] px-2 py-[3px] text-[9px] font-bold uppercase tracking-wide text-white shadow-sm">
+            You
+          </span>
+        )}
+
+        <div className="flex flex-col items-center gap-2 px-4 pb-3.5 pt-4 text-center">
           <div className="relative">
             <div
               className={[
-                "w-[52px] h-[52px] rounded-full overflow-hidden border-[2.5px] shadow-sm",
-                isMe ? "border-[#1B3A5C]" : "border-white",
+                "h-14 w-14 overflow-hidden rounded-full ring-4 ring-offset-0",
+                isMe ? "ring-[#1B3A5C]/20" : style.ring,
               ].join(" ")}
-              style={{ boxShadow: "0 2px 8px rgba(0,0,0,0.08)" }}
             >
               {photoUrl ? (
                 <img
                   src={photoUrl}
                   alt={node.name}
-                  className="w-full h-full object-cover"
+                  className="h-full w-full object-cover"
                   loading="lazy"
                   draggable={false}
                 />
               ) : (
-                <div className={`w-full h-full flex items-center justify-center ${style.avatarBg}`}>
-                  <span className="text-white font-bold text-[15px] select-none">
-                    {getInitials(node.name)}
-                  </span>
+                <div className={`flex h-full w-full items-center justify-center bg-gradient-to-br ${style.avatar}`}>
+                  <span className="text-base font-bold text-white">{initialsOf(node.name)}</span>
                 </div>
               )}
             </div>
-            {isMe && (
-              <div className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-green-500 border-2 border-white" />
+            {/* Photo is mandatory on the card but only 22 of 1,090 active employees have one on
+                file. Rather than let an initials circle pass as a photo, mark the gap so it can
+                be chased. */}
+            {!photoUrl && (
+              <span
+                className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white bg-slate-200"
+                title="No photo on file"
+              >
+                <CameraOff className="h-2.5 w-2.5 text-slate-500" />
+              </span>
             )}
           </div>
 
-          {/* Name */}
           <div className="w-full">
-            <p className="text-[13px] font-bold text-slate-900 leading-snug truncate" title={node.name}>
+            <p className="truncate text-[13px] font-bold leading-tight text-slate-900" title={node.name}>
               {node.name}
             </p>
-            <p className="text-[11px] text-slate-500 leading-snug truncate mt-0.5" title={node.designation ?? ""}>
-              {node.designation || "—"}
+
+            {node.designation ? (
+              <p
+                className="mt-0.5 truncate text-[11px] font-medium leading-tight text-slate-500"
+                title={node.designation}
+              >
+                {node.designation}
+              </p>
+            ) : (
+              <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-[2px] text-[9px] font-semibold text-amber-700">
+                <AlertTriangle className="h-2.5 w-2.5" />
+                Designation not set
+              </span>
+            )}
+
+            <p
+              className="mt-1 flex items-center justify-center gap-1 truncate text-[10px] text-slate-400"
+              title={node.department_name ?? "No department"}
+            >
+              <Building2 className="h-2.5 w-2.5 shrink-0" />
+              <span className="truncate">{node.department_name || "No department"}</span>
             </p>
           </div>
 
-          {/* Process / Branch pill */}
           {(node.process_name || node.branch_name) && (
-            <div className="flex flex-wrap items-center justify-center gap-1">
+            <div className="flex w-full flex-wrap items-center justify-center gap-1">
               {node.process_name && (
-                <span className={`text-[9px] font-semibold px-2 py-0.5 rounded-full border truncate max-w-[95px] ${style.badge}`} title={node.process_name}>
+                <span
+                  className={`max-w-[110px] truncate rounded-full border px-2 py-[2px] text-[9px] font-semibold ${style.pill}`}
+                  title={node.process_name}
+                >
                   {node.process_name}
                 </span>
               )}
               {node.branch_name && (
-                <span className="text-[9px] font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 truncate max-w-[85px]" title={node.branch_name}>
-                  {node.branch_name}
+                <span
+                  className="inline-flex max-w-[95px] items-center gap-0.5 truncate rounded-full bg-slate-100 px-2 py-[2px] text-[9px] font-medium text-slate-500"
+                  title={node.branch_name}
+                >
+                  <MapPin className="h-2 w-2 shrink-0" />
+                  <span className="truncate">{node.branch_name}</span>
                 </span>
               )}
             </div>
           )}
 
-          {/* Collapse/expand button */}
           {hasChildren && (
             <button
+              type="button"
               onClick={(e) => {
-                // The card itself is now clickable (it opens the employee drawer), and this
-                // button sits inside it — without stopping propagation, expanding a node would
-                // also open the drawer.
                 e.stopPropagation();
-                setExpanded((v) => !v);
+                onToggle(node.id);
               }}
-              className="flex items-center gap-1 mt-0.5 px-2.5 py-1 rounded-full bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-all cursor-pointer border border-slate-200/60"
+              className={[
+                "mt-0.5 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-semibold transition-colors",
+                expanded
+                  ? "border-slate-200 bg-slate-50 text-slate-500 hover:bg-slate-100"
+                  : "border-[#1B3A5C]/20 bg-[#1B3A5C]/5 text-[#1B3A5C] hover:bg-[#1B3A5C]/10",
+              ].join(" ")}
+              title={expanded ? "Collapse this team" : "Expand this team"}
             >
-              {expanded ? (
-                <ChevronDown className="h-3 w-3 transition-transform" />
-              ) : (
-                <ChevronRight className="h-3 w-3 transition-transform" />
+              {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              {node.children.length} direct
+              {(node.total_reports ?? 0) > node.children.length && (
+                <span className="text-slate-400">· {node.total_reports} total</span>
               )}
-              <Users className="h-3 w-3" />
-              <span className="text-[10px] font-semibold">{node.children.length}</span>
             </button>
           )}
         </div>
-      </motion.div>
+      </div>
 
-      {/* ── Children tree with connectors ────────────────────────── */}
-      <AnimatePresence>
-        {hasChildren && expanded && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: "auto" }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.25 }}
-            className="flex flex-col items-center overflow-visible"
-          >
-            {/* Vertical line from card down to horizontal bar */}
-            <div className="w-px h-7 bg-slate-300" />
+      {hasChildren && expanded && (
+        <div className="flex flex-col items-center">
+          <div className="h-7 w-px bg-slate-300" />
 
-            {/* Children wrapper with horizontal connector */}
-            <div className="relative flex items-start">
-              {/* Horizontal connector bar — spans from first child center to last child center */}
-              {node.children.length > 1 && (
-                <div className="absolute top-0 left-[calc(50%/var(--child-count))] right-[calc(50%/var(--child-count))] h-px bg-slate-300"
-                  style={{ left: `calc(100% / ${node.children.length} / 2)`, right: `calc(100% / ${node.children.length} / 2)` }}
+          <div className="relative flex items-start">
+            {visibleChildren.length > 1 && (
+              <div
+                className="absolute top-0 h-px bg-slate-300"
+                style={{
+                  left: `calc(100% / ${visibleChildren.length} / 2)`,
+                  right: `calc(100% / ${visibleChildren.length} / 2)`,
+                }}
+              />
+            )}
+
+            {visibleChildren.map((child) => (
+              <div key={child.id} className="flex flex-col items-center px-3">
+                <div className="h-5 w-px bg-slate-300" />
+                <OrgChartNodeCard
+                  node={child}
+                  depth={depth + 1}
+                  selfEmployeeId={selfEmployeeId}
+                  expandedIds={expandedIds}
+                  onToggle={onToggle}
+                  matchIds={matchIds}
+                  onSelect={onSelect}
+                  selfRef={selfRef}
                 />
-              )}
+              </div>
+            ))}
+          </div>
 
-              {node.children.map((child) => (
-                <div key={child.id} className="flex flex-col items-center px-2">
-                  {/* Vertical connector from horizontal bar down to child card */}
-                  <div className="w-px h-5 bg-slate-300" />
-                  <OrgChartNodeCard
-                    node={child}
-                    depth={depth + 1}
-                    currentEmployeeId={currentEmployeeId}
-                    searchQuery={searchQuery}
-                  />
-                </div>
-              ))}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAllChildren(true)}
+              className="mt-3 rounded-full border border-dashed border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-500 shadow-sm transition-colors hover:border-[#1B3A5C]/40 hover:text-[#1B3A5C]"
+            >
+              Show {hiddenCount} more direct report{hiddenCount === 1 ? "" : "s"}
+            </button>
+          )}
+          {showAllChildren && node.children.length > INLINE_CHILD_LIMIT && (
+            <button
+              type="button"
+              onClick={() => setShowAllChildren(false)}
+              className="mt-3 rounded-full border border-dashed border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-500 shadow-sm transition-colors hover:border-[#1B3A5C]/40 hover:text-[#1B3A5C]"
+            >
+              Show only first {INLINE_CHILD_LIMIT}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 });

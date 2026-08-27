@@ -1,6 +1,7 @@
 import { Router } from "express";
-import type { Request, Response } from "express";
+import type { Request, RequestHandler, Response } from "express";
 import { requireAuth } from "../../middleware/authMiddleware.js";
+import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import * as XLSX from "xlsx";
@@ -17,7 +18,8 @@ const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any,
 router.use(requireAuth);
 
 // All list/get: any authenticated user (needed for dropdowns)
-// Create/update/delete: admin or hr
+// Create/update/delete: admin or hr, EXCEPT /departments — super_admin only, see
+// requireDepartmentWrite below.
 
 /**
  * Who is making an Org Masters change, for cost_centre_approval_log.
@@ -31,6 +33,51 @@ function orgActor(req: Request): { id: string; role: string } | undefined {
   return { id: String(auth.id), role: String(auth.role ?? (req as any).userRoles?.[0] ?? "unknown") };
 }
 
+/**
+ * Per-path override for the write guards below.
+ *
+ * Every org master shared one gate — create/update on requireRole("admin","hr"), delete on
+ * requireRole("admin") — which is right for the tables HR genuinely maintains (designations,
+ * campaigns, grade bands) and wrong for department_master. See requireDepartmentWrite.
+ */
+type CrudGuards = {
+  write?: RequestHandler;
+  remove?: RequestHandler;
+  status?: RequestHandler;
+};
+
+/**
+ * department_master is org structure, not day-to-day HR data. Renaming or deleting a
+ * department silently re-points every employee record, payroll cost mapping, requisition and
+ * report filter that resolves through it, and there is no undo. Until 2026-08-27 this sat on
+ * the shared requireRole("admin","hr") gate, which on live data meant 17 accounts could
+ * create or rename a department and 3 could delete one — 16 of the 17 being branch HR, who
+ * have no reason to reshape the company's org chart. Locked to super_admin.
+ *
+ * The one carve-out is a genuine false positive, not a concession. EmployeeEditDialog PUTs
+ * `{ manager_id }` to this same endpoint as a side effect of HR ticking "department head" on
+ * an employee record (see EmployeeEditDialog.tsx around the department_id save). That is an
+ * employee edit expressed as a department write, so admin/hr keep it — but ONLY when
+ * manager_id is the *entire* body. Any payload that also carries dept_name, dept_code,
+ * description or active_status is a structure change and falls through to super_admin.
+ *
+ * Checking the body shape rather than trusting a dedicated route means an HR client cannot
+ * reach a rename by pointing the head-assignment call at a fuller payload.
+ */
+const isDepartmentHeadAssignment = (body: unknown): boolean => {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const keys = Object.keys(body as Record<string, unknown>);
+  return keys.length > 0 && keys.every((key) => key === "manager_id");
+};
+
+const requireDepartmentStructure = requireRole("super_admin");
+const requireDepartmentHead      = requireRole("admin", "hr");
+
+const requireDepartmentWrite: RequestHandler = (req, res, next) =>
+  isDepartmentHeadAssignment(req.body)
+    ? requireDepartmentHead(req as AuthenticatedRequest, res, next)
+    : requireDepartmentStructure(req as AuthenticatedRequest, res, next);
+
 function buildCrud(
   path: string,
   svc: {
@@ -40,8 +87,12 @@ function buildCrud(
     update(id: string, d: any): any;
     delete(id: string): any;
     setStatus?(id: string, status: number): any;
-  }
+  },
+  guards: CrudGuards = {}
 ) {
+  const writeGuard  = guards.write  ?? requireRole("admin", "hr");
+  const removeGuard = guards.remove ?? requireRole("admin");
+  const statusGuard = guards.status ?? requireRole("admin", "hr");
   router.get(path, h(async (req: Request, res: Response) => {
     const { q, active_status, page, limit, branch_id, include_duplicates } = req.query;
     const options = {
@@ -64,20 +115,20 @@ function buildCrud(
     if (!item) return res.status(404).json({ error: "Not found" });
     res.json({ data: item });
   }));
-  router.post(path, requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
+  router.post(path, writeGuard, h(async (req: Request, res: Response) => {
     const item = await svc.create(req.body);
     res.status(201).json({ data: item });
   }));
-  router.put(`${path}/:id`, requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
+  router.put(`${path}/:id`, writeGuard, h(async (req: Request, res: Response) => {
     const item = await svc.update(req.params.id, req.body);
     res.json({ data: item });
   }));
-  router.delete(`${path}/:id`, requireRole("admin"), h(async (req: Request, res: Response) => {
+  router.delete(`${path}/:id`, removeGuard, h(async (req: Request, res: Response) => {
     await svc.delete(req.params.id);
     res.json({ ok: true });
   }));
   if (svc.setStatus) {
-    router.patch(`${path}/:id/status`, requireRole("admin", "hr"), h(async (req: Request, res: Response) => {
+    router.patch(`${path}/:id/status`, statusGuard, h(async (req: Request, res: Response) => {
       const { active_status } = req.body;
       if (active_status !== 0 && active_status !== 1) {
         return res.status(400).json({ error: "active_status must be 0 or 1" });
@@ -167,7 +218,11 @@ router.get("/branches/cc-code-map",
 );
 
 buildCrud("/branches",      branchService);
-buildCrud("/departments",   departmentService);
+buildCrud("/departments",   departmentService, {
+  write:  requireDepartmentWrite,
+  remove: requireRole("super_admin"),
+  status: requireRole("super_admin"),
+});
 buildCrud("/lobs",          lobService);
 buildCrud("/designations",  designationService);
 buildCrud("/campaigns",     campaignService);

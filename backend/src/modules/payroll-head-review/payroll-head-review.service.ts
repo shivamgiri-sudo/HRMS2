@@ -441,7 +441,19 @@ export async function getEmployeeJourney(employeeId: string) {
               COALESCE(sca.pf_employee, pm.epf_employee) AS pf_employee,
               COALESCE(sca.esic_employee, pm.esic_employee) AS esic_employee,
               COALESCE(sca.pf_employee, pm.epf_employee) AS pf_employee_amt,
-              COALESCE(sca.esic_employee, pm.esic_employee) AS esic_employee_amt
+              COALESCE(sca.esic_employee, pm.esic_employee) AS esic_employee_amt,
+              -- The rest of the package. salary_component_assignments stores only
+              -- basic/hra/conveyance/special_allowance/gross/pf/esi/ctc, so every other
+              -- component the package actually carries was invisible on the review screen —
+              -- most importantly BONUS, which 229 of the 230 populated packages carry at
+              -- 8.33% of basic INSIDE gross. A reviewer validating a package could not see
+              -- a component that is part of the CTC they were signing off.
+              -- No column collision: none of these exist on sca, so the sca.* expansion
+              -- above cannot shadow them.
+              pm.bonus, pm.lta, pm.portfolio, pm.medical, pm.pli,
+              pm.other_allowance, pm.professional_tax, pm.admin_charges,
+              pm.package_amount AS pkg_package_amount,
+              pm.band_code      AS pkg_band_code
          FROM salary_component_assignments sca
          LEFT JOIN salary_package_master pm ON pm.id = sca.package_id
         WHERE sca.employee_id = ? AND sca.status = 'active'

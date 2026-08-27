@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import TeamMemberDrawer from "./TeamMemberDrawer";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -99,6 +100,8 @@ export default function TeamOverviewTab({ onActionsClick }: { onActionsClick: ()
     staleTime: 2 * 60_000,
   });
 
+  const [selected, setSelected] = useState<{ id: string; name: string } | null>(null);
+
   const ov = (overviewRes as any)?.data as TeamOverview | undefined;
   const members = ((membersRes as any)?.data ?? []) as TeamMember[];
   const alerts = ((alertsRes as any)?.data ?? []) as Alert[];
@@ -108,6 +111,13 @@ export default function TeamOverviewTab({ onActionsClick }: { onActionsClick: ()
 
   return (
     <div className="space-y-6">
+      <TeamMemberDrawer
+        employeeId={selected?.id ?? null}
+        employeeName={selected?.name}
+        open={!!selected}
+        onOpenChange={(o) => { if (!o) setSelected(null); }}
+      />
+
       {/* Alert banner */}
       {alerts.length > 0 && (
         <button
@@ -196,10 +206,14 @@ export default function TeamOverviewTab({ onActionsClick }: { onActionsClick: ()
         ) : (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {members.map((m) => (
-              <Link
+              /* Opens the member deep-dive in place rather than navigating to the employee
+                 record — the manager's question is "how is this person doing", which the
+                 employee page does not answer. */
+              <button
                 key={m.id}
-                to={`/employees/${m.id}`}
-                className="group flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+                type="button"
+                onClick={() => setSelected({ id: m.id, name: m.full_name ?? "" })}
+                className="group flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3.5 text-left shadow-sm hover:border-indigo-300 hover:shadow-md transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
               >
                 <Avatar name={m.full_name ?? "?"} />
                 <div className="min-w-0 flex-1">
@@ -209,7 +223,7 @@ export default function TeamOverviewTab({ onActionsClick }: { onActionsClick: ()
                   <p className="text-xs text-slate-400 truncate">{m.employee_code}</p>
                 </div>
                 <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-indigo-400 transition-colors shrink-0" />
-              </Link>
+              </button>
             ))}
           </div>
         )}

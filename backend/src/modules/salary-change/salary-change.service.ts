@@ -37,10 +37,21 @@ export async function getEmployeeSalaryProfile(employeeId: string) {
   const employee = empRows[0] ?? null;
   if (!employee) throw httpError("Employee not found or inactive.", 404, "NOT_FOUND");
 
+  // salary_component_assignments stores only basic/hra/conveyance/special_allowance/
+  // gross/pf/esi/ctc. Every other component of the package — bonus above all, which is
+  // 8.33% of basic and sits INSIDE gross on 229 of the 230 populated catalog rows — lives
+  // on salary_package_master. Joining it is what lets the Salary Change Center show the
+  // whole package, and lets the builder open pre-filled with all of it rather than a
+  // partial copy that would silently drop those components on the next save.
   const [scRows] = await db.execute<RowDataPacket[]>(
-    `SELECT *, net_estimate AS net_in_hand FROM salary_component_assignments
-      WHERE employee_id = ? AND status = 'active'
-      ORDER BY effective_date DESC LIMIT 1`,
+    `SELECT sca.*, sca.net_estimate AS net_in_hand,
+            pm.bonus, pm.lta, pm.portfolio, pm.medical, pm.pli,
+            pm.other_allowance, pm.professional_tax, pm.admin_charges,
+            pm.band_code AS pkg_band_code
+       FROM salary_component_assignments sca
+       LEFT JOIN salary_package_master pm ON pm.id = sca.package_id
+      WHERE sca.employee_id = ? AND sca.status = 'active'
+      ORDER BY sca.effective_date DESC LIMIT 1`,
     [employeeId]
   );
 

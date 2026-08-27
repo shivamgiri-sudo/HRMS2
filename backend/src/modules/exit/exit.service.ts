@@ -13,6 +13,7 @@ import { revokeSessionsForEmployee } from "../../shared/sessionRevocation.js";
 import { recordExitFollowUpFailure } from "./exit-followup-recovery.js";
 import { deprovisionEmployeeAccess } from "../../shared/employeeDeprovisioning.js";
 import { triggerResignationPendingReview } from "../work-inbox/work-inbox.triggers.js";
+import { recordManagerChange } from "../management/manager-attribution.service.js";
 
 // Singleton transporter — created once at module load, not per-call
 const mailer = nodemailer.createTransport({
@@ -443,6 +444,26 @@ export const exitService = {
       });
 
       // Nullify reporting_manager_id for direct reports so they are not orphaned
+      //
+      // This is the single most destructive manager change in the platform: when a manager
+      // exits, every one of their reports loses the only record of who managed them. 123 of
+      // 1,120 active employees currently sit with no manager at all, and 83 exited employees
+      // still have people pointing at them (counted 2026-08-27). Without an effective-dated
+      // row written FIRST, the departing manager's team history becomes unattributable the
+      // moment this UPDATE runs — their attrition and shrinkage record simply disappears.
+      const [orphanRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM employees WHERE reporting_manager_id = ? AND active_status = 1`,
+        [employeeId]
+      ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+      for (const row of orphanRows as RowDataPacket[]) {
+        await recordManagerChange({
+          employeeId: String((row as { id: unknown }).id),
+          newManagerId: null,
+          changedBy: userId ?? null,
+          reason: 'Reporting manager exited — team pending re-parent',
+        });
+      }
+
       await db.execute(
         `UPDATE employees
             SET reporting_manager_id = NULL, updated_at = NOW()

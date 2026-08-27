@@ -4,10 +4,12 @@ import { Link } from "react-router-dom";
 import {
   BriefcaseBusiness,
   Building2,
+  Cake,
   CalendarDays,
   ExternalLink,
   Eye,
   EyeOff,
+  Home,
   IndianRupee,
   Mail,
   MapPin,
@@ -193,7 +195,10 @@ export function EmployeeViewDialog({ employee, open, onOpenChange }: EmployeeVie
                 [Building2, "Cost centre", details?.cost_centre_name || employee.costCentre],
                 [UserRoundCheck, "Reporting manager", details?.reporting_manager_name || employee.reportingManager],
                 [CalendarDays, "Date of joining", formatDate(details?.date_of_joining || employee.joinDate)],
+                [Cake, "Date of birth", formatDate(details?.date_of_birth)],
                 [UserRoundCheck, "Employment type", details?.employment_type || "Not recorded"],
+                // Both addresses, composed by the stat-card endpoint. They are full postal
+                // lines rather than a city, so each takes the full row width below.
               ].map(([Icon, label, value]) => {
                 const DetailIcon = Icon as React.ElementType;
                 return (
@@ -208,6 +213,23 @@ export function EmployeeViewDialog({ employee, open, onOpenChange }: EmployeeVie
                   </div>
                 );
               })}
+            </div>
+
+            <div className="grid gap-4">
+              {[
+                ["Current address", details?.current_address],
+                ["Permanent address", details?.permanent_address],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-white p-4">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-[#1B6AB5]">
+                    <Home className="size-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400">{label}</p>
+                    <p className="mt-1 break-words text-base font-bold text-slate-800">{value || "Not recorded"}</p>
+                  </div>
+                </div>
+              ))}
             </div>
 
             <div className="rounded-2xl border border-blue-100 bg-blue-50/50 p-4">

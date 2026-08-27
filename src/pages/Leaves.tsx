@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import { AIInsightPanel } from "@/components/ai";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertCircle,
   ArrowUpDown,
   Calendar,
   CalendarDays,
@@ -41,7 +42,12 @@ import { usePagination } from "@/hooks/usePagination";
 import { useSorting } from "@/hooks/useSorting";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
-import { useLeaveRequests, useLeaveStats } from "@/hooks/useLeaves";
+import {
+  useLeaveRequests,
+  useLeaveStats,
+  useLeaveLoadInfo,
+  fetchLeaveRowsForExport,
+} from "@/hooks/useLeaves";
 import { useIsAdminOrHR } from "@/hooks/useUserRole";
 import { useCanDiscard } from "@/hooks/useDiscard";
 import { DiscardDialog } from "@/components/discard/DiscardDialog";
@@ -229,6 +235,7 @@ const Leaves = () => {
 
   const { data: requests = [], isLoading } = useLeaveRequests();
   const { data: stats } = useLeaveStats();
+  const leaveLoad = useLeaveLoadInfo();
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({
@@ -423,9 +430,30 @@ const Leaves = () => {
     initialPageSize: 10,
   });
 
-  const exportToCSV = (startDate?: Date, endDate?: Date) => {
-    const allRequests = [...pendingRequests, ...allProcessedRequests];
-    const filteredRequests = filterByDateRange(allRequests, startDate, endDate);
+  const toIsoDate = (d?: Date) => (d ? format(d, "yyyy-MM-dd") : undefined);
+
+  const fetchExportRows = async (startDate?: Date, endDate?: Date) => {
+    try {
+      return await fetchLeaveRowsForExport(toIsoDate(startDate), toIsoDate(endDate));
+    } catch (error) {
+      // Falling back to the on-screen rows would export a silently partial file, so the
+      // export is refused instead and the reason is shown.
+      toast({
+        title: "Export failed",
+        description: error instanceof Error ? error.message : "Could not load leave rows to export.",
+        variant: "destructive",
+      });
+      throw error;
+    }
+  };
+
+  /**
+   * Exports pull their rows from the SERVER for the requested range, not from what the screen
+   * happens to hold. The in-memory processed list is capped (PROCESSED_ROW_CAP), so exporting
+   * the array would have quietly produced a partial file that looks like a complete one.
+   */
+  const exportToCSV = async (startDate?: Date, endDate?: Date) => {
+    const filteredRequests = filterByDateRange(await fetchExportRows(startDate, endDate), startDate, endDate);
 
     const headers = [
       "Employee",
@@ -479,9 +507,8 @@ const Leaves = () => {
     });
   };
 
-  const exportToPDF = (startDate?: Date, endDate?: Date) => {
-    const allRequests = [...pendingRequests, ...allProcessedRequests];
-    const filteredRequests = filterByDateRange(allRequests, startDate, endDate);
+  const exportToPDF = async (startDate?: Date, endDate?: Date) => {
+    const filteredRequests = filterByDateRange(await fetchExportRows(startDate, endDate), startDate, endDate);
 
     const doc = new jsPDF();
 
@@ -878,9 +905,25 @@ const Leaves = () => {
 
             <div className="flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-xs font-medium text-slate-500">
               <CalendarDays className="h-3.5 w-3.5 text-sky-700" />
-              {requests.length} total request{requests.length === 1 ? "" : "s"}
+              {requests.length} loaded · {(stats?.pending ?? 0) + (stats?.approved ?? 0) + (stats?.rejected ?? 0)} total
             </div>
           </div>
+
+          {/* Every pending request is loaded; the processed history is capped. Said out loud,
+              because the Processed tab's year and leave-type filters are built from what was
+              loaded — an older year would otherwise vanish from the dropdown with nothing to
+              explain it, and the export would have quietly shrunk to match. */}
+          {leaveLoad.truncated && (
+            <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+              <span>
+                Showing the {leaveLoad.processedLoaded.toLocaleString("en-IN")} most recent processed
+                requests of {leaveLoad.processedTotal.toLocaleString("en-IN")}. All{" "}
+                {(stats?.pending ?? 0).toLocaleString("en-IN")} pending requests are loaded, and the
+                counts above are server totals. Use Export with a date range for the full history.
+              </span>
+            </div>
+          )}
 
           <Tabs defaultValue="overview" className="w-full">
             <div className="mobile-scroll-x w-full">
@@ -1168,13 +1211,13 @@ const Leaves = () => {
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium">
-                    Remarks {actionType === "approve" ? <span className="text-rose-500">*</span> : "(optional)"}
+                    Remarks {actionType === "approve" ? "(optional)" : <span className="text-rose-500">*</span>}
                   </label>
 
                   <Textarea
                     value={reviewNotes}
                     onChange={(event) => setReviewNotes(event.target.value)}
-                    placeholder={actionType === "approve" ? "Remarks are required to approve" : "Add any notes for the employee."}
+                    placeholder={actionType === "approve" ? "Add any notes for the employee (optional)." : "Remarks are required to reject"}
                     rows={3}
                     className="rounded-xl"
                   />
@@ -1197,7 +1240,7 @@ const Leaves = () => {
 
               <Button
                 onClick={confirmAction}
-                disabled={updateStatusMutation.isPending || (actionType === "approve" && !reviewNotes.trim())}
+                disabled={updateStatusMutation.isPending || (actionType !== "approve" && !reviewNotes.trim())}
                 className={
                   actionType === "approve"
                     ? "rounded-xl bg-slate-950 text-white hover:bg-slate-800"

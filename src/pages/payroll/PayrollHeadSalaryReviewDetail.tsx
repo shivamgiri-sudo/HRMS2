@@ -19,6 +19,8 @@ import {
   User, Lock, ChevronDown, ChevronRight, Briefcase, BadgeCheck, Clock, ExternalLink,
 } from 'lucide-react';
 import { PackageBuilderDialog } from '@/components/payroll/PackageBuilderDialog';
+import { pfYesNo, esicYesNo } from '@/lib/salaryEligibility';
+import { earningRows, otherDeductionRows, employerCostRows } from '@/lib/salaryComponentRows';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────────
 
@@ -469,7 +471,7 @@ export default function PayrollHeadSalaryReviewDetail() {
         <SectionCard
           gradient="bg-gradient-to-r from-purple-600 to-violet-600"
           title="Salary Package"
-          desc="Assign a package → accept → approve. Payroll reads salary_component_assignments."
+          desc="Assign a package → validate → approve. Payroll reads salary_component_assignments."
           icon={IndianRupee}
         >
           {/* Assigned breakdown */}
@@ -479,8 +481,8 @@ export default function PayrollHeadSalaryReviewDetail() {
                 <p className="text-xs font-bold uppercase tracking-widest text-purple-700">Assigned Package</p>
                 <div className="flex items-center gap-1.5">
                   {review?.package_accepted
-                    ? <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" />Accepted</span>
-                    : <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 flex items-center gap-1"><Clock className="h-3 w-3" />Pending acceptance</span>
+                    ? <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" />Validated</span>
+                    : <span className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 flex items-center gap-1"><Clock className="h-3 w-3" />Pending validation</span>
                   }
                   <span className="text-[11px] text-slate-500">Eff. {fmtDate(review?.package_effective_from)}</span>
                 </div>
@@ -488,22 +490,31 @@ export default function PayrollHeadSalaryReviewDetail() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8">
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Earnings</p>
-                  <SalaryRow label="Basic" value={inr(sc.basic)} />
-                  <SalaryRow label="HRA" value={inr(sc.hra)} />
-                  <SalaryRow label="Conveyance" value={inr(sc.conveyance)} />
-                  {sc.special_allowance > 0 && <SalaryRow label="Special Allowance" value={inr(sc.special_allowance)} />}
-                  {sc.other_allowance > 0 && <SalaryRow label="Other Allowance" value={inr(sc.other_allowance)} />}
+                  {/* Every earning the package carries, not just the four that
+                      salary_component_assignments happens to store — see salaryComponentRows.ts. */}
+                  {earningRows(sc).map((row) => (
+                    <SalaryRow key={row.label} label={row.label} value={inr(row.value)} />
+                  ))}
                   <SalaryRow label="Gross Monthly" value={inr(sc.gross_monthly ?? sc.gross)} bold separator />
                 </div>
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Deductions</p>
-                  <SalaryRow label={`PF (Employee) — ${Number(sc.pf_employee) > 0 ? 'Yes' : 'No'}`} value={sc.pf_employee ? `− ${inr(sc.pf_employee)}` : '—'} />
-                  <SalaryRow label={`ESIC (Employee) — ${Number(sc.esic_employee) > 0 ? 'Yes' : 'No'}`} value={sc.esic_employee ? `− ${inr(sc.esic_employee)}` : '—'} />
+                  {/* Eligibility comes from the pf_applicable / esi_applicable flags, not
+                      from whether a deduction amount happens to be stored. pf_employee is
+                      NULL on 3,577 of the 4,290 active assignments while pf_applicable = 1
+                      on 3,124 of them, so reading the amount reported "No" for thousands of
+                      employees who are in fact enrolled. */}
+                  <SalaryRow label={`PF (Employee) — ${pfYesNo(sc)}`} value={sc.pf_employee ? `− ${inr(sc.pf_employee)}` : '—'} />
+                  <SalaryRow label={`ESIC (Employee) — ${esicYesNo(sc)}`} value={sc.esic_employee ? `− ${inr(sc.esic_employee)}` : '—'} />
+                  {otherDeductionRows(sc).map((row) => (
+                    <SalaryRow key={row.label} label={row.label} value={`− ${inr(row.value)}`} />
+                  ))}
                   <SalaryRow label="Net in Hand" value={inr(sc.net_in_hand ?? sc.net_estimate)} bold separator />
                   <div className="mt-3 pt-3 border-t border-slate-100">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Employer Cost</p>
-                    <SalaryRow label="PF (Employer)" value={inr(sc.employer_pf ?? sc.epf_employer)} />
-                    <SalaryRow label="ESIC (Employer)" value={inr(sc.employer_esi ?? sc.esic_employer)} />
+                    {employerCostRows(sc).map((row) => (
+                      <SalaryRow key={row.label} label={row.label} value={inr(row.value)} />
+                    ))}
                     <SalaryRow label="CTC" value={inr(sc.ctc)} bold separator />
                   </div>
                 </div>
@@ -633,16 +644,22 @@ export default function PayrollHeadSalaryReviewDetail() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8">
                       <div>
                         <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Earnings</p>
-                        <SalaryRow label="Basic" value={inr(selectedPackagePreview.basic)} />
-                        <SalaryRow label="HRA" value={inr(selectedPackagePreview.hra)} />
-                        <SalaryRow label="Conveyance" value={inr(selectedPackagePreview.conveyance)} />
+                        {earningRows(selectedPackagePreview).map((row) => (
+                          <SalaryRow key={row.label} label={row.label} value={inr(row.value)} />
+                        ))}
                         <SalaryRow label="Gross" value={inr(selectedPackagePreview.gross)} bold separator />
                       </div>
                       <div>
                         <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Deductions</p>
                         <SalaryRow label="PF (Emp)" value={selectedPackagePreview.epf_employee ? `− ${inr(selectedPackagePreview.epf_employee)}` : '—'} />
                         <SalaryRow label="ESIC (Emp)" value={selectedPackagePreview.esic_employee ? `− ${inr(selectedPackagePreview.esic_employee)}` : '—'} />
+                        {otherDeductionRows(selectedPackagePreview).map((row) => (
+                          <SalaryRow key={row.label} label={row.label} value={`− ${inr(row.value)}`} />
+                        ))}
                         <SalaryRow label="Net in Hand" value={inr(selectedPackagePreview.net_in_hand)} bold separator />
+                        {employerCostRows(selectedPackagePreview).map((row) => (
+                          <SalaryRow key={row.label} label={row.label} value={inr(row.value)} />
+                        ))}
                         <SalaryRow label="CTC" value={inr(selectedPackagePreview.ctc)} bold separator />
                       </div>
                     </div>
@@ -668,7 +685,7 @@ export default function PayrollHeadSalaryReviewDetail() {
             <div className="border-t border-slate-100 pt-4 flex items-center gap-3 mt-4">
               <Button disabled={busy} onClick={() => void acceptPackage()}
                 className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 rounded-xl gap-2">
-                <CheckCircle2 className="h-4 w-4" />Accept Package
+                <CheckCircle2 className="h-4 w-4" />Validate Package
               </Button>
               <p className="text-xs text-slate-500">
                 Effective {fmtDate(review.package_effective_from)} — confirms payroll will use this breakdown.

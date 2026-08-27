@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { earningRows, otherDeductionRows, employerCostRows } from '@/lib/salaryComponentRows';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -197,11 +198,9 @@ export function OfferedSalarySection({
         )}
         <div className="grid grid-cols-2 gap-x-4">
           <div>
-            <DrawerSalaryRow label="Basic" value={inr(os.basic)} />
-            <DrawerSalaryRow label="HRA" value={inr(os.hra)} />
-            <DrawerSalaryRow label="Conveyance" value={inr(os.conveyance)} />
-            {Number(os.special_allowance) > 0 && <DrawerSalaryRow label="Special Allowance" value={inr(os.special_allowance)} />}
-            {Number(os.bonus) > 0 && <DrawerSalaryRow label="Bonus" value={inr(os.bonus)} />}
+            {earningRows(os).map((row) => (
+              <DrawerSalaryRow key={row.label} label={row.label} value={inr(row.value)} />
+            ))}
             <DrawerSalaryRow label="Gross" value={inr(os.gross)} bold separator />
           </div>
           <div>
@@ -229,7 +228,13 @@ export function OfferedSalarySection({
                 </div>
               </>);
             })()}
+            {otherDeductionRows(os).map((row) => (
+              <DrawerSalaryRow key={row.label} label={row.label} value={`− ${inr(row.value)}`} />
+            ))}
             <DrawerSalaryRow label="Net in Hand" value={inr(os.net_in_hand)} bold separator />
+            {employerCostRows(os).map((row) => (
+              <DrawerSalaryRow key={row.label} label={row.label} value={inr(row.value)} />
+            ))}
             <DrawerSalaryRow label="Offered CTC" value={inr(os.offered_ctc)} bold separator />
           </div>
         </div>
@@ -306,10 +311,10 @@ export function FinalSalarySection({
         <p className="text-xs font-semibold text-white">Final Salary (Payroll Head)</p>
         {review?.package_accepted ? (
           <span className="ml-auto text-[10px] font-semibold text-emerald-300 bg-white/15 rounded-full px-2 py-0.5 flex items-center gap-1">
-            <CheckCircle2 className="h-2.5 w-2.5" />Accepted
+            <CheckCircle2 className="h-2.5 w-2.5" />Validated
           </span>
         ) : review?.salary_package_id ? (
-          <span className="ml-auto text-[10px] text-amber-300 bg-white/15 rounded-full px-2 py-0.5">Not accepted</span>
+          <span className="ml-auto text-[10px] text-amber-300 bg-white/15 rounded-full px-2 py-0.5">Not validated</span>
         ) : sc ? (
           <span className="ml-auto text-[10px] text-emerald-300 bg-white/15 rounded-full px-2 py-0.5">Assigned</span>
         ) : (
@@ -320,10 +325,12 @@ export function FinalSalarySection({
         {sc ? (
           <div className="grid grid-cols-2 gap-x-4">
             <div>
-              <DrawerSalaryRow label="Basic" value={inr(sc.basic)} />
-              <DrawerSalaryRow label="HRA" value={inr(sc.hra)} />
-              <DrawerSalaryRow label="Conveyance" value={inr(sc.conveyance)} />
-              {(sc.special_allowance > 0) && <DrawerSalaryRow label="Special Allowance" value={inr(sc.special_allowance)} />}
+              {/* Bonus reaches this list through the salary_package_master join — it is
+                  8.33% of basic sitting INSIDE gross on 229 of 230 live packages, so
+                  leaving it off meant gross did not visibly add up. */}
+              {earningRows(sc).map((row) => (
+                <DrawerSalaryRow key={row.label} label={row.label} value={inr(row.value)} />
+              ))}
               <DrawerSalaryRow label="Gross" value={inr(sc.gross_monthly ?? sc.gross)} bold separator />
             </div>
             <div>
@@ -341,7 +348,13 @@ export function FinalSalarySection({
                   <DrawerSalaryRow label={`ESIC (Emp) — ${sc.esi_applicable ? 'Yes' : 'No'}`} value={esicAmt != null ? inr(esicAmt) : '—'} />
                 </>);
               })()}
+              {otherDeductionRows(sc).map((row) => (
+                <DrawerSalaryRow key={row.label} label={row.label} value={`− ${inr(row.value)}`} />
+              ))}
               <DrawerSalaryRow label="Net in Hand" value={inr(sc.net_in_hand ?? sc.net_estimate)} bold separator />
+              {employerCostRows(sc).map((row) => (
+                <DrawerSalaryRow key={row.label} label={row.label} value={inr(row.value)} />
+              ))}
               <DrawerSalaryRow label="CTC" value={inr(sc.ctc)} bold separator />
             </div>
           </div>
@@ -392,11 +405,22 @@ export function FinalSalarySection({
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__all__" className="text-xs">All grades</SelectItem>
-                      {grades.map((g) => (
-                        <SelectItem key={g} value={g} className="text-xs">
-                          Grade {g} · {packages.filter((p) => p.band_code === g).length} package{packages.filter((p) => p.band_code === g).length !== 1 ? 's' : ''}
-                        </SelectItem>
-                      ))}
+                      {grades.map((g) => {
+                        const inGrade = packages.filter((p) => p.band_code === g);
+                        // Band floor/ceiling comes from salary_band_master via listPackages'
+                        // join (slab_from/slab_to), so the range shown is the band's own
+                        // definition, not the min/max of whatever packages happen to exist.
+                        const from = inGrade.find((p) => p.slab_from != null)?.slab_from;
+                        const to   = inGrade.find((p) => p.slab_to   != null)?.slab_to;
+                        const range = from != null && to != null
+                          ? ` (${inr(from)} – ${inr(to)}/mo)`
+                          : '';
+                        return (
+                          <SelectItem key={g} value={g} className="text-xs">
+                            Grade {g}{range} · {inGrade.length} package{inGrade.length !== 1 ? 's' : ''}
+                          </SelectItem>
+                        );
+                      })}
                     </SelectContent>
                   </Select>
                 </div>
@@ -441,7 +465,7 @@ export function FinalSalarySection({
             {review?.salary_package_id && !review?.package_accepted && (
               <Button size="sm" disabled={busy} onClick={() => acceptPackage()}
                 className="w-full h-8 text-xs cursor-pointer bg-emerald-600 hover:bg-emerald-700 rounded-lg gap-1.5">
-                <CheckCircle2 className="h-3 w-3" />Accept Package
+                <CheckCircle2 className="h-3 w-3" />Validate Package
               </Button>
             )}
           </div>
@@ -624,9 +648,9 @@ export function sectionStatus(section: SectionKey, row: QueueRow): { text: strin
       if (s.final.accepted) {
         return decided && s.final.ctc
           ? { text: `Approved · ${inr(s.final.ctc)}`, tone: 'good' }
-          : { text: 'Accepted — awaiting approval', tone: 'warn' };
+          : { text: 'Validated — awaiting approval', tone: 'warn' };
       }
-      if (s.final.assigned) return { text: 'Assigned — not accepted', tone: 'warn' };
+      if (s.final.assigned) return { text: 'Assigned — not validated', tone: 'warn' };
       return { text: 'Not assigned', tone: 'bad' };
     }
     case 'bgv': {
@@ -1419,8 +1443,8 @@ function ReviewDrawer({
                     <p className="text-sm font-semibold text-slate-900">Ready to decide?</p>
                     <p className="text-xs text-slate-500 mt-0.5">
                       {review?.package_accepted
-                        ? 'Package accepted — you can approve for payroll.'
-                        : 'Assign and accept a salary package first.'}
+                        ? 'Package validated — you can approve for payroll.'
+                        : 'Assign and validate a salary package first.'}
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -1439,7 +1463,7 @@ function ReviewDrawer({
                   </div>
                   {!review?.package_accepted && (
                     <p className="text-[11px] text-slate-400 flex items-center gap-1">
-                      <Lock className="h-3 w-3" />Approve unlocks after package acceptance.
+                      <Lock className="h-3 w-3" />Approve unlocks after package validation.
                     </p>
                   )}
                 </div>

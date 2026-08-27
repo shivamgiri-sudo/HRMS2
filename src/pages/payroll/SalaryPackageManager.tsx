@@ -9,7 +9,7 @@
  *
  * The admin tab is only visible to admin/super_admin/payroll roles.
  */
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, Fragment } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -31,6 +31,7 @@ import {
   Trash2,
   Settings,
   Package,
+  ChevronRight,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -64,6 +65,17 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { calcFromCtc, calcFromInHand, PT_BY_STATE, type PkgCalcOptions } from "@/lib/salaryCalculator";
+import { earningRows, otherDeductionRows, employerCostRows } from "@/lib/salaryComponentRows";
+
+/** One label/amount line inside an expanded package row. */
+function DetailLine({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
+  return (
+    <div className={`flex items-center justify-between gap-4 py-0.5 ${strong ? "border-t border-slate-200 mt-1 pt-1" : ""}`}>
+      <span className={`text-[11px] ${strong ? "font-bold text-slate-700" : "text-slate-500"}`}>{label}</span>
+      <span className={`text-[11px] tabular-nums ${strong ? "font-bold text-slate-900" : "text-slate-700"}`}>{value}</span>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -617,6 +629,7 @@ function AdminTab() {
   const [costCentres, setCostCentres] = useState<CostCentre[]>([]);
 
   const [packages, setPackages] = useState<AdminPackage[]>([]);
+  const [expandedPkgId, setExpandedPkgId] = useState<string | null>(null);
   const [pkgBranch, setPkgBranch] = useState("");
   const [pkgBand, setPkgBand] = useState("");
   const [pkgCC, setPkgCC] = useState("");
@@ -627,8 +640,26 @@ function AdminTab() {
   const [inHandInput, setInHandInput] = useState("");
   const [includePf, setIncludePf] = useState(true);
   const [includeEsic, setIncludeEsic] = useState(true);
+  // Bonus is part of CTC (8.33% of basic) — owner ruling 2026-08-27. This builder never
+  // passed includeBonus at all, so calcFromCtc fell back to its old default of OFF and the
+  // Bonus field on the form below was pinned at ₹0 no matter what CTC was entered.
+  const [includeBonus, setIncludeBonus] = useState(true);
   const [basicPct, setBasicPct] = useState(40);
   const [hraPct, setHraPct] = useState(40);
+
+  /**
+   * Which component columns this list needs — the union of what the loaded packages fund.
+   * Basic/HRA/Conveyance always appear (earningRows keeps them); the optional ones only
+   * show up when at least one package on screen carries money in them.
+   */
+  const componentMap = (pkg: AdminPackage) =>
+    new Map([...earningRows(pkg), ...otherDeductionRows(pkg), ...employerCostRows(pkg)]
+      .map((row) => [row.label, row.value] as const));
+
+  const earningCols = [...new Set(packages.flatMap((p) => earningRows(p).map((r) => r.label)))];
+  const employerCols = [...new Set(packages.flatMap((p) => employerCostRows(p).map((r) => r.label)))];
+  // caret + Band + CC + earnings + Gross + PF + ESI + Net + employer cols + CTC + actions
+  const colCount = 3 + earningCols.length + 4 + employerCols.length + 2;
 
   const branches = [...new Set(costCentres.map((c) => c.branch_name))].sort();
   const [branchStates, setBranchStates] = useState<Record<string, string>>({});
@@ -668,7 +699,7 @@ function AdminTab() {
   useEffect(() => {
     if (!editPkg) return;
     const selectedBranch = editPkg?.branch_name ?? pkgBranch;
-    const opts: PkgCalcOptions = { includePf, includeEsic, basicPct, hraPct, state: selectedBranch ? branchStates[selectedBranch] : undefined };
+    const opts: PkgCalcOptions = { includePf, includeEsic, includeBonus, basicPct, hraPct, state: selectedBranch ? branchStates[selectedBranch] : undefined };
     if (calcMode === "ctc") {
       const v = parseFloat(ctcInput);
       if (!v || v <= 0) return;
@@ -680,7 +711,7 @@ function AdminTab() {
       const c = calcFromInHand(v, opts);
       setEditPkg((p) => ({ ...p!, ...c, package_amount: c.ctc }));
     }
-  }, [ctcInput, inHandInput, includePf, includeEsic, basicPct, hraPct, calcMode, editPkg?.branch_name, pkgBranch, branchStates]);
+  }, [ctcInput, inHandInput, includePf, includeEsic, includeBonus, basicPct, hraPct, calcMode, editPkg?.branch_name, pkgBranch, branchStates]);
 
   const saveBand = async () => {
     if (!editBand?.band_code || editBand.slab_from == null || editBand.slab_to == null) return;
@@ -861,16 +892,30 @@ function AdminTab() {
                       <input type="checkbox" className="h-4 w-4 accent-blue-600" checked={includeEsic} onChange={(e) => setIncludeEsic(e.target.checked)} />
                       <span className="text-xs font-medium">ESIC</span>
                     </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="checkbox" className="h-4 w-4 accent-green-600" checked={includeBonus} onChange={(e) => setIncludeBonus(e.target.checked)} />
+                      <span className="text-xs font-medium">Bonus (8.33%)</span>
+                    </label>
                     <div className="flex items-center gap-1.5">
                       <Label className="text-xs">Basic %</Label>
                       <Input className="h-8 w-16 text-xs" type="number" min={10} max={80} value={basicPct} onChange={(e) => setBasicPct(Number(e.target.value))} />
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Label className="text-xs">HRA %</Label>
+                      <Input className="h-8 w-16 text-xs" type="number" min={0} max={100} value={hraPct} onChange={(e) => setHraPct(Number(e.target.value))} />
                     </div>
                   </div>
 
                   <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
                     <div className="space-y-2">
                       <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b pb-1">Earnings</p>
-                      {[["basic", "Basic"], ["hra", "HRA"], ["conveyance", "Conveyance"], ["special_allowance", "Special"], ["bonus", "Bonus"]].map(([f, l]) => (
+                      {/* Every earning salary_package_master stores, so a package can be
+                          built with all of them rather than five. Bonus in particular was
+                          on this form already but pinned at ₹0 — see includeBonus above. */}
+                      {[["basic", "Basic"], ["hra", "HRA"], ["conveyance", "Conveyance"],
+                        ["bonus", "Bonus (8.33%)"], ["special_allowance", "Special Allowance"],
+                        ["other_allowance", "Other Allowance"], ["lta", "LTA"],
+                        ["medical", "Medical"], ["portfolio", "Portfolio"], ["pli", "PLI"]].map(([f, l]) => (
                         <div key={f} className="flex items-center gap-2">
                           <Label className="text-xs w-28">{l}</Label>
                           <Input className="h-8 text-xs flex-1 bg-slate-50" type="number" value={(editPkg as any)[f] ?? 0}
@@ -895,6 +940,21 @@ function AdminTab() {
                         <Label className="text-xs w-28 font-bold text-emerald-700">Net In Hand</Label>
                         <Input className="h-8 text-xs flex-1 bg-emerald-50 font-bold text-emerald-700" readOnly value={editPkg.net_in_hand ? fmtINR(editPkg.net_in_hand) : ""} />
                       </div>
+
+                      {/* Employer cost — the gap between net and CTC, which the form used to
+                          compute and save but never show. */}
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 border-b pb-1 pt-2">Employer Cost</p>
+                      {[["epf_employer", "PF (Employer)"], ["esic_employer", "ESIC (Employer)"], ["admin_charges", "Admin Charges (1%)"]].map(([f, l]) => (
+                        <div key={f} className="flex items-center gap-2">
+                          <Label className="text-xs w-28">{l}</Label>
+                          <Input className="h-8 text-xs flex-1 bg-slate-50 text-slate-600" type="number" value={(editPkg as any)[f] ?? 0}
+                            onChange={(e) => setEditPkg((p) => ({ ...p!, [f]: Number(e.target.value) }))} />
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-2 pt-1 border-t">
+                        <Label className="text-xs w-28 font-bold text-blue-700">CTC</Label>
+                        <Input className="h-8 text-xs flex-1 bg-blue-50 font-bold text-blue-700" readOnly value={editPkg.ctc ? fmtINR(editPkg.ctc) : ""} />
+                      </div>
                     </div>
                   </div>
 
@@ -913,30 +973,91 @@ function AdminTab() {
                 <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
                   <table className="w-full text-xs">
                     <thead className="sticky top-0 bg-white z-10">
-                      <tr className="bg-slate-50 border-b">{["Band", "CC", "Basic", "HRA", "Gross", "PF", "ESI", "Net", "CTC", ""].map((h) => (
-                        <th key={h} className="px-2 py-2 text-left font-semibold text-slate-600 whitespace-nowrap">{h}</th>
+                      {/* Columns are the components the packages in THIS list actually fund.
+                          A fixed column list either hid real money (bonus and admin charges
+                          are populated on 229 and 230 of the 302 catalog rows and had no
+                          column at all) or padded the table with ₹0 columns for the ones
+                          nobody uses (LTA, portfolio, medical, PLI are 0 on every row). */}
+                      <tr className="bg-slate-50 border-b">{["", "Band", "CC", ...earningCols, "Gross", "PF", "ESI", "Net", ...employerCols, "CTC", ""].map((h, i) => (
+                        <th key={`${h}-${i}`} className="px-2 py-2 text-left font-semibold text-slate-600 whitespace-nowrap">{h}</th>
                       ))}</tr>
                     </thead>
                     <tbody className="divide-y">
-                      {packages.map((p) => (
-                        <tr key={p.id} className="hover:bg-blue-50/30">
+                      {packages.map((p) => {
+                        const values = componentMap(p);
+                        const isOpen = expandedPkgId === p.id;
+                        return (
+                      // Keyed Fragment, not <> — the row and its expanded detail are two
+                      // siblings produced by one map iteration.
+                      <Fragment key={p.id}>
+                        <tr
+                          onClick={() => setExpandedPkgId(isOpen ? null : p.id)}
+                          className={`cursor-pointer hover:bg-blue-50/30 ${isOpen ? "bg-blue-50/50" : ""}`}
+                          title="Click to see every component">
+                          <td className="px-2 py-1.5 text-slate-400">
+                            <ChevronRight className={`h-3.5 w-3.5 transition-transform ${isOpen ? "rotate-90" : ""}`} />
+                          </td>
                           <td className="px-2 py-1.5 font-bold">{p.band_code}</td>
                           <td className="px-2 py-1.5 font-mono text-[10px] max-w-[100px] truncate">{p.cost_centre_code || "—"}</td>
-                          <td className="px-2 py-1.5">{fmtINR(p.basic)}</td>
-                          <td className="px-2 py-1.5">{fmtINR(p.hra)}</td>
+                          {earningCols.map((label) => (
+                            <td key={label} className="px-2 py-1.5">{fmtINR(values.get(label) ?? 0)}</td>
+                          ))}
                           <td className="px-2 py-1.5 font-semibold">{fmtINR(p.gross)}</td>
                           <td className="px-2 py-1.5 text-red-600">{fmtINR(p.epf_employee)}</td>
                           <td className="px-2 py-1.5 text-red-600">{fmtINR(p.esic_employee)}</td>
                           <td className="px-2 py-1.5 font-bold text-emerald-700">{fmtINR(p.net_in_hand)}</td>
+                          {employerCols.map((label) => (
+                            <td key={label} className="px-2 py-1.5 text-slate-500">{fmtINR(values.get(label) ?? 0)}</td>
+                          ))}
                           <td className="px-2 py-1.5">{fmtINR(p.ctc)}</td>
-                          <td className="px-2 py-1.5">
+                          <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
                             <div className="flex gap-1">
                               <button onClick={() => { setCalcMode("ctc"); setCtcInput(String(p.ctc || "")); setEditPkg(p); }} className="p-1 hover:bg-slate-200 rounded"><Pencil className="h-3 w-3 text-slate-500" /></button>
                               <button onClick={() => deletePkg(p.id)} className="p-1 hover:bg-red-100 rounded"><Trash2 className="h-3 w-3 text-red-400" /></button>
                             </div>
                           </td>
                         </tr>
-                      ))}
+                        {isOpen && (
+                          <tr className="bg-slate-50/80">
+                            <td colSpan={colCount} className="px-4 py-3">
+                              <div className="grid gap-x-8 gap-y-3 sm:grid-cols-3">
+                                <div>
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Earnings</p>
+                                  {earningRows(p).map((row) => (
+                                    <DetailLine key={row.label} label={row.label} value={fmtINR(row.value)} />
+                                  ))}
+                                  <DetailLine label="Gross" value={fmtINR(p.gross)} strong />
+                                </div>
+                                <div>
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Employee Deductions</p>
+                                  <DetailLine label="PF (Employee)" value={p.epf_employee ? `− ${fmtINR(p.epf_employee)}` : "₹0"} />
+                                  <DetailLine label="ESIC (Employee)" value={p.esic_employee ? `− ${fmtINR(p.esic_employee)}` : "₹0"} />
+                                  {otherDeductionRows(p).map((row) => (
+                                    <DetailLine key={row.label} label={row.label} value={`− ${fmtINR(row.value)}`} />
+                                  ))}
+                                  <DetailLine label="Net in Hand" value={fmtINR(p.net_in_hand)} strong />
+                                </div>
+                                <div>
+                                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Employer Cost</p>
+                                  {employerCostRows(p).map((row) => (
+                                    <DetailLine key={row.label} label={row.label} value={fmtINR(row.value)} />
+                                  ))}
+                                  <DetailLine label="CTC" value={fmtINR(p.ctc)} strong />
+                                  <div className="pt-2 mt-2 border-t border-slate-200 flex items-center gap-2">
+                                    <Button size="sm" variant="outline" className="h-7 gap-1.5 text-xs"
+                                      onClick={(e) => { e.stopPropagation(); setCalcMode("ctc"); setCtcInput(String(p.ctc || "")); setEditPkg(p); }}>
+                                      <Pencil className="h-3 w-3" />Edit package
+                                    </Button>
+                                    <span className="text-[10px] text-slate-400 font-mono truncate">{p.branch_name} · Band {p.band_code}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                        );
+                      })}
                     </tbody>
                   </table>
                   {!packages.length && <p className="text-center text-slate-400 py-8">No packages</p>}

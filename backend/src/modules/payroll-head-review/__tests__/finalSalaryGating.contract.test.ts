@@ -43,7 +43,10 @@ describe("Final salary is not shown as final before approval", () => {
   it("the section tile withholds an amount until the review is approved", () => {
     const tile = QUEUE.slice(QUEUE.indexOf("case 'final': {"), QUEUE.indexOf("case 'final': {") + 900);
     expect(tile).toMatch(/const decided = row\.status === 'approved';/);
-    expect(tile).toMatch(/Accepted — awaiting approval/);
+    // "Validated", not "Accepted" — the button was renamed to Validate Package on
+    // 2026-08-27 (owner request) and this tile's copy follows it. What the assertion
+    // actually guards is that the pending branch names a STATE and not an amount.
+    expect(tile).toMatch(/Validated — awaiting approval/);
     // The amount may only be quoted on the decided branch.
     expect(tile).toMatch(/decided && s\.final\.ctc/);
   });

@@ -21,7 +21,13 @@ billingConfigRouter.use(requireAuth);
 
 billingConfigRouter.get(
   '/',
-  requireRole('finance_head', 'super_admin', 'admin', 'hr'),
+  // Aligned with the page gate: role_page_access grants ATTENDANCE_BILLING_CONFIG view to
+  // super_admin, admin, finance_head, hr and wfm. wfm was missing here, so wfm could open
+  // the page but the list 403'd. Write endpoints below (create/update/delete) are
+  // deliberately NOT widened — this table drives the extra-day-salary rule in
+  // payrollCalculate.service.ts, so the write surface stays narrow to finance_head/
+  // super_admin (delete: super_admin only).
+  requireRole('finance_head', 'super_admin', 'admin', 'hr', 'wfm'),
   h(async (_req, res) => {
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT

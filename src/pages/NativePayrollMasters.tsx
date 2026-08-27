@@ -48,6 +48,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -990,6 +991,16 @@ const EMPTY_DESIG = { desig_code: "", desig_name: "", grade: "" };
 function OrgMastersTab() {
   const qc = useQueryClient();
 
+  /**
+   * Third door onto department_master, after /departments and Org Masters. The API refuses a
+   * create or rename from anyone but super_admin (requireDepartmentWrite, backend
+   * org.routes.ts), so payroll/finance roles keep the list — which they need, every payroll
+   * master resolves through it — and lose the buttons. Designations below are unaffected and
+   * stay on the existing admin/hr gate.
+   */
+  const { roleKeys, isResolved: accessResolved } = useWorkforceAccess();
+  const canManageDepartments = accessResolved && roleKeys.includes("super_admin");
+
   // -- Departments --
   const [deptOpen, setDeptOpen] = useState(false);
   const [editingDept, setEditingDept] = useState<Department | null>(null);
@@ -1093,9 +1104,11 @@ function OrgMastersTab() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3">
           <CardTitle className="text-base">Departments</CardTitle>
-          <Button size="sm" onClick={openAddDept}>
-            <Plus className="h-4 w-4 mr-1" /> Add Department
-          </Button>
+          {canManageDepartments && (
+            <Button size="sm" onClick={openAddDept}>
+              <Plus className="h-4 w-4 mr-1" /> Add Department
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           {deptLoading && (
@@ -1136,9 +1149,13 @@ function OrgMastersTab() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="icon" onClick={() => openEditDept(d)}>
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
+                      {canManageDepartments ? (
+                        <Button variant="ghost" size="icon" onClick={() => openEditDept(d)}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">View only</span>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}

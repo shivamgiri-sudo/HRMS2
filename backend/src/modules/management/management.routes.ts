@@ -9,6 +9,8 @@ import { db } from "../../db/mysql.js";
 import { resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { PAYROLL_ROLES } from "../../platform/policy/roles.js";
+import { assertCanViewMember, getTeamMemberDeepDive, getTeamHygiene } from "./team-member.service.js";
+import { getManagerAttrition, getManagerShrinkage } from "./manager-attribution.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -26,6 +28,43 @@ router.use(requireAuth);
  */
 async function callerHasPayrollAccess(userId: string): Promise<boolean> {
   return hasRole(userId, ...(PAYROLL_ROLES as string[]));
+}
+
+/**
+ * A listed role, OR anyone who genuinely has direct reports.
+ *
+ * Every team endpoint here was gated on a manager-shaped role list. That list does not
+ * describe who manages people at MAS: of the 78 active employees with at least one active
+ * direct report, 64 hold ONLY the `employee` role (counted 2026-08-27). So the My Team page
+ * answered "Access denied" — or, worse, "No direct reports found" — to real managers looking
+ * at their own team, including one with 160 pending leave requests from her own reports.
+ *
+ * This widens who may ASK, never what comes back: each handler still resolves rows through
+ * resolveTeamScope(), which is bound to the reporting line. A caller with no reports and no
+ * listed role is still refused by the role gate below.
+ */
+function requireRoleOrDirectReports(...roles: string[]) {
+  const roleGate = requireRole(...roles);
+  return async (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void) => {
+    const userId = req.authUser?.id;
+    if (userId) {
+      try {
+        const [rows] = await db.execute<any[]>(
+          `SELECT 1 FROM employees mgr
+            WHERE mgr.user_id = ?
+              AND EXISTS (SELECT 1 FROM employees r
+                           WHERE (r.reporting_manager_id = mgr.id OR r.manager_id = mgr.id)
+                             AND r.active_status = 1)
+            LIMIT 1`,
+          [userId],
+        );
+        if ((rows as any[]).length > 0) return next();
+      } catch {
+        // Fall through to the role gate rather than failing open.
+      }
+    }
+    return (roleGate as unknown as (rq: unknown, rs: unknown, nx: unknown) => void)(req, res, next);
+  };
 }
 
 /**
@@ -79,7 +118,7 @@ router.post("/coaching", requireRole("admin", "hr", "qa", "manager", "branch_hea
   res.status(201).json({ data: await managementService.createCoachingSession(req.body, req.authUser!.id, req) });
 }));
 
-router.get("/alerts", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/alerts", requireRoleOrDirectReports("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const acknowledged = req.query.acknowledged !== undefined ? req.query.acknowledged === "true" : undefined;
   const { employeeIds, isWide } = await resolveTeamScope(userId);
@@ -125,7 +164,7 @@ router.get("/system-dashboard", requireRole("admin", "super_admin"), h(async (_r
 // ─── TNI (Training Needs Identification) ─────────────────────────────────────
 
 // Returns the calling manager's direct reports (for coaching modal dropdowns, etc.)
-router.get("/team-members", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/team-members", requireRoleOrDirectReports("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "qa", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   if (await hasRole(userId, "admin", "hr", "ceo")) {
     // Wide roles: return a small employee list (name + id only) filtered by process if provided
@@ -242,7 +281,7 @@ router.get("/ceo-metrics", requireRole("admin", "hr", "ceo", "finance"), h(async
 
 // ─── Management Team Dashboard endpoints (ManagementDashboard.tsx) ───────────
 
-router.get("/team-overview", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/team-overview", requireRoleOrDirectReports("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
 
   // Build scoped WHERE clause
@@ -319,7 +358,7 @@ router.get("/team-overview", requireRole("admin", "hr", "manager", "branch_head"
   }});
 }));
 
-router.get("/agent-performance", requireRole("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/agent-performance", requireRoleOrDirectReports("admin", "hr", "manager", "branch_head", "ceo", "process_manager", "team_leader", "assistant_manager"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
   const filters: Record<string, unknown> = { ...req.query };
   if (!isWide && employeeIds) filters.employee_ids = employeeIds;
@@ -414,6 +453,84 @@ router.get("/training-needs", requireRole("admin", "hr", "manager", "branch_head
     priority: (r.priority ?? "medium") as "high" | "medium" | "low",
   }));
   res.json({ success: true, data: mapped });
+}));
+
+/**
+ * GET /api/management/team-member/:id — one member, every angle there is data for.
+ *
+ * Backs the My Team drill-down. Access is decided by the reporting line, not by role:
+ * 64 of the 78 people who actually have direct reports hold only the `employee` role, so a
+ * role gate here would lock out the page's real audience while a wide role still reaches
+ * anyone. assertCanViewMember() enforces that at the query layer — UI gating is not
+ * security (CLAUDE.md rule 6).
+ */
+router.get("/team-member/:id", h(async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.authUser!.id;
+  const targetId = String(req.params.id);
+
+  await assertCanViewMember(userId, targetId);
+
+  // Peers for the median shown beside each KPI: the caller's own team, so "vs team" means
+  // the team the manager is looking at rather than the whole company.
+  const { employeeIds, isWide } = await resolveTeamScope(userId);
+  let peerIds = employeeIds ?? [];
+  if (isWide || peerIds.length === 0) {
+    const [peers] = await db.execute<any[]>(
+      `SELECT e2.id FROM employees e1
+         JOIN employees e2 ON e2.reporting_manager_id = e1.reporting_manager_id
+        WHERE e1.id = ? AND e2.active_status = 1 AND e1.reporting_manager_id IS NOT NULL
+        LIMIT 500`,
+      [targetId],
+    );
+    peerIds = (peers as any[]).map((r) => String(r.id));
+  }
+
+  const data = await getTeamMemberDeepDive(targetId, peerIds);
+  return res.json({ success: true, data });
+}));
+
+/**
+ * GET /api/management/team-hygiene — the compliance checklist across the caller's team.
+ *
+ * Presence only, never a value: whether a bank record exists is a management fact, its
+ * digits are payroll data and must not cross into a management endpoint.
+ */
+router.get("/team-hygiene", h(async (req: AuthenticatedRequest, res: Response) => {
+  const { employeeIds, isWide } = await resolveTeamScope(req.authUser!.id);
+
+  let ids = employeeIds ?? [];
+  if (isWide) {
+    // Wide roles have no reporting line to scope by; cap the sweep rather than pulling all
+    // 1,120 active employees through eight EXISTS subqueries on every page load.
+    const [rows] = await db.execute<any[]>(
+      `SELECT id FROM employees WHERE active_status = 1 ORDER BY full_name LIMIT 300`,
+    );
+    ids = (rows as any[]).map((r) => String(r.id));
+  }
+
+  const data = await getTeamHygiene(ids);
+  return res.json({ success: true, data });
+}));
+
+/**
+ * GET /api/management/team-retention — attrition and shrinkage for the caller's own team,
+ * attributed to whoever actually held the team at the time rather than to whoever holds the
+ * pointer today. See manager-attribution.service.ts for why that distinction is the whole
+ * point, and why every figure comes back labelled `observed` or `assumed_current`.
+ */
+router.get("/team-retention", h(async (req: AuthenticatedRequest, res: Response) => {
+  const emp = await getEmployeeForUser(req.authUser!.id);
+  if (!emp) return res.status(403).json({ success: false, message: "No employee record" });
+
+  const months = Math.min(Math.max(Number(req.query.months ?? 12) || 12, 1), 24);
+  const days = Math.min(Math.max(Number(req.query.days ?? 30) || 30, 7), 90);
+
+  const [attrition, shrinkage] = await Promise.all([
+    getManagerAttrition(emp.id, months),
+    getManagerShrinkage(emp.id, days),
+  ]);
+
+  return res.json({ success: true, data: { attrition, shrinkage } });
 }));
 
 export { router as managementRouter };

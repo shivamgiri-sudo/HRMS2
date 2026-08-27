@@ -285,3 +285,102 @@ Root cause found: real bug, not seed/placeholder data — rta-nightly.cron.ts ca
 Fixed (commit 2390f871, review APPROVED — org-wide call preserved not replaced, per-branch error isolation verified, upsert-safety confirmed via real UNIQUE KEY read): added additive per-branch loop to the shared rta-nightly.cron.ts; changed performance-scorecard's shrinkage lookup to match branchId only; re-enabled the Shrinkage column (available:false removed).
 Review found one Important item (real, independently DB-verified: 0/1119 live exposure but not schema-impossible, 92 historical rows have the shape) — fixed immediately (commit ef723a97): guard skips the shrinkage lookup entirely when branchId is falsy, rather than risking an unscoped listSnapshots call silently matching another branch's data. 14/14 tests still pass.
 ALL 3 ROLLUP COLUMNS (Attrition, Shrinkage, Revenue) NOW REAL. Full backlog from the entire session, including the shrinkage data-gap follow-up, is exhausted.
+
+---
+
+# AON Analytics Correctness + Filters — SDD Progress Ledger
+# Started: 2026-08-26
+# Plan: docs/superpowers/plans/2026-08-26-aon-analytics-correctness-and-filters.md
+# Worktree: .claude/worktrees/aon-analytics-correctness (branch worktree-aon-analytics-correctness)
+# Branch start commit: 2d1b7215
+
+## Tasks
+Task 1: complete (commits 2d1b7215..d5485720, review clean — spec OK, quality Approved)
+  fixes applied: tightened AND assertion (proved by AND->OR falsification), exported AON_DAYS_SQL so Task 3 need not hand-roll the clamp
+  minor deferred to final review: report line-count claim off (79 not 140); comments embed point-in-time counts
+  live verified: 1091 total; In Training 13, 0-30 163, 31-60 101, 61-90 93, 90+ 721 (sums exactly)
+Task 2: complete (commit e9c5f033, base d5485720, review clean — spec OK, quality Approved, no Critical)
+  headcount now 1091; 53 files/324 tests green in src/modules/reporting
+  DEFERRED RESIDUALS — no task in this plan claims these, hand to final whole-branch review:
+    (a) atRiskBucketSql (aon.executor.ts ~L268) — 3rd bucket copy, unclamped, 4-bucket, feeds attrition at-risk denominator.
+        Verified dormant: 0 of 2560 recent exits land In Training (2461 have NULL salary_start_date), so no unmatched row today.
+    (b) RELIABLE_POPULATION (aon.executor.ts ~L148) — active_status=1 OR date_of_exit IS NOT NULL
+    (c) still_active (aon.executor.ts ~L826) — SUM(e.active_status = 1) in cohort survival; LIVE inconsistency:
+        counts the same 30 stale-flag leavers, so cohort survival disagrees with the corrected headcount
+Task 3: complete (commits 1125c1ce, 0d77863b, base e9c5f033, re-review RESOLVED both findings)
+  deviation applied: uses exported AON_DAYS_SQL instead of hand-rolled GREATEST (my override of the brief)
+  fixes: per-switch test now catches a PARTIAL regression (proved by reverting 90+ case -> FAIL);
+         clamped tenure_at_exit_days + aon_days display columns — they were negative for the 13 live
+         In Training staff and silently assigned risk_score 45 (top tier) because a negative satisfies <=30
+  executors suite 6 files / 37 tests green
+Task 4: complete (commit 1bb58410, base 0d77863b, review clean — spec OK, quality Approved)
+  coo added to SUPER_ADMIN_ROLES; contract test pins positive AND negative cases (branch roles stay out)
+  note: implementer misreported suite as 49 files/294; actual verified 55 files/331 passed/1 skipped
+Task 5: complete (commit d9d38a70, base 1bb58410, review clean — spec OK, quality Approved)
+  five buckets render, In Training first, SERIES[4] (no collision with 7/1/3/2)
+  Record<Bucket,string> forces a colour for every bucket — a 6th cannot be added without one
+Task 6: complete (commits b193a591, d282856b, base d9d38a70, review clean — spec OK, quality Approved)
+  4 filter dimensions exposed; managerId deliberately excluded; date note added (disable deviation honoured)
+  I found + had fixed mid-task: headline KPI was branchId-only, so filtering by Process narrowed the table
+    but not the headline number. Now all four, with a falsification-proved assertion.
+  DEFERRED RESIDUAL (d) — EmployeeListPanel drill-down receives ONLY branchId at all 3 call sites
+    (lines ~804, ~949, ~1219); its props type does not accept process/department/costCentre at all.
+    Backend drilldown DOES support them via appendFilterConditions. LIVE consequence: drilling into a
+    Process/Dept/CostCentre-filtered cell can list employees outside that filter — i.e. the drawer
+    disagrees with the number clicked. Same defect class as the headline gap. No task claims this.
+  Minor: the conditional-spread filter block is duplicated 4x — extract buildFilterParams() in a later pass
+  Pre-existing TS2322 (cohort-survival row typing) left untouched, verified pre-existing by stash
+Task 7: complete (commits 29c386bc, 7de0b6a6, base d282856b, review clean — spec OK, quality Approved)
+  MANDATORY falsification initially did NOT go red — harness was proven unable to fail. Root cause:
+    tautological baseline (compared strict count against a hardcoded rule identical to the weakened one)
+    + other invariants tested Task 3 not Task 1 + the 30 stale-flag staff land in an ordinary 31-60 bucket.
+  Fixed: tautological assertion REMOVED; added hard toBe(0) "no active employee has non-active
+    employment_status" (scale-invariant, load-bearing) + a bounded ratio on stale exit dates.
+    Re-falsified: weakening now FAILS with "expected 30 to be +0". 10/10 green on correct code.
+  NEW DATA FINDING (e): 8 employees have employment_status=active but a stale PAST date_of_exit/
+    resignation_date — separate pre-existing data bug, which is why invariant (a) is a ratio not a hard 0.
+  Minor: no invariant catches UNDER-inclusion (e.g. dropping LOWER() would undercount) — follow-up.
+
+## ALL 7 TASKS COMPLETE — pending final whole-branch review
+
+## Final whole-branch review (opus) — 3 Critical, all live-verified, ALL FIXED
+  C1 drill-down tenure predicates also matched In Training (GREATEST clamps to 0, and 0<=30 is true):
+     aggregate 0-30 cell 153 vs drawer 165 — the 12 In Training appeared in TWO drawers. Fixed with NOT(IN_TRAINING) x8.
+  C2 drill-down still used e.active_status=1 (:148, :223): 31-60 cell 112 vs drawer 142 — handed back the
+     30 exited staff, and offered "Flag for Retention Review" on them. Fixed to ACTIVE_EMPLOYEE_SQL.
+  C3 cost-centre dropdown hit /api/finance/cost-centres — 403 (silent) for hr/payroll/wfm/manager/ceo,
+     and capped at 100 by created_at so only 1 of 30 staffed cost centres appeared. Fixed to /api/org/cost-centres.
+  I1 RosterAnalyticsPanel hard-coded 4 buckets -> showed 1,078. Fixed to five.
+  I2 COO fix was INERT: ROLES_ALL_MANAGEMENT lacked coo, so the catalog middleware 403d before scope ran. Fixed.
+  HARNESS DEFECT: the drill-down test re-implemented the executor SQL instead of calling aonDrilldownEmployees,
+     so it asserted the executor against a copy of itself and stayed green through C1+C2. Rewired to the real
+     executor; RED-before proof "expected 107 to be 95" (the 12-person leak), GREEN after.
+  fix commits: df04a8be, 300a4180, 8c4c1af0, 0d35dd31
+  VERIFIED: backend src/modules/reporting 57 files/344 passed/1 skip; frontend 7 files/64 passed;
+     no new typecheck errors (1 pre-existing TS2322 cohort-survival typing remains)
+  STATE: branch complete and green. NOT merged to main — awaiting user decision.
+
+## MERGED AND PUSHED — 2026-08-27
+  Local merge into main was REFUSED by git (27 of the 80 dirty files on main belong to other live
+  sessions; merging origin-side commits would have overwritten them). Nothing was applied, no
+  half-merge left. Took the remote route instead per user choice.
+  Dropped commit 3dfd50fd: my worktree base had RESTORED NativeOrgChartEnhanced.tsx, but its owner
+  had since deliberately deleted it on origin — merging would have resurrected another session's
+  intentional deletion. Re-dropped before merging.
+  Merged origin/main into the branch inside the clean worktree (no conflicts), re-ran suites on the
+  MERGED result: backend 57 files/344 passed, frontend 64 passed.
+  Pushed dcb9f8ad..b1d0dabf -> origin/main. Pre-push structural guards passed.
+  Verified BY CONTENT on origin (not by SHA): workforce-population.ts present, 11 IN_TRAINING_SQL
+  refs in aon-drilldown.executor.ts. Exactly 16 files / 20 commits landed, nothing of anyone else's.
+  Per-task briefs/reports/packages preserved at .superpowers/sdd/aon-task-reports/
+  NOTE: local main still 82 dirty files and now behind origin — left alone for its owners.
+
+
+---
+
+# Attendance Integrity Console — SDD Progress Ledger
+# Started: 2026-08-27
+# Plan: docs/superpowers/plans/2026-08-27-attendance-integrity-console.md
+# Branch start commit: e77d60b72157450a34e0ae28e30f89c4c7fd7796
+
+## Tasks

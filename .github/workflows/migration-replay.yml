@@ -79,5 +79,11 @@ jobs:
           DB_USER: root
           DB_PASSWORD: root
           DB_NAME: mas_hrms_ci
-          TEST_DB_NAME: mas_hrms_ci_replay
-        run: npm run migrate:fresh:test
+          # Must match migrate-fresh-test.ts's disposableDbName pattern
+          # (^test_|_test$|_testing$|...). 'mas_hrms_ci_replay' did not, so the
+          # script refused before replaying a single migration.
+          TEST_DB_NAME: mas_hrms_ci_replay_test
+        # The script requires an explicit destructive-run confirmation — it drops and
+        # recreates TEST_DB_NAME. Without the flag it exits 1 at the first guard, which
+        # is why this job reported "failure" while proving nothing about the migrations.
+        run: npm run migrate:fresh:test -- --allow-destructive-test-db

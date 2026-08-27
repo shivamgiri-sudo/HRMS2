@@ -18,7 +18,15 @@ export interface PkgCalcOptions {
    * reads from statutory_config via payrollCalculate.service.ts.
    */
   pfWageLimit?: number;
-  /** Include 8.33% statutory bonus in gross. Defaults to false for simple packages. */
+  /**
+   * Include the 8.33% statutory bonus in gross.
+   *
+   * Owner ruling, 2026-08-27: bonus is part of CTC, so this DEFAULTS TO TRUE — pass
+   * `false` explicitly for the rare package that excludes it. The live catalog agrees:
+   * 229 of the 230 populated salary_package_master rows carry bonus = 8.33% of basic
+   * inside gross. Defaulting it off produced packages whose CTC was short by that
+   * amount against every package already in the catalog.
+   */
   includeBonus?: boolean;
 }
 
@@ -51,7 +59,15 @@ const ESIC_EMP_RATE = 0.0075;
 const ESIC_EMPLR_RATE = 0.0325;
 const ESIC_LIMIT = 21000;
 const GRATUITY_RATE = 15 / 26 / 12;
-const ADMIN_RATE = 0.0101; // EPFO: 0.50% admin + 0.50% EDLI + 0.01% EDLI admin
+/** Payment of Bonus Act minimum: 8.33% of basic. */
+const BONUS_RATE = 0.0833;
+// Owner ruling, 2026-08-27: admin charges are 1% of PF wages.
+// This matches the live catalog, which is the stronger evidence: every populated row in
+// salary_package_master computes admin_charges at exactly 1.00% (basic 3,000 -> 30,
+// basic 3,700 -> 37), so the 1.01% here was making the builder disagree with the 230
+// packages already in use. EPFO's own rate is 0.50% admin + 0.50% EDLI; the extra 0.01%
+// EDLI administration charge was abolished in 2018 and should not have survived here.
+export const ADMIN_RATE = 0.01;
 // Default PF wage limit: 999999 = full basic (matches MAS Callnet's statutory_config).
 // EPF Act statutory minimum is ₹15,000; employer may contribute on more.
 const DEFAULT_PF_WAGE_LIMIT = 999999;
@@ -143,13 +159,13 @@ export function getProfessionalTax(gross: number, state?: string): number {
 }
 
 function deriveComponents(gross: number, opts: PkgCalcOptions): PkgComponents {
-  const { includePf, includeEsic, basicPct, hraPct, state, includeBonus } = opts;
+  const { includePf, includeEsic, basicPct, hraPct, state } = opts;
+  const includeBonus = opts.includeBonus ?? true; // part of CTC unless explicitly excluded
   const pfCap = opts.pfWageLimit ?? DEFAULT_PF_WAGE_LIMIT;
 
   const basic = r2(gross * (basicPct / 100));
   const hra = r2(basic * (hraPct / 100));
-  // Only include bonus in gross breakdown if explicitly enabled
-  const bonus = includeBonus ? r2(basic * 0.0833) : 0;
+  const bonus = includeBonus ? r2(basic * BONUS_RATE) : 0;
   const special_allowance = Math.max(0, r2(gross - basic - hra - CONV - bonus));
 
   const pfBase = Math.min(basic, pfCap);

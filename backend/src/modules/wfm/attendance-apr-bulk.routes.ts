@@ -19,17 +19,49 @@ const MANUAL_UPLOAD_CAMPAIGN = 'MANUAL_UPLOAD';
 const router = Router();
 router.use(requireAuth);
 
+const MAX_UPLOAD_MB = 2;
+
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 2 * 1024 * 1024 },
+  limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
   fileFilter(_req, file, cb) {
-    if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+    if (file.mimetype === 'text/csv' || file.originalname.toLowerCase().endsWith('.csv')) {
       cb(null, true);
     } else {
-      cb(new Error('Only CSV files are accepted'));
+      cb(new Error(
+        'This upload reads CSV files only — it cannot read an Excel workbook. ' +
+        'In Excel choose File > Save As > CSV (Comma delimited) (*.csv) and upload that file.',
+      ));
     }
   },
 });
+
+/**
+ * Multer's rejections are the uploader's problem to fix, not a server fault — but
+ * multer raises them as plain Errors with no statusCode, and the global error handler
+ * masks any statusless throw in production as "An unexpected server error occurred.
+ * Please quote reference <hex>". So an uploader who sent an .xlsx, or a file over the
+ * size limit, was told nothing at all about what to change: the one sentence that would
+ * have fixed it — save it as CSV — was replaced by a reference number.
+ *
+ * Reproduced end to end: posting an .xlsx to this route returned exactly that masked
+ * 500. Answering the rejection here, with a status, keeps it out of the masking branch.
+ */
+function acceptCsvUpload(req: any, res: any, next: any) {
+  upload.single('file')(req, res, (err: unknown) => {
+    if (!err) return next();
+    const code = (err as { code?: string })?.code;
+    const message =
+      code === 'LIMIT_FILE_SIZE'
+        ? `The file is larger than ${MAX_UPLOAD_MB} MB. Split it into smaller files and upload them one at a time.`
+        : code === 'LIMIT_UNEXPECTED_FILE'
+          ? 'Attach the CSV as a single file named "file".'
+          : err instanceof Error && err.message
+            ? err.message
+            : 'The uploaded file could not be read.';
+    return res.status(400).json({ success: false, message });
+  });
+}
 
 interface CsvRow {
   rowNum: number;
@@ -105,7 +137,7 @@ function parseCsv(content: string): { rows: CsvRow[]; errors: RowError[] } {
 router.post(
   '/apr-bulk-upload',
   requireRole('wfm', 'hr', 'payroll_head', 'super_admin', 'admin'),
-  upload.single('file'),
+  acceptCsvUpload,
   async (req: any, res: any) => {
     if (!req.file) {
       return res.status(400).json({ success: false, message: 'No CSV file uploaded' });

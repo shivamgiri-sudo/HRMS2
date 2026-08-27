@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/management/team-member.service.ts",
+    "src/modules/management/management.routes.ts",
+    "src/modules/quality-dashboard/quality-manager.service.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}

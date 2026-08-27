@@ -15,13 +15,25 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Building2, Plus, Pencil, Trash2, Users, Loader2, ShieldAlert } from "lucide-react";
 import { useDepartments, useCreateDepartment, useUpdateDepartment, useDeleteDepartment, Department } from "@/hooks/useDepartments";
-import { useIsAdminOrHR } from "@/hooks/useUserRole";
+import { useIsAdminOrHR, useWorkforceAccess } from "@/hooks/useUserRole";
 import { toast } from "sonner";
 import { formatISTDate } from "@/lib/utils";
 
 const Departments = () => {
   const { data: departments, isLoading } = useDepartments();
   const { isAdminOrHR, isLoading: roleLoading } = useIsAdminOrHR();
+  /**
+   * Viewing the department list and reshaping it are two different privileges.
+   *
+   * isAdminOrHR spans nine role keys — 24 live accounts — which is the right audience for
+   * reading the structure, and far too wide for editing it: the API now answers a rename or a
+   * delete from any of them with 403 (see requireDepartmentWrite in backend org.routes.ts).
+   * Rendering the buttons anyway would just hand 23 people a control that always fails, the
+   * same defect Support Command Center shipped. Gate on isResolved too, or the controls
+   * flicker visible for one render before roleKeys arrives.
+   */
+  const { roleKeys, isResolved: accessResolved } = useWorkforceAccess();
+  const canManageDepartments = accessResolved && roleKeys.includes("super_admin");
   const createDepartment = useCreateDepartment();
   const updateDepartment = useUpdateDepartment();
   const deleteDepartment = useDeleteDepartment();
@@ -155,6 +167,7 @@ const Departments = () => {
                 </div>
               </div>
             </div>
+            {canManageDepartments && (
             <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
               <DialogTrigger asChild>
                 <Button
@@ -219,6 +232,7 @@ const Departments = () => {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+            )}
           </div>
         </section>
 
@@ -275,6 +289,10 @@ const Departments = () => {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
+                            {!canManageDepartments && (
+                              <span className="text-xs text-muted-foreground">View only</span>
+                            )}
+                            {canManageDepartments && (<>
                             <Dialog
                               open={editingDepartment?.id === department.id}
                               onOpenChange={(open) => !open && setEditingDepartment(null)}
@@ -377,6 +395,7 @@ const Departments = () => {
                                 </AlertDialogFooter>
                               </AlertDialogContent>
                             </AlertDialog>
+                            </>)}
                           </div>
                         </TableCell>
                       </TableRow>

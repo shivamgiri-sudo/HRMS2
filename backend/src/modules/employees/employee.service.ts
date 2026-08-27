@@ -10,6 +10,7 @@ import type { CreateEmployeeInput, EmployeeFilters, UpdateEmployeeInput } from "
 import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
 import { dispatchJoinProvisioningTasks } from "../it-provisioning/it-provisioning.service.js";
 import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
+import { recordSupervisoryChange } from "../management/manager-attribution.service.js";
 
 // Directory list sort — SortableTableHead on the frontend already exposes these 8 columns,
 // but the query ignored sortBy entirely and always returned employee_code ASC, so "sort by
@@ -596,6 +597,39 @@ export const employeeService = {
       params.push(id);
       await db.execute(`UPDATE employees SET ${sets.join(", ")} WHERE id = ?`, params);
 
+      /**
+       * A manager change is recorded as HISTORY, not just as an audit line.
+       *
+       * The audit row below says "this field changed"; it cannot answer "who managed this
+       * person on 12 June", which is the question attrition and shrinkage actually depend on.
+       * Without an effective-dated record, every exit re-attributes itself to whoever holds
+       * the pointer today — so a manager inheriting a team also inherits its entire past
+       * attrition, and the previous manager's record silently empties. See
+       * manager-attribution.service.ts and migration 1624.
+       *
+       * Deliberately not awaited and never allowed to throw: the profile edit is the user's
+       * action and must not fail because a history row could not be written.
+       */
+      const managerMoved = input.reportingManagerId !== undefined &&
+        String(input.reportingManagerId ?? "") !== String(snap.reporting_manager_id ?? "");
+      const processMoved = input.processId !== undefined &&
+        String(input.processId ?? "") !== String(snap.process_id ?? "");
+      const branchMoved = input.branchId !== undefined &&
+        String(input.branchId ?? "") !== String(snap.branch_id ?? "");
+
+      // Any of the three moves the person under different accountability, so all three open a
+      // new supervisory period. Only the changed fields are passed; the rest carry forward.
+      if (managerMoved || processMoved || branchMoved) {
+        void recordSupervisoryChange({
+          employeeId: id,
+          ...(managerMoved ? { managerId: input.reportingManagerId ?? null } : {}),
+          ...(processMoved ? { processId: input.processId ?? null } : {}),
+          ...(branchMoved ? { branchId: input.branchId ?? null } : {}),
+          changedBy: actorUserId ?? null,
+          reason: deactivationReason ?? null,
+        });
+      }
+
       // Audit any sensitive field changes
       const changedSensitive = SENSITIVE_FIELDS.filter(
         (f) => input[f.inputKey] !== undefined && String(input[f.inputKey] ?? "") !== String(snap[f.dbCol] ?? "")
@@ -730,7 +764,14 @@ export const employeeService = {
     processId?: string;
     branchId?: string;
     departmentId?: string;
-  }): Promise<{ nodes: OrgTreeServiceNode[]; totalCount: number }> {
+  }): Promise<{
+    nodes: OrgTreeServiceNode[];
+    totalCount: number;
+    renderedCount: number;
+    selfEmployeeId: string | null;
+    unassigned: OrgTreeServiceNode[];
+    dataIssues: OrgTreeDataIssue[];
+  }> {
     const { userId, processId, branchId, departmentId } = params;
 
     // Resolve requester roles
@@ -765,12 +806,12 @@ export const employeeService = {
       if (departmentId) { wheres.push("e.department_id = ?"); qp.push(departmentId); }
     } else if (isBranchHead) {
       const scopeBranch = self?.branch_id;
-      if (!scopeBranch) return { nodes: [], totalCount: 0 };
+      if (!scopeBranch) return EMPTY_ORG_TREE(self?.id ?? null);
       wheres.push("e.branch_id = ?");
       qp.push(scopeBranch);
     } else if (isProcMgr || isWfm) {
       const scopeProcess = self?.process_id;
-      if (!scopeProcess) return { nodes: [], totalCount: 0 };
+      if (!scopeProcess) return EMPTY_ORG_TREE(self?.id ?? null);
       wheres.push("e.process_id = ?");
       qp.push(scopeProcess);
     } else {
@@ -783,12 +824,109 @@ export const employeeService = {
         wheres.push("e.id = ?");
         qp.push(self.id);
       } else {
-        return { nodes: [], totalCount: 0 };
+        return EMPTY_ORG_TREE(self?.id ?? null);
       }
     }
 
     const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
+      `${ORG_TREE_SELECT}
+      WHERE ${wheres.join(" AND ")}
+      ORDER BY e.date_of_joining ASC`,
+      qp
+    );
+
+    const employees = empRows as OrgTreeServiceNode[];
+
+    // The requester's own reporting line frequently leaves the scoped set — a Noida
+    // agent's Process Manager can sit in a different process. Without the chain the
+    // requester renders as a detached root and "where do I sit" is unanswerable, which
+    // is the whole point of the page. Pull the ancestors in explicitly and mark them.
+    if (self?.id) {
+      const scopedIdsForChain = new Set(employees.map((e) => e.id));
+      const chain: OrgTreeServiceNode[] = [];
+      const seenChain = new Set<string>([self.id]);
+      let cursor: string | null =
+        employees.find((e) => e.id === self.id)?.reporting_manager_id ?? null;
+
+      if (!scopedIdsForChain.has(self.id)) {
+        const [ownRows] = await db.execute<RowDataPacket[]>(
+          `${ORG_TREE_SELECT} WHERE e.id = ? LIMIT 1`, [self.id]
+        );
+        const own = (ownRows as OrgTreeServiceNode[])[0];
+        if (own) { employees.push(own); scopedIdsForChain.add(own.id); cursor = own.reporting_manager_id; }
+      }
+
+      // Bounded walk — the guard is `seenChain`, so a cycle in the data terminates here
+      // instead of looping forever.
+      while (cursor && !seenChain.has(cursor) && chain.length < 25) {
+        seenChain.add(cursor);
+        if (scopedIdsForChain.has(cursor)) {
+          cursor = employees.find((e) => e.id === cursor)?.reporting_manager_id ?? null;
+          continue;
+        }
+        const [mgrRows] = await db.execute<RowDataPacket[]>(
+          `${ORG_TREE_SELECT} WHERE e.id = ? AND e.active_status = 1 LIMIT 1`, [cursor]
+        );
+        const mgr = (mgrRows as OrgTreeServiceNode[])[0];
+        if (!mgr) break;
+        mgr.is_reporting_line = 1;
+        chain.push(mgr);
+        scopedIdsForChain.add(mgr.id);
+        cursor = mgr.reporting_manager_id;
+      }
+      employees.push(...chain);
+    }
+
+    const totalCount = employees.length;
+    const built = buildOrgForest(employees, self?.id ?? null);
+
+    return {
+      nodes: built.roots,
+      totalCount,
+      renderedCount: built.renderedCount,
+      selfEmployeeId: self?.id ?? null,
+      unassigned: built.unassigned,
+      dataIssues: built.dataIssues,
+    };
+  },
+};
+
+// Internal type for org tree — not exported to avoid polluting Employee types
+export interface OrgTreeServiceNode {
+  id: string;
+  employee_code: string;
+  name: string;
+  designation: string | null;
+  process_name: string | null;
+  branch_name: string | null;
+  department_name: string | null;
+  avatar_url: string | null;
+  reporting_manager_id: string | null;
+  role_key: string | null;
+  active_status: number;
+  /** 1 when the row was pulled in only to complete the requester's reporting line. */
+  is_reporting_line?: number;
+  /** Filled by buildOrgForest — the client needs both counts to label a collapsed branch. */
+  direct_reports?: number;
+  total_reports?: number;
+  children: OrgTreeServiceNode[];
+}
+
+/**
+ * A reporting-data defect the tree builder had to work around. Surfaced to the client
+ * rather than swallowed: the previous builder dropped these rows silently, which is how
+ * 900 of 1,120 active employees came to be missing from the live chart while the header
+ * still counted them.
+ */
+interface OrgTreeDataIssue {
+  type: "self_manager" | "cycle" | "missing_manager";
+  employeeId: string;
+  employeeCode: string;
+  name: string;
+  detail: string;
+}
+
+const ORG_TREE_SELECT = `SELECT
          e.id,
          e.employee_code,
          TRIM(CONCAT(e.first_name, ' ', COALESCE(e.last_name, ''))) AS name,
@@ -812,49 +950,140 @@ export const employeeService = {
        LEFT JOIN designation_master d    ON d.id    = e.designation_id
        LEFT JOIN process_master    p     ON p.id    = e.process_id
        LEFT JOIN branch_master     b     ON b.id    = e.branch_id
-       LEFT JOIN department_master dept  ON dept.id = e.department_id
-      WHERE ${wheres.join(" AND ")}
-      ORDER BY e.date_of_joining ASC`,
-      qp
-    );
+       LEFT JOIN department_master dept  ON dept.id = e.department_id`;
 
-    const employees = empRows as OrgTreeServiceNode[];
-    const totalCount = employees.length;
+function EMPTY_ORG_TREE(selfEmployeeId: string | null) {
+  return {
+    nodes: [] as OrgTreeServiceNode[],
+    totalCount: 0,
+    renderedCount: 0,
+    selfEmployeeId,
+    unassigned: [] as OrgTreeServiceNode[],
+    dataIssues: [] as OrgTreeDataIssue[],
+  };
+}
 
-    // Build tree strictly from real reporting_manager_id data — no synthetic inference
-    const byId = new Map<string, OrgTreeServiceNode & { children: OrgTreeServiceNode[] }>();
-    for (const emp of employees) {
-      byId.set(emp.id, { ...emp, children: [] });
+/**
+ * Builds the reporting forest, and — unlike the previous implementation — guarantees every
+ * scoped employee appears exactly once in the output.
+ *
+ * The old builder treated a row as a root only when its manager was absent from the scoped
+ * set, and otherwise pushed it under that manager. Three employees are recorded as their own
+ * manager, so they were never roots and no root could reach them; they and the 900 people
+ * beneath them vanished from the chart with no error while the header still counted them.
+ * Anything sitting on a longer cycle would disappear the same way.
+ *
+ * Here, a row whose manager chain does not terminate at a genuine root is promoted to a root
+ * and the broken edge is reported in `dataIssues`. Correcting the underlying rows is still
+ * the right answer — but a data defect must not silently delete 80% of the org.
+ */
+export function buildOrgForest(
+  employees: OrgTreeServiceNode[],
+  selfEmployeeId: string | null,
+): {
+  roots: OrgTreeServiceNode[];
+  unassigned: OrgTreeServiceNode[];
+  renderedCount: number;
+  dataIssues: OrgTreeDataIssue[];
+} {
+  const byId = new Map<string, OrgTreeServiceNode>();
+  for (const emp of employees) {
+    if (byId.has(emp.id)) continue; // the reporting-line merge can re-add an already scoped row
+    byId.set(emp.id, { ...emp, children: [] });
+  }
+
+  const dataIssues: OrgTreeDataIssue[] = [];
+  const issueFor = (n: OrgTreeServiceNode, type: OrgTreeDataIssue["type"], detail: string) =>
+    dataIssues.push({ type, employeeId: n.id, employeeCode: n.employee_code, name: n.name, detail });
+
+  // Resolve each row's effective parent. Start from the recorded manager, then repair the
+  // edges that make the graph something other than a forest.
+  const effectiveParent = new Map<string, string | null>();
+  for (const node of byId.values()) {
+    const mgr = node.reporting_manager_id;
+    if (mgr === node.id) {
+      // Three live rows are recorded as their own manager. Left alone, such a row can never
+      // be a root and no root can reach it, so it and everyone beneath it disappears.
+      effectiveParent.set(node.id, null);
+      issueFor(node, "self_manager", "Recorded as their own reporting manager");
+    } else if (!mgr || !byId.has(mgr)) {
+      effectiveParent.set(node.id, null);
+    } else {
+      effectiveParent.set(node.id, mgr);
     }
+  }
 
-    const scopedIds = new Set(employees.map((e) => e.id));
-    const roots: (OrgTreeServiceNode & { children: OrgTreeServiceNode[] })[] = [];
-
-    for (const emp of employees) {
-      const mgr = emp.reporting_manager_id;
-      if (!mgr || !scopedIds.has(mgr)) {
-        roots.push(byId.get(emp.id)!);
-      } else {
-        byId.get(mgr)!.children.push(byId.get(emp.id)!);
+  // Break any remaining cycle at exactly one edge — the node the walk re-enters. Cutting the
+  // edge for every node whose chain merely passes through a cycle would flatten the whole
+  // subtree into roots, which is a different way of destroying the chart.
+  const resolution = new Map<string, "visiting" | "resolved">();
+  for (const startId of byId.keys()) {
+    if (resolution.has(startId)) continue;
+    const stack: string[] = [];
+    let cursor: string | null = startId;
+    while (cursor) {
+      const state = resolution.get(cursor);
+      if (state === "resolved") break;
+      if (state === "visiting") {
+        const node = byId.get(cursor)!;
+        const throughName = byId.get(effectiveParent.get(cursor) ?? "")?.name ?? "their manager";
+        effectiveParent.set(cursor, null);
+        issueFor(node, "cycle", `Reporting line loops back through ${throughName}`);
+        break;
       }
+      resolution.set(cursor, "visiting");
+      stack.push(cursor);
+      cursor = effectiveParent.get(cursor) ?? null;
     }
+    for (const id of stack) resolution.set(id, "resolved");
+  }
 
-    return { nodes: roots, totalCount };
-  },
-};
+  const roots: OrgTreeServiceNode[] = [];
+  for (const node of byId.values()) {
+    const parentId = effectiveParent.get(node.id) ?? null;
+    if (parentId) byId.get(parentId)!.children.push(node);
+    else roots.push(node);
+  }
 
-// Internal type for org tree — not exported to avoid polluting Employee types
-interface OrgTreeServiceNode {
-  id: string;
-  employee_code: string;
-  name: string;
-  designation: string | null;
-  process_name: string | null;
-  branch_name: string | null;
-  department_name: string | null;
-  avatar_url: string | null;
-  reporting_manager_id: string | null;
-  role_key: string | null;
-  active_status: number;
-  children: OrgTreeServiceNode[];
+  // Depth-first subtree count. Cycles are already broken above, so this cannot recurse forever.
+  const countSubtree = (n: OrgTreeServiceNode): number => {
+    let total = 0;
+    for (const child of n.children) total += 1 + countSubtree(child);
+    n.direct_reports = n.children.length;
+    n.total_reports = total;
+    return total;
+  };
+  let renderedCount = 0;
+  for (const r of roots) renderedCount += 1 + countSubtree(r);
+
+  // Sort so the org reads top-down: biggest teams first, then alphabetically.
+  const sortTree = (nodes: OrgTreeServiceNode[]) => {
+    nodes.sort((a, b) =>
+      (b.total_reports ?? 0) - (a.total_reports ?? 0) || a.name.localeCompare(b.name));
+    for (const n of nodes) sortTree(n.children);
+  };
+  sortTree(roots);
+
+  // A root with no reports is not a hierarchy — rendering 170 lone cards side by side is what
+  // makes the chart unreadably wide. They go to their own tray instead, and the viewer's own
+  // card always stays on the canvas so the page can still answer "where do I sit".
+  const unassigned: OrgTreeServiceNode[] = [];
+  const realRoots: OrgTreeServiceNode[] = [];
+  for (const r of roots) {
+    const isSelf = selfEmployeeId != null && r.id === selfEmployeeId;
+    if (r.children.length === 0 && !isSelf) {
+      unassigned.push(r);
+      issueFor(
+        r,
+        "missing_manager",
+        r.reporting_manager_id
+          ? "Reporting manager is not an active employee in this view"
+          : "No reporting manager recorded",
+      );
+    } else {
+      realRoots.push(r);
+    }
+  }
+
+  return { roots: realRoots, unassigned, renderedCount, dataIssues };
 }

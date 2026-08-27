@@ -39,6 +39,8 @@ export interface PerfQuery {
   to: string;
   processId?: string | null;
   managerId?: string | null;
+  /** Set only when a cell on an agent row is opened, so the detail is that person. */
+  employeeId?: string | null;
 }
 
 function qs(p: Record<string, string | null | undefined>) {
@@ -47,7 +49,7 @@ function qs(p: Record<string, string | null | undefined>) {
   return s.toString();
 }
 
-function formatValue(s: SectionValue): string {
+export function formatValue(s: { value: number | null; unit: SectionValue["unit"] }): string {
   if (s.value === null) return "—";
   switch (s.unit) {
     case "percent": return `${s.value}%`;
@@ -68,7 +70,11 @@ function formatValue(s: SectionValue): string {
 function cellTone(s: SectionValue): string {
   if (s.availability === "not_tracked") return "text-slate-300 italic";
   if (s.availability === "no_data") return "text-slate-400";
-  if (!s.direction || s.value === null) return "text-slate-800";
+  if (s.value === null) return "text-slate-800";
+  // A shortfall against contracted seats is the one count worth colouring: it
+  // is a comparison of two real figures, not a score against a made-up target.
+  if (s.key === "buffer") return s.value < 0 ? "text-red-600 font-semibold" : "text-slate-800 font-semibold";
+  if (!s.direction) return "text-slate-800";
   // Only percent metrics carry a shared sense of good/bad; a raw count or a
   // duration has no universal threshold, so those stay neutral rather than
   // being coloured against an invented benchmark.

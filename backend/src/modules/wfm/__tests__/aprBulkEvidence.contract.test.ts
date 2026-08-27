@@ -36,7 +36,9 @@ describe("APR bulk upload records dialler evidence", () => {
 
   it("files them under their own campaign so a re-upload overwrites", () => {
     expect(SOURCE).toMatch(/MANUAL_UPLOAD_CAMPAIGN\s*=\s*'MANUAL_UPLOAD'/);
-    expect(SOURCE).toMatch(/ON DUPLICATE KEY UPDATE Net_Login = VALUES\(Net_Login\)/);
+    // Whitespace-tolerant: the statement is formatted across lines, and the strict
+    // single-line form made this assertion fail on source it should have accepted.
+    expect(SOURCE).toMatch(/ON DUPLICATE KEY UPDATE\s+Net_Login = VALUES\(Net_Login\)/);
   });
 
   it("never adds a second row for a day the feed already reports", () => {

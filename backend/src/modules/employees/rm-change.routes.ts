@@ -6,6 +6,7 @@ import { requireRole } from "../../middleware/requireRole.js";
 import { db } from "../../db/mysql.js";
 import { getEmployeeForUser } from "../../shared/accessGuard.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
+import { recordManagerChange } from "../management/manager-attribution.service.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -232,6 +233,16 @@ router.post("/:id/action", requireRole("admin", "hr", "wfm", "payroll_hr"), h(as
     await connection.commit();
 
     if (action === "approved") {
+      // Effective-dated history, after the commit so a failure here cannot roll back an
+      // approval the employee has already been told about. Without it this approved change
+      // silently re-attributes the employee's whole past record to the new manager.
+      void recordManagerChange({
+        employeeId: String(request.employee_id),
+        newManagerId: request.requested_manager_id ? String(request.requested_manager_id) : null,
+        changedBy: req.authUser!.id,
+        reason: "Reporting-manager change request approved",
+      });
+
       void logSensitiveAction({
         actor_user_id: req.authUser!.id,
         action_type: "REPORTING_MANAGER_CHANGED",

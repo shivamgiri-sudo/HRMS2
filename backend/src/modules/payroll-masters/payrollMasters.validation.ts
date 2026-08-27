@@ -30,6 +30,12 @@ export const CreatePackageSchema = z.object({
   package_amount:    z.coerce.number().min(0),
   basic:             moneyField,
   hra:               moneyField,
+  // lta was missing from this schema while being present in the service's
+  // PACKAGE_MONEY_COLUMNS, so zod stripped it out of every payload and the INSERT
+  // wrote 0 for it no matter what was submitted — a silent drop, not an error.
+  // Dormant until now only because LTA is 0 on all 302 catalog rows; the admin
+  // package form gained an LTA input on 2026-08-27, which would have made it live.
+  lta:               moneyField,
   conveyance:        moneyField,
   portfolio:         moneyField,
   medical:           moneyField,

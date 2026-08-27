@@ -277,7 +277,30 @@ async function runRequisitionApprovalNudge(): Promise<void> {
 // ── 4. Daily Hiring Report ───────────────────────────────────────────────────
 
 export async function runDailyHiringReport(forDate?: string, testEmail?: string): Promise<any> {
-  const BRANCHES = ['NOIDA', 'NOIDA-2', 'AHMEDABAD-JALDARSHAN'];
+  // Was a hardcoded ['NOIDA', 'NOIDA-2', 'AHMEDABAD-JALDARSHAN']. branch_master carries
+  // SIX active branches (verified 2026-08-27), so Delhi Office, HEAD OFFICE and
+  // NOIDA-DIALDESK were silently absent from a report whose whole purpose is to be
+  // branch-wise — and any branch opened later would have been absent too, with nothing
+  // to signal it.
+  //
+  // Restricted to branches that actually have candidate activity so the mail does not
+  // grow empty sections for branches that never recruit, and falls back to the original
+  // three if the lookup fails: a report that sends the old shape beats one that throws.
+  let BRANCHES: string[];
+  try {
+    const [branchRows] = await db.execute<RowDataPacket[]>(
+      `SELECT b.branch_name
+         FROM branch_master b
+        WHERE b.active_status = 1
+          AND EXISTS (SELECT 1 FROM ats_candidate c WHERE c.applied_for_branch = b.branch_name)
+        ORDER BY b.branch_name`,
+    );
+    BRANCHES = (branchRows as any[]).map((r) => String(r.branch_name));
+    if (BRANCHES.length === 0) throw new Error('no active branches with candidates');
+  } catch (e) {
+    console.error('[ats-daily-report] branch lookup failed, using the original fixed list:', (e as Error).message);
+    BRANCHES = ['NOIDA', 'NOIDA-2', 'AHMEDABAD-JALDARSHAN'];
+  }
   const reports: any[] = [];
   const targetDate = forDate || new Date().toISOString().slice(0, 10);
 

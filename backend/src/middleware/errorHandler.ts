@@ -19,6 +19,30 @@ export function errorHandler(
 ) {
   console.error("API Error:", error);
 
+  // multer's own rejections are the uploader's problem to fix, not a server fault.
+  // A MulterError carries a `code` (LIMIT_FILE_SIZE, LIMIT_UNEXPECTED_FILE, …) but no
+  // `statusCode`, so it used to fall through to the masking branch below and reach the
+  // user as "An unexpected server error occurred. Please quote reference <hex>" — a
+  // reference number in place of "the file is too large". Nineteen route files upload
+  // through multer, so answering it here fixes all of them at once rather than
+  // per-route. (A rejection raised inside a route's own `fileFilter` is a plain Error
+  // and cannot be told apart from a real fault here — those are still statused at the
+  // route, as attendance-apr-bulk.routes.ts does.)
+  if (error instanceof Error && error.name === "MulterError") {
+    const code = (error as Error & { code?: string }).code;
+    const message =
+      code === "LIMIT_FILE_SIZE"
+        ? "The file is too large for this upload. Reduce its size, or split it and upload the parts separately."
+        : code === "LIMIT_UNEXPECTED_FILE"
+          ? `The upload sent a file in an unexpected field${
+              (error as Error & { field?: string }).field ? ` ("${(error as Error & { field?: string }).field}")` : ""
+            }. Attach it in the field this screen expects.`
+          : code === "LIMIT_FILE_COUNT"
+            ? "Too many files were attached for this upload."
+            : error.message || "The uploaded file could not be read.";
+    return res.status(400).json({ success: false, errorCode: code ?? null, message });
+  }
+
   if (error instanceof ZodError) {
     return res.status(400).json({
       success: false,

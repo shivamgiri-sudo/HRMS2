@@ -1,4 +1,5 @@
 import type { QDSummary } from "./types";
+import { safeNum } from "./types";
 import { PanelShell, Spinner } from "./shared";
 
 interface Props {
@@ -47,8 +48,11 @@ export function FailRatesBars({ summary: s, loading }: Props) {
       ) : (
         <div className="space-y-3.5">
           {PARAMS.map(({ key, label }) => {
-            // `|| 0` still guards the runtime case the type cannot: the API may omit a rate.
-            const val = s[key] || 0;
+            // The API returns these as MySQL DECIMALs, which mysql2 hands back as *strings*
+            // ("36.5"), so QDSummary's `number` is a type lie at runtime and `val.toFixed(1)`
+            // threw "toFixed is not a function", blanking the whole page. safeNum also covers
+            // the case the type cannot: the API omitting a rate entirely.
+            const val = safeNum(s[key]);
             return (
               <div key={key}>
                 <div className="mb-1 flex items-center justify-between">

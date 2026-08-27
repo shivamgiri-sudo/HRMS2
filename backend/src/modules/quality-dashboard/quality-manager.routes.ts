@@ -26,15 +26,50 @@ async function getEmployeeCode(userId: string): Promise<string | null> {
 }
 
 /**
+ * Admits a listed role OR anyone who actually has direct reports.
+ *
+ * requireRole alone refused the page's real audience: of the 78 active employees with direct
+ * reports, 64 hold only the `employee` role (counted 2026-08-27), so a manager opening the My
+ * Team Quality tab was told "Access denied" about her own team. This does NOT widen the data
+ * — getTeamQuality() resolves the caller's own employee_code and reports only on their direct
+ * reports, exactly as before. It widens who may ask the question about their own team.
+ */
+function allowRolesOrManagers(...roles: string[]) {
+  const roleGate = requireRole(...roles);
+  return async (req: AuthenticatedRequest, res: Response, next: (err?: unknown) => void) => {
+    const userId = req.authUser?.id;
+    if (userId) {
+      try {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT 1 AS has_reports
+             FROM mas_hrms.employees mgr
+            WHERE mgr.user_id = ?
+              AND EXISTS (SELECT 1 FROM mas_hrms.employees r
+                           WHERE (r.reporting_manager_id = mgr.id OR r.manager_id = mgr.id)
+                             AND r.active_status = 1)
+            LIMIT 1`,
+          [userId],
+        );
+        if (rows.length > 0) return next();
+      } catch (error) {
+        // Fall through to the role gate rather than failing open.
+        logger.error('Error checking direct reports for quality access:', error);
+      }
+    }
+    return (roleGate as unknown as (rq: unknown, rs: unknown, nx: unknown) => void)(req, res, next);
+  };
+}
+
+/**
  * GET /api/manager/team-quality
  * Returns team quality summary + agent breakdown for manager's direct reports
- * Auth: requireRole(['RM', 'TL', 'process_manager', 'team_leader'])
- * Query params: daysBack (default 7), process (default INBOUND)
+ * Auth: a manager-shaped role, or any caller who has direct reports.
+ * Query params: daysBack (default 7), process (optional — no campaign filter by default)
  */
 router.get(
   '/team-quality',
   requireAuth,
-  requireRole('admin', 'hr', 'ceo', 'process_manager', 'team_leader', 'manager', 'branch_head', 'assistant_manager'),
+  allowRolesOrManagers('admin', 'hr', 'ceo', 'process_manager', 'team_leader', 'manager', 'branch_head', 'assistant_manager'),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.authUser?.id;
@@ -45,7 +80,10 @@ router.get(
       const employeeCode = await getEmployeeCode(userId);
 
       const daysBack = parseInt(req.query.daysBack as string) || 7;
-      const process = (req.query.process as string) || 'INBOUND';
+      // Defaults to no campaign filter, not to 'INBOUND'. The old default silently excluded
+      // every row, because live assessments carry Campaign = NULL — see the query in
+      // quality-manager.service.ts. A caller may still pass ?process=... to narrow.
+      const process = (req.query.process as string) || '';
 
       // Validate inputs
       if (daysBack < 1 || daysBack > 365) {

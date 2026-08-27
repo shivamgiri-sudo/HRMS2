@@ -77,7 +77,15 @@ describe("nothing applies before approval", () => {
   it("leave approval reuses the leave engine rather than touching the ledger directly", () => {
     const src = read("leave-application-bulk.service.ts");
     expect(src).toContain("leaveService.reviewRequest(");
-    expect(src).toContain('status: "branch_head_approved"');
+    // 'approved', NOT 'branch_head_approved'. This assertion used to require the
+    // latter, which is what let the bug through: reviewRequest handles the two
+    // statuses identically, but only 'approved' is the status the rest of the system
+    // reads back. attendance-engine.service.ts resolves its approved-leave override on
+    // `leave_request.status = 'approved'` and leaves the attendance day is_locked = 0,
+    // so a batch approved as 'branch_head_approved' had its leave days reclassified
+    // from biometric evidence on the next nightly run and payroll charged LWP.
+    expect(src).toContain('status: "approved"');
+    expect(src).not.toMatch(/status: "branch_head_approved"/);
     // The balance tables must never be written from here — that is the engine's job.
     const code = readCode("leave-application-bulk.service.ts");
     expect(code).not.toContain("leave_balance_ledger");

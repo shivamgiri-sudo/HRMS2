@@ -18,6 +18,7 @@ import { logSensitiveAction } from '../../shared/auditLog.js';
 import { activateIfJoiningDateReached } from '../employees/employee-activation.service.js';
 import { emailService } from '../communication/email.service.js';
 import { inboxService } from '../inbox/inbox.service.js';
+import { recordSupervisoryChange } from "../management/manager-attribution.service.js";
 
 function _frontendUrl(path: string) {
   const base = String(process.env.FRONTEND_URL || process.env.APP_URL || 'http://localhost:5173').replace(/\/+$/, '');
@@ -466,6 +467,13 @@ export async function completeWfmAlignmentTask(
       `UPDATE employees SET process_id = ?, updated_at = NOW() WHERE id = ?`,
       [input.process_id, task.employee_id]
     );
+    // Process reassignment moves the person under a different process manager, so the
+    // supervisory period must close and reopen — see manager-attribution.service.ts.
+    void recordSupervisoryChange({
+      employeeId: String(task.employee_id),
+      processId: input.process_id ? String(input.process_id) : null,
+      changedBy: null, reason: "Process assigned during IT provisioning",
+    });
 
     // 2. Create/update employee_roster_preference (existing table)
     const [existingPref] = await conn.execute<RowDataPacket[]>(

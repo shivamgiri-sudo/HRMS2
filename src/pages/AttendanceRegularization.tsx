@@ -446,6 +446,30 @@ type FormValues = z.infer<typeof regularizationSchema>;
 
 const TABLE_PAGE_SIZE = 20;
 
+/**
+ * Statuses a request can still be acted on from. Everything else is closed history,
+ * which is 131,336 of the 131,353 live rows and is what made this page unusable when
+ * it was fetched unconditionally.
+ */
+const OPEN_REGULARIZATION_STATUSES = ["pending", "manager_approved", "payroll_pending"];
+
+/**
+ * Ceiling on one fetch. The server clamps to 500 of its own accord; asking for the
+ * same number here keeps the two honest with each other rather than relying on the
+ * clamp. The open queue is 10 rows org-wide today, so this is headroom, not a target.
+ */
+const REQUEST_FETCH_LIMIT = 500;
+
+/** GET /api/wfm/regularizations — `data` unchanged, paging fields added alongside it. */
+type RegularizationListResponse = {
+  success: boolean;
+  data: WfmRegularizationRow[];
+  total?: number;
+  page?: number;
+  limit?: number;
+  hasMore?: boolean;
+};
+
 export default function AttendanceRegularization() {
   const geoCapture = useGeoCapture();
   const { toast } = useToast();
@@ -459,22 +483,67 @@ export default function AttendanceRegularization() {
   // rests entirely on row scope. Gate the control on roles that actually approve
   // regularisations. Scope enforcement on the backend remains the real boundary —
   // this stops the control being offered to someone who should never see it.
-  const APPROVER_ROLES = ["super_admin", "admin", "hr", "hr_head", "manager", "branch_head", "process_manager", "wfm", "team_leader", "tl"];
+  //
+  // Narrowed 2026-08-27 to the owner's ruling: bulk approval belongs to Branch WFM
+  // and Branch Payroll HR over their own branch, plus Payroll Head and Super Admin
+  // across all branches. It previously admitted ten roles — admin, hr, hr_head,
+  // manager, branch_head, process_manager, team_leader and tl among them.
+  //
+  // Branch containment is NOT decided here. PATCH /regularizations/bulk-review now
+  // resolves the caller's permitted branches from user_assignment_scope and refuses
+  // any id outside them with a per-row 403, so a stale or over-broad role list in
+  // the browser cannot widen what the sweep actually touches. This list only decides
+  // whether the button is offered.
+  // "payroll" is here for the same reason the backend lists it: the two branch payroll
+  // HR users hold both payroll_hr and payroll, and their branch scope rows are filed
+  // under payroll. The backend still decides which branches they may touch.
+  const APPROVER_ROLES = ["super_admin", "payroll_head", "payroll_hr", "payroll", "wfm"];
   const canBulkApprove = roleKeys.some((role) => APPROVER_ROLES.includes(role));
+
+  /**
+   * Who gets the approval-queue TABS, as distinct from the bulk-approve BUTTON.
+   *
+   * These were one flag, so narrowing the bulk-approve list to four roles would have
+   * taken the "Pending My Approval" tab away from everyone else — including the
+   * reporting managers this page was just fixed for. Reviewing one request is stage 1
+   * of the workflow and is not a branch-wide action; sweeping a queue is.
+   *
+   * The role list alone is not sufficient here. A reporting manager is frequently a
+   * plain employee who holds none of these role keys and is an approver purely by
+   * virtue of employees.reporting_manager_id — 161 distinct managers live, and the
+   * backend authorises them through resolveEffectiveApprover(). So this also turns
+   * true whenever the (now branch- and scope-filtered) response actually contains
+   * someone else's request: if the server showed it to them, they may act on it.
+   */
+  const REVIEW_UI_ROLES = ["super_admin", "admin", "hr", "hr_head", "manager", "branch_head", "process_manager", "wfm", "payroll_head", "payroll_hr", "team_leader", "tl"];
+  const hasReviewRole = roleKeys.some((role) => REVIEW_UI_ROLES.includes(role));
+
+  // Set by loadRequests() once the first response is in: did the server return any
+  // request belonging to somebody else? That is the data-driven half of
+  // canReviewRequests, and the only signal that catches a reporting manager who holds
+  // no approver role key at all.
+  const [hasTeamRequests, setHasTeamRequests] = useState(false);
+  const [firstLoadDone, setFirstLoadDone] = useState(false);
+  const canReviewRequests = hasReviewRole || hasTeamRequests;
 
   // View tabs: "my_requests" shows only user's own, "pending_approval" shows team requests awaiting action
   type ViewTab = "my_requests" | "pending_approval" | "all";
   // useState initializer runs once at mount — roleKeys is [] on first render (query pending),
-  // so canBulkApprove would always be false and the tab would wrongly default to "my_requests".
-  // Use a ref guard + effect to set the correct default once roles have loaded.
+  // so canReviewRequests would always be false and the tab would wrongly default to
+  // "my_requests". Use a ref guard + effect to set the correct default once roles have
+  // loaded AND the first response is in, since a role-less reporting manager is only
+  // recognisable from the data.
   const [viewTab, setViewTab] = useState<ViewTab>("my_requests");
+  // loadRequests() is also called with no argument from the submit/review/discard
+  // success handlers, which must refetch the tab the user is actually looking at.
+  const viewTabRef = useRef<ViewTab>("my_requests");
+  useEffect(() => { viewTabRef.current = viewTab; }, [viewTab]);
   const tabInitialized = useRef(false);
   useEffect(() => {
-    if (!roleLoading && !tabInitialized.current) {
-      tabInitialized.current = true;
-      if (canBulkApprove) setViewTab("pending_approval");
-    }
-  }, [roleLoading, canBulkApprove]);
+    if (roleLoading || !firstLoadDone || tabInitialized.current) return;
+    tabInitialized.current = true;
+    if (canReviewRequests) setViewTab("pending_approval");
+  }, [roleLoading, firstLoadDone, canReviewRequests]);
 
   // Branches for BulkBranchCorrection
   const { data: branchesData } = useBranches();
@@ -487,6 +556,10 @@ export default function AttendanceRegularization() {
   }, [branchesData]);
 
   const [requests, setRequests] = useState<EmployeeRequest[]>([]);
+  // What the server says matches the current filter, which is not the same as how
+  // many rows were sent — the fetch is capped at REQUEST_FETCH_LIMIT. Shown on the
+  // All tab so a truncated history reads as truncated rather than as the whole set.
+  const [serverTotal, setServerTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState("all");
   const [filterFromDate, setFilterFromDate] = useState("");
@@ -640,20 +713,69 @@ export default function AttendanceRegularization() {
     retry: false,
   });
 
-  async function loadRequests() {
+  /**
+   * This page used to call GET /api/wfm/regularizations with NO query parameters at
+   * all, then filter and page the whole result in the browser at 20 rows a page.
+   * The endpoint had no status filter, no date window and no LIMIT, so for anyone
+   * with org-wide scope it returned every row in the table: 131,353 live on
+   * 2026-08-27, of which 131,336 were already `approved` and 10 were pending. The
+   * request did not come back within 120 seconds. That is the whole of the reported
+   * slowness — the page was downloading seven years of closed history to show a
+   * queue of ten.
+   *
+   * Every fetch below is now bounded, and asks only for what the visible tab needs.
+   */
+  async function loadRequests(tab: ViewTab = viewTabRef.current) {
     setIsLoading(true);
     try {
-      const res = await hrmsApi.get<{ success: boolean; data: WfmRegularizationRow[] }>("/api/wfm/regularizations");
-      setRequests((res.data ?? []).map(normalizeRegularizationRow));
+      const params = new URLSearchParams({ limit: String(REQUEST_FETCH_LIMIT) });
+      // "All" is the only view that wants closed history. The other two are the
+      // approval queue and the caller's own requests, and both are covered by the
+      // open statuses plus /mine below — measured at 162 ms / 14 KB against the
+      // live database versus the 120 s+ timeout this replaces.
+      if (tab !== "all") params.set("status", OPEN_REGULARIZATION_STATUSES.join(","));
+
+      const res = await hrmsApi.get<RegularizationListResponse>(
+        `/api/wfm/regularizations?${params.toString()}`
+      );
+      const scoped = (res.data ?? []).map(normalizeRegularizationRow);
+      setServerTotal(typeof res.total === "number" ? res.total : scoped.length);
+
+      // The caller's own requests come from /mine as well as the scoped list. The
+      // scoped list returns what they may APPROVE; an ordinary employee holds no
+      // scope row and no reports, so without this their own history would be empty
+      // on the My Requests tab. /mine is bounded by employee id and is cheap.
+      let own: EmployeeRequest[] = [];
+      try {
+        const mineRes = await hrmsApi.get<{ success: boolean; data: WfmRegularizationRow[] }>(
+          "/api/wfm/regularizations/mine"
+        );
+        own = (mineRes.data ?? []).map(normalizeRegularizationRow);
+      } catch {
+        // No employee record behind this login — the scoped list stands on its own.
+      }
+
+      // Dedupe by id: a manager's own request appears in both responses.
+      const byId = new Map<string, EmployeeRequest>();
+      for (const row of [...scoped, ...own]) byId.set(row.id, row);
+      const merged = [...byId.values()];
+      setRequests(merged);
+      // Anything the server returned that is not the caller's own is something they
+      // are entitled to review — that is what listScope decided before sending it.
+      setHasTeamRequests(merged.some((row) => row.employee_id !== currentEmployeeId));
     } catch {
       try {
         const res = await hrmsApi.get<{ success: boolean; data: WfmRegularizationRow[] }>("/api/wfm/regularizations/mine");
-        setRequests((res.data ?? []).map(normalizeRegularizationRow));
+        const own = (res.data ?? []).map(normalizeRegularizationRow);
+        setRequests(own);
+        setServerTotal(own.length);
       } catch {
         setRequests([]);
+        setServerTotal(0);
       }
     } finally {
       setIsLoading(false);
+      setFirstLoadDone(true);
     }
   }
 
@@ -663,6 +785,18 @@ export default function AttendanceRegularization() {
     if (dateParam) form.setValue("attendanceDate", dateParam);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Switching to or away from "All" changes which statuses the server is asked for,
+  // so it needs a refetch rather than a client-side re-filter of what is in memory.
+  const lastFetchedTab = useRef<ViewTab | null>(null);
+  useEffect(() => {
+    if (lastFetchedTab.current === null) { lastFetchedTab.current = viewTab; return; }
+    const wasAll = lastFetchedTab.current === "all";
+    const isAll = viewTab === "all";
+    lastFetchedTab.current = viewTab;
+    if (wasAll !== isAll) loadRequests(viewTab);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewTab]);
 
   // Auto-populate current times from preview; also pre-fill requested times from actual punch data
   useEffect(() => {
@@ -831,7 +965,9 @@ export default function AttendanceRegularization() {
               </div>
             </div>
             <button
-              onClick={loadRequests}
+              // Wrapped, not passed directly: loadRequests now takes an optional tab and
+              // React would hand it the MouseEvent as that argument.
+              onClick={() => loadRequests()}
               className="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-50"
             >
               <RefreshCw className="h-4 w-4" />
@@ -1487,8 +1623,12 @@ export default function AttendanceRegularization() {
             Sits above "My Requests" because it is a clearing task done under month-end time
             pressure, not something to scroll past. Reuses canBulkApprove: the people who
             approve regularizations are the people who raise them in bulk. The backend enforces
-            scope per employee regardless — this only decides who is offered the control. */}
-        {canBulkApprove && (
+            scope per employee regardless — this only decides who is offered the control.
+            Uses canReviewRequests, not canBulkApprove: raising corrections in bulk is not the
+            same authority as approving a queue in bulk, and narrowing this to the four
+            bulk-approval roles would have withdrawn it from hr, branch_head and
+            process_manager, who were never in question. */}
+        {canReviewRequests && (
           <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3">
               <h2 className="text-sm font-semibold text-slate-950">Bulk correction across a branch</h2>
@@ -1525,7 +1665,7 @@ export default function AttendanceRegularization() {
                     {tabCounts.myRequests}
                   </span>
                 </button>
-                {canBulkApprove && (
+                {canReviewRequests && (
                   <button
                     type="button"
                     onClick={() => { setViewTab("pending_approval"); setTablePage(1); }}
@@ -1548,7 +1688,7 @@ export default function AttendanceRegularization() {
                     )}
                   </button>
                 )}
-                {canBulkApprove && (
+                {canReviewRequests && (
                   <button
                     type="button"
                     onClick={() => { setViewTab("all"); setTablePage(1); }}
@@ -1588,7 +1728,14 @@ export default function AttendanceRegularization() {
             <p className="text-xs text-slate-500">
               {viewTab === "my_requests" && "Your own regularization requests and their status."}
               {viewTab === "pending_approval" && "Team requests awaiting your approval action."}
-              {viewTab === "all" && `All requests in your scope. (${filteredRequests.length} shown)`}
+              {viewTab === "all" && (
+                serverTotal > requests.length
+                  // The fetch is capped at REQUEST_FETCH_LIMIT, so say so rather than
+                  // letting a truncated page read as the complete history. `serverTotal`
+                  // is the server's own count for this filter.
+                  ? `${filteredRequests.length} shown — most recent ${requests.length} of ${serverTotal.toLocaleString("en-IN")} requests in your scope. Narrow by status or date to reach older ones.`
+                  : `All requests in your scope. (${filteredRequests.length} shown)`
+              )}
             </p>
             <div className="flex flex-wrap gap-2">
               <Select value={filterStatus} onValueChange={(v) => { setFilterStatus(v); setTablePage(1); }}>
@@ -1796,7 +1943,7 @@ export default function AttendanceRegularization() {
         onDiscarded={loadRequests}
       />
 
-      {/* Review confirmation dialog — remarks required for approval */}
+      {/* Review confirmation dialog — remarks required for rejection, optional on approval */}
       <Dialog
         open={!!reviewDialogTarget}
         onOpenChange={(open) => { if (!open) { setReviewDialogTarget(null); setReviewDialogNote(""); } }}
@@ -1812,12 +1959,12 @@ export default function AttendanceRegularization() {
           </DialogHeader>
           <div className="space-y-2">
             <Label className="text-sm font-medium">
-              Remarks {reviewDialogTarget?.status === "approved" ? <span className="text-rose-500">*</span> : "(optional)"}
+              Remarks {reviewDialogTarget?.status === "approved" ? "(optional)" : <span className="text-rose-500">*</span>}
             </Label>
             <Textarea
               value={reviewDialogNote}
               onChange={(e) => setReviewDialogNote(e.target.value)}
-              placeholder={reviewDialogTarget?.status === "approved" ? "Remarks are required to approve" : "Add rejection reason (optional)"}
+              placeholder={reviewDialogTarget?.status === "approved" ? "Add a note for the employee (optional)" : "Remarks are required to reject"}
               rows={3}
               className="rounded-xl resize-none"
             />
@@ -1827,7 +1974,7 @@ export default function AttendanceRegularization() {
               Cancel
             </Button>
             <Button
-              disabled={reviewMutation.isPending || (reviewDialogTarget?.status === "approved" && !reviewDialogNote.trim())}
+              disabled={reviewMutation.isPending || (reviewDialogTarget?.status !== "approved" && !reviewDialogNote.trim())}
               onClick={() => {
                 if (!reviewDialogTarget) return;
                 reviewMutation.mutate(

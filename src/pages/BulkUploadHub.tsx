@@ -76,6 +76,22 @@ const IMPORT_RPC_BY_TYPE: Record<string, string> = {
   WEEK_OFF_PREFERENCE_BULK: "import_weekoff_preference_batch",
   SHIFT_ROTATION_TYPE_UPDATE: "import_shift_rotation_type_batch",
   SHIFT_ROSTER_BULK: "import_shift_roster_batch",
+  PF_UAN_UPDATE: "import_pf_uan_batch",
+  // Approval-gated types. Import only STAGES rows — into leave_request,
+  // attendance_regularization, incentive_upload_batch/line and
+  // employee_deduction_entries, each in that table's own pending state — and nothing
+  // reaches payroll until a branch head approves the batch.
+  //
+  // All five were live, selectable templates in the dropdown below with a working
+  // backend import behind them, and no entry here. getImportRpc returned "" for them,
+  // so a user could pick "Leave Application (Bulk)", upload and validate a file, and
+  // then be told at the last step "Import mapping for LEAVE_APPLICATION_BULK is not
+  // enabled yet." Live data agrees: zero batches have ever been created for any of the
+  // five, against nine for the types that are mapped.
+  LEAVE_APPLICATION_BULK: "import_leave_application_batch",
+  ATTENDANCE_REGULARIZATION_BULK: "import_attendance_regularization_batch",
+  INCENTIVE_BULK: "import_incentive_bulk_batch",
+  DEDUCTION_BULK: "import_deduction_bulk_batch",
 };
 
 function getImportRpc(uploadTypeCode: string) {

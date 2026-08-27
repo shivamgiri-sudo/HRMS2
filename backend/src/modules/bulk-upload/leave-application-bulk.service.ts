@@ -178,13 +178,33 @@ export async function applyLeaveBatch(
 
   for (const row of rows) {
     try {
-      // branch_head_approved, not approved: it is the terminal approval status the
-      // leave engine already recognises for branch-head decisions, and it triggers
-      // the identical balance deduction and attendance write.
+      // 'approved', not 'branch_head_approved'.
+      //
+      // Both statuses run the identical balance deduction and attendance write inside
+      // reviewRequest, so the two looked interchangeable. They are not, once the row
+      // is in the table: 'approved' is the ONLY leave status the rest of the system
+      // reads. attendance-engine.service.ts resolves an approved-leave override with
+      // `leave_request.status = 'approved'`, and the day it writes into
+      // attendance_daily_record is left is_locked = 0 (verified live: 14 of 14
+      // leave_approved rows are unlocked). So a batch approved as
+      // 'branch_head_approved' produced a leave_approved attendance row that the
+      // nightly engine could not see any leave behind — it reclassified the day from
+      // biometric/APR evidence, overwrote the unlocked row as 'absent' with
+      // lwp_value 1.00, and payroll charged LWP for leave the branch head had
+      // approved. The upload would have looked like it worked, and the money would
+      // have been wrong a night later.
+      //
+      // Fourteen other consumers filter leave the same way — payroll's
+      // leave-reversal.service.ts, the leave-balance-sync worker, roster capacity,
+      // RTA and the reporting executors among them — so this is not only the engine.
+      //
+      // Who approved it is not lost: importLeaveBatch already sets approval_level =
+      // 'branch_head' and requires_branch_head_approval = 1 on every row of the
+      // batch, and the remark below names the batch.
       await leaveService.reviewRequest(
         row.created_entity_id,
         {
-          status: "branch_head_approved",
+          status: "approved",
           remarks: remarks
             ? `Branch Head bulk approval (${batch.upload_batch_no}): ${remarks}`
             : `Branch Head bulk approval (${batch.upload_batch_no})`,

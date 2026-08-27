@@ -254,10 +254,10 @@ export default function TeamLeaveTab() {
           </DialogHeader>
           <div className="space-y-1.5">
             <label className="text-sm font-medium">
-              Remarks {reviewTarget?.action === "approved" ? <span className="text-rose-500">*</span> : "(optional)"}
+              Remarks {reviewTarget?.action === "approved" ? "(optional)" : <span className="text-rose-500">*</span>}
             </label>
             <Textarea
-              placeholder={reviewTarget?.action === "approved" ? "Remarks are required to approve" : "Add rejection reason (optional)"}
+              placeholder={reviewTarget?.action === "approved" ? "Add a note for the employee (optional)" : "Remarks are required to reject"}
               value={remarks}
               onChange={(e) => setRemarks(e.target.value)}
               rows={3}
@@ -270,7 +270,7 @@ export default function TeamLeaveTab() {
             </Button>
             <Button
               onClick={handleReview}
-              disabled={submitting || (reviewTarget?.action === "approved" && !remarks.trim())}
+              disabled={submitting || (reviewTarget?.action !== "approved" && !remarks.trim())}
               className={`rounded-xl ${reviewTarget?.action === "approved" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-rose-600 hover:bg-rose-700"}`}
             >
               {submitting ? "Submitting…" : reviewTarget?.action === "approved" ? "Approve" : "Reject"}

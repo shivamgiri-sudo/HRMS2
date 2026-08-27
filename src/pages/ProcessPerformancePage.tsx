@@ -3,29 +3,49 @@ import { useQuery } from "@tanstack/react-query";
 import { hrmsApi, type HrmsEnvelope } from "@/lib/hrmsApi";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import ProcessPerformanceTable, { type PerfQuery } from "@/components/process-performance/ProcessPerformanceTable";
-import { Activity } from "lucide-react";
+import { Activity, RotateCcw } from "lucide-react";
 
 /**
  * Process Performance Health Report Card.
  *
- * The process picker is fed by /api/processes/my-processes, which resolves the
- * caller's own assignments — but that endpoint is only the picker. Every figure
- * on the page is scoped again server-side, so an unlisted processId typed into
- * the URL still returns nothing outside the caller's scope.
+ * Both pickers are fed by /api/process-performance/filters, which resolves them
+ * through the SAME scope predicate the table uses. They were previously fed by
+ * /api/processes/my-processes, which reads user_assignment_scope — live that
+ * grants a process to ten users in the whole system, so every admin, CEO and COO
+ * opened this page to an empty Process picker and, because the Manager picker
+ * was gated behind it, no working filters at all.
+ *
+ * The pickers are only pickers. Every figure is scoped again server-side, so an
+ * id typed into the URL still returns nothing outside the caller's scope.
  */
 
-interface AssignedProcess { id: string; process_name: string }
+interface FilterOptions {
+  processes: Array<{ id: string; name: string }>;
+  managers: Array<{ id: string; name: string }>;
+}
 
 const SEL = "h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-400";
 
+/**
+ * Dates are formatted from the LOCAL calendar fields, never via toISOString().
+ *
+ * In IST (UTC+5:30) a locally-built midnight Date is 18:30 UTC the previous day,
+ * so `new Date(2026, 7, 1).toISOString().slice(0, 10)` is "2026-07-31". Picking
+ * August therefore queried 31 Jul – 30 Aug: every figure on the page was
+ * computed over a window shifted one day at both ends.
+ */
+const isoLocal = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
 function firstOfMonth(d = new Date()) {
-  return new Date(d.getFullYear(), d.getMonth(), 1).toISOString().slice(0, 10);
+  return isoLocal(new Date(d.getFullYear(), d.getMonth(), 1));
 }
-const todayIso = () => new Date().toISOString().slice(0, 10);
+const todayIso = () => isoLocal(new Date());
+const currentMonth = () => todayIso().slice(0, 7);
 
 export default function ProcessPerformancePage() {
   const [mode, setMode] = useState<"month" | "range">("month");
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(currentMonth);
   const [from, setFrom] = useState(firstOfMonth);
   const [to, setTo] = useState(todayIso);
   const [processId, setProcessId] = useState<string>("");
@@ -38,29 +58,38 @@ export default function ProcessPerformancePage() {
     const [y, m] = month.split("-").map(Number);
     const start = new Date(y, m - 1, 1);
     const end = new Date(y, m, 0);
-    return { from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10) };
+    return { from: isoLocal(start), to: isoLocal(end) };
   }, [mode, month, from, to]);
 
-  const { data: procs } = useQuery({
-    queryKey: ["my-processes"],
-    queryFn: () => hrmsApi.get<HrmsEnvelope<AssignedProcess[]>>("/api/processes/my-processes"),
-  });
-
-  // Manager options come from the manager grain of this same scoped endpoint, so
-  // the list can only ever contain managers the caller is allowed to see.
-  const { data: mgrs } = useQuery({
-    queryKey: ["process-performance", "manager-options", processId, range],
-    enabled: !!processId,
-    queryFn: () => hrmsApi.get<HrmsEnvelope<Array<{ id: string; name: string }>>>(
-      `/api/process-performance/managers?processId=${encodeURIComponent(processId)}&from=${range.from}&to=${range.to}`,
+  // One call for both pickers, through the page's own scope. The manager list
+  // narrows to the chosen process when there is one, and stays fully usable when
+  // there is not — filtering by manager first is a legitimate way to read this
+  // page, and gating it behind a process choice made it unreachable.
+  const { data: options } = useQuery({
+    queryKey: ["process-performance", "filters", processId],
+    queryFn: () => hrmsApi.get<HrmsEnvelope<FilterOptions>>(
+      `/api/process-performance/filters${processId ? `?processId=${encodeURIComponent(processId)}` : ""}`,
     ),
   });
+  const processes = options?.data?.processes ?? [];
+  const managers = options?.data?.managers ?? [];
+  const isFiltered = mode !== "month" || month !== currentMonth() || !!processId || !!managerId;
 
   const query: PerfQuery = {
     from: range.from,
     to: range.to,
     processId: processId || null,
     managerId: managerId || null,
+    employeeId: null,
+  };
+
+  const resetFilters = () => {
+    setMode("month");
+    setMonth(currentMonth());
+    setFrom(firstOfMonth());
+    setTo(todayIso());
+    setProcessId("");
+    setManagerId("");
   };
 
   return (
@@ -113,27 +142,39 @@ export default function ProcessPerformancePage() {
               value={processId}
               onChange={(e) => { setProcessId(e.target.value); setManagerId(""); }}
             >
-              <option value="">All my processes</option>
-              {(procs?.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.process_name}</option>)}
+              <option value="">All processes in my scope</option>
+              {processes.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
 
           <div className="flex flex-col gap-1">
             <label htmlFor="pp-manager" className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Manager</label>
-            <select id="pp-manager" className={SEL} value={managerId} disabled={!processId}
+            <select id="pp-manager" className={SEL} value={managerId}
               onChange={(e) => setManagerId(e.target.value)}>
-              <option value="">{processId ? "All managers" : "Select a process first"}</option>
-              {(mgrs?.data ?? []).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+              <option value="">All managers</option>
+              {managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           </div>
+
+          {isFiltered && (
+            <button
+              type="button"
+              onClick={resetFilters}
+              className="h-9 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />Reset
+            </button>
+          )}
         </div>
 
         <ProcessPerformanceTable query={query} />
 
         <p className="text-[11px] text-slate-400 px-1">
-          Cells marked <span className="italic text-slate-300">not tracked</span> have no data source in the system yet —
-          that is different from a low score. Root-cause breakdowns are shown only where the underlying records carry a
-          category; where they do not, the reason is stated instead.
+          A cell reads <span className="text-slate-400">—</span> when its source holds no rows for that group and period,
+          and <span className="italic text-slate-300">not tracked</span> when the figure is not defined at that level —
+          neither is a low score. Mandate and Buffer are contracted per cost centre, so they are reported on process rows
+          only. Root-cause breakdowns are shown only where the underlying records carry a category; where they do not, the
+          reason is stated instead.
         </p>
       </div>
     </DashboardLayout>

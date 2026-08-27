@@ -66,6 +66,7 @@ export interface DiscardBlocker {
     | "NO_LEAVE_TYPE"
     | "PAYROLL_MONTH_CLOSED"
     | "OUT_OF_SCOPE"
+    | "LOCKED_BY_BULK_UPLOAD"
     | "NOT_FOUND";
   message: string;
 }
@@ -427,6 +428,63 @@ async function loadAttendanceRows(
   return out;
 }
 
+/**
+ * Refuse to discard a row that an approved bulk upload locked.
+ *
+ * A bulk batch is approved once, by a branch head, for hundreds of employees at a
+ * time; `lockEntity` records every row it applied in `bulk_upload_locked_entity` so
+ * that decision cannot then be unpicked one row at a time through the discard screen,
+ * leaving the batch's own summary claiming rows that no longer exist.
+ *
+ * That table has been written since the bulk-approval flow shipped, and
+ * `getEntityLock` was written to read it — but nothing ever called it, so the lock
+ * was recorded and never enforced. This is the call site it was written for.
+ *
+ * The entity_type values are the bulk services' own ENTITY_TYPE constants
+ * ("leave_request", "attendance_regularization"), not the discard module's shorter
+ * preview names, so they are mapped here rather than passed through.
+ */
+async function bulkUploadLockBlocker(
+  entityType: "leave" | "regularization" | "dispute",
+  entityId: string,
+): Promise<DiscardBlocker | null> {
+  const { getEntityLock } = await import("../bulk-upload/bulk-approval.service.js");
+  const lockedType = entityType === "leave" ? "leave_request" : "attendance_regularization";
+  const lock = await getEntityLock(lockedType, entityId);
+  if (!lock) return null;
+  return {
+    code: "LOCKED_BY_BULK_UPLOAD",
+    message:
+      `This row was applied by approved bulk upload ${lock.upload_batch_no ?? "(batch number unavailable)"} ` +
+      `and is locked. Reverse it through that batch rather than discarding the row on its own.`,
+  };
+}
+
+/**
+ * The same lock, enforced inside the discard transaction.
+ *
+ * `bulkUploadLockBlocker` above runs in the preview, which is deliberately outside any
+ * transaction — so between the preview passing and the discard committing, a bulk batch
+ * can be approved over the very row being discarded. This is the guard that actually
+ * makes the lock hold: it runs under the row lock the discard already holds, and throws
+ * rather than reporting a blocker, because by this point there is no preview left to
+ * put one in.
+ */
+async function assertNotBulkLocked(
+  entityType: "leave_request" | "attendance_regularization",
+  entityId: string,
+): Promise<void> {
+  const { getEntityLock } = await import("../bulk-upload/bulk-approval.service.js");
+  const lock = await getEntityLock(entityType, entityId);
+  if (!lock) return;
+  throw httpError(
+    `This row was applied by approved bulk upload ${lock.upload_batch_no ?? "(batch number unavailable)"} ` +
+    `and is locked. Reverse it through that batch rather than discarding the row on its own.`,
+    409,
+    "LOCKED_BY_BULK_UPLOAD",
+  );
+}
+
 // ─── Service ─────────────────────────────────────────────────────────────────
 
 export const discardService = {
@@ -452,6 +510,9 @@ export const discardService = {
 
     const scopeBlocker = await checkScope(actor, leave.employee_id);
     if (scopeBlocker) blockers.push(scopeBlocker);
+
+    const leaveLockBlocker = await bulkUploadLockBlocker("leave", id);
+    if (leaveLockBlocker) blockers.push(leaveLockBlocker);
 
     const months = monthsInRange(String(leave.from_date), String(leave.to_date));
     const { payroll, blocker: payrollBlocker } = await checkPayrollMonths(months);
@@ -543,6 +604,9 @@ export const discardService = {
     const scopeBlocker = await checkScope(actor, reg.employee_id);
     if (scopeBlocker) blockers.push(scopeBlocker);
 
+    const regLockBlocker = await bulkUploadLockBlocker(isDispute ? "dispute" : "regularization", id);
+    if (regLockBlocker) blockers.push(regLockBlocker);
+
     const sessionDate = String(reg.session_date).slice(0, 10);
     const { payroll, blocker: payrollBlocker } = await checkPayrollMonths([sessionDate.slice(0, 7)]);
     if (payrollBlocker) blockers.push(payrollBlocker);
@@ -611,6 +675,7 @@ export const discardService = {
           "NOT_APPROVED"
         );
       }
+      await assertNotBulkLocked("leave_request", id);
 
       employeeId = String(leave.employee_id);
       const days = Number(leave.total_days ?? 0);
@@ -750,6 +815,7 @@ export const discardService = {
           "NOT_APPROVED"
         );
       }
+      await assertNotBulkLocked("attendance_regularization", id);
 
       employeeId = String(reg.employee_id);
       const sessionDate = String(reg.session_date).slice(0, 10);

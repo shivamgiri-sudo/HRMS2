@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/modules/employees/employee.routes.ts",
+    "src/modules/employees/employee.secure.routes.ts",
+    "src/modules/leave/leave.secure.routes.ts",
+    "src/modules/wfm/wfm.regularization.secure.routes.ts"
+  ],
+  "compilerOptions": { "noEmit": true }
+}
