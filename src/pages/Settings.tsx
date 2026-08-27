@@ -31,7 +31,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useDepartments } from "@/hooks/useDepartments";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { useIsAdminOrHR, useUserRole } from "@/hooks/useUserRole";
+import { useIsAdminOrHR, useUserRole, useWorkforceAccess } from "@/hooks/useUserRole";
 import { useViewAs } from "@/contexts/ViewAsContext";
 import { UserRolesManager } from "@/components/settings/UserRolesManager";
 import { EmployeeCodeSettings } from "@/components/settings/EmployeeCodeSettings";
@@ -508,6 +508,14 @@ const Settings = () => {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { isAdminOrHR, isLoading: roleLoading, role } = useIsAdminOrHR();
+  /**
+   * Departments tab is a second door onto the same department_master CRUD as /departments.
+   * The API is super_admin-only for structure changes (requireDepartmentWrite, backend
+   * org.routes.ts), so the ~24 accounts that pass isAdminOrHR keep the read-only list and
+   * lose the buttons that would only 403.
+   */
+  const { roleKeys: settingsRoleKeys, isResolved: settingsAccessResolved } = useWorkforceAccess();
+  const canManageDepartments = settingsAccessResolved && settingsRoleKeys.includes("super_admin");
   const isAdmin = role === 'admin' || role === 'super_admin';
   const isSuperAdmin = role === 'super_admin';
   const { isViewAsEnabled, toggleFeatureEnabled } = useViewAs();
@@ -804,6 +812,7 @@ const Settings = () => {
                   <CardTitle>Departments</CardTitle>
                   <CardDescription>Manage company departments</CardDescription>
                 </div>
+                {canManageDepartments && (
                 <Dialog open={deptDialogOpen} onOpenChange={(open) => {
                   setDeptDialogOpen(open);
                   if (!open) {
@@ -854,6 +863,7 @@ const Settings = () => {
                     </DialogFooter>
                   </DialogContent>
                 </Dialog>
+                )}
               </CardHeader>
               <CardContent>
                 {loadingDepts ? (
@@ -876,6 +886,7 @@ const Settings = () => {
                           <TableCell className="font-medium">{dept.name}</TableCell>
                           <TableCell className="text-muted-foreground">{dept.description || '-'}</TableCell>
                           <TableCell>
+                            {canManageDepartments ? (
                             <div className="flex gap-2">
                               <Button variant="ghost" size="icon" className="cursor-pointer" onClick={() => handleEditDept(dept)}>
                                 <Pencil className="h-4 w-4" />
@@ -890,6 +901,9 @@ const Settings = () => {
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">View only</span>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}

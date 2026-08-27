@@ -281,9 +281,18 @@ function FormModal({
 interface EntityTabProps {
   tab: TabConfig;
   isAdmin: boolean;
+  /**
+   * Whether this viewer may change *this* master, as opposed to the org masters generally.
+   *
+   * Added for Departments: department_master structure changes are super_admin-only at the
+   * API (requireDepartmentWrite, backend org.routes.ts), so for everyone else this tab is a
+   * read-only list. Without the split, the ~24 accounts that pass isAdminOrHR would still be
+   * offered Add / Edit / Delete here and get a 403 on submit.
+   */
+  canWrite: boolean;
 }
 
-function EntityTab({ tab, isAdmin }: EntityTabProps) {
+function EntityTab({ tab, isAdmin, canWrite }: EntityTabProps) {
   const [records, setRecords] = useState<OrgRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -487,13 +496,15 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
               </select>
             )}
           </div>
-          <button
-            onClick={openAdd}
-            className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer"
-          >
-            <Plus className="h-4 w-4" />
-            Add {tab.label.replace(/s$/, "")}
-          </button>
+          {canWrite && (
+            <button
+              onClick={openAdd}
+              className="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition-colors cursor-pointer"
+            >
+              <Plus className="h-4 w-4" />
+              Add {tab.label.replace(/s$/, "")}
+            </button>
+          )}
         </div>
         <input
           type="text"
@@ -594,6 +605,10 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
                     </td>
                     <td className="p-4">
                       <div className="flex items-center gap-2">
+                        {!canWrite && (
+                          <span className="text-[11px] font-semibold text-slate-400">View only</span>
+                        )}
+                        {canWrite && (
                         <button
                           onClick={() => openEdit(rec)}
                           className="cursor-pointer rounded-xl border border-slate-200 p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800 transition-colors"
@@ -601,7 +616,8 @@ function EntityTab({ tab, isAdmin }: EntityTabProps) {
                         >
                           <Pencil className="h-3.5 w-3.5" />
                         </button>
-                        {isAdmin && (
+                        )}
+                        {isAdmin && canWrite && (
                           <>
                             <button
                               onClick={() => toggleStatus(rec)}
@@ -2129,11 +2145,19 @@ function CostCentreTab({ isAdmin }: { isAdmin: boolean }) {
 // ── Main page ────────────────────────────────────────────────────────────────
 
 export default function NativeOrgMasters() {
-  const { isAdminOrHR, roles } = useIsAdminOrHR();
+  const { isAdminOrHR, roles, roleKeys, isResolved } = useIsAdminOrHR();
   const isAdmin = roles.includes("admin");
 
   const [activeTab, setActiveTab] = useState<TabKey>("branches");
   const currentTab = TABS.find((t) => t.key === activeTab)!;
+  /**
+   * Departments is the one tab whose writes the API restricts to super_admin — renaming or
+   * deleting a department re-points every employee, payroll mapping and requisition that
+   * resolves through it. Every other master stays on the existing admin/hr gate.
+   * Gate on isResolved so the controls do not flash for a render before roles land.
+   */
+  const canWriteTab =
+    currentTab.key !== "departments" || (isResolved && roleKeys.includes("super_admin"));
   const [downloading, setDownloading] = useState(false);
 
   const downloadExcel = async () => {
@@ -2199,7 +2223,7 @@ export default function NativeOrgMasters() {
         ) : activeTab === "cost-centres" ? (
           <CostCentreTab key="cost-centres" isAdmin={isAdmin || isAdminOrHR} />
         ) : (
-          <EntityTab key={activeTab} tab={currentTab} isAdmin={isAdmin || isAdminOrHR} />
+          <EntityTab key={activeTab} tab={currentTab} isAdmin={isAdmin || isAdminOrHR} canWrite={canWriteTab} />
         )}
       </div>
     </DashboardLayout>
