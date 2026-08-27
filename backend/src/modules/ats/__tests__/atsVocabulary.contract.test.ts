@@ -64,11 +64,16 @@ describe("branch vocabulary", () => {
     expect(branchRegion("Jaldarshan")).toBe("Gujarat");
   });
 
-  it("does NOT fold the Noida sites into a branch", () => {
-    // Okaya and Trapezoid are worked by staff rostered to both NOIDA and NOIDA-2, so any
-    // rollup would be a guess. They keep their identity; region supplies the grouping.
-    expect(canonicalBranch("Okaya Centre")).toBe("Okaya Centre");
-    expect(canonicalBranch("Trapezoid")).toBe("Trapezoid");
+  it("folds the Noida site aliases onto their branches", () => {
+    /**
+     * Okaya is NOIDA-2 and Trapezoid is NOIDA, confirmed by the business 2026-08-27. The data
+     * could not settle this on its own — staff rostered to both branches take candidates at
+     * both sites — so it was escalated rather than guessed. The building is still visible on
+     * each row as `_site`; only the branch rolls up.
+     */
+    expect(canonicalBranch("Okaya Centre")).toBe("NOIDA-2");
+    expect(canonicalBranch("Okaya")).toBe("NOIDA-2");
+    expect(canonicalBranch("Trapezoid")).toBe("NOIDA");
     expect(branchRegion("Okaya Centre")).toBe("Uttar Pradesh");
     expect(branchRegion("Trapezoid")).toBe("Uttar Pradesh");
   });
@@ -100,14 +105,17 @@ describe("recruiter identity", () => {
     }
   });
 
-  it("keeps KHUSHI and Khushi Mishra apart", () => {
+  it("merges KHUSHI into Khushi Mishra", () => {
     /**
-     * The trap. A name-similarity check flags these as a likely pair and they are two people:
-     * KHUSHI is khushichandaliya379@gmail.com at NOIDA-2; Khushi Mishra is
-     * khushi.mishra@teammas.in at NOIDA. Merging them would silently combine two recruiters'
-     * numbers into one leaderboard row.
+     * The roster's email read these as two people — KHUSHI carries a personal
+     * khushichandaliya379@gmail.com against khushi.mishra@teammas.in — and the business
+     * confirmed on 2026-08-27 that they are one person with a wrong address on her roster row.
+     *
+     * Recorded because it is the counter-example to this module's own method: the roster email
+     * is the strongest signal available and it is not infallible, so a merge it rejects is a
+     * question for a human rather than a settled answer.
      */
-    expect(recruiterKey(null, "KHUSHI")).not.toBe(recruiterKey(null, "Khushi Mishra"));
+    expect(recruiterKey(null, "KHUSHI")).toBe(recruiterKey(null, "Khushi Mishra"));
     expect(suspectedDuplicateRecruiters(["KHUSHI", "Khushi Mishra"])).toEqual([]);
   });
 

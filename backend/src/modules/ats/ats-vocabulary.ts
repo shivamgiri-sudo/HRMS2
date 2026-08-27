@@ -136,14 +136,14 @@ export const BRANCH_CANONICAL: Readonly<Record<string, string>> = {
   "noida 2": "NOIDA-2",
   "noida-dialdesk": "NOIDA-DIALDESK",
   "noida-dd": "NOIDA-DIALDESK",
-  // Okaya and Trapezoid are Noida SITES, not branches, and are deliberately not folded into
-  // NOIDA or NOIDA-2. Both are worked by staff from both branches — Sheelu and Shristi are
-  // rostered to NOIDA-2 and Mehar to NOIDA, yet all three take candidates at these sites — so
-  // any rollup would be a guess. They keep their own identity; `_region` gives the grouping.
-  "okaya centre": "Okaya Centre",
-  "okaya operations": "Okaya Centre",
-  okaya: "Okaya Centre",
-  trapezoid: "Trapezoid",
+  // Okaya and Trapezoid are alias names for the two Noida branches, confirmed by the business
+  // 2026-08-27. The data alone could not settle this — staff rostered to both branches take
+  // candidates at both sites, so the roster suggested no rollup — which is why it was left to a
+  // human rather than guessed. The building stays visible as `_site`; only the branch rolls up.
+  "okaya centre": "NOIDA-2",
+  "okaya operations": "NOIDA-2",
+  okaya: "NOIDA-2",
+  trapezoid: "NOIDA",
   // Head office and the single-row entries.
   "head office": "HEAD OFFICE",
   corp: "HEAD OFFICE",
@@ -162,8 +162,6 @@ export const BRANCH_REGION: Readonly<Record<string, string>> = {
   "NOIDA": "Uttar Pradesh",
   "NOIDA-2": "Uttar Pradesh",
   "NOIDA-DIALDESK": "Uttar Pradesh",
-  "Okaya Centre": "Uttar Pradesh",
-  "Trapezoid": "Uttar Pradesh",
   "HEAD OFFICE": "Uttar Pradesh",
   "Delhi Office": "Delhi",
 };
@@ -247,12 +245,22 @@ export const RECRUITER_ALIAS: Readonly<Record<string, string>> = {
   mehar: "Mehar Sheikh",
   "sheelu verma": "Sheelu",
   "srashti chauhan": "Shristi",
+  // Confirmed by the business 2026-08-27. The roster row for KHUSHI carries a personal gmail
+  // (khushichandaliya379@gmail.com) while the same person's corporate address is
+  // khushi.mishra@teammas.in, which is why the email check read them as two people. The gmail
+  // is the wrong address on the roster, not a second recruiter.
+  khushi: "Khushi Mishra",
 };
 
-/** Pairs a similarity check would flag that are confirmed to be different people. */
-export const RECRUITER_DISTINCT: ReadonlyArray<readonly [string, string]> = [
-  ["khushi", "khushi mishra"],
-];
+/**
+ * Pairs a similarity check would flag that are confirmed to be different people.
+ *
+ * Empty today. `khushi` / `khushi mishra` sat here until the business confirmed on 2026-08-27
+ * that they are one person whose roster row carries a personal gmail; it moved to
+ * RECRUITER_ALIAS. Kept as the place to record a genuine false positive, because the roster's
+ * email is the evidence this module leans on and it is demonstrably not always right.
+ */
+export const RECRUITER_DISTINCT: ReadonlyArray<readonly [string, string]> = [];
 
 export function recruiterKey(_id: unknown, name: unknown): string {
   const nm = normalizeRecruiterName(name);
@@ -277,6 +285,8 @@ export function suspectedDuplicateRecruiters(names: readonly string[]): Array<{ 
       const tb = tokens(list[j]);
       if (!ta.length || !tb.length) continue;
       const [short, long] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+      // Already resolved to one person by RECRUITER_ALIAS — nothing left to confirm.
+      if (recruiterKey(null, list[i]) === recruiterKey(null, list[j])) continue;
       if (isConfirmedDistinct(list[i], list[j])) continue;
       if (short.every((t) => long.includes(t))) {
         out.push({ a: list[i], b: list[j], reason: "one name's words are contained in the other" });

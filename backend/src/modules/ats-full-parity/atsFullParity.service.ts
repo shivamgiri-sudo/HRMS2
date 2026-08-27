@@ -1535,10 +1535,18 @@ export const atsFullParityService = {
     const rawName = normalizeText(row.recruiter_assigned_name || row.recruiter_name);
     const canonical = normalizeRecruiterName(rawName);
     if (byId || rawName) {
+      /**
+       * Corporate address first. Some roster rows carry a recruiter's personal mailbox — the
+       * row for KHUSHI holds khushichandaliya379@gmail.com where the same person's working
+       * address is khushi.mishra@teammas.in. Sending an SLA breach alert, which names a
+       * candidate, to a free-mail account is worse than not sending it, so a company-domain
+       * address wins whenever one exists for the same person.
+       */
       const [rows] = await db.execute<RowDataPacket[]>(
         `SELECT email, name FROM ats_recruiter_roster
           WHERE active_status = 1 AND email IS NOT NULL AND email <> ''
             AND (id = ? OR recruiter_code = ? OR LOWER(TRIM(name)) = ? OR LOWER(TRIM(name)) = ?)
+          ORDER BY (email LIKE '%@teammas.%') DESC, LENGTH(email) ASC
           LIMIT 1`,
         [byId || "", byId || "", rawName.toLowerCase(), canonical.toLowerCase()],
       );
@@ -1765,6 +1773,12 @@ export const atsFullParityService = {
     await countOf("emails_skipped_no_recipient", "notification",
       `SELECT COUNT(*) AS cnt FROM ats_command_email_log WHERE status = 'skipped' AND notes LIKE '%Missing TO%'`,
       (n) => n === 0, "Alerts raised but dropped because no recipient address could be resolved.");
+
+    await countOf("recruiters_with_personal_email_on_roster", "data_integrity",
+      `SELECT COUNT(*) AS cnt FROM ats_recruiter_roster
+        WHERE active_status = 1 AND email IS NOT NULL AND email <> ''
+          AND email NOT LIKE '%@teammas.%'`,
+      (n) => n === 0, "A personal mailbox on the roster receives candidate-identifying alerts.");
 
     await countOf("waiting_candidates_without_recruiter_email", "notification",
       `SELECT COUNT(*) AS cnt FROM ats_candidate WHERE ${scoped}
