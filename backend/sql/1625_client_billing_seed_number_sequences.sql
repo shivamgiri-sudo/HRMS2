@@ -1,4 +1,4 @@
--- 1622_client_billing_seed_number_sequences.sql
+-- 1625_client_billing_seed_number_sequences.sql
 --
 -- CRITICAL data-integrity fix for the client-billing module.
 --
@@ -51,6 +51,20 @@
 --
 -- Rollback (only safe while no live invoice has been issued since):
 --   DELETE FROM client_invoice_number_sequence WHERE kind IN ('proforma','bill');
+--
+-- RENUMBERED BEFORE RELEASE. This first landed on disk as
+-- `migrations/1622_client_billing_seed_number_sequences.sql` and was applied to production
+-- under that filename on 2026-08-27 (schema_migrations records it, executor "Work:33340") —
+-- a local `tsx watch` backend picked up the manifest edit and ran it, since backend/.env
+-- points DB_HOST at the live mas_hrms. It was renumbered afterwards because 1622, 1623 and
+-- 1624 were all claimed by concurrent sessions, and moved from sql/migrations/ to sql/
+-- because that is where the manifest guard looks for new files (the sql/migrations/ entries
+-- are grandfathered in the lock's knownDangling list).
+--
+-- So production carries a schema_migrations row under the OLD name and will apply this file
+-- again under the new one. That is harmless and deliberate: every statement here is
+-- ON DUPLICATE KEY UPDATE ... GREATEST(), so the second run cannot rewind a counter or
+-- change a value — it is a no-op unless a scope is genuinely behind.
 
 INSERT INTO client_invoice_number_sequence (kind, scope_key, `last_value`, updated_at)
 SELECT 'proforma', 'GLOBAL',
