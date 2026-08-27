@@ -127,6 +127,23 @@ export default function NativeVendorManagement() {
   const vendorTotal = vendorsPage?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(vendorTotal / VENDOR_PAGE_SIZE));
 
+  /*
+   * Hide a column when no row on this page has anything to put in it.
+   *
+   * Contact and Payment were two fixed columns of solid "—". Live data 2026-08-27:
+   * contact_email is empty on ALL 1,829 vendors and payment_terms on ALL 1,829, with
+   * contact_phone missing on 1,559. So ~200px of a 937px table was reserved for nothing,
+   * which squeezed Vendor Name into 166px and wrapped names like "24X7 PEST MANAGEMENT
+   * SOLUTIONS" onto three lines, leaving ragged row heights down the whole table.
+   *
+   * Computed per page rather than hardcoded, so the columns reappear by themselves the
+   * moment real contact or payment-terms data is entered — no code change needed, and no
+   * risk of permanently hiding a field that later matters.
+   */
+  const rowsOnPage = vendorsData ?? [];
+  const showContactCol = rowsOnPage.some((v) => v.contact_email || v.contact_phone);
+  const showPaymentCol = rowsOnPage.some((v) => v.payment_terms);
+
   const { data: contractsData, isLoading: loadingC, refetch: refC } = useQuery({
     queryKey: ['erp-contracts'],
     queryFn: async () => {
@@ -316,9 +333,9 @@ export default function NativeVendorManagement() {
                       <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 w-28">Code</th>
                       <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">Vendor name</th>
                       <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 w-36">Type</th>
-                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 hidden md:table-cell">Contact</th>
+                      {showContactCol && <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 hidden md:table-cell">Contact</th>}
                       <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 hidden lg:table-cell w-36">GST</th>
-                      <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 hidden lg:table-cell w-24">Payment</th>
+                      {showPaymentCol && <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 hidden lg:table-cell w-24">Payment</th>}
                       <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 w-20">Status</th>
                       <th className="h-9 px-4 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 w-20">Actions</th>
                     </tr>
@@ -340,12 +357,16 @@ export default function NativeVendorManagement() {
                             {VENDOR_TYPE_LABELS[v.vendor_type] ?? v.vendor_type}
                           </span>
                         </td>
-                        <td className="px-4 py-2 hidden md:table-cell">
-                          <p className="text-xs text-slate-600">{v.contact_email ?? '—'}</p>
-                          {v.contact_phone && <p className="text-xs text-slate-400">{v.contact_phone}</p>}
-                        </td>
+                        {showContactCol && (
+                          <td className="px-4 py-2 hidden md:table-cell">
+                            <p className="text-xs text-slate-600">{v.contact_email ?? '—'}</p>
+                            {v.contact_phone && <p className="text-xs text-slate-400">{v.contact_phone}</p>}
+                          </td>
+                        )}
                         <td className="px-4 py-2 hidden lg:table-cell text-xs font-mono text-slate-500">{v.gst_number ?? '—'}</td>
-                        <td className="px-4 py-2 hidden lg:table-cell text-xs text-slate-500">{v.payment_terms ?? '—'}</td>
+                        {showPaymentCol && (
+                          <td className="px-4 py-2 hidden lg:table-cell text-xs text-slate-500">{v.payment_terms ?? '—'}</td>
+                        )}
                         <td className="px-4 py-2">
                           <Badge variant={v.is_active ? 'default' : 'secondary'}>
                             {v.is_active ? 'Active' : 'Inactive'}

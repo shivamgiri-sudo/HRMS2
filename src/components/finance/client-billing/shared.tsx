@@ -21,6 +21,32 @@ export function money(value: number | string | null | undefined): string {
   }).format(Number(value ?? 0));
 }
 
+/**
+ * Compact Indian-notation money for the KPI tiles only — lakh/crore, two decimals.
+ *
+ * The tiles used the exact same `money()` as the table cells, so the all-time approved
+ * figure rendered as "₹3,94,19,35,105.07" inside a ~180px card. A summary number exists to
+ * be read at a glance and nobody parses eleven digits and a paise value at a glance; it also
+ * pushed the tile text to the edge of its box at 1280px and below. "₹394.19 Cr" carries the
+ * same meaning in a fifth of the space.
+ *
+ * Deliberately NOT used anywhere a figure is transacted on, reconciled or exported — every
+ * table cell, detail dialog, GST breakdown, PDF and CSV keeps the full-precision `money()`.
+ * Rounding is display-only and never re-enters a calculation.
+ */
+export function moneyCompact(value: number | string | null | undefined): string {
+  const n = Number(value ?? 0);
+  const abs = Math.abs(n);
+  const sign = n < 0 ? "-" : "";
+  // Two decimals, then strip trailing zeros and a bare trailing dot: 394.19 stays, 2.50
+  // becomes 2.5, 5.00 becomes 5. Stripping only an exact ".00" left "₹2.50 L" sitting next
+  // to "₹5 L" in the same tile row.
+  const fmt = (v: number) => v.toFixed(2).replace(/\.?0+$/, "");
+  if (abs >= 1e7) return `${sign}₹${fmt(abs / 1e7)} Cr`;
+  if (abs >= 1e5) return `${sign}₹${fmt(abs / 1e5)} L`;
+  return money(n);
+}
+
 /** `client_invoice.invoice_status` badge — reuses the codebase's shared status-badge
  *  palette (green/approved, amber/pending, red/rejected) rather than a page-local one. */
 export function InvoiceStatusBadge({ status }: { status: InvoiceStatus }) {

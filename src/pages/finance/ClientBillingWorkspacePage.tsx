@@ -59,7 +59,7 @@ import { CreateProformaSheet } from "@/components/finance/client-billing/CreateP
 import { CreditNoteDetailDialog } from "@/components/finance/client-billing/CreditNoteDetailDialog";
 import { InvoiceDetailDialog } from "@/components/finance/client-billing/InvoiceDetailDialog";
 import { RejectInvoiceDialog } from "@/components/finance/client-billing/RejectInvoiceDialog";
-import { CreditStatusBadge, InvoiceStatusBadge, money } from "@/components/finance/client-billing/shared";
+import { CreditStatusBadge, InvoiceStatusBadge, money, moneyCompact } from "@/components/finance/client-billing/shared";
 
 const PAGE_SIZE = 25;
 
@@ -160,62 +160,82 @@ function ListToolbar({
   const set = (patch: Partial<ListFilterState>) => onChange({ ...filters, ...patch, page: 1 });
   const hasActiveFilters = Boolean(filters.fromDate || filters.toDate || filters.costCentreId || filters.search);
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-2">
-      {statusOptions && (
-        <Select value={filters.status} onValueChange={(v) => set({ status: v })}>
-          <SelectTrigger className="h-8 w-48 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {statusOptions.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-      <Input
-        type="date"
-        className="h-8 w-36 text-xs"
-        value={filters.fromDate}
-        onChange={(e) => set({ fromDate: e.target.value })}
-        title="From date"
-      />
-      <Input
-        type="date"
-        className="h-8 w-36 text-xs"
-        value={filters.toDate}
-        onChange={(e) => set({ toDate: e.target.value })}
-        title="To date"
-      />
-      <div className="w-56">
-        <SearchableSelect
-          options={costCentreOptions}
-          value={filters.costCentreId}
-          onChange={(v) => set({ costCentreId: v })}
-          placeholder="All cost centres"
-          searchPlaceholder="Search cost centre…"
-          emptyText="No cost centre found."
-          aria-label="Cost centre"
-        />
+    /*
+     * Two explicit groups — filters, then actions — rather than one wrapping row with
+     * `ml-auto` on the export button. With a single flex-wrap row, `ml-auto` resolves
+     * against whichever line the button lands on, so below ~1280px the search box wrapped
+     * to line two on the left and Export/New Proforma sat at the far right of that same
+     * line with a wide gap between them. Observed live at 1024px. Grouping keeps the
+     * filters together and the actions together at every width.
+     */
+    <div className="mb-3 flex flex-wrap items-end justify-between gap-x-3 gap-y-2">
+      <div className="flex flex-wrap items-end gap-2">
+        {statusOptions && (
+          <Select value={filters.status} onValueChange={(v) => set({ status: v })}>
+            <SelectTrigger className="h-8 w-48 text-xs" aria-label="Status">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {statusOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        {/* Both date boxes rendered an identical bare "dd-mm-yyyy" with the from/to
+            distinction only in a `title` tooltip — invisible on keyboard focus and on
+            touch. A visible caption costs one line of 10px text and removes the guess. */}
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">From</span>
+          <Input
+            type="date"
+            className="h-8 w-36 text-xs"
+            value={filters.fromDate}
+            onChange={(e) => set({ fromDate: e.target.value })}
+            aria-label="From date"
+          />
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">To</span>
+          <Input
+            type="date"
+            className="h-8 w-36 text-xs"
+            value={filters.toDate}
+            onChange={(e) => set({ toDate: e.target.value })}
+            aria-label="To date"
+          />
+        </div>
+        <div className="w-56">
+          <SearchableSelect
+            options={costCentreOptions}
+            value={filters.costCentreId}
+            onChange={(v) => set({ costCentreId: v })}
+            placeholder="All cost centres"
+            searchPlaceholder="Search cost centre…"
+            emptyText="No cost centre found."
+            aria-label="Cost centre"
+          />
+        </div>
+        <div className="relative">
+          <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-slate-400" />
+          <Input
+            className="h-8 w-52 pl-7 text-xs"
+            value={filters.search}
+            onChange={(e) => set({ search: e.target.value })}
+            placeholder={searchPlaceholder}
+            aria-label={searchPlaceholder}
+          />
+        </div>
+        {hasActiveFilters && (
+          <Button
+            variant="ghost" size="sm" className="h-8 text-xs"
+            onClick={() => onChange(EMPTY_FILTERS(filters.status))}
+          >
+            <X className="mr-1 h-3 w-3" />Clear
+          </Button>
+        )}
       </div>
-      <div className="relative">
-        <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-slate-400" />
-        <Input
-          className="h-8 w-52 pl-7 text-xs"
-          value={filters.search}
-          onChange={(e) => set({ search: e.target.value })}
-          placeholder={searchPlaceholder}
-        />
-      </div>
-      {hasActiveFilters && (
-        <Button
-          variant="ghost" size="sm" className="h-8 text-xs"
-          onClick={() => onChange(EMPTY_FILTERS(filters.status))}
-        >
-          <X className="mr-1 h-3 w-3" />Clear
-        </Button>
-      )}
-      <div className="ml-auto">
+      <div className="flex shrink-0 items-center gap-2">
         <Button variant="outline" size="sm" className="h-8 text-xs" onClick={onExport} disabled={isExporting}>
           {isExporting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Download className="mr-1.5 h-3.5 w-3.5" />}
           Export CSV
@@ -275,7 +295,7 @@ function DownloadPdfButton({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button size="icon" variant="ghost" className="h-7 w-7" title="Download PDF" disabled={isDownloading}>
+        <Button size="icon" variant="ghost" className="h-7 w-7" title="Download PDF" aria-label="Download PDF" disabled={isDownloading}>
           {isDownloading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
         </Button>
       </DropdownMenuTrigger>
@@ -544,6 +564,10 @@ export default function ClientBillingWorkspacePage() {
           <Button
             size="sm"
             variant="ghost"
+            // Icon-only and previously carried neither text, title nor aria-label, so it was
+            // announced as just "button" — the only control on the page with no name at all.
+            title="Refresh"
+            aria-label="Refresh"
             onClick={() => {
               void proformasQuery.refetch();
               void invoicesQuery.refetch();
@@ -566,13 +590,13 @@ export default function ClientBillingWorkspacePage() {
             />
             <Metric
               label="Approved (all-time)"
-              value={money(summary.invoices.approved.total)}
+              value={moneyCompact(summary.invoices.approved.total)}
               tone="emerald"
               sub={`${summary.invoices.approved.count} invoices`}
             />
             <Metric
               label="Billed This Month"
-              value={money(summary.thisMonthBilled.total)}
+              value={moneyCompact(summary.thisMonthBilled.total)}
               tone="blue"
               sub={`${summary.thisMonthBilled.count} invoices`}
             />
@@ -583,7 +607,7 @@ export default function ClientBillingWorkspacePage() {
             />
             <Metric
               label="Credit Notes"
-              value={money(summary.creditNotes.draft.total + summary.creditNotes.approved.total)}
+              value={moneyCompact(summary.creditNotes.draft.total + summary.creditNotes.approved.total)}
               sub={`${summary.creditNotes.draft.count} draft · ${summary.creditNotes.approved.count} approved`}
             />
           </div>
@@ -668,7 +692,7 @@ export default function ClientBillingWorkspacePage() {
                           <TableCell>
                             <div className="flex items-center justify-end gap-1">
                               <Button
-                                size="icon" variant="ghost" className="h-7 w-7" title="Preview"
+                                size="icon" variant="ghost" className="h-7 w-7" title="Preview" aria-label="Preview"
                                 onClick={() => setPreviewTarget({ kind: "proforma", id: row.id, label: row.proforma_no ?? row.id })}
                               >
                                 <Eye className="h-3.5 w-3.5" />
@@ -681,14 +705,14 @@ export default function ClientBillingWorkspacePage() {
                                     <>
                                       <Button
                                         size="icon" variant="ghost" className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
-                                        title="Approve"
+                                        title="Approve" aria-label="Approve"
                                         onClick={() => setApproveTarget({ id: row.id, label: row.proforma_no ?? row.id })}
                                       >
                                         <ThumbsUp className="h-3.5 w-3.5" />
                                       </Button>
                                       <Button
                                         size="icon" variant="ghost" className="h-7 w-7 text-rose-600 hover:text-rose-700"
-                                        title="Reject"
+                                        title="Reject" aria-label="Reject"
                                         onClick={() => setRejectInvoiceTarget({ id: row.id, label: row.proforma_no ?? row.id })}
                                       >
                                         <XCircle className="h-3.5 w-3.5" />
@@ -774,7 +798,7 @@ export default function ClientBillingWorkspacePage() {
                           <TableCell>
                             <div className="flex items-center justify-end gap-1">
                               <Button
-                                size="icon" variant="ghost" className="h-7 w-7" title="Preview"
+                                size="icon" variant="ghost" className="h-7 w-7" title="Preview" aria-label="Preview"
                                 onClick={() => setPreviewTarget({ kind: "invoice", id: row.id, label: row.bill_no ?? row.id })}
                               >
                                 <Eye className="h-3.5 w-3.5" />
@@ -782,7 +806,7 @@ export default function ClientBillingWorkspacePage() {
                               <DownloadPdfButton kind="invoice" id={row.id} docNumber={row.bill_no ?? row.id} downloadingId={downloadingId} onDownload={handleDownload} />
                               <Button
                                 size="icon" variant="ghost" className="h-7 w-7"
-                                title="Audit log"
+                                title="Audit log" aria-label="Audit log"
                                 onClick={() => setAuditInvoice({ id: row.id, label: row.bill_no ?? row.id })}
                               >
                                 <FileClock className="h-3.5 w-3.5" />
@@ -871,7 +895,7 @@ export default function ClientBillingWorkspacePage() {
                           <TableCell>
                             <div className="flex items-center justify-end gap-1">
                               <Button
-                                size="icon" variant="ghost" className="h-7 w-7" title="Preview"
+                                size="icon" variant="ghost" className="h-7 w-7" title="Preview" aria-label="Preview"
                                 onClick={() => setPreviewTarget({ kind: "credit-note", id: row.id, label: row.credit_no ?? row.id })}
                               >
                                 <Eye className="h-3.5 w-3.5" />
@@ -883,7 +907,7 @@ export default function ClientBillingWorkspacePage() {
                                   : (
                                     <Button
                                       size="icon" variant="ghost" className="h-7 w-7 text-emerald-600 hover:text-emerald-700"
-                                      title="Approve"
+                                      title="Approve" aria-label="Approve"
                                       onClick={() => setApproveCreditTarget({ id: row.id, label: row.credit_no ?? row.id })}
                                     >
                                       <ThumbsUp className="h-3.5 w-3.5" />
@@ -892,7 +916,7 @@ export default function ClientBillingWorkspacePage() {
                               )}
                               <Button
                                 size="icon" variant="ghost" className="h-7 w-7"
-                                title="View details"
+                                title="View details" aria-label="View details"
                                 onClick={() => setDetailCreditNoteId(row.id)}
                               >
                                 <FileText className="h-3.5 w-3.5" />
