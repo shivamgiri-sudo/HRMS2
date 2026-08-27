@@ -21,6 +21,7 @@ import {
 } from "./grn-number-monthly.service.js";
 import { grnSmartService } from "./grn-smart.service.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
+import { applyImprestNoGst, IMPREST_TAX_PROFILE } from "./grn-imprest-tax.js";
 
 export type GrnType = "vendor" | "imprest";
 export type GrnStatus =
@@ -457,6 +458,10 @@ export const grnService = {
       recoverableTaxPct: Number(budgetLine.recoverable_tax_pct),
       justification: String(budgetLine.justification || "Approved budget line"),
     });
+    // Imprest is petty cash with no tax invoice behind it: the whole amount is P&L cost and the
+    // budget line's planned tax treatment must not manufacture a GST split. See applyImprestNoGst.
+    const isImprest = payload.grnType === "imprest";
+    const amountsForGrn = isImprest ? applyImprestNoGst(amounts) : amounts;
 
     if (amounts.grossAmount > Number(budgetLine.available_gross_amount) + 0.01) {
       throw new Error("GRN amount exceeds the available approved budget");
@@ -518,15 +523,15 @@ export const grnService = {
         quantity,
         budgetLine.unit,
         unitRate,
-        budgetLine.tax_treatment,
-        budgetLine.gst_rate,
-        budgetLine.gst_type,
-        budgetLine.recoverable_tax_pct,
-        amounts.baseAmount,
-        amounts.taxAmount,
-        amounts.grossAmount,
-        amounts.pnlCostAmount,
-        amounts.grossAmount,
+        isImprest ? IMPREST_TAX_PROFILE.taxTreatment : budgetLine.tax_treatment,
+        isImprest ? IMPREST_TAX_PROFILE.gstRate : budgetLine.gst_rate,
+        isImprest ? IMPREST_TAX_PROFILE.gstType : budgetLine.gst_type,
+        isImprest ? IMPREST_TAX_PROFILE.recoverableTaxPct : budgetLine.recoverable_tax_pct,
+        amountsForGrn.baseAmount,
+        amountsForGrn.taxAmount,
+        amountsForGrn.grossAmount,
+        amountsForGrn.pnlCostAmount,
+        amountsForGrn.grossAmount,
         payload.billDate,
         accountingPeriod,
         paymentTermsDays,
@@ -566,9 +571,9 @@ export const grnService = {
       quantity,
       unit: budgetLine.unit,
       unit_rate: unitRate,
-      amount_without_tax: amounts.baseAmount,
-      tax_amount: amounts.taxAmount,
-      amount_with_tax: amounts.grossAmount,
+      amount_without_tax: amountsForGrn.baseAmount,
+      tax_amount: amountsForGrn.taxAmount,
+      amount_with_tax: amountsForGrn.grossAmount,
     });
     return { id, grnNumber: null };
   },

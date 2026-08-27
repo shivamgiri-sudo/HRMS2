@@ -1282,6 +1282,17 @@ export function BudgetLinkedGrnForm({
             return sum;
           }
           const calc = computeLine(line, shareGross / basis);
+          if (!isVendor) {
+            // Imprest carries no GST — petty cash out of the branch float, no tax invoice, no
+            // ITC. The budget line may be PLANNED as GST-inclusive (e.g. Tea/Coffee at 18%
+            // recoverable), but that planning classification must not split a tax component out
+            // of a voucher that has none: the whole amount is the cost and the whole amount hits
+            // P&L. Mirrors applyImprestNoGst() on the server, which stores it the same way.
+            sum.base += Number(calc.gross);
+            sum.gross += Number(calc.gross);
+            sum.pnl += Number(calc.gross);
+            return sum;
+          }
           sum.base += Number(calc.base);
           sum.tax += Number(calc.tax);
           sum.gross += Number(calc.gross);

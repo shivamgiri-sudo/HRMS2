@@ -19,6 +19,7 @@ import {
   allocateAcrossLines,
 } from "../process-pnl/budget-headroom-gate.service.js";
 import { refuse } from "../process-pnl/finance-error.js";
+import { applyImprestNoGst, IMPREST_TAX_PROFILE } from "./grn-imprest-tax.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
 import {
@@ -766,6 +767,10 @@ export const grnSmartService = {
       if (String(grn.status) !== "draft") {
         throw new Error("Allocations can only be changed while the GRN is a draft");
       }
+      // Imprest = petty cash out of the branch float. No tax invoice, no ITC, so the funding
+      // budget line's planned tax treatment must not split a GST component out of it and the
+      // whole amount is P&L cost. See applyImprestNoGst for the full rationale.
+      const isImprest = String(grn.grn_type) === "imprest";
 
       // An UNBUDGETED row (raised via the same "no approved budget line" path the vendor
       // cascade already has — createUnbudgetedDraft/e2c8db0d) has no budget line to pick.
@@ -997,6 +1002,8 @@ export const grnSmartService = {
             recoverableTaxPct: Number(fundingLine.recoverable_tax_pct),
             justification: String(fundingLine.justification || "Approved budget allocation"),
           });
+          // Imprest carries no GST — the whole voucher amount is P&L cost. See applyImprestNoGst.
+          const rowAmounts = isImprest ? applyImprestNoGst(amounts) : amounts;
 
           // Spillover audit trail: only the first/primary draw for a row keeps the raiser's own
           // remarks verbatim. Every draw beyond it exists only because the row's own line came up
@@ -1013,7 +1020,7 @@ export const grnSmartService = {
             line: { ...fundingLine, cost_centre_id: originalCostCentreId, cost_centre_name: originalCostCentreName },
             quantity: drawQuantity,
             unitRate: fundingUnitRate,
-            amounts,
+            amounts: rowAmounts,
             remarks,
             // Inherited from the ORIGINAL allocation row, regardless of which line ended up
             // funding it — a budgeted row that merely spilled onto a sibling line is not
@@ -1069,8 +1076,11 @@ export const grnSmartService = {
             grn.branch_id, item.line.process_id ?? null, item.line.cost_centre_id ?? null,
             item.line.process_id || item.line.cost_centre_id ? "direct" : "indirect",
             percentage, item.quantity, item.line.unit, item.unitRate,
-            item.line.tax_treatment, item.line.gst_rate, item.line.gst_type,
-            item.line.recoverable_tax_pct, item.amounts.baseAmount,
+            isImprest ? IMPREST_TAX_PROFILE.taxTreatment : item.line.tax_treatment,
+            isImprest ? IMPREST_TAX_PROFILE.gstRate : item.line.gst_rate,
+            isImprest ? IMPREST_TAX_PROFILE.gstType : item.line.gst_type,
+            isImprest ? IMPREST_TAX_PROFILE.recoverableTaxPct : item.line.recoverable_tax_pct,
+            item.amounts.baseAmount,
             item.amounts.taxAmount, item.amounts.cgstAmount, item.amounts.sgstAmount,
             item.amounts.igstAmount, item.amounts.grossAmount,
             item.amounts.recoverableTaxAmount, item.amounts.pnlCostAmount,
@@ -1101,8 +1111,16 @@ export const grnSmartService = {
       const weightedGstRate = totalBase > 0 ? roundMoney((totalTax / totalBase) * 100) : 0;
       const weightedRecoverablePct = totalTax > 0 ? roundMoney((totalRecoverable / totalTax) * 100) : 0;
       const units = new Set(prepared.map((item) => String(item.line.unit)));
-      const taxTreatments = new Set(prepared.map((item) => String(item.line.tax_treatment)));
-      const gstTypes = new Set(prepared.map((item) => String(item.line.gst_type)));
+      const taxTreatments = new Set(
+        isImprest
+          ? [IMPREST_TAX_PROFILE.taxTreatment]
+          : prepared.map((item) => String(item.line.tax_treatment))
+      );
+      const gstTypes = new Set(
+        isImprest
+          ? [IMPREST_TAX_PROFILE.gstType]
+          : prepared.map((item) => String(item.line.gst_type))
+      );
 
       await connection.execute(
         `UPDATE grn_request
