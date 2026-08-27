@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1004,
-  "columnCount": 14329,
+  "tableCount": 1023,
+  "columnCount": 14615,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -444,6 +444,20 @@
       "status",
       "notes",
       "active_status",
+      "created_at",
+      "updated_at"
+    ],
+    "asset_movement_log": [
+      "id",
+      "asset_id",
+      "movement_type",
+      "movement_date",
+      "from_location",
+      "to_location",
+      "employee_id",
+      "moved_by",
+      "remarks",
+      "created_by",
       "created_at",
       "updated_at"
     ],
@@ -2134,7 +2148,10 @@
       "recorded_by",
       "created_at",
       "exit_request_id",
-      "is_provisional"
+      "is_provisional",
+      "inferred_reason",
+      "inference_confidence",
+      "inference_signals"
     ],
     "attrition_snapshot": [
       "id",
@@ -2298,15 +2315,15 @@
       "ifsc_code",
       "penny_drop_ref",
       "penny_drop_status",
-      "beneficiary_name_returned",
-      "initiated_at",
-      "settled_at",
-      "provider_response_json",
       "verification_token",
       "verification_token_expires_at",
       "employee_name_at_request",
       "name_match_tier",
-      "name_match_score"
+      "name_match_score",
+      "beneficiary_name_returned",
+      "initiated_at",
+      "settled_at",
+      "provider_response_json"
     ],
     "benefit_enrollment": [
       "id",
@@ -4423,6 +4440,28 @@
       "completed_at",
       "created_at"
     ],
+    "cost_center_billing_config": [
+      "id",
+      "cost_center",
+      "client_name",
+      "process_name",
+      "branch_name",
+      "working_days_per_week",
+      "billing_days_per_month",
+      "hours_per_fte_per_day",
+      "shifts",
+      "billing_type",
+      "rate_per_fte_per_month",
+      "rate_per_hour",
+      "current_mandate",
+      "buffer_pct",
+      "daily_hours_target",
+      "monthly_hours_target",
+      "active_status",
+      "synced_from_db_bill_at",
+      "created_at",
+      "updated_at"
+    ],
     "cost_centre_approval_log": [
       "id",
       "cost_centre_id",
@@ -6213,6 +6252,23 @@
       "notified_employee",
       "created_at"
     ],
+    "employee_performance_daily_snapshot": [
+      "id",
+      "employee_id",
+      "snapshot_date",
+      "attendance_status",
+      "late_by_minutes",
+      "unplanned_leave_flag",
+      "pip_status",
+      "designation_id",
+      "quality_score",
+      "template_metrics",
+      "team_attrition_pct",
+      "team_shrinkage_pct",
+      "team_revenue",
+      "created_at",
+      "updated_at"
+    ],
     "employee_pf_withdrawal": [
       "id",
       "employee_id",
@@ -6339,6 +6395,21 @@
       "created_at",
       "updated_at"
     ],
+    "employee_retention_recommendation": [
+      "id",
+      "employee_id",
+      "generated_at",
+      "risk_tier",
+      "prediction_score",
+      "recommendations",
+      "action_taken",
+      "action_taken_at",
+      "action_taken_by",
+      "outcome",
+      "outcome_date",
+      "created_at",
+      "updated_at"
+    ],
     "employee_roster_preference": [
       "id",
       "employee_id",
@@ -6384,6 +6455,20 @@
       "effective_from",
       "effective_to",
       "active_status",
+      "created_at"
+    ],
+    "employee_salary_change_log": [
+      "id",
+      "employee_id",
+      "old_salary_component_assignment_id",
+      "new_salary_component_assignment_id",
+      "requested_by_user_id",
+      "requested_by_name",
+      "actor_user_id",
+      "reason",
+      "old_ctc",
+      "new_ctc",
+      "effective_date",
       "created_at"
     ],
     "employee_salary_date_revision_requests": [
@@ -10469,6 +10554,31 @@
       "resulting_request_id",
       "created_at"
     ],
+    "mandate_seat_history": [
+      "id",
+      "cost_center",
+      "client_name",
+      "process_name",
+      "branch_name",
+      "period_month",
+      "finance_year",
+      "mandate_seats",
+      "actual_billed_seats",
+      "seat_rate",
+      "monthly_revenue",
+      "previous_mandate_seats",
+      "seat_change",
+      "change_reason",
+      "change_effective_date",
+      "source",
+      "db_bill_invoice_id",
+      "created_at",
+      "updated_at",
+      "updated_by",
+      "revenue_status",
+      "exclude_from_prediction",
+      "exclude_reason"
+    ],
     "manpower_requisition": [
       "id",
       "req_code",
@@ -12570,6 +12680,36 @@
       "save_date",
       "synced_at"
     ],
+    "quarterly_return_file": [
+      "id",
+      "obligation_id",
+      "vault_document_id",
+      "form27a_vault_document_id",
+      "form_designation",
+      "challan_count",
+      "total_tax_deducted",
+      "deductee_count",
+      "total_amount_paid",
+      "excluded_employees_json",
+      "generated_by",
+      "generated_at",
+      "superseded_at"
+    ],
+    "quarterly_return_obligation": [
+      "id",
+      "deductor_id",
+      "financial_year_start",
+      "quarter",
+      "form_designation",
+      "due_date",
+      "current_file_id",
+      "status",
+      "acknowledgement_number",
+      "filed_by",
+      "filed_at",
+      "created_at",
+      "updated_at"
+    ],
     "quick_poll": [
       "id",
       "question",
@@ -13262,6 +13402,36 @@
       "appeal_count",
       "appeal_reason",
       "original_dispute_id"
+    ],
+    "salary_dispute_attachment": [
+      "id",
+      "dispute_id",
+      "file_name",
+      "file_path",
+      "file_type",
+      "file_size",
+      "uploaded_by",
+      "uploaded_at"
+    ],
+    "salary_dispute_audit": [
+      "id",
+      "dispute_id",
+      "action",
+      "actor_user_id",
+      "actor_role",
+      "from_status",
+      "to_status",
+      "remarks",
+      "metadata_json",
+      "created_at"
+    ],
+    "salary_dispute_sla_config": [
+      "id",
+      "stage",
+      "sla_hours",
+      "escalate_to",
+      "active_status",
+      "updated_at"
     ],
     "salary_employee_verification": [
       "id",
@@ -14444,6 +14614,56 @@
       "created_at",
       "updated_at"
     ],
+    "tds_challan": [
+      "id",
+      "deductor_id",
+      "source",
+      "filing_month",
+      "bsr_code",
+      "challan_tender_date",
+      "challan_serial_number",
+      "deposited_amount",
+      "cin",
+      "reconciliation_status",
+      "matched_challan_id",
+      "discrepancy_amount",
+      "import_batch_id",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
+    "tds_csi_import_batch": [
+      "id",
+      "deductor_id",
+      "date_range_from",
+      "date_range_to",
+      "original_filename",
+      "imported_count",
+      "skipped_duplicate_count",
+      "imported_by",
+      "imported_at"
+    ],
+    "tds_deductor": [
+      "id",
+      "tan",
+      "deductor_name",
+      "registered_address",
+      "responsible_person_name",
+      "responsible_person_designation",
+      "responsible_person_pan",
+      "is_active",
+      "created_by",
+      "created_at",
+      "updated_at",
+      "deactivated_at",
+      "deactivated_by"
+    ],
+    "tds_deductor_branch": [
+      "id",
+      "deductor_id",
+      "branch_id",
+      "created_at"
+    ],
     "tenant_config": [
       "id",
       "tenant_key",
@@ -15150,6 +15370,22 @@
       "legacy_loan_id",
       "created_at"
     ],
+    "v_mandate_seat_trend": [
+      "cost_center",
+      "client_name",
+      "process_name",
+      "branch_name",
+      "period_month",
+      "finance_year",
+      "mandate_seats",
+      "actual_billed_seats",
+      "seat_rate",
+      "monthly_revenue",
+      "seat_change",
+      "seat_change_pct",
+      "change_reason",
+      "source"
+    ],
     "v_month_working_days": [
       "run_month",
       "working_days"
@@ -15210,6 +15446,64 @@
       "review_notes",
       "created_at",
       "updated_at"
+    ],
+    "vendor_bank_change_request": [
+      "id",
+      "vendor_id",
+      "action",
+      "previous_detail_id",
+      "account_holder_name",
+      "account_number_encrypted",
+      "account_number_last4",
+      "account_number_blind_index",
+      "ifsc",
+      "bank_name",
+      "branch_name",
+      "status",
+      "reason",
+      "requested_by",
+      "requested_by_role",
+      "requested_at",
+      "decided_by",
+      "decided_by_role",
+      "decided_at",
+      "decision_reason",
+      "created_at",
+      "updated_at"
+    ],
+    "vendor_bank_detail": [
+      "id",
+      "vendor_id",
+      "account_holder_name",
+      "account_number_encrypted",
+      "account_number_last4",
+      "account_number_blind_index",
+      "ifsc",
+      "bank_name",
+      "branch_name",
+      "status",
+      "effective_from",
+      "superseded_at",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
+    "vendor_bank_detail_log": [
+      "id",
+      "vendor_id",
+      "change_request_id",
+      "bank_detail_id",
+      "action",
+      "old_account_last4",
+      "old_ifsc",
+      "new_account_last4",
+      "new_ifsc",
+      "actor_user_id",
+      "actor_role",
+      "reason",
+      "ip_address",
+      "user_agent",
+      "created_at"
     ],
     "vendor_branch_applicability": [
       "id",
@@ -16333,7 +16627,8 @@
       "active_status",
       "created_by",
       "created_at",
-      "updated_at"
+      "updated_at",
+      "alert_threshold_pct"
     ],
     "workforce_role_catalog": [
       "id",
