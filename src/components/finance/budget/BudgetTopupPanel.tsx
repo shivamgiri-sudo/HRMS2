@@ -738,8 +738,14 @@ export function BudgetTopupPanel({
           const stages = buildApprovalStages(request);
           const unitRate = Number(request.unit_rate ?? 0);
           const quantity = Number(request.requested_quantity ?? 0);
-          /* Only worth printing when it is a real derivation, not 1 × the whole amount. */
-          const showUnitEconomics = unitRate > 0 && quantity > 0 && quantity !== 1;
+          /* Verified against live data 2026-08-27: 5 of the 7 top-ups on record carry a
+             FRACTIONAL requested_quantity, because create() derives it as amount/unit_rate and
+             most requests are for a rupee figure that is not a whole multiple of the line rate
+             (e.g. ₹1,000 against a ₹15,000/Seat line -> 0.0667). Gating on quantity !== 1 let
+             every one of those through and printed "0.0667 Seat × ₹15,000.00", which is
+             arithmetically true and useless to a reviewer. Only show the derivation when the
+             quantity reads as a real count. */
+          const showUnitEconomics = unitRate > 0 && quantity >= 1;
           /* The remark the current end-state actually rests on. review() has captured approval
              notes since migration 1061 and nothing in the UI has ever read them back. */
           const decisionNote =
