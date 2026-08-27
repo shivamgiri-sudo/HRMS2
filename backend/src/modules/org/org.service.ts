@@ -731,10 +731,18 @@ export const costCentreService = {
 
     const id = randomUUID();
     await db.execute(
+      // current_mandate, billing_days_per_month, hours_per_fte_per_day and billing_type are NOT
+      // in this table. 1564_cost_centre_billing_fields.sql would add them but has never run
+      // against mas_hrms — only its working_days_per_week exists — so naming them here made this
+      // INSERT fail outright with "Unknown column 'current_mandate' in 'field list'". Nothing in
+      // the codebase reads any of the four, and they were only ever written as fixed defaults
+      // (0 / 26 / 8.00 / "seat"), so dropping them from the statement loses nothing and lets the
+      // row actually be created. The optional fields stay on the signature: callers already pass
+      // them and rejecting that would be a second, pointless break.
       `INSERT INTO cost_centre_master
          (id, cost_centre_code, cost_centre_name, client_id, lob_id, branch_id, process_id, department_id,
-          current_mandate, working_days_per_week, billing_days_per_month, hours_per_fte_per_day, billing_type)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          working_days_per_week)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         data.cost_centre_code,
@@ -744,11 +752,7 @@ export const costCentreService = {
         data.branch_id.trim(),
         data.process_id.trim(),
         data.department_id?.trim() || null,
-        data.current_mandate ?? 0,
         data.working_days_per_week ?? 6,
-        data.billing_days_per_month ?? 26,
-        data.hours_per_fte_per_day ?? 8.00,
-        data.billing_type ?? "seat",
       ]
     );
     await syncCostCentreRelatedTables({
@@ -778,6 +782,11 @@ export const costCentreService = {
     // path that silently renamed four cost centres on 2026-08-19 with no trace of who or where.
     const before = await getById("cost_centre_master", id);
     await db.execute(
+      // The same four columns the INSERT above dropped, and for the same reason: they are not in
+      // cost_centre_master. This statement was the worse of the two — PUT /api/org/cost-centres/:id
+      // runs straight into it with no gate, so every edit saved from the Org Masters form died on
+      // "Unknown column 'current_mandate' in 'field list'", where the create path at least failed
+      // earlier and for a different reason.
       `UPDATE cost_centre_master SET
          cost_centre_name = COALESCE(?, cost_centre_name),
          client_id = COALESCE(NULLIF(?, ''), client_id),
@@ -785,11 +794,7 @@ export const costCentreService = {
          branch_id = COALESCE(NULLIF(?, ''), branch_id),
          process_id = COALESCE(NULLIF(?, ''), process_id),
          department_id = COALESCE(NULLIF(?, ''), department_id),
-         current_mandate = COALESCE(?, current_mandate),
          working_days_per_week = COALESCE(?, working_days_per_week),
-         billing_days_per_month = COALESCE(?, billing_days_per_month),
-         hours_per_fte_per_day = COALESCE(?, hours_per_fte_per_day),
-         billing_type = COALESCE(NULLIF(?, ''), billing_type),
          updated_at = NOW()
        WHERE id = ?`,
       [
@@ -799,11 +804,7 @@ export const costCentreService = {
         data.branch_id ?? null,
         data.process_id ?? null,
         data.department_id ?? null,
-        data.current_mandate ?? null,
         data.working_days_per_week ?? null,
-        data.billing_days_per_month ?? null,
-        data.hours_per_fte_per_day ?? null,
-        data.billing_type ?? null,
         id,
       ]
     );
