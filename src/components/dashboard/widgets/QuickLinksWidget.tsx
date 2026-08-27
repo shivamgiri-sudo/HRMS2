@@ -56,20 +56,20 @@ function flattenNavItems(): NavItem[] {
 
 const ALL_PAGES = flattenNavItems();
 
-// Gradient colors for link chips
-const CHIP_COLORS = [
-  'from-blue-500 to-indigo-600',
-  'from-purple-500 to-violet-600',
-  'from-emerald-500 to-teal-600',
-  'from-amber-500 to-orange-600',
-  'from-pink-500 to-rose-600',
-  'from-cyan-500 to-blue-600',
-  'from-indigo-500 to-purple-600',
-  'from-teal-500 to-emerald-600',
+// Inline gradient styles for chips — avoids Tailwind purge of dynamic from-*/to-* classes
+const CHIP_GRADIENTS = [
+  'linear-gradient(135deg, #3b82f6, #4f46e5)',
+  'linear-gradient(135deg, #a855f7, #7c3aed)',
+  'linear-gradient(135deg, #10b981, #0d9488)',
+  'linear-gradient(135deg, #f59e0b, #ea580c)',
+  'linear-gradient(135deg, #ec4899, #e11d48)',
+  'linear-gradient(135deg, #06b6d4, #3b82f6)',
+  'linear-gradient(135deg, #6366f1, #a855f7)',
+  'linear-gradient(135deg, #14b8a6, #10b981)',
 ];
 
-function getChipColor(index: number) {
-  return CHIP_COLORS[index % CHIP_COLORS.length];
+function getChipStyle(index: number): React.CSSProperties {
+  return { background: CHIP_GRADIENTS[index % CHIP_GRADIENTS.length] };
 }
 
 // Search dialog component (shared)
@@ -239,11 +239,8 @@ export function QuickLinksBar() {
             to={link.href}
             onMouseEnter={() => setHoveredLink(link.href)}
             onMouseLeave={() => setHoveredLink(null)}
-            className={cn(
-              'group relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all duration-200 cursor-pointer shrink-0',
-              'bg-gradient-to-r shadow-sm hover:shadow-md hover:scale-[1.02]',
-              getChipColor(index)
-            )}
+            style={getChipStyle(index)}
+            className="group relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-white transition-all duration-200 cursor-pointer shrink-0 shadow-sm hover:shadow-md hover:scale-[1.02]"
           >
             {link.label}
             <ArrowRight className="h-3 w-3 opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition-all" />
@@ -357,11 +354,8 @@ export function QuickLinksWidget() {
                   to={link.href}
                   onMouseEnter={() => setHoveredLink(link.href)}
                   onMouseLeave={() => setHoveredLink(null)}
-                  className={cn(
-                    'group relative rounded-xl p-3 transition-all duration-200 cursor-pointer overflow-hidden',
-                    'bg-gradient-to-br hover:shadow-lg hover:scale-[1.02]',
-                    getChipColor(index)
-                  )}
+                  style={getChipStyle(index)}
+                  className="group relative rounded-xl p-3 transition-all duration-200 cursor-pointer overflow-hidden hover:shadow-lg hover:scale-[1.02]"
                 >
                   <button
                     onClick={(e) => handleRemove(e, link.href)}

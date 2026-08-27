@@ -76,7 +76,7 @@ export function RoleDashboardShell({
         ) : (
           <div className="relative z-10 space-y-5">
             {!hideQuickLinks && (
-              <div className="-mt-3 mb-3 border-b border-slate-100 bg-white/80 backdrop-blur-sm rounded-lg">
+              <div className="-mt-3 mb-3 border border-slate-200 bg-slate-50/80 backdrop-blur-sm rounded-lg">
                 <QuickLinksBar />
               </div>
             )}
