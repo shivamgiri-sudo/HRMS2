@@ -1092,16 +1092,36 @@ function ApprovalQueueTab() {
           <CardTitle className="text-base">Apply Approved Incentives to Payroll Run</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* Incentive-wipe warning — shown when selected run already had incentives applied */}
+          {/* What this step does, stated before the button rather than after a mistake.
+              The old copy here said "Re-applying will add the amounts again", which described
+              applyToRun before it was fixed: it used to do gross_salary = gross_salary + total
+              on top of the amount payrollCalculate §5f already pulls. It no longer writes
+              gross_salary, net_salary or incentive_total at all and is idempotent, so that
+              warning was frightening people away from the step that renders the payslip
+              breakdown. What IS still true is the recalculation wipe — payrollCalculate
+              deletes every salary_prep_line_component row for the run — so that half is kept,
+              corrected to say what actually disappears. */}
+          <div className="flex items-start gap-3 rounded-md border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-sky-600" aria-hidden="true" />
+            <div>
+              <p className="font-semibold">This adds the payslip breakdown, not the money</p>
+              <p className="text-sky-800 mt-0.5">
+                Payroll already includes every <strong>approved</strong> incentive in gross and net on
+                each calculation. This step writes the per-incentive lines that let an employee see
+                what they were paid. Running it twice is safe &mdash; it changes no payroll figure.
+              </p>
+            </div>
+          </div>
+
           {selectedRunSummary?.incentives_applied_at && (
             <div className="flex items-start gap-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
-              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" aria-hidden="true" />
               <div>
-                <p className="font-semibold">Incentives already applied to this run</p>
+                <p className="font-semibold">Already applied to this run</p>
                 <p className="text-amber-700 mt-0.5">
                   Applied on {new Date(selectedRunSummary.incentives_applied_at).toLocaleString("en-IN")}.
-                  Re-applying will add the amounts again. If you recalculate the run after applying,
-                  incentives will be wiped and must be re-applied.
+                  Recalculating the run clears the breakdown lines from the payslip &mdash; the incentive
+                  is still paid, but it shows as an unexplained amount until you apply again.
                 </p>
               </div>
             </div>

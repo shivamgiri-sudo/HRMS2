@@ -699,24 +699,23 @@ export const payrollGovernanceService = {
         "Incentive batches for this payroll month are not yet approved (status draft/pending_approval) — their amounts will not be included until approved.",
         "variable_pay",
       )),
-      // A batch reaching status='applied' is proof the manual POST
-      // /api/incentives/apply-to-run path fired for it. That path ADDS its
-      // total onto gross_salary/net_salary a second time on top of what
-      // payrollCalculate.service.ts already pulls automatically from the same
-      // approved batch on every calculation — there is no guard against this in
-      // either code path. Reported as a blocker: verify affected employees'
-      // gross/net before disbursing.
-      checkedIssue("variable_pay", "INCENTIVE_APPLY_TO_RUN_DOUBLE_COUNT_RISK", () => countIssue(
-        `SELECT ib.id, ib.batch_ref, ib.total_employees, ib.total_amount, ib.status
-           FROM incentive_upload_batch ib
-          WHERE ib.pay_month = ?
-            AND ib.status = 'applied'`,
-        [run.run_month],
-        "INCENTIVE_APPLY_TO_RUN_DOUBLE_COUNT_RISK",
-        "blocker",
-        "Incentive batch(es) reached status='applied' via POST /api/incentives/apply-to-run, which adds its total to gross/net a second time on top of the automatic per-calculation pull — verify affected employees' gross/net are not double-counted before disbursing this run.",
-        "variable_pay",
-      )),
+      // REMOVED 2026-08-27: INCENTIVE_APPLY_TO_RUN_DOUBLE_COUNT_RISK.
+      //
+      // This raised a BLOCKER on any batch at status='applied' — which is the normal,
+      // correct end state of the Apply step, not a fault. It described behaviour
+      // incentives.service.ts::applyToRun no longer has: that function used to do
+      // `gross_salary = gross_salary + total` on top of the amount
+      // payrollCalculate.service.ts §5f already pulls, and it no longer touches
+      // gross_salary, net_salary or incentive_total at all (see its docblock — the
+      // engine is the authoritative writer of all three, and applyToRun is now
+      // idempotent, writing only the INCEN_<code> component rows and INCENTIVE rollup
+      // the payslip renders).
+      //
+      // Left as-was, this check blocked a payroll run for doing the right thing, and
+      // told whoever read it to go hunting for a double-count that cannot occur. A
+      // guard that fires on correct behaviour is worse than no guard: it trains people
+      // to override blockers. Deleted rather than downgraded — there is no residual
+      // risk here to report at any severity.
 
       // REIMBURSEMENT — source: employee_reimbursement_claim
       // (backend/src/modules/payroll/reimbursements.routes.ts). Real

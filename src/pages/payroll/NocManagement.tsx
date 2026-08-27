@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   FileText,
   Search,
+  ShieldCheck,
   Upload,
   XCircle,
 } from "lucide-react";
@@ -361,12 +362,26 @@ export default function NocManagement() {
   return (
     <DashboardLayout>
       <div className="p-6 space-y-6">
-        {/* Header */}
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">NOC Management</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            No Objection Certificate workflow for inactive employee salary / FNF release
-          </p>
+        {/* Header.
+            The subtitle used to describe the workflow ("...for inactive employee salary / FNF
+            release") without saying what validating one actually does. Until 2026-08-27 the
+            honest answer was "nothing" — nocValidated() had no callers. Now that a required,
+            unvalidated NOC blocks the final exit transition, the consequence is stated here,
+            because a queue whose effect is invisible is a queue people stop working. */}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">NOC Management</h1>
+            <p className="text-slate-500 text-sm mt-1">
+              No Objection Certificate workflow for inactive employee salary / FNF release
+            </p>
+          </div>
+          <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 max-w-md">
+            <ShieldCheck className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" aria-hidden="true" />
+            <span>
+              A leaver who needs a NOC <strong>cannot be marked exited</strong> until it is
+              validated here. Rejecting one sends it back to the branch with your reason.
+            </span>
+          </div>
         </div>
 
         <Tabs defaultValue={isBranchPayroll ? "upload" : "validate"}>
@@ -674,11 +689,36 @@ export default function NocManagement() {
                     )}
                     {!nocLoading && nocs.length === 0 && (
                       <TableRow>
-                        <TableCell
-                          colSpan={7}
-                          className="py-10 text-center text-slate-400"
-                        >
-                          No NOC records found for the selected filter.
+                        <TableCell colSpan={7} className="py-12">
+                          {/* An empty queue and a wrong filter look identical when the only
+                              message is "no records found". Say which one this is, and give
+                              the one action that resolves the ambiguity. */}
+                          <div className="flex flex-col items-center gap-2 text-center">
+                            <FileText className="h-8 w-8 text-slate-300" aria-hidden="true" />
+                            <p className="text-sm font-medium text-slate-600">
+                              {statusFilter === "uploaded"
+                                ? "Nothing waiting for validation"
+                                : `No ${statusFilter === "all" ? "" : statusFilter + " "}NOC records`}
+                            </p>
+                            <p className="max-w-sm text-xs text-slate-400">
+                              {statusFilter === "uploaded"
+                                ? "Branch payroll has not uploaded any NOC awaiting your decision. Exits needing one are held until they do."
+                                : "Nothing matches this filter. Try “All” to see every NOC on record."}
+                            </p>
+                            {statusFilter !== "all" && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="mt-1 cursor-pointer transition-colors"
+                                onClick={() => {
+                                  setStatusFilter("all");
+                                  void loadNocs("all");
+                                }}
+                              >
+                                Show all NOCs
+                              </Button>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     )}
