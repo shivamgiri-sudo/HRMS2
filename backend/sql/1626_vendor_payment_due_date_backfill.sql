@@ -1,18 +1,25 @@
 -- 1626_vendor_payment_due_date_backfill.sql
 --
--- ⚠️ DELIBERATELY NOT REGISTERED IN MIGRATION_MANIFEST, AND THE FILENAME CARRIES A
---    .PENDING-APPROVAL SUFFIX SO THE RUNNER CANNOT SEE IT.
+-- ✅ APPLIED TO PRODUCTION 2026-08-27 with explicit user authorisation ("apply it"), run
+--    under a controlled script rather than left to the migration runner so a restore point
+--    and before/after evidence were captured in the same pass.
 --
---    In this repo, adding the manifest line IS the execution: a local `tsx watch` backend
---    restarts on any src/** change, runs pending migrations at boot, and backend/.env points
---    DB_HOST at the live mas_hrms. That is exactly how 1625 reached production unintended on
---    2026-08-27. This file writes to 14,369 rows of a finance table, so it must not be able
---    to fire by accident.
+--    Result: 14,369 rows matched, 14,369 changed, 0 left NULL. The Overdue figure moved from
+--    ₹0 (structurally impossible to be anything else) to ₹4,83,13,763 across 2,431 rows, and
+--    the Aging report went from 0 rows to 2,431. Integrity guards after the write: money
+--    totals byte-identical to the pre-write audit (₹43,16,71,269 paid / ₹4,83,13,763
+--    pending), 0 rows dated in the future, 0 rows whose due_date disagrees with its own GRN.
 --
---    TO APPLY: rename to drop the .PENDING-APPROVAL suffix, then add
---      "1626_vendor_payment_due_date_backfill.sql"
---    to MIGRATION_MANIFEST in backend/src/db/runPendingMigrations.ts. Only after the user
---    has explicitly approved it.
+--    Restore point: `zz_vpt_due_date_backup_20260827` (id, due_date for all 14,369 rows,
+--    taken immediately before the write). To roll back:
+--      UPDATE vendor_payment_tracking vpt
+--        JOIN zz_vpt_due_date_backup_20260827 b ON b.id = vpt.id
+--         SET vpt.due_date = b.due_date;
+--    Drop that table once the new ageing has been reviewed and accepted.
+--
+--    It is registered in MIGRATION_MANIFEST so a rebuilt database reaches the same state.
+--    Re-running is a no-op: the UPDATE is guarded on `due_date IS NULL`, so it can only ever
+--    fill a gap, never overwrite a date the live service has since written.
 --
 -- WHAT IS BROKEN
 --
