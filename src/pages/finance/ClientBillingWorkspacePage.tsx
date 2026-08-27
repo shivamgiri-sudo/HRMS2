@@ -168,8 +168,8 @@ function ListToolbar({
      * line with a wide gap between them. Observed live at 1024px. Grouping keeps the
      * filters together and the actions together at every width.
      */
-    <div className="mb-3 flex flex-wrap items-end justify-between gap-x-3 gap-y-2">
-      <div className="flex flex-wrap items-end gap-2">
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+      <div className="flex flex-wrap items-center gap-2">
         {statusOptions && (
           <Select value={filters.status} onValueChange={(v) => set({ status: v })}>
             <SelectTrigger className="h-8 w-48 text-xs" aria-label="Status">
@@ -182,24 +182,28 @@ function ListToolbar({
             </SelectContent>
           </Select>
         )}
-        {/* Both date boxes rendered an identical bare "dd-mm-yyyy" with the from/to
-            distinction only in a `title` tooltip — invisible on keyboard focus and on
-            touch. A visible caption costs one line of 10px text and removes the guess. */}
-        <div className="flex flex-col gap-0.5">
+        {/* Both date boxes rendered an identical bare "dd-mm-yyyy", with the from/to
+            distinction only in a `title` tooltip — invisible on keyboard focus and on touch.
+            They are one control conceptually, so they live in one non-shrinking group with an
+            inline "–" between them: the pair can never be split across two wrapped lines, and
+            the captions sit beside the inputs rather than above, which keeps the whole filter
+            bar one row tall. (A first attempt stacked a caption over each input separately —
+            that doubled the row height and at 1024px pushed To onto its own line below From,
+            which read worse than the unlabelled version it replaced.) */}
+        <div className="flex shrink-0 items-center gap-1.5 rounded-md border bg-slate-50/60 px-2 py-1">
           <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">From</span>
           <Input
             type="date"
-            className="h-8 w-36 text-xs"
+            className="h-6 w-32 border-0 bg-transparent px-1 text-xs shadow-none focus-visible:ring-1"
             value={filters.fromDate}
             onChange={(e) => set({ fromDate: e.target.value })}
             aria-label="From date"
           />
-        </div>
-        <div className="flex flex-col gap-0.5">
+          <span className="text-slate-400">–</span>
           <span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">To</span>
           <Input
             type="date"
-            className="h-8 w-36 text-xs"
+            className="h-6 w-32 border-0 bg-transparent px-1 text-xs shadow-none focus-visible:ring-1"
             value={filters.toDate}
             onChange={(e) => set({ toDate: e.target.value })}
             aria-label="To date"
