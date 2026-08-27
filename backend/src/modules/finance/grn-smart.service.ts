@@ -1159,7 +1159,7 @@ export const grnSmartService = {
                 invoice_number = ?, irn = ?, irn_ack_no = ?,
                 service_period_start = ?, service_period_end = ?,
                 purchase_reference = ?, vendor_gstin = ?, place_of_supply = ?,
-                other_charges = ?, round_off_amount = ?,
+                other_charges = ?, round_off_amount = COALESCE(?, round_off_amount),
                 is_unbudgeted = ?
           WHERE id = ?`,
         [
@@ -1182,7 +1182,15 @@ export const grnSmartService = {
           String(input.purchaseReference ?? "").trim() || null,
           String(input.vendorGstin ?? "").trim().toUpperCase() || null,
           String(input.placeOfSupply ?? "").trim() || null,
-          roundMoney(Number(input.otherCharges ?? 0)), roundMoney(Number(input.roundOffAmount ?? 0)),
+          roundMoney(Number(input.otherCharges ?? 0)),
+          // round_off_amount is a DISCLOSURE: it records that a gap between an invoice's
+          // components and its declared total was absorbed into a cost allocation instead of
+          // being fixed. saveComponentAllocations() writes it; this path used to overwrite it
+          // with `?? 0`, treating "the caller did not send it" as "there is no round-off" — so a
+          // later save here erased the disclosure while the absorbed paise stayed in the rows.
+          // Not sent now means leave it alone (the COALESCE the extraction-confirm path already
+          // uses); an explicit 0 still clears it.
+          input.roundOffAmount == null ? null : roundMoney(Number(input.roundOffAmount)),
           // Derived from the rows just written, not the flag stored at create time — a GRN
           // created as an ordinary budgeted draft can still end up with an unbudgeted cost
           // centre once split, and that has to route through the same stricter approval an

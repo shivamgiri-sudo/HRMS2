@@ -110,6 +110,7 @@ function makeState(opts: {
 }) {
   const insertedAllocations: Record<string, unknown>[] = [];
   let grnUpdateParams: unknown[] | null = null;
+  let grnUpdateSql: string | null = null;
 
   function norm(v: unknown) {
     return String(v ?? "").trim().toUpperCase();
@@ -210,6 +211,7 @@ function makeState(opts: {
 
     if (s.startsWith("UPDATE grn_request") && s.includes("SET allocation_mode")) {
       grnUpdateParams = params;
+      grnUpdateSql = s;
       return [{ affectedRows: 1 }, []];
     }
 
@@ -248,6 +250,7 @@ function makeState(opts: {
     connection,
     get insertedAllocations() { return insertedAllocations; },
     get grnUpdateParams() { return grnUpdateParams; },
+    get grnUpdateSql() { return grnUpdateSql; },
   };
 }
 
@@ -415,5 +418,60 @@ describe("imprest allocations reproduce the typed amount to the paise", () => {
     expect(Number(row.tax_amount)).toBe(1530);
     expect(Number(row.amount_with_tax)).toBe(10030);
     expect(String(row.tax_treatment)).toBe("exclusive");
+  });
+});
+
+/**
+ * round_off_amount is a DISCLOSURE column: it records that a gap between an invoice's components
+ * and its declared total was absorbed into a cost allocation rather than fixed. saveComponentAllocations()
+ * writes it correctly. saveAllocations() — the other write path, which the same GRN can be saved
+ * through afterwards — wrote `input.roundOffAmount ?? 0`, treating "field not sent" as "the
+ * round-off is zero" and silently erasing the disclosure while the absorbed paise stayed in the
+ * allocation rows. Live evidence: 2 of the 7 component-flow GRNs carry a 4-6 paise gap between
+ * their components and their header with round_off_amount reading 0.00, and pass validation only
+ * because the re-check tolerance is ₹1.
+ *
+ * "Not sent" must mean "leave it alone" — the COALESCE pattern the extraction-confirm path
+ * already uses. An explicit 0 still clears it.
+ */
+describe("saveAllocations does not erase a round-off disclosure it was not asked to change", () => {
+  const line: FakeBudgetLine = {
+    ...teaLine, id: "line-plain", tax_treatment: "exclusive", gst_rate: 0, gst_type: "none",
+  };
+
+  async function save(input: Record<string, unknown>, grnOverrides: Record<string, unknown> = {}) {
+    stateRef.current = makeState({
+      grn: baseGrn({ grn_type: "vendor", round_off_amount: -0.2, ...grnOverrides }),
+      budgetHeaders: headers, budgetLines: [line], costCentres,
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+    await grnSmartService.saveAllocations("grn-1", input, "user-1", "branch_head");
+    const sql = String(stateRef.current.grnUpdateSql);
+    const params = stateRef.current.grnUpdateParams as unknown[];
+    // The round-off parameter is the one immediately before is_unbudgeted/grnId at the tail.
+    return { sql, roundOffParam: params[params.length - 3] };
+  }
+
+  it("leaves the stored value untouched when the caller does not send one", async () => {
+    const { sql, roundOffParam } = await save({
+      allocations: [{ budgetLineId: "line-plain", quantity: 1, unitRate: 8500 }],
+    });
+    expect(sql).toContain("round_off_amount = COALESCE(?, round_off_amount)");
+    // null = "leave it alone". Before this change it was 0 — the disclosure was wiped.
+    expect(roundOffParam).toBeNull();
+  });
+
+  it("still writes an explicit value, including an explicit zero", async () => {
+    const explicit = await save({
+      allocations: [{ budgetLineId: "line-plain", quantity: 1, unitRate: 8500 }],
+      roundOffAmount: -0.2,
+    });
+    expect(explicit.roundOffParam).toBe(-0.2);
+
+    const cleared = await save({
+      allocations: [{ budgetLineId: "line-plain", quantity: 1, unitRate: 8500 }],
+      roundOffAmount: 0,
+    });
+    expect(cleared.roundOffParam).toBe(0);
   });
 });
