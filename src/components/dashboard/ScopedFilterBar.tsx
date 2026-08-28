@@ -24,6 +24,33 @@ interface Process {
 
 const ALL_VALUE = "__all__";
 
+/**
+ * The branch dropdown always offered an "All Branches" choice and defaulted its display
+ * to that label, even for a caller whose scope the backend has already pinned to one
+ * branch (a branch_head, for example) — /api/dashboards/:code/summary silently ignores
+ * the branchId query param unless scope.level is ORG_ALL, so picking "All Branches" here
+ * was a real option in the UI that did nothing on the server. Verified live 2026-08-28:
+ * a branch_head's own /api/dashboards/HR_DASHBOARD/filters returns exactly one branch
+ * with scope.level "BRANCH_ALL", under a control reading "All Branches".
+ *
+ * Restricted to exactly this shape: a dashboard-driven fetch (dashboardCode set — never
+ * /api/org/branches, which has no scope concept and passes scopeLevel as null here) that
+ * came back both non-ORG_ALL and with exactly one branch. A restricted caller who
+ * legitimately covers several branches (a multi-site manager) is untouched — "All
+ * Branches" is a meaningful, real choice for them, not a misleading one.
+ *
+ * Extracted as a pure function because this repo's frontend tests run under
+ * `environment: "node"` with no jsdom/@testing-library — component logic worth a
+ * regression test has to be testable without rendering.
+ */
+export function isBranchFilterRestrictedToOne(
+  dashboardCode: string | undefined,
+  scopeLevel: string | null,
+  branchCount: number,
+): boolean {
+  return Boolean(dashboardCode) && scopeLevel !== null && scopeLevel !== "ORG_ALL" && branchCount === 1;
+}
+
 export interface DateRange {
   from: string;
   to: string;
@@ -60,6 +87,11 @@ export function ScopedFilterBar({
   const [selectedProcess, setSelectedProcess] = useState<string>("");
   const [dateFrom, setDateFrom] = useState<string>("");
   const [dateTo, setDateTo] = useState<string>("");
+  // Non-null only when dashboardCode is set — /api/org/branches (the other branch of the
+  // fetch below) has no scope concept and never sets this, so every non-dashboard caller
+  // of this component (Employees, Org Chart, Attendance, Reports) is byte-identical to
+  // before this field existed.
+  const [scopeLevel, setScopeLevel] = useState<string | null>(null);
 
   useEffect(() => {
     if (!showBranch && !showProcess) return;
@@ -81,11 +113,13 @@ export function ScopedFilterBar({
             ...process,
             branch_id: process.branch_id ?? (process as Process & { branchId?: string }).branchId,
           })));
+          setScopeLevel(String(payload.scope?.level ?? "ORG_ALL"));
         }
       })
       .catch((error) => {
         setBranches([]);
         setProcesses([]);
+        setScopeLevel(null);
         setLoadError(error instanceof Error ? error.message : "Unable to load scoped filters.");
       })
       .finally(() => setLoadingBranches(false));
@@ -116,6 +150,8 @@ export function ScopedFilterBar({
   const visibleProcesses = selectedBranch
     ? processes.filter((process) => !process.branch_id || process.branch_id === selectedBranch)
     : processes;
+
+  const isRestrictedToOneBranch = isBranchFilterRestrictedToOne(dashboardCode, scopeLevel, branches.length);
 
   function handleBranchChange(value: string) {
     const normalized = value === ALL_VALUE ? "" : value;
@@ -154,12 +190,15 @@ export function ScopedFilterBar({
         loadingBranches ? (
           <Skeleton className="h-9 w-36" />
         ) : (
-          <Select value={selectedBranch || ALL_VALUE} onValueChange={handleBranchChange}>
+          <Select
+            value={selectedBranch || (isRestrictedToOneBranch ? branches[0].id : ALL_VALUE)}
+            onValueChange={handleBranchChange}
+          >
             <SelectTrigger className="h-9 w-40 text-sm">
               <SelectValue placeholder="All Branches" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value={ALL_VALUE}>All Branches</SelectItem>
+              {!isRestrictedToOneBranch && <SelectItem value={ALL_VALUE}>All Branches</SelectItem>}
               {branches.map((b) => (
                 <SelectItem key={b.id} value={b.id}>
                   {b.name}
