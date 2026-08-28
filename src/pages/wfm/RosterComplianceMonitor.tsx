@@ -81,13 +81,24 @@ interface Violation {
   employeeName: string;
   processName: string | null;
   branchName: string | null;
-  ruleType: "MINIMUM_REST" | "CONSECUTIVE_DAYS" | "WEEKOFF_FAIRNESS" | "MAX_HOURS_WEEK" | "NIGHT_SHIFT_LIMIT";
+  /*
+   * Widened from the five roster-rule literals to `string`, because the API's per-incident
+   * feed emits attendance-derived ids (ABSENT_NO_CALL, LATE_ARRIVAL) and there is no
+   * per-incident source for the five rules the summary counts. Narrowing this back would
+   * force those ids into buckets they do not belong to; RULE_CONFIG is guarded with a humanised fallback in ViolationRow.
+   */
+  ruleType: string;
   severity: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
   detectedAt: string;
   details: string;
   affectedDates: string[];
   suggestedFix: string | null;
-  status: "OPEN" | "ACKNOWLEDGED" | "RESOLVED" | "WAIVED";
+  /*
+   * Also widened. The API derives this from the roster day (WORKING / WEEK_OFF); there is no
+   * acknowledge/resolve/waive workflow behind this dashboard and no table to persist one, so
+   * the four-state union described a lifecycle that has never existed.
+   */
+  status: string;
   resolvedAt: string | null;
   resolvedBy: string | null;
 }
@@ -264,10 +275,28 @@ function RuleComplianceCard({
   );
 }
 
+/** "ABSENT_NO_CALL" -> "Absent No Call", for ids RULE_CONFIG has no entry for. */
+const humanise = (id: string) =>
+  id.split(/[_\s]+/).filter(Boolean).map((w) => w.charAt(0) + w.slice(1).toLowerCase()).join(" ");
+
 function ViolationRow({ violation }: { violation: Violation }) {
-  const ruleConfig = RULE_CONFIG[violation.ruleType];
-  const severityConfig = SEVERITY_CONFIG[violation.severity];
-  const statusConfig = STATUS_CONFIG[violation.status];
+  /*
+   * Both lookups are keyed on values the API supplies, and the API emits ids these maps do
+   * not contain: ruleId is attendance-derived (ABSENT_NO_CALL, LATE_ARRIVAL) rather than one
+   * of the five roster rules, and status is WORKING/WEEK_OFF rather than an OPEN/RESOLVED
+   * lifecycle. Unguarded, `RULE_CONFIG[...]` returns undefined and the `.icon` read below
+   * throws, taking the whole page down on the first real row.
+   */
+  const ruleConfig = RULE_CONFIG[violation.ruleType as keyof typeof RULE_CONFIG] ?? {
+    label: humanise(violation.ruleType),
+    icon: AlertTriangle,
+    description: "",
+  };
+  const severityConfig = SEVERITY_CONFIG[violation.severity] ?? SEVERITY_CONFIG.LOW;
+  const statusConfig = STATUS_CONFIG[violation.status as keyof typeof STATUS_CONFIG] ?? {
+    color: "bg-slate-100 text-slate-700",
+    label: humanise(violation.status),
+  };
   const colors = TONE[severityConfig.tone];
   const Icon = ruleConfig.icon;
 
@@ -347,6 +376,118 @@ function TrendChart({ data }: { data: TrendData[] }) {
   );
 }
 
+// ── API adapters ─────────────────────────────────────────────────────────────
+/*
+ * This page called /api/roster-compliance/*, which nothing serves. The real endpoints are
+ * /api/wfm/compliance/{summary,violations,trend} — written for this dashboard, per their own
+ * comments — under a different prefix and a different response shape. Both sides are adapted
+ * here rather than in the backend, because /summary and /trend are also consumed by the
+ * WFM compliance surface and changing their contract would break that.
+ *
+ * Worth doing only now: until 2026-08-28 that engine queried `roster_assignment` (0 rows) and
+ * returned a flat 100% via its own `: 100` fallback, so wiring this up would have replaced an
+ * error state with a confident lie. It now reads wfm_roster_assignment — measured live at
+ * 65% for August (1,198 violations across 599 employees) and 82% for July.
+ */
+interface ComplianceApiRule {
+  ruleId: string;
+  ruleName: string;
+  violationCount: number;
+}
+interface ComplianceApiSummary {
+  compliancePct: number;
+  totalEmployees: number;
+  totalViolations: number;
+  rules: ComplianceApiRule[];
+  trend: number;
+}
+interface ApiViolation {
+  violationId: string;
+  date: string;
+  employeeId: string;
+  employeeCode: string;
+  employeeName: string;
+  processName: string | null;
+  branchName: string | null;
+  ruleId: string;
+  ruleName: string;
+  severity: "high" | "medium" | "low";
+  shiftName: string | null;
+  status: string;
+}
+interface ApiTrendPoint {
+  month: string;
+  compliancePct: number;
+  violations: number;
+}
+
+/** API ruleId → the key this page's byRule object uses. */
+const RULE_ID_TO_KEY: Record<string, keyof ComplianceSummary["byRule"]> = {
+  MIN_REST: "minimumRest",
+  CONSECUTIVE_DAYS: "consecutiveDays",
+  WEEKOFF_FAIRNESS: "weekOffFairness",
+  MAX_HOURS: "maxHoursWeek",
+  NIGHT_SHIFT_LIMIT: "nightShiftLimit",
+};
+
+function adaptSummary(raw: ComplianceApiSummary | null | undefined): ComplianceSummary {
+  const employees = Number(raw?.totalEmployees ?? 0);
+  const emptyRule = { violations: 0, total: employees, score: 100 };
+  const byRule: ComplianceSummary["byRule"] = {
+    minimumRest: { ...emptyRule },
+    consecutiveDays: { ...emptyRule },
+    weekOffFairness: { ...emptyRule },
+    maxHoursWeek: { ...emptyRule },
+    nightShiftLimit: { ...emptyRule },
+  };
+  for (const rule of raw?.rules ?? []) {
+    const key = RULE_ID_TO_KEY[rule.ruleId];
+    if (!key) continue;
+    const violations = Number(rule.violationCount ?? 0);
+    byRule[key] = {
+      violations,
+      total: employees,
+      // "% of the evaluated population without this breach" — which is what the card's
+      // "N checked" caption beside it already claims the denominator is.
+      score: employees > 0 ? Math.max(0, Math.round(((employees - violations) / employees) * 100)) : 100,
+    };
+  }
+  return {
+    overallScore: Number(raw?.compliancePct ?? 0),
+    trend: Number(raw?.trend ?? 0),
+    byRule,
+    // The API exposes no per-branch or per-process compliance split. Left empty rather than
+    // faked; the panels that read them render their own empty state.
+    byBranch: [],
+    byProcess: [],
+  };
+}
+
+function adaptViolation(v: ApiViolation): Violation {
+  return {
+    id: v.violationId,
+    employeeId: v.employeeId,
+    employeeCode: v.employeeCode,
+    employeeName: v.employeeName,
+    processName: v.processName,
+    branchName: v.branchName,
+    // Passed through as the API's own rule id. These are attendance-derived breaches
+    // (ABSENT_NO_CALL, LATE_ARRIVAL), NOT the five roster rules the summary counts — the API
+    // has no per-incident feed for those. ViolationRow guards its RULE_CONFIG lookup and
+    // humanises anything unrecognised, so the label stays truthful instead of being forced
+    // into one of the five buckets it does not belong to.
+    ruleType: v.ruleId,
+    severity: v.severity === "high" ? "HIGH" : v.severity === "medium" ? "MEDIUM" : "LOW",
+    detectedAt: v.date,
+    details: [v.ruleName, v.shiftName].filter(Boolean).join(" · "),
+    affectedDates: v.date ? [v.date] : [],
+    suggestedFix: null,
+    status: v.status,
+    resolvedAt: null,
+    resolvedBy: null,
+  };
+}
+
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function RosterComplianceMonitor() {
@@ -361,30 +502,48 @@ export default function RosterComplianceMonitor() {
 
   const { data: summaryData, isLoading: summaryLoading, isError: summaryError } = useQuery({
     queryKey: ["compliance", "summary", branchFilter],
-    queryFn: () => {
+    queryFn: async () => {
       const params = new URLSearchParams();
       if (branchFilter !== ALL) params.set("branchId", branchFilter);
-      return hrmsApi.get<ComplianceSummary>(`/api/roster-compliance/summary?${params}`);
+      const raw = await hrmsApi.get<ComplianceApiSummary>(`/api/wfm/compliance/summary?${params}`);
+      return adaptSummary(raw);
     },
   });
 
   const { data: violationsData, isLoading: violationsLoading, refetch } = useQuery({
     queryKey: ["compliance", "violations", branchFilter, ruleFilter, statusFilter],
-    queryFn: () => {
+    queryFn: async () => {
       const params = new URLSearchParams();
       if (branchFilter !== ALL) params.set("branchId", branchFilter);
-      if (ruleFilter !== ALL) params.set("ruleType", ruleFilter);
-      if (statusFilter !== ALL) params.set("status", statusFilter);
-      return hrmsApi.get<{ violations: Violation[]; total: number }>(`/api/roster-compliance/violations?${params}`);
+      // The API filters by ruleId, not ruleType — the parameter name this page used to send
+      // was silently ignored, so the rule dropdown never narrowed anything.
+      if (ruleFilter !== ALL) params.set("ruleId", ruleFilter);
+      const raw = await hrmsApi.get<{ violations: ApiViolation[]; totalCount: number }>(
+        `/api/wfm/compliance/violations?${params}`,
+      );
+      const violations = (raw?.violations ?? []).map(adaptViolation);
+      // status is filtered client-side: the API derives it from the roster day
+      // (WORKING / WEEK_OFF) and has no acknowledge/resolve workflow to filter on.
+      return {
+        violations: statusFilter === ALL ? violations : violations.filter((v) => v.status === statusFilter),
+        total: raw?.totalCount ?? violations.length,
+      };
     },
   });
 
   const { data: trendData } = useQuery({
     queryKey: ["compliance", "trend", branchFilter],
-    queryFn: () => {
+    queryFn: async () => {
       const params = new URLSearchParams();
       if (branchFilter !== ALL) params.set("branchId", branchFilter);
-      return hrmsApi.get<{ trend: TrendData[] }>(`/api/roster-compliance/trend?${params}`);
+      const raw = await hrmsApi.get<{ trend: ApiTrendPoint[] }>(`/api/wfm/compliance/trend?${params}`);
+      return {
+        trend: (raw?.trend ?? []).map((t) => ({
+          week: t.month,
+          violations: Number(t.violations ?? 0),
+          score: Number(t.compliancePct ?? 0),
+        })),
+      };
     },
   });
 
