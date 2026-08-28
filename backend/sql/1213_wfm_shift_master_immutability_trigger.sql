@@ -59,14 +59,32 @@
 
 USE mas_hrms;
 
-SET @has_is_locked = (
-  SELECT COUNT(*) FROM information_schema.COLUMNS
-  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wfm_shift_master' AND COLUMN_NAME = 'is_locked'
-);
+-- ── 2026-08-28 CORRECTION: the is_locked guard must NOT live in the trigger body ──
+--
+-- This file previously did:
+--     SET @has_is_locked = (SELECT COUNT(*) ... COLUMN_NAME = 'is_locked');
+-- and then tested `@has_is_locked = 1` INSIDE the trigger. That is a user
+-- variable, and user variables are SESSION-scoped. The session that runs this
+-- migration sets it to 1; every other session — i.e. every session that will
+-- ever fire the trigger — sees NULL. `NULL = 1` is NULL, so the IF is never
+-- true and the trigger would have SIGNALed nothing, ever.
+--
+-- Demonstrated live 2026-08-28 on two connections: the setting session reads 1,
+-- a second connection reads NULL, and `(@has_is_locked = 1)` returns NULL there.
+--
+-- That is worse than not installing it at all: migration 1200's comment and this
+-- file's own header both then claim the direct-SQL gap is closed, while nothing
+-- guards it. The dependency on 1200 is a decision about whether to CREATE the
+-- trigger, not a condition to re-evaluate on every UPDATE — so the trigger body
+-- now tests only row state.
+--
+-- No separate precondition query is needed, and the one drafted here first was a
+-- hack (it forced an error via a deliberately multi-row subquery, which reports
+-- "Subquery returns more than 1 row" — an error that tells the reader nothing).
+-- CREATE TRIGGER validates its own column references: if 1200 has not run, the
+-- statement below fails with "Unknown column 'is_locked' in NEW", which names the
+-- missing column and the fix. Let the server produce that message.
 
--- No-op (not a failure) if 1200 hasn't run yet — the trigger has nothing to
--- gate without is_locked, and creating it against a column that doesn't
--- exist would itself throw. Re-run this file after 1200 to actually install it.
 DROP TRIGGER IF EXISTS trg_wfm_shift_master_protect_locked;
 
 DELIMITER $$
@@ -74,7 +92,8 @@ CREATE TRIGGER trg_wfm_shift_master_protect_locked
 BEFORE UPDATE ON wfm_shift_master
 FOR EACH ROW
 BEGIN
-  IF @has_is_locked = 1 AND OLD.is_locked = 1 AND (
+  -- Row state only. No session variables: see the 2026-08-28 correction above.
+  IF OLD.is_locked = 1 AND (
        NOT (NEW.start_time <=> OLD.start_time)
     OR NOT (NEW.end_time <=> OLD.end_time)
     OR NOT (NEW.required_minutes <=> OLD.required_minutes)
