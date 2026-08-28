@@ -196,20 +196,40 @@ router.post(
       return res.json({ success: true, uploaded: 0, skipped_locked: 0, errors: parseErrors });
     }
 
-    // Fetch all unique employee codes in one query
+    // Fetch all unique employee codes in one query.
+    //
+    // This is a prerequisite read the rest of the request depends on — no row can
+    // be classified or inserted without knowing who the employees are. Unlike the
+    // chunked phases below, a failure here cannot be scoped to a subset of rows,
+    // so it fails the whole request cleanly instead of continuing with an empty
+    // employee map (which would make every row wrongly report "Employee not found
+    // or inactive" instead of the real cause). Un-chunked because this is a single
+    // IN-list query, not a per-row loop — the earlier crash bug was about bare
+    // `await`s inside loops, and this one is not in a loop, but it was still bare
+    // and still upstream of the fixed phases, so a DB error here still crashed the
+    // process exactly as before the chunked-insert fix.
     const codes = [...new Set(csvRows.map(r => r.employee_code))];
     const ph = codes.map(() => '?').join(', ');
-    const [empRows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.id AS employee_id, e.employee_code,
-              LOWER(COALESCE(dm.dept_name, ''))         AS dept_name,
-              LOWER(COALESCE(desig.designation_name,'')) AS designation_name,
-              e.branch_id, e.process_id
-       FROM employees e
-       LEFT JOIN department_master dm    ON dm.id = e.department_id
-       LEFT JOIN designation_master desig ON desig.id = e.designation_id
-       WHERE e.employee_code IN (${ph}) AND e.employment_status = 'active'`,
-      codes,
-    );
+    let empRows: RowDataPacket[];
+    try {
+      [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT e.id AS employee_id, e.employee_code,
+                LOWER(COALESCE(dm.dept_name, ''))         AS dept_name,
+                LOWER(COALESCE(desig.designation_name,'')) AS designation_name,
+                e.branch_id, e.process_id
+         FROM employees e
+         LEFT JOIN department_master dm    ON dm.id = e.department_id
+         LEFT JOIN designation_master desig ON desig.id = e.designation_id
+         WHERE e.employee_code IN (${ph}) AND e.employment_status = 'active'`,
+        codes,
+      );
+    } catch (err) {
+      return res.status(502).json({
+        success: false,
+        message: `Could not look up employees for this upload — the upload was not processed at all and no rows were saved. Retry the upload. (${
+          err instanceof Error ? err.message : String(err)})`,
+      });
+    }
     const empMap = new Map<string, any>();
     for (const row of empRows as any[]) empMap.set(row.employee_code, row);
 
@@ -240,32 +260,52 @@ router.post(
     for (const pairChunk of chunkArray(lockPairs, INSERT_CHUNK_SIZE)) {
       const placeholders = pairChunk.map(() => '(?,?)').join(',');
       const params = pairChunk.flat();
-      const [lockedRows] = await db.execute<RowDataPacket[]>(
-        `SELECT adr.employee_id,
-                DATE_FORMAT(adr.record_date,'%Y-%m-%d') AS record_date,
-                adr.is_locked,
-                adr.regularization_id,
-                adr.override_by,
-                ar.id AS approved_regularization_id
-         FROM attendance_daily_record adr
-         LEFT JOIN attendance_regularization ar
-           ON ar.employee_id = adr.employee_id
-          AND ar.session_date = adr.record_date
-          AND ar.status = 'approved'
-         WHERE (adr.employee_id, adr.record_date) IN (${placeholders})
-           AND (
-                 -- A lock this route set on a previous upload is not "protected": the
-                 -- rows below are now written with is_locked=1 so the nightly engine
-                 -- cannot recompute them away, and treating that as protection would
-                 -- make a corrected re-upload permanently impossible. A lock that came
-                 -- with a human decision — an override or a regularization — still wins.
-                 (adr.is_locked=1 AND (adr.override_by IS NOT NULL OR adr.regularization_id IS NOT NULL))
-                 OR adr.regularization_id IS NOT NULL
-                 OR adr.override_by IS NOT NULL
-                 OR ar.id IS NOT NULL
-               )`,
-        params,
-      );
+      let lockedRows: RowDataPacket[];
+      try {
+        [lockedRows] = await db.execute<RowDataPacket[]>(
+          `SELECT adr.employee_id,
+                  DATE_FORMAT(adr.record_date,'%Y-%m-%d') AS record_date,
+                  adr.is_locked,
+                  adr.regularization_id,
+                  adr.override_by,
+                  ar.id AS approved_regularization_id
+           FROM attendance_daily_record adr
+           LEFT JOIN attendance_regularization ar
+             ON ar.employee_id = adr.employee_id
+            AND ar.session_date = adr.record_date
+            AND ar.status = 'approved'
+           WHERE (adr.employee_id, adr.record_date) IN (${placeholders})
+             AND (
+                   -- A lock this route set on a previous upload is not "protected": the
+                   -- rows below are now written with is_locked=1 so the nightly engine
+                   -- cannot recompute them away, and treating that as protection would
+                   -- make a corrected re-upload permanently impossible. A lock that came
+                   -- with a human decision — an override or a regularization — still wins.
+                   (adr.is_locked=1 AND (adr.override_by IS NOT NULL OR adr.regularization_id IS NOT NULL))
+                   OR adr.regularization_id IS NOT NULL
+                   OR adr.override_by IS NOT NULL
+                   OR ar.id IS NOT NULL
+                 )`,
+          params,
+        );
+      } catch (err) {
+        // Fail closed, not open. A failed chunk means we cannot tell which of its
+        // employee+date pairs are protected by an approved regularization, a manual
+        // override, or a payroll lock — so every pair in this chunk is treated as
+        // locked, and the upload skips writing to those rows. The alternative
+        // (treating the chunk as unlocked) risks silently overwriting a
+        // payroll-locked or regularization-approved attendance record because the
+        // safety check itself errored, which is worse than under-writing rows a
+        // caller can safely retry.
+        const reason = `Lock status could not be verified for this row — the safety check that protects payroll-locked and regularization-approved attendance failed, so this row was skipped rather than risk an unsafe overwrite. Retry the upload. (${
+          err instanceof Error ? err.message : String(err)})`;
+        for (const [employeeId, attendanceDate] of pairChunk) {
+          const key = `${employeeId}:${attendanceDate}`;
+          lockedSet.add(key);
+          protectedReasonByKey.set(key, reason);
+        }
+        continue;
+      }
       for (const r of lockedRows as any[]) {
         const key = `${r.employee_id}:${r.record_date}`;
         lockedSet.add(key);
@@ -502,10 +542,12 @@ router.post(
       // but chunks are independent of each other — one chunk's DB error does not
       // roll back or block any other chunk, and never crashes the request. `errors`
       // lists every row that did NOT land, by row number, with the real reason,
-      // including any chunk-level DB failure. `uploaded` + `skipped_locked` +
-      // (validation-error rows in `errors`) + (DB-failure rows in `errors`) always
-      // accounts for every row in the file — a caller can always tell exactly what
-      // was written from this response alone.
+      // including any chunk-level DB failure. The real invariant is
+      // `uploaded + errors.length === (total rows in the file)`: `errors` is where
+      // every non-uploaded row is accounted for, including parse-stage failures
+      // and locked rows — `skipped_locked` is a count of how many of those `errors`
+      // rows were locked, not a fourth bucket disjoint from `errors`, so it is not
+      // additive with `uploaded` and `errors.length`.
       failed: failedRows.length,
       errors: rowErrors,
     });

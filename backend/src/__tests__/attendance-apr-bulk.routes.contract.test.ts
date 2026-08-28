@@ -202,3 +202,94 @@ describe("defect 3 — a small well-formed file still succeeds and classifies id
     );
   });
 });
+
+describe("defect 4 (review finding) — the employee-lookup query, upstream of the fixed insert phases, is unguarded", () => {
+  it("a DB error on the employee-lookup query produces a clean failed response, not a thrown/unhandled error", async () => {
+    execute.mockReset();
+    execute.mockImplementation(async (sql: string) => {
+      if (/FROM employees e/.test(sql)) {
+        throw Object.assign(new Error("Connection lost"), { code: "PROTOCOL_CONNECTION_LOST" });
+      }
+      return [[], []];
+    });
+
+    const csv = csvOf([{ code: "E001", date: "01-08-2026", mins: 500 }]);
+    const res = await request(appFor("wfm"))
+      .post("/api/wfm/attendance/apr-bulk-upload")
+      .attach("file", Buffer.from(csv), "apr.csv");
+
+    // Must not crash the process (supertest getting any response at all proves
+    // this) and must not misreport as a partial success — the whole request
+    // failed cleanly, and the caller is told to retry.
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(res.status).toBeLessThan(600);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toMatch(/retry/i);
+    // Never silently continued with an empty employee map — that would report
+    // "Employee not found or inactive" for every row instead of the real cause.
+    expect(res.body.message).not.toMatch(/Employee not found or inactive/);
+  });
+});
+
+describe("defect 5 (review finding) — the lock-check chunk loop is unguarded and must fail closed", () => {
+  it("a DB error on a lock-check chunk reports its rows as uncertain-safety skips, does not insert them, and does not crash", async () => {
+    execute.mockReset();
+    execute.mockImplementation(async (sql: string) => {
+      if (/FROM employees e/.test(sql)) {
+        return [[EMP], []];
+      }
+      if (/FROM attendance_daily_record adr/.test(sql) && /LEFT JOIN attendance_regularization/.test(sql)) {
+        throw Object.assign(new Error("Lock wait timeout exceeded; try restarting transaction"), { code: "ER_LOCK_WAIT_TIMEOUT" });
+      }
+      if (/FROM apr\s+WHERE \(UserID, ReportDate\)/.test(sql)) {
+        return [[], []];
+      }
+      if (/attendance_feature_config/i.test(sql)) {
+        return [[], []];
+      }
+      if (/INSERT INTO attendance_daily_record/.test(sql)) {
+        return [{ affectedRows: 1 }, []];
+      }
+      if (/INSERT INTO apr /.test(sql)) {
+        return [{ affectedRows: 1 }, []];
+      }
+      return [[], []];
+    });
+
+    const csv = csvOf([
+      { code: "E001", date: "01-08-2026", mins: 500 },
+      { code: "E001", date: "02-08-2026", mins: 500 },
+    ]);
+
+    const res = await request(appFor("wfm"))
+      .post("/api/wfm/attendance/apr-bulk-upload")
+      .attach("file", Buffer.from(csv), "apr.csv");
+
+    // Request completes normally — no crash.
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    // Fail closed: neither row was inserted.
+    expect(res.body.uploaded).toBe(0);
+    expect(res.body.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          row: 2,
+          employee_code: "E001",
+          reason: expect.stringMatching(/could not be verified/i),
+        }),
+        expect.objectContaining({
+          row: 3,
+          employee_code: "E001",
+          reason: expect.stringMatching(/could not be verified/i),
+        }),
+      ]),
+    );
+    // Distinguishable from a confirmed lock reason.
+    for (const e of res.body.errors) {
+      expect(e.reason).not.toBe("Attendance record is locked for payroll");
+    }
+    // Never actually inserted into attendance_daily_record.
+    const insertCalls = execute.mock.calls.filter(([sql]) => /INSERT INTO attendance_daily_record/.test(sql));
+    expect(insertCalls.length).toBe(0);
+  });
+});
