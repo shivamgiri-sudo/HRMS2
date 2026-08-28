@@ -2,6 +2,7 @@ import { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
 import { provisionLmsIdentityForEmployee } from "../lms/lms-provisioning.service.js";
 import { toStoredName, toStoredNameRequired } from "../../shared/nameFormat.js";
+import { normalizeDate } from "./bulk-approval.service.js";
 
 interface BatchRow extends RowDataPacket {
   id: string;
@@ -24,7 +25,8 @@ interface ParsedRow {
   email: string | null;
   gender: string | null;
   doj: string | null;
-  employmentType: string;
+  dob: string | null;
+  employmentType: string | null;
   branchCode: string | null;
   departmentCode: string | null;
   designationCode: string | null;
@@ -88,14 +90,44 @@ export async function importEmployeeMasterBatch(
 
     const employeeCode = String(data.employee_code ?? "").trim();
     const firstName = String(data.first_name ?? "").trim();
+    const lastName = String(data.last_name ?? "").trim();
+    const doj = String(data.date_of_joining ?? "").trim();
 
-    if (!employeeCode || !firstName) {
-      const msg = `Row ${row.row_no}: employee_code and first_name are required`;
+    // The template declares employee_code, first_name, last_name and
+    // date_of_joining all required — this used to enforce only the first two.
+    // last_name is nullable on the live table, so a missing one silently wrote
+    // NULL with no error. date_of_joining is NOT NULL with no default, so a
+    // missing one previously reached the INSERT and failed there with a raw
+    // MySQL error instead of this row-level message; the outcome (row rejected,
+    // batch continues) is unchanged, only the message is now legible.
+    if (!employeeCode || !firstName || !lastName || !doj) {
+      const msg = `Row ${row.row_no}: employee_code, first_name, last_name and date_of_joining are required`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
       errorRows++;
       continue;
     }
+
+    // The template's own guide says "date_of_joining and date_of_birth must be
+    // DD-MM-YYYY", but this used to just String(...).slice(0, 10) the raw cell —
+    // no DD-MM-YYYY -> YYYY-MM-DD conversion at all. A date entered exactly as
+    // instructed (e.g. "23-08-2026") reached the INSERT unchanged and MySQL
+    // rejected it: "Incorrect date value '23-08-2026' for column
+    // 'date_of_joining'" (ER_TRUNCATED_WRONG_VALUE) — live-reproduced by calling
+    // importEmployeeMasterBatch directly. Only a date already typed as ISO
+    // (YYYY-MM-DD) slipped through by accident. normalizeDate is the same
+    // DD-MM-YYYY/ISO/Excel-serial parser leave and regularization bulk uploads
+    // already trust (bulk-approval.service.ts) — reused here instead of a second
+    // ad hoc parser.
+    const normalizedDoj = normalizeDate(doj);
+    if (!normalizedDoj) {
+      const msg = `Row ${row.row_no}: date_of_joining "${doj}" is not a valid date (use DD-MM-YYYY)`;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      errorRows++;
+      continue;
+    }
+
     if (employeeCode.startsWith("IDC")) {
       const msg = `Row ${row.row_no}: IDC employees are not allowed`;
       errors.push(msg);
@@ -124,8 +156,24 @@ export async function importEmployeeMasterBatch(
       mobile: data.mobile ? String(data.mobile).trim() : null,
       email: data.email ? String(data.email).trim() : null,
       gender: data.gender ? String(data.gender).trim() : null,
-      doj: data.date_of_joining ? String(data.date_of_joining).slice(0, 10) : null,
-      employmentType: data.employment_type ? String(data.employment_type).trim() : "PERMANENT",
+      doj: normalizedDoj,
+      // date_of_birth is an optional template column ("date_of_joining and
+      // date_of_birth must be DD-MM-YYYY" per the template guide) that this
+      // service never read at all — not mis-parsed, simply absent from the
+      // parsed row, so it silently vanished on every upload regardless of
+      // format. Parsed the same way as date_of_joining, but — being optional —
+      // an unparseable value is left null rather than rejecting the row,
+      // matching this file's existing leniency for other optional fields
+      // (see the employmentType comment above).
+      dob: data.date_of_birth ? normalizeDate(String(data.date_of_birth).trim()) : null,
+      // No fabricated default. 'PERMANENT' never existed among live employment_type
+      // values (ONROLL, MGMT. TRAINEE, Full Time, HARYANA, OffRoll — varchar, not an
+      // enum) and statutory/PF reporting hard-filters on employment_type = 'ONROLL'
+      // (statutory.executor.ts, pf-creation.service.ts) — every bulk-created employee
+      // that left this blank was silently invisible to PF/ESIC reporting. NULL is
+      // honest about "not classified"; asserting a specific wrong classification is
+      // worse, the same reasoning this file already applies to unresolved master codes.
+      employmentType: data.employment_type ? String(data.employment_type).trim() : null,
       branchCode, departmentCode, designationCode, costCentreCode, processCode, lobCode,
     });
   }
@@ -229,22 +277,22 @@ export async function importEmployeeMasterBatch(
   // original per-row loop's error isolation.
   const buildParams = (r: ParsedRow) => [
     r.employeeCode, toStoredNameRequired(r.firstName), toStoredName(r.lastName), r.mobile, r.email,
-    r.gender, r.doj,
+    r.gender, r.doj, r.dob,
     r.branchCode ? branchIds.get(r.branchCode) ?? null : null,
     r.departmentCode ? departmentIds.get(r.departmentCode) ?? null : null,
     r.designationCode ? designationIds.get(r.designationCode) ?? null : null,
     r.costCentreCode ? costCentreIds.get(r.costCentreCode) ?? null : null,
     r.processCode ? processIds.get(r.processCode) ?? null : null,
     r.lobCode ? lobIds.get(r.lobCode) ?? null : null,
-    r.employmentType, importedByUserId,
+    r.employmentType,
   ];
 
   const insertSql = (placeholders: string) => `
     INSERT INTO employees
        (employee_code, first_name, last_name, mobile, official_email,
-        gender, date_of_joining, branch_id, department_id, designation_id,
+        gender, date_of_joining, date_of_birth, branch_id, department_id, designation_id,
         cost_centre_id, process_id, lob_id, employment_type, active_status,
-        employment_status, created_by)
+        employment_status)
      VALUES ${placeholders}
      ON DUPLICATE KEY UPDATE
        first_name = VALUES(first_name),
@@ -253,6 +301,7 @@ export async function importEmployeeMasterBatch(
        official_email = COALESCE(VALUES(official_email), official_email),
        gender = COALESCE(VALUES(gender), gender),
        date_of_joining = COALESCE(VALUES(date_of_joining), date_of_joining),
+       date_of_birth = COALESCE(VALUES(date_of_birth), date_of_birth),
        branch_id = COALESCE(VALUES(branch_id), branch_id),
        department_id = COALESCE(VALUES(department_id), department_id),
        designation_id = COALESCE(VALUES(designation_id), designation_id),
@@ -262,7 +311,7 @@ export async function importEmployeeMasterBatch(
        employment_type = VALUES(employment_type)`;
 
   for (const rowsInChunk of chunk(importable, CHUNK_SIZE)) {
-    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active',?)").join(", ");
+    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active')").join(", ");
     const params = rowsInChunk.flatMap(buildParams);
 
     try {
@@ -275,7 +324,7 @@ export async function importEmployeeMasterBatch(
     } catch {
       for (const r of rowsInChunk) {
         try {
-          await db.execute(insertSql("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active',?)"), buildParams(r));
+          await db.execute(insertSql("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,'active')"), buildParams(r));
           importedRowIds.push(r.rowId);
           provisionQueue.push(r.employeeCode);
           importedRows++;

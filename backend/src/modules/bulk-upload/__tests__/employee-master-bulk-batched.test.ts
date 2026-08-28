@@ -53,8 +53,8 @@ beforeEach(() => {
 describe("importEmployeeMasterBatch — batched rewrite", () => {
   it("rejects IDC-prefixed codes and missing required fields before any DB lookup", async () => {
     mockBySql([
-      row("row-1", 1, { employee_code: "IDC001", first_name: "A" }),
-      row("row-2", 2, { first_name: "B" }), // missing employee_code
+      row("row-1", 1, { employee_code: "IDC001", first_name: "A", last_name: "N", date_of_joining: "2026-01-01" }),
+      row("row-2", 2, { first_name: "B" }), // missing employee_code, last_name, date_of_joining
     ], {});
 
     const result = await importEmployeeMasterBatch("batch-1", "user-1");
@@ -62,7 +62,7 @@ describe("importEmployeeMasterBatch — batched rewrite", () => {
     expect(result.importedRows).toBe(0);
     expect(result.errorRows).toBe(2);
     expect(result.errors[0]).toMatch(/IDC employees are not allowed/);
-    expect(result.errors[1]).toMatch(/employee_code and first_name are required/);
+    expect(result.errors[1]).toMatch(/employee_code, first_name, last_name and date_of_joining are required/);
     // Never even reached the six bulk lookups — no code set was populated.
     expect(execute.mock.calls.some(([sql]) => typeof sql === "string" && sql.includes("_master"))).toBe(false);
   });
@@ -70,8 +70,8 @@ describe("importEmployeeMasterBatch — batched rewrite", () => {
   it("resolves org codes via bulk lookups and inserts in one chunked statement", async () => {
     mockBySql(
       [row("row-1", 1, {
-        employee_code: "MAS001", first_name: "Amit", branch_code: "OKAYA",
-        process_code: "ONF_KYC", designation_code: "EXECUTIVE",
+        employee_code: "MAS001", first_name: "Amit", last_name: "Kumar", date_of_joining: "2026-01-01",
+        branch_code: "OKAYA", process_code: "ONF_KYC", designation_code: "EXECUTIVE",
       })],
       {
         branch: [{ id: "branch-1", code: "OKAYA" }],
@@ -105,7 +105,7 @@ describe("importEmployeeMasterBatch — batched rewrite", () => {
     // So a miss is now a reported error naming the row and the offending code, and nothing is
     // written. The value the uploader supplied is no longer thrown away in silence.
     mockBySql(
-      [row("row-1", 1, { employee_code: "MAS001", first_name: "Amit", process_code: "CLOSED_PROC" })],
+      [row("row-1", 1, { employee_code: "MAS001", first_name: "Amit", last_name: "Kumar", date_of_joining: "2026-01-01", process_code: "CLOSED_PROC" })],
       { process: [] }, // inactive/nonexistent process_code never comes back from the filtered lookup
     );
 
@@ -126,8 +126,8 @@ describe("importEmployeeMasterBatch — batched rewrite", () => {
           // process_code (2026-08-26) and designation_code (2026-08-27) are both required, so
           // these fixtures carry them — this test is about chunk-failure isolation, not about
           // master resolution.
-          row("row-1", 1, { employee_code: "MAS001", first_name: "Amit", process_code: "P1", designation_code: "D1" }),
-          row("row-2", 2, { employee_code: "MAS002", first_name: "Priya", process_code: "P1", designation_code: "D1" }),
+          row("row-1", 1, { employee_code: "MAS001", first_name: "Amit", last_name: "Kumar", date_of_joining: "2026-01-01", process_code: "P1", designation_code: "D1" }),
+          row("row-2", 2, { employee_code: "MAS002", first_name: "Priya", last_name: "Singh", date_of_joining: "2026-01-01", process_code: "P1", designation_code: "D1" }),
         ], []];
       }
       if (sql.includes("FROM process_master")) return [[{ id: "p-1", code: "P1" }], []];
@@ -154,11 +154,62 @@ describe("importEmployeeMasterBatch — batched rewrite", () => {
     expect(provisionLmsIdentityForEmployee).toHaveBeenCalledWith({ employeeCode: "MAS001", createdBy: "user-1" });
   });
 
+  it("normalizes a DD-MM-YYYY date_of_joining to ISO before the INSERT, and passes through date_of_birth", async () => {
+    // The template's own guide says "date_of_joining and date_of_birth must be
+    // DD-MM-YYYY", but this used to just String(...).slice(0, 10) the raw cell for
+    // date_of_joining — no conversion at all — and never read date_of_birth in the
+    // first place. A date entered exactly as instructed (e.g. "23-08-2026") reached
+    // the INSERT unchanged and MySQL rejected it: "Incorrect date value" — every
+    // fixture in this file up to now used an already-ISO date_of_joining and so
+    // never exercised this path at all. date_of_birth silently vanished on every
+    // upload regardless of format, live-reproduced by calling
+    // importEmployeeMasterBatch directly against the real DB.
+    mockBySql(
+      [row("row-1", 1, {
+        employee_code: "MAS001", first_name: "Amit", last_name: "Kumar",
+        date_of_joining: "23-08-2026", date_of_birth: "15-06-1995",
+        process_code: "P1", designation_code: "D1",
+      })],
+      { process: [{ id: "p-1", code: "P1" }], designation: [{ id: "d-1", code: "D1" }] },
+    );
+
+    const result = await importEmployeeMasterBatch("batch-1", "user-1");
+
+    expect(result.importedRows).toBe(1);
+    expect(result.errorRows).toBe(0);
+    const insertCall = execute.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO employees"));
+    expect(insertCall).toBeDefined();
+    const [sql, params] = insertCall as [string, unknown[]];
+    expect(sql).toMatch(/\bdate_of_birth\b/);
+    expect(params).toContain("2026-08-23");
+    expect(params).toContain("1995-06-15");
+    expect(params).not.toContain("23-08-2026");
+  });
+
+  it("rejects an unparseable date_of_joining before any DB write, naming the row", async () => {
+    mockBySql(
+      [row("row-1", 1, {
+        employee_code: "MAS001", first_name: "Amit", last_name: "Kumar",
+        date_of_joining: "not-a-date",
+      })],
+      {},
+    );
+
+    const result = await importEmployeeMasterBatch("batch-1", "user-1");
+
+    expect(result.importedRows).toBe(0);
+    expect(result.errorRows).toBe(1);
+    expect(result.errors[0]).toMatch(/date_of_joining "not-a-date" is not a valid date/);
+    const insertCall = execute.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO employees"));
+    expect(insertCall).toBeUndefined();
+  });
+
   it("does not fail the row when LMS provisioning throws — it's best-effort", async () => {
     // process_code and designation_code are required; this test is about LMS being best-effort.
     mockBySql(
       [row("row-1", 1, {
-        employee_code: "MAS001", first_name: "Amit", process_code: "P1", designation_code: "D1",
+        employee_code: "MAS001", first_name: "Amit", last_name: "Kumar", date_of_joining: "2026-01-01",
+        process_code: "P1", designation_code: "D1",
       })],
       { process: [{ id: "p-1", code: "P1" }], designation: [{ id: "d-1", code: "D1" }] },
     );
