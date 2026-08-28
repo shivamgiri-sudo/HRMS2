@@ -4,6 +4,7 @@ import { requireAuth, type AuthenticatedRequest } from '../../middleware/authMid
 import { requireRole } from '../../middleware/requireRole.js';
 import { QualityExecutiveService } from './quality-executive.service.js';
 import { logger } from '../../logger.js';
+import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
 
 const router = Router();
 
@@ -49,7 +50,8 @@ function buildQualityFallback(daysBack: number, reason: string) {
 router.get(
   '/quality-summary',
   requireAuth,
-  requireRole('ceo', 'coo', 'super_admin', 'admin'),
+  // CEO and Super Admin layouts read this; `management` is admitted to CEO_DASHBOARD too.
+  requireRole('admin', ...dashboardConsumerRoles('CEO_DASHBOARD', 'SUPER_ADMIN_DASHBOARD')),
   async (req: AuthenticatedRequest, res: Response) => {
     const daysBack = parseInt(req.query.daysBack as string) || 30;
     try {
@@ -102,7 +104,7 @@ router.get(
 router.get(
   '/quality-summary/process-breakdown',
   requireAuth,
-  requireRole('ceo', 'coo', 'super_admin', 'admin'),
+  requireRole('admin', ...dashboardConsumerRoles('CEO_DASHBOARD', 'SUPER_ADMIN_DASHBOARD')),
   async (req: AuthenticatedRequest, res: Response) => {
     const daysBack = parseInt(req.query.daysBack as string) || 30;
     try {

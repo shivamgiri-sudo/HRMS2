@@ -150,28 +150,65 @@ export function LiveVsProcessedPanel({ data }: { data: ReferenceDashboardData })
 }
 
 /** Onboarding pipeline funnel from the ONBOARDING metric's detail. */
+/**
+ * Onboarding pipeline.
+ *
+ * The header read "517 candidates" on 2026-08-28, above rows that summed to 38 (pending
+ * 28 + submitted 3 + joined 7 + a permanently-zero Stuck). The 479-row gap is real and
+ * explainable, but nothing on the panel explained it, so the funnel did not add up.
+ * `pending` is deliberately narrow: it excludes 433 rows raised before the 25-Aug-2026
+ * pendency cutoff, 27 already converted to employees but never advanced, and 21 belonging
+ * to closed or non-candidate records. Each of those now has its own row, so the panel
+ * reconciles against its own total instead of hiding the difference.
+ *
+ * Two rows were also wrong on their face:
+ *   Stuck — `ats_onboarding_bridge.status` only ever holds pending / profile_submitted /
+ *           joined. 'stuck' is never written, so the row was a guaranteed zero. It now
+ *           renders only if that status ever starts being used.
+ *   OTP Verified — counts every candidate_onboarding_profile ever created (100), not the
+ *           517 bridge rows. A different population cannot be a stage of this funnel, so
+ *           it is labelled as the separate figure it is.
+ */
 export function OnboardingFunnelPanel({ data }: { data: ReferenceDashboardData }) {
   const m = data.metrics;
   const reason = metricUnavailableReason(m, "onb");
   const total = metricDetail(m, "onb", "total");
+  const pending = metricDetail(m, "onb", "pending");
+  const beforeCutoff = metricDetail(m, "onb", "pendingBeforeCutoff");
+  const alreadyJoined = metricDetail(m, "onb", "pendingAlreadyJoined");
+  const stuck = metricDetail(m, "onb", "stuck");
 
   return (
     <ReferencePanel
       title="Onboarding Pipeline"
-      action={<span className="text-xs text-[#61708a]">{reason ? reason : `${formatValue(total)} candidates`}</span>}
+      action={(
+        <span className="text-xs text-[#61708a]">
+          {reason
+            ? reason
+            : pending === null || total === null
+              ? "pipeline unavailable"
+              : `${formatValue(pending)} actionable of ${formatValue(total)} total`}
+        </span>
+      )}
       bodyClassName="p-0"
     >
       {reason ? (
         <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">{reason}</p>
       ) : (
         <div className="divide-y divide-[#edf1f6]">
-          <ReferenceListRow icon={Clock3} title="Pending" subtitle="Awaiting candidate submission" value={metricDetail(m, "onb", "pending")} tone="amber" href="/ats/onboarding-requests" />
+          <ReferenceListRow icon={Clock3} title="Pending" subtitle="Awaiting candidate submission" value={pending} tone="amber" href="/ats/onboarding-requests" />
+          {beforeCutoff !== null && beforeCutoff > 0 ? (
+            <ReferenceListRow icon={Clock3} title="Pre-Cutoff Backlog" subtitle="Raised before the 25-Aug-2026 pendency cutoff" value={beforeCutoff} tone="blue" href="/ats/onboarding-requests" />
+          ) : null}
           <ReferenceListRow icon={FileCheck2} title="Profile Submitted" subtitle="Ready for HR review" value={metricDetail(m, "onb", "submitted")} tone="blue" href="/ats/onboarding-bridge" />
           <ReferenceListRow icon={UserCheck} title="Joined" subtitle="Converted to employee" value={metricDetail(m, "onb", "joined")} tone="green" href="/ats/joining-control-room" />
-          <ReferenceListRow icon={TriangleAlert} title="Stuck" subtitle="Beyond the ageing threshold" value={metricDetail(m, "onb", "stuck")} tone="red" href="/ats/onboarding-requests" />
-          {/* Reads otpVerified, which is what the query counts. The old key was
-              named otpPending while counting the opposite. */}
-          <ReferenceListRow icon={ShieldCheck} title="OTP Verified" subtitle="Candidate identity confirmed" value={metricDetail(m, "onb", "otpVerified")} tone="blue" />
+          {alreadyJoined !== null && alreadyJoined > 0 ? (
+            <ReferenceListRow icon={TriangleAlert} title="Not Advanced" subtitle="Converted but still marked pending" value={alreadyJoined} tone="amber" href="/ats/joining-control-room" />
+          ) : null}
+          {stuck !== null && stuck > 0 ? (
+            <ReferenceListRow icon={TriangleAlert} title="Stuck" subtitle="Beyond the ageing threshold" value={stuck} tone="red" href="/ats/onboarding-requests" />
+          ) : null}
+          <ReferenceListRow icon={ShieldCheck} title="OTP Verified" subtitle="All candidate profiles, not only the rows above" value={metricDetail(m, "onb", "otpVerified")} tone="blue" />
         </div>
       )}
     </ReferencePanel>
@@ -202,10 +239,25 @@ export function PayrollBlockersPanel({ data }: { data: ReferenceDashboardData })
         <p className="px-4 py-8 text-center text-sm text-[#a0aec0]">{reason}</p>
       ) : (
         <div className="divide-y divide-[#edf1f6]">
-          <ReferenceListRow icon={WalletCards} title="Missing Bank Account" subtitle="Cannot be paid by NEFT" value={metricDetail(m, "payroll", "missingBank")} tone="red" href="/employees" />
-          <ReferenceListRow icon={FileCheck2} title="Missing PAN" subtitle="Blocks TDS computation" value={metricDetail(m, "payroll", "missingPan")} tone="red" href="/employees" />
-          <ReferenceListRow icon={ShieldCheck} title="Missing UAN" subtitle="Blocks PF filing" value={metricDetail(m, "payroll", "missingUan")} tone="amber" href="/employees" />
-          <ReferenceListRow icon={Users} title="Total Blocked" subtitle="Not payroll-ready" value={metricDetail(m, "payroll", "blockerCount")} tone="red" />
+          {/* missingBank is "not payable by ANY route"; missingNeftBank is the one the
+              NEFT file itself cannot reach (employee_bank_detail only). The row named NEFT
+              was showing the first of those, under-reporting the gap in the file it named.
+              Both are shown: an employee payable by bank-advice and invisible to the NEFT
+              export is a real, separately-actionable state. */}
+          <ReferenceListRow icon={WalletCards} title="Missing Bank Account" subtitle="Not payable by any route" value={metricDetail(m, "payroll", "missingBank")} tone="red" href="/employees" />
+          <ReferenceListRow icon={WalletCards} title="Not In NEFT File" subtitle="Cannot be paid by the NEFT file" value={metricDetail(m, "payroll", "missingNeftBank")} tone="amber" href="/employees" />
+          <ReferenceListRow icon={FileCheck2} title="Missing PAN" subtitle="No PAN on file — blocks TDS computation" value={metricDetail(m, "payroll", "missingPan")} tone="red" href="/employees" />
+          {/* Stored but unusable: values like CTRPC455K that fail the Income Tax Act
+              shape. payroll-governance.service.ts raises INVALID_PAN_FORMAT on these as an
+              auto-TDS blocker, while this panel used to count them as ready. Separate row
+              because it is different work — chasing a correction, not a submission. */}
+          <ReferenceListRow icon={TriangleAlert} title="Invalid PAN Format" subtitle="Stored PAN fails the AAAAA0000A shape" value={metricDetail(m, "payroll", "invalidPan")} tone="red" href="/employees" />
+          <ReferenceListRow icon={Users} title="Total Blocked" subtitle="Missing bank or PAN past the grace window" value={metricDetail(m, "payroll", "blockerCount")} tone="red" />
+          {/* UAN sits BELOW Total Blocked and says so. getPayrollReadinessMetrics does not
+              include UAN in its ready test — only bank and PAN — so on 2026-08-28 a "410"
+              sat directly above a "Total Blocked 238" with nothing indicating the larger
+              number was not part of the smaller one. It blocks PF filing, not payment. */}
+          <ReferenceListRow icon={ShieldCheck} title="Missing UAN" subtitle="Blocks PF filing — not counted in Total Blocked" value={metricDetail(m, "payroll", "missingUan")} tone="amber" href="/employees" />
         </div>
       )}
     </ReferencePanel>
@@ -289,6 +341,7 @@ export function AttendanceExceptionPanel({ data }: { data: ReferenceDashboardDat
   const reason = metricUnavailableReason(m, "attException");
   const blockers = metricDetail(m, "attException", "blockers");
   const unscopeable = metricDetail(m, "attException", "unscopeable");
+  const otherOpen = metricDetail(m, "attException", "otherOpen");
 
   return (
     <ReferencePanel
@@ -311,9 +364,22 @@ export function AttendanceExceptionPanel({ data }: { data: ReferenceDashboardDat
               reads `attendance_daily_record` and could never show these rows. */}
           <ReferenceListRow icon={WalletCards} title="Payable Days Mismatch" subtitle="Blocks the payroll run until reconciled" value={metricDetail(m, "attException", "payableMismatch")} tone="red" href="/wfm/attendance-integrity?tab=exceptions&issueType=salary_payable_days_mismatch&status=open" />
           <ReferenceListRow icon={FileWarning} title="Missing Attendance Record" subtitle="No daily record was created" value={metricDetail(m, "attException", "missingAdr")} tone="red" href="/wfm/attendance-integrity?tab=exceptions&issueType=missing_adr&status=open" />
+          {/* The four blocker types below carried no row at all. On 2026-08-28 they held
+              1,272 of the 4,405 open blockers — every one of them inside the headline
+              "4,666 open" and absent from the breakdown underneath it. */}
+          <ReferenceListRow icon={FileWarning} title="Zero-Minute Attendance" subtitle="Marked present with no worked minutes" value={metricDetail(m, "attException", "zeroMinute")} tone="red" href="/wfm/attendance-integrity?tab=exceptions&issueType=zero_minute_attendance&status=open" />
+          <ReferenceListRow icon={Fingerprint} title="Missing Punch" subtitle="A usable source exists but no punch was recorded" value={metricDetail(m, "attException", "missingPunchWithSource")} tone="red" href="/wfm/attendance-integrity?tab=exceptions&issueType=missing_punch_with_usable_source&status=open" />
+          <ReferenceListRow icon={FileWarning} title="Dialler Source Without Evidence" subtitle="Dialler activity with no supporting record" value={metricDetail(m, "attException", "diallerWithoutEvidence")} tone="red" href="/wfm/attendance-integrity?tab=exceptions&issueType=dialler_source_without_evidence&status=open" />
+          <ReferenceListRow icon={Fingerprint} title="Missing Biometric Day" subtitle="No biometric day row for a worked date" value={metricDetail(m, "attException", "missingIbd")} tone="red" href="/wfm/attendance-integrity?tab=exceptions&issueType=missing_ibd&status=open" />
           <ReferenceListRow icon={Fingerprint} title="Unmapped Biometric User" subtitle="Punches cannot be matched to an employee" value={metricDetail(m, "attException", "unmappedCosec")} tone="amber" href="/wfm/attendance-integrity?tab=exceptions&issueType=unmapped_cosec_user&status=open" />
+          <ReferenceListRow icon={Fingerprint} title="Inactive User Activity" subtitle="Punches from a deactivated biometric user" value={metricDetail(m, "attException", "inactiveCosecActivity")} tone="amber" href="/wfm/attendance-integrity?tab=exceptions&issueType=inactive_cosec_user_activity&status=open" />
+          {otherOpen !== null && otherOpen > 0 ? (
+            <ReferenceListRow icon={FileWarning} title="Other Open Exceptions" subtitle="Issue types not itemised above" value={otherOpen} tone="amber" href="/wfm/attendance-integrity?tab=exceptions&status=open" />
+          ) : null}
           <ReferenceListRow icon={TriangleAlert} title="Warnings" subtitle="Non-blocking, needs review" value={metricDetail(m, "attException", "warnings")} tone="amber" href="/wfm/attendance-integrity?tab=exceptions&severity=warning&status=open" />
-          <ReferenceListRow icon={UserCheck} title="Resolved (30d)" subtitle="Cleared in the last 30 days" value={metricDetail(m, "attException", "resolved")} tone="green" href="/wfm/attendance-integrity?tab=exceptions&status=resolved" />
+          {/* resolvedLast30d, not resolved: the latter counts issues RAISED in the last 30
+              days that have since been cleared, which is not what this label promises. */}
+          <ReferenceListRow icon={UserCheck} title="Resolved (30d)" subtitle="Cleared in the last 30 days" value={metricDetail(m, "attException", "resolvedLast30d")} tone="green" href="/wfm/attendance-integrity?tab=exceptions&status=resolved" />
           <ReferenceListRow icon={FileWarning} title="Total Open" subtitle="All unresolved exceptions in the last 30 days" value={metricDetail(m, "attException", "openTotal")} tone="amber" href="/wfm/attendance-integrity?tab=exceptions&status=open" />
           {unscopeable !== null && unscopeable > 0 ? (
             <ReferenceListRow icon={Users} title="No Employee Link" subtitle="Counted org-wide only — cannot be attributed to a branch" value={unscopeable} tone="blue" />
@@ -359,7 +425,11 @@ export function DocumentCompliancePanel({ data }: { data: ReferenceDashboardData
         <div className="divide-y divide-[#edf1f6]">
           <ReferenceListRow icon={FileWarning} title="No Document On File" subtitle="Active employees with nothing uploaded" value={metricDetail(m, "docCompliance", "employeesWithNoDocs")} tone="red" href="/document-verification" />
           <ReferenceListRow icon={FileCheck2} title="Employees With Documents" subtitle="At least one document uploaded" value={metricDetail(m, "docCompliance", "employeesWithDocs")} tone="green" href="/document-verification" />
-          <ReferenceListRow icon={ShieldCheck} title="Verified Documents" subtitle="Checked and approved" value={metricDetail(m, "docCompliance", "verifiedDocs")} tone="green" href="/document-verification" />
+          {/* `verified` was written in bulk by the migration and 0 of the 487 flagged
+              documents held by active employees carries a verification_date (live,
+              2026-08-28). Presenting 487 as "checked and approved" asserts an audit that
+              never happened, so the row states how many carry actual evidence. */}
+          <ReferenceListRow icon={ShieldCheck} title="Verified Documents" subtitle={`Flagged verified — ${formatValue(metricDetail(m, "docCompliance", "verifiedWithEvidence"))} carry a verification date`} value={metricDetail(m, "docCompliance", "verifiedDocs")} tone="green" href="/document-verification" />
           <ReferenceListRow icon={Clock3} title="Awaiting Verification" subtitle="Uploaded but not yet checked" value={metricDetail(m, "docCompliance", "unverifiedDocs")} tone="amber" href="/document-verification" />
           <ReferenceListRow icon={FileCheck2} title="Documents On File" subtitle="Total uploaded for active employees" value={metricDetail(m, "docCompliance", "totalDocs")} tone="blue" href="/document-verification" />
         </div>
@@ -481,6 +551,27 @@ export function RecruiterFunnelPanel({ data }: { data: ReferenceDashboardData })
   const conversion = metricDetail(m, "recruiterActivity", "conversionPct");
   const recruiters = metricDetail(m, "recruiterActivity", "recruiters");
 
+  /**
+   * The outcome flags stopped being written; the leads did not.
+   *
+   * ats_recruiter_hiring_activity carried 9,698 rows in the 30-day window on 2026-08-28
+   * with hr_interview_status empty on every one of them and final_selection_flag /
+   * joined_flag set on none — while the same table holds 20,108 selections from June, all
+   * of them from one bulk import. So the source is neither unavailable nor empty, and
+   * metricUnavailableReason correctly returns null for it: three stages simply render 0
+   * and the conversion rate renders "—", which reads as a recruitment function that
+   * selected nobody all month.
+   *
+   * Leads present with every downstream outcome absent is not a funnel result. Say which
+   * it is, rather than letting the reader assume the flattering interpretation.
+   */
+  const leads = metricDetail(m, "recruiterActivity", "leads");
+  const hrScreened = metricDetail(m, "recruiterActivity", "hrScreened");
+  const selected = metricDetail(m, "recruiterActivity", "selected");
+  const joined = metricDetail(m, "recruiterActivity", "joined");
+  const outcomesUnwritten =
+    !reason && (leads ?? 0) > 0 && !hrScreened && !selected && !joined;
+
   return (
     <ReferencePanel
       title="Recruiter Funnel (30 days)"
@@ -499,16 +590,27 @@ export function RecruiterFunnelPanel({ data }: { data: ReferenceDashboardData })
           <ReferenceListRow icon={UserSearch} title="Leads Worked" subtitle="Activity rows in the last 30 days" value={metricDetail(m, "recruiterActivity", "leads")} tone="blue" href="/ats/recruiter/hiring-dashboard" />
           <ReferenceListRow icon={Users} title="Contacted" subtitle="Recruiter reached the candidate" value={metricDetail(m, "recruiterActivity", "contacted")} tone="blue" href="/ats/recruiter/hiring-dashboard" />
           <ReferenceListRow icon={CalendarClock} title="Walk-ins" subtitle="Candidate attended in person" value={metricDetail(m, "recruiterActivity", "walkins")} tone="blue" href="/ats/walkin-queue" />
-          <ReferenceListRow icon={FileCheck2} title="HR Screened" subtitle="HR interview outcome recorded" value={metricDetail(m, "recruiterActivity", "hrScreened")} tone="amber" href="/ats/recruiter/hiring-dashboard" />
-          <ReferenceListRow icon={UserCheck} title="Selected" subtitle="Final selection made" value={metricDetail(m, "recruiterActivity", "selected")} tone="green" href="/ats/candidate-master" />
+          <ReferenceListRow icon={FileCheck2} title="HR Screened" subtitle={outcomesUnwritten ? "Outcome not being recorded" : "HR interview outcome recorded"} value={outcomesUnwritten ? null : hrScreened} tone="amber" href="/ats/recruiter/hiring-dashboard" />
+          <ReferenceListRow icon={UserCheck} title="Selected" subtitle={outcomesUnwritten ? "Outcome not being recorded" : "Final selection made"} value={outcomesUnwritten ? null : selected} tone="green" href="/ats/candidate-master" />
           <ReferenceListRow
             icon={TrendingUp}
             title="Joined"
-            subtitle={conversion === null ? "Converted to an employee" : `${formatValue(conversion, "%")} of those selected actually joined`}
-            value={metricDetail(m, "recruiterActivity", "joined")}
+            subtitle={
+              outcomesUnwritten
+                ? "Outcome not being recorded"
+                : conversion === null ? "Converted to an employee" : `${formatValue(conversion, "%")} of those selected actually joined`
+            }
+            value={outcomesUnwritten ? null : joined}
             tone="green"
             href="/employees"
           />
+          {outcomesUnwritten ? (
+            <p className="px-4 py-3 text-xs leading-relaxed text-[#b45309]">
+              Leads are being captured but no screening, selection or joining outcome has been
+              recorded against any of them in this window — these three stages are not measuring
+              a result of zero, they are not being written.
+            </p>
+          ) : null}
         </div>
       )}
     </ReferencePanel>

@@ -11,6 +11,7 @@ import { kpiService } from "./kpi.service.js";
 import { logSourceFailure } from "../../shared/apiResponse.js";
 import { buildScopeWhere, resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
 
 /**
  * Swallow a KPI query failure into an empty row set, but always log it.
@@ -195,7 +196,12 @@ router.put("/rating-config/:processId", requireRole("admin", "hr"), h(async (req
  * the period) and returns the full per-metric breakdown alongside it, so the number on
  * the tile is always attributable to a specific metric.
  */
-router.get("/org-summary", requireRole("admin", "hr", "super_admin", "ceo", "manager"), h(async (req: AuthenticatedRequest, res: Response) => {
+// Derived from the registry: the CEO, Super Admin and Manager layouts render the org KPI
+// rollup. The literal list covered `manager` but none of the other Manager-dashboard roles,
+// so branch heads and team leaders saw an empty KPI panel.
+router.get("/org-summary", requireRole("admin", "hr", ...dashboardConsumerRoles(
+  "CEO_DASHBOARD", "SUPER_ADMIN_DASHBOARD", "MANAGEMENT_DASHBOARD",
+)), h(async (req: AuthenticatedRequest, res: Response) => {
   const period = String(req.query.period ?? "").trim() || new Date().toISOString().slice(0, 7);
 
   // Row scope: this endpoint allows `manager`, who must not receive org-wide KPI.

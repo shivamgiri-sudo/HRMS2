@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ShieldX } from "lucide-react";
 
@@ -269,6 +269,25 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     staleTime: 60_000,
     retry: 1,
   });
+
+  /**
+   * Land on the newest run instead of an empty page.
+   *
+   * `selectedPayrollRunId` starts as "" and nothing ever set it, so PayrollReferenceLayout
+   * took its `if (!selectedRunId)` branch on every first load — the whole dashboard was a
+   * single "Select a payroll run" dropdown, with no population, amounts, blockers, filings
+   * or disbursement status until the user chose one by hand. /api/payroll/runs already
+   * returns newest-first, so the first row is the run a payroll user wants.
+   *
+   * Only seeds when nothing is selected, so a user's own choice is never overwritten by a
+   * background refetch.
+   */
+  useEffect(() => {
+    if (variant !== "payroll" || selectedPayrollRunId) return;
+    const newest = asRecord(payrollRunsQuery.data?.[0]);
+    const id = newest.id == null ? "" : String(newest.id);
+    if (id) setSelectedPayrollRunId(id);
+  }, [variant, selectedPayrollRunId, payrollRunsQuery.data]);
 
   const payrollQuery = useQuery({
     queryKey: ["reference-dashboard-payroll", selectedPayrollRunId],

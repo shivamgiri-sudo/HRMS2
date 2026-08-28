@@ -459,13 +459,38 @@ export const atsService = {
     return rows as AtsSourcingChannel[];
   },
 
-  async getDashboardStats(filters: { fromDate?: string; toDate?: string; branch?: string; process?: string }) {
+  /**
+   * `branch` / `process` are the NAMES held in ats_candidate.applied_for_branch and
+   * .applied_for_process, and both now accept a list — the caller's whole entitlement,
+   * resolved from ids to names by the controller.
+   *
+   * Until 2026-08-28 this method took a single name straight off the query string and
+   * applied no caller scope at all, so every role that renders ATS tiles read org-wide
+   * figures. The dashboard also sent `branchId`/`processId` (ids) while this read
+   * `branch`/`process` (names), so the filter above the tiles moved nothing either. Both
+   * halves are fixed at the controller; this signature just stopped assuming one value.
+   */
+  async getDashboardStats(filters: {
+    fromDate?: string;
+    toDate?: string;
+    branch?: string | readonly string[];
+    process?: string | readonly string[];
+  }) {
+    const asList = (value?: string | readonly string[]): string[] =>
+      (Array.isArray(value) ? value : value ? [value as string] : [])
+        .map((entry) => String(entry ?? "").trim())
+        .filter(Boolean);
+    const branchNames = asList(filters.branch);
+    const processNames = asList(filters.process);
+    const inClause = (column: string, values: string[]) =>
+      `${column} IN (${values.map(() => "?").join(", ")})`;
+
     const conds: string[] = ["active_status = 1", excludeEmployeeShapedCandidatesSql("ats_candidate")];
     const params: unknown[] = [];
     if (filters.fromDate) { conds.push("walk_in_date >= ?"); params.push(filters.fromDate); }
     if (filters.toDate)   { conds.push("walk_in_date <= ?"); params.push(filters.toDate); }
-    if (filters.branch)   { conds.push("applied_for_branch = ?"); params.push(filters.branch); }
-    if (filters.process)  { conds.push("applied_for_process = ?"); params.push(filters.process); }
+    if (branchNames.length)  { conds.push(inClause("applied_for_branch", branchNames)); params.push(...branchNames); }
+    if (processNames.length) { conds.push(inClause("applied_for_process", processNames)); params.push(...processNames); }
     const where = `WHERE ${conds.join(" AND ")}`;
 
     /**
@@ -479,8 +504,8 @@ export const atsService = {
      */
     const scopeConds: string[] = [];
     const scopeParams: unknown[] = [];
-    if (filters.branch)  { scopeConds.push("applied_for_branch = ?");  scopeParams.push(filters.branch); }
-    if (filters.process) { scopeConds.push("applied_for_process = ?"); scopeParams.push(filters.process); }
+    if (branchNames.length)  { scopeConds.push(inClause("applied_for_branch", branchNames));  scopeParams.push(...branchNames); }
+    if (processNames.length) { scopeConds.push(inClause("applied_for_process", processNames)); scopeParams.push(...processNames); }
     const scopeSql = scopeConds.length ? ` AND ${scopeConds.join(" AND ")}` : "";
 
     const [stageRows] = await db.execute<RowDataPacket[]>(

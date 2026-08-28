@@ -89,6 +89,14 @@ const ORG_ALL_ROLES = new Set([
   "ho_payroll", "payroll_head", "finance_head", "accounts_head", "payroll_admin",
   "payroll_hr", "payroll", "finance", "ho_operations", "operations_head", "ho_wfm",
   "ho_rta", "compliance_head", "ho_it",
+  // Head-office function heads that were in no scope set at all, so they fell through the
+  // whole ladder to the SELF_ONLY default at the bottom of resolveDashboardScope. Both are
+  // named on dashboards they could not populate: `it_head` on IT_MANAGER_DASHBOARD,
+  // `tq_head` on QUALITY_DASHBOARD and OPERATIONS_DASHBOARD. ORG_ALL is not a blanket
+  // grant here — the branch below fails closed to the caller's own branch unless they hold
+  // an explicit scope_type='all' row, so this widens them from "themselves" to at least
+  // "their branch", and to the org only where an administrator has said so.
+  "it_head", "tq_head",
 ]);
 
 // Roles that should be scoped to their assigned branch(es) only.
@@ -101,6 +109,9 @@ const BRANCH_ALL_ROLES = new Set([
   "payroll_branch",
   "branch_it",
   "it",   // IT department manager — scoped to their assigned branch
+  // Same gap as the head-office pair above: declared on branch-scoped dashboards but in no
+  // scope set, so they resolved to SELF_ONLY.
+  "branch_admin", "branch_qa", "branch_wfm",
 ]);
 
 const PROCESS_OR_TEAM_ROLES = new Set([
@@ -114,6 +125,25 @@ const TEAM_ROLES = new Set([
 ]);
 
 const SELF_ONLY_ROLES = new Set(["employee", "agent", "trainee"]);
+
+/**
+ * The union of every set above — the roles resolveDashboardScope can actually place.
+ *
+ * Anything admitted to an operational dashboard but absent from this set falls past the
+ * whole ladder to the SELF_ONLY default at the end of resolveDashboardScope, which shows
+ * the user a dashboard counting exactly one person: themselves. Exported so
+ * dashboard-scope-role-coverage.test.ts can assert the registry is a subset of it,
+ * because nothing else makes that omission visible.
+ */
+export const SCOPE_BEARING_ROLES: ReadonlySet<string> = new Set<string>([
+  ...SYSTEM_WIDE_ROLES,
+  ...HEAD_OFFICE_ROLES,
+  ...ORG_ALL_ROLES,
+  ...BRANCH_ALL_ROLES,
+  ...PROCESS_OR_TEAM_ROLES,
+  ...TEAM_ROLES,
+  ...SELF_ONLY_ROLES,
+]);
 
 export class DashboardScopeConfigurationError extends Error {
   readonly statusCode = 409;

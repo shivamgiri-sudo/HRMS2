@@ -169,8 +169,10 @@ describe("canonical dashboard metric contract", () => {
 
 describe("role-specific metric execution definitions", () => {
   it("does not return the same metric bundle for every dashboard", () => {
+    // `tat` and `dpdp` dropped 2026-08-28: both sources hold 0 rows on a COUNT(*) and no
+    // layout consumes either key, so requesting them bought a false zero and two queries.
     expect(getDashboardMetricKeys("HR_DASHBOARD")).toEqual([
-      "onb", "tat", "resign", "dpdp", "appointmentEsign", "bgv", "nm", "joiningDocEsign",
+      "onb", "resign", "appointmentEsign", "bgv", "nm", "joiningDocEsign",
       "hc", "att", "docCompliance", "training", "leaveApprovals",
     ]);
     expect(getDashboardMetricKeys("WFM_DASHBOARD")).toEqual(["hc", "att", "attException", "biometric"]);

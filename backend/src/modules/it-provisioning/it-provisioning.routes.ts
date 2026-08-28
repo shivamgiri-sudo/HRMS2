@@ -24,10 +24,15 @@ import {
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { parseAdEventLog } from './ad-log-parser.js';
 import { dispatchTaskCompletion } from './task-completion-handlers.service.js';
+import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
 
 const router = Router();
 const h = (fn: Function) => (req: any, res: any, next: any) => fn(req, res).catch(next);
-const PROVISIONING_ROLES = ['admin', 'super_admin', 'it', 'wfm', 'hr', 'branch_admin'];
+// `it_head` and `ho_it` are admitted to the IT Manager dashboard but were absent here, and
+// this is one of only two endpoints that dashboard calls — so both IT head accounts saw a
+// page with nothing on it at all. wfm/hr/branch_admin stay: they use provisioning outside
+// the dashboard.
+const PROVISIONING_ROLES = ['admin', 'wfm', 'hr', 'branch_admin', ...dashboardConsumerRoles('IT_MANAGER_DASHBOARD')];
 
 // Multer for AD log evidence uploads — stored under uploads/provisioning-evidence/
 const EVIDENCE_UPLOAD_DIR = path.resolve(process.cwd(), 'uploads', 'provisioning-evidence');
@@ -874,7 +879,9 @@ router.post('/bulk-sync', requireRole('it', 'admin', 'super_admin', 'hr'), h(asy
 }));
 
 // ── IT Dashboard Summary (comprehensive) ─────────────────────────────────────
-router.get('/it-dashboard-summary', requireRole('admin', 'super_admin', 'it', 'branch_it', 'ho_it', 'hr'), h(async (req: AuthenticatedRequest, res: Response) => {
+// Same gap as /stats above: `it_head` was missing, which is the role the IT Manager
+// dashboard is named for.
+router.get('/it-dashboard-summary', requireRole('admin', 'hr', ...dashboardConsumerRoles('IT_MANAGER_DASHBOARD')), h(async (req: AuthenticatedRequest, res: Response) => {
   const userId = req.authUser!.id;
   const isAdmin = await hasRole(userId, 'admin', 'hr', 'super_admin');
 

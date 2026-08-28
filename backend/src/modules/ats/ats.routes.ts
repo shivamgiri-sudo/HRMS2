@@ -1,6 +1,7 @@
 ﻿import { Router } from "express";
 import { requireAuth, requireWriteAccess } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
+import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
 import { requireScopedRole } from "../../middleware/scopeMiddleware.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import type { NextFunction, Response } from "express";
@@ -222,7 +223,13 @@ atsRouter.patch("/onboarding-bridge/:id",        requireRole("admin", "hr"), h(c
 
 // Reference data
 atsRouter.get("/sourcing-channels",              requireRole("admin", "hr", "recruiter"), h(c.listSourcingChannels.bind(c)));
-atsRouter.get("/stats",                          requireRole("admin", "hr", "recruiter", "manager", "super_admin"), h(c.getDashboardStats.bind(c)));
+// Gate derived from the dashboard registry, not restated: HR, CEO, Manager, Super Admin
+// and Recruiter dashboards all render tiles from this endpoint. The hand-written list
+// omitted `ceo`, so the CEO dashboard's own hiring panel returned 403 for all four CEO
+// accounts while reading fine as super_admin (requireRole short-circuits for it).
+atsRouter.get("/stats",                          requireRole("admin", ...dashboardConsumerRoles(
+  "HR_DASHBOARD", "CEO_DASHBOARD", "MANAGEMENT_DASHBOARD", "SUPER_ADMIN_DASHBOARD", "RECRUITER_DASHBOARD",
+)), h(c.getDashboardStats.bind(c)));
 
 // Walk-in queue â€” candidates who arrived via Walk-In channel, sorted by walk_in_date desc
 atsRouter.get("/walkin-queue",                   requireRole("admin", "hr", "recruiter"), h(async (req: AuthenticatedRequest, res: Response) => {

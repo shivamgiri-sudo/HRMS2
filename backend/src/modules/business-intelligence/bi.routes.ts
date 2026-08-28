@@ -13,6 +13,7 @@ import {
 } from './bi.service.js';
 import { resolveDashboardScopeForRequest, narrowDashboardScope } from '../../shared/dashboardScope.js';
 import { getUserRoleContext } from '../../shared/roleResolver.js';
+import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
 
 export const biRouter = Router();
 biRouter.use(requireAuth);
@@ -20,7 +21,15 @@ biRouter.use(requireAuth);
 const h = (fn: (req: any, res: Response) => Promise<any>) => (req: any, res: Response, next: any) =>
   fn(req, res).catch(next);
 
-const OPS_ROLES = ['super_admin', 'admin', 'ceo', 'coo', 'manager', 'process_manager', 'branch_head', 'operations_manager', 'wfm'] as const;
+// Derived from the registry rather than restated. The daily-operations pulse and the
+// quality-intervention feed are rendered by the WFM, WFM Attendance, Manager, CEO, Super
+// Admin, Operations and Quality layouts; the previous literal list covered five of the
+// eleven role keys those dashboards admit, so assistant_manager, team_leader, rta, qa and
+// tq_head each hit 403 on a page they were entitled to open.
+const OPS_ROLES = ['admin', ...dashboardConsumerRoles(
+  'WFM_DASHBOARD', 'WFM_ATTENDANCE_DASHBOARD', 'MANAGEMENT_DASHBOARD', 'CEO_DASHBOARD',
+  'SUPER_ADMIN_DASHBOARD', 'OPERATIONS_DASHBOARD', 'QUALITY_DASHBOARD',
+)];
 const FINANCE_ROLES = ['super_admin', 'admin', 'ceo', 'payroll_head', 'finance_head'] as const;
 
 // GET /api/bi/daily-operations-pulse

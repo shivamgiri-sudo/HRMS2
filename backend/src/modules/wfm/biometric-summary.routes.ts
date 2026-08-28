@@ -5,6 +5,8 @@ import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import { toIST } from "../../shared/timezone.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
+import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
 
 export const biometricSummaryRouter = Router();
 biometricSummaryRouter.use(requireAuth);
@@ -33,39 +35,69 @@ function limitValue(value: unknown, fallback: number): number {
 function commonWhere(query: any, params: any[]) {
   const clauses = ["adr.record_date BETWEEN ? AND ?"];
   params.push(dateValue(query.from, monthStart()), dateValue(query.to, today()));
+  // Lists as well as single values: a caller entitled to several branches must not be
+  // narrowed to whichever one happened to sort first.
+  const inList = (column: string, values: unknown) => {
+    const list = (Array.isArray(values) ? values : [])
+      .map((entry) => String(entry ?? "").trim())
+      .filter(Boolean);
+    if (list.length === 0) return;
+    clauses.push(`${column} IN (${list.map(() => "?").join(", ")})`);
+    params.push(...list);
+  };
   if (query.branchId) { clauses.push("e.branch_id = ?"); params.push(String(query.branchId)); }
+  else inList("e.branch_id", query.branchIds);
   if (query.processId) { clauses.push("e.process_id = ?"); params.push(String(query.processId)); }
+  else inList("e.process_id", query.processIds);
+  inList("e.id", query.employeeIds);
   if (query.costCentreId) { clauses.push("e.cost_centre_id = ?"); params.push(String(query.costCentreId)); }
   if (query.managerId) { clauses.push("e.reporting_manager_id = ?"); params.push(String(query.managerId)); }
   if (query.employeeId) { clauses.push("e.id = ?"); params.push(String(query.employeeId)); }
   return clauses.join(" AND ");
 }
 
-const roleGuard = requireRole("admin", "hr", "wfm", "manager", "process_manager", "team_leader", "ceo", "finance", "payroll");
-
-// Roles that must have scope auto-injected if not explicitly passed
-const RESTRICTED_SCOPE_ROLES = new Set(["manager", "process_manager", "team_leader", "tl", "wfm"]);
+// Derived from the registry: WFM, WFM Attendance, Manager and Operations layouts all gate
+// their attendance tiles on this endpoint. `finance` and `payroll` stay as literals — they
+// reach adherence outside the dashboards.
+const roleGuard = requireRole("admin", "finance", "payroll", ...dashboardConsumerRoles(
+  "WFM_DASHBOARD", "WFM_ATTENDANCE_DASHBOARD", "MANAGEMENT_DASHBOARD", "OPERATIONS_DASHBOARD",
+));
 
 /**
- * For non-admin callers who haven't passed explicit branchId/processId,
- * auto-inject their own employee's branch/process from mas_hrms.
- * Mutates req.query in-place so downstream commonWhere picks it up.
+ * Narrows the query to whatever the caller is actually entitled to.
+ *
+ * This used to hand-roll its own idea of scope: it skipped injection for `hr` and
+ * `finance` outright, and only injected for the five roles named in
+ * RESTRICTED_SCOPE_ROLES. Both halves were wrong in the same direction. A branch_head
+ * resolves to scope role `hr`, so branch heads skipped injection and read company-wide
+ * adherence beside branch-scoped tiles; and any role outside that five-role set — qa,
+ * branch_hr, assistant_manager, operations_manager — also skipped it, for no stated
+ * reason. A second, hand-written scope model was the defect.
+ *
+ * resolveDashboardScopeForRequest is the one the rest of the dashboards use, and it
+ * already knows every role's tier, honours user_assignment_scope, and fails closed when a
+ * role is unconfigured. ORG_ALL is the only level that reads unscoped.
+ *
+ * Mutates req.query in place so commonWhere picks it up, and never widens: an explicit
+ * branchId/processId the caller passed is left alone by commonWhere itself.
  */
 async function injectScopeIfNeeded(req: any): Promise<void> {
   const userId = req.authUser?.id;
   if (!userId) return;
-  const ctx = await getUserRoleContext(userId);
-  if (ctx.isSuperAdmin || ctx.isHO || ctx.roleKeys.includes("ceo") || ctx.roleKeys.includes("finance") || ctx.roleKeys.includes("hr")) return;
-  if (!ctx.roleKeys.some(r => RESTRICTED_SCOPE_ROLES.has(r))) return;
-  // Only inject if caller didn't pass explicit scope params
   if (req.query.branchId || req.query.processId) return;
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT branch_id, process_id FROM employees WHERE user_id = ? AND active_status = 1 LIMIT 1`,
-    [userId]
-  );
-  const emp = (rows as any[])[0];
-  if (emp?.branch_id) req.query.branchId = String(emp.branch_id);
-  if (emp?.process_id) req.query.processId = String(emp.process_id);
+
+  try {
+    const ctx = await getUserRoleContext(userId);
+    const scope = await resolveDashboardScopeForRequest(req.authUser, ctx.primaryRole);
+    if (scope.level === "ORG_ALL") return;
+    if (scope.branchIds.length) req.query.branchIds = scope.branchIds;
+    if (scope.processIds.length) req.query.processIds = scope.processIds;
+    if (scope.employeeIds.length) req.query.employeeIds = scope.employeeIds;
+  } catch {
+    // resolveDashboardScope throws DashboardScopeConfigurationError for an unconfigured
+    // account. Fail CLOSED — an unresolvable scope must show nothing, never everything.
+    req.query.employeeIds = ["__no_scope__"];
+  }
 }
 
 biometricSummaryRouter.get("/adherence-summary", roleGuard, h(async (req: any, res: any) => {

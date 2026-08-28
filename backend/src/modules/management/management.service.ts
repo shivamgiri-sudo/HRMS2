@@ -569,12 +569,42 @@ export const managementService = {
     };
   },
 
-  async getWorkforceDashboard(branchId?: string, processId?: string, scopeLevel?: string) {
+  /**
+   * Accepts a LIST of branches/processes, not one of each.
+   *
+   * The caller previously passed `scope.branchIds[0]` and `scope.processIds[0]`, so a user
+   * entitled to several branches saw exactly one of them — presented as their complete
+   * view, with the filter bar above it still reading "All Branches". Live on 2026-08-28
+   * that silently hid three of four branches from an 18-strong process-manager cohort.
+   *
+   * A single string is still accepted so the other callers of this method keep working;
+   * both shapes normalise to the same list below.
+   */
+  async getWorkforceDashboard(
+    branchId?: string | readonly string[],
+    processId?: string | readonly string[],
+    scopeLevel?: string,
+  ) {
     // Build scope WHERE fragment for employee table
+    const asList = (value?: string | readonly string[]): string[] =>
+      (Array.isArray(value) ? value : value ? [value as string] : [])
+        .map((entry) => String(entry ?? "").trim())
+        .filter(Boolean);
+    const branchIds = asList(branchId);
+    const processIds = asList(processId);
+
     const scopeConds: string[] = [];
     const scopeParams: unknown[] = [];
-    if (branchId) { scopeConds.push("branch_id = ?"); scopeParams.push(branchId); }
-    if (processId) { scopeConds.push("process_id = ?"); scopeParams.push(processId); }
+    // IN (...) rather than = ? — with one id the plan is identical, with several it is the
+    // difference between the caller's whole entitlement and an arbitrary slice of it.
+    if (branchIds.length) {
+      scopeConds.push(`branch_id IN (${branchIds.map(() => "?").join(", ")})`);
+      scopeParams.push(...branchIds);
+    }
+    if (processIds.length) {
+      scopeConds.push(`process_id IN (${processIds.map(() => "?").join(", ")})`);
+      scopeParams.push(...processIds);
+    }
     const empScopeWhere = scopeConds.length ? " AND " + scopeConds.join(" AND ") : "";
     const empScopeJoinWhere = scopeConds.length
       ? " AND " + scopeConds.map(c => "e." + c).join(" AND ")

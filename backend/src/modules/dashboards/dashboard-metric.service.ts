@@ -249,7 +249,10 @@ export async function getHeadcountMetrics(scope: DashboardScope): Promise<Metric
     const short = required != null && available != null ? required - available : null;
 
     const status: MetricResult["status"] = active === 0 ? "warn" : "ok";
-    return wrapEnriched("HEADCOUNT", active, { active, required, available, short }, status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds));
+    // `active` doubles as the source row count: a scope that matches no employees must
+    // report NO_DATA_IN_SOURCE, not a confident headcount of 0. That is precisely what a
+    // team-scoped manager with no mapped reports was seeing.
+    return wrapEnriched("HEADCOUNT", active, { active, required, available, short }, status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), active);
   } catch (err) {
     return nullResult("HEADCOUNT", err);
   }
@@ -624,6 +627,52 @@ const PAYABLE_BANK_SQL = `(
   OR (e.bank_account_number IS NOT NULL AND e.bank_account_number <> '')
 )`;
 
+/**
+ * An employee holds a PAN payroll can actually use.
+ *
+ * Two things the previous `pan_number IS NULL OR pan_number = ''` test got wrong, both
+ * measured live on 2026-08-28 across 1,120 active employees:
+ *
+ *  1. No format check. Seven employees past the joining grace hold a value that cannot be
+ *     a PAN — CTRPC455K, CPWPD2907, GJKPMO583H, NPRK4925R, SCOPS624C, BSPPTO806H,
+ *     JWZPS2362, FWHPR13R — eight to ten characters in the wrong shape. Every one counted
+ *     as payroll-ready here, while payroll-governance.service.ts raises
+ *     INVALID_PAN_FORMAT on exactly the same rows (a blocker under auto-TDS). Two gates
+ *     answering "can this employee be paid" must not disagree about what a PAN is, so
+ *     this uses that file's regex verbatim.
+ *
+ *  2. `pan_number_encrypted` was never consulted. Six employees hold ciphertext with an
+ *     empty plaintext column and were reported as missing a PAN. Every payroll read of
+ *     this field goes through resolvePii(pan_number_encrypted, pan_number), which PREFERS
+ *     the ciphertext (payroll.routes.ts, payroll-more.routes.ts) — payroll reads those six
+ *     without difficulty.
+ *
+ * Ciphertext counts only where the plaintext column is empty. The encryption backfill
+ * encrypted whatever plaintext was there at the time, so ciphertext sitting beside a
+ * malformed plaintext value is the encryption OF that malformed value, not a second,
+ * better PAN — seven of the eight bad rows above carry exactly that pairing. Preferring
+ * ciphertext unconditionally would silently re-admit them.
+ */
+const PAN_USABLE_SQL = `(
+  (e.pan_number IS NOT NULL AND UPPER(TRIM(e.pan_number)) REGEXP '^[A-Z]{5}[0-9]{4}[A-Z]$')
+  OR (
+    (e.pan_number IS NULL OR e.pan_number = '')
+    AND e.pan_number_encrypted IS NOT NULL AND e.pan_number_encrypted <> ''
+  )
+)`;
+
+/** Stored, but in a shape the Income Tax Act does not recognise. */
+const PAN_INVALID_SQL = `(
+  e.pan_number IS NOT NULL AND e.pan_number <> ''
+  AND UPPER(TRIM(e.pan_number)) NOT REGEXP '^[A-Z]{5}[0-9]{4}[A-Z]$'
+)`;
+
+/** No PAN on file at all, in either column. */
+const PAN_ABSENT_SQL = `(
+  (e.pan_number IS NULL OR e.pan_number = '')
+  AND (e.pan_number_encrypted IS NULL OR e.pan_number_encrypted = '')
+)`;
+
 export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
     const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
@@ -680,13 +729,17 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
                 WHERE bd.employee_id = e.id AND bd.is_primary = 1 AND bd.active_status = 1
                   AND CONVERT(bd.account_number USING utf8mb4) REGEXP '^[0-9]{6,20}$')
                    AND DATEDIFF(CURDATE(), date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingNeftBank,
-         SUM(CASE WHEN (pan_number IS NULL OR pan_number = '')
+         -- No PAN in either column. Split from invalidPan deliberately: "232 have no PAN"
+         -- and "7 hold one that will be rejected" are different pieces of work.
+         SUM(CASE WHEN ${PAN_ABSENT_SQL}
                    AND DATEDIFF(CURDATE(), date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingPan,
+         SUM(CASE WHEN ${PAN_INVALID_SQL}
+                   AND DATEDIFF(CURDATE(), date_of_joining) > 30 THEN 1 ELSE 0 END) AS invalidPan,
          SUM(CASE WHEN (uan_number IS NULL OR uan_number = '')
                    AND DATEDIFF(CURDATE(), date_of_joining) > 60 THEN 1 ELSE 0 END) AS missingUan,
          SUM(CASE WHEN
                (${PAYABLE_BANK_SQL} OR DATEDIFF(CURDATE(), date_of_joining) <= 30) AND
-               ((pan_number IS NOT NULL AND pan_number != '') OR DATEDIFF(CURDATE(), date_of_joining) <= 30)
+               (${PAN_USABLE_SQL} OR DATEDIFF(CURDATE(), date_of_joining) <= 30)
              THEN 1 ELSE 0 END) AS readyCount
        FROM employees e
        -- active_status alone, matching the headcount tile and the employee reports.
@@ -702,6 +755,7 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
     const readyCount = Number(r.readyCount ?? 0);
     const missingBank = Number(r.missingBank ?? 0);
     const missingPan = Number(r.missingPan ?? 0);
+    const invalidPan = Number(r.invalidPan ?? 0);
     const missingUan = Number(r.missingUan ?? 0);
     const blockerCount = total - readyCount;
 
@@ -716,7 +770,7 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
       "PAYROLL_READINESS",
       readyCount,
       {
-        total, readyCount, blockerCount, missingBank, missingPan, missingUan,
+        total, readyCount, blockerCount, missingBank, missingPan, invalidPan, missingUan,
         // Cannot be reached by the NEFT file specifically — see the note in the query.
         missingNeftBank: Number(r.missingNeftBank ?? 0),
       },
@@ -907,6 +961,13 @@ export async function getDpdpWithdrawalMetrics(scope: DashboardScope): Promise<M
       false,
       targetScopeId(scope.branchIds),
       targetScopeId(scope.processIds),
+      // sourceRowCount was omitted, so it arrived as undefined rather than 0 and
+      // adaptLegacyMetric's `result.sourceRowCount === 0` test never fired. The tile
+      // therefore rendered a confident "Pending DPDP requests: 0" from a table holding
+      // literally nothing — the one shape the NO_DATA_IN_SOURCE guard exists to prevent,
+      // bypassed by omission rather than by design. dpdp_consent_withdrawal held 0 rows
+      // on 2026-08-28.
+      Number(r.total ?? 0),
     );
   } catch (err) {
     return nullResult("DPDP", err);
@@ -962,9 +1023,10 @@ export async function getAppointmentEsignMetrics(scope: DashboardScope): Promise
       false,
       targetScopeId(scope.branchIds),
       targetScopeId(scope.processIds),
-      // sourceRowCount is not reported by this metric; null keeps the cutoff in its own
-      // positional slot rather than silently landing in the row-count one.
-      null,
+      // The row count IS available here — it is `total`. Passing null meant an empty
+      // appointment_letter_request table rendered "0 pending" as a measurement rather than
+      // "no data recorded yet".
+      Number(r.total ?? 0),
       PENDENCY_CUTOFF_DATE,
     );
   } catch (err) {
@@ -1188,7 +1250,7 @@ export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<
       false,
       targetScopeId(scope.branchIds),
       targetScopeId(scope.processIds),
-      null,
+      Number(r.total ?? 0),
       PENDENCY_CUTOFF_DATE,
     );
   } catch (err) {
@@ -1222,12 +1284,34 @@ export async function getAttendanceExceptionMetrics(scope: DashboardScope): Prom
          SUM(CASE WHEN ari.resolved_at IS NULL AND ari.issue_type = 'missing_adr' THEN 1 ELSE 0 END) AS missingAdr,
          SUM(CASE WHEN ari.resolved_at IS NULL AND ari.issue_type = 'salary_payable_days_mismatch' THEN 1 ELSE 0 END) AS payableMismatch,
          SUM(CASE WHEN ari.resolved_at IS NULL AND ari.issue_type = 'unmapped_cosec_user' THEN 1 ELSE 0 END) AS unmappedCosec,
-         SUM(CASE WHEN ari.resolved_at IS NOT NULL THEN 1 ELSE 0 END) AS resolved,
+         SUM(CASE WHEN ari.resolved_at IS NULL AND ari.issue_type = 'zero_minute_attendance' THEN 1 ELSE 0 END) AS zeroMinute,
+         SUM(CASE WHEN ari.resolved_at IS NULL AND ari.issue_type = 'missing_punch_with_usable_source' THEN 1 ELSE 0 END) AS missingPunchWithSource,
+         SUM(CASE WHEN ari.resolved_at IS NULL AND ari.issue_type = 'dialler_source_without_evidence' THEN 1 ELSE 0 END) AS diallerWithoutEvidence,
+         SUM(CASE WHEN ari.resolved_at IS NULL AND ari.issue_type = 'missing_ibd' THEN 1 ELSE 0 END) AS missingIbd,
+         SUM(CASE WHEN ari.resolved_at IS NULL AND ari.issue_type = 'inactive_cosec_user_activity' THEN 1 ELSE 0 END) AS inactiveCosecActivity,
+         SUM(CASE WHEN ari.resolved_at IS NULL AND ari.issue_type NOT IN (
+               'missing_adr', 'salary_payable_days_mismatch', 'unmapped_cosec_user',
+               'zero_minute_attendance', 'missing_punch_with_usable_source',
+               'dialler_source_without_evidence', 'missing_ibd', 'inactive_cosec_user_activity'
+             ) THEN 1 ELSE 0 END) AS otherOpen,
          SUM(CASE WHEN ari.employee_id IS NULL THEN 1 ELSE 0 END) AS unscopeable
        FROM attendance_reconciliation_issue ari
        LEFT JOIN employees emp ON emp.id = ari.employee_id
        WHERE ari.issue_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
          AND ${scopeSql}`,
+      scopeParams,
+    );
+
+    // Cleared in the last 30 days, measured on WHEN IT WAS CLEARED. Deliberately not
+    // constrained by issue_date: the query above counts resolved rows inside a window
+    // filtered on issue_date, i.e. "raised in the last 30 days and since cleared", while
+    // the panel labels that row "Cleared in the last 30 days". Those are different sets.
+    const [clearedRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS resolved_last_30d
+         FROM attendance_reconciliation_issue ari
+         LEFT JOIN employees emp ON emp.id = ari.employee_id
+        WHERE ari.resolved_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+          AND ${scopeSql}`,
       scopeParams,
     );
 
@@ -1250,7 +1334,17 @@ export async function getAttendanceExceptionMetrics(scope: DashboardScope): Prom
         missingAdr: Number(r.missingAdr ?? 0),
         payableMismatch,
         unmappedCosec: Number(r.unmappedCosec ?? 0),
-        resolved: Number(r.resolved ?? 0),
+        zeroMinute: Number(r.zeroMinute ?? 0),
+        missingPunchWithSource: Number(r.missingPunchWithSource ?? 0),
+        diallerWithoutEvidence: Number(r.diallerWithoutEvidence ?? 0),
+        missingIbd: Number(r.missingIbd ?? 0),
+        inactiveCosecActivity: Number(r.inactiveCosecActivity ?? 0),
+        otherOpen: Number(r.otherOpen ?? 0),
+        // `resolved` (resolved among issues RAISED in the window) is deliberately NOT
+        // returned. It is not what the panel's "Cleared in the last 30 days" row means,
+        // and dashboard-widget-coverage.test.ts rightly fails any detail key that is
+        // fetched on every dashboard load and displayed nowhere.
+        resolvedLast30d: Number((clearedRows[0] as any)?.resolved_last_30d ?? 0),
         unscopeable: Number(r.unscopeable ?? 0),
       },
       status,
@@ -1268,7 +1362,11 @@ export async function getAttendanceExceptionMetrics(scope: DashboardScope): Prom
 /**
  * Document verification backlog for **active** employees only.
  *
- * `employee_documents` holds 207,616 rows across 22,672 employees, but only 1,344 of
+ * Re-measured live 2026-08-28: 1,120 active employees, of whom just 20 hold any document
+ * at all (500 documents between them) — 1.8% coverage. The 1,344 / 1,084 figures this
+ * comment used to quote are an older snapshot; do not reason from them.
+ *
+ * `employee_documents` holds 207,616 rows across 22,672 employees, but only 1,120 of
  * those employees are active — the rest is historical debt that never reaches zero. This
  * counts the active population, which is the number an HR user can work down.
  *
@@ -1278,7 +1376,7 @@ export async function getAttendanceExceptionMetrics(scope: DashboardScope): Prom
  * `expiry_date` is 0% populated for active employees, so expiry is deliberately NOT part
  * of this metric — an "expiring documents" figure would be a permanent, misleading zero.
  * The headline is instead the count of active employees with no document on file at all
- * (1,084 of 1,344), which is the real compliance signal.
+ * (1,100 of 1,120), which is the real compliance signal.
  */
 export async function getDocumentComplianceMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
@@ -1301,6 +1399,13 @@ export async function getDocumentComplianceMetrics(scope: DashboardScope): Promi
          COUNT(DISTINCT CASE WHEN d.id IS NOT NULL THEN e.id END) AS employeesWithDocs,
          COUNT(d.id) AS totalDocs,
          COALESCE(SUM(CASE WHEN d.verified = 1 THEN 1 ELSE 0 END), 0) AS verifiedDocs,
+         -- the verified flag is set on 487 of the 500 documents held by active employees and NONE
+         -- of them carries a verification_date (live, 2026-08-28). The flag was written in
+         -- bulk by the migration, not by anyone checking a document, so "Verified
+         -- Documents" was asserting a compliance level nobody had established. The panel
+         -- now qualifies the 487 with this figure instead of presenting it unadorned.
+         COALESCE(SUM(CASE WHEN d.verified = 1 AND d.verification_date IS NOT NULL THEN 1 ELSE 0 END), 0)
+           AS verifiedWithEvidence,
          COUNT(d.id)
            - COALESCE(SUM(CASE WHEN d.verified = 1 THEN 1 ELSE 0 END), 0) AS unverifiedDocs
        FROM employees e
@@ -1330,6 +1435,7 @@ export async function getDocumentComplianceMetrics(scope: DashboardScope): Promi
         employeesWithDocs: Number(r.employeesWithDocs ?? 0),
         totalDocs: Number(r.totalDocs ?? 0),
         verifiedDocs: Number(r.verifiedDocs ?? 0),
+        verifiedWithEvidence: Number(r.verifiedWithEvidence ?? 0),
         unverifiedDocs,
         coveragePct,
       },

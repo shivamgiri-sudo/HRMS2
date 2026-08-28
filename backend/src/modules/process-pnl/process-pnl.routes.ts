@@ -1390,7 +1390,12 @@ router.get(
   })
 );
 
-router.get("/pnl/summary", h(async (req, res) => {
+// Every sibling P&L read — ceo-overview, trend, export, budgets — carries
+// requireRole(...PNL_READ_ROLES). This one did not: it had requireAuth from router.use()
+// and nothing else, so any authenticated employee could read revenue, cost and margin for
+// the branch scopedFilters resolved them to. `payroll` and `payroll_hr` are added because
+// the Payroll dashboard renders this endpoint's figures and they are entitled to it.
+router.get("/pnl/summary", requireRole(...PNL_READ_ROLES, "payroll", "payroll_hr"), h(async (req, res) => {
   const data = await canonicalPnlService.getSummary(await scopedFilters(req));
   res.json({ success: true, data });
 }));

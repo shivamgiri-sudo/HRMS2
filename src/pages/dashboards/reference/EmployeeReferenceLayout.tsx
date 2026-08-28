@@ -22,7 +22,7 @@ import {
   ReferenceQuickLink,
 } from "../ReferenceDashboardUI";
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
-import { asNumber, formatValue, stringAt } from "../reference-dashboard-model";
+import { METRIC_NO_DATA_REASON, asNumber, formatValue, stringAt } from "../reference-dashboard-model";
 import { ReferenceAIBrief, ReferenceWorkInbox } from "./ReferenceOperationalPanels";
 import { LeaveApprovalPanel } from "./ReferenceSharedPanels";
 import { CompanyFeedSidePanel } from "@/components/dashboard/CompanyFeedSidePanel";
@@ -50,6 +50,20 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
   // against 29 expected, and 8 x 0.5 / 29 = 13.8%. The panel simply never showed
   // the half-day count that reconciles them.
   const halfDay = asNumber(attendance.halfDays ?? attendance.half_day ?? attendance.halfDay);
+
+  /**
+   * This layout reads /api/wfm/my-attendance rather than the metric bundle, so it has no
+   * metricUnavailableReason() to call — but it has the same problem the metric model
+   * solves. When the month holds no rows the endpoint COALESCEs every figure to 0, and
+   * "Present 0, Absent 0, Late 0, Attendance 0%" is indistinguishable from a person who
+   * genuinely did not attend. loadEmployee() already detects the empty case and records it
+   * in sourceErrors; this reuses that signal on the tiles themselves, in the same wording
+   * the metric-driven dashboards use.
+   */
+  const attendanceMissing = (data.employee.sourceErrors ?? []).some((message) =>
+    message.startsWith("Attendance:"),
+  );
+  const attendanceReason = attendanceMissing ? METRIC_NO_DATA_REASON : null;
   const completion = asNumber(lms.completion_pct ?? lms.completionPct ?? lms.course_completion_pct);
   const mcq = asNumber(lms.mcq_best_score ?? lms.mcqBestScore);
   const readiness = asNumber(lms.readiness_score ?? lms.readinessScore);
@@ -110,15 +124,15 @@ export function EmployeeReferenceLayout({ data, employeeName }: { data: Referenc
       <ReferencePanel title="My Attendance This Month" bodyClassName="p-2 sm:p-3">
         <ReferenceMetricGrid columns={5} loading={data.loading} metrics={[
           { label: "Present", value: present, helper: "Full days", icon: UserCheck, tone: "green",
-            ...drill("att"), },
+            unavailableReason: attendanceReason, ...drill("att"), },
           { label: "Half Day", value: halfDay, helper: "Counts as 0.5", icon: Clock3, tone: halfDay && halfDay > 0 ? "amber" : "blue",
-            ...drill("att"), },
+            unavailableReason: attendanceReason, ...drill("att"), },
           { label: "Absent", value: absent, helper: "Day", icon: TriangleAlert, tone: absent && absent > 0 ? "red" : "green",
-            ...drill("att"), },
+            unavailableReason: attendanceReason, ...drill("att"), },
           { label: "Late", value: late, helper: "Days", icon: Clock3, tone: late && late > 0 ? "amber" : "blue",
-            ...drill("att"), },
+            unavailableReason: attendanceReason, ...drill("att"), },
           { label: "Attendance %", value: attendancePct, valueSuffix: "%", helper: "Full + half days", icon: Target, tone: "blue",
-            ...drill("att"), },
+            unavailableReason: attendanceReason, ...drill("att"), },
         ]} />
       </ReferencePanel>
 

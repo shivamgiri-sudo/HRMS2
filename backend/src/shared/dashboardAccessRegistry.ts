@@ -247,3 +247,34 @@ export function canAccessDashboard(code: unknown, roleKeys: readonly string[]): 
   const normalizedRoles = new Set(roleKeys.map(normalizeDashboardRole));
   return dashboard.allowedRoleKeys.some((role) => normalizedRoles.has(normalizeDashboardRole(role)));
 }
+
+/**
+ * Every role key entitled to at least one of the named dashboards.
+ *
+ * A role dashboard passes four independent gates before it renders: the React variant
+ * check, the `role_page_access` grant, this registry on `/api/dashboards/*`, and a
+ * separate `requireRole(...)` on each secondary endpoint the page calls. The first three
+ * are all driven from `allowedRoleKeys` below; the fourth was hand-written per module and
+ * had drifted from it on nine endpoints — so a role opened the page it was entitled to and
+ * then watched half the tiles return 403. Measured live 2026-08-28: `ceo` was denied
+ * `/api/ats/stats` (its own hiring tiles), `it_head` was denied both endpoints the IT
+ * Manager dashboard calls, and `assistant_manager` / `team_leader` / `branch_head` were
+ * denied six of the Manager dashboard's endpoints. Only `super_admin` saw a whole page,
+ * because requireRole short-circuits for it — which is exactly why the pages tested clean.
+ *
+ * Endpoints that feed dashboards therefore derive their gate from here rather than
+ * restating it. Pass the dashboards whose layouts actually call the endpoint; extra roles
+ * an endpoint serves outside the dashboards stay as literals alongside the spread.
+ *
+ * Returns raw (un-normalised) keys because requireRole normalises and expands its own
+ * inputs; handing it the alias forms as well would be redundant, not wrong.
+ */
+export function dashboardConsumerRoles(...codes: readonly DashboardCode[]): string[] {
+  const roles = new Set<string>();
+  for (const code of codes) {
+    const definition = DASHBOARD_ACCESS_REGISTRY[code];
+    if (!definition) continue;
+    for (const role of definition.allowedRoleKeys) roles.add(role);
+  }
+  return [...roles];
+}

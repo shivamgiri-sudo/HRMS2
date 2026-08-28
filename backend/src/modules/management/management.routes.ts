@@ -11,6 +11,7 @@ import { getUserRoleContext } from "../../shared/roleResolver.js";
 import { PAYROLL_ROLES } from "../../platform/policy/roles.js";
 import { assertCanViewMember, getTeamMemberDeepDive, getTeamHygiene } from "./team-member.service.js";
 import { getManagerAttrition, getManagerShrinkage } from "./manager-attribution.service.js";
+import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -144,17 +145,37 @@ router.get("/dashboard", requireRole("admin", "hr", "manager", "branch_head", "c
   ) });
 }));
 
-router.get("/workforce-dashboard", requireRole("admin", "hr", "ceo", "manager", "branch_head", "process_manager", "wfm", "payroll", "payroll_hr", "payroll_head", "finance_head"), h(async (req: AuthenticatedRequest, res: Response) => {
+// Gate derived from the registry: the CEO, Manager, Super Admin, Operations, Quality and
+// HR layouts all read this endpoint. The hand-written list omitted every quality and
+// operations role, so `qa` and `tq_head` opened the Quality and Operations dashboards and
+// got 403 on the process breakdown — as did assistant_manager and team_leader on Manager.
+router.get("/workforce-dashboard", requireRole("admin", "payroll", "payroll_hr", "payroll_head", "finance_head", ...dashboardConsumerRoles(
+  "CEO_DASHBOARD", "MANAGEMENT_DASHBOARD", "SUPER_ADMIN_DASHBOARD", "OPERATIONS_DASHBOARD", "QUALITY_DASHBOARD", "HR_DASHBOARD",
+)), h(async (req: AuthenticatedRequest, res: Response) => {
   const ctx = await getUserRoleContext(req.authUser!.id);
   const scope = await resolveDashboardScopeForRequest(req.authUser!, ctx.primaryRole);
-  // Allow ORG_ALL roles to override scope via query params
-  const branchId = scope.level === "ORG_ALL"
-    ? (req.query.branchId as string | undefined)
-    : (scope.branchIds[0] ?? undefined);
-  const processId = scope.level === "ORG_ALL"
-    ? (req.query.processId as string | undefined)
-    : (scope.processIds[0] ?? undefined);
-  res.json({ data: await managementService.getWorkforceDashboard(branchId, processId, scope.level) });
+
+  // Two bugs lived in the three lines this replaces.
+  //
+  // `scope.branchIds[0]` handed the service ONE branch out of the caller's entitlement,
+  // so a process manager holding four branches saw a quarter of their people with nothing
+  // saying so. The whole list goes through now.
+  //
+  // And a non-ORG_ALL caller's own branchId/processId was discarded outright, so the
+  // filter bar rendered "All Branches" over a view the server had already pinned and
+  // choosing a branch changed nothing. A requested value is now honoured when it is
+  // INSIDE the caller's entitlement and ignored when it is not — narrowing is always
+  // safe, widening is what the scope exists to prevent.
+  const requested = (value: unknown, entitled: readonly string[]): string[] | undefined => {
+    const asked = String(value ?? "").trim();
+    if (!asked) return undefined;
+    if (entitled.length === 0) return [asked];          // ORG_ALL: no list to check against
+    return entitled.includes(asked) ? [asked] : undefined;
+  };
+  const branchIds = requested(req.query.branchId, scope.branchIds) ?? scope.branchIds;
+  const processIds = requested(req.query.processId, scope.processIds) ?? scope.processIds;
+
+  res.json({ data: await managementService.getWorkforceDashboard(branchIds, processIds, scope.level) });
 }));
 
 router.get("/system-dashboard", requireRole("admin", "super_admin"), h(async (_req: AuthenticatedRequest, res: Response) => {

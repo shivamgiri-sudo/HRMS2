@@ -1,6 +1,10 @@
 import type { Response } from "express";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import { atsService } from "./ats.service.js";
+import { db } from "../../db/mysql.js";
+import type { RowDataPacket } from "mysql2";
+import { getUserRoleContext } from "../../shared/roleResolver.js";
+import { resolveDashboardScopeForRequest } from "../../shared/dashboardScope.js";
 import { buildScopeWhereClause } from "../../shared/scopeAccess.js";
 import {
   createCandidateSchema,
@@ -10,6 +14,29 @@ import {
   createOnboardingBridgeSchema,
   updateOnboardingBridgeSchema,
 } from "./ats.validation.js";
+
+/**
+ * ats_candidate records the branch and process a candidate APPLIED FOR as free text
+ * (applied_for_branch / applied_for_process), not as a foreign key — so a scope expressed
+ * in ids cannot filter it until the ids are turned back into the names the rows carry.
+ *
+ * An id with no matching master row yields nothing rather than a wildcard: a scope that
+ * cannot be resolved must narrow to zero, never widen to everything.
+ */
+async function resolveNames(table: "branch_master" | "process_master", column: string, ids: readonly string[]): Promise<string[]> {
+  const wanted = [...new Set(ids.map((id) => String(id ?? "").trim()).filter(Boolean))];
+  if (wanted.length === 0) return [];
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${column} AS name FROM ${table} WHERE id IN (${wanted.map(() => "?").join(", ")})`,
+    wanted,
+  );
+  return (rows as RowDataPacket[])
+    .map((row) => String((row as { name?: unknown }).name ?? "").trim())
+    .filter(Boolean);
+}
+
+const resolveBranchNames = (ids: readonly string[]) => resolveNames("branch_master", "branch_name", ids);
+const resolveProcessNames = (ids: readonly string[]) => resolveNames("process_master", "process_name", ids);
 
 export const atsController = {
   async listCandidates(req: AuthenticatedRequest, res: Response) {
@@ -125,9 +152,45 @@ export const atsController = {
     return res.json({ success: true, data });
   },
 
+  /**
+   * Applies the caller's dashboard scope. This endpoint previously read `branch` and
+   * `process` off the query string and applied nothing else, so a branch HR user, a
+   * process manager and the CEO all saw the same org-wide ATS figures — and because the
+   * dashboards send `branchId`/`processId` (ids) rather than `branch`/`process` (names),
+   * the filter bar above those tiles was inert as well.
+   *
+   * ats_candidate stores applied_for_branch / applied_for_process as NAMES, so the scope's
+   * ids are resolved to names before they can filter anything. A requested id narrows
+   * within the entitlement and is ignored when it falls outside it; `branch`/`process`
+   * name params still work for the callers that already use them.
+   */
   async getDashboardStats(req: AuthenticatedRequest, res: Response) {
-    const { fromDate, toDate, branch, process } = req.query as Record<string, string | undefined>;
-    const data = await atsService.getDashboardStats({ fromDate, toDate, branch, process });
+    const { fromDate, toDate, branch, process, branchId, processId } =
+      req.query as Record<string, string | undefined>;
+
+    const ctx = await getUserRoleContext(req.authUser!.id);
+    const scope = await resolveDashboardScopeForRequest(req.authUser!, ctx.primaryRole);
+
+    const narrow = (asked: string | undefined, entitled: readonly string[]): string[] => {
+      const value = String(asked ?? "").trim();
+      if (!value) return [...entitled];
+      if (entitled.length === 0) return [value];         // ORG_ALL — nothing to narrow against
+      return entitled.includes(value) ? [value] : [...entitled];
+    };
+    const branchIds = narrow(branchId, scope.branchIds);
+    const processIds = narrow(processId, scope.processIds);
+
+    const [branchNames, processNames] = await Promise.all([
+      resolveBranchNames(branchIds),
+      resolveProcessNames(processIds),
+    ]);
+
+    const data = await atsService.getDashboardStats({
+      fromDate,
+      toDate,
+      branch: branch ?? branchNames,
+      process: process ?? processNames,
+    });
     return res.json({ success: true, data });
   },
 };

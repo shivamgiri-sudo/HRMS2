@@ -31,8 +31,13 @@ describe("getDashboardStats applies the caller's scope to its sub-queries", () =
 
   it("builds a scope-only fragment carrying branch and process", () => {
     expect(body).toMatch(/const scopeSql = /);
-    expect(body).toContain("applied_for_branch = ?");
-    expect(body).toContain("applied_for_process = ?");
+    // `IN (...)` since 2026-08-28, not `= ?`: the caller's scope is a LIST of branches and
+    // processes, and collapsing it to one value was how a four-branch process manager saw a
+    // single branch. The assertion is on the column being filtered, not on the operator.
+    expect(body).toContain("applied_for_branch");
+    expect(body).toContain("applied_for_process");
+    expect(body).toMatch(/inClause\("applied_for_branch", branchNames\)/);
+    expect(body).toMatch(/inClause\("applied_for_process", processNames\)/);
   });
 
   it("the scope fragment deliberately excludes the date window", () => {

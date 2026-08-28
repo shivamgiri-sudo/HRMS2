@@ -74,7 +74,38 @@ const ROLE_PRIORITY: Readonly<Record<string, number>> = {
   recruiter: 45,
   trainer: 44,
   qa: 43,
+
+  // ── roles that were absent from this table entirely ────────────────────────────────
+  // A missing key scores 0 through the `?? 0` in resolvePrimaryRole, and every real
+  // account also holds `employee` (10) — so the privileged role LOST every comparison,
+  // primaryRole came back "employee", and resolveDashboardScope handed the user
+  // SELF_ONLY. Measured live 2026-08-28: all four IT accounts opened an IT Manager
+  // dashboard whose headcount tile read 1 (themselves); branch_admin and tq_head were in
+  // the same state.
+  //
+  // `it` was already declared in dashboardScope's BRANCH_ALL_ROLES and
+  // `operations_manager` / `quality_lead` in PROCESS_OR_TEAM_ROLES — those branches were
+  // simply unreachable, because primaryRole could never resolve to any of them. Each rank
+  // below matches the scope tier the role already declares (or is being given) there, so
+  // this changes WHICH branch of resolveDashboardScope runs, not what that branch does.
+  // dashboard-scope-role-coverage.test.ts fails if the two lists drift apart again.
+  //
+  // Deliberately NOT added: `interviewer` and `lms_admin` hold no dashboard scope and
+  // promoting them would change primaryRole for 12 accounts across 30+ unrelated call
+  // sites; `it_admin`/`payroll_admin`/`tl` and the other aliases are normalised away by
+  // uniqueRoles before this table is consulted, so an entry for them would be dead.
+  branch_admin: 62,     // branch tier, just under branch_it (63) above
+  branch_qa: 61,
+  branch_wfm: 60,       // ties process_manager; the tie breaks to branch_wfm by name,
+                        // which is the direction we want — a branch grant beats a process one
+  tq_head: 73,          // head-office function head: must outrank qa_manager (53) and
+                        // quality_analyst (52), which a T&Q head commonly co-holds —
+                        // otherwise the process-tier role wins and narrows them again
+  quality_lead: 50,
+  operations_manager: 49,
   ho_it: 42,
+  it_head: 41,          // head-office tier: ORG_ALL_ROLES, fails closed to own branch
+  it: 40,
 
   employee: 10,
   agent: 9,

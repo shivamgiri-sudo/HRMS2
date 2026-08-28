@@ -145,8 +145,15 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   // three tiles are removed from CeoReferenceLayout instead; re-add the keys here
   // once the pipelines feed data.
   CEO_DASHBOARD: ["hc", "att", "payroll", "onb", "resign", "attException", "docCompliance", "bgv"],
+  // `tat` and `dpdp` removed 2026-08-28, on exactly the reasoning already written into the
+  // CEO bundle below: task_tat_instance and dpdp_consent_withdrawal hold 0 rows on a
+  // COUNT(*), so requesting them asserted "no open TAT items" and "no pending DPDP
+  // requests" about pipelines that are not running. Neither had a consumer either — no
+  // layout in src/pages/dashboards reads metrics.tat or metrics.dpdp — so this removes a
+  // query per request as well as a false zero. `nm` stays: candidate_name_match_summary
+  // holds real rows (7), just few. Re-add the day their sources start writing.
   HR_DASHBOARD: [
-    "onb", "tat", "resign", "dpdp", "appointmentEsign", "bgv", "nm", "joiningDocEsign",
+    "onb", "resign", "appointmentEsign", "bgv", "nm", "joiningDocEsign",
     "hc", "att", "docCompliance", "training", "leaveApprovals",
   ],
   WFM_DASHBOARD: ["hc", "att", "attException", "biometric"],
@@ -155,14 +162,23 @@ const DASHBOARD_METRICS: Readonly<Record<DashboardCode, readonly MetricKey[]>> =
   // it rendered a permanent blank. getHeadcountMetrics is cheap post-fix (already
   // parallelized this session), so there's no cost concern to adding it here.
   WFM_ATTENDANCE_DASHBOARD: ["hc", "att", "attException", "biometric"],
+  // `incentive` KEPT. information_schema.table_rows reported incentive_upload_batch as
+  // empty, but that column is an InnoDB estimate — COUNT(*) is 1 (a rejected batch), so
+  // the metric is measuring something real and PayrollReferenceLayout already renders
+  // metricUnavailableReason() for it if that ever changes.
   PAYROLL_HR_DASHBOARD: ["payroll", "incentive", "salaryComponents", "attException"],
   // Scoped headcount and attendance context for QA; audit scores stay on /api/quality-dashboard/*.
   QUALITY_DASHBOARD: ["hc", "att"],
   OPERATIONS_DASHBOARD: ["hc", "att"],
-  RECRUITER_DASHBOARD: ["onb", "tat", "recruiterActivity"],
+  // `tat` removed — same empty source as HR above.
+  RECRUITER_DASHBOARD: ["onb", "recruiterActivity"],
   // Incoming joiners are provisioning demand; exits are deprovisioning and asset recovery.
   IT_MANAGER_DASHBOARD: ["hc", "onb", "resign"],
-  MANAGEMENT_DASHBOARD: ["hc", "att", "tat", "training", "leaveApprovals"],
+  // `tat` removed — same empty source as HR above. `onb` ADDED: ManagerReferenceLayout's
+  // "New Joiners (This Month)" tile falls back to metricDetail(m, "onb", …) when the
+  // workforce summary has no new_joiners_30d, and the bundle never requested it, so the
+  // fallback was dead code.
+  MANAGEMENT_DASHBOARD: ["hc", "att", "onb", "training", "leaveApprovals"],
   EMPLOYEE_SELF_DASHBOARD: ["att", "leaveApprovals"],
   PERFORMANCE_SCORECARD: [
     "attendanceStatus", "latecoming", "unplannedLeave", "pipStatus",
@@ -197,7 +213,7 @@ export function adaptLegacyMetric(
 ): DashboardMetric {
   const definition = Object.values(METRICS).find((item) => item.code === metricCode);
   if (!definition) throw new Error(`Metric definition not found: ${metricCode}`);
-  const available = result.value !== null && result.value !== undefined;
+  const rawAvailable = result.value !== null && result.value !== undefined;
   const statusMap = {
     ok: "healthy",
     warn: "warning",
@@ -212,16 +228,29 @@ export function adaptLegacyMetric(
   //   available          a real measurement, including a real zero
   // `available` stays true for an empty source: the read succeeded, so it must not be
   // reported in the dashboard's "sources unavailable" banner.
-  const emptySource = available && result.sourceRowCount === 0;
-  const errorCode = !available
-    ? (result.errorCode ?? "SOURCE_UNAVAILABLE")
-    : emptySource
-      ? "NO_DATA_IN_SOURCE"
+  // An empty source is an empty source whether or not the metric could compute a value
+  // from it. Several metrics return null rather than 0 when there is nothing to divide by
+  // — attendanceRate and avgCompletionPct both do — so requiring `available` here sent a
+  // team-scoped manager with no mapped reports down the !available branch and reported
+  // SOURCE_UNAVAILABLE: the tile said the database was unreachable when the query had in
+  // fact run perfectly and matched no rows. QUERY_FAILED still wins, because a metric that
+  // actually threw has a row count of nothing for a different reason.
+  const emptySource = result.sourceRowCount === 0 && result.errorCode !== "QUERY_FAILED";
+  // An empty source counts as AVAILABLE — the read succeeded. unavailableMetricCodes()
+  // drives the red "database sources unavailable" banner off this flag, and listing empty
+  // tables there is what buried real breakage among routine empties.
+  const available = rawAvailable || emptySource;
+  const errorCode = emptySource
+    ? "NO_DATA_IN_SOURCE"
+    : !available
+      ? (result.errorCode ?? "SOURCE_UNAVAILABLE")
       : null;
-  const errorMessage = !available
-    ? (result.errorMessage ?? `${definition.source} did not return a usable value`)
-    : emptySource
-      ? `${definition.source} holds no records for this scope yet`
+  // Same precedence as errorCode above — an empty source explains itself, and must not be
+  // described as a source that "did not return a usable value".
+  const errorMessage = emptySource
+    ? `${definition.source} holds no records for this scope yet`
+    : !available
+      ? (result.errorMessage ?? `${definition.source} did not return a usable value`)
       : null;
 
   return {

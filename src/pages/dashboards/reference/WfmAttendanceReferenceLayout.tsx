@@ -26,6 +26,7 @@ import {
   asNumber,
   formatValue,
   metricDetail,
+  metricUnavailableReason,
   metricValue,
   numberAt,
   read,
@@ -79,14 +80,19 @@ export function WfmAttendanceReferenceLayout({ data, filters }: { data: Referenc
         columns={6}
         loading={data.loading}
         metrics={[
+          // unavailableReason was never passed on this layout, so a scope with no attendance
+          // rows rendered "Present 0 / Absent 0 / Late 0" as measurements rather than
+          // "No data recorded yet".
           { label: "Total Employees", value: active, helper: "In selected scope", icon: Users, tone: "blue",
-            ...drill("hc"), },
-          { label: "Present Today", value: present, helper: attendanceRate === null ? "Live" : `${attendanceRate}%`, icon: UserCheck, tone: "green", ...drill("att") },
-          { label: "Late Arrivals", value: late, helper: latePct === null ? "Today" : `${latePct}%`, icon: Clock3, tone: "amber", ...drill("att") },
+            unavailableReason: metricUnavailableReason(m, "hc"), ...drill("hc"), },
+          { label: "Present Today", value: present, helper: attendanceRate === null ? "Live" : `${attendanceRate}%`, icon: UserCheck, tone: "green",
+            unavailableReason: metricUnavailableReason(m, "att"), ...drill("att") },
+          { label: "Late Arrivals", value: late, helper: latePct === null ? "Today" : `${latePct}%`, icon: Clock3, tone: "amber",
+            unavailableReason: metricUnavailableReason(m, "att"), ...drill("att") },
           { label: "Absent Today", value: absent, helper: "Attendance status", icon: UserMinus, tone: "red",
-            ...drill("att"), },
+            unavailableReason: metricUnavailableReason(m, "att"), ...drill("att"), },
           { label: "On Leave", value: onLeave, helper: "Approved leave", icon: CalendarClock, tone: "blue",
-            ...drill("att"), },
+            unavailableReason: metricUnavailableReason(m, "att"), ...drill("att"), },
           { label: "Working Remotely", value: workingRemotely, helper: "WFH / remote", icon: Network, tone: "violet" },
         ]}
       />

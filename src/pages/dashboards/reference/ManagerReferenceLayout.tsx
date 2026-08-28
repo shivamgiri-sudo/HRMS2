@@ -31,6 +31,7 @@ import {
   countEmployeesOnLeaveOnDate,
   formatValue,
   metricDetail,
+  metricUnavailableReason,
   metricValue,
   numberAt,
   statusCount,
@@ -116,12 +117,20 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
         columns={6}
         loading={data.loading}
         metrics={[
+          // unavailableReason on every metric-backed tile. This layout never passed it, so a
+          // manager whose reporting hierarchy maps nobody — 4 of the 10 team-scoped accounts
+          // live on 2026-08-28 — read a confident "Team Members 0 / Present 0 / Absent 0"
+          // instead of "No data recorded yet". An unmapped team and an empty team looked
+          // identical, and only one of them is a person's actual situation.
           { label: "Team Members", value: team, helper: "Total", icon: Users, tone: "blue",
-            ...drill("hc"), },
-          { label: "Present Today", value: present, helper: attendance === null ? "Live" : `${attendance}%`, icon: UserCheck, tone: "green" },
+            unavailableReason: metricUnavailableReason(m, "hc"), ...drill("hc"), },
+          { label: "Present Today", value: present, helper: attendance === null ? "Live" : `${attendance}%`, icon: UserCheck, tone: "green",
+            unavailableReason: metricUnavailableReason(m, "att") },
           { label: "On Leave", value: employeesOnLeaveToday, helper: team ? `${Math.round((employeesOnLeaveToday / Math.max(team, 1)) * 1000) / 10}%` : "Today", icon: CalendarDays, tone: "amber" },
-          { label: "Absent", value: absent, helper: team && absent !== null ? `${Math.round((absent / Math.max(team, 1)) * 1000) / 10}%` : "Today", icon: UserMinus, tone: "red" },
-          { label: "New Joiners (This Month)", value: newJoiners, helper: "Last 30 days", icon: UserPlus, tone: "violet", ...drill("onb") },
+          { label: "Absent", value: absent, helper: team && absent !== null ? `${Math.round((absent / Math.max(team, 1)) * 1000) / 10}%` : "Today", icon: UserMinus, tone: "red",
+            unavailableReason: metricUnavailableReason(m, "att") },
+          { label: "New Joiners (This Month)", value: newJoiners, helper: "Last 30 days", icon: UserPlus, tone: "violet",
+            unavailableReason: metricUnavailableReason(m, "onb"), ...drill("onb") },
           { label: "Open Positions", value: asNumber(data.ats.open_positions ?? data.ats.openPositions), helper: "View jobs", icon: BriefcaseBusiness, tone: "blue", href: "/ats/dashboard" },
         ]}
       />

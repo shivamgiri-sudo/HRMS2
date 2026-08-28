@@ -24,6 +24,7 @@ import {
   asNumber,
   formatValue,
   metricDetail,
+  metricUnavailableReason,
   metricValue,
 } from "../reference-dashboard-model";
 import {
@@ -44,6 +45,24 @@ export function OperationsReferenceLayout({ data, filters }: { data: ReferenceDa
   const loginAdherenceTarget = asNumber(o.login_adherence_target_pct ?? o.login_adherence_target);
   const avgHandleTime = asNumber(o.avg_aht_seconds ?? o.avg_handle_time ?? o.aht ?? metricValue(m, "aht"));
   const activeHeadcount = asNumber(o.agents_logged_in ?? o.agents_scheduled ?? metricDetail(m, "hc", "active") ?? metricValue(m, "hc"));
+
+  /**
+   * The dialler feed delivers agent rows without the columns that measure them.
+   *
+   * `apr` has been receiving 150–380 agent rows a day while Calls, AHT and every shrinkage
+   * column (BIO / LUNCH / QA / TRAINING) arrive empty — 0 calls on most days for a fortnight
+   * to 2026-08-28, against ~1,100 active staff. Rendered as a number, that reads as a floor
+   * that took no calls; it is a feed that is not reporting them.
+   *
+   * The distinction is testable rather than assumed: agents present AND the measure absent
+   * means the column is missing, not that the work did not happen. With no agents logged in
+   * at all, a zero is a real zero and stays one.
+   */
+  const agentsLoggedIn = asNumber(o.agents_logged_in);
+  const feedSilent = (measure: number | null) =>
+    (agentsLoggedIn ?? 0) > 0 && (measure === null || measure === 0)
+      ? "Not reported by the dialler feed"
+      : null;
 
   const volumeTrend = arrayAt(opsPulse, "volume_trend").map((row) => ({
     label: String(row.period ?? row.hour ?? row.label ?? ""),
@@ -82,6 +101,7 @@ export function OperationsReferenceLayout({ data, filters }: { data: ReferenceDa
             helper: "total volume today",
             icon: Headphones,
             tone: "blue",
+            unavailableReason: feedSilent(totalVolume),
           },
           {
             label: "Login Adherence",
@@ -98,6 +118,7 @@ export function OperationsReferenceLayout({ data, filters }: { data: ReferenceDa
             helper: "seconds per interaction",
             icon: Clock,
             tone: avgHandleTime !== null && avgHandleTime <= 300 ? "green" : "amber",
+            unavailableReason: feedSilent(avgHandleTime),
           },
           {
             label: "Active Headcount",
@@ -105,6 +126,7 @@ export function OperationsReferenceLayout({ data, filters }: { data: ReferenceDa
             helper: "agents on floor",
             icon: Users,
             tone: "violet",
+            unavailableReason: metricUnavailableReason(m, "hc"),
             ...drill("hc"),
           },
         ]}
