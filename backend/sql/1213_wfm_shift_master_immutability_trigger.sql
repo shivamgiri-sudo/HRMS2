@@ -98,8 +98,12 @@ BEGIN
     OR NOT (NEW.end_time <=> OLD.end_time)
     OR NOT (NEW.required_minutes <=> OLD.required_minutes)
   ) THEN
+      -- MESSAGE_TEXT is capped at 128 characters. The original text ran to 180 and
+      -- MySQL replaced the intended SQLSTATE 45000 with HY000 "Data too long for
+      -- condition item 'MESSAGE_TEXT'" — the write was still blocked, but the caller
+      -- got a truncation error instead of the reason. Keep this under 128.
     SIGNAL SQLSTATE '45000'
-      SET MESSAGE_TEXT = 'wfm_shift_master: start_time/end_time/required_minutes cannot be changed on a locked (used) shift version — call createShiftVersion() to create a new effective-dated version instead';
+      SET MESSAGE_TEXT = 'wfm_shift_master: start_time/end_time/required_minutes are immutable on a locked shift version; create a new version instead';
   END IF;
 END$$
 DELIMITER ;
