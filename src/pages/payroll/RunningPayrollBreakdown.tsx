@@ -27,6 +27,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RunningMonthCard, getIstRunMonth } from "@/components/payroll/RunningMonthCard";
+import { ADRAttendanceCalendar } from "@/components/attendance/ADRAttendanceCalendar";
 import { cn } from "@/lib/utils";
 
 const MANAGER_ROLES = [
@@ -225,6 +226,8 @@ function ScopeAggregateTab({ month }: { month: string }) {
   );
 }
 
+type CalView = "all" | "bio" | "apr";
+
 function EmployeeDrilldown({
   month, filterKey, filterId, filterName, onBack,
 }: {
@@ -232,6 +235,7 @@ function EmployeeDrilldown({
 }) {
   const [search, setSearch] = useState("");
   const [selectedEmpId, setSelectedEmpId] = useState<string | null>(null);
+  const [calView, setCalView] = useState<CalView>("all");
   const [page, setPage] = useState(1);
   const LIMIT = 20;
 
@@ -250,13 +254,35 @@ function EmployeeDrilldown({
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / LIMIT);
 
+  const [calYr, calMo] = month.split("-").map(Number);
+
   if (selectedEmpId) {
     return (
       <div className="space-y-3">
-        <Button variant="ghost" size="sm" onClick={() => setSelectedEmpId(null)} className="gap-1.5">
+        <Button variant="ghost" size="sm" onClick={() => { setSelectedEmpId(null); setCalView("all"); }} className="gap-1.5">
           ← Back to {filterName}
         </Button>
         <RunningMonthCard employeeId={selectedEmpId} month={month} self={false} />
+        <div className="space-y-2 pt-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Attendance Calendar</span>
+            <div className="ml-auto flex gap-1">
+              {(["all", "bio", "apr"] as const).map(v => (
+                <Button key={v} size="sm" variant={calView === v ? "default" : "outline"}
+                  className={cn("text-xs h-7 px-2.5", calView === v && "bg-indigo-600 hover:bg-indigo-700")}
+                  onClick={() => setCalView(v)}>
+                  {v === "all" ? "All" : v === "bio" ? "Bio" : "APR"}
+                </Button>
+              ))}
+            </div>
+          </div>
+          <ADRAttendanceCalendar
+            employeeId={selectedEmpId}
+            initialYear={calYr}
+            initialMonth={(calMo || 1) - 1}
+            sourceView={calView}
+          />
+        </div>
       </div>
     );
   }
@@ -330,6 +356,7 @@ function EmployeeSearchTab({ month, isSelfOnly, employeeId }: {
   const [search, setSearch] = useState("");
   const [suggestions, setSuggestions] = useState<Employee[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
+  const [calView, setCalView] = useState<CalView>("all");
 
   const searchEmployees = (q: string) => {
     setSearch(q);
@@ -353,6 +380,7 @@ function EmployeeSearchTab({ month, isSelfOnly, employeeId }: {
 
   const targetEmployeeId = isSelfOnly ? employeeId : selectedEmployee?.id ?? null;
   const showCard = isSelfOnly || !!selectedEmployee;
+  const [calYr, calMo] = month.split("-").map(Number);
 
   return (
     <div className="space-y-4">
@@ -381,7 +409,31 @@ function EmployeeSearchTab({ month, isSelfOnly, employeeId }: {
         </div>
       )}
       {showCard ? (
-        <RunningMonthCard employeeId={targetEmployeeId} month={month} self={isSelfOnly} />
+        <>
+          <RunningMonthCard employeeId={targetEmployeeId} month={month} self={isSelfOnly} />
+          {targetEmployeeId && (
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Attendance Calendar</span>
+                <div className="ml-auto flex gap-1">
+                  {(["all", "bio", "apr"] as const).map(v => (
+                    <Button key={v} size="sm" variant={calView === v ? "default" : "outline"}
+                      className={cn("text-xs h-7 px-2.5", calView === v && "bg-indigo-600 hover:bg-indigo-700")}
+                      onClick={() => setCalView(v)}>
+                      {v === "all" ? "All" : v === "bio" ? "Bio" : "APR"}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+              <ADRAttendanceCalendar
+                employeeId={targetEmployeeId}
+                initialYear={calYr}
+                initialMonth={(calMo || 1) - 1}
+                sourceView={calView}
+              />
+            </div>
+          )}
+        </>
       ) : (
         <div className="rounded-2xl border border-dashed border-border py-12 text-center text-sm text-muted-foreground">
           <Search className="w-8 h-8 mx-auto mb-2 opacity-30" />

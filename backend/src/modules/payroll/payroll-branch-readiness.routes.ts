@@ -247,9 +247,9 @@ payrollBranchReadinessRouter.get(
 payrollBranchReadinessRouter.get(
   "/:branchId",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "payroll_head", "super_admin", "payroll"),
+  requireRole("branch_head", "payroll_branch", "payroll_head", "super_admin", "payroll", "wfm"),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_head", "payroll"],
+    ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -319,13 +319,29 @@ payrollBranchReadinessRouter.post(
           "overtime_confirmed_at";
 
       // Try to update in DB; fall through gracefully if table absent
+      //
+      // The process_id = '' filter is load-bearing. This is the BRANCH-LEVEL route, and
+      // the branch aggregate is the row with process_id = '' (ensureRecord defaults
+      // processId to ''). Without the filter the UPDATE matched every process-scoped row
+      // for the same (month, branch) too, so one branch head ticking one checklist item
+      // silently confirmed it on behalf of every process manager under that branch.
+      //
+      // Verified live 2026-08-28: for NOIDA-2 / 2026-08 the unfiltered predicate matches
+      // 7 rows where it should match 1 — the branch aggregate plus 6 process-scoped rows,
+      // one of which covers 219 employees. Each checklist item is worth up to 15 of the
+      // 100 readiness points and 'ready' is score >= 80, so this pushed processes toward
+      // ready that nobody had actually signed off. Across live data 4 (month, branch)
+      // groups are affected, 41 rows total.
+      //
+      // The sibling process-scoped route below (POST /:branchId/:processId/checklist)
+      // already filtered on process_id correctly; only this branch-level path was wrong.
       try {
         await db.execute(
           `UPDATE payroll_branch_readiness
               SET ${safeItem} = ?,
                   ${confirmedAtCol} = ${value === 1 ? "NOW()" : "NULL"}
-            WHERE process_month = ? AND branch_id = ?`,
-          [value, month, branchId]
+            WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
+          [value, month, branchId, ""]
         );
       } catch (dbErr: unknown) {
         const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
@@ -492,9 +508,9 @@ payrollBranchReadinessRouter.post(
 payrollBranchReadinessRouter.get(
   "/:branchId/processes",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "payroll_head", "super_admin", "payroll"),
+  requireRole("branch_head", "payroll_branch", "payroll_head", "super_admin", "payroll", "wfm"),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_head", "payroll"],
+    ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm"],
     branchScopeTarget,
     SCOPE_OPTIONS
   ),

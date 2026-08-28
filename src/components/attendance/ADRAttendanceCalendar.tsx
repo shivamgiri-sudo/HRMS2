@@ -57,6 +57,8 @@ interface ADRAttendanceCalendarProps {
   employeeId: string;
   initialMonth?: number;
   initialYear?: number;
+  /** "all" = merged ADR (default) | "bio" = raw COSEC biometric | "apr" = dialler-only */
+  sourceView?: "all" | "bio" | "apr";
 }
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -347,7 +349,7 @@ function missingDayStatus(dateStr: string): DayStatus {
   return age >= 0 && age <= 1 ? "awaiting" : "unprocessed";
 }
 
-export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }: ADRAttendanceCalendarProps) {
+export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear, sourceView = "all" }: ADRAttendanceCalendarProps) {
   const today = new Date();
   const [currentMonth, setCurrentMonth] = useState(initialMonth ?? today.getMonth());
   const [currentYear,  setCurrentYear]  = useState(initialYear  ?? today.getFullYear());
@@ -450,7 +452,11 @@ export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }:
       <Card className="overflow-hidden">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-base">{MONTHS[currentMonth]} {currentYear}</CardTitle>
+            <CardTitle className="text-base">
+              {MONTHS[currentMonth]} {currentYear}
+              {sourceView === "bio" && <span className="ml-2 text-xs font-semibold text-sky-600 bg-sky-50 border border-sky-200 rounded px-1.5 py-0.5">Biometric</span>}
+              {sourceView === "apr" && <span className="ml-2 text-xs font-semibold text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5">APR / Dialler</span>}
+            </CardTitle>
             <div className="flex gap-1.5">
               <Button variant="outline" size="sm" onClick={() => { setCurrentMonth(today.getMonth()); setCurrentYear(today.getFullYear()); }}>
                 <CalendarIcon className="mr-1.5 h-3.5 w-3.5" />Today
@@ -498,7 +504,18 @@ export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }:
               // IST date — toISOString() is UTC and puts the "today" ring on the
               // previous day between 00:00 and 05:30 IST.
               const isToday   = dateStr === istTodayString();
-              const status: DayStatus = record?.status ?? (isWknd ? "weekend" : missingDayStatus(dateStr));
+              const baseStatus: DayStatus = record?.status ?? (isWknd ? "weekend" : missingDayStatus(dateStr));
+              const status: DayStatus =
+                sourceView === "bio"
+                  ? (record ? (record.biometricStatus ? normalizeStatus(record.biometricStatus) : "unprocessed") : baseStatus)
+                  : sourceView === "apr"
+                  ? (record ? (record.aprStatus ? normalizeStatus(record.aprStatus) : "unprocessed") : baseStatus)
+                  : baseStatus;
+
+              const cellMinutes =
+                sourceView === "bio" ? record?.biometricMinutes
+                : sourceView === "apr" ? record?.diallerMinutes
+                : record?.rawMinutes;
 
               return (
                 <button
@@ -514,22 +531,24 @@ export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }:
 
                   {record && (
                     <>
-                      {/* Source badge */}
-                      {record.attendanceSource === "dialler" ? (
-                        <span className="inline-block text-[9px] font-bold rounded px-0.5 bg-amber-100 text-amber-700 leading-tight">APR</span>
-                      ) : record.attendanceSource === "biometric" ? (
-                        <span className="inline-block text-[9px] font-bold rounded px-0.5 bg-sky-100 text-sky-700 leading-tight">BIO</span>
-                      ) : null}
+                      {/* Source badge — only in "all" mode where both sources may coexist */}
+                      {sourceView === "all" && (
+                        record.attendanceSource === "dialler" ? (
+                          <span className="inline-block text-[9px] font-bold rounded px-0.5 bg-amber-100 text-amber-700 leading-tight">APR</span>
+                        ) : record.attendanceSource === "biometric" ? (
+                          <span className="inline-block text-[9px] font-bold rounded px-0.5 bg-sky-100 text-sky-700 leading-tight">BIO</span>
+                        ) : null
+                      )}
 
                       {/* Minutes */}
-                      {record.rawMinutes != null && record.rawMinutes > 0 && (
+                      {cellMinutes != null && cellMinutes > 0 && (
                         <div className="text-[10px] font-semibold text-slate-600 leading-tight">
-                          {fmtMinutes(record.rawMinutes)}
+                          {fmtMinutes(cellMinutes)}
                         </div>
                       )}
 
-                      {/* Mismatch indicator */}
-                      {record.mismatchFlag === 1 && (
+                      {/* Mismatch indicator — only in all mode */}
+                      {sourceView === "all" && record.mismatchFlag === 1 && (
                         <AlertTriangle className="h-2.5 w-2.5 text-amber-500 mt-0.5" />
                       )}
 
@@ -550,12 +569,26 @@ export function ADRAttendanceCalendar({ employeeId, initialMonth, initialYear }:
         </CardContent>
       </Card>
 
-      {/* Payroll note */}
-      <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800">
-        <span className="font-semibold">ADR (Attendance Daily Record)</span> is the payroll-ready source.
-        Your salary, LWP deductions and late marks are calculated from this data — not from live biometric punches.
-        Days showing "Not Processed" are pending the nightly attendance engine run.
-      </div>
+      {/* Source note */}
+      {sourceView === "all" && (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-xs text-emerald-800">
+          <span className="font-semibold">ADR (Attendance Daily Record)</span> is the payroll-ready source.
+          Salary, LWP deductions and late marks are calculated from this data.
+          Days showing "Not Processed" are pending the nightly attendance engine run.
+        </div>
+      )}
+      {sourceView === "bio" && (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-2.5 text-xs text-sky-800">
+          <span className="font-semibold">Biometric view</span> — raw COSEC punch data only.
+          This is the fallback source when APR/dialler data is absent. Not the authoritative payroll record.
+        </div>
+      )}
+      {sourceView === "apr" && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800">
+          <span className="font-semibold">APR / Dialler view</span> — net login minutes from the dialler only.
+          Days with no APR data show as unprocessed even if biometric confirms presence.
+        </div>
+      )}
 
       <ADRDayDetailSheet
         open={sheetOpen}

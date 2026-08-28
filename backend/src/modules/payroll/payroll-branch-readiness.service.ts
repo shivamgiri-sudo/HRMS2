@@ -739,14 +739,20 @@ export const payrollBranchReadinessService = {
       const msg = err instanceof Error ? err.message : String(err);
       // Columns may not exist yet — try without the new columns
       try {
+        // Same process_id filter as the primary UPDATE above. This degraded path drops the
+        // three newer columns when they are absent, but it must not also widen its WHERE:
+        // without process_id it wrote one process's projected gross/net and headcount onto
+        // every other process row for the same (month, branch), and onto the branch
+        // aggregate. Projections are what the HO summary reads, so a silent fallback was
+        // enough to make every process under a branch report identical salary figures.
         await db.execute(
           `UPDATE payroll_branch_readiness
               SET projected_gross = ?,
                   projected_net = ?,
                   projection_computed_at = NOW(),
                   employee_count = ?
-            WHERE process_month = ? AND branch_id = ?`,
-          [projectedGross, projectedNet, employeeCount, month, branchId]
+            WHERE process_month = ? AND branch_id = ? AND process_id = ?`,
+          [projectedGross, projectedNet, employeeCount, month, branchId, processId]
         );
       } catch {
         console.warn(`[BranchReadiness] refreshProjection persist failed — ${msg}`);
