@@ -241,6 +241,62 @@ const KNOWN_MISSING: Record<string, string> = {
   // Not a fetch, but still a promise the product makes and does not keep.
   "/api/webhooks/:x":
     "SimpleConnectorWizard DISPLAYS this to the user as 'your webhook URL will be /api/webhooks/{key}'. No /api/webhooks is mounted anywhere, so any external system configured against it posts into nothing. Listed here rather than ignored because the URL is published to third parties.",
+
+  // ── RosterComplianceMonitor (/wfm/roster-compliance), audited 2026-08-28 ──────────────
+  // A backend for this dashboard DOES exist — wfm-compliance-analytics.routes.ts, mounted at
+  // /api/wfm/compliance, and its own doc comments say it was written for this page. It is not
+  // a matter of correcting the prefix, which is why these are listed rather than repointed:
+  //   • /summary returns {period, compliancePct, totalEmployees, totalViolations, rules[],
+  //     trend} where the page consumes {overallScore, byRule{...}, byBranch, byProcess}. The
+  //     rules[] array does carry all five rule types, so summary and trend are adaptable.
+  //   • /violations is a DIFFERENT DOMAIN. It returns attendance exceptions
+  //     (ABSENT_NO_CALL, LATE_ARRIVAL, status WEEK_OFF/WORKING); the page wants roster-rule
+  //     breaches (MINIMUM_REST, CONSECUTIVE_DAYS, ...) with an OPEN/ACKNOWLEDGED/RESOLVED
+  //     workflow that has no table behind it. Wiring one to the other would file "Late
+  //     Arrival" under "Minimum Rest violations".
+  // Deeper still: that engine queries `roster_assignment`, which holds 0 rows. The live roster
+  // is `wfm_roster_assignment` (417,773). Because its own fallback is `: 100` when
+  // total_shifts = 0, the backend itself returns 100% compliance with 0 violations. Repointing
+  // the table is a product decision about which roster is authoritative — both are live code
+  // paths — so it is deliberately not made here.
+  "/api/roster-compliance/summary":
+    "Unserved. Nearest real backend is GET /api/wfm/compliance/summary, but its response shape does not match what RosterComplianceMonitor consumes, and it computes over the empty roster_assignment table. See the block above.",
+  "/api/roster-compliance/violations":
+    "Unserved, and NOT substitutable by /api/wfm/compliance/violations, which returns attendance exceptions rather than roster-rule breaches. The page's OPEN/ACKNOWLEDGED/RESOLVED violation workflow has no backing table anywhere.",
+  "/api/roster-compliance/trend":
+    "Unserved. GET /api/wfm/compliance/trend returns {month, compliancePct, totalShifts, violations} against the page's {week, violations, score}; adaptable, but blocked behind the same empty-table and shape questions as /summary.",
+
+  // ── RosterInterventionDashboard (/wfm/roster-interventions) ───────────────────────────
+  // Served in substance at /api/analytics/intervention-recommendations (/outcomes, /pending,
+  // PATCH /:id) — the paths and the verb differ from what the page calls, and /outcomes
+  // covers total/retained/exited/pending/retentionRate but not the byTier breakdown the page
+  // renders. Repointing is cheap; it would also change nothing a user sees, because
+  // employee_retention_recommendation holds 0 rows. This is an unpopulated feature, not a
+  // broken one, so the honest fix is to generate recommendations, not to move a URL.
+  "/api/analytics/interventions/summary":
+    "Unserved. Closest is GET /api/analytics/intervention-recommendations/outcomes, which lacks the byTier breakdown this page renders. Moot until employee_retention_recommendation has rows — it has 0.",
+  "/api/analytics/interventions/pending":
+    "Unserved. GET /api/analytics/intervention-recommendations/pending is the same query under a different path. Returns nothing today regardless: employee_retention_recommendation holds 0 rows.",
+  "/api/analytics/interventions/:x/action":
+    "Unserved. The equivalent mutation is PATCH /api/analytics/intervention-recommendations/:id — different verb and path. Nothing to action while the table is empty.",
+
+  // ── WFMCapacityDashboard (/wfm/capacity-dashboard) ────────────────────────────────────
+  "/api/workforce-mandate/hiring-demand":
+    "Genuinely absent — that router serves /capacity-summary, /hc-formula, /leadership-summary and /support-ratios. /capacity-summary works and already returns a hiringDemand NUMBER; only the by-priority breakdown is missing, and 'priority' is not a concept this model carries yet. The page degrades to zeros, and since 2026-08-28 says so in its Hiring Demand panel instead of implying no open positions.",
+
+  // ── NativeTNIAnalysis (/wfm/tni-analysis) — not linked from the sidebar ───────────────
+  "/api/quality-dashboard/tni-agent-params":
+    "Unserved. quality-dashboard.routes.ts has no TNI paths at all; training-needs analysis was never built on the backend.",
+  "/api/quality-dashboard/tni-analysis":
+    "Unserved, same as tni-agent-params — no TNI surface exists behind /api/quality-dashboard.",
+  "/api/lms-integration/assign":
+    "Unserved. lmsIntegrationRouter is mounted at /api/lms (not /api/lms-integration) and exposes /dashboard-summary, /risk-summary and /batches — there is no /assign on it. Assigning a learner from HRMS would also need the LMS boundary rule honoured (integration layer, no direct writes), so this is a design question, not a missing line.",
+
+  // ── NativeOpsCommandCenter (/ops/command-center) — not linked from the sidebar ────────
+  "/api/call-master/inbound/today":
+    "Unserved. /api/call-master is mounted but exposes no /inbound/today.",
+  "/api/operations-live/summary":
+    "Unserved. operations-live.routes.ts EXISTS and is mounted — at /api/operations, serving /live-status, /roster-vs-actual and /attrition-risk. There is no /summary on it, so this is a missing handler as well as a prefix mismatch.",
 };
 
 /**

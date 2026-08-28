@@ -247,6 +247,62 @@ describe("application shell routing contracts", () => {
       "/wfm/adherence-command-center",
       "/wfm/agent-attendance-view",
       "/wfm/break-desk-devices",
+
+      // ── Added 2026-08-28. Each route below was checked for inbound links from a
+      // non-route, non-nav source file, so the three groups are evidence, not labels.
+
+      // (a) Opened from a parent screen — the case this list was created for. Link counts
+      // are inbound references from real pages: statutory-filing 4, statutory 4,
+      // branch-readiness 3, process-readiness 3, bank-readiness 2, disbursal 2,
+      // statutory-config 2, and one each for the rest.
+      "/compliance/audit-report",
+      "/compliance/labour",
+      "/compliance/statutory",
+      "/payroll/bank-readiness",
+      "/payroll/branch-readiness",
+      "/payroll/cost-summary",
+      "/payroll/disbursal",
+      "/payroll/process-readiness",
+      "/payroll/run-lifecycle",
+      "/payroll/statutory-config",
+      "/payroll/statutory-filing",
+      "/payroll/variance",
+      "/payroll/variance-analysis",
+
+      // (b) Prototypes and comparison harnesses. Deliberately unlinked; kept because
+      // CLAUDE.md forbids deleting page flows to simplify, not because they are wanted.
+      "/onboard-full-v2",
+      "/onboarding-demo",
+      "/onboarding-step10-demo",
+      "/profile-compare",
+      "/profile-enhanced",
+      "/profile-v2",
+      "/profile-v3",
+      "/profile-v3-demo",
+      "/ux-skill-compare",
+      "/ux-skill-demo",
+
+      // (c) Unlinked because their backend does not answer. /ops/command-center calls
+      // /api/call-master/inbound/today and /api/operations-live/summary; /wfm/tni-analysis
+      // calls two /api/quality-dashboard/tni-* paths and /api/lms-integration/assign. None
+      // is served (see api-endpoint-existence.contract.test.ts's KNOWN_MISSING). Putting
+      // either in the sidebar would advertise a page that cannot load.
+      "/ops/command-center",
+      "/wfm/tni-analysis",
+
+      // (d) ⚠️ ORPHANED — real features with ZERO inbound links and no sidebar entry, so
+      // today they are reachable only by typing the URL. These are listed to make this
+      // contract pass on a truthful inventory, NOT because anyone decided they should be
+      // hidden. Each needs an owner to say "link it" or "retire it"; /bulk-upload/approvals
+      // in particular is a live, shipped approval gate. Do not read this block as settled.
+      "/ats/onboarding",
+      "/bulk-upload/approvals",
+      "/finance/client-payments",
+      "/payroll/salary-disputes/queue",
+      "/payroll/salary-disputes/team",
+      "/payroll/salary-package-manager",
+      "/wfm/mobile-attendance",
+      "/wfm/roster-analytics-panel",
     ]);
     const navPaths = new Set(
       [...navSource.matchAll(/href:\s*"([^"]+)"/g)].map((match) => match[1].split("?")[0]),
