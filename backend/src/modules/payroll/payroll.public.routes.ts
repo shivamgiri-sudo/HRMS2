@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Response } from "express";
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
+import { publicRegistrationLimiter } from "../../middleware/rateLimiter.js";
 
 /**
  * Public payroll surfaces — no authentication.
@@ -51,7 +52,12 @@ export function parseMonthYear(raw: string): string {
 }
 
 // GET /api/payroll/verify/payslip/:empCode/:monthYear — PUBLIC — payslip QR verification
-payrollPublicRouter.get("/verify/payslip/:empCode/:monthYear", h(async (req: any, res: Response) => {
+//
+// Rate-limited HERE, on the specific route, not by mounting the limiter on the whole
+// "/api/payroll" prefix in app.ts — that previously throttled every authenticated
+// payroll request (payslip/my, running-summary/me, ...) sharing this router's mount
+// path, capping the entire office to 15 payroll requests per 10 minutes per IP.
+payrollPublicRouter.get("/verify/payslip/:empCode/:monthYear", publicRegistrationLimiter, h(async (req: any, res: Response) => {
   const empCode = String(req.params.empCode ?? "").trim();
   const runMonth = parseMonthYear(String(req.params.monthYear ?? ""));
 

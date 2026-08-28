@@ -232,6 +232,41 @@ export const payslipService = {
     (rec as any).pan_number = resolvePii((rec as any).pan_number_encrypted, (rec as any).pan_number).value;
     delete (rec as any).pan_number_encrypted;
 
+    // paid_working_days / eligible_weekoff_days / final_payable_days were never
+    // populated by the payroll engine — verified 2026-08-28: all 129,696 salary_prep_line
+    // rows ever created carry 0 in these three columns, including ones with real gross_salary.
+    // working_days/present_days/leave_days ARE populated correctly and are what earnings
+    // are actually computed from. This derives a display-only estimate from those real
+    // columns instead of showing an all-zero attendance grid — it does not recompute or
+    // alter any pay figure, all of which are already stored above.
+    const workingDays = Number((rec as any).working_days ?? 0);
+    const presentDays = Number((rec as any).present_days ?? 0);
+    const leaveDays = Number((rec as any).leave_days ?? 0);
+    const calendarDays = Number((rec as any).active_calendar_days ?? 0);
+    const storedPaidDays = Number((rec as any).paid_working_days ?? 0);
+    const storedWeekoffDays = Number((rec as any).eligible_weekoff_days ?? 0);
+    const storedPayableDays = Number((rec as any).final_payable_days ?? 0);
+    if (storedPaidDays === 0 && storedWeekoffDays === 0 && storedPayableDays === 0
+        && (workingDays > 0 || presentDays > 0)) {
+      const derivedWeekoffDays = Math.max(calendarDays - workingDays, 0);
+      // present_days + leave_days is the same fallback the payroll engine itself uses
+      // for paidBase (payrollCalculate.service.ts), but present_days can already run
+      // past the calendar length on this legacy attendance data (e.g. 31 present + 2
+      // leave in a 30-day month) — clamped to calendarDays so the tile never shows more
+      // paid/payable days than the month it is describing actually has.
+      const derivedPaidDays = calendarDays > 0
+        ? Math.min(presentDays + leaveDays, calendarDays)
+        : presentDays + leaveDays;
+      (rec as any).paid_working_days = derivedPaidDays;
+      (rec as any).eligible_weekoff_days = derivedWeekoffDays;
+      // Holidays are not separable from weekoffs in this legacy data — no column
+      // isolates them — so leave null (renders as "—") rather than guessing a split.
+      (rec as any).eligible_holiday_days = null;
+      (rec as any).final_payable_days = calendarDays > 0
+        ? Math.min(derivedPaidDays + derivedWeekoffDays, calendarDays)
+        : derivedPaidDays + derivedWeekoffDays;
+    }
+
     const [components] = await db.execute<RowDataPacket[]>(
       `SELECT component_code, component_name, component_type, amount, taxable, reason
          FROM salary_prep_line_component
