@@ -60,9 +60,10 @@ describe("importWeekOffPreferenceBatch — batched rewrite", () => {
     const insertCall = execute.mock.calls.find(([sql]) => typeof sql === "string" && sql.startsWith("\n    INSERT INTO week_off_preference") || (typeof sql === "string" && sql.includes("INSERT INTO week_off_preference")));
     expect(insertCall).toBeDefined();
     const params = insertCall![1] as unknown[];
-    // Each row is a 10-field tuple: id, employee_id, process_id, branch_id, week_start_date,
-    // preferred_day_1, preferred_day_2, reason, submission_order, created_by.
-    const submissionOrders = [params[8], params[18], params[28]];
+    // Each row is a 12-field tuple: id, employee_id, process_id, branch_id, week_start_date,
+    // preferred_day, alternate_day, preferred_day_1, preferred_day_2, reason,
+    // submission_order, created_by.
+    const submissionOrders = [params[10], params[22], params[34]];
     expect(submissionOrders).toEqual([6, 7, 8]); // continues from the existing max of 5, in row_no order
   });
 
@@ -97,7 +98,7 @@ describe("importWeekOffPreferenceBatch — batched rewrite", () => {
     const insertCall = execute.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO week_off_preference"));
     const params = insertCall![1] as unknown[];
     // row-1 (process-1, starting max 0) -> order 1; row-2 (process-2, starting max 10) -> order 11.
-    expect([params[8], params[18]]).toEqual([1, 11]);
+    expect([params[10], params[22]]).toEqual([1, 11]);
   });
 
   it("errors a row with an unresolvable employee_code without disturbing the others' ordering", async () => {
@@ -120,5 +121,40 @@ describe("importWeekOffPreferenceBatch — batched rewrite", () => {
     expect(result.imported).toBe(1);
     expect(result.skipped).toBe(1);
     expect(result.errors[0]).toMatch(/GHOST.*not found or inactive/);
+  });
+
+  it("populates the legacy preferred_day/alternate_day columns, not just preferred_day_1/preferred_day_2", async () => {
+    // week_off_preference.preferred_day is NOT NULL with no default, and it is the
+    // column weekoff-allocation.service.ts's FCFS run and roster-generation.service.ts
+    // actually read — neither reads preferred_day_1/preferred_day_2. Before this fix
+    // the INSERT named only the split columns, so every bulk-upload row failed
+    // outright with "Field 'preferred_day' doesn't have a default value" — 0
+    // successful imports ever, live-confirmed via PREPARE. This pins that a fresh
+    // row now carries both column generations, in agreement.
+    execute.mockResolvedValueOnce([
+      [row("row-1", 1, { employee_code: "MAS001", week_start_date: "2026-08-17", preferred_day_1: "sunday", preferred_day_2: "saturday" })],
+      [],
+    ]);
+    execute.mockResolvedValueOnce([[{ employee_code: "MAS001", id: "emp-1", process_id: "proc-1", branch_id: "br-1" }], []]);
+    execute.mockResolvedValueOnce([[{ week_start_date: "2026-08-17", process_id: "proc-1", max_order: 0 }], []]);
+    execute.mockResolvedValueOnce([{}, []]); // INSERT
+    execute.mockResolvedValueOnce([{}, []]); // UPDATE upload_batch_row imported
+    execute.mockResolvedValueOnce([{}, []]); // UPDATE upload_batch
+
+    const result = await importWeekOffPreferenceBatch("batch-1", "user-1");
+    expect(result.imported).toBe(1);
+    expect(result.skipped).toBe(0);
+
+    const insertCall = execute.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO week_off_preference"));
+    expect(insertCall).toBeDefined();
+    const sql = insertCall![0] as string;
+    expect(sql).toMatch(/\bpreferred_day\b,\s*alternate_day\b/);
+    const params = insertCall![1] as unknown[];
+    // id, employee_id, process_id, branch_id, week_start_date,
+    // preferred_day, alternate_day, preferred_day_1, preferred_day_2, reason, submission_order, created_by
+    expect(params[5]).toBe(0); // preferred_day = Sunday
+    expect(params[6]).toBe(6); // alternate_day = Saturday
+    expect(params[7]).toBe(0); // preferred_day_1 stays in agreement
+    expect(params[8]).toBe(6); // preferred_day_2 stays in agreement
   });
 });

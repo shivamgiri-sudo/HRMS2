@@ -283,9 +283,16 @@ export async function importShiftRosterBatch(
             }
             // parsed.startTime/endTime is what the uploaded cell literally said, so it's
             // used directly for the snapshot rather than re-reading it back off the
-            // (possibly pre-existing, possibly reused) shift template row.
-            shiftStartTime = parsed.startTime;
-            shiftEndTime = parsed.endTime;
+            // (possibly pre-existing, possibly reused) shift template row. parseShiftTiming
+            // returns "HH:MM:SS" (8 chars); wfm_roster_assignment.shift_start_time/
+            // shift_end_time are varchar(5) ("HH:MM"). Truncated here, once, so the
+            // INSERT below (via weekAssignments) gets the same 5-char value the .slice(0,5)
+            // calls a few lines down already use for the rest-policy check — before this,
+            // every row with a resolved (non-week-off) shift died with "Data too long for
+            // column 'shift_start_time'" (ER_DATA_TOO_LONG), the same bug fixed in
+            // roster-assignment-bulk.service.ts, live-reproduced there directly.
+            shiftStartTime = parsed.startTime.slice(0, 5);
+            shiftEndTime = parsed.endTime.slice(0, 5);
           }
 
           // Area 2: minimum-rest validation. BLOCKS with no override path, same as
@@ -464,8 +471,17 @@ export async function importShiftRosterBatch(
           [JSON.stringify(update.errors), update.id]
         );
       } else {
+        // target_record_id was never a real column on upload_batch_row — migration
+        // 1522 named the pair created_entity_type/created_entity_id instead. This
+        // threw ER_BAD_FIELD_ERROR on the first row of every batch that produced at
+        // least one successful day-assignment, and rolled the whole batch back with
+        // it (single shared transaction). Live-confirmed via PREPARE, and matches a
+        // real stuck batch: BATCH-1784051881054 (236 rows) sits at
+        // batch_status='validated', imported_rows=0 despite its row-level statuses
+        // already showing 178 imported / 58 error from an earlier, non-transactional
+        // version of this code.
         await conn.execute(
-          "UPDATE upload_batch_row SET row_status='imported', target_record_id=? WHERE id=?",
+          "UPDATE upload_batch_row SET row_status='imported', created_entity_type='wfm_roster_assignment', created_entity_id=? WHERE id=?",
           [update.targetRecordIds[0] ?? null, update.id]
         );
       }
