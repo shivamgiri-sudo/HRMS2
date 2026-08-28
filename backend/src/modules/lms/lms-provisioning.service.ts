@@ -84,10 +84,19 @@ async function upsertExternalTrainee(
   const traineeName = [profile.first_name, profile.last_name].filter(Boolean).join(" ").trim() || profile.employee_code;
   const email = profile.official_email ?? profile.email ?? null;
   await conn.execute(
+    // last_updated_at on the LMS's trainee_master is datetime(3) NOT NULL with no
+    // default — it only self-populates via "ON UPDATE CURRENT_TIMESTAMP(3)", which
+    // does nothing for a plain INSERT. Every first-time provisioning (no existing
+    // row to hit ON DUPLICATE KEY UPDATE) failed with "Field 'last_updated_at'
+    // doesn't have a default value" — caught as best-effort by the caller so it
+    // never failed the employee import itself, but the trainee row was never
+    // created and no LMS learner ever got linked on a brand-new employee's first
+    // bulk import. Live-confirmed via PREPARE and by direct invocation against the
+    // real DB. NOW(3) matches the column's own millisecond precision.
     `INSERT INTO trainee_master
        (id, employee_id, lms_id, trainee_name, email, mobile, branch, process, lob,
-        status, source, emp_id_type, permanent_emp_id, emp_id_mapped_at, created_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active', 'HRMS', 'PERMANENT', ?, NOW(), ?)
+        status, source, emp_id_type, permanent_emp_id, emp_id_mapped_at, created_by, last_updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Active', 'HRMS', 'PERMANENT', ?, NOW(), ?, NOW(3))
      ON DUPLICATE KEY UPDATE
        lms_id = VALUES(lms_id),
        trainee_name = COALESCE(VALUES(trainee_name), trainee_name),
