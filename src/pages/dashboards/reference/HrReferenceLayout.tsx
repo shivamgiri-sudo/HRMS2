@@ -307,6 +307,21 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
     return out;
   })();
   const pendingLeaveBacklog = asNumber(data.workforce.pending_leave_requests) ?? metricValue(m, 'leaveApprovals');
+  /**
+   * Requests the db_bill migration left as 'pending' that the legacy system had already
+   * decided. 547 of the 586 rows this database calls pending were 'Not Approved' in
+   * db_bill.leave_management (548 of those 718 source rows carry an explicit
+   * DisApprovedReason, so the value means rejected, not "awaiting a decision"), and every
+   * one of the 586 has a to_date in the past.
+   *
+   * The server now keeps them out of `pending_leave_requests` so the tile is an approval
+   * queue again rather than an eight-year archive. Reported here as its own line: the
+   * rows are still wrong in the database and hiding them entirely would just move the
+   * surprise to whoever next queries the table. Renders nothing once the backlog is
+   * repaired (backend/scripts/repair-legacy-leave-status.mjs) and the count reaches zero.
+   */
+  const legacyLeaveBacklog = asNumber(data.workforce.legacy_leave_backlog)
+    ?? metricDetail(m, 'leaveApprovals', 'legacyBacklog');
   const hasLeaveData = Object.keys(leaveByStatus).length > 0 || pendingLeaveBacklog !== null;
 
   // Department/Branch breakdown - REAL DATA ONLY
@@ -436,7 +451,7 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
           icon={Hourglass}
           label="Pending Leave"
           value={settling || pendingLeaveBacklog === null ? "—" : pendingLeaveBacklog.toLocaleString()}
-          sub="awaiting approval"
+          sub={legacyLeaveBacklog ? `awaiting approval · ${legacyLeaveBacklog.toLocaleString()} legacy` : "awaiting approval"}
           color="#F59E0B"
           bg="from-amber-500/10 to-orange-500/5"
         />

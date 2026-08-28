@@ -294,12 +294,20 @@ async function syncLeaveGap(bill, hrms, empMap) {
     for (const [k,v] of ltByCode) { if (k.includes(u) || u.includes(k)) return v; }
     return defaultLtId;
   }
-  function mapStatus(s, cs) {
-    const v = (cs || s || '').toLowerCase();
-    if (v.includes('appro')) return 'approved';
-    if (v.includes('reject') || v.includes('disap')) return 'rejected';
+  function mapStatus(s) {
+    // Reads Status only. This used to prefer `CurrentStatus`, which is not a status at
+    // all — it holds a comma-separated list of approval-line ids like
+    // '1111700_A,1112108_A'. Nothing in it matches any branch below, so every row fell
+    // through to the `return 'approved'` default and rejected leave was imported as
+    // approved.
+    const v = (s || '').trim().toLowerCase();
+    // 'Not Approved' (718 rows in db_bill, 548 of them carrying a DisApprovedReason)
+    // contains 'appro', so rejection has to be tested first.
+    if (v.includes('reject') || v.includes('disap') || v.includes('not appro')) return 'rejected';
     if (v.includes('cancel')) return 'cancelled';
-    return 'approved';
+    if (v.includes('appro')) return 'approved';
+    // Unknown / blank: never assert a decision that was not recorded.
+    return 'pending';
   }
 
   let offset = 0, inserted = 0, skipped = 0;
@@ -332,7 +340,7 @@ async function syncLeaveGap(bill, hrms, empMap) {
         end_date:       r.LeaveTo,
         total_days:     Number(r.TotalLeave) || 1,
         reason:         r.Purpose || null,
-        status:         mapStatus(r.Status, r.CurrentStatus),
+        status:         mapStatus(r.Status),
         approval_level: 0,
         leave_type_code: r.LeaveType || null,
         payroll_closed_flag: 0,

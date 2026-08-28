@@ -88,14 +88,21 @@ describe("HEADCOUNT definition stays aligned with management.service.ts", () => 
 });
 
 describe("BGV drilldown matches the tile's pending bucket exactly", () => {
-  it("uses the same status IN (...) list as getBgvMetrics' pending SUM CASE, not a wider NOT IN", () => {
+  it("uses the same status IN (...) list as getBgvMetrics' outstanding bucket, not a wider NOT IN", () => {
     const metricStart = source.indexOf("export async function getBgvMetrics");
-    const metricSlice = source.slice(metricStart, metricStart + 1600);
-    const pendingMatch = metricSlice.match(/bgv\.status IN \(([^)]+)\) THEN 1 ELSE 0 END\) AS pending/);
-    expect(pendingMatch, "could not find getBgvMetrics' pending bucket definition").not.toBeNull();
+    const metricSlice = source.slice(metricStart, metricStart + 3000);
+    // getBgvMetrics rolls its checks up per candidate now (2026-08-28: the tile counted
+    // 280 check rows against 109 real people), so the outstanding-status list lives in
+    // the named OUTSTANDING constant rather than inline in a `... AS pending` SUM CASE.
+    // The list itself is what has to stay in step with the drilldown.
+    const pendingMatch = metricSlice.match(/const OUTSTANDING = `\(bgv\.status IS NULL OR bgv\.status IN \(([^)]+)\)\)`/);
+    expect(pendingMatch, "could not find getBgvMetrics' outstanding bucket definition").not.toBeNull();
+    expect(pendingMatch![1]).toBe("'pending','not_started','queued','manual_review','in_progress'");
 
     const drillStart = drilldownSource.indexOf("async function drillBgv");
-    const drillSlice = drilldownSource.slice(drillStart, drillStart + 1200);
+    // 2500, not 1200: drillBgv now groups per candidate and carries the explanatory
+    // header for that, which pushed the WHERE clause past the old window.
+    const drillSlice = drilldownSource.slice(drillStart, drillStart + 2500);
     // The active WHERE clause, not the explanatory comment above it (which still
     // mentions the old NOT IN pattern in prose on purpose, as a "don't reintroduce
     // this" note) — assert on the actual condition line.

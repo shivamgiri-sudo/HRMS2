@@ -149,19 +149,38 @@ export class LeaveSyncHandler {
 
     const normalized = legacyStatus.trim().toLowerCase();
 
-    if (normalized.includes('approve') && !normalized.includes('disapprove')) {
-      return 'approved';
-    }
-    if (normalized.includes('reject') || normalized.includes('disapprove')) {
+    // Rejection is tested FIRST, and 'not approved' is named explicitly.
+    //
+    // db_bill.leave_management.Status holds exactly four values: 'Approved' (31,540),
+    // 'Not Approved' (718), '' (34) and NULL (16). 'Not Approved' is terminal — 548 of
+    // those 718 rows carry a populated DisApprovedReason — but it contains the
+    // substring "approve", so the old approved-first test matched it and imported 77
+    // rejected leaves into mas_hrms as APPROVED, where they count toward leave
+    // balances. Ordering the checks the other way round is what fixes it; the
+    // 'disapprove' guard alone never covered the value the source actually uses.
+    if (
+      normalized.includes('reject')
+      || normalized.includes('disapprove')
+      || normalized.includes('not approve')
+      || normalized.includes('notapprove')
+    ) {
       return 'rejected';
-    }
-    if (normalized.includes('pending') || normalized.includes('waiting')) {
-      return 'pending';
     }
     if (normalized.includes('cancel')) {
       return 'cancelled';
     }
+    if (normalized.includes('approve')) {
+      return 'approved';
+    }
+    if (normalized.includes('pending') || normalized.includes('waiting')) {
+      return 'pending';
+    }
 
+    // Unrecognised values stay 'pending' on purpose: an unknown state must not be
+    // asserted as a decision. It does mean an unmapped value shows up as approval
+    // pendency on the dashboards, which is how 547 already-decided db_bill rows came
+    // to sit in the "Pending Leave Approvals" queue — see the legacy_leave_id split in
+    // dashboard-metric.service.ts::getLeaveApprovalMetrics.
     return 'pending';
   }
 

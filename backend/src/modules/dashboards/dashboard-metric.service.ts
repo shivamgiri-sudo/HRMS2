@@ -19,6 +19,27 @@ import {
   statusList,
 } from "../../shared/attendanceStatus.js";
 import { IST_DATE_EXPR } from "../../utils/dateUtils.js";
+import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
+
+// ─── Candidate-keyed pendency: what does NOT count as outstanding ─────────────
+/**
+ * `ats_candidate` is a mixed table: 29,888 of its 38,191 rows are legacy EMPLOYEE
+ * records imported from db_bill and 50 are seeded test records, against 8,253 genuine
+ * candidates. Every candidate-keyed pendency metric here (onboarding, BGV, name match)
+ * joined to it without that filter, so migrated and test rows were counted as live
+ * queue. The ATS module has drawn this boundary since the record_type backfill ran;
+ * the dashboards never adopted it.
+ */
+const GENUINE_CANDIDATE_SQL = excludeEmployeeShapedCandidatesSql("cand");
+
+/**
+ * A candidate the business has already finished with. Work still sitting open against
+ * one of these is not pendency anybody can act on — it is a record that was never
+ * closed out. Compared case-insensitively: `ats_candidate.status` is free varchar and
+ * holds both 'Rejected' and 'rejected' shapes.
+ */
+const DEAD_CANDIDATE_SQL =
+  `LOWER(COALESCE(cand.status, '')) IN ('rejected', 'no show', 'inactive')`;
 
 // ─── Shared metric wrapper shape ──────────────────────────────────────────────
 export interface MetricResult {
@@ -239,10 +260,40 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
     // previously two sequential awaits (~3.3s measured against the live DB).
     const [[bridgeRows], [otpRows]] = await Promise.all([
       db.execute<RowDataPacket[]>(
+        // `pending` is the number an HR user can still act on, so three groups are
+        // held out of it and reported alongside instead of inflating it:
+        //
+        //   settled   — the bridge already has an employee_id / converted_at, i.e. the
+        //               person joined, but nobody advanced status to 'joined' (27 of 507
+        //               live on 2026-08-28). Already onboarded is not still onboarding.
+        //   closed    — the candidate is Rejected / No Show / Inactive (6 live). Their
+        //               onboarding stopped; the bridge row just outlived the decision.
+        //   nonCandidate — legacy_employee / test rows in ats_candidate (15 live).
+        //
+        // Their sum is exposed as `staleNotActionable` so the drop from the raw status
+        // count is auditable from the payload rather than being an unexplained shrink.
         `SELECT
            COUNT(*) AS total,
            SUM(CASE WHEN b.status = 'profile_submitted' THEN 1 ELSE 0 END) AS submitted,
-           SUM(CASE WHEN b.status IN ('pending','initiated') THEN 1 ELSE 0 END) AS pending,
+           SUM(CASE WHEN b.status IN ('pending','initiated') THEN 1 ELSE 0 END) AS pendingRaw,
+           SUM(CASE WHEN b.status IN ('pending','initiated')
+                     AND ${GENUINE_CANDIDATE_SQL}
+                     AND NOT (${DEAD_CANDIDATE_SQL})
+                     AND b.employee_id IS NULL
+                     AND b.converted_at IS NULL
+               THEN 1 ELSE 0 END) AS pending,
+           SUM(CASE WHEN b.status IN ('pending','initiated')
+                     AND (b.employee_id IS NOT NULL OR b.converted_at IS NOT NULL)
+               THEN 1 ELSE 0 END) AS pendingAlreadyJoined,
+           SUM(CASE WHEN b.status IN ('pending','initiated')
+                     AND ${GENUINE_CANDIDATE_SQL}
+                     AND ${DEAD_CANDIDATE_SQL}
+                     AND b.employee_id IS NULL AND b.converted_at IS NULL
+               THEN 1 ELSE 0 END) AS pendingClosedCandidate,
+           SUM(CASE WHEN b.status IN ('pending','initiated')
+                     AND NOT (${GENUINE_CANDIDATE_SQL})
+                     AND b.employee_id IS NULL AND b.converted_at IS NULL
+               THEN 1 ELSE 0 END) AS pendingNonCandidate,
            SUM(CASE WHEN b.status = 'stuck' THEN 1 ELSE 0 END) AS stuck,
            SUM(CASE WHEN b.status = 'joined' THEN 1 ELSE 0 END) AS joined
          FROM ats_onboarding_bridge b
@@ -262,7 +313,9 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
            LEFT JOIN ats_candidate cand ON cand.id = cop.candidate_id
            LEFT JOIN branch_master bm ON bm.branch_name = cand.applied_for_branch
            LEFT JOIN process_master pm ON pm.process_name = cand.applied_for_process
-          WHERE cop.otp_verified = 1 AND ${scopeSql}`,
+          WHERE cop.otp_verified = 1
+            AND ${GENUINE_CANDIDATE_SQL}
+            AND ${scopeSql}`,
         scopeParams
       ),
     ]);
@@ -270,6 +323,10 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
     const r = bridgeRows[0] as any;
     const submitted = Number(r?.submitted ?? 0);
     const pending = Number(r?.pending ?? 0);
+    const pendingRaw = Number(r?.pendingRaw ?? 0);
+    const pendingAlreadyJoined = Number(r?.pendingAlreadyJoined ?? 0);
+    const pendingClosedCandidate = Number(r?.pendingClosedCandidate ?? 0);
+    const pendingNonCandidate = Number(r?.pendingNonCandidate ?? 0);
     const stuck = Number(r?.stuck ?? 0);
     const joined = Number(r?.joined ?? 0);
     const total = Number(r?.total ?? 0);
@@ -285,7 +342,23 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
     return wrapEnriched(
       "ONBOARDING",
       submitted + pending,
-      { submitted, pending, otpVerified, otpPending: otpVerified, stuck, joined, total },
+      {
+        submitted,
+        pending,
+        otpVerified,
+        otpPending: otpVerified,
+        stuck,
+        joined,
+        total,
+        // Raw status count and the three reasons it exceeds `pending`. Kept in the
+        // payload so a reader can reconcile this tile against a plain
+        // `WHERE status = 'pending'` query without having to read this file.
+        pendingRaw,
+        pendingAlreadyJoined,
+        pendingClosedCandidate,
+        pendingNonCandidate,
+        staleNotActionable: pendingAlreadyJoined + pendingClosedCandidate + pendingNonCandidate,
+      },
       status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), total,
     );
   } catch (err) {
@@ -821,49 +894,121 @@ export async function getAppointmentEsignMetrics(scope: DashboardScope): Promise
 }
 
 // ─── BGV ──────────────────────────────────────────────────────────────────────
+/**
+ * BGV pendency, counted in **candidates** — not in checks.
+ *
+ * `candidate_bgv_check` holds one row per verification (aadhaar, pan, bank, criminal,
+ * …), so a single candidate contributes up to eleven rows. Counting rows made the tile
+ * read 280 "BGV Pending" against 121 real people, and the number moved whenever the
+ * check mix changed rather than when the queue did. Every consumer of this metric
+ * ("BGV Pending — Approvals pending" on CEO and HR) is asking how many *people* are
+ * waiting, so the headline is now DISTINCT candidates; the check-level totals stay in
+ * `checksPending` / `totalChecks` so the drilldown and the old reading are still
+ * available.
+ *
+ * Buckets are a partition of the candidates in scope, evaluated with precedence
+ * breached > flagged > pending > cleared, so they sum to `candidates` exactly. A person
+ * with one failed check and three still queued is one flagged candidate, not one of each.
+ *
+ * Status vocabulary is taken from the values actually present: verified, failed,
+ * not_started, manual_review, mismatch, queued, waived. `waived` counts as settled —
+ * it is an explicit decision to skip the check, not an outstanding one.
+ *
+ * Legacy/test candidates and candidates the business has already rejected are excluded;
+ * both are reported separately so the exclusion is visible rather than silent.
+ */
 export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
     // candidate_bgv_check has no `bgv_status` column (it is `status`), and
-    // ats_onboarding_bridge carries no branch/process columns to scope by — so the
-    // previous query raised ER_BAD_FIELD_ERROR and the BGV tile was permanently blank.
+    // ats_onboarding_bridge carries no branch/process columns to scope by — so an
+    // earlier query raised ER_BAD_FIELD_ERROR and the BGV tile was permanently blank.
     // Scope routes via the candidate, as the other candidate-keyed metrics do.
-    //
-    // Status buckets are taken from the values actually present: verified, failed,
-    // not_started, manual_review, mismatch, queued. Anything awaiting action counts as
-    // pending — treating only the literal 'pending' as outstanding would have dropped
-    // 87 of 194 records on the floor.
     const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "bm.id", "pm.id");
 
+    const OUTSTANDING = `(bgv.status IS NULL OR bgv.status IN ('pending','not_started','queued','manual_review','in_progress'))`;
+    const FLAGGED = `bgv.status IN ('flagged','failed','mismatch','discrepancy')`;
+    const SETTLED = `bgv.status IN ('cleared','verified','passed','waived')`;
+
     const [rows] = await db.execute<RowDataPacket[]>(
+      // Rolled up per candidate first, then counted — a candidate-level bucket cannot be
+      // expressed as a SUM over check rows without double-counting people.
       `SELECT
-         COUNT(*) AS source_rows,
-         SUM(CASE WHEN bgv.status IS NULL OR bgv.status IN ('pending','not_started','queued','manual_review','in_progress') THEN 1 ELSE 0 END) AS pending,
-         SUM(CASE WHEN bgv.status IN ('cleared','verified','passed') THEN 1 ELSE 0 END) AS cleared,
-         SUM(CASE WHEN bgv.status IN ('flagged','failed','mismatch','discrepancy') THEN 1 ELSE 0 END) AS flagged,
-         SUM(CASE WHEN bgv.status = 'breached' THEN 1 ELSE 0 END) AS breached
-       FROM candidate_bgv_check bgv
-       LEFT JOIN ats_candidate cand ON cand.id = bgv.candidate_id
-       LEFT JOIN branch_master bm ON bm.branch_name = cand.applied_for_branch
-       LEFT JOIN process_master pm ON pm.process_name = cand.applied_for_process
-       WHERE ${scopeSql}`,
+         COUNT(*) AS candidates,
+         SUM(CASE WHEN c.breached > 0 THEN 1 ELSE 0 END) AS breached,
+         SUM(CASE WHEN c.breached = 0 AND c.flagged > 0 THEN 1 ELSE 0 END) AS flagged,
+         SUM(CASE WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding > 0 THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding = 0 THEN 1 ELSE 0 END) AS cleared,
+         COALESCE(SUM(c.checks), 0) AS totalChecks,
+         COALESCE(SUM(c.outstanding), 0) AS checksPending
+       FROM (
+         SELECT bgv.candidate_id,
+                COUNT(*) AS checks,
+                SUM(CASE WHEN ${OUTSTANDING} THEN 1 ELSE 0 END) AS outstanding,
+                SUM(CASE WHEN ${FLAGGED} THEN 1 ELSE 0 END) AS flagged,
+                SUM(CASE WHEN bgv.status = 'breached' THEN 1 ELSE 0 END) AS breached,
+                SUM(CASE WHEN ${SETTLED} THEN 1 ELSE 0 END) AS settled
+           FROM candidate_bgv_check bgv
+           LEFT JOIN ats_candidate cand ON cand.id = bgv.candidate_id
+           LEFT JOIN branch_master bm ON bm.branch_name = cand.applied_for_branch
+           LEFT JOIN process_master pm ON pm.process_name = cand.applied_for_process
+          WHERE ${GENUINE_CANDIDATE_SQL}
+            AND NOT (${DEAD_CANDIDATE_SQL})
+            AND ${scopeSql}
+          GROUP BY bgv.candidate_id
+       ) c`,
       scopeParams
     );
 
-    // A `!rows[0]` fallback used to sit here reading ats_onboarding_bridge.bgv_consent_given.
-    // It was unreachable (a bare aggregate always returns exactly one row) and the column
-    // it referenced does not exist, so it could only ever have thrown. Removed rather than
-    // left as a second broken path behind the first.
+    // Everything the two filters above removed, so the tile can say how much it set
+    // aside instead of quietly shrinking. Counted in candidates, same unit as the
+    // headline. A failure here must not take the metric down — the exclusions are
+    // provenance, not the measurement.
+    const [excludedRows] = await db.execute<RowDataPacket[]>(
+      `SELECT
+         COUNT(DISTINCT CASE WHEN NOT (${GENUINE_CANDIDATE_SQL}) OR cand.id IS NULL
+                             THEN bgv.candidate_id END) AS nonCandidateRecords,
+         COUNT(DISTINCT CASE WHEN ${GENUINE_CANDIDATE_SQL} AND ${DEAD_CANDIDATE_SQL}
+                             THEN bgv.candidate_id END) AS closedCandidates
+       FROM candidate_bgv_check bgv
+       LEFT JOIN ats_candidate cand ON cand.id = bgv.candidate_id`,
+    ).catch((err: unknown) => {
+      logSourceFailure("dashboard-metric.bgv-exclusions", err, { metricCode: "BGV" });
+      return [[{ nonCandidateRecords: null, closedCandidates: null }]] as any;
+    });
 
     const r = rows[0] as any;
     const pending = Number(r.pending ?? 0);
     const cleared = Number(r.cleared ?? 0);
     const flagged = Number(r.flagged ?? 0);
     const breached = Number(r.breached ?? 0);
+    const candidates = Number(r.candidates ?? 0);
+    const x = excludedRows[0] as any;
 
     const status: MetricResult["status"] =
       breached > 0 || flagged > 0 ? "critical" : pending > 20 ? "warn" : "ok";
 
-    return wrapEnriched("BGV", pending, { pending, cleared, flagged, breached }, status, false, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), Number(r.source_rows ?? 0));
+    return wrapEnriched(
+      "BGV",
+      pending,
+      {
+        pending,
+        cleared,
+        flagged,
+        breached,
+        candidates,
+        // The old headline, kept so nobody reconciling against a saved screenshot has
+        // to guess why the number moved.
+        checksPending: Number(r.checksPending ?? 0),
+        totalChecks: Number(r.totalChecks ?? 0),
+        excludedNonCandidateRecords: x?.nonCandidateRecords == null ? null : Number(x.nonCandidateRecords),
+        excludedClosedCandidates: x?.closedCandidates == null ? null : Number(x.closedCandidates),
+      },
+      status,
+      false,
+      targetScopeId(scope.branchIds),
+      targetScopeId(scope.processIds),
+      candidates,
+    );
   } catch (err) {
     return nullResult("BGV", err);
   }
@@ -889,7 +1034,10 @@ export async function getNameMismatchMetrics(scope: DashboardScope): Promise<Met
        LEFT JOIN ats_candidate cand ON cand.id = nm.candidate_id
        LEFT JOIN branch_master bm ON bm.branch_name = cand.applied_for_branch
        LEFT JOIN process_master pm ON pm.process_name = cand.applied_for_process
-       WHERE ${scopeSql}`,
+       -- Same boundary the onboarding and BGV metrics draw: legacy_employee and test
+       -- rows in ats_candidate are not a live name-verification queue.
+       WHERE ${GENUINE_CANDIDATE_SQL}
+         AND ${scopeSql}`,
       scopeParams
     );
 
@@ -1400,14 +1548,36 @@ export async function getLeaveApprovalMetrics(scope: DashboardScope): Promise<Me
     const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
 
     const [rows] = await db.execute<RowDataPacket[]>(
+      // `pending` is what a manager can still decide; `legacyBacklog` is what the
+      // db_bill import left behind.
+      //
+      // 551 of the 586 rows this table reports as pending carry a legacy_leave_id, and
+      // cross-checking each one against db_bill.leave_management (2026-08-28) showed 547
+      // of them were **already decided in the legacy system** — 514 with Status =
+      // 'Not Approved' (548 of the 718 such rows carry an explicit DisApprovedReason, so
+      // the value means rejected, not "awaiting approval") and 33 more blanked but still
+      // carrying a disapproval reason. A mapper in the import turned that terminal state
+      // into 'pending'. Only 4 legacy rows were genuinely undecided.
+      //
+      // The effect on screen was a "Pending Leave Approvals" queue of 171 (branch-scoped)
+      // to 586 (org-wide) of which none was actionable: every one of the 586 has a
+      // to_date in the past. Splitting the count leaves the backlog visible and countable
+      // without letting it stand in for today's approval queue.
+      //
+      // legacy_leave_id IS NOT NULL is the marker written by the db_bill migration
+      // (backend/scripts/migrate-leave-history-full.ts); natively-filed requests leave it
+      // NULL. This is a display split only — the underlying rows are untouched, and the
+      // data repair is backend/scripts/repair-legacy-leave-status.mjs.
       `SELECT
          COUNT(*) AS source_rows,
-         SUM(CASE WHEN lr.status = 'pending' THEN 1 ELSE 0 END) AS pending,
-         SUM(CASE WHEN lr.status = 'pending' AND lr.from_date < CURDATE() THEN 1 ELSE 0 END) AS pendingAlreadyStarted,
-         SUM(CASE WHEN lr.status = 'pending' AND lr.requires_branch_head_approval = 1 THEN 1 ELSE 0 END) AS needsBranchHead,
+         SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN lr.status = 'pending' THEN 1 ELSE 0 END) AS pendingAllSources,
+         SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NOT NULL THEN 1 ELSE 0 END) AS legacyBacklog,
+         SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL AND lr.from_date < CURDATE() THEN 1 ELSE 0 END) AS pendingAlreadyStarted,
+         SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL AND lr.requires_branch_head_approval = 1 THEN 1 ELSE 0 END) AS needsBranchHead,
          SUM(CASE WHEN lr.status = 'approved' THEN 1 ELSE 0 END) AS approved,
          SUM(CASE WHEN lr.status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
-         MAX(CASE WHEN lr.status = 'pending' THEN DATEDIFF(CURDATE(), lr.from_date) END) AS oldestPendingDays
+         MAX(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL THEN DATEDIFF(CURDATE(), lr.from_date) END) AS oldestPendingDays
        FROM leave_request lr
        JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
        WHERE ${scopeSql}`,
@@ -1433,6 +1603,11 @@ export async function getLeaveApprovalMetrics(scope: DashboardScope): Promise<Me
         approved: Number(r.approved ?? 0),
         rejected: Number(r.rejected ?? 0),
         oldestPendingDays: r.oldestPendingDays === null ? null : Number(r.oldestPendingDays),
+        // Migrated rows the db_bill import left as 'pending', and the raw total the
+        // table still reports. Both kept so the backlog is visible and the headline is
+        // reconcilable against a plain status count.
+        legacyBacklog: Number(r.legacyBacklog ?? 0),
+        pendingAllSources: Number(r.pendingAllSources ?? 0),
       },
       status,
       false,

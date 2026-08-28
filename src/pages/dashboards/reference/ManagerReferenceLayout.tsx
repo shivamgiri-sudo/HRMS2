@@ -70,7 +70,20 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
   const leaveDataFailed = Boolean(data.managerLeavesError);
   const approvedLeaves = leaveDataFailed ? null : statusCount(data.managerLeaves, "approved");
   const employeesOnLeaveToday = countEmployeesOnLeaveOnDate(data.managerLeaves, today);
-  const pendingLeaves = leaveDataFailed ? null : statusCount(data.managerLeaves, "pending");
+  /**
+   * Prefer the LEAVE_APPROVALS metric over counting the request list.
+   *
+   * Two reasons. The list is /api/leave/requests?limit=100 ordered by applied_at DESC,
+   * so counting statuses in it counts the first hundred rows, not the queue. And it
+   * includes the db_bill import's mis-statused rows: 547 of the 586 requests this
+   * database calls pending were already 'Not Approved' in the legacy system, so a
+   * manager saw an approval queue in which nothing could be approved. The metric applies
+   * the legacy_leave_id split (see getLeaveApprovalMetrics) and is branch-scoped; the
+   * list count stays as the fallback for when the metric itself is unavailable.
+   */
+  const pendingLeaves = metricDetail(m, "leaveApprovals", "pending")
+    ?? (leaveDataFailed ? null : statusCount(data.managerLeaves, "pending"));
+  const legacyLeaveBacklog = metricDetail(m, "leaveApprovals", "legacyBacklog");
   const rejectedLeaves = leaveDataFailed ? null : statusCount(data.managerLeaves, "rejected");
   const positiveInsights = arrayAt(data.managerInsights, "good", "items");
   const overdueInsights = arrayAt(data.managerInsights, "bad", "items");
@@ -174,7 +187,7 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
       <div className="grid gap-4 xl:grid-cols-[0.92fr_0.92fr_1.16fr]">
         <ReferencePanel title="Pending Approvals" bodyClassName="p-0">
           <div className="divide-y divide-[#edf1f6]">
-            <ReferenceListRow icon={CalendarDays} title="Leave Requests" value={pendingLeaves} tone="amber" href="/leaves" />
+            <ReferenceListRow icon={CalendarDays} title="Leave Requests" subtitle={legacyLeaveBacklog ? `${legacyLeaveBacklog.toLocaleString()} legacy rows excluded` : undefined} value={pendingLeaves} tone="amber" href="/leaves" />
             <ReferenceListRow icon={Clock3} title="Timesheets" value={openActions} tone="red" href="/work-inbox" />
             <ReferenceListRow icon={FileText} title="Expense Claims" value={asNumber(data.workforce.pending_expense_claims)} tone="green" href="/expenses/approvals" />
           </div>

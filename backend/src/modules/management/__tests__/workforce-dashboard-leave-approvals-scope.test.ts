@@ -40,10 +40,22 @@ describe("getWorkforceDashboard pending_leave_approvals stays scoped", () => {
     expect(query).toContain("${empScopeJoinWhere}");
   });
 
-  it("passes scopeParams to the query so the scope fragment's placeholders are bound", () => {
-    // The query call site: db.execute(<sql containing pending_leave_approvals>, scopeParams)
+  it("binds the scope fragment's placeholders once for every time it is interpolated", () => {
+    // The query call site: db.execute(<sql containing pending_leave_approvals>, <params>).
+    //
+    // This used to assert the literal `scopeParams,` because the fragment appeared once.
+    // It appears twice since the legacy_leave_backlog subquery was added (2026-08-28),
+    // and passing scopeParams once there would shift every binding — the branch filter
+    // would silently read the process id, both being char(36). What matters is that the
+    // number of param spreads matches the number of interpolations, not the exact text.
     const callStart = source.lastIndexOf("db.execute", source.indexOf("pending_leave_approvals"));
-    const callSlice = source.slice(callStart, source.indexOf("critical_performance_alerts") + 400);
-    expect(callSlice).toMatch(/scopeParams,?\s*\),/);
+    const callEnd = source.indexOf("critical_performance_alerts") + 400;
+    const callSlice = source.slice(callStart, callEnd);
+    const interpolations = (callSlice.match(/\$\{empScopeJoinWhere\}/g) ?? []).length;
+    expect(interpolations).toBeGreaterThan(0);
+    const spreads = (callSlice.match(/\.\.\.scopeParams/g) ?? []).length;
+    // One interpolation may still be bound by passing `scopeParams` bare.
+    const bare = /(?:^|[^.])scopeParams,?\s*\),/.test(callSlice) ? 1 : 0;
+    expect(spreads + bare).toBe(interpolations);
   });
 });

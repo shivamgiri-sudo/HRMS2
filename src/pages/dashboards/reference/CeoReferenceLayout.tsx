@@ -115,7 +115,11 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
         pipelines feed data.
       */}
       <ReferenceActionStrip title="Today's Operations — Immediate Actions" items={[
-        { label: "BGV Pending", value: bgv, detail: "Approvals pending", tone: "red", href: "/ats/bgv", ...drill("bgv") },
+        // "Candidates", not "Approvals": getBgvMetrics counts DISTINCT candidates with
+        // at least one outstanding check, having previously counted the check rows
+        // themselves — 280 rows against 109 real people. The label has to name the unit
+        // or the smaller number reads as a drop in workload rather than a unit change.
+        { label: "BGV Pending", value: bgv, detail: "Candidates awaiting verification", tone: "red", href: "/ats/bgv", ...drill("bgv") },
         { label: "Onboarding Pending", value: onboarding, detail: "Joiners awaiting completion", tone: "amber", href: "/ats/onboarding-requests", ...drill("onb") },
         { label: "Payroll Readiness", value: payrollReadiness === null ? null : `${payrollReadiness}%`, detail: "Complete pending items", tone: "amber", href: "/payroll/branch-readiness" },
       ]} />

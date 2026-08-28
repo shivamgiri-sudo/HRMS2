@@ -6,6 +6,7 @@ import {
   drillAttendanceStatus, drillLatecoming, drillUnplannedLeave, drillPipStatus,
   drillQualityBaseline, drillAttrition, drillShrinkage, drillRevenue,
 } from "./performance-scorecard-drilldown.js";
+import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
 
 export interface DrilldownResult {
   metricCode: string;
@@ -142,6 +143,16 @@ const CANDIDATE_SCOPE_JOIN = `
 const candidateScopeJoin = (candidateIdExpr: string) =>
   CANDIDATE_SCOPE_JOIN.replace("%CANDIDATE_ID%", candidateIdExpr);
 
+/**
+ * The same boundary dashboard-metric.service.ts applies to every candidate-keyed
+ * metric. `ats_candidate` holds 29,888 legacy employee records imported from db_bill
+ * and 50 test rows against 8,253 genuine candidates; without this, a drawer opened
+ * from a tile that excludes them returns more rows than the tile counted.
+ */
+const GENUINE_CANDIDATE_SQL = excludeEmployeeShapedCandidatesSql("cand");
+const DEAD_CANDIDATE_SQL =
+  `LOWER(COALESCE(cand.status, '')) IN ('rejected', 'no show', 'inactive')`;
+
 function sourceUnavailable(err: unknown): never {
   throw Object.assign(err as Error, { errorCode: "SOURCE_UNAVAILABLE" });
 }
@@ -215,6 +226,17 @@ async function drillOnboarding(
       : "";
     const bucketParams = bucketStatuses ?? [];
 
+    // Only the `pending` bucket is filtered, and with exactly the predicate
+    // getOnboardingMetrics uses for its own `pending` count: genuine candidate, not
+    // already rejected/no-show, and not already converted to an employee. Without it
+    // the "Onboarding Pending" drawer listed 507 rows behind a tile reading 461.
+    const pendingActionableSql = bucket === "pending"
+      ? ` AND ${GENUINE_CANDIDATE_SQL}
+          AND NOT (${DEAD_CANDIDATE_SQL})
+          AND b.employee_id IS NULL
+          AND b.converted_at IS NULL`
+      : "";
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT cand.full_name AS candidateName,
               cand.candidate_code AS candidateCode,
@@ -223,7 +245,7 @@ async function drillOnboarding(
               b.status AS status,
               b.created_at AS createdAt
          FROM ats_onboarding_bridge b ${join}
-        WHERE ${scopeSql}${bucketSql}
+        WHERE ${scopeSql}${bucketSql}${pendingActionableSql}
         ORDER BY b.created_at ASC
         LIMIT 200`,
       [...params, ...bucketParams],
@@ -386,6 +408,7 @@ async function drillNameMismatch(scope: DashboardScope): Promise<DrilldownResult
          FROM candidate_name_match_summary nm
          ${candidateScopeJoin("nm.candidate_id")}
         WHERE nm.overall_match_status IN ('mismatch','partial','pending')
+          AND ${GENUINE_CANDIDATE_SQL}
           AND ${scopeSql}
         ORDER BY nm.blocks_employee_code DESC, nm.last_calculated_at ASC
         LIMIT 100`,
@@ -490,22 +513,28 @@ async function drillBgv(scope: DashboardScope): Promise<DrilldownResult> {
   try {
     const { sql: scopeSql, params } = buildScopeWhere(scope, "bm.id", "pm.id");
     const [rows] = await db.execute<RowDataPacket[]>(
+      // One row per CANDIDATE, matching getBgvMetrics's unit. This listed one row per
+      // check, so a candidate with six outstanding verifications filled six lines and
+      // the drawer showed 280 rows behind a tile counting 109 people. The outstanding
+      // check types are collapsed into a single column instead.
+      //
+      // Excludes the same records the tile does: legacy_employee / test rows in
+      // ats_candidate, and candidates already rejected or marked no-show.
       `SELECT cand.full_name AS name,
-              bgv.check_type AS checkType,
-              bgv.status AS status,
-              bgv.match_score AS matchScore,
-              bgv.created_at AS createdAt,
-              DATEDIFF(NOW(), bgv.created_at) AS ageDays
+              cand.candidate_code AS candidateCode,
+              COUNT(*) AS pendingChecks,
+              GROUP_CONCAT(DISTINCT bgv.check_type ORDER BY bgv.check_type SEPARATOR ', ') AS checkType,
+              MIN(bgv.status) AS status,
+              MIN(bgv.created_at) AS createdAt,
+              DATEDIFF(NOW(), MIN(bgv.created_at)) AS ageDays
          FROM candidate_bgv_check bgv
          ${candidateScopeJoin("bgv.candidate_id")}
-        -- Matches getBgvMetrics's own "pending" bucket exactly (including NULL treated
-        -- as pending). The previous NOT IN ('verified','passed','completed') was a
-        -- superset that also admitted rows the tile itself buckets as cleared,
-        -- flagged or breached — the drawer behind "BGV Pending" could legitimately
-        -- return more rows than the tile's own pending count.
         WHERE COALESCE(bgv.status,'pending') IN ('pending','not_started','queued','manual_review','in_progress')
+          AND ${GENUINE_CANDIDATE_SQL}
+          AND NOT (${DEAD_CANDIDATE_SQL})
           AND ${scopeSql}
-        ORDER BY bgv.created_at ASC
+        GROUP BY bgv.candidate_id, cand.full_name, cand.candidate_code
+        ORDER BY createdAt ASC
         LIMIT 100`,
       params,
     );
@@ -513,9 +542,10 @@ async function drillBgv(scope: DashboardScope): Promise<DrilldownResult> {
       metricCode: "BGV",
       records: (rows as any[]).map((r) => ({
         name: r.name ?? "—",
+        candidateCode: r.candidateCode ?? "—",
+        pendingChecks: Number(r.pendingChecks ?? 0),
         checkType: r.checkType,
         status: r.status ?? "pending",
-        matchScore: r.matchScore === null ? null : Number(r.matchScore),
         createdAt: r.createdAt,
         ageDays: Number(r.ageDays ?? 0),
       })),
@@ -949,7 +979,13 @@ async function drillLeaveApprovals(scope: DashboardScope): Promise<DrilldownResu
          JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
          LEFT JOIN branch_master b ON b.id = e.branch_id
          LEFT JOIN leave_type_master lt ON lt.id = lr.leave_type_id
+        -- legacy_leave_id IS NULL matches the getLeaveApprovalMetrics pending bucket.
+        -- Migrated db_bill rows were imported with the wrong status (547 of them were
+        -- already 'Not Approved' in the source) and are excluded from the actionable
+        -- queue there, so listing them here would leave the drawer disagreeing with
+        -- the tile it opens from.
         WHERE lr.status = 'pending'
+          AND lr.legacy_leave_id IS NULL
           AND ${scopeSql}
         ORDER BY lr.from_date ASC
         LIMIT 100`,

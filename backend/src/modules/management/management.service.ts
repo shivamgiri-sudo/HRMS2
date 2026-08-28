@@ -736,13 +736,27 @@ export const managementService = {
         // did) show two different numbers for "pending leave approvals" in the same
         // session — live-verified 26 (this query, unscoped) vs 11 (the metric) on
         // 2026-08-13.
+        // legacy_leave_id IS NULL matches the getLeaveApprovalMetrics pending bucket:
+        // 547 of the rows this table calls pending are db_bill rows that were already
+        // decided ('Not Approved') in the legacy system and were imported with the wrong
+        // status. Counting them here made "Pending Leave Approvals" a queue nobody could
+        // work — every one of the 586 has a to_date in the past. The migrated rows are
+        // still reported, as legacy_leave_backlog, so nothing is hidden.
         `SELECT
            (SELECT COUNT(*) FROM leave_request lr
               JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
-             WHERE LOWER(lr.status) = 'pending'${empScopeJoinWhere}) AS pending_leave_approvals,
+             WHERE LOWER(lr.status) = 'pending'
+               AND lr.legacy_leave_id IS NULL${empScopeJoinWhere}) AS pending_leave_approvals,
+           (SELECT COUNT(*) FROM leave_request lr
+              JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
+             WHERE LOWER(lr.status) = 'pending'
+               AND lr.legacy_leave_id IS NOT NULL${empScopeJoinWhere}) AS legacy_leave_backlog,
            (SELECT COUNT(*) FROM performance_alert
              WHERE acknowledged = 0 AND severity IN ('high', 'critical')) AS critical_performance_alerts`,
-        scopeParams,
+        // Two subqueries now interpolate empScopeJoinWhere, so its placeholders are
+        // bound twice. Passing scopeParams once here silently shifted every binding
+        // and made the branch filter read the process id.
+        [...scopeParams, ...scopeParams],
       ),
       db.execute<RowDataPacket[]>(
         `SELECT
@@ -1106,6 +1120,7 @@ export const managementService = {
       on_leave: onLeaveCount,
       total_branches: totalBranches,
       pending_leave_requests: numberValue(approvals.pending_leave_approvals),
+      legacy_leave_backlog: numberValue(approvals.legacy_leave_backlog),
       pending_expense_claims: numberValue(expenseResult[0]?.count),
       // null, not 0. Nothing computes this — there is no project-risk source wired up —
       // and a literal zero renders as "no projects at risk", which is a claim this
