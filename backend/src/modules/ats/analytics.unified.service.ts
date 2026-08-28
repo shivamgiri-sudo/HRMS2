@@ -31,6 +31,83 @@ const JOINED_STAGE_PREDICATE = `LOWER(TRIM(current_stage)) IN (${JOINED_STAGE_LI
 const JOINED_STAGE_SQL = `CASE WHEN ${JOINED_STAGE_PREDICATE} THEN 1 ELSE 0 END`;
 
 /**
+ * "Became an employee" beyond what current_stage tracks.
+ *
+ * Verified against production 2026-08-28: of 8,253 genuine candidates (record_type =
+ * 'candidate'), only 6 carry a terminal stage above (0.07%). But 643 more are
+ * demonstrably on payroll today — matched by mobile number to an employees row whose
+ * date_of_joining is on/after the candidate's created_at — and were simply never moved
+ * past their interview stage. The stage field is not maintained; this is a second,
+ * independent signal for the same underlying fact, not a replacement for it (2 rows are
+ * staged but have no identity match at all — no mobile on file — so the two signals are
+ * OR'd, not swapped).
+ *
+ * Time-ordered on purpose: an employee who joined BEFORE this candidate applied and
+ * happens to share a mobile (rehire, family number reused for a fresh application) is
+ * not this application's conversion. Without the ordering check, mobile-only matching
+ * over-counts by roughly 2x (measured: 1,377 raw matches vs 814 time-ordered, against a
+ * broader multi-column match set than the mobile-only version below produces).
+ *
+ * Matched on mobile only, not email: employees carry a mobile on 58,410/58,929 rows
+ * (99.1%) against 21,300 distinct emails spread across four differently-named columns,
+ * and only `employees.mobile` is indexed — an email match would need an unindexed scan
+ * of a column that still misses over half the roster.
+ */
+const MOBILE_JOIN_MAP_TTL_MS = 15 * 60 * 1000;
+let _mobileJoinMapCache: { value: Map<string, string>; at: number } | null = null;
+
+/**
+ * Cached rather than joined into the query it feeds: grouping the whole employees table
+ * by mobile takes ~6.4s on this remote DB (measured 2026-08-28, isolated from every other
+ * part of the query) — by far the slowest thing on the ATS analytics page if paid on every
+ * request. The mapping changes only as fast as people join, so a 15-minute TTL is coarse
+ * on purpose; force a refresh with `{ force: true }`, same pattern as
+ * loadBgvDbConfig() in bgv-config.store.ts.
+ */
+async function getEmployeeMobileJoinMap(opts?: { force?: boolean }): Promise<Map<string, string>> {
+  const now = Date.now();
+  if (!opts?.force && _mobileJoinMapCache && now - _mobileJoinMapCache.at < MOBILE_JOIN_MAP_TTL_MS) {
+    return _mobileJoinMapCache.value;
+  }
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT mobile, MAX(date_of_joining) as doj
+       FROM employees
+      WHERE mobile IS NOT NULL AND mobile <> ''
+      GROUP BY mobile`
+  );
+  const value = new Map<string, string>();
+  for (const row of rows as RowDataPacket[]) {
+    if (row.doj) value.set(String(row.mobile), String(row.doj));
+  }
+  _mobileJoinMapCache = { value, at: now };
+  return value;
+}
+
+/** Test-only escape hatch — mirrors resetBgvDbConfigCache(). */
+export function resetEmployeeMobileJoinMapCacheForTest(): void {
+  _mobileJoinMapCache = null;
+}
+
+/**
+ * Pure combine step, kept separate from both queries above so it is unit-testable
+ * without a database: did this one candidate become an employee, by stage OR identity?
+ */
+export function candidateBecameEmployee(
+  candidate: { current_stage: string | null; mobile: string | null; created_at: string | Date },
+  mobileJoinMap: Map<string, string>,
+): boolean {
+  const stage = String(candidate.current_stage ?? '').trim().toLowerCase();
+  if ((JOINED_STAGES as readonly string[]).includes(stage)) return true;
+
+  if (!candidate.mobile) return false;
+  const doj = mobileJoinMap.get(candidate.mobile);
+  if (!doj) return false;
+
+  const createdAt = candidate.created_at instanceof Date ? candidate.created_at : new Date(candidate.created_at);
+  return new Date(doj) >= createdAt;
+}
+
+/**
  * ATS Analytics Service
  * Real queries against ats_candidate, ats_interview_submission, ats_recruiter_roster.
  * Old-system cross-DB queries removed — mas_hrms is the single source of truth.
@@ -51,11 +128,11 @@ interface TrendRow extends RowDataPacket {
   selections: number;
 }
 
+// total_hired / conversion_rate are computed in JS via candidateBecameEmployee() now,
+// not selected by this query — see getSourceChannelROI().
 interface SourceRow extends RowDataPacket {
   source_channel: string;
   total_candidates: number;
-  total_hired: number;
-  conversion_rate: number;
   avg_time_to_hire_days: number | null;
 }
 
@@ -173,13 +250,13 @@ export async function getSourceChannelROI(): Promise<{
   avg_time_to_hire_days: number;
   cost_per_hire?: number; // TODO: Add when cost data available
 }[]> {
-  // New system data
+  // Per-channel totals and avg_time_to_hire_days — unchanged from before this fix, and
+  // deliberately left as AVG(DATEDIFF) over every candidate in the channel, not just the
+  // hired ones (that was already this metric's definition; not this change's concern).
   const [newData] = await db.execute<SourceRow[]>(
     `SELECT
       COALESCE(sourcing_channel, 'Walk-in') as source_channel,
       COUNT(*) as total_candidates,
-      SUM(${JOINED_STAGE_SQL}) as total_hired,
-      ROUND((SUM(${JOINED_STAGE_SQL}) / COUNT(*)) * 100, 2) as conversion_rate,
       AVG(DATEDIFF(updated_at, created_at)) as avg_time_to_hire_days
     FROM ats_candidate
     WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}
@@ -187,13 +264,36 @@ export async function getSourceChannelROI(): Promise<{
     ORDER BY total_candidates DESC`
   );
 
-  return newData.map((row) => ({
-    source_channel: row.source_channel,
-    total_candidates: Number(row.total_candidates ?? 0),
-    total_hired: Number(row.total_hired ?? 0),
-    conversion_rate: Number(row.conversion_rate ?? 0),
-    avg_time_to_hire_days: Number(row.avg_time_to_hire_days ?? 0),
-  }));
+  // total_hired / conversion_rate go through candidateBecameEmployee() instead of a bare
+  // SQL SUM, because that determination needs the cached employees-by-mobile map — see
+  // its comment above for why this is two cheap queries plus a cache hit rather than one
+  // query with the match folded in as a correlated subquery or JOIN.
+  const [candidateRows] = await db.execute<RowDataPacket[]>(
+    `SELECT COALESCE(sourcing_channel, 'Walk-in') as source_channel,
+            current_stage, mobile, created_at
+       FROM ats_candidate
+      WHERE active_status = 1 AND ${EXCLUDE_EMPLOYEE_SHAPED}`
+  );
+  const mobileJoinMap = await getEmployeeMobileJoinMap();
+  const hiredByChannel = new Map<string, number>();
+  for (const row of candidateRows as RowDataPacket[]) {
+    if (candidateBecameEmployee(row as { current_stage: string | null; mobile: string | null; created_at: string }, mobileJoinMap)) {
+      const channel = String(row.source_channel);
+      hiredByChannel.set(channel, (hiredByChannel.get(channel) ?? 0) + 1);
+    }
+  }
+
+  return newData.map((row) => {
+    const totalCandidates = Number(row.total_candidates ?? 0);
+    const totalHired = hiredByChannel.get(row.source_channel) ?? 0;
+    return {
+      source_channel: row.source_channel,
+      total_candidates: totalCandidates,
+      total_hired: totalHired,
+      conversion_rate: totalCandidates > 0 ? Math.round((totalHired / totalCandidates) * 10000) / 100 : 0,
+      avg_time_to_hire_days: Number(row.avg_time_to_hire_days ?? 0),
+    };
+  });
 }
 
 /**
@@ -407,7 +507,15 @@ export async function getCustomReport(params: {
         metricClauses.push('AVG(DATEDIFF(updated_at, created_at)) as avg_time_to_hire');
         break;
       case 'conversion_rate':
-        metricClauses.push('ROUND((SUM(CASE WHEN current_stage = "joined" THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2) as conversion_rate');
+        // Same dead literal as getSourceChannelROI had (double-quoted here, which is why
+        // the guard test for that one — a single-quote regex — didn't already catch this
+        // site). Routed through JOINED_STAGE_SQL, not candidateBecameEmployee()'s identity
+        // match: this is a generic, arbitrarily-grouped/filtered ad-hoc report builder, and
+        // the identity match needs the cached mobile map joined in application code, which
+        // doesn't compose with a dynamic SQL string built from a metrics/groupBy whitelist.
+        // So this metric is stage-only — consistent and no longer arithmetically zero, but
+        // narrower than the source-channel ROI figure above.
+        metricClauses.push(`ROUND((SUM(${JOINED_STAGE_SQL}) / COUNT(*)) * 100, 2) as conversion_rate`);
         break;
     }
   });
