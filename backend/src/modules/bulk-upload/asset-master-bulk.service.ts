@@ -13,10 +13,15 @@ interface ParsedRow {
   assetCode: string;
   assetName: string;
   category: string;
-  purchaseCost: number | null;
-  purchaseDate: string | null;
+  status: string;
+  assetType: string | null;
   serialNumber: string | null;
-  assetCondition: string;
+  purchaseDate: string | null;
+  purchaseCost: number | null;
+  vendor: string | null;
+  warrantyExpiry: string | null;
+  notes: string | null;
+  branchCode: string | null;
 }
 
 const CHUNK_SIZE = 200;
@@ -26,6 +31,9 @@ function chunk<T>(items: T[], size: number): T[][] {
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
 }
+
+// Mirrors asset_master.status's live ENUM exactly.
+const VALID_STATUSES = new Set(["available", "assigned", "maintenance", "repair", "retired", "lost"]);
 
 export async function importAssetMasterBatch(
   batchId: string,
@@ -46,6 +54,7 @@ export async function importAssetMasterBatch(
   const errors: string[] = [];
   let errorRows = 0;
   const errorUpdates: Array<{ rowId: string; message: string }> = [];
+  const branchCodes = new Set<string>();
 
   for (const row of batchRows) {
     const data =
@@ -55,23 +64,56 @@ export async function importAssetMasterBatch(
 
     const assetCode = String(data.asset_code ?? "").trim();
     const assetName = String(data.asset_name ?? "").trim();
+    // The template's required category column is asset_category, not category —
+    // reading the wrong key meant every uploaded category was discarded in favour
+    // of the literal string "General", even once the INSERT itself is fixed below.
+    const category = String(data.asset_category ?? "").trim();
 
-    if (!assetCode || !assetName) {
-      const msg = `Row ${row.row_no}: asset_code and asset_name are required`;
+    if (!assetCode || !assetName || !category) {
+      const msg = `Row ${row.row_no}: asset_code, asset_name and asset_category are required`;
       errors.push(msg);
       errorUpdates.push({ rowId: row.id, message: msg });
       errorRows++;
       continue;
     }
 
+    const statusRaw = String(data.status ?? "").trim().toLowerCase();
+    if (!statusRaw || !VALID_STATUSES.has(statusRaw)) {
+      const msg = `Row ${row.row_no}: status "${data.status ?? ""}" must be one of ${[...VALID_STATUSES].sort().join(", ")}`;
+      errors.push(msg);
+      errorUpdates.push({ rowId: row.id, message: msg });
+      errorRows++;
+      continue;
+    }
+
+    const branchCode = data.branch_code ? String(data.branch_code).trim() : null;
+    if (branchCode) branchCodes.add(branchCode);
+
     parsed.push({
-      rowId: row.id, rowNo: row.row_no, assetCode, assetName,
-      category: data.category ? String(data.category).trim() : "General",
-      purchaseCost: data.cost ? parseFloat(String(data.cost)) : null,
-      purchaseDate: data.purchase_date ? String(data.purchase_date).slice(0, 10) : null,
+      rowId: row.id, rowNo: row.row_no, assetCode, assetName, category, status: statusRaw,
+      assetType: data.asset_type ? String(data.asset_type).trim() : null,
       serialNumber: data.serial_number ? String(data.serial_number).trim() : null,
-      assetCondition: data.condition ? String(data.condition).trim() : "good",
+      // The template's cost column is purchase_cost, not cost — same class of
+      // key-name mismatch as asset_category above.
+      purchaseDate: data.purchase_date ? String(data.purchase_date).slice(0, 10) : null,
+      purchaseCost: data.purchase_cost ? parseFloat(String(data.purchase_cost)) : null,
+      vendor: data.vendor ? String(data.vendor).trim() : null,
+      warrantyExpiry: data.warranty_expiry ? String(data.warranty_expiry).slice(0, 10) : null,
+      notes: data.notes ? String(data.notes).trim() : null,
+      branchCode,
     });
+  }
+
+  // One bulk lookup covering every branch_code referenced in the file, instead of
+  // up to one SELECT per row.
+  const branchIdByCode = new Map<string, string>();
+  if (branchCodes.size > 0) {
+    const codes = Array.from(branchCodes);
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, branch_code FROM branch_master WHERE branch_code IN (${codes.map(() => "?").join(",")})`,
+      codes
+    );
+    for (const r of rows) branchIdByCode.set(r.branch_code as string, r.id as string);
   }
 
   let importedRows = 0;
@@ -83,24 +125,40 @@ export async function importAssetMasterBatch(
   // as an error — every other row in the batch still lands, matching the
   // original per-row loop's error isolation.
   for (const rowsInChunk of chunk(parsed, CHUNK_SIZE)) {
-    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,'available')").join(", ");
+    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?,?,?,?)").join(", ");
     const params = rowsInChunk.flatMap((r) => [
-      r.assetCode, r.assetName, r.category, r.purchaseCost, r.purchaseDate, r.serialNumber, r.assetCondition,
+      r.assetCode, r.assetName, r.category, r.assetType, r.serialNumber,
+      r.purchaseDate, r.purchaseCost, r.vendor, r.warrantyExpiry, r.notes,
+      r.branchCode ? branchIdByCode.get(r.branchCode) ?? null : null,
+      r.status,
     ]);
 
     try {
       await db.execute(
+        // asset_condition/asset_status were never real columns on asset_master —
+        // every row of every ASSET_MASTER upload failed with ER_BAD_FIELD_ERROR
+        // before this fix, live-confirmed via PREPARE (consistent with the live
+        // table holding 0 rows system-wide). The real status column is `status`,
+        // and it — along with asset_type/vendor/warranty_expiry/notes/branch_code,
+        // all template-declared optional columns — was never read from the
+        // uploaded row at all; status was hardcoded to 'available' regardless of
+        // what the file said.
         `INSERT INTO asset_master
-           (asset_code, asset_name, asset_category, purchase_cost, purchase_date,
-            serial_number, asset_condition, asset_status)
+           (asset_code, asset_name, asset_category, asset_type, serial_number,
+            purchase_date, purchase_cost, vendor, warranty_expiry, notes, branch_id, status)
          VALUES ${placeholders}
          ON DUPLICATE KEY UPDATE
            asset_name = VALUES(asset_name),
            asset_category = VALUES(asset_category),
-           purchase_cost = COALESCE(VALUES(purchase_cost), purchase_cost),
-           purchase_date = COALESCE(VALUES(purchase_date), purchase_date),
+           asset_type = COALESCE(VALUES(asset_type), asset_type),
            serial_number = COALESCE(VALUES(serial_number), serial_number),
-           asset_condition = VALUES(asset_condition)`,
+           purchase_date = COALESCE(VALUES(purchase_date), purchase_date),
+           purchase_cost = COALESCE(VALUES(purchase_cost), purchase_cost),
+           vendor = COALESCE(VALUES(vendor), vendor),
+           warranty_expiry = COALESCE(VALUES(warranty_expiry), warranty_expiry),
+           notes = COALESCE(VALUES(notes), notes),
+           branch_id = COALESCE(VALUES(branch_id), branch_id),
+           status = VALUES(status)`,
         params
       );
       for (const r of rowsInChunk) {
@@ -112,17 +170,25 @@ export async function importAssetMasterBatch(
         try {
           await db.execute(
             `INSERT INTO asset_master
-               (asset_code, asset_name, asset_category, purchase_cost, purchase_date,
-                serial_number, asset_condition, asset_status)
-             VALUES (?,?,?,?,?,?,?,'available')
+               (asset_code, asset_name, asset_category, asset_type, serial_number,
+                purchase_date, purchase_cost, vendor, warranty_expiry, notes, branch_id, status)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
              ON DUPLICATE KEY UPDATE
                asset_name = VALUES(asset_name),
                asset_category = VALUES(asset_category),
-               purchase_cost = COALESCE(VALUES(purchase_cost), purchase_cost),
-               purchase_date = COALESCE(VALUES(purchase_date), purchase_date),
+               asset_type = COALESCE(VALUES(asset_type), asset_type),
                serial_number = COALESCE(VALUES(serial_number), serial_number),
-               asset_condition = VALUES(asset_condition)`,
-            [r.assetCode, r.assetName, r.category, r.purchaseCost, r.purchaseDate, r.serialNumber, r.assetCondition]
+               purchase_date = COALESCE(VALUES(purchase_date), purchase_date),
+               purchase_cost = COALESCE(VALUES(purchase_cost), purchase_cost),
+               vendor = COALESCE(VALUES(vendor), vendor),
+               warranty_expiry = COALESCE(VALUES(warranty_expiry), warranty_expiry),
+               notes = COALESCE(VALUES(notes), notes),
+               branch_id = COALESCE(VALUES(branch_id), branch_id),
+               status = VALUES(status)`,
+            [r.assetCode, r.assetName, r.category, r.assetType, r.serialNumber,
+             r.purchaseDate, r.purchaseCost, r.vendor, r.warrantyExpiry, r.notes,
+             r.branchCode ? branchIdByCode.get(r.branchCode) ?? null : null,
+             r.status]
           );
           importedRowIds.push(r.rowId);
           importedRows++;

@@ -13,7 +13,7 @@ interface ParsedRow {
   designationCode: string;
   designationName: string;
   grade: string | null;
-  level: string | null;
+  activeStatus: 0 | 1;
 }
 
 const CHUNK_SIZE = 200;
@@ -22,6 +22,14 @@ function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
+}
+
+/** "1"/"true"/"yes"/"active" → 1; "0"/"false"/"no"/"inactive" → 0; blank → default. */
+function parseActiveStatus(raw: unknown, defaultValue: 0 | 1 = 1): 0 | 1 {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (!v) return defaultValue;
+  if (["0", "false", "no", "inactive", "n"].includes(v)) return 0;
+  return 1;
 }
 
 export async function importDesignationMasterBatch(
@@ -64,7 +72,7 @@ export async function importDesignationMasterBatch(
     parsed.push({
       rowId: row.id, rowNo: row.row_no, designationCode, designationName,
       grade: data.grade ? String(data.grade).trim() : null,
-      level: data.level ? String(data.level).trim() : null,
+      activeStatus: parseActiveStatus(data.active_status),
     });
   }
 
@@ -77,17 +85,23 @@ export async function importDesignationMasterBatch(
   // as an error — every other row in the batch still lands, matching the
   // original per-row loop's error isolation.
   for (const rowsInChunk of chunk(parsed, CHUNK_SIZE)) {
-    const placeholders = rowsInChunk.map(() => "(?,?,?,?,1)").join(", ");
-    const params = rowsInChunk.flatMap((r) => [r.designationCode, r.designationName, r.grade, r.level]);
+    const placeholders = rowsInChunk.map(() => "(?,?,?,?)").join(", ");
+    const params = rowsInChunk.flatMap((r) => [r.designationCode, r.designationName, r.grade, r.activeStatus]);
 
     try {
       await db.execute(
-        `INSERT INTO designation_master (designation_code, designation_name, grade, level, active_status)
+        // `level` was never a real column on designation_master and was not even a
+        // template-declared field — every row of every DESIGNATION_MASTER upload
+        // failed with ER_BAD_FIELD_ERROR before this fix, live-confirmed via
+        // PREPARE. active_status IS a template-declared optional column that the
+        // service silently ignored; it is now read and applied on both insert and
+        // re-upload.
+        `INSERT INTO designation_master (designation_code, designation_name, grade, active_status)
          VALUES ${placeholders}
          ON DUPLICATE KEY UPDATE
            designation_name = VALUES(designation_name),
            grade = COALESCE(VALUES(grade), grade),
-           level = COALESCE(VALUES(level), level)`,
+           active_status = VALUES(active_status)`,
         params
       );
       for (const r of rowsInChunk) {
@@ -98,13 +112,13 @@ export async function importDesignationMasterBatch(
       for (const r of rowsInChunk) {
         try {
           await db.execute(
-            `INSERT INTO designation_master (designation_code, designation_name, grade, level, active_status)
-             VALUES (?,?,?,?,1)
+            `INSERT INTO designation_master (designation_code, designation_name, grade, active_status)
+             VALUES (?,?,?,?)
              ON DUPLICATE KEY UPDATE
                designation_name = VALUES(designation_name),
                grade = COALESCE(VALUES(grade), grade),
-               level = COALESCE(VALUES(level), level)`,
-            [r.designationCode, r.designationName, r.grade, r.level]
+               active_status = VALUES(active_status)`,
+            [r.designationCode, r.designationName, r.grade, r.activeStatus]
           );
           importedRowIds.push(r.rowId);
           importedRows++;

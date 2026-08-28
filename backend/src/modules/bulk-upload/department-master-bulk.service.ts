@@ -12,8 +12,8 @@ interface ParsedRow {
   rowNo: number;
   deptCode: string;
   deptName: string;
-  costCentre: string | null;
   description: string | null;
+  activeStatus: 0 | 1;
 }
 
 const CHUNK_SIZE = 200;
@@ -22,6 +22,14 @@ function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
+}
+
+/** "1"/"true"/"yes"/"active" → 1; "0"/"false"/"no"/"inactive" → 0; blank → default. */
+function parseActiveStatus(raw: unknown, defaultValue: 0 | 1 = 1): 0 | 1 {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (!v) return defaultValue;
+  if (["0", "false", "no", "inactive", "n"].includes(v)) return 0;
+  return 1;
 }
 
 export async function importDepartmentMasterBatch(
@@ -63,8 +71,8 @@ export async function importDepartmentMasterBatch(
 
     parsed.push({
       rowId: row.id, rowNo: row.row_no, deptCode, deptName,
-      costCentre: data.cost_centre ? String(data.cost_centre).trim() : null,
       description: data.description ? String(data.description).trim() : null,
+      activeStatus: parseActiveStatus(data.active_status),
     });
   }
 
@@ -77,17 +85,22 @@ export async function importDepartmentMasterBatch(
   // as an error — every other row in the batch still lands, matching the
   // original per-row loop's error isolation.
   for (const rowsInChunk of chunk(parsed, CHUNK_SIZE)) {
-    const placeholders = rowsInChunk.map(() => "(?,?,?,?,1)").join(", ");
-    const params = rowsInChunk.flatMap((r) => [r.deptCode, r.deptName, r.costCentre, r.description]);
+    const placeholders = rowsInChunk.map(() => "(?,?,?,?)").join(", ");
+    const params = rowsInChunk.flatMap((r) => [r.deptCode, r.deptName, r.description, r.activeStatus]);
 
     try {
       await db.execute(
-        `INSERT INTO department_master (dept_code, dept_name, cost_centre, description, active_status)
+        // cost_centre was never a real column on department_master — every row of
+        // every DEPARTMENT_MASTER upload failed with ER_BAD_FIELD_ERROR before this
+        // fix, live-confirmed via PREPARE. active_status is a template-declared
+        // optional column that the service silently ignored; it is now read and
+        // applied on both insert and re-upload.
+        `INSERT INTO department_master (dept_code, dept_name, description, active_status)
          VALUES ${placeholders}
          ON DUPLICATE KEY UPDATE
            dept_name = VALUES(dept_name),
-           cost_centre = COALESCE(VALUES(cost_centre), cost_centre),
-           description = COALESCE(VALUES(description), description)`,
+           description = COALESCE(VALUES(description), description),
+           active_status = VALUES(active_status)`,
         params
       );
       for (const r of rowsInChunk) {
@@ -98,13 +111,13 @@ export async function importDepartmentMasterBatch(
       for (const r of rowsInChunk) {
         try {
           await db.execute(
-            `INSERT INTO department_master (dept_code, dept_name, cost_centre, description, active_status)
-             VALUES (?,?,?,?,1)
+            `INSERT INTO department_master (dept_code, dept_name, description, active_status)
+             VALUES (?,?,?,?)
              ON DUPLICATE KEY UPDATE
                dept_name = VALUES(dept_name),
-               cost_centre = COALESCE(VALUES(cost_centre), cost_centre),
-               description = COALESCE(VALUES(description), description)`,
-            [r.deptCode, r.deptName, r.costCentre, r.description]
+               description = COALESCE(VALUES(description), description),
+               active_status = VALUES(active_status)`,
+            [r.deptCode, r.deptName, r.description, r.activeStatus]
           );
           importedRowIds.push(r.rowId);
           importedRows++;

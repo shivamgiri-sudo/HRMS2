@@ -21,6 +21,48 @@ router.use(requireAuth);
 
 const MAX_UPLOAD_MB = 2;
 
+/**
+ * Reproduced end to end against the live DB (2026-08-27): a 4,941-row file drove
+ * one `INSERT ... ON DUPLICATE KEY UPDATE` per row — 4,941 sequential round trips
+ * to a remote database. A 2-row file alone took 69 seconds, so the full file held
+ * row locks open long enough to collide with ordinary concurrent traffic and die
+ * with `ER_LOCK_WAIT_TIMEOUT`. Because the failing `await` sat in a bare loop with
+ * no try/catch, that error escaped as an unhandled promise rejection and killed
+ * the Node process outright — after 2,881 of the 4,941 rows had already committed,
+ * silently, with no way for the caller to tell.
+ *
+ * The fix batches rows into chunked multi-row INSERT statements instead of one
+ * row at a time. Each multi-row INSERT is a single SQL statement, and MySQL
+ * executes a single statement atomically — all its rows land or none do — so a
+ * chunk is naturally the unit of atomicity without an explicit transaction. 300
+ * rows/chunk keeps each statement small (this table's ~9 bound params per row is
+ * at most ~2,700 params and a few tens of KB of SQL text — far inside
+ * max_allowed_packet) while cutting round trips for a file this size from
+ * thousands to roughly a dozen, which is what keeps each lock window short enough
+ * to survive contention instead of timing out.
+ *
+ * Chunk-commit was chosen over one giant transaction for the whole upload: at
+ * ~5,000 rows a single transaction would hold its locks for the entire upload
+ * (the exact condition that produced the timeout in the first place), and any
+ * failure anywhere would force a full rollback — discarding rows that saved
+ * cleanly and forcing a complete re-upload with zero credit for what worked. Both
+ * writes here are naturally idempotent (`ON DUPLICATE KEY UPDATE` keyed on the
+ * table's real unique keys), so a caller can safely re-run only the rows a failed
+ * chunk reports back, and a corrected re-upload of the whole file is always safe.
+ *
+ * The trade-off: a chunk failure is reported at chunk granularity, not per row —
+ * every row in a failed chunk is reported as not-saved even though MySQL may have
+ * rejected only one of them. The response's `errors` array always names exactly
+ * which rows are in that state, so a caller is never left guessing what landed.
+ */
+const INSERT_CHUNK_SIZE = 300;
+
+function chunkArray<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
@@ -171,15 +213,33 @@ router.post(
     const empMap = new Map<string, any>();
     for (const row of empRows as any[]) empMap.set(row.employee_code, row);
 
-    // Fetch locked records for all affected employee+date pairs
-    const lockChecks = csvRows.map(r => {
+    // Fetch locked records for all affected employee+date pairs.
+    //
+    // Previously this list was built by string-interpolating employee_id and
+    // attendance_date directly into the SQL text. employee_id comes from the DB and
+    // attendance_date is format-validated by parseCsv, so it was never exploitable —
+    // but at up to several thousand rows it produced one enormous interpolated
+    // statement. Parameterised and chunked below: MySQL's row-constructor
+    // `(a,b) IN ((?,?),(?,?),...)` form (already used a few lines down for the `apr`
+    // sync check) takes bound params instead, and INSERT_CHUNK_SIZE keeps any one
+    // statement small. Deduplicated first since the same employee+date pair can
+    // repeat across rows the file itself does not dedupe.
+    const lockPairs: Array<[string, string]> = [];
+    const seenLockPairs = new Set<string>();
+    for (const r of csvRows) {
       const emp = empMap.get(r.employee_code);
-      return emp ? `('${emp.employee_id}','${r.attendance_date}')` : null;
-    }).filter(Boolean);
+      if (!emp) continue;
+      const key = `${emp.employee_id}:${r.attendance_date}`;
+      if (seenLockPairs.has(key)) continue;
+      seenLockPairs.add(key);
+      lockPairs.push([emp.employee_id, r.attendance_date]);
+    }
 
     const lockedSet = new Set<string>();
     const protectedReasonByKey = new Map<string, string>();
-    if (lockChecks.length > 0) {
+    for (const pairChunk of chunkArray(lockPairs, INSERT_CHUNK_SIZE)) {
+      const placeholders = pairChunk.map(() => '(?,?)').join(',');
+      const params = pairChunk.flat();
       const [lockedRows] = await db.execute<RowDataPacket[]>(
         `SELECT adr.employee_id,
                 DATE_FORMAT(adr.record_date,'%Y-%m-%d') AS record_date,
@@ -192,7 +252,7 @@ router.post(
            ON ar.employee_id = adr.employee_id
           AND ar.session_date = adr.record_date
           AND ar.status = 'approved'
-         WHERE (adr.employee_id, adr.record_date) IN (${lockChecks.join(',')})
+         WHERE (adr.employee_id, adr.record_date) IN (${placeholders})
            AND (
                  -- A lock this route set on a previous upload is not "protected": the
                  -- rows below are now written with is_locked=1 so the nightly engine
@@ -204,6 +264,7 @@ router.post(
                  OR adr.override_by IS NOT NULL
                  OR ar.id IS NOT NULL
                )`,
+        params,
       );
       for (const r of lockedRows as any[]) {
         const key = `${r.employee_id}:${r.record_date}`;
@@ -228,9 +289,13 @@ router.post(
     // the upload still writes the attendance record exactly as before; only the
     // evidence row is withheld.
     const aprAlreadySynced = new Set<string>();
-    if (csvRows.length > 0) {
+    // Chunked for the same reason as the lock check above: this was already
+    // parameterised (never an injection risk), but one statement covering every
+    // row in a several-thousand-row file is unnecessarily large. Same chunk size,
+    // same row-constructor form.
+    for (const rowChunk of chunkArray(csvRows, INSERT_CHUNK_SIZE)) {
       const pairParams: string[] = [];
-      const pairPlaceholders = csvRows.map((r) => {
+      const pairPlaceholders = rowChunk.map((r) => {
         pairParams.push(r.employee_code, r.attendance_date);
         return '(?,?)';
       }).join(',');
@@ -249,11 +314,26 @@ router.post(
     let skippedLocked = 0;
     let evidenceRecorded = 0;
     let evidenceSkippedAlreadySynced = 0;
+    const failedRows: RowError[] = [];
 
     // Resolved once for the whole upload, not per row: a bulk file can carry
     // thousands of rows and this is a database read. Resolving it inside the loop
     // would also let the floor change midway through a single upload.
     const netLoginHalfDayFloor = await resolveHalfDayFloorMinutes('netlogin_half_day_floor_minutes');
+
+    // Phase 1 — validate and classify every row (no DB writes here). Unchanged
+    // skip reasons, unchanged call sites for isOperationsExecutive /
+    // classifyOperationsNetLogin. Rows that pass are queued for the chunked
+    // insert in phase 2; rows the file itself was fine on but that fail to save
+    // are queued for evidence in phase 3, filtered by the same
+    // aprAlreadySynced check as before.
+    interface InsertCandidate {
+      rowNum: number;
+      employee_code: string;
+      attendance_date: string;
+      params: [string, string, unknown, unknown, number, number, string, number, string];
+    }
+    const toInsert: InsertCandidate[] = [];
 
     for (const row of csvRows) {
       const emp = empMap.get(row.employee_code);
@@ -280,95 +360,133 @@ router.post(
 
       const { status, lwpValue } = classifyOperationsNetLogin(row.net_login_minutes, netLoginHalfDayFloor);
 
-      await db.execute(
-        // is_locked=1 is the whole point of this write.
-        //
-        // Without it the row sits at is_locked=0, and the nightly attendance sweep
-        // recomputes that employee/date from the automatic sources — the `apr` table
-        // and biometric punches — and silently overwrites the upload. This route does
-        // not write to `apr`, so the engine has no memory of what was uploaded: the
-        // file survived until 23:00 that night and then vanished, with no error. The
-        // other manual-override path in this codebase, correctDailyRecord(), has always
-        // set is_locked=1; this one never did.
-        //
-        // The ON DUPLICATE guard keys off override_by/regularization_id rather than
-        // is_locked. Two reasons: those two columns are never assigned in this
-        // statement, so the guard cannot be corrupted by MySQL evaluating assignments
-        // left-to-right and reading an already-updated value; and it expresses the real
-        // precedence — a human override or an approved regularization outranks a bulk
-        // file, while automatic engine output does not.
-        `INSERT INTO attendance_daily_record
-           (id, employee_id, record_date, branch_id, process_id,
-            attendance_source, source_system,
-            dialler_minutes, raw_minutes,
-            attendance_status, lwp_value,
-            late_mark, late_by_minutes,
-            is_locked,
-            processed_at, created_by)
-         VALUES (UUID(), ?, ?, ?, ?,
-                 'dialler', 'apr_bulk',
-                 ?, ?,
-                 ?, ?,
-                 0, 0,
-                 1,
-                 NOW(), ?)
-         ON DUPLICATE KEY UPDATE
-           attendance_source = IF(override_by IS NULL AND regularization_id IS NULL, 'dialler',                attendance_source),
-           source_system     = IF(override_by IS NULL AND regularization_id IS NULL, 'apr_bulk',               source_system),
-           dialler_minutes   = IF(override_by IS NULL AND regularization_id IS NULL, VALUES(dialler_minutes),   dialler_minutes),
-           raw_minutes       = IF(override_by IS NULL AND regularization_id IS NULL, VALUES(raw_minutes),       raw_minutes),
-           attendance_status = IF(override_by IS NULL AND regularization_id IS NULL, VALUES(attendance_status), attendance_status),
-           lwp_value         = IF(override_by IS NULL AND regularization_id IS NULL, VALUES(lwp_value),         lwp_value),
-           is_locked         = IF(override_by IS NULL AND regularization_id IS NULL, 1,                         is_locked),
-           processed_at      = IF(override_by IS NULL AND regularization_id IS NULL, NOW(),                     processed_at)`,
-        [
+      toInsert.push({
+        rowNum: row.rowNum,
+        employee_code: row.employee_code,
+        attendance_date: row.attendance_date,
+        params: [
           emp.employee_id, row.attendance_date, emp.branch_id, emp.process_id,
           row.net_login_minutes, row.net_login_minutes,
           status, lwpValue,
           (req.authUser as any).id,
         ],
-      );
-      uploaded++;
+      });
+    }
 
-      // Record the same minutes as EVIDENCE, not only as a verdict.
-      //
-      // Much of the dialler estate is not connected to this database, so those
-      // campaigns never reach `apr` and their agents are invisible to everything
-      // that reasons about dialler coverage — including isEnrolledInAprFeed, which
-      // decides whether an Operations Executive is judged on APR alone. Writing the
-      // attendance record alone left the engine with no memory that the day was
-      // ever evidenced: the employee stayed "not covered" and every day this file
-      // did not mention kept falling back to their biometric punch.
-      //
-      // Filed under its own campaign so it is distinguishable from a synced row,
-      // and re-uploading a corrected figure overwrites it rather than adding to it.
-      // The attendance record above is unchanged and still authoritative for the
-      // days in this file; this only gives the engine the evidence behind it.
-      if (aprAlreadySynced.has(`${row.employee_code}:${row.attendance_date}`)) {
+    // Phase 2 — write attendance_daily_record in chunked multi-row statements.
+    //
+    // is_locked=1 is the whole point of this write.
+    //
+    // Without it the row sits at is_locked=0, and the nightly attendance sweep
+    // recomputes that employee/date from the automatic sources — the `apr` table
+    // and biometric punches — and silently overwrites the upload. This route does
+    // not write to `apr`, so the engine has no memory of what was uploaded: the
+    // file survived until 23:00 that night and then vanished, with no error. The
+    // other manual-override path in this codebase, correctDailyRecord(), has always
+    // set is_locked=1; this one never did.
+    //
+    // The ON DUPLICATE guard keys off override_by/regularization_id rather than
+    // is_locked. Two reasons: those two columns are never assigned in this
+    // statement, so the guard cannot be corrupted by MySQL evaluating assignments
+    // left-to-right and reading an already-updated value; and it expresses the real
+    // precedence — a human override or an approved regularization outranks a bulk
+    // file, while automatic engine output does not.
+    //
+    // Each chunk below is ONE multi-row INSERT — one SQL statement, so MySQL
+    // applies it atomically (see INSERT_CHUNK_SIZE comment above). A chunk that
+    // throws (lock timeout, transient connection error, anything) is caught here,
+    // never allowed to escape as an unhandled rejection, and every row in that
+    // chunk is reported back as not-saved with the real DB error text. Rows in
+    // chunks that succeed are never rolled back by a later chunk's failure.
+    const succeededInsertRows: InsertCandidate[] = [];
+    for (const insertChunk of chunkArray(toInsert, INSERT_CHUNK_SIZE)) {
+      const valuesSql = insertChunk.map(() => '(UUID(), ?, ?, ?, ?, \'dialler\', \'apr_bulk\', ?, ?, ?, ?, 0, 0, 1, NOW(), ?)').join(',\n           ');
+      const flatParams = insertChunk.flatMap(c => c.params);
+      try {
+        await db.execute(
+          `INSERT INTO attendance_daily_record
+             (id, employee_id, record_date, branch_id, process_id,
+              attendance_source, source_system,
+              dialler_minutes, raw_minutes,
+              attendance_status, lwp_value,
+              late_mark, late_by_minutes,
+              is_locked,
+              processed_at, created_by)
+           VALUES ${valuesSql}
+           ON DUPLICATE KEY UPDATE
+             attendance_source = IF(override_by IS NULL AND regularization_id IS NULL, 'dialler',                attendance_source),
+             source_system     = IF(override_by IS NULL AND regularization_id IS NULL, 'apr_bulk',               source_system),
+             dialler_minutes   = IF(override_by IS NULL AND regularization_id IS NULL, VALUES(dialler_minutes),   dialler_minutes),
+             raw_minutes       = IF(override_by IS NULL AND regularization_id IS NULL, VALUES(raw_minutes),       raw_minutes),
+             attendance_status = IF(override_by IS NULL AND regularization_id IS NULL, VALUES(attendance_status), attendance_status),
+             lwp_value         = IF(override_by IS NULL AND regularization_id IS NULL, VALUES(lwp_value),         lwp_value),
+             is_locked         = IF(override_by IS NULL AND regularization_id IS NULL, 1,                         is_locked),
+             processed_at      = IF(override_by IS NULL AND regularization_id IS NULL, NOW(),                     processed_at)`,
+          flatParams,
+        );
+        uploaded += insertChunk.length;
+        succeededInsertRows.push(...insertChunk);
+      } catch (err) {
+        const reason = `Attendance not saved: batch insert failed (rows ${insertChunk[0]!.rowNum}-${insertChunk[insertChunk.length - 1]!.rowNum} of this file) — ${
+          err instanceof Error ? err.message : String(err)}`;
+        for (const c of insertChunk) {
+          failedRows.push({ row: c.rowNum, employee_code: c.employee_code, reason });
+        }
+      }
+    }
+    rowErrors.push(...failedRows);
+
+    // Phase 3 — record the same minutes as EVIDENCE, not only as a verdict, for
+    // every row that actually saved in phase 2.
+    //
+    // Much of the dialler estate is not connected to this database, so those
+    // campaigns never reach `apr` and their agents are invisible to everything
+    // that reasons about dialler coverage — including isEnrolledInAprFeed, which
+    // decides whether an Operations Executive is judged on APR alone. Writing the
+    // attendance record alone left the engine with no memory that the day was
+    // ever evidenced: the employee stayed "not covered" and every day this file
+    // did not mention kept falling back to their biometric punch.
+    //
+    // Filed under its own campaign so it is distinguishable from a synced row,
+    // and re-uploading a corrected figure overwrites it rather than adding to it.
+    // The attendance record above is unchanged and still authoritative for the
+    // days in this file; this only gives the engine the evidence behind it.
+    //
+    // Same chunked-multi-row / catch-per-chunk contract as phase 2: a failure here
+    // never fails the attendance write already committed, and never throws — but
+    // it is never silent either, or coverage would quietly stay wrong with the
+    // upload reporting success.
+    const toEvidence = succeededInsertRows.filter(c => {
+      if (aprAlreadySynced.has(`${c.employee_code}:${c.attendance_date}`)) {
         evidenceSkippedAlreadySynced++;
-      } else {
-        try {
-          // Set source='manual' to protect from sync overwrites
-          await db.execute(
-            `INSERT INTO apr (ReportDate, UserID, campaign_id, Net_Login, source, uploaded_by)
-             VALUES (?, ?, ?, SEC_TO_TIME(? * 60), 'manual', ?)
-             ON DUPLICATE KEY UPDATE
-               Net_Login = VALUES(Net_Login),
-               source = 'manual',
-               uploaded_by = VALUES(uploaded_by)`,
-            [row.attendance_date, row.employee_code, MANUAL_UPLOAD_CAMPAIGN, row.net_login_minutes, (req.authUser as any).id],
-          );
-          evidenceRecorded++;
-        } catch (err) {
-          // The attendance record is already written and correct. A failure to file
-          // the evidence must not fail the row — but it must not be silent either,
-          // or coverage would quietly stay wrong with the upload reporting success.
-          rowErrors.push({
-            row: row.rowNum,
-            employee_code: row.employee_code,
-            reason: `Attendance saved, but the dialler evidence row could not be recorded: ${
-              err instanceof Error ? err.message : String(err)}`,
-          });
+        return false;
+      }
+      return true;
+    });
+
+    for (const evidenceChunk of chunkArray(toEvidence, INSERT_CHUNK_SIZE)) {
+      const valuesSql = evidenceChunk.map(() => `(?, ?, ?, SEC_TO_TIME(? * 60), 'manual', ?)`).join(',\n           ');
+      const flatParams = evidenceChunk.flatMap(c => [
+        c.attendance_date, c.employee_code, MANUAL_UPLOAD_CAMPAIGN, c.params[4], (req.authUser as any).id,
+      ]);
+      try {
+        // Set source='manual' to protect from sync overwrites
+        await db.execute(
+          `INSERT INTO apr (ReportDate, UserID, campaign_id, Net_Login, source, uploaded_by)
+           VALUES ${valuesSql}
+           ON DUPLICATE KEY UPDATE
+             Net_Login = VALUES(Net_Login),
+             source = 'manual',
+             uploaded_by = VALUES(uploaded_by)`,
+          flatParams,
+        );
+        evidenceRecorded += evidenceChunk.length;
+      } catch (err) {
+        const reason = `Attendance saved, but the dialler evidence row could not be recorded (batch rows ${
+          evidenceChunk[0]!.rowNum}-${evidenceChunk[evidenceChunk.length - 1]!.rowNum} of this file): ${
+          err instanceof Error ? err.message : String(err)}`;
+        for (const c of evidenceChunk) {
+          rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason });
         }
       }
     }
@@ -379,6 +497,16 @@ router.post(
       skipped_locked: skippedLocked,
       evidence_recorded: evidenceRecorded,
       evidence_skipped_already_synced: evidenceSkippedAlreadySynced,
+      // Atomicity contract: rows are written in chunks of up to INSERT_CHUNK_SIZE
+      // via a single multi-row statement per chunk, so each chunk is all-or-nothing
+      // but chunks are independent of each other — one chunk's DB error does not
+      // roll back or block any other chunk, and never crashes the request. `errors`
+      // lists every row that did NOT land, by row number, with the real reason,
+      // including any chunk-level DB failure. `uploaded` + `skipped_locked` +
+      // (validation-error rows in `errors`) + (DB-failure rows in `errors`) always
+      // accounts for every row in the file — a caller can always tell exactly what
+      // was written from this response alone.
+      failed: failedRows.length,
       errors: rowErrors,
     });
   },

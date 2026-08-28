@@ -31,9 +31,13 @@ const CASES = [
     dupeCode: "OPS",
   },
   {
+    // asset_category and status are both real, required columns on asset_master
+    // (status is a live ENUM) — the old fixture omitted both, which is only
+    // possible to not-notice because the service used to hardcode 'available'
+    // and never read asset_category from the row at all.
     name: "asset", modulePath: "../asset-master-bulk.service.js", exportName: "importAssetMasterBatch",
-    table: "asset_master", requiredMsg: /asset_code and asset_name are required/,
-    validRow: { asset_code: "AST001", asset_name: "Dell Laptop" },
+    table: "asset_master", requiredMsg: /asset_code, asset_name and asset_category are required/,
+    validRow: { asset_code: "AST001", asset_name: "Dell Laptop", asset_category: "IT Equipment", status: "available" },
     invalidRow: { asset_code: "", asset_name: "Missing code" },
     dupeCode: "AST001",
   },

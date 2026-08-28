@@ -16,6 +16,9 @@ interface ParsedRow {
   state: string | null;
   address: string | null;
   pincode: string | null;
+  callCentreCode: string | null;
+  displayName: string | null;
+  activeStatus: 0 | 1;
 }
 
 const CHUNK_SIZE = 200;
@@ -24,6 +27,14 @@ function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
+}
+
+/** "1"/"true"/"yes"/"active" → 1; "0"/"false"/"no"/"inactive" → 0; blank → default. */
+function parseActiveStatus(raw: unknown, defaultValue: 0 | 1 = 1): 0 | 1 {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (!v) return defaultValue;
+  if (["0", "false", "no", "inactive", "n"].includes(v)) return 0;
+  return 1;
 }
 
 export async function importBranchMasterBatch(
@@ -69,6 +80,13 @@ export async function importBranchMasterBatch(
       state: data.state ? String(data.state).trim() : null,
       address: data.address ? String(data.address).trim() : null,
       pincode: data.pincode ? String(data.pincode).trim() : null,
+      // call_centre_code and display_name are template-declared optional columns
+      // that were never read here despite both being real, indexed columns on
+      // branch_master (call_centre_code even carries a UNIQUE key) — a user filling
+      // them in per the template had the values silently discarded.
+      callCentreCode: data.call_centre_code ? String(data.call_centre_code).trim() : null,
+      displayName: data.display_name ? String(data.display_name).trim() : null,
+      activeStatus: parseActiveStatus(data.active_status),
     });
   }
 
@@ -81,19 +99,31 @@ export async function importBranchMasterBatch(
   // as an error — every other row in the batch still lands, matching the
   // original per-row loop's error isolation.
   for (const rowsInChunk of chunk(parsed, CHUNK_SIZE)) {
-    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,1)").join(", ");
-    const params = rowsInChunk.flatMap((r) => [r.branchCode, r.branchName, r.city, r.state, r.address, r.pincode]);
+    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?)").join(", ");
+    const params = rowsInChunk.flatMap((r) => [
+      r.branchCode, r.branchName, r.city, r.state, r.address, r.pincode,
+      r.callCentreCode, r.displayName, r.activeStatus,
+    ]);
 
     try {
       await db.execute(
-        `INSERT INTO branch_master (branch_code, branch_name, city, state, address, pincode, active_status)
+        // active_status, call_centre_code and display_name are template-declared
+        // optional columns that were previously ignored — active_status was
+        // hardcoded to 1 with no way to bulk-deactivate a branch, and the other two
+        // were dropped outright. All three are now read and applied.
+        `INSERT INTO branch_master
+           (branch_code, branch_name, city, state, address, pincode,
+            call_centre_code, display_name, active_status)
          VALUES ${placeholders}
          ON DUPLICATE KEY UPDATE
            branch_name = VALUES(branch_name),
            city = COALESCE(VALUES(city), city),
            state = COALESCE(VALUES(state), state),
            address = COALESCE(VALUES(address), address),
-           pincode = COALESCE(VALUES(pincode), pincode)`,
+           pincode = COALESCE(VALUES(pincode), pincode),
+           call_centre_code = COALESCE(VALUES(call_centre_code), call_centre_code),
+           display_name = COALESCE(VALUES(display_name), display_name),
+           active_status = VALUES(active_status)`,
         params
       );
       for (const r of rowsInChunk) {
@@ -104,15 +134,21 @@ export async function importBranchMasterBatch(
       for (const r of rowsInChunk) {
         try {
           await db.execute(
-            `INSERT INTO branch_master (branch_code, branch_name, city, state, address, pincode, active_status)
-             VALUES (?,?,?,?,?,?,1)
+            `INSERT INTO branch_master
+               (branch_code, branch_name, city, state, address, pincode,
+                call_centre_code, display_name, active_status)
+             VALUES (?,?,?,?,?,?,?,?,?)
              ON DUPLICATE KEY UPDATE
                branch_name = VALUES(branch_name),
                city = COALESCE(VALUES(city), city),
                state = COALESCE(VALUES(state), state),
                address = COALESCE(VALUES(address), address),
-               pincode = COALESCE(VALUES(pincode), pincode)`,
-            [r.branchCode, r.branchName, r.city, r.state, r.address, r.pincode]
+               pincode = COALESCE(VALUES(pincode), pincode),
+               call_centre_code = COALESCE(VALUES(call_centre_code), call_centre_code),
+               display_name = COALESCE(VALUES(display_name), display_name),
+               active_status = VALUES(active_status)`,
+            [r.branchCode, r.branchName, r.city, r.state, r.address, r.pincode,
+             r.callCentreCode, r.displayName, r.activeStatus]
           );
           importedRowIds.push(r.rowId);
           importedRows++;
