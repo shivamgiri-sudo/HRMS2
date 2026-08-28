@@ -227,11 +227,24 @@ export default function NativeOpsCommandCenter() {
     try {
       setRefreshing(true);
 
+      /*
+       * Both feeds below used to call prefixes nothing serves — /api/call-master/inbound/today
+       * and /api/operations-live/summary — so each returned 401 (a missing /api/* route 401s in
+       * this app rather than 404s) and both sections showed their unavailable state on every
+       * load. Neither endpoint was missing; both were mounted under a different prefix:
+       *   /api/call-master/inbound/today  ->  /api/inbound/today
+       *   /api/operations-live/summary    ->  /api/operations/live-status (.summary)
+       */
+
       // Section 1: Inbound Live (today's data)
       try {
-        const inboundRes = await hrmsApi.get("/api/call-master/inbound/today");
-        if (inboundRes.data?.success && !inboundRes.data._unavailable) {
-          setInboundProjects(inboundRes.data.data || []);
+        const inboundRes = await hrmsApi.get<{ success?: boolean; data?: unknown[]; _unavailable?: boolean }>(
+          "/api/inbound/today",
+        );
+        // The route reports an upstream failure as success:true with _unavailable set, rather
+        // than throwing — so an empty list from a degraded source is not read as "no projects".
+        if (inboundRes?.success && !inboundRes._unavailable) {
+          setInboundProjects((inboundRes.data as typeof inboundProjects) || []);
           setInboundUnavailable(false);
         } else {
           setInboundUnavailable(true);
@@ -242,10 +255,11 @@ export default function NativeOpsCommandCenter() {
 
       // Section 2: Live Agent Status
       try {
-        const liveRes = await hrmsApi.get("/api/operations-live/summary");
-        if (liveRes.data?.success) {
-          setAgentSummary(liveRes.data.data);
-        }
+        const liveRes = await hrmsApi.get<{ success?: boolean; data?: { summary?: OperationsSummary } }>(
+          "/api/operations/live-status",
+        );
+        // live-status returns {agents, summary, timestamp}; this panel only renders the summary.
+        setAgentSummary(liveRes?.success ? (liveRes.data?.summary ?? null) : null);
       } catch {
         setAgentSummary(null);
       }

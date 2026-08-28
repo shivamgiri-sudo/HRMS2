@@ -318,11 +318,20 @@ const KNOWN_MISSING: Record<string, string> = {
   "/api/lms-integration/assign":
     "NOT BUILT, deliberately — and now this page's only remaining gap, since its TNI endpoints are served. lmsIntegrationRouter is mounted at /api/lms (not /api/lms-integration) and exposes read-only surfaces (/dashboard-summary, /risk-summary, /batches) BY DESIGN: CLAUDE.md's LMS boundary rule makes the deployed LMS the system of record and forbids HRMS writing into it without explicit authorisation. Assigning a flagged agent to training is therefore a charter decision about integration scaffolding, not a handler someone forgot. Do not stub it.",
 
-  // ── NativeOpsCommandCenter (/ops/command-center) — not linked from the sidebar ────────
-  "/api/call-master/inbound/today":
-    "Unserved. /api/call-master is mounted but exposes no /inbound/today.",
-  "/api/operations-live/summary":
-    "Unserved. operations-live.routes.ts EXISTS and is mounted — at /api/operations, serving /live-status, /roster-vs-actual and /attrition-risk. There is no /summary on it, so this is a missing handler as well as a prefix mismatch.",
+  // ── NativeOpsCommandCenter (/ops/command-center) ──────────────────────────────────────
+  // Both entries retired 2026-08-28. Like the TNI pair, neither endpoint was missing — each
+  // was mounted under a different prefix, and the page has been repointed:
+  //   /api/call-master/inbound/today  ->  /api/inbound/today          (inboundRouter, app.ts)
+  //   /api/operations-live/summary    ->  /api/operations/live-status (reads .summary off
+  //                                       {agents, summary, timestamp})
+  // My earlier note called the second "a missing handler as well as a prefix mismatch". Wrong
+  // on the first half: live-status already returns exactly the OperationsSummary this panel
+  // renders — total_agents, logged_in, on_break, logged_out, absent, avg_call_duration.
+  //
+  // The page still is NOT linked in the sidebar, for a reason unrelated to these two feeds:
+  // its Escalation Signals and Process Utilization sections are hardcoded to empty arrays
+  // behind "mock for now - replace with real endpoints" comments. Two working feeds do not
+  // make half a stubbed screen worth advertising. See app-shell-routing.contract.test.ts.
 };
 
 /**

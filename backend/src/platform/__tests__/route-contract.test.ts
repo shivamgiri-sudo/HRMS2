@@ -85,11 +85,15 @@ const KNOWN_GAPS: Record<string, string> = {
   "GET /api/wfm/roster":
     "Deliberately unbuilt. /roster/assignments cannot serve it: requireRosterPlanScope throws when planId is absent, before the global-role bypass, and the caller is a plan-agnostic date-range view. Needs a cross-plan read model.",
 
-  // ── Untracked scaffolding pages added 2026-08-22 — not mounted in any router, not reachable.
-  "GET /api/call-master/inbound/today":
-    "NOT REACHABLE: NativeOpsCommandCenter.tsx is an untracked file (never committed). No lazy import or Route mounts it. Backend route should be built when the page is wired up. 2026-08-22.",
-  "GET /api/operations-live/summary":
-    "NOT REACHABLE: Same page (NativeOpsCommandCenter.tsx). Not tracked, not mounted. 2026-08-22.",
+  // The two NativeOpsCommandCenter entries are retired 2026-08-28, and their premise had gone
+  // stale in the same way the TNI pair's had: that page is committed and IS mounted, at
+  // /ops/command-center. Neither backend route needed building either — both were already
+  // served under a different prefix, and the page has been repointed:
+  //   /api/call-master/inbound/today -> /api/inbound/today
+  //   /api/operations-live/summary   -> /api/operations/live-status (.summary), which already
+  //                                     returns exactly the OperationsSummary the panel renders
+  // The page stays out of the sidebar, but for an unrelated reason: two of its four sections
+  // are hardcoded to empty arrays behind "mock for now" comments.
   // The two TNI entries are retired 2026-08-28. Their premise had gone stale: NativeTNIAnalysis
   // .tsx is committed and IS mounted, at /wfm/tni-analysis. And the backend was not "needed" —
   // tni.service.ts already exported getTniAnalysis and getTniAgentCalls in full and was simply
