@@ -140,6 +140,10 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/payroll/salary-packages": "SALARY_PACKAGES",
   "/payroll/sign-off": "PAYROLL_SIGN_OFF",
   "/payroll/run-lifecycle": "PAYROLL_SIGN_OFF",
+  // Granted in rbacPageMatrix.ts (fd8240cb) and mounted in payroll.routes.tsx with these
+  // exact Gate codes, but never added here — the same drift class WORKFORCE_COMMAND_CENTER
+  // caught above, just for a plain single-route page rather than a merged console.
+  "/payroll/salary-review": "PAYROLL_HEAD_SALARY_REVIEW_QUEUE",
   "/payroll/statutory-config": "STATUTORY_CONFIG",
   "/payroll/statutory-filing": "PAYROLL_STATUTORY_FILING",
   "/payroll/tax-declaration": "TAX_DECLARATION",
@@ -264,6 +268,8 @@ export const PAGE_CODE_BY_ROUTE_PATTERN: Record<string, string> = {
   "/employees/:id/360": "EMPLOYEE_MANAGEMENT",
   "/employees/:employeeId/joining-documents": "EMPLOYEE_JOINING_DOCUMENTS",
   "/letters/:id/preview": "LETTERS",
+  // Same drift as PAYROLL_HEAD_SALARY_REVIEW_QUEUE above; this one is parameterized.
+  "/payroll/salary-review/:employeeId": "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",
 };
 
 function normalizeRoutePath(href: string): string {

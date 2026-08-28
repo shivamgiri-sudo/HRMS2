@@ -31,14 +31,50 @@ const ROUTE_BY_PAGE_CODE: Record<string, string> = Object.entries(PAGE_CODE_BY_R
 const KNOWN_ROUTES = new Set(Object.keys(PAGE_CODE_BY_ROUTE));
 
 /**
+ * Reverse-resolution-only overrides for page codes whose real destination is one tab of
+ * a merged console rather than a standalone route, so they can never gain a
+ * PAGE_CODE_BY_ROUTE entry (the forward map) without reintroducing a bug.
+ *
+ * WFM_ATTENDANCE_EXCEPTIONS is the case in point. Task 6 of the WFM attendance-page merge
+ * folded the old /wfm/attendance-exceptions page into a tab of /wfm/attendance-integrity
+ * and turned the old path into a query-string-preserving redirect (see
+ * AttendanceIntegrityRedirect.tsx) — so pageRoutePageCodes.ts deliberately removed its
+ * PAGE_CODE_BY_ROUTE entry (see that file's comment on "/wfm/attendance-integrity") and,
+ * just as deliberately, never added one for the merged route either: the console covers
+ * four page codes (one per tab), and ProtectedRoute's getRoutePageCode() forward lookup is
+ * a hard pre-render deny — mapping "/wfm/attendance-integrity" to any single code would
+ * 403 a viewer whose grant covers a different tab before the console's own per-tab
+ * canViewPage() gating ever runs.
+ *
+ * That correctly keeps ProtectedRoute out of it, but it also means ROUTE_BY_PAGE_CODE
+ * below (built from that same forward map) has nothing to resolve WFM_ATTENDANCE_EXCEPTIONS
+ * to any more. page_catalog's page_path for it still reads the pre-merge
+ * '/wfm/attendance-exceptions' (backend/sql/1083_wfm_attendance_exceptions_page_code.sql —
+ * intentionally not migrated, see resolveLaunchRoute's KNOWN_ROUTES check below: that path
+ * is no longer a KNOWN_ROUTES key either, since it left PAGE_CODE_BY_ROUTE), so without an
+ * explicit override, eight roles holding this grant (backend/src/shared/rbacPageMatrix.ts)
+ * would silently fall through resolveLaunchRoute() to "/dashboard" instead of the console.
+ *
+ * This map is consulted only here, in resolveLaunchRoute() — never by getRoutePageCode() —
+ * so it cannot make ProtectedRoute re-gate the merged console behind one code.
+ */
+const ROUTE_OVERRIDE_BY_PAGE_CODE: Record<string, string> = {
+  WFM_ATTENDANCE_EXCEPTIONS: "/wfm/attendance-integrity?tab=exceptions",
+};
+
+/**
  * Resolve where a launcher tile should point.
  *
- * Router mapping wins. A database path is used only if it names a route that exists —
+ * The reverse-only override wins first (see ROUTE_OVERRIDE_BY_PAGE_CODE above), then the
+ * router mapping. A database path is used only if it names a route that exists —
  * page_catalog.page_path drifts (sql/216 is the recorded example) and an unchecked
  * fallback turns that drift into a 404 the user meets by clicking a tile they were
  * legitimately granted.
  */
-function resolveLaunchRoute(page: { page_code: string; route_path?: string | null; page_path?: string | null }): string {
+export function resolveLaunchRoute(page: { page_code: string; route_path?: string | null; page_path?: string | null }): string {
+  const override = ROUTE_OVERRIDE_BY_PAGE_CODE[page.page_code];
+  if (override) return override;
+
   const routerPath = ROUTE_BY_PAGE_CODE[page.page_code];
   if (routerPath) return routerPath;
 

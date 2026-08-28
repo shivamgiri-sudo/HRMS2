@@ -121,6 +121,20 @@ const KNOWN_UNMAPPED_PAGE_CODES = [
   "PAYROLL_DEDUCTION_TYPES",      // -> /payroll/ho-queues, already PAYROLL_HO_QUEUES
   "PAYROLL_DEDUCTION_UPLOAD",     // -> /payroll/ho-queues, already PAYROLL_HO_QUEUES
   "PROVISIONING_APPOINTMENT",     // -> /provisioning/appointment-letter, already PROVISIONING_APPOINTMENT_LETTER
+
+  // Deliberately, permanently unmapped here — not a gap, a boundary. The merged
+  // /wfm/attendance-integrity console (Task 6 of the WFM attendance-page merge) covers
+  // four page codes, one per tab, and ProtectedRoute's getRoutePageCode() forward lookup
+  // is a hard pre-render deny — mapping the route to any single code here would 403 a
+  // viewer whose grant covers a different tab before the console's own per-tab
+  // canViewPage() gating ever runs (see pageRoutePageCodes.ts's comment on
+  // "/wfm/attendance-integrity"). This code is NOT invisible to the launcher despite
+  // being invisible to this map, though: ModuleLauncher.tsx's ROUTE_OVERRIDE_BY_PAGE_CODE
+  // resolves it straight to "/wfm/attendance-integrity?tab=exceptions", covered by the
+  // "resolves WFM_ATTENDANCE_EXCEPTIONS to its merged-console tab" test below — so the
+  // one thing this whole file guards against (a granted code silently 404ing/dead-ending)
+  // is still checked for this code, just via ModuleLauncher's test instead of this map.
+  "WFM_ATTENDANCE_EXCEPTIONS",
 ].sort();
 
 describe("page catalog / router drift", () => {
