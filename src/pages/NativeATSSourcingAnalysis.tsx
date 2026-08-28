@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   AlertTriangle, BarChart3, Clock, Loader, RefreshCcw, TrendingUp, Users,
+  Zap, Gauge, CalendarClock,
 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -21,6 +22,36 @@ type AtsStats = {
 type SourcingChannel = {
   id: string;
   name: string;
+};
+
+// From /api/ats/analytics/* — see backend/src/modules/ats/ats-analytics.routes.ts.
+// Fetched and error-handled separately from the two calls above (own effect, own
+// loading/error state): those are the page's original, load-bearing data, and a
+// failure in one of these newer, additive endpoints must not take the whole page
+// down with it — the sections below simply omit themselves instead.
+type SourceChannelRoi = {
+  source_channel: string;
+  total_candidates: number;
+  total_hired: number;
+  conversion_rate: number;
+  avg_time_to_hire_days: number;
+};
+
+type TimeToHireMetrics = {
+  overall_avg_days: number;
+  by_role: { role: string; avg_days: number }[];
+  by_source: { source: string; avg_days: number }[];
+  by_branch: { branch: string; avg_days: number }[];
+  fastest_hire_days: number;
+  slowest_hire_days: number;
+};
+
+type HiringTrendPoint = {
+  month: string;
+  year: number;
+  registrations: number;
+  interviews: number;
+  selections: number;
 };
 
 // Pipeline stages in order
@@ -74,6 +105,12 @@ export default function NativeATSSourcingAnalysis() {
   const [stats, setStats] = useState<AtsStats | null>(null);
   const [channels, setChannels] = useState<SourcingChannel[]>([]);
 
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState("");
+  const [sourceRoi, setSourceRoi] = useState<SourceChannelRoi[]>([]);
+  const [timeToHire, setTimeToHire] = useState<TimeToHireMetrics | null>(null);
+  const [hiringTrends, setHiringTrends] = useState<HiringTrendPoint[]>([]);
+
   const load = async () => {
     setLoading(true);
     setMessage("");
@@ -94,8 +131,38 @@ export default function NativeATSSourcingAnalysis() {
     }
   };
 
+  const loadAnalytics = async () => {
+    setAnalyticsLoading(true);
+    setAnalyticsError("");
+    try {
+      const [roiRes, timeRes, trendsRes] = await Promise.all([
+        hrmsApi.get<{ success: boolean; data: SourceChannelRoi[] }>(
+          "/api/ats/analytics/source-channel-roi"
+        ),
+        hrmsApi.get<{ success: boolean; data: TimeToHireMetrics }>(
+          "/api/ats/analytics/time-to-hire"
+        ),
+        hrmsApi.get<{ success: boolean; data: HiringTrendPoint[] }>(
+          "/api/ats/analytics/hiring-trends?months=6"
+        ),
+      ]);
+      setSourceRoi(roiRes.data ?? []);
+      setTimeToHire(timeRes.data ?? null);
+      setHiringTrends(trendsRes.data ?? []);
+    } catch (err: unknown) {
+      // Deliberately does not touch `message` — that banner belongs to the page's
+      // original data. A failure here just means the three sections below quietly
+      // omit themselves instead of showing anything.
+      const msg = err instanceof Error ? err.message : "Analytics data unavailable";
+      setAnalyticsError(msg);
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  };
+
   useEffect(() => {
     void load();
+    void loadAnalytics();
   }, []);
 
   // ── Derived data ─────────────────────────────────────────────────────────────
@@ -151,6 +218,18 @@ export default function NativeATSSourcingAnalysis() {
     Converted: "text-teal-700",
   };
 
+  // Source-channel ROI, sorted by candidate volume (matches the Top Sources table above it).
+  const sourceRoiSorted = [...sourceRoi].sort(
+    (a, b) => b.total_candidates - a.total_candidates
+  );
+
+  // Most recent 6 months of hiring trend, oldest first (chart reads left-to-right = time
+  // forward). The API already returns them ordered by month_year ascending.
+  const maxTrendRegistrations = Math.max(
+    ...hiringTrends.map((t) => t.registrations),
+    1
+  );
+
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
@@ -171,8 +250,11 @@ export default function NativeATSSourcingAnalysis() {
             </p>
           </div>
           <button
-            onClick={() => load()}
-            disabled={loading}
+            onClick={() => {
+              void load();
+              void loadAnalytics();
+            }}
+            disabled={loading || analyticsLoading}
             className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition-colors cursor-pointer disabled:opacity-50"
           >
             <RefreshCcw className="h-4 w-4" />
@@ -398,6 +480,227 @@ export default function NativeATSSourcingAnalysis() {
                 </div>
               )}
             </div>
+
+            {/* ── Source Channel ROI / Time to Hire / Hiring Trends ─────────────────
+                 From /api/ats/analytics/*, wired up separately from everything above
+                 (own loading/error state) so a problem here never blocks the page's
+                 original sections. Loading state shows a compact inline spinner rather
+                 than the page's full-height one — these are additive detail below data
+                 that has already rendered. */}
+            {analyticsLoading && (
+              <div className="flex items-center justify-center gap-2 py-6 text-sm text-slate-400">
+                <Loader className="h-4 w-4 animate-spin" />
+                Loading conversion &amp; time-to-hire detail…
+              </div>
+            )}
+
+            {!analyticsLoading && analyticsError && sourceRoi.length === 0 && !timeToHire && (
+              <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm font-semibold text-amber-800">
+                <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                Conversion and time-to-hire detail could not be loaded ({analyticsError}). The
+                sections above are unaffected.
+              </div>
+            )}
+
+            {sourceRoi.length > 0 && (
+              <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+                <div className="border-b p-5">
+                  <h2 className="font-black text-slate-950">
+                    Source Channel ROI
+                  </h2>
+                  <p className="text-sm text-slate-500">
+                    Who actually became an employee, by channel — not just who
+                    applied. Counts a candidate hired the moment their stage is
+                    moved past interview, or the moment their phone number
+                    matches an employee who joined on or after the application
+                    (most conversions are only ever caught this second way — see
+                    candidateBecameEmployee in analytics.unified.service.ts).
+                  </p>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[560px] text-sm">
+                    <thead className="bg-slate-50 text-left text-xs uppercase text-slate-500">
+                      <tr>
+                        {["Channel", "Candidates", "Hired", "Conversion", "Avg Days to Hire"].map(
+                          (h) => (
+                            <th key={h} className="p-4 font-semibold">
+                              {h}
+                            </th>
+                          )
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sourceRoiSorted.map((row) => (
+                        <tr
+                          key={row.source_channel}
+                          className="border-t hover:bg-slate-50/80 transition-colors"
+                        >
+                          <td className="p-4 font-semibold text-slate-950 capitalize">
+                            {resolveChannelName(row.source_channel)}
+                          </td>
+                          <td className="p-4 text-slate-700">
+                            {row.total_candidates.toLocaleString()}
+                          </td>
+                          <td className="p-4 font-black text-emerald-700">
+                            {row.total_hired.toLocaleString()}
+                          </td>
+                          <td className="p-4">
+                            <span
+                              className={`inline-flex rounded-full px-2.5 py-1 text-xs font-black ${
+                                row.conversion_rate >= 10
+                                  ? "bg-emerald-50 text-emerald-700"
+                                  : row.conversion_rate >= 3
+                                    ? "bg-amber-50 text-amber-700"
+                                    : "bg-slate-100 text-slate-500"
+                              }`}
+                            >
+                              {row.conversion_rate.toFixed(1)}%
+                            </span>
+                          </td>
+                          <td className="p-4 text-slate-700">
+                            {row.avg_time_to_hire_days
+                              ? `${Math.round(row.avg_time_to_hire_days)}d`
+                              : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {timeToHire && (
+              <div className="grid gap-6 lg:grid-cols-3">
+                {/* Fastest / slowest / overall as three compact stats */}
+                <div className="space-y-4 lg:col-span-1">
+                  <StatCard
+                    title="Avg Time to Hire (stage-tracked)"
+                    value={Math.round(timeToHire.overall_avg_days)}
+                    suffix=" days"
+                    icon={<Gauge className="h-5 w-5" />}
+                    tone="bg-blue-50 text-blue-700"
+                  />
+                  <StatCard
+                    title="Fastest Hire"
+                    value={timeToHire.fastest_hire_days}
+                    suffix=" days"
+                    icon={<Zap className="h-5 w-5" />}
+                    tone="bg-emerald-50 text-emerald-700"
+                  />
+                  <StatCard
+                    title="Slowest Hire"
+                    value={timeToHire.slowest_hire_days}
+                    suffix=" days"
+                    icon={<CalendarClock className="h-5 w-5" />}
+                    tone="bg-rose-50 text-rose-700"
+                  />
+                </div>
+
+                {/* By role / by source, side by side */}
+                <div className="grid gap-6 sm:grid-cols-2 lg:col-span-2">
+                  <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+                    <div className="border-b p-5">
+                      <h2 className="font-black text-slate-950">By Role</h2>
+                      <p className="text-sm text-slate-500">
+                        Days from application to hire
+                      </p>
+                    </div>
+                    {timeToHire.by_role.length === 0 ? (
+                      <p className="p-5 text-sm text-slate-400">
+                        No stage-tracked hires yet to break down by role.
+                      </p>
+                    ) : (
+                      <div className="space-y-3 p-5">
+                        {timeToHire.by_role.map((r) => (
+                          <div
+                            key={r.role ?? "unspecified"}
+                            className="flex items-center justify-between text-sm"
+                          >
+                            <span className="font-semibold text-slate-700">
+                              {r.role ?? "Unspecified"}
+                            </span>
+                            <span className="font-black text-slate-950">
+                              {r.avg_days}d
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+                    <div className="border-b p-5">
+                      <h2 className="font-black text-slate-950">By Source</h2>
+                      <p className="text-sm text-slate-500">
+                        Days from application to hire
+                      </p>
+                    </div>
+                    {timeToHire.by_source.length === 0 ? (
+                      <p className="p-5 text-sm text-slate-400">
+                        No stage-tracked hires yet to break down by source.
+                      </p>
+                    ) : (
+                      <div className="space-y-3 p-5">
+                        {timeToHire.by_source.map((s) => (
+                          <div
+                            key={s.source}
+                            className="flex items-center justify-between text-sm"
+                          >
+                            <span className="font-semibold text-slate-700 capitalize">
+                              {resolveChannelName(s.source)}
+                            </span>
+                            <span className="font-black text-slate-950">
+                              {s.avg_days}d
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {hiringTrends.length > 0 && (
+              <div className="overflow-hidden rounded-3xl border bg-white shadow-sm">
+                <div className="border-b p-5">
+                  <h2 className="font-black text-slate-950">
+                    Hiring Trend (6 months)
+                  </h2>
+                  <p className="text-sm text-slate-500">
+                    Registrations by month
+                  </p>
+                </div>
+                <div className="space-y-3 p-5">
+                  {hiringTrends.map((t) => {
+                    const pct =
+                      maxTrendRegistrations > 0
+                        ? Math.max((t.registrations / maxTrendRegistrations) * 100, 2)
+                        : 2;
+                    return (
+                      <div key={t.month} className="space-y-1">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="font-semibold text-slate-700">
+                            {t.month}
+                          </span>
+                          <span className="font-black text-slate-950">
+                            {t.registrations.toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+                          <div
+                            className="h-full rounded-full bg-violet-500 transition-all duration-500"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
