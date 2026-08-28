@@ -305,9 +305,32 @@ function capReached(rows: unknown[]) {
   return rows.length > SOURCE_ROW_CAP;
 }
 
-function employeeScope(alias = "e", params: ControlParams) {
+/**
+ * `dateExpr` must be a SQL expression for the day the gap falls on, written by
+ * this module — never anything derived from a request. When given, employees who
+ * had already left by that day are excluded, and so are inactive employees with
+ * no leaving date recorded at all.
+ *
+ * That second group is the reason this exists. In 2026-08, 445 of the 492
+ * dialler gaps belonged to inactive employees with a NULL date_of_leaving —
+ * 90% of the page's headline number. They are a data-quality contradiction (the
+ * APR feed still carries an agent code for someone marked inactive), not
+ * attendance to repair, and `repairMissingAdr` would have written ADR rows for
+ * people who are not on payroll.
+ *
+ * Leavers are matched on date rather than dropped wholesale, so someone who left
+ * mid-month keeps the days they actually worked — those still have to reconcile
+ * for their final settlement.
+ */
+function employeeScope(alias = "e", params: ControlParams, dateExpr?: string) {
   const clauses: string[] = [];
   const values: unknown[] = [];
+  if (dateExpr) {
+    clauses.push(`(
+      ${alias}.active_status = 1
+      OR (${alias}.date_of_leaving IS NOT NULL AND ${alias}.date_of_leaving >= ${dateExpr})
+    )`);
+  }
   if (params.branchId) {
     clauses.push(`${alias}.branch_id = ?`);
     values.push(params.branchId);
@@ -385,7 +408,7 @@ async function sourceCounts(from: string, to: string) {
 }
 
 async function aprGaps(from: string, to: string, params: ControlParams): Promise<AttendanceControlGap[]> {
-  const scope = employeeScope("e", params);
+  const scope = employeeScope("e", params, "a.ReportDate");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id,
             e.employee_code,
@@ -443,7 +466,7 @@ async function aprGaps(from: string, to: string, params: ControlParams): Promise
 }
 
 async function crossEvidencePenaltyConflicts(from: string, to: string, params: ControlParams): Promise<AttendanceControlGap[]> {
-  const scope = employeeScope("e", params);
+  const scope = employeeScope("e", params, "adr.record_date");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT adr.employee_id,
             e.employee_code,
@@ -561,7 +584,7 @@ async function crossEvidencePenaltyConflicts(from: string, to: string, params: C
 }
 
 async function ncosecGaps(from: string, to: string, params: ControlParams): Promise<AttendanceControlGap[]> {
-  const scope = employeeScope("e", params);
+  const scope = employeeScope("e", params, "ibd.activity_date");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT e.id AS employee_id,
             e.employee_code,
@@ -682,7 +705,7 @@ async function salaryPrepGaps(runId: string, params: ControlParams): Promise<Att
 }
 
 async function regularizationGaps(from: string, to: string, params: ControlParams): Promise<AttendanceControlGap[]> {
-  const scope = employeeScope("e", params);
+  const scope = employeeScope("e", params, "ar.session_date");
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT ar.id AS regularization_id,
             ar.employee_id,
@@ -973,6 +996,169 @@ async function repairMissingAdrFromNcosec(conflictKeys: string[], actorUserId: s
 
 export const payrollAttendanceControlService = {
   roles: PAYROLL_ROLES,
+
+  /**
+   * Full detail behind one gap row, for the drill-down drawer.
+   *
+   * A gap is not a stored record — it is an employee-day derived from several
+   * feeds — so this re-reads every source for that one day rather than trusting
+   * anything the list already returned. That is the point of the drawer: it
+   * answers "why is this a gap" from the underlying evidence.
+   *
+   * Gap keys come in six shapes (see the `id:` assignments above); all of them
+   * resolve to an employee plus a date, except the regularization one, which
+   * carries only its own row id and has to be looked up.
+   */
+  async getGapDetail(key: string) {
+    const parts = String(key).split(":");
+    let employeeId: string | null = null;
+    let issueDate: string | null = null;
+
+    if (parts[0] === "regularization" && parts[1]) {
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT employee_id, DATE_FORMAT(session_date, '%Y-%m-%d') AS session_date
+           FROM attendance_regularization WHERE id = ? LIMIT 1`,
+        [parts[1]],
+      );
+      const row = (rows as any[])[0];
+      if (row) {
+        employeeId = String(row.employee_id);
+        issueDate = String(row.session_date);
+      }
+    } else if (parts[0] === "conflict") {
+      // conflict:<variant>:<employeeId>:<date>
+      employeeId = parts[2] ?? null;
+      issueDate = parts[3] ?? null;
+    } else {
+      // apr:/ncosec:/salary:<employeeId>:<date-or-run-month>
+      employeeId = parts[1] ?? null;
+      issueDate = parts[2] ?? null;
+    }
+
+    if (!employeeId || !issueDate) {
+      return null;
+    }
+    // salary: keys carry a run month (YYYY-MM); widen it to that month so the
+    // day-scoped reads below still return the month's evidence.
+    const isMonthKey = /^\d{4}-\d{2}$/.test(issueDate);
+    const from = isMonthKey ? monthRange(issueDate).from : issueDate;
+    const to = isMonthKey ? monthRange(issueDate).to : issueDate;
+
+    const [
+      [employeeRows], [adrRows], [ibdRows], [punchRows],
+      [aprRows], [regRows], [leaveRows], [rosterRows], [reviewRows], [auditRows],
+    ] = await Promise.all([
+      db.execute<RowDataPacket[]>(
+        `SELECT e.id, e.employee_code, e.biometric_code,
+                COALESCE(NULLIF(e.full_name,''), CONCAT_WS(' ', e.first_name, e.last_name)) AS employee_name,
+                e.active_status, DATE_FORMAT(e.date_of_joining,'%Y-%m-%d') AS date_of_joining,
+                DATE_FORMAT(e.date_of_leaving,'%Y-%m-%d') AS date_of_leaving,
+                bm.branch_name, pm.process_name, dm.dept_name, dg.designation_name
+           FROM employees e
+           LEFT JOIN branch_master bm ON bm.id = e.branch_id
+           LEFT JOIN process_master pm ON pm.id = e.process_id
+           LEFT JOIN department_master dm ON dm.id = e.department_id
+           LEFT JOIN designation_master dg ON dg.id = e.designation_id
+          WHERE e.id = ? LIMIT 1`,
+        [employeeId],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(record_date,'%Y-%m-%d') AS record_date, attendance_status, lwp_value,
+                raw_minutes, biometric_minutes, dialler_minutes, biometric_status, apr_status,
+                attendance_source, source_system, source_reference, mismatch_flag, is_locked,
+                regularization_id, override_by, override_reason, late_mark, late_by_minutes,
+                created_by, created_at, updated_at
+           FROM attendance_daily_record
+          WHERE employee_id = ? AND record_date BETWEEN ? AND ?
+          ORDER BY record_date`,
+        [employeeId, from, to],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT ibd.integration_key, ibd.source_table, DATE_FORMAT(ibd.activity_date,'%Y-%m-%d') AS activity_date,
+                ibd.first_punch, ibd.last_punch, ibd.total_punches, ibd.biometric_minutes
+           FROM integration_biometric_daily ibd
+           JOIN employees e ON e.id = ?
+            AND (ibd.employee_code = e.employee_code OR ibd.employee_code = e.biometric_code)
+          WHERE ibd.activity_date BETWEEN ? AND ?
+          ORDER BY ibd.activity_date`,
+        [employeeId, from, to],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(punch_date,'%Y-%m-%d') AS punch_date, first_punch_in, last_punch_out,
+                total_punches, raw_minutes, source_system, cosec_user_id
+           FROM biometric_attendance_log
+          WHERE employee_id = ? AND punch_date BETWEEN ? AND ?
+          ORDER BY punch_date`,
+        [employeeId, from, to],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(a.ReportDate,'%Y-%m-%d') AS report_date, a.campaign_id, a.Calls,
+                a.Net_Login, a.Login_Time, a.Logout_Time, a.process_name, a.source
+           FROM apr a JOIN employees e ON e.employee_code = a.UserID
+          WHERE e.id = ? AND a.ReportDate BETWEEN ? AND ?
+          ORDER BY a.ReportDate`,
+        [employeeId, from, to],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT id, DATE_FORMAT(session_date,'%Y-%m-%d') AS session_date, requested_status, status,
+                reason, reason_code, reviewed_by, reviewed_at, reviewer_note, payroll_impact, created_at
+           FROM attendance_regularization
+          WHERE employee_id = ? AND session_date BETWEEN ? AND ?
+          ORDER BY created_at DESC`,
+        [employeeId, from, to],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT lr.id, lr.leave_type_code, lr.status,
+                DATE_FORMAT(lr.from_date,'%Y-%m-%d') AS from_date,
+                DATE_FORMAT(lr.to_date,'%Y-%m-%d') AS to_date,
+                lr.total_days, lr.reason, lr.approved_by, lr.approved_at
+           FROM leave_request lr
+          WHERE lr.employee_id = ? AND lr.to_date >= ? AND lr.from_date <= ?
+          ORDER BY lr.from_date DESC`,
+        [employeeId, from, to],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT DATE_FORMAT(roster_date,'%Y-%m-%d') AS roster_date, is_week_off, shift_start_time,
+                shift_end_time, roster_status, publish_status, scheduled_minutes
+           FROM wfm_roster_assignment
+          WHERE employee_id = ? AND roster_date BETWEEN ? AND ?
+          ORDER BY roster_date`,
+        [employeeId, from, to],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT conflict_key, issue_type, status, review_note, reviewed_by, reviewed_at, created_at, updated_at
+           FROM payroll_attendance_conflict_review
+          WHERE employee_id = ? AND issue_date BETWEEN ? AND ?
+          ORDER BY updated_at DESC`,
+        [employeeId, from, to],
+      ),
+      db.execute<RowDataPacket[]>(
+        `SELECT action_type, module_key, entity_type, entity_id, actor_user_id, metadata_json, created_at
+           FROM audit_log
+          WHERE module_key = 'payroll' AND entity_type = 'attendance_daily_record'
+            AND entity_id LIKE ?
+          ORDER BY created_at DESC LIMIT 20`,
+        [`%${employeeId}%`],
+      ),
+    ]);
+
+    return {
+      key,
+      employeeId,
+      issueDate,
+      window: { from, to },
+      employee: (employeeRows as any[])[0] ?? null,
+      attendanceRecords: adrRows,
+      biometricDaily: ibdRows,
+      biometricPunches: punchRows,
+      aprRecords: aprRows,
+      regularizations: regRows,
+      leaveRequests: leaveRows,
+      rosterAssignments: rosterRows,
+      reviewHistory: reviewRows,
+      auditTrail: auditRows,
+    };
+  },
 
   async getControlTower(params: ControlParams) {
     const runMonth = params.runMonth ?? new Date().toISOString().slice(0, 7);

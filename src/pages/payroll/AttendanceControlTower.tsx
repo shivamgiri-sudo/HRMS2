@@ -5,6 +5,7 @@ import { Activity, AlertTriangle, Bell, CheckCircle2, Database, MoreHorizontal, 
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { AttendanceGapDetailDrawer } from "./AttendanceGapDetailDrawer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -212,6 +213,8 @@ export default function AttendanceControlTower() {
   const [branchId, setBranchId] = useState("all");
   const [processId, setProcessId] = useState("all");
   const [selected, setSelected] = useState<string[]>([]);
+  // Gap key whose drill-down drawer is open, per the platform drill-down rule.
+  const [detailKey, setDetailKey] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const limit = 50;
 
@@ -781,8 +784,13 @@ export default function AttendanceControlTower() {
                     </TableRow>
                   )}
                   {!isLoading && rows.map((row) => (
-                    <TableRow key={row.id} className={`h-12 transition-colors hover:bg-blue-50/30 ${REVIEW_ROW_STYLE[row.reviewStatus ?? "open"] ?? ""}`}>
-                      <TableCell className="px-3 py-1.5">
+                    <TableRow
+                      key={row.id}
+                      onClick={() => setDetailKey(row.id)}
+                      title="Open full detail"
+                      className={`h-12 cursor-pointer transition-colors hover:bg-blue-50/30 ${REVIEW_ROW_STYLE[row.reviewStatus ?? "open"] ?? ""}`}
+                    >
+                      <TableCell className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
                         {(row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr" ||
                           ["dialler_penalty_biometric_supports_better", "biometric_penalty_dialler_supports_better"].includes(row.issueType)) ? (
                           <input type="checkbox" className="h-4 w-4 rounded border-slate-300"
@@ -915,6 +923,9 @@ export default function AttendanceControlTower() {
             <SalaryDriftPanel runId={data.run.id} runMonth={data.runMonth} snapshotLocked={Boolean(data.run.attendance_snapshot_locked)} />
           </div>
         )}
+
+        {/* ── Row drill-down ── */}
+        <AttendanceGapDetailDrawer gapKey={detailKey} onClose={() => setDetailKey(null)} />
       </div>
     </DashboardLayout>
   );

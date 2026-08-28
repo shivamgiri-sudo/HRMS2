@@ -323,6 +323,21 @@ router.get(
   }),
 );
 
+// Detail behind one gap row, for the drill-down drawer. The key is the synthetic
+// gap id from the list; it is URL-encoded because every form contains colons.
+// Registered before the POST block so it sits with the other reads.
+router.get(
+  "/attendance-control-tower/gap/:key",
+  requireRole("super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm", "branch_head"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const data = await payrollAttendanceControlService.getGapDetail(String(req.params.key ?? ""));
+    if (!data) {
+      return res.status(404).json({ success: false, message: "Gap not found or key not recognised" });
+    }
+    return res.json({ success: true, data });
+  }),
+);
+
 router.post(
   "/attendance-control-tower/notify-managers",
   requireRole("super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm", "branch_head"),

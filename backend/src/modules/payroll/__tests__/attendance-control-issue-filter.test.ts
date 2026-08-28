@@ -142,3 +142,77 @@ describe("per-source row cap is reported rather than silently applied", () => {
     expect(result.summary.truncatedSources).toContain("apr");
   });
 });
+
+describe("gap queries are scoped to employees actually in force on the gap date", () => {
+  it("excludes leavers by date rather than dropping every inactive employee", async () => {
+    mockDb({});
+    await payrollAttendanceControlService.getControlTower({ ...BASE });
+
+    const sqls = execute.mock.calls.map(([sql]) => String(sql));
+    const aprSql = sqls.find((s) => s.includes("FROM apr a") && s.includes("HAVING adr_id IS NULL"));
+    expect(aprSql).toBeDefined();
+
+    // Active employees always qualify...
+    expect(aprSql).toContain("e.active_status = 1");
+    // ...and an inactive one only for days on or before the day they left, so a
+    // mid-month leaver keeps the days they actually worked for their settlement.
+    expect(aprSql).toContain("e.date_of_leaving >= a.ReportDate");
+    // A blanket active_status filter would have hidden those days entirely.
+    expect(aprSql).not.toMatch(/AND\s+e\.active_status\s*=\s*1\s*(AND|\))/);
+  });
+
+  it("scopes each source on its own date column", async () => {
+    mockDb({});
+    await payrollAttendanceControlService.getControlTower({ ...BASE });
+    const sqls = execute.mock.calls.map(([sql]) => String(sql));
+
+    const expectations: [string, string][] = [
+      ["FROM integration_biometric_daily ibd", "e.date_of_leaving >= ibd.activity_date"],
+      ["FROM attendance_regularization ar", "e.date_of_leaving >= ar.session_date"],
+    ];
+    for (const [needle, clause] of expectations) {
+      const sql = sqls.find((s) => s.includes(needle));
+      expect(sql, `no query matched ${needle}`).toBeDefined();
+      expect(sql).toContain(clause);
+    }
+  });
+});
+
+describe("gap drill-down resolves every key shape to an employee-day", () => {
+  it.each([
+    ["apr:emp-1:2026-08-04", "emp-1", "2026-08-04"],
+    ["ncosec:emp-2:2026-08-05", "emp-2", "2026-08-05"],
+    ["conflict:dialler-penalty:emp-3:2026-08-06", "emp-3", "2026-08-06"],
+    ["conflict:biometric-penalty:emp-4:2026-08-07", "emp-4", "2026-08-07"],
+  ])("parses %s", async (key, employeeId, issueDate) => {
+    mockDb({});
+    const detail = await payrollAttendanceControlService.getGapDetail(key);
+    expect(detail?.employeeId).toBe(employeeId);
+    expect(detail?.issueDate).toBe(issueDate);
+    expect(detail?.window).toEqual({ from: issueDate, to: issueDate });
+  });
+
+  it("widens a salary key's run month into that month's range", async () => {
+    mockDb({});
+    const detail = await payrollAttendanceControlService.getGapDetail("salary:emp-9:2026-08");
+    expect(detail?.window).toEqual({ from: "2026-08-01", to: "2026-08-31" });
+  });
+
+  it("looks the employee-day up for a regularization key, which carries only its own id", async () => {
+    execute.mockReset();
+    execute.mockImplementation(async (sql: string) => {
+      if (sql.includes("FROM attendance_regularization WHERE id = ?")) {
+        return [[{ employee_id: "emp-7", session_date: "2026-08-11" }], []];
+      }
+      return [[], []];
+    });
+    const detail = await payrollAttendanceControlService.getGapDetail("regularization:reg-1");
+    expect(detail?.employeeId).toBe("emp-7");
+    expect(detail?.issueDate).toBe("2026-08-11");
+  });
+
+  it("returns null for an unparseable key instead of querying on undefined", async () => {
+    mockDb({});
+    expect(await payrollAttendanceControlService.getGapDetail("nonsense")).toBeNull();
+  });
+});
