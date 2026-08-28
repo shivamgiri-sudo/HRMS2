@@ -593,6 +593,37 @@ export async function getAttendanceMetrics(scope: DashboardScope): Promise<Metri
 }
 
 // ─── Payroll Readiness ────────────────────────────────────────────────────────
+/**
+ * "Can this employee actually be paid?" — asked of the table the payment file reads.
+ *
+ * The tile used to test `employees.bank_account_number` alone, and reported 130 active
+ * employees as unpayable. Checked against db_bill on 2026-08-28, 126 of those 130 had an
+ * account number and IFSC in `masjclrentry`, and the account matched what their salary
+ * was ACTUALLY paid into (`salary_data.AcNo`) on 1,034 of 1,034 checkable cases.
+ *
+ * `employees.bank_account_number` is frozen legacy data with **no writer anywhere in the
+ * application** — bank-payment-readiness.service.ts:760 says so, and points out that
+ * bank-advice pays from it while neft-transfer-file and /bank-export pay from
+ * `employee_bank_detail`. Measuring payability against the column nothing writes, while
+ * payment happens from a different table, is why the tile and reality diverged.
+ *
+ * So this asks the question of `employee_bank_detail` — same join the NEFT export uses
+ * (`is_primary = 1 AND active_status = 1`) — and requires a digits-only 6-20 account,
+ * which is what rejects the Excel damage the legacy exports carry (`4.57E+11` is not an
+ * account number but is very much non-empty). The legacy column is kept as a fallback so
+ * an employee who has one and no detail row is still counted as payable.
+ */
+const PAYABLE_BANK_SQL = `(
+  EXISTS (
+    SELECT 1 FROM employee_bank_detail bd
+     WHERE bd.employee_id = e.id
+       AND bd.is_primary = 1
+       AND bd.active_status = 1
+       AND CONVERT(bd.account_number USING utf8mb4) REGEXP '^[0-9]{6,20}$'
+  )
+  OR (e.bank_account_number IS NOT NULL AND e.bank_account_number <> '')
+)`;
+
 export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise<MetricResult> {
   try {
     const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
@@ -637,14 +668,24 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS total,
-         SUM(CASE WHEN (bank_account_number IS NULL OR bank_account_number = '')
+         SUM(CASE WHEN NOT ${PAYABLE_BANK_SQL}
                    AND DATEDIFF(CURDATE(), date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingBank,
+         -- Payable by SOME route (above) is not the same question as payable by NEFT.
+         -- bank-advice draws on employees.bank_account_number; the NEFT file and
+         -- /bank-export draw on employee_bank_detail. An employee with only the legacy
+         -- column is payable by one file and invisible to the other, so both counts are
+         -- reported rather than collapsing them into a single reassuring number.
+         SUM(CASE WHEN NOT EXISTS (
+               SELECT 1 FROM employee_bank_detail bd
+                WHERE bd.employee_id = e.id AND bd.is_primary = 1 AND bd.active_status = 1
+                  AND CONVERT(bd.account_number USING utf8mb4) REGEXP '^[0-9]{6,20}$')
+                   AND DATEDIFF(CURDATE(), date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingNeftBank,
          SUM(CASE WHEN (pan_number IS NULL OR pan_number = '')
                    AND DATEDIFF(CURDATE(), date_of_joining) > 30 THEN 1 ELSE 0 END) AS missingPan,
          SUM(CASE WHEN (uan_number IS NULL OR uan_number = '')
                    AND DATEDIFF(CURDATE(), date_of_joining) > 60 THEN 1 ELSE 0 END) AS missingUan,
          SUM(CASE WHEN
-               ((bank_account_number IS NOT NULL AND bank_account_number != '') OR DATEDIFF(CURDATE(), date_of_joining) <= 30) AND
+               (${PAYABLE_BANK_SQL} OR DATEDIFF(CURDATE(), date_of_joining) <= 30) AND
                ((pan_number IS NOT NULL AND pan_number != '') OR DATEDIFF(CURDATE(), date_of_joining) <= 30)
              THEN 1 ELSE 0 END) AS readyCount
        FROM employees e
@@ -674,7 +715,11 @@ export async function getPayrollReadinessMetrics(scope: DashboardScope): Promise
     return wrapEnriched(
       "PAYROLL_READINESS",
       readyCount,
-      { total, readyCount, blockerCount, missingBank, missingPan, missingUan },
+      {
+        total, readyCount, blockerCount, missingBank, missingPan, missingUan,
+        // Cannot be reached by the NEFT file specifically — see the note in the query.
+        missingNeftBank: Number(r.missingNeftBank ?? 0),
+      },
       status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), total
     );
   } catch (err) {
