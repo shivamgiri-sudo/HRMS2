@@ -58,6 +58,84 @@ async function requireLmsProgressAccess(
   }
 }
 
+// ─── Training-need capture ────────────────────────────────────────────────────
+/**
+ * POST /api/lms/assign — record a training need in HRMS for one or more agents.
+ *
+ * This is the charter-compliant half of "assign to LMS", and the naming deserves care because
+ * the endpoint deliberately does LESS than its name suggests. CLAUDE.md's LMS boundary rule
+ * makes the deployed LMS the system of record for direct learning assignments and forbids HRMS
+ * writing into it without explicit authorisation, so this endpoint **does not touch the LMS**.
+ * It writes `training_need` — the HRMS-side integration record whose own status enum
+ * ('identified' -> 'mapped_to_lms' -> 'in_training' -> 'completed' -> 'closed') is built for
+ * exactly this handoff. Rows are created at 'identified'; a coordinator moves them to
+ * 'mapped_to_lms' once the real enrolment exists in the LMS.
+ *
+ * The alternative — POSTing into the LMS from here — would create the second source of truth
+ * for training that the charter explicitly prohibits.
+ *
+ * Callers pass agent codes (db_audit.call_quality_assessment.User, e.g. MAS59813) rather than
+ * employee UUIDs, because that is what the quality data carries. Codes that do not resolve are
+ * reported back in `skipped` instead of failing the batch: a TNI selection of 40 agents should
+ * not be lost because two of them have left.
+ */
+lmsIntegrationRouter.post("/assign",
+  requireRole("super_admin", "admin", "hr", "quality", "wfm", "operations_manager"),
+  h(async (req, res) => {
+    const body = req.body as { agent_codes?: unknown; reason?: unknown; priority?: unknown };
+    const codes = Array.isArray(body.agent_codes)
+      ? [...new Set(body.agent_codes.map((c) => String(c ?? "").trim()).filter(Boolean))]
+      : [];
+    if (codes.length === 0) {
+      return res.status(400).json({ success: false, message: "agent_codes must be a non-empty array" });
+    }
+    if (codes.length > 500) {
+      return res.status(400).json({ success: false, message: "agent_codes is limited to 500 per request" });
+    }
+
+    const ALLOWED_PRIORITY = new Set(["low", "medium", "high", "critical"]);
+    const priority = ALLOWED_PRIORITY.has(String(body.priority ?? "")) ? String(body.priority) : "high";
+    const reason = typeof body.reason === "string" && body.reason.trim()
+      ? body.reason.trim().slice(0, 2000)
+      : "Training need identified from TNI analysis";
+
+    const { db } = await import("../../db/mysql.js");
+    const placeholders = codes.map(() => "?").join(", ");
+    const [empRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, employee_code FROM employees
+        WHERE employee_code IN (${placeholders}) AND employment_status = 'active'`,
+      codes,
+    );
+    const byCode = new Map((empRows as RowDataPacket[]).map((r) => [String(r.employee_code), String(r.id)]));
+    const skipped = codes.filter((c) => !byCode.has(c));
+
+    const actorId = req.authUser?.id ?? null;
+    const { randomUUID } = await import("node:crypto");
+    let created = 0;
+    for (const [, employeeId] of byCode) {
+      await db.execute(
+        `INSERT INTO training_need
+           (id, employee_id, need_type, description, priority, status, identified_by)
+         VALUES (?, ?, 'quality', ?, ?, 'identified', ?)`,
+        [randomUUID(), employeeId, reason, priority, actorId],
+      );
+      created += 1;
+    }
+
+    return res.json({
+      success: true,
+      created,
+      skipped,
+      status: "identified",
+      // Said explicitly in the payload, not just in this comment: the caller's UI should not
+      // tell a user their agents are enrolled in a course. They are flagged for training.
+      message: created > 0
+        ? `${created} training need(s) recorded in HRMS. LMS enrolment is actioned separately by a coordinator.`
+        : "No active employees matched the supplied agent codes.",
+    });
+  }),
+);
+
 // ─── Dashboard Summary ────────────────────────────────────────────────────────
 // GET /api/lms/dashboard-summary — org-wide LMS snapshot for CEO/Super Admin
 lmsIntegrationRouter.get("/dashboard-summary",

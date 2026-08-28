@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -251,6 +252,7 @@ function SidePanel({
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function NativeTNIAnalysis() {
+  const { toast } = useToast();
   const [from, setFrom]       = useState(firstOfMonth());
   const [to, setTo]           = useState(today());
   const [clientId, setClientId] = useState("all");
@@ -322,15 +324,40 @@ export default function NativeTNIAnalysis() {
     alert(`${selected.size} agent(s) flagged for QA coaching. (Integrate with coaching workflow)`);
   };
 
+  /*
+   * Was POSTing to /api/lms-integration/assign — a prefix nothing serves — and reporting the
+   * resulting 401 as "coming soon or LMS endpoint not configured", so a failed request looked
+   * like a feature flag. It now calls /api/lms/assign, where the LMS integration router is
+   * actually mounted.
+   *
+   * The wording below changed with it, and the distinction is the point rather than pedantry.
+   * The endpoint records a `training_need` row in HRMS; it does NOT enrol anyone in the LMS,
+   * because CLAUDE.md's boundary rule makes the deployed LMS the system of record for learning
+   * assignments. Saying "LMS module assigned" would tell a QA manager the coaching is booked
+   * when only the need has been logged.
+   */
   const handleAssignLMS = () => {
     if (!selected.size) return;
-    hrmsApi.post("/api/lms-integration/assign", {
+    hrmsApi.post<{ created?: number; skipped?: string[]; message?: string }>("/api/lms/assign", {
       agent_codes: [...selected],
-      reason: "TNI coaching assignment",
-    }).then(() => {
-      alert(`LMS module assigned to ${selected.size} agent(s).`);
-    }).catch(() => {
-      alert("LMS module assignment — coming soon or LMS endpoint not configured.");
+      reason: "Training need identified from TNI analysis",
+    }).then((res) => {
+      const created = res?.created ?? 0;
+      const skipped = res?.skipped ?? [];
+      toast({
+        title: created > 0 ? "Training needs recorded" : "Nothing recorded",
+        description: [
+          `${created} of ${selected.size} agent(s) flagged in HRMS.`,
+          skipped.length ? `${skipped.length} skipped (no active employee): ${skipped.slice(0, 5).join(", ")}${skipped.length > 5 ? "…" : ""}.` : "",
+          "LMS enrolment is actioned separately by a coordinator.",
+        ].filter(Boolean).join(" "),
+      });
+    }).catch((err) => {
+      toast({
+        title: "Could not record training needs",
+        description: err instanceof Error ? err.message : "The request failed. Nothing was saved.",
+        variant: "destructive",
+      });
     });
   };
 

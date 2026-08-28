@@ -315,8 +315,15 @@ const KNOWN_MISSING: Record<string, string> = {
   // them in quality-dashboard.routes.ts was the entire fix. Verified live before wiring:
   // db_audit.call_quality_assessment holds 452,620 rows through today, and August returns 58
   // agents with 51 flagged for coaching. The page is now linked in the sidebar.
-  "/api/lms-integration/assign":
-    "NOT BUILT, deliberately — and now this page's only remaining gap, since its TNI endpoints are served. lmsIntegrationRouter is mounted at /api/lms (not /api/lms-integration) and exposes read-only surfaces (/dashboard-summary, /risk-summary, /batches) BY DESIGN: CLAUDE.md's LMS boundary rule makes the deployed LMS the system of record and forbids HRMS writing into it without explicit authorisation. Assigning a flagged agent to training is therefore a charter decision about integration scaffolding, not a handler someone forgot. Do not stub it.",
+  // /api/lms-integration/assign is retired 2026-08-28 — the page calls POST /api/lms/assign
+  // now, where lmsIntegrationRouter is mounted, and that endpoint is served.
+  //
+  // It deliberately does less than its name: it records a `training_need` row in HRMS at status
+  // 'identified' and does NOT write into the LMS, because CLAUDE.md makes the deployed LMS the
+  // system of record for learning assignments. training_need's status enum
+  // ('identified' -> 'mapped_to_lms' -> 'in_training' -> ...) is built for that handoff. The
+  // response and the page's toast both say "recorded in HRMS, LMS enrolment actioned
+  // separately" rather than claiming anyone is enrolled.
 
   // ── NativeOpsCommandCenter (/ops/command-center) ──────────────────────────────────────
   // Both entries retired 2026-08-28. Like the TNI pair, neither endpoint was missing — each

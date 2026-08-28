@@ -9,7 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { hrmsApi } from "@/lib/hrmsApi";
-import { Database, Loader2, CheckCircle2, XCircle, Zap, Globe, Code2, AlertCircle } from "lucide-react";
+import { Database, Loader2, CheckCircle2, XCircle, Zap, Globe, Code2, AlertCircle, AlertTriangle } from "lucide-react";
 
 interface SimpleConnectorWizardProps {
   open: boolean;
@@ -500,12 +500,27 @@ export function SimpleConnectorWizard({ open, onOpenChange, onSuccess }: SimpleC
                 </>
               )}
 
-              {/* Webhook */}
+              {/*
+                This used to present `/api/webhooks/{key}` as the user's live webhook URL, with
+                a green tick beside it. No /api/webhooks route is mounted anywhere in the
+                backend and none ever has been, so anything a third party was configured to
+                POST there went nowhere — silently, since the sender only sees a 401 from a
+                path that does not exist.
+
+                The URL is not shown as a promise any more. It is the one place in this wizard
+                that published an address outside the company, which makes it the worst place
+                to advertise a capability that is not there. The connector record itself is
+                still created, so the intent is captured and nothing is lost once a receiver
+                exists — at which point this notice is what should be replaced, not re-added.
+              */}
               {connectorType === "webhook" && (
-                <Alert>
-                  <CheckCircle2 className="h-4 w-4" />
+                <Alert variant="destructive">
+                  <AlertTriangle className="h-4 w-4" />
                   <AlertDescription>
-                    Your webhook URL will be: <code className="bg-slate-100 px-2 py-1 rounded">/api/webhooks/{key || "your_key"}</code>
+                    <span className="font-semibold">Inbound webhooks are not receiving yet.</span>{" "}
+                    This connector will be saved, but there is no endpoint listening for it — do
+                    not configure an external system to post here yet, as the requests would be
+                    discarded. Ask the integrations team before relying on it.
                   </AlertDescription>
                 </Alert>
               )}

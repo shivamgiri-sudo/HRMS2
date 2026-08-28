@@ -99,8 +99,16 @@ const KNOWN_GAPS: Record<string, string> = {
   // tni.service.ts already exported getTniAnalysis and getTniAgentCalls in full and was simply
   // imported by nothing, so the page 401'd on both. Mounting the two routes was the whole fix.
   // Verified live: 452,620 audit rows through today; August returns 58 agents, 51 flagged.
-  "POST /api/lms-integration/assign":
-    "NOT BUILT, deliberately. NativeTNIAnalysis.tsx is now mounted at /wfm/tni-analysis and its TNI endpoints are served, so this is the page's one remaining gap: assigning a flagged agent to LMS training. It is NOT a routing oversight like the TNI pair was. lmsIntegrationRouter is mounted at /api/lms and exposes read-only surfaces (/dashboard-summary, /risk-summary, /batches) — by design. CLAUDE.md's LMS boundary rule makes the deployed LMS the system of record and forbids HRMS writing into it without explicit authorisation, so an assign endpoint is a charter decision (Package 6 integration scaffolding), not a handler to add. Do not stub. 2026-08-28.",
+  // POST /api/lms-integration/assign is retired 2026-08-28. The page now calls POST
+  // /api/lms/assign, where lmsIntegrationRouter is actually mounted, so the old prefix is
+  // referenced by nothing.
+  //
+  // What that endpoint does is deliberately narrower than "assign to LMS", and the boundary is
+  // the reason: it records a `training_need` row in HRMS at status 'identified' and does NOT
+  // write into the LMS. CLAUDE.md makes the deployed LMS the system of record for learning
+  // assignments, and training_need's own status enum ('identified' -> 'mapped_to_lms' -> ...)
+  // exists for exactly this handoff — a coordinator advances it once the real enrolment is made.
+  // Posting into the LMS from HRMS would create the second source of truth the charter forbids.
 
   // ── WFM intelligence pages added 2026-08-23 — pages are mounted and reachable;
   // backend endpoints are not yet built. Live defects pending backend implementation.
