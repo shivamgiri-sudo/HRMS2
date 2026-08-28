@@ -296,9 +296,16 @@ const KNOWN_MISSING: Record<string, string> = {
   // difference is that a 401 from an unserved URL was indistinguishable from a quiet week.
   // /outcomes also carries no per-tier split, so byTier is counted from the pending rows.
 
-  // ── WFMCapacityDashboard (/wfm/capacity-dashboard) ────────────────────────────────────
-  "/api/workforce-mandate/hiring-demand":
-    "Genuinely absent — that router serves /capacity-summary, /hc-formula, /leadership-summary and /support-ratios. /capacity-summary works and already returns a hiringDemand NUMBER; only the by-priority breakdown is missing, and 'priority' is not a concept this model carries yet. The page degrades to zeros, and since 2026-08-28 says so in its Hiring Demand panel instead of implying no open positions.",
+  // /api/workforce-mandate/hiring-demand used to sit here, described as genuinely absent and
+  // needing a priority model that did not exist. RESOLVED 2026-08-28 — and the description was
+  // wrong. /capacity-summary already returns both the hiringDemand total AND a per-process
+  // `hiringByProcess` breakdown carrying its own priority, bucketed from each mandate's
+  // headcount. It was a duplicated endpoint, not a missing one.
+  //
+  // WFMCapacityDashboard now derives the panel from the /capacity-summary response it already
+  // fetches, so the page makes one request fewer than before rather than one more. `critical`
+  // stays 0 on purpose: the API buckets HIGH/MEDIUM/LOW and has no CRITICAL tier, and inventing
+  // a threshold to fill that tile would manufacture a severity the data does not express.
 
   // ── NativeTNIAnalysis (/wfm/tni-analysis) — not linked from the sidebar ───────────────
   "/api/quality-dashboard/tni-agent-params":

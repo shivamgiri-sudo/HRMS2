@@ -95,6 +95,19 @@ interface CapacitySummary {
     activeHC: number;
     gap: number;
   }>;
+  /**
+   * Per-process hiring breakdown, returned by /capacity-summary alongside the org-wide totals.
+   * Declared here because the Hiring Demand panel is derived from it rather than from a second
+   * request — see the note above the `demand` computation.
+   */
+  hiringByProcess?: Array<{
+    processId: string;
+    processName: string;
+    branchName: string | null;
+    mandatedHc: number;
+    requiredHc: number;
+    priority: "HIGH" | "MEDIUM" | "LOW";
+  }>;
 }
 
 interface HiringDemand {
@@ -450,14 +463,18 @@ export default function WFMCapacityDashboard() {
     },
   });
 
-  const { data: demandData, isError: demandError } = useQuery({
-    queryKey: ["capacity", "demand", branchFilter],
-    queryFn: () => {
-      const params = new URLSearchParams();
-      if (branchFilter !== ALL) params.set("branchId", branchFilter);
-      return hrmsApi.get<HiringDemand>(`/api/workforce-mandate/hiring-demand?${params}`);
-    },
-  });
+  /*
+   * There is no second request for hiring demand any more. This page used to fetch
+   * /api/workforce-mandate/hiring-demand, which nothing serves — that router exposes
+   * /capacity-summary, /hc-formula, /leadership-summary and /support-ratios. The query failed
+   * on every load and the panel fell back to zeros, reading as "no open positions".
+   *
+   * It was never a missing endpoint so much as a duplicated one: /capacity-summary already
+   * returns `hiringDemand` and a per-process `hiringByProcess` breakdown carrying its own
+   * priority, computed from each mandate's headcount. Deriving from the response this page
+   * already has beats adding a second endpoint that would recompute the same numbers from the
+   * same table — and removes a request rather than fixing one.
+   */
 
   const capacity = capacityData ?? {
     overall: {
@@ -471,11 +488,35 @@ export default function WFMCapacityDashboard() {
     trend: [],
   };
 
-  const demand = demandData ?? {
-    total: 0,
-    byPriority: { critical: 0, high: 0, medium: 0, low: 0 },
-    byProcess: [],
-  };
+  /*
+   * `critical` stays 0 deliberately. The API buckets a process as HIGH / MEDIUM / LOW from its
+   * mandated headcount and has no CRITICAL tier, so inventing a threshold to populate that
+   * tile would be manufacturing a severity the data does not express.
+   */
+  const demand: HiringDemand = (() => {
+    const rows = capacityData?.hiringByProcess ?? [];
+    const byPriority = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const r of rows) {
+      const key = String(r.priority ?? "LOW").toLowerCase() as keyof typeof byPriority;
+      if (key in byPriority) byPriority[key] += 1;
+    }
+    return {
+      total: Number(capacity.overall.hiringDemand ?? 0),
+      byPriority,
+      byProcess: rows.map((r) => ({
+        processId: r.processId,
+        processName: r.processName,
+        // requiredHc is this process's own required staffed headcount — the per-process figure
+        // behind the org-wide total above.
+        demand: Number(r.requiredHc ?? 0),
+        priority: (String(r.priority ?? "LOW").toUpperCase() as HiringDemand["byProcess"][number]["priority"]),
+        // No due date exists in the mandate model — /capacity-summary carries none and there is
+        // no column behind one. Explicitly null so the column renders empty rather than being
+        // filled with a date that would be invented.
+        dueDate: null,
+      })),
+    };
+  })();
 
   return (
     <DashboardLayout>
@@ -631,21 +672,9 @@ export default function WFMCapacityDashboard() {
                     </div>
                   </div>
                   <Badge className="text-lg px-4 py-1 bg-violet-100 text-violet-700">
-                    {demandError ? "unavailable" : `${demand.total} total`}
+                    {`${demand.total} total`}
                   </Badge>
                 </div>
-                {/*
-                  Scoped to this block on purpose: the rest of the page comes from
-                  /capacity-summary, which works. Only /workforce-mandate/hiring-demand is
-                  unserved, and `demand` falls back to all-zeros — so this section alone would
-                  otherwise claim there are no positions to fill.
-                */}
-                {demandError && (
-                  <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                    Hiring demand could not be loaded — the priority counts below are placeholders,
-                    not zero open positions. Everything above this panel is live data.
-                  </p>
-                )}
               </div>
               <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-3 rounded-xl bg-red-50 text-center">
