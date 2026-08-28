@@ -232,6 +232,7 @@ import { employeeCodeGateRouter } from "./modules/ats/employee-code-gate.routes.
 import { payrollHRRouter } from "./modules/ats/payroll-hr.routes.js";
 import { branchHeadApprovalRouter } from "./modules/ats/branch-head-approval.routes.js";
 import { commandCentreRouter } from "./modules/ats/command-centre.routes.js";
+import { atsAnalyticsRouter } from "./modules/ats/ats-analytics.routes.js";
 import { bmiBenchmarkRouter } from "./modules/ats/bmi-benchmark.routes.js";
 import { interviewRouter } from "./modules/ats/interview.routes.js";
 // bgvEnhancedRouter removed — duplicate UI, name-match functions migrated to bgv-verification.service.ts
@@ -711,6 +712,7 @@ app.use("/api/ats/employee-code", employeeCodeGateRouter);
 app.use("/api/ats/payroll-hr", payrollHRRouter);
 app.use("/api/ats/branch-head-approval", branchHeadApprovalRouter);
 app.use("/api/ats/command-centre", commandCentreRouter);
+app.use("/api/ats/analytics", atsAnalyticsRouter);
 app.use("/api/ats/bmi-benchmark", bmiBenchmarkRouter);
 app.use("/api/ats/interview", interviewRouter);
 // bgv-enhanced route removed — duplicate UI, functions migrated to canonical bgv-verification service

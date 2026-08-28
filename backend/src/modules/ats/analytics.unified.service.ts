@@ -23,10 +23,18 @@ const EXCLUDE_EMPLOYEE_SHAPED = excludeEmployeeShapedCandidatesSql('ats_candidat
  * ('Onboarded' vs 'converted'). Kept as one constant so a future stage rename breaks in
  * one place instead of silently zeroing every one of these again.
  */
-const JOINED_STAGES = ['onboarded', 'converted', 'payroll_validated'] as const;
+export const JOINED_STAGES = ['onboarded', 'converted', 'payroll_validated'] as const;
 const JOINED_STAGE_LIST = JOINED_STAGES.map(s => `'${s}'`).join(', ');
-/** Boolean form, for a WHERE clause. */
-const JOINED_STAGE_PREDICATE = `LOWER(TRIM(current_stage)) IN (${JOINED_STAGE_LIST})`;
+/**
+ * Boolean form, for a WHERE clause. Exported so other "did this candidate become an
+ * employee" queries — e.g. ats.service.ts's getDashboardStats, which is the query the
+ * live Sourcing Analysis page actually calls — use the same vocabulary instead of a
+ * second hand-copied list that drifts from this one. That drift was real: getDashboardStats
+ * used ('converted','Onboarded','Selected'), missing 'payroll_validated' and wrongly
+ * including 'Selected' — an offer/selection stage, not an actual hire, on a card labelled
+ * "Conversion Rate". Fixed 2026-08-28 by switching it to this constant.
+ */
+export const JOINED_STAGE_PREDICATE = `LOWER(TRIM(current_stage)) IN (${JOINED_STAGE_LIST})`;
 /** 1/0 form, for SUM() inside an aggregate. */
 const JOINED_STAGE_SQL = `CASE WHEN ${JOINED_STAGE_PREDICATE} THEN 1 ELSE 0 END`;
 
@@ -63,8 +71,12 @@ let _mobileJoinMapCache: { value: Map<string, string>; at: number } | null = nul
  * request. The mapping changes only as fast as people join, so a 15-minute TTL is coarse
  * on purpose; force a refresh with `{ force: true }`, same pattern as
  * loadBgvDbConfig() in bgv-config.store.ts.
+ *
+ * Exported so ats.service.ts's getDashboardStats() shares this cache instead of building
+ * its own — that endpoint is hit on every load of a real, frequently-visited page, so a
+ * second independent 6.4s query would defeat the point of caching this at all.
  */
-async function getEmployeeMobileJoinMap(opts?: { force?: boolean }): Promise<Map<string, string>> {
+export async function getEmployeeMobileJoinMap(opts?: { force?: boolean }): Promise<Map<string, string>> {
   const now = Date.now();
   if (!opts?.force && _mobileJoinMapCache && now - _mobileJoinMapCache.at < MOBILE_JOIN_MAP_TTL_MS) {
     return _mobileJoinMapCache.value;
