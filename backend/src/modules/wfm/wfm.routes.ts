@@ -1673,6 +1673,29 @@ wfmRouter.get(
 
     const { db: dbConn } = await import("../../db/mysql.js");
 
+    // Biometric keys are resolved once, up front, because the punch query below must filter
+    // cosec_punch_sync on its own indexed `user_id` column. Joining employees to that table
+    // and wrapping both sides in COLLATE made `idx_user_date (user_id, punch_time)` unusable
+    // and turned every drawer open into a 3.19M-row full index scan (measured: 56s).
+    const [empKeyRows] = await dbConn.execute(
+      `SELECT employee_code, call_centre_code, biometric_code
+         FROM employees WHERE id = ? LIMIT 1`,
+      [employeeId]
+    ) as any[];
+    const empKeys = (empKeyRows as any[])[0] ?? null;
+    // De-duplicated because employee_code and biometric_code are equal on most rows.
+    const punchUserIds = Array.from(new Set(
+      [empKeys?.employee_code, empKeys?.biometric_code].filter((v): v is string => !!v)
+    ));
+
+    // Night shift: punches belonging to this shift can land on the next calendar day up to
+    // 06:00, so the window is a half-open datetime range — a range the index can seek,
+    // unlike the DATE()/TIME() wrappers it replaces.
+    const punchWindowStart = `${date} 00:00:00`;
+    const nextDay = new Date(`${date}T00:00:00Z`);
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+    const punchWindowEnd = `${nextDay.toISOString().slice(0, 10)} 06:00:00`;
+
     // Run queries: cosec_daily_agg may not exist in all environments — catch its error gracefully
     const [[attRows], [punchRows]] = await Promise.all([
       // 1. Attendance record + biometric log
@@ -1694,26 +1717,21 @@ wfmRouter.get(
           LIMIT 1`,
         [employeeId, date]
       ),
-      // 2. Individual punch events — handle night shift (prev-day punches before 06:00)
-      dbConn.execute(
-        `SELECT DATE_FORMAT(cps.punch_time, '%Y-%m-%d %H:%i:%s') AS punch_time,
-                cps.io_type,
-                CASE cps.io_type WHEN 1 THEN 'In' WHEN 2 THEN 'Out' ELSE CAST(cps.io_type AS CHAR) END AS io_label,
-                cps.device_id
-           FROM cosec_punch_sync cps
-           JOIN employees e
-             ON (
-               e.employee_code COLLATE utf8mb4_unicode_ci = cps.user_id COLLATE utf8mb4_unicode_ci
-               OR e.biometric_code COLLATE utf8mb4_unicode_ci = cps.user_id COLLATE utf8mb4_unicode_ci
-             )
-          WHERE e.id = ?
-            AND (
-              DATE(cps.punch_time) = ?
-              OR (DATE(cps.punch_time) = DATE_ADD(?, INTERVAL 1 DAY) AND TIME(cps.punch_time) < '06:00:00')
-            )
-          ORDER BY cps.punch_time ASC`,
-        [employeeId, date, date]
-      ),
+      // 2. Individual punch events — handle night shift (next-day punches before 06:00)
+      punchUserIds.length === 0
+        ? Promise.resolve([[] as any[]] as any)
+        : dbConn.execute(
+            `SELECT DATE_FORMAT(cps.punch_time, '%Y-%m-%d %H:%i:%s') AS punch_time,
+                    cps.io_type,
+                    CASE cps.io_type WHEN 1 THEN 'In' WHEN 2 THEN 'Out' ELSE CAST(cps.io_type AS CHAR) END AS io_label,
+                    cps.device_id
+               FROM cosec_punch_sync cps
+              WHERE cps.user_id IN (${punchUserIds.map(() => "?").join(", ")})
+                AND cps.punch_time >= ?
+                AND cps.punch_time < ?
+              ORDER BY cps.punch_time ASC`,
+            [...punchUserIds, punchWindowStart, punchWindowEnd]
+          ),
     ]);
 
     // cosec_daily_agg may not exist — query it separately with fallback to null
@@ -1800,12 +1818,6 @@ wfmRouter.get(
     try {
       const { getAprDayCampaigns, parseSqlTimeToMinutes, composeIstDateTime } =
         await import("./apr-attendance.service.js");
-      const [empKeyRows] = await dbConn.execute(
-        `SELECT employee_code, call_centre_code, biometric_code
-           FROM employees WHERE id = ? LIMIT 1`,
-        [employeeId]
-      ) as any[];
-      const empKeys = (empKeyRows as any[])[0];
       if (empKeys) {
         const campaigns = await getAprDayCampaigns(empKeys, date);
         if (campaigns.length > 0) {
