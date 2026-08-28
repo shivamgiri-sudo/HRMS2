@@ -99,12 +99,12 @@ const KNOWN_GAPS: Record<string, string> = {
 
   // ── WFM intelligence pages added 2026-08-23 — pages are mounted and reachable;
   // backend endpoints are not yet built. Live defects pending backend implementation.
-  "GET /api/roster-compliance/summary":
-    "REACHABLE but backend not built. RosterComplianceMonitor.tsx is mounted at /wfm/roster-compliance. Needs roster-compliance.routes.ts with summary/violations/trend endpoints. Added 2026-08-23.",
-  "GET /api/roster-compliance/violations":
-    "REACHABLE but backend not built. RosterComplianceMonitor.tsx is mounted at /wfm/roster-compliance. Same route file as /summary. Added 2026-08-23.",
-  "GET /api/roster-compliance/trend":
-    "REACHABLE but backend not built. RosterComplianceMonitor.tsx is mounted at /wfm/roster-compliance. Same route file as /summary. Added 2026-08-23.",
+  // The three GET /api/roster-compliance/* gaps were removed 2026-08-28:
+  // roster-compliance.routes.ts now serves summary, violations and trend, so the
+  // "every known gap is still a real gap" assertion was failing on every push for
+  // every session. Retiring an entry once the route lands is what that assertion is
+  // for — a KNOWN_GAPS list that outlives its gaps stops being a record of what is
+  // missing and becomes a blocker.
   "GET /api/analytics/interventions/summary":
     "REACHABLE but backend not built. RosterInterventionDashboard.tsx is mounted at /wfm/roster-interventions. Needs analytics/intervention-recommendation.service.ts + routes. Added 2026-08-23.",
   "GET /api/analytics/interventions/pending":
