@@ -275,12 +275,34 @@ function normalizeDate(value: unknown) {
   return String(value).slice(0, 10);
 }
 
-function matchesFilters(gap: AttendanceControlGap, params: ControlParams) {
-  if (params.issueType && params.issueType !== "all" && gap.issueType !== params.issueType) return false;
+// Split out from matchesFilters so the issue-type dropdown can be built from the
+// set that ignores the issue-type filter. Applying it before computing
+// summary.issueTypes collapsed the dropdown to the single selected value, which
+// left no way back to another type without clearing the filter first.
+function matchesIssueType(gap: AttendanceControlGap, params: ControlParams) {
+  return !params.issueType || params.issueType === "all" || gap.issueType === params.issueType;
+}
+
+function matchesSearch(gap: AttendanceControlGap, params: ControlParams) {
   const q = params.search?.trim().toLowerCase();
   if (!q) return true;
   return [gap.employeeCode, gap.employeeName, gap.branchName, gap.processName, gap.issueType]
     .some((part) => String(part ?? "").toLowerCase().includes(q));
+}
+
+function matchesFilters(gap: AttendanceControlGap, params: ControlParams) {
+  return matchesIssueType(gap, params) && matchesSearch(gap, params);
+}
+
+// Each per-source query is capped so one runaway month cannot pull the whole
+// table into memory. The cap used to be 500 with no signal when it bit: in
+// 2026-08 aprGaps was already at 492, so the next day of dialler data would have
+// silently dropped rows while summary.totalGaps still read as complete. Fetching
+// CAP + 1 lets the caller detect the cliff and say so.
+const SOURCE_ROW_CAP = 5000;
+
+function capReached(rows: unknown[]) {
+  return rows.length > SOURCE_ROW_CAP;
 }
 
 function employeeScope(alias = "e", params: ControlParams) {
@@ -389,7 +411,7 @@ async function aprGaps(from: string, to: string, params: ControlParams): Promise
                a.ReportDate, adr.id, adr.attendance_status, adr.raw_minutes,
                adr.dialler_minutes, adr.biometric_minutes, adr.is_locked, adr.regularization_id
       HAVING adr_id IS NULL
-      LIMIT 500`,
+      LIMIT ${SOURCE_ROW_CAP + 1}`,
     [from, to, ...scope.values],
   );
 
@@ -460,7 +482,7 @@ async function crossEvidencePenaltyConflicts(from: string, to: string, params: C
           COALESCE(apr.apr_minutes, 0) > 0
           OR COALESCE(ibd.biometric_minutes, 0) > 0
         )
-      LIMIT 2000`,
+      LIMIT ${SOURCE_ROW_CAP + 1}`,
     [from, to, from, to, ...scope.values],
   );
 
@@ -574,7 +596,7 @@ async function ncosecGaps(from: string, to: string, params: ControlParams): Prom
             )
           )
         )
-      LIMIT 500`,
+      LIMIT ${SOURCE_ROW_CAP + 1}`,
     [from, to, ...scope.values],
   );
 
@@ -631,7 +653,7 @@ async function salaryPrepGaps(runId: string, params: ControlParams): Promise<Att
           + COALESCE(spl.eligible_holiday_days, 0),
           DAY(LAST_DAY(CONCAT(spr.run_month, '-01')))
         )) > 0.01
-      LIMIT 500`,
+      LIMIT ${SOURCE_ROW_CAP + 1}`,
     [runId, ...scope.values],
   );
 
@@ -689,7 +711,7 @@ async function regularizationGaps(from: string, to: string, params: ControlParam
           OR adr.regularization_id <> ar.id
           OR COALESCE(adr.is_locked, 0) <> 1
         )
-      LIMIT 500`,
+      LIMIT ${SOURCE_ROW_CAP + 1}`,
     [from, to, ...scope.values],
   );
 
@@ -970,21 +992,54 @@ export const payrollAttendanceControlService = {
       run?.id ? salaryPrepGaps(String(run.id), params) : Promise.resolve([]),
     ]);
 
-    const allGapsBeforeReview = [...crossConflicts, ...apr, ...ncosec, ...regularization, ...salary]
-      .filter((gap) => matchesFilters(gap, params));
+    // Each source query fetched SOURCE_ROW_CAP + 1 rows; more than the cap means
+    // it hit the ceiling and the counts below understate reality. Report which
+    // sources were clipped rather than presenting a short total as complete.
+    const truncatedSources = (
+      [
+        ["apr", apr],
+        ["ncosec", ncosec],
+        ["cross_evidence", crossConflicts],
+        ["regularization", regularization],
+        ["salary_prep", salary],
+      ] as const
+    )
+      .filter(([, rows]) => capReached(rows))
+      .map(([name]) => name);
+
+    const allSources = [...crossConflicts, ...apr, ...ncosec, ...regularization, ...salary];
+
+    // Everything except the issue-type filter. The dropdown is built from this so
+    // it keeps listing every type that is present under the current branch,
+    // process, search and review filters — picking one type no longer hides the rest.
+    const searchScoped = allSources.filter((gap) => matchesSearch(gap, params));
+
+    const allGapsBeforeReview = searchScoped.filter((gap) => matchesIssueType(gap, params));
     const reviewedGaps = await attachResolutionState(await attachReviewState(allGapsBeforeReview));
-    const visibleGaps = reviewedGaps.filter((gap) => {
+    const visibleFilter = (gap: AttendanceControlGap) => {
       const status = String(gap.reviewStatus ?? "open");
       if (params.reviewStatus && params.reviewStatus !== "all") {
         return status === params.reviewStatus;
       }
       return !["reviewed", "no_issue"].includes(status);
-    }).sort(sortControlGaps);
+    };
+    const visibleGaps = reviewedGaps.filter(visibleFilter).sort(sortControlGaps);
 
     const summaryByType = visibleGaps.reduce<Record<string, number>>((acc, gap) => {
       acc[gap.issueType] = (acc[gap.issueType] ?? 0) + 1;
       return acc;
     }, {});
+
+    // Review state is only attached to the issue-type-filtered set, so the option
+    // list is derived from the search-scoped set instead. It is the union of the
+    // types actually present plus whatever is currently selected, so the active
+    // choice never vanishes from its own dropdown.
+    const availableIssueTypes = Array.from(
+      new Set([
+        ...searchScoped.map((gap) => gap.issueType),
+        ...(params.issueType && params.issueType !== "all" ? [params.issueType] : []),
+      ]),
+    ).sort();
     const blockers = visibleGaps.filter((gap) => gap.severity === "blocker").length;
     const warnings = visibleGaps.filter((gap) => gap.severity === "warning").length;
 
@@ -1014,7 +1069,10 @@ export const payrollAttendanceControlService = {
         blockers,
         warnings,
         issueTypes: summaryByType,
+        availableIssueTypes,
         sourceCounts: counts,
+        truncatedSources,
+        sourceRowCap: SOURCE_ROW_CAP,
       },
       readiness,
       gaps: visibleGaps.slice(start, start + limit),

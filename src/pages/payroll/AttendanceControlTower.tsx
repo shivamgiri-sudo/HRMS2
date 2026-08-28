@@ -68,12 +68,15 @@ interface ControlTowerResponse {
     blockers: number;
     warnings: number;
     issueTypes: Record<string, number>;
+    availableIssueTypes?: string[];
     sourceCounts: {
       adr: SourceCount;
       ncosec: SourceCount;
       apr: SourceCount;
       regularization: SourceCount;
     };
+    truncatedSources?: string[];
+    sourceRowCap?: number;
   };
   readiness: any;
   gaps: GapRow[];
@@ -236,8 +239,12 @@ export default function AttendanceControlTower() {
     staleTime: 30_000,
   });
 
-  const issueOptions = Object.keys(data?.summary.issueTypes ?? {});
-  const { data: filterData } = useQuery({
+  // availableIssueTypes ignores the issue-type filter, so selecting one type no
+  // longer empties the dropdown of every other type. Falls back to the old
+  // behaviour if the backend has not been redeployed yet.
+  const issueOptions = data?.summary.availableIssueTypes ?? Object.keys(data?.summary.issueTypes ?? {});
+  const truncatedSources = data?.summary.truncatedSources ?? [];
+  const { data: filterData, error: filterError } = useQuery({
     queryKey: ["payroll-attendance-control-filter-options", branchId],
     queryFn: async () => {
       const p = new URLSearchParams();
@@ -491,6 +498,19 @@ export default function AttendanceControlTower() {
         {error && (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
             Failed to load payroll attendance control data.
+          </div>
+        )}
+        {filterError && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Branch and process filters could not be loaded, so those dropdowns are empty. The
+            figures below still cover every branch and process you can see.
+          </div>
+        )}
+        {truncatedSources.length > 0 && (
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Showing the first {data?.summary.sourceRowCap?.toLocaleString("en-IN")} rows from{" "}
+            {truncatedSources.map(sourceLabel).join(", ")}. There are more gaps than are counted
+            here — narrow the branch, process or date range to see the full picture.
           </div>
         )}
 

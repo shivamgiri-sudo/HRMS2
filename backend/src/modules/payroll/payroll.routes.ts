@@ -390,7 +390,11 @@ router.post(
 );
 
 // ─── Cascading filter options for payroll workspace dropdowns ──
-router.get("/filter-options", requireRole("ceo", "admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin"), h(async (req: AuthenticatedRequest, res: Response) => {
+// wfm, payroll_branch and branch_head are included deliberately: they can open
+// /payroll/attendance-control-tower, which calls this route for its branch and
+// process dropdowns. Without them the page loaded but both filters came back
+// empty with no error shown, because the client ignores this query's failure.
+router.get("/filter-options", requireRole("ceo", "admin", "hr", "super_admin", "finance", "payroll", "finance_head", "payroll_head", "payroll_admin", "wfm", "payroll_branch", "branch_head"), h(async (req: AuthenticatedRequest, res: Response) => {
   const branchId = typeof req.query.branchId === "string" ? req.query.branchId : undefined;
 
   const scoped = await buildScopeWhereClause(
