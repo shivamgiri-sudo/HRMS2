@@ -116,11 +116,15 @@ describe("importShiftRosterBatch transaction handling", () => {
     expect(conn.release).toHaveBeenCalledTimes(1);
     expect(result.imported).toBe(1);
 
-    // The row-status update must carry a non-null target_record_id now.
+    // The row-status update must carry a non-null created_entity_id now.
+    // target_record_id was never a real column on upload_batch_row — migration 1522
+    // named the pair created_entity_type/created_entity_id instead, and the old
+    // column name threw ER_BAD_FIELD_ERROR on the live schema, rolling back every
+    // batch that had at least one row succeed.
     const targetUpdateCall = conn.execute.mock.calls.find(
-      ([sql]: [string]) => typeof sql === "string" && sql.includes("row_status='imported', target_record_id=?"),
+      ([sql]: [string]) => typeof sql === "string" && sql.includes("row_status='imported', created_entity_type='wfm_roster_assignment', created_entity_id=?"),
     );
-    expect(targetUpdateCall, "target_record_id UPDATE not found").toBeDefined();
+    expect(targetUpdateCall, "created_entity_id UPDATE not found").toBeDefined();
     expect(targetUpdateCall![1][0]).not.toBeNull();
 
     // The lock was acquired and released for this employee.
@@ -161,6 +165,47 @@ describe("importShiftRosterBatch transaction handling", () => {
     // shift_version_id/scheduled_minutes since the schema probe found neither.
     expect(sql).toMatch(/VALUES \(\?,\?,\?,\?,\?,\?,\?,\?,'published','published','bulk_upload',\?\)/);
     expect(params).toContain("o'brien's note");
+  });
+
+  it("truncates the parsed HH:MM:SS shift timing to HH:MM before the INSERT", async () => {
+    // parseShiftTiming returns "HH:MM:SS" (8 chars); wfm_roster_assignment's
+    // shift_start_time/shift_end_time are varchar(5) ("HH:MM") — the same defect
+    // roster-assignment-bulk.service.ts had. Before the fix, shiftStartTime/
+    // shiftEndTime carried the 8-char value straight into the INSERT and every day
+    // with a resolved (non-week-off) shift died with "Data too long for column
+    // 'shift_start_time'" (ER_DATA_TOO_LONG) — live-reproduced by calling
+    // importShiftRosterBatch directly against the real DB, 0 successful imports
+    // with a shift assigned.
+    queueRows(
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        employee_code: "MAS001", week_start_date: "2026-08-17",
+        mon_shift: "09:00-18:00",
+      }) }],
+      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      [],
+      [],
+      [], // isRestPolicyFeatureActive -> inactive
+      [], // checkEmployeeDateNotLocked -> not locked
+      [{ id: "shift-1" }], // resolveShiftTemplate
+      [], // existing wfm_roster_assignment before-value
+      [], // shift-versioning schema probe
+      [], // INSERT wfm_roster_assignment
+      [], // UPDATE upload_batch_row
+      [], // UPDATE upload_batch
+    );
+
+    const result = await importShiftRosterBatch("batch-1", "user-1");
+    expect(result.imported).toBe(1);
+
+    const insertCall = conn.execute.mock.calls.find(
+      ([sql]: [string]) => typeof sql === "string" && sql.includes("INSERT INTO wfm_roster_assignment"),
+    );
+    expect(insertCall, "batch INSERT not found").toBeDefined();
+    const [, params] = insertCall as [string, unknown[]];
+    expect(params).toContain("09:00");
+    expect(params).toContain("18:00");
+    expect(params).not.toContain("09:00:00");
+    expect(params).not.toContain("18:00:00");
   });
 
   it("blocks a day on insufficient rest against an existing DB row (Area 2), with no override path in bulk upload", async () => {

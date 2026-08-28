@@ -98,8 +98,19 @@ export async function importRosterAssignmentBatch(
         }
         const shiftRow = (shiftRows as RowDataPacket[])[0];
         shiftTemplateId = shiftRow.id as string;
-        shiftStartTime = shiftRow.start_time as string;
-        shiftEndTime = shiftRow.end_time as string;
+        // wfm_roster_assignment.shift_start_time/shift_end_time are varchar(5)
+        // ("HH:MM"), but wfm_shift_template.start_time/end_time come back from
+        // mysql2 as the full "HH:MM:SS" TIME string (8 chars). Truncated here, once,
+        // so every use below — the rest-policy check, computeScheduledMinutes, and
+        // the INSERT itself — sees the same 5-char value the column actually holds.
+        // Before this every row with a resolved shift died with "Data too long for
+        // column 'shift_start_time'" (ER_DATA_TOO_LONG) — live-reproduced directly
+        // against importRosterAssignmentBatch, 0 successful imports with a shift
+        // assigned. The other .slice(0, 5) calls downstream become no-ops now, kept
+        // as-is rather than removed — cheap, and correct even if this ever reads a
+        // value that isn't already 5 characters.
+        shiftStartTime = String(shiftRow.start_time).slice(0, 5);
+        shiftEndTime = String(shiftRow.end_time).slice(0, 5);
       }
       const scheduledMinutes = shiftStartTime && shiftEndTime
         ? computeScheduledMinutes(String(shiftStartTime).slice(0, 5), String(shiftEndTime).slice(0, 5))
@@ -258,8 +269,17 @@ export async function importRosterAssignmentBatch(
         continue;
       }
 
+      // target_record_id was never a real column on upload_batch_row — migration 1522
+      // named the pair created_entity_type/created_entity_id instead (the columns
+      // linkRowToEntity in bulk-approval.service.ts writes to). This statement threw
+      // ER_BAD_FIELD_ERROR on the first row of every batch that had at least one row
+      // actually succeed, and because it runs inside this function's single
+      // transaction the whole batch then rolled back — every wfm_roster_assignment
+      // row already inserted in that batch was undone with it. Live-confirmed via
+      // PREPARE. A batch made entirely of invalid rows never reached this line, so it
+      // "succeeded" with 0 imported, which is why the failure looked inconsistent.
       await conn.execute(
-        "UPDATE upload_batch_row SET row_status='imported', target_record_id=? WHERE id=?",
+        "UPDATE upload_batch_row SET row_status='imported', created_entity_type='wfm_roster_assignment', created_entity_id=? WHERE id=?",
         [rowResult.assignmentId, batchRow.id]
       );
       imported++;

@@ -187,19 +187,35 @@ export async function importWeekOffPreferenceBatch(
   // alone is retried row-by-row so only the actually-bad row ends up marked
   // as an error — every other row in the batch still lands.
   for (const rowsInChunk of chunk(prepared, CHUNK_SIZE)) {
-    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,'submitted',?,?)").join(", ");
+    const placeholders = rowsInChunk.map(() => "(?,?,?,?,?,?,?,?,?,?,'submitted',?,?)").join(", ");
     const params = rowsInChunk.flatMap((r) => [
       r.prefId, r.employeeId, r.processId, r.branchId, r.weekStartDate,
-      r.day1, r.day2, r.reason, r.submissionOrder, userId,
+      r.day1, r.day2, r.day1, r.day2, r.reason, r.submissionOrder, userId,
     ]);
 
     try {
       await db.execute(
+        // preferred_day (singular) is the column every live consumer actually reads —
+        // weekoff-allocation.service.ts's FCFS run, roster-generation.service.ts, and
+        // the manual single-preference path in roster-capacity.service.ts all select
+        // or insert `preferred_day`/`alternate_day`, none of them
+        // `preferred_day_1`/`preferred_day_2`. preferred_day is also NOT NULL with no
+        // default, so before this every bulk-upload row failed outright with "Field
+        // 'preferred_day' doesn't have a default value" — live-confirmed via PREPARE,
+        // 0 successful imports ever. preferred_day/alternate_day are populated from
+        // the same day1/day2 values written to preferred_day_1/preferred_day_2, so
+        // both column generations stay in agreement — matching what
+        // submitWeekOffPreference writes for a manually-submitted preference. This
+        // does not add auto-approval or capacity-check behavior: uploaded rows still
+        // land as pending, only now visible to the engine that actually allocates
+        // week-offs.
         `INSERT INTO week_off_preference
            (id, employee_id, process_id, branch_id, week_start_date,
-            preferred_day_1, preferred_day_2, reason, status, submission_order, created_by)
+            preferred_day, alternate_day, preferred_day_1, preferred_day_2, reason, status, submission_order, created_by)
          VALUES ${placeholders}
          ON DUPLICATE KEY UPDATE
+           preferred_day = VALUES(preferred_day),
+           alternate_day = VALUES(alternate_day),
            preferred_day_1 = VALUES(preferred_day_1),
            preferred_day_2 = VALUES(preferred_day_2),
            reason = VALUES(reason),
@@ -216,15 +232,17 @@ export async function importWeekOffPreferenceBatch(
           await db.execute(
             `INSERT INTO week_off_preference
                (id, employee_id, process_id, branch_id, week_start_date,
-                preferred_day_1, preferred_day_2, reason, status, submission_order, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?)
+                preferred_day, alternate_day, preferred_day_1, preferred_day_2, reason, status, submission_order, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'submitted', ?, ?)
              ON DUPLICATE KEY UPDATE
+               preferred_day = VALUES(preferred_day),
+               alternate_day = VALUES(alternate_day),
                preferred_day_1 = VALUES(preferred_day_1),
                preferred_day_2 = VALUES(preferred_day_2),
                reason = VALUES(reason),
                status = 'submitted'`,
             [r.prefId, r.employeeId, r.processId, r.branchId, r.weekStartDate,
-             r.day1, r.day2, r.reason, r.submissionOrder, userId]
+             r.day1, r.day2, r.day1, r.day2, r.reason, r.submissionOrder, userId]
           );
           importedRowUpdates.push({ rowId: r.rowId, prefId: r.prefId });
           imported++;
@@ -242,8 +260,17 @@ export async function importWeekOffPreferenceBatch(
     const cases = importedRowUpdates.map(() => "WHEN ? THEN ?").join(" ");
     const caseParams = importedRowUpdates.flatMap((u) => [u.rowId, u.prefId]);
     const ids = importedRowUpdates.map((u) => u.rowId);
+    // target_record_id was never a real column on upload_batch_row — migration 1522
+    // named the pair created_entity_type/created_entity_id instead. This threw
+    // ER_BAD_FIELD_ERROR after the week_off_preference INSERTs above had ALREADY
+    // committed (this function opens no transaction of its own, unlike the roster
+    // services), so the uncaught throw left upload_batch marked 'failed' while the
+    // rows were durably written — the UI reported failure for data that had, in
+    // fact, landed. Live-confirmed via PREPARE.
     await db.execute(
-      `UPDATE upload_batch_row SET row_status = 'imported', target_record_id = CASE id ${cases} END
+      `UPDATE upload_batch_row SET row_status = 'imported',
+              created_entity_type = 'week_off_preference',
+              created_entity_id = CASE id ${cases} END
        WHERE id IN (${ids.map(() => "?").join(",")})`,
       [...caseParams, ...ids]
     );

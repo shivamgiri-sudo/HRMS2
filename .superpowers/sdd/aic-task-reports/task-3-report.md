@@ -167,3 +167,40 @@ of this task's scope.
 
 Staged and committed by explicit path only (`src/pages/wfm/attendance-integrity/*.tsx` — all
 newly created files, so no risk of picking up unrelated dirty tree state).
+
+## Fix pass — review findings
+
+Commit: `de1d2751921504d6f6255ce1d5313a3fbc028793` (parent `d5781bf4`, local `main`, not pushed — same convention as Task 4's commit, per `git status --porcelain` showing 147 unrelated dirty files in this shared tree). `git show --stat HEAD` confirms exactly one file changed: `src/pages/wfm/attendance-integrity/BillingRulesPanel.tsx` (35 insertions, 22 deletions). Built via a private `GIT_INDEX_FILE` (`git read-tree HEAD && git add -- <file> && git write-tree && git commit-tree ... -p HEAD && git update-ref refs/heads/main`) because the shared `.git/index` had this same file staged as a deletion by another session at the time (`git status --porcelain` showed both `D` and `??` for it).
+
+### Finding 1 — write controls gated to API-real roles
+
+Read `backend/src/modules/attendance/billing-config.routes.ts` directly (not from the prompt) to get the actual `requireRole(...)` calls:
+- `POST /` (create): `requireRole('finance_head', 'super_admin')`
+- `PATCH /:id` (update): `requireRole('finance_head', 'super_admin')`
+- `DELETE /:id` (deactivate): `requireRole('super_admin')`
+
+Replaced the single `canEdit` with:
+```ts
+const canWrite = isResolved && canEditPage("ATTENDANCE_BILLING_CONFIG");
+const canCreateOrEdit = canWrite && hasAnyRole("finance_head", "super_admin");
+const canDeactivate = canWrite && hasAnyRole("super_admin");
+```
+`canCreateOrEdit` gates Add Rule and the Edit (Pencil) button; `canDeactivate` gates the Deactivate (Trash2) button. `isResolved` stayed in the base `canWrite` so controls don't flicker on for a frame before role data lands (per the hook's own doc comment).
+
+Used `hasAnyRole` from `useWorkforceAccess`, not `primaryRole`. `primaryRole` collapses a user to one highest-priority role (see `getPrimaryRole`'s priority list in `useUserRole.ts`) — a user who holds both `hr` (or any role above `finance_head` in that list) and `finance_head` would have `primaryRole !== 'finance_head'` and be wrongly denied. `hasAnyRole(...)` checks the full expanded `roleKeys` set, so it is correct for a multi-role user regardless of which role is "primary".
+
+Did not touch `role_page_access` or write a migration — the stale `admin` grant stays as recorded in the file-header comment; the frontend now refuses to trust it alone.
+
+### Role-to-control mapping (verified against the router)
+
+- **Add Rule / Edit**: rendered only for `super_admin` or `finance_head` (`canEditPage` grant AND `hasAnyRole('finance_head','super_admin')`). Matches `POST /` and `PATCH /:id` exactly — both accept exactly these two roles, no more, no less.
+- **Deactivate**: rendered only for `super_admin` (`canEditPage` grant AND `hasAnyRole('super_admin')`). Matches `DELETE /:id` exactly.
+- One real asymmetry the static role gate cannot fully close: `PATCH /:id` special-cases `existing.scope_type === 'global'` to require `super_admin` even for a `finance_head` (`if (existing.scope_type === 'global' && req.authUser?.role !== 'super_admin') return 403`). The UI's Edit button has no such per-row exception — `canCreateOrEdit` does not check `entry.scope_type`, so a `finance_head` still sees Edit on the Global Default row and gets a 403 on save. (Deactivate is unaffected: it is already excluded for `scope_type === "global"` rows by the existing `entry.scope_type !== "global"` check, which predates this fix and I left alone — the API's `DELETE` handler also refuses to deactivate a global row for anyone, so that exclusion is correct as-is.) Closing the Edit gap would mean adding an `entry.scope_type !== "global" || hasAnyRole("super_admin")` condition to the per-row Edit button specifically — a targeted, single-line fix, but it goes beyond "one gating expression" scoped to the page-level `canEdit` computation this task named, and changes gating logic per-row rather than the named expression at line ~149. Flagging it here rather than silently leaving finance_head with a 403-yielding button on that one row.
+
+### Finding 2 — accessibility
+
+Added `aria-label="Edit billing rule"` to the Pencil button and `aria-label="Deactivate billing rule"` to the Trash2 button. Removed the dead `h-7 w-7` className from both — confirmed via the shared `Button` component that its icon-size variant already sets `min-h-[44px] min-w-[44px]`, which overrides the smaller inline class. No other className or behavior on those two buttons was changed.
+
+### Typecheck
+
+`npm run typecheck` (root `tsconfig.app.json` + `tsconfig.node.json`): exit code 2, 83 `error TS` lines total — matches the documented ~83 pre-existing baseline exactly (same count as Task 4's report same day). `grep "BillingRulesPanel" <output>` returns zero matches — this file is clean. All 83 errors are in unrelated files (`OnboardingSteps1to5V2.tsx`, `AonAnalyticsView.tsx`, `useCostCentres.ts`, `NativeFullFinal.test.tsx`, `NativeIncentives.tsx`, `NativeOpsCommandCenter.tsx`, `NativeOrgMasters.tsx`, `EsiRegDocsTab.tsx`, `ProfileEnhanced(V2).tsx`, `ProfileV3.tsx`, `RosterImportPage.tsx` + its test), not touched.

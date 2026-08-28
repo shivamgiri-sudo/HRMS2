@@ -255,6 +255,45 @@ describe("importRosterAssignmentBatch transaction handling", () => {
     expect(restProbeCall).toBeUndefined();
   });
 
+  it("truncates the resolved shift's HH:MM:SS time to HH:MM before the INSERT", async () => {
+    // wfm_roster_assignment.shift_start_time/shift_end_time are varchar(5) ("HH:MM"),
+    // but wfm_shift_template.start_time/end_time come back from mysql2 as the full
+    // "HH:MM:SS" TIME string (8 chars) — exactly what this test's shift row returns.
+    // Before the fix, shiftStartTime/shiftEndTime carried that 8-char value straight
+    // into the INSERT and every row with a resolved shift died with "Data too long
+    // for column 'shift_start_time'" (ER_DATA_TOO_LONG) — live-reproduced by calling
+    // importRosterAssignmentBatch directly against the real DB, 0 successful imports
+    // with a shift assigned.
+    queueRows(
+      [{ id: "row-1", row_no: 1, normalized_data: JSON.stringify({
+        cycle_id: "cycle-1", employee_code: "MAS001", roster_date: "2026-08-17",
+        shift_code: "GEN", is_week_off: "0", notes: null,
+      }) }],
+      [{ id: "emp-1", process_id: "process-1", branch_id: "branch-1" }],
+      [{ id: "shift-1", start_time: "10:00:00", end_time: "19:00:00" }],
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+      [],
+    );
+
+    const result = await importRosterAssignmentBatch("batch-1", "user-1");
+    expect(result.imported).toBe(1);
+
+    const insertCall = conn.execute.mock.calls.find(
+      ([sql]: [string]) => typeof sql === "string" && sql.startsWith("INSERT INTO wfm_roster_assignment"),
+    );
+    expect(insertCall).toBeDefined();
+    const [, params] = insertCall as [string, unknown[]];
+    expect(params).toContain("10:00");
+    expect(params).toContain("19:00");
+    expect(params).not.toContain("10:00:00");
+    expect(params).not.toContain("19:00:00");
+  });
+
   it("still collects a row-level validation failure without rolling back the transaction", async () => {
     // Row is missing employee_code — a validation failure, not an unexpected error.
     queueRows(

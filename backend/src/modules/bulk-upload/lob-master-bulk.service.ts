@@ -13,6 +13,7 @@ interface ParsedRow {
   lobCode: string;
   lobName: string;
   description: string | null;
+  activeStatus: 0 | 1;
 }
 
 const CHUNK_SIZE = 200;
@@ -21,6 +22,14 @@ function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
+}
+
+/** "1"/"true"/"yes"/"active" → 1; "0"/"false"/"no"/"inactive" → 0; blank → default. */
+function parseActiveStatus(raw: unknown, defaultValue: 0 | 1 = 1): 0 | 1 {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (!v) return defaultValue;
+  if (["0", "false", "no", "inactive", "n"].includes(v)) return 0;
+  return 1;
 }
 
 export async function importLobMasterBatch(
@@ -63,6 +72,7 @@ export async function importLobMasterBatch(
     parsed.push({
       rowId: row.id, rowNo: row.row_no, lobCode, lobName,
       description: data.description ? String(data.description).trim() : null,
+      activeStatus: parseActiveStatus(data.active_status),
     });
   }
 
@@ -75,16 +85,20 @@ export async function importLobMasterBatch(
   // as an error — every other row in the batch still lands, matching the
   // original per-row loop's error isolation.
   for (const rowsInChunk of chunk(parsed, CHUNK_SIZE)) {
-    const placeholders = rowsInChunk.map(() => "(?,?,?,1)").join(", ");
-    const params = rowsInChunk.flatMap((r) => [r.lobCode, r.lobName, r.description]);
+    const placeholders = rowsInChunk.map(() => "(?,?,?,?)").join(", ");
+    const params = rowsInChunk.flatMap((r) => [r.lobCode, r.lobName, r.description, r.activeStatus]);
 
     try {
       await db.execute(
+        // active_status is a template-declared optional column that was previously
+        // hardcoded to 1, with no way to bulk-reactivate/deactivate an LOB via
+        // re-upload. Now read and applied.
         `INSERT INTO lob_master (lob_code, lob_name, description, active_status)
          VALUES ${placeholders}
          ON DUPLICATE KEY UPDATE
            lob_name = VALUES(lob_name),
-           description = COALESCE(VALUES(description), description)`,
+           description = COALESCE(VALUES(description), description),
+           active_status = VALUES(active_status)`,
         params
       );
       for (const r of rowsInChunk) {
@@ -96,11 +110,12 @@ export async function importLobMasterBatch(
         try {
           await db.execute(
             `INSERT INTO lob_master (lob_code, lob_name, description, active_status)
-             VALUES (?,?,?,1)
+             VALUES (?,?,?,?)
              ON DUPLICATE KEY UPDATE
                lob_name = VALUES(lob_name),
-               description = COALESCE(VALUES(description), description)`,
-            [r.lobCode, r.lobName, r.description]
+               description = COALESCE(VALUES(description), description),
+               active_status = VALUES(active_status)`,
+            [r.lobCode, r.lobName, r.description, r.activeStatus]
           );
           importedRowIds.push(r.rowId);
           importedRows++;

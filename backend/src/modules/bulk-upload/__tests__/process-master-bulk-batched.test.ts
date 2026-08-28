@@ -25,17 +25,23 @@ beforeEach(() => {
 });
 
 describe("importProcessMasterBatch — batched rewrite", () => {
-  it("upserts every valid row in one chunked statement, resolving branch/lob codes via bulk lookups", async () => {
+  it("upserts every valid row in one chunked statement, resolving branch codes via a bulk lookup", async () => {
+    // business_lob is process_master's real column — a free-text field, not a
+    // foreign key. The old fixture used `lob_code` and expected it resolved
+    // through lob_master; process_master has no such relationship (no lob_id
+    // column exists), and the template's real optional column is `business_lob`.
     execute.mockResolvedValueOnce([
       [
-        row("row-1", 1, { process_code: "ONF_KYC", process_name: "Onfido KYC", branch_code: "OKAYA", lob_code: "KYC" }),
+        row("row-1", 1, {
+          process_code: "ONF_KYC", process_name: "Onfido KYC", branch_code: "OKAYA",
+          business_lob: "KYC", client_name: "Onfido", workload_type: "backoffice",
+        }),
         row("row-2", 2, { process_code: "", process_name: "Missing code" }), // pre-validation error
       ],
       [],
     ]);
     execute.mockImplementation(async (sql: string) => {
       if (sql.includes("FROM branch_master")) return [[{ id: "branch-1", branch_code: "OKAYA" }], []];
-      if (sql.includes("FROM lob_master")) return [[{ id: "lob-1", lob_code: "KYC" }], []];
       return [{}, []];
     });
 
@@ -46,7 +52,7 @@ describe("importProcessMasterBatch — batched rewrite", () => {
     expect(result.errors[0]).toMatch(/process_code and process_name are required/);
 
     const insertCall = execute.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO process_master"));
-    expect(insertCall![1]).toEqual(["ONF_KYC", "Onfido KYC", "branch-1", "lob-1"]);
+    expect(insertCall![1]).toEqual(["ONF_KYC", "Onfido KYC", "branch-1", "KYC", "Onfido", "backoffice", 1]);
   });
 
   it("isolates one bad row when the chunk's multi-row statement fails, so the rest of the chunk still lands", async () => {
