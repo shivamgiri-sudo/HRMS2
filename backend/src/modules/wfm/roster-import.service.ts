@@ -905,20 +905,31 @@ export async function commitImportBatch(
           }
         }
 
+        /*
+         * assignment_type carries the week-off, but `is_week_off` is the column 112 call sites
+         * across this repo actually read — payroll's paid-day counting, the WFM compliance
+         * engine's shift/violation split, week-off fairness, break management and the roster
+         * reports all branch on the flag, not the type. Every INSERT below omitted it, so it
+         * defaulted to 0 and a committed roster looked like nobody ever had a day off.
+         * Measured on live data before this fix: 916 rows with assignment_type='WEEK_OFF' and
+         * is_week_off=1 on exactly ZERO of them.
+         */
+        const isWeekOff = row.normalized_type === 'WEEK_OFF' ? 1 : 0;
+
         if (importMode === 'NEW') {
           // INSERT IGNORE — skip if already exists
           const [result] = options.cycleId
             ? await conn.execute(
                 `INSERT IGNORE INTO wfm_roster_assignment
-                   (id, employee_id, roster_date, assignment_type, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, cycle_id, created_at)
-                 VALUES (UUID(), ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW())`,
-                [employeeId, rosterDate, row.normalized_type, shiftStartTime, shiftEndTime, batchId, options.cycleId]
+                   (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, cycle_id, created_at)
+                 VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW())`,
+                [employeeId, rosterDate, row.normalized_type, isWeekOff, shiftStartTime, shiftEndTime, batchId, options.cycleId]
               )
             : await conn.execute(
                 `INSERT IGNORE INTO wfm_roster_assignment
-                   (id, employee_id, roster_date, assignment_type, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, created_at)
-                 VALUES (UUID(), ?, ?, ?, ?, ?, 'DRAFT', ?, NOW())`,
-                [employeeId, rosterDate, row.normalized_type, shiftStartTime, shiftEndTime, batchId]
+                   (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, created_at)
+                 VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, NOW())`,
+                [employeeId, rosterDate, row.normalized_type, isWeekOff, shiftStartTime, shiftEndTime, batchId]
               );
           if ((result as unknown as ResultSetHeader).affectedRows > 0) {
             assignmentsCreated++;
@@ -930,28 +941,30 @@ export async function commitImportBatch(
           const [result] = options.cycleId
             ? await conn.execute(
                 `INSERT INTO wfm_roster_assignment
-                   (id, employee_id, roster_date, assignment_type, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, cycle_id, created_at)
-                 VALUES (UUID(), ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW())
+                   (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, cycle_id, created_at)
+                 VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, NOW())
                  ON DUPLICATE KEY UPDATE
                    assignment_type = VALUES(assignment_type),
+                   is_week_off = VALUES(is_week_off),
                    shift_start_time = VALUES(shift_start_time),
                    shift_end_time = VALUES(shift_end_time),
                    lifecycle_state = 'DRAFT',
                    import_batch_id = VALUES(import_batch_id),
                    cycle_id = VALUES(cycle_id)`,
-                [employeeId, rosterDate, row.normalized_type, shiftStartTime, shiftEndTime, batchId, options.cycleId]
+                [employeeId, rosterDate, row.normalized_type, isWeekOff, shiftStartTime, shiftEndTime, batchId, options.cycleId]
               )
             : await conn.execute(
                 `INSERT INTO wfm_roster_assignment
-                   (id, employee_id, roster_date, assignment_type, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, created_at)
-                 VALUES (UUID(), ?, ?, ?, ?, ?, 'DRAFT', ?, NOW())
+                   (id, employee_id, roster_date, assignment_type, is_week_off, shift_start_time, shift_end_time, lifecycle_state, import_batch_id, created_at)
+                 VALUES (UUID(), ?, ?, ?, ?, ?, ?, 'DRAFT', ?, NOW())
                  ON DUPLICATE KEY UPDATE
                    assignment_type = VALUES(assignment_type),
+                   is_week_off = VALUES(is_week_off),
                    shift_start_time = VALUES(shift_start_time),
                    shift_end_time = VALUES(shift_end_time),
                    lifecycle_state = 'DRAFT',
                    import_batch_id = VALUES(import_batch_id)`,
-                [employeeId, rosterDate, row.normalized_type, shiftStartTime, shiftEndTime, batchId]
+                [employeeId, rosterDate, row.normalized_type, isWeekOff, shiftStartTime, shiftEndTime, batchId]
               );
           const header = result as unknown as ResultSetHeader;
           if (header.affectedRows === 1) {
