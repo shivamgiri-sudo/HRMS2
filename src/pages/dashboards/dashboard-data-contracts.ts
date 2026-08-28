@@ -224,6 +224,11 @@ export function normalizeExecutiveQualityData(payload: unknown): JsonRecord {
   return {
     org_quality_score: asNumber(metrics.overall_quality_score ?? data.org_quality_score),
     target_score: asNumber(metrics.target_quality_score ?? data.target_score),
+    // quality-executive.routes.ts catches a failed query and answers HTTP 200 with a
+    // zero-filled body carrying data_status: 'UNAVAILABLE'. Both fields were dropped
+    // here, so a dead audit source rendered as a genuine org quality score of 0.
+    data_status: data.data_status ?? null,
+    note: data.note ?? null,
     risk_agents: critical === null && atRisk === null
       ? null
       : (critical ?? 0) + (atRisk ?? 0),
@@ -255,6 +260,17 @@ export function normalizeOrgKpiData(payload: unknown): JsonRecord {
     period: data.period ?? data.periodLabel,
     org_average_score: score,
     score,
+    // /api/kpi/org-summary does not compute a composite KPI score — no such number exists
+    // in this database (kpi_daily_actual.actual_value mixes percent, seconds, count and
+    // currency in one column). It picks a single NAMED headline metric and returns which
+    // one it picked. Dropping metric_name here is what let a 9.10 sales-conversion rate
+    // render as "Org Avg KPI Score 9.10 /100" on the CEO dashboard.
+    metric_name: summary.metric_name ?? null,
+    metric_code: summary.metric_code ?? null,
+    metric_unit: summary.metric_unit ?? null,
+    // A failed source and an empty month are different answers; the endpoint says which,
+    // and the panel could not tell the reader because this never came through.
+    unavailable: asRecord(data.unavailableSources).kpi ?? null,
     employees_scored: asNumber(summary.employees_scored ?? data.totalAgentsScored),
     best_process: processRows[0] ?? null,
     needs_attention: processRows.at(-1) ?? null,

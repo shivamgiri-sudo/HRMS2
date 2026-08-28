@@ -24,6 +24,7 @@ import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import {
   arrayAt,
   asNumber,
+  asRecord,
   formatCurrency,
   formatValue,
   metricDetail,
@@ -54,6 +55,15 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
   // permanently read "Revenue risk" instead of the actual revenue figure.
   const revenue = numberAt(data.pnl, "kpis", "recognizedRevenue") ?? numberAt(data.pnl, "kpis", "organisationRevenue");
   const revenueGap = numberAt(data.pnl, "kpis", "revenueAtRisk") ?? numberAt(data.pnl, "kpis", "revenueGapMtd");
+  // `revenueAtRisk` sums process_revenue_daily.revenue_at_risk. That table holds no rows
+  // in production and only a manual POST writes it, so the sum was 0 and the tile asserted
+  // a confident "no revenue at risk" for a pipeline that has never run. The P&L service now
+  // returns null plus this reason instead of a false zero — see resolveRevenueAtRisk in
+  // canonical-pnl.service.ts.
+  const revenueGapUnavailable = read(asRecord(data.pnl).kpis, "revenueAtRiskUnavailable");
+  const revenueGapReason = typeof revenueGapUnavailable === "string" && revenueGapUnavailable
+    ? "Revenue-risk feed not generated"
+    : null;
   // The page-level "Data as of" control (ReferenceDashboardUI's UpdatedControl)
   // reflects /api/dashboards/{code}/summary's generatedAt, not the P&L cache's
   // own — the two can legitimately differ (30s vs 60s TTL, different fetch
@@ -80,9 +90,24 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
   const resignation = metricDetail(m, "resign", "pendingDiscussion") ?? metricValue(m, "resign");
   const qualityScore = asNumber(data.quality.org_quality_score ?? data.quality.average_score ?? data.quality.score);
   const qualityTarget = asNumber(data.quality.target ?? data.quality.target_score);
+  // The route answers 200 with a zero-filled body when the audit source fails, so a 0 here
+  // can mean "nobody scored zero" or "the query died". The payload says which.
+  const qualityNote = data.quality.data_status === "UNAVAILABLE" && typeof data.quality.note === "string"
+    ? data.quality.note
+    : null;
+  const qualityGap = qualityScore !== null && qualityTarget !== null
+    ? Math.round((qualityTarget - qualityScore) * 100) / 100
+    : null;
   const riskAgents = asNumber(data.quality.risk_agents ?? data.quality.at_risk_agents);
   const processRows = arrayAt(data.quality, "processes").length ? arrayAt(data.quality, "processes") : arrayAt(data.quality, "scorecard");
   const orgScore = asNumber(data.orgKpi.org_average_score ?? data.orgKpi.average_score ?? data.orgKpi.score);
+  // Not a composite KPI score — /api/kpi/org-summary picks one named metric (see
+  // normalizeOrgKpiData). Naming it is the difference between "the org scores 9.1/100" and
+  // "sales conversion averages 9.1%".
+  const kpiMetricName = typeof data.orgKpi.metric_name === "string" ? data.orgKpi.metric_name : null;
+  const kpiMetricUnit = typeof data.orgKpi.metric_unit === "string" ? data.orgKpi.metric_unit : null;
+  const kpiUnavailable = typeof data.orgKpi.unavailable === "string" ? data.orgKpi.unavailable : null;
+  const kpiEmployeesScored = asNumber(data.orgKpi.employees_scored);
   const bestProcess = read(data.orgKpi, "best_process") as Record<string, unknown> | undefined;
   const needsAttention = read(data.orgKpi, "needs_attention") as Record<string, unknown> | undefined;
   const kpiTrend = arrayAt(data.orgKpi, "trend").slice(-10).map((row) => ({
@@ -127,7 +152,7 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
       <ReferenceMetricGrid columns={4} loading={data.loading} metrics={[
         { label: "Attendance Rate", value: attendance, valueSuffix: "%", helper: m.att?.previousValue === null ? "Processed attendance" : "vs previous period", icon: Fingerprint, tone: "blue", trend: m.att?.changePct, unavailableReason: metricUnavailableReason(m, "att"), ...drill("att") },
         { label: "Avg Shrinkage", value: shrinkage, valueSuffix: "%", helper: "vs last 30 days", icon: Activity, tone: shrinkage !== null && shrinkage > 20 ? "red" : "green" },
-        { label: "Revenue Gap MTD", value: formatCurrency(revenueGap), helper: (revenue === null ? "Revenue risk" : `Revenue ${formatCurrency(revenue)}`) + (pnlAsOf ? ` · P&L as of ${pnlAsOf}` : ""), icon: IndianRupee, tone: "violet" },
+        { label: "Revenue Gap MTD", value: formatCurrency(revenueGap), helper: (revenueGapReason ?? (revenue === null ? "Revenue risk" : `Revenue ${formatCurrency(revenue)}`)) + (pnlAsOf ? ` · P&L as of ${pnlAsOf}` : ""), icon: IndianRupee, tone: "violet" },
         { label: "Certified Learners", value: certified, helper: "vs last 30 days", icon: BadgeCheck, tone: "amber" },
       ]} />
 
@@ -170,8 +195,11 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
         <ReferenceAIBrief title="Automated Executive Summary" actionHref="/reports" items={[
           { label: "Attendance rate", value: attendance === null ? null : `${attendance}%`, text: "Organisation-wide processed attendance rate.", icon: Fingerprint, tone: "blue" },
           { label: "Shrinkage", value: shrinkage === null ? null : `${shrinkage}%`, text: "Average shrinkage based on current workforce and availability.", icon: Activity, tone: shrinkage !== null && shrinkage > 20 ? "red" : "green" },
-          { label: "Revenue gap", value: formatCurrency(revenueGap), text: "Month-to-date revenue at risk from the finance P&L summary.", icon: IndianRupee, tone: revenueGap && revenueGap > 0 ? "red" : "green" },
-          { label: "Payroll readiness", value: payrollReadiness === null ? null : `${payrollReadiness}%`, text: "Employees with complete bank, PAN and UAN details.", icon: Target, tone: payrollReadiness !== null && payrollReadiness >= 90 ? "green" : "amber" },
+          { label: "Revenue gap", value: formatCurrency(revenueGap), text: revenueGapReason ? "The revenue-risk feed has not been generated, so no gap has been measured." : "Month-to-date revenue at risk from the finance P&L summary.", icon: IndianRupee, tone: revenueGap && revenueGap > 0 ? "red" : "green" },
+          // getPayrollReadinessMetrics gates on bank and PAN only. UAN is reported beside
+          // them but is not part of the ready test, so naming it here overstated what the
+          // percentage certifies.
+          { label: "Payroll readiness", value: payrollReadiness === null ? null : `${payrollReadiness}%`, text: "Employees with complete bank and PAN details.", icon: Target, tone: payrollReadiness !== null && payrollReadiness >= 90 ? "green" : "amber" },
         ]} />
 
         <ReferencePanel title="Good / Bad Insights">
@@ -183,13 +211,38 @@ export function CeoReferenceLayout({ data, filters }: { data: ReferenceDashboard
       </div>
 
       <div className="grid gap-3 sm:gap-4 grid-cols-1 lg:grid-cols-2 xl:grid-cols-[1.25fr_0.75fr]">
-        <ReferencePanel title="Quality Overview (Last 30 Days)">
-          <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Org Quality Score</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(qualityScore)}</p></div><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Quality vs Target</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(qualityScore, "%")}</p><ReferenceProgress label={`Target ${formatValue(qualityTarget, "%")}`} value={qualityScore} max={qualityTarget || 100} tone={qualityScore !== null && qualityTarget !== null && qualityScore >= qualityTarget ? "green" : "red"} /></div><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Risk Agents</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(riskAgents)}</p></div></div>
-          <div className="mt-4 overflow-x-auto rounded-lg border border-[#e3e9f2]"><table className="w-full min-w-[560px] text-left text-xs"><thead className="bg-[#f8fafc] text-[#61708a]"><tr><th className="px-3 py-2">Process</th><th>Avg Score</th><th>Agents</th><th>Calls</th><th>Status</th></tr></thead><tbody className="divide-y divide-[#edf1f6]">{processRows.length ? processRows.slice(0, 6).map((row, index) => <tr key={String(row.id ?? index)}><td className="px-3 py-2 font-medium text-[#1d2b45]">{String(row.process_name ?? row.process ?? `Process ${index + 1}`)}</td><td>{formatValue(row.avg_score ?? row.score)}</td><td>{formatValue(row.agents ?? row.agent_count)}</td><td>{formatValue(row.calls ?? row.audit_count)}</td><td className="font-semibold text-[#16a34a]">{String(row.status ?? "—")}</td></tr>) : <tr><td colSpan={5} className="px-3 py-8 text-center text-[#94a3b8]">Quality scorecard is unavailable</td></tr>}</tbody></table></div>
+        {/*
+          The scorecard used to render one row named "Process 1": it grouped on
+          db_audit.call_quality_assessment.Campaign, which stopped being written after
+          April 2026, so nine processes collapsed into a single NULL-named row. Fixed in
+          quality-executive.service.ts (grouped on ClientId, named from
+          portal_client_config). The table no longer slices to six either — Du Digital BD
+          and Exicom rank 8th and 9th, and they are the two a CEO most needs to see.
+        */}
+        <ReferencePanel
+          title="Quality Overview (Last 30 Days)"
+          action={<span className="text-xs text-[#61708a]">{processRows.length ? `${processRows.length} processes` : ""}</span>}
+        >
+          {qualityNote ? <p className="mb-3 rounded-lg border border-[#fee3c5] bg-[#fff9f2] px-3 py-2 text-xs text-[#b45309]">{qualityNote}</p> : null}
+          <div className="grid gap-3 sm:grid-cols-3"><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Org Quality Score</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(qualityScore)}</p></div><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Quality vs Target</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{qualityGap === null ? "—" : `${Math.abs(qualityGap).toFixed(2)}`}</p><p className="mt-1 text-xs text-[#71809a]">{qualityGap === null ? "target unavailable" : qualityGap > 0 ? "pts below target" : "pts above target"}</p><ReferenceProgress label={`Target ${formatValue(qualityTarget, "%")}`} value={qualityScore} max={qualityTarget || 100} tone={qualityScore !== null && qualityTarget !== null && qualityScore >= qualityTarget ? "green" : "red"} /></div><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Risk Agents</p><p className="mt-2 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(riskAgents)}</p></div></div>
+          <div className="mt-4 overflow-x-auto rounded-lg border border-[#e3e9f2]"><table className="w-full min-w-[560px] text-left text-xs"><thead className="bg-[#f8fafc] text-[#61708a]"><tr><th className="px-3 py-2">Process</th><th>Avg Score</th><th>Agents</th><th>Calls</th><th>Status</th></tr></thead><tbody className="divide-y divide-[#edf1f6]">{processRows.length ? processRows.map((row, index) => <tr key={String(row.id ?? row.process ?? index)}><td className="px-3 py-2 font-medium text-[#1d2b45]">{String(row.process_name ?? row.process ?? "Unattributed")}</td><td>{formatValue(row.avg_score ?? row.score)}</td><td>{formatValue(row.agents ?? row.agent_count)}</td><td>{formatValue(row.calls ?? row.audit_count)}</td><td className="font-semibold text-[#16a34a]">{String(row.status ?? "—")}</td></tr>) : <tr><td colSpan={5} className="px-3 py-8 text-center text-[#94a3b8]">Quality scorecard is unavailable</td></tr>}</tbody></table></div>
         </ReferencePanel>
 
-        <ReferencePanel title="KPI Performance">
-          <div className="grid grid-cols-3 gap-3"><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">Org Avg KPI Score</p><p className="mt-4 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(orgScore)}<span className="text-xs font-medium text-[#71809a]"> /100</span></p></div><div className="rounded-lg border border-[#d7f0df] bg-[#f2fbf5] p-4"><p className="text-xs text-[#71809a]">Best Process</p><p className="mt-4 text-[15px] font-bold text-[#16a34a]">{String(bestProcess?.name ?? bestProcess?.process_name ?? "—")}</p><p className="mt-3 text-[20px] font-extrabold text-[#0b1f44]">{formatValue(bestProcess?.score)}</p></div><div className="rounded-lg border border-[#fee3c5] bg-[#fff9f2] p-4"><p className="text-xs text-[#71809a]">Needs Attention</p><p className="mt-4 text-[15px] font-bold text-[#f97316]">{String(needsAttention?.name ?? needsAttention?.process_name ?? "—")}</p><p className="mt-3 text-[20px] font-extrabold text-[#0b1f44]">{formatValue(needsAttention?.score)}</p></div></div>
+        {/*
+          There is no composite "org KPI score" in this database: kpi_daily_actual.actual_value
+          mixes percent, seconds, count and currency in one column, so averaging across it is
+          meaningless. /api/kpi/org-summary therefore picks ONE named headline metric — the
+          percent, higher-is-better metric with the most samples, excluding ATTENDANCE_PCT —
+          and says which. For 2026-08 that is CONVERSION_RATE at 9.10, which this panel used
+          to print as "Org Avg KPI Score 9.10 /100". The metric now names itself, and the
+          best/worst process tiles say they are ranked on it.
+        */}
+        <ReferencePanel
+          title="KPI Performance"
+          action={<span className="text-xs text-[#61708a]">{kpiEmployeesScored === null ? "" : `${kpiEmployeesScored} employees scored`}</span>}
+        >
+          {kpiUnavailable ? <p className="mb-3 rounded-lg border border-[#fee3c5] bg-[#fff9f2] px-3 py-2 text-xs text-[#b45309]">{kpiUnavailable}</p> : null}
+          <div className="grid grid-cols-3 gap-3"><div className="rounded-lg border border-[#e3e9f2] p-4"><p className="text-xs text-[#71809a]">{kpiMetricName ?? "Headline KPI"}</p><p className="mt-4 text-[23px] font-extrabold text-[#0b1f44]">{formatValue(orgScore)}<span className="text-xs font-medium text-[#71809a]">{kpiMetricUnit === "percent" ? "%" : ""}</span></p></div><div className="rounded-lg border border-[#d7f0df] bg-[#f2fbf5] p-4"><p className="text-xs text-[#71809a]">Best Process</p><p className="mt-4 text-[15px] font-bold text-[#16a34a]">{String(bestProcess?.name ?? bestProcess?.process_name ?? "—")}</p><p className="mt-3 text-[20px] font-extrabold text-[#0b1f44]">{formatValue(bestProcess?.score)}</p></div><div className="rounded-lg border border-[#fee3c5] bg-[#fff9f2] p-4"><p className="text-xs text-[#71809a]">Needs Attention</p><p className="mt-4 text-[15px] font-bold text-[#f97316]">{String(needsAttention?.name ?? needsAttention?.process_name ?? "—")}</p><p className="mt-3 text-[20px] font-extrabold text-[#0b1f44]">{formatValue(needsAttention?.score)}</p></div></div>
           <div className="mt-4"><ReferenceLineChart data={kpiTrend} height={135} /></div>
         </ReferencePanel>
       </div>

@@ -18,6 +18,35 @@ const n = (value: unknown): number => {
 const pct = (numerator: number, denominator: number): number | null =>
   denominator > 0 ? (numerator / denominator) * 100 : null;
 
+/**
+ * Revenue-at-risk, or an explanation of why there is no figure.
+ *
+ * `revenueAtRisk` sums `process_revenue_daily.revenue_at_risk` across the P&L rows (see
+ * getRevenueDailyMap in process-pnl.service.ts). That table holds ZERO rows in production
+ * and its only writer is a manual POST /api/business-command/revenue-risk/generate-daily
+ * — nothing schedules it. Summing an empty set yields 0, so the CEO dashboard rendered a
+ * confident "Revenue Gap MTD: Rs 0" for a pipeline that has never run once.
+ *
+ * Same judgement as the TAT Breached / Name Mismatch tiles removed from that dashboard on
+ * 31-Jul-2026: a false zero on an executive dashboard is worse than a blank one. A zero is
+ * reported only when the source actually returned rows saying zero.
+ */
+export function resolveRevenueAtRisk(
+  total: number,
+  sourceRowCount: number,
+): { revenueAtRisk: number | null; revenueAtRiskUnavailable: string | null } {
+  if (!(sourceRowCount > 0)) {
+    return {
+      revenueAtRisk: null,
+      revenueAtRiskUnavailable:
+        "Revenue at risk has not been generated for this period — process_revenue_daily "
+        + "holds no rows. The feed is produced on demand by "
+        + "POST /api/business-command/revenue-risk/generate-daily, not on a schedule.",
+    };
+  }
+  return { revenueAtRisk: n(total), revenueAtRiskUnavailable: null };
+}
+
 function currentPeriod() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -69,6 +98,23 @@ function normalizePeriod(value?: string) {
 // the uncached one) could disagree for up to 60s even though both compute from the identical
 // underlying rows. Return shape is unchanged (ReturnType<typeof bpoPnlAllocationOverlayService.
 // getSummary>), so this is a pure caching change, not a response-shape change.
+/**
+ * How many revenue-risk rows exist for the period at all. Distinguishes "the risk engine
+ * ran and found nothing" from "the risk engine has never run", which sum() cannot.
+ */
+async function countRevenueRiskRows(period: string): Promise<number> {
+  if (!(await tableExists("process_revenue_daily"))) return 0;
+  const [year, month] = period.split("-").map(Number);
+  const lastDay = new Date(year!, month!, 0).getDate();
+  const rows = await queryRows<RowDataPacket>(
+    `SELECT COUNT(*) AS source_rows
+       FROM process_revenue_daily
+      WHERE revenue_date BETWEEN ? AND ?`,
+    [`${period}-01`, `${period}-${String(lastDay).padStart(2, "0")}`],
+  );
+  return Number((rows[0] as { source_rows?: unknown } | undefined)?.source_rows ?? 0);
+}
+
 export async function getCachedAllocationSummary(filters: Partial<PnlQueryFilters>) {
   const key = `pnl-allocation-summary:v1:${filters.period ?? ""}:${filters.branchId ?? ""}:${filters.processId ?? ""}:${filters.clientId ?? ""}:${filters.search ?? ""}`;
   return pnlSummaryCache.getOrSet(
@@ -292,9 +338,10 @@ export const canonicalPnlService = {
 
   async getSummary(filters: Partial<PnlQueryFilters>) {
     const period = normalizePeriod(filters.period);
-    const [summary, trend] = await Promise.all([
+    const [summary, trend, revenueRiskRows] = await Promise.all([
       getCachedAllocationSummary({ ...filters, period }),
       this.getTrend({ ...filters, period }),
+      countRevenueRiskRows(period),
     ]);
     const rows = summary.rows as BpoPnlRow[];
     const mostProfitable = [...rows].sort((left, right) => right.ebitda - left.ebitda)[0];
@@ -314,7 +361,7 @@ export const canonicalPnlService = {
               value: mostProfitable.ebitda,
             }
           : null,
-        revenueAtRisk: sum(rows, "revenueAtRisk"),
+        ...resolveRevenueAtRisk(sum(rows, "revenueAtRisk"), revenueRiskRows),
         receivableRisk: sum(rows, "outstandingReceivable"),
         monthEndProjectedProfit: n(summary.kpis.ebitda),
         billableHeadcount: sum(rows, "billableHc"),

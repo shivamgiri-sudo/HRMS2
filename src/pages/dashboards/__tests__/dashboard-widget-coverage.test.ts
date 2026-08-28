@@ -107,13 +107,24 @@ describe("dashboard widget coverage", () => {
     // to prevent, so every detail key is pinned here.
     const shared = read("ReferenceSharedPanels.tsx");
     const REQUIRED: Record<string, readonly string[]> = {
+      // ATTENDANCE_EXCEPTIONS gained a row per issue type: only missing_adr,
+      // salary_payable_days_mismatch and unmapped_cosec_user were itemised, which on
+      // 2026-08-28 covered 3,345 of 4,666 open exceptions and left the other 1,321 in the
+      // headline total with no row. `resolved` was replaced by `resolvedLast30d` — the
+      // former counted issues RAISED in the window and since cleared, which is not what
+      // the "Cleared in the last 30 days" row says.
       AttendanceExceptionPanel: [
         "openTotal", "blockers", "warnings", "missingAdr", "payableMismatch",
-        "unmappedCosec", "resolved", "unscopeable",
+        "unmappedCosec", "zeroMinute", "missingPunchWithSource", "diallerWithoutEvidence",
+        "missingIbd", "inactiveCosecActivity", "otherOpen", "resolvedLast30d", "unscopeable",
+      ],
+      PayrollBlockersPanel: [
+        "missingBank", "missingNeftBank", "missingPan", "invalidPan", "missingUan",
+        "blockerCount", "readyCount", "total",
       ],
       DocumentCompliancePanel: [
         "activeEmployees", "employeesWithNoDocs", "employeesWithDocs", "totalDocs",
-        "verifiedDocs", "unverifiedDocs", "coveragePct",
+        "verifiedDocs", "verifiedWithEvidence", "unverifiedDocs", "coveragePct",
       ],
       BiometricCoveragePanel: [
         "employees", "completePunchPairs", "singlePunchOnly", "singlePunchPct",

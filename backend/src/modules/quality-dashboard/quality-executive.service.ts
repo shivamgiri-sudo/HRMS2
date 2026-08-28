@@ -129,9 +129,14 @@ export class QualityExecutiveService {
            e.last_name,
            ROUND(AVG(cqa.quality_percentage), 2) as quality_score,
            COUNT(*) as calls_handled,
-           SUBSTRING_INDEX(SUBSTRING_INDEX(GROUP_CONCAT(DISTINCT SUBSTRING(cqa.Campaign, 1, 10)), ',', 1), ',', -1) as process
+           SUBSTRING_INDEX(
+             GROUP_CONCAT(DISTINCT COALESCE(ccfg.display_name, CONCAT('Client ', cqa.ClientId))
+                          ORDER BY cqa.ClientId),
+             ',', 1) as process
          FROM db_audit.call_quality_assessment cqa
          LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
+         LEFT JOIN Shivamgiri.portal_client_config ccfg
+           ON ccfg.client_id = CAST(cqa.ClientId AS UNSIGNED)
          CROSS JOIN (SELECT @rank := 0) AS init
          WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
          GROUP BY cqa.User, e.first_name, e.last_name
@@ -150,9 +155,14 @@ export class QualityExecutiveService {
            e.last_name,
            ROUND(AVG(cqa.quality_percentage), 2) as quality_score,
            COUNT(*) as calls_handled,
-           SUBSTRING_INDEX(SUBSTRING_INDEX(GROUP_CONCAT(DISTINCT SUBSTRING(cqa.Campaign, 1, 10)), ',', 1), ',', -1) as process
+           SUBSTRING_INDEX(
+             GROUP_CONCAT(DISTINCT COALESCE(ccfg.display_name, CONCAT('Client ', cqa.ClientId))
+                          ORDER BY cqa.ClientId),
+             ',', 1) as process
          FROM db_audit.call_quality_assessment cqa
          LEFT JOIN mas_hrms.employees e ON e.employee_code = cqa.User
+         LEFT JOIN Shivamgiri.portal_client_config ccfg
+           ON ccfg.client_id = CAST(cqa.ClientId AS UNSIGNED)
          CROSS JOIN (SELECT @rank := 0) AS init
          WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
          GROUP BY cqa.User, e.first_name, e.last_name
@@ -162,16 +172,36 @@ export class QualityExecutiveService {
         [daysBack]
       );
 
-      // Get process performance
+      // Get process performance.
+      //
+      // Keyed on ClientId, NOT on Campaign. `Campaign` stopped being written after April
+      // 2026: on 2026-08-28 every one of the 14,488 rows in the trailing 30-day window has
+      // Campaign IS NULL (COUNT(DISTINCT Campaign) = 0 for the window; 35,150 NULLs overall,
+      // all of them from 2026-05 onward). `GROUP BY Campaign` therefore returned exactly ONE
+      // row, with a NULL name, blending nine processes spanning 47%-87% into a single 73.6%
+      // — which the CEO dashboard rendered as the literal filler string "Process 1".
+      //
+      // ClientId is populated on 100% of those rows and resolves to 9 processes. The display
+      // name comes from Shivamgiri.portal_client_config, the same lookup call-master.service.ts
+      // already uses for this table. Campaign is kept as a second-choice label so historic
+      // windows (daysBack spanning before May 2026) still read with their original names, and
+      // `Client <id>` covers the two live ids that carry no config row (487, 417).
       const [processMetrics] = await conn.execute<RowDataPacket[]>(
         `SELECT
-           cqa.Campaign as process_name,
+           COALESCE(
+             ccfg.display_name,
+             NULLIF(MAX(cqa.Campaign), ''),
+             CONCAT('Client ', cqa.ClientId),
+             'Unattributed'
+           ) as process_name,
            ROUND(AVG(cqa.quality_percentage), 2) as avg_quality,
            COUNT(DISTINCT cqa.User) as agent_count,
            COUNT(*) as calls_handled
          FROM db_audit.call_quality_assessment cqa
+         LEFT JOIN Shivamgiri.portal_client_config ccfg
+           ON ccfg.client_id = CAST(cqa.ClientId AS UNSIGNED)
          WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL ? DAY)
-         GROUP BY cqa.Campaign
+         GROUP BY cqa.ClientId, ccfg.display_name
          ORDER BY avg_quality DESC`,
         [daysBack]
       );
@@ -237,13 +267,20 @@ export class QualityExecutiveService {
           calls_handled: row.calls_handled,
           process: row.process || 'N/A'
         })),
-        process_performance: (processMetrics || []).map((row: any) => ({
-          process: row.process_name,
-          avg_quality: row.avg_quality,
-          agent_count: row.agent_count,
-          calls_handled: row.calls_handled,
-          status: row.avg_quality >= 85 ? 'On Track' : row.avg_quality >= 75 ? 'At Risk' : 'Critical'
-        })),
+        // Number() at source, not just in the frontend hook: ROUND(AVG(...)) is a MySQL
+        // DECIMAL and mysql2 hands DECIMALs back as strings, the same defect class the
+        // trend-direction comparison above was bitten by.
+        process_performance: (processMetrics || []).map((row: any) => {
+          const avgQuality = Number(row.avg_quality) || 0;
+          return {
+            process: String(row.process_name ?? 'Unattributed'),
+            avg_quality: avgQuality,
+            agent_count: Number(row.agent_count) || 0,
+            calls_handled: Number(row.calls_handled) || 0,
+            status: (avgQuality >= 85 ? 'On Track' : avgQuality >= 75 ? 'At Risk' : 'Critical') as
+              'On Track' | 'At Risk' | 'Critical'
+          };
+        }),
         risk_summary: {
           critical_agents_count: agentQualityScores.filter((score) => score < 60).length,
           at_risk_agents_count: agentQualityScores.filter((score) => score >= 60 && score < 70).length,
