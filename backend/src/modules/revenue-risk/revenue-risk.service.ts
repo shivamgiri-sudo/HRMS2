@@ -149,26 +149,19 @@ async function getAllPlannedHc(date: string): Promise<Map<string, number>> {
     if (map.size > 0) return map;
   }
 
-  // Secondary: roster_assignment. Separate, reachable feature (own route +
-  // NativeRosterMasterBuilder.tsx UI) that currently holds 0 rows in
-  // production but isn't dead code — keep it as a real fallback so this
-  // function picks it up automatically if it's ever adopted, without
-  // preferring an empty table over the engine that's actually populated.
-  if (await tableExists("roster_assignment")) {
-    // roster_assignment has no process_id column — join through employees
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT e.process_id, COUNT(DISTINCT ra.employee_id) AS cnt
-         FROM roster_assignment ra
-         JOIN employees e ON e.id = ra.employee_id
-        WHERE ra.roster_date = ?
-        GROUP BY e.process_id`,
-      [date]
-    );
-    for (const row of rows as any[]) {
-      if (row.process_id) map.set(String(row.process_id), Number(row.cnt ?? 0));
-    }
-    if (map.size > 0) return map;
-  }
+  /*
+   * A secondary lookup against `roster_assignment` used to sit here. It was kept on the
+   * grounds that the table was "a separate, reachable feature that currently holds 0 rows but
+   * isn't dead code", so this function would pick it up automatically if it were ever adopted.
+   *
+   * It was never adopted, and as of 2026-08-28 it cannot be: roster-master.service.ts — the
+   * table's only writer anywhere in the backend — now writes to `wfm_roster_assignment`, the
+   * single roster source. Nothing writes `roster_assignment`, so this branch could only ever
+   * evaluate an empty table and fall through. Removed rather than repointed, because the
+   * primary above already reads wfm_roster_assignment; repointing would only re-query the same
+   * table minus the publish_status filter, and counting draft assignments as committed plan is
+   * exactly what that filter exists to prevent.
+   */
 
   // Final fallback: active employee headcount by process (no roster data at all).
   if (await tableExists("employees")) {

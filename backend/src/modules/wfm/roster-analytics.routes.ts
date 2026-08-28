@@ -17,6 +17,22 @@ const router = Router();
 
 router.use(requireAuth);
 
+/**
+ * Same correction as wfm-compliance-analytics.routes.ts, for the same reason: every query
+ * here read `roster_assignment`, which holds 0 rows, so this whole analytics surface was
+ * computing over nothing. The live roster is `wfm_roster_assignment` — confirmed by the owner
+ * on 2026-08-28 as the single source whether a roster is uploaded or created in the UI.
+ *
+ * The guard excludes one synthetic cohort (412,032 rows from a single 2026-06-11 batch, all
+ * 09:00–18:00, no assignment_type, no template, no cycle, no import batch, no week-offs) while
+ * keeping all 5,741 real rows. Phrased as "all four provenance columns null" rather than
+ * "cycle_id IS NOT NULL" because roster.service.ts only sets cycle_id when a cycle is given,
+ * so a manually created assignment can have neither and the narrower filter would drop it.
+ */
+const realRoster = (alias: string) =>
+  `NOT (${alias}.import_batch_id IS NULL AND ${alias}.cycle_id IS NULL ` +
+  `AND ${alias}.assignment_type IS NULL AND ${alias}.shift_template_id IS NULL)`;
+
 const ANALYTICS_ROLES = ['super_admin', 'admin', 'hr', 'wfm', 'branch_head', 'operations_manager', 'ceo', 'coo'];
 
 /**
@@ -218,9 +234,10 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
          SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark > 0 THEN 1 ELSE 0 END) AS late,
          SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS absent,
          0 AS incomplete
-       FROM roster_assignment ra
+       FROM wfm_roster_assignment ra
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
-       WHERE ra.employee_id = ? AND DATE_FORMAT(ra.roster_date, '%Y-%m') = ?`,
+       WHERE ra.employee_id = ? AND DATE_FORMAT(ra.roster_date, '%Y-%m') = ?
+         AND ${realRoster('ra')}`,
       [employeeId, currentMonth]
     );
 
@@ -246,10 +263,11 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
          SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark = 0 THEN 1 ELSE 0 END) AS on_time,
          SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') AND adr.late_mark > 0 THEN 1 ELSE 0 END) AS late,
          SUM(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 1 ELSE 0 END) AS absent
-       FROM roster_assignment ra
+       FROM wfm_roster_assignment ra
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE ra.employee_id = ?
          AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 6 MONTH)
+         AND ${realRoster('ra')}
        GROUP BY DATE_FORMAT(ra.roster_date, '%Y-%m')
        ORDER BY month`,
       [employeeId]
@@ -269,10 +287,11 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
          DAYNAME(ra.roster_date) AS day_name,
          COUNT(*) AS total,
          SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present
-       FROM roster_assignment ra
+       FROM wfm_roster_assignment ra
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE ra.employee_id = ?
          AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+         AND ${realRoster('ra')}
        GROUP BY DAYNAME(ra.roster_date), DAYOFWEEK(ra.roster_date)
        ORDER BY DAYOFWEEK(ra.roster_date)`,
       [employeeId]
@@ -298,11 +317,12 @@ router.get('/employee-profile/:employeeId', requireRole(...ANALYTICS_ROLES, 'man
          sm.shift_name,
          COUNT(*) AS total,
          SUM(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 1 ELSE 0 END) AS present
-       FROM roster_assignment ra
+       FROM wfm_roster_assignment ra
        JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
        WHERE ra.employee_id = ?
          AND ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 3 MONTH)
+         AND ${realRoster('ra')}
        GROUP BY sm.id, sm.shift_name`,
       [employeeId]
     );
@@ -419,7 +439,7 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, 
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const processId = req.query.processId ? String(req.query.processId) : undefined;
 
-    let whereClause = 'WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+    let whereClause = `WHERE ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${realRoster('ra')}`;
     const params: string[] = [];
 
     if (branchId) {
@@ -444,7 +464,7 @@ router.get('/shift-effectiveness', requireRole(...ANALYTICS_ROLES), async (req, 
          AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg,
          30 AS break_budget,
          AVG(COALESCE(wb.total_break_minutes, 30)) AS avg_break_minutes
-       FROM roster_assignment ra
+       FROM wfm_roster_assignment ra
        JOIN employees e ON ra.employee_id = e.id
        JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
@@ -522,7 +542,7 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
          GROUP BY employee_id, session_date
        ) wb
        JOIN employees e ON wb.employee_id = e.id
-       JOIN roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
+       JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
        WHERE 1=1 ${branchFilter}`,
       params
     );
@@ -550,7 +570,7 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
          GROUP BY employee_id, session_date
        ) wb
        JOIN employees e ON wb.employee_id = e.id
-       JOIN roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
+       JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
        JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
        WHERE 1=1 ${branchFilter}
        GROUP BY sm.id, sm.shift_name`,
@@ -580,7 +600,7 @@ router.get('/break-compliance', requireRole(...ANALYTICS_ROLES), async (req, res
          GROUP BY employee_id, session_date
        ) wb
        JOIN employees e ON wb.employee_id = e.id
-       JOIN roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
+       JOIN wfm_roster_assignment ra ON wb.employee_id = ra.employee_id AND wb.session_date = ra.roster_date
        WHERE wb.total_break > 30 ${branchFilter}
        GROUP BY e.id, e.employee_code, e.full_name
        HAVING AVG(wb.total_break - 30) > 5
@@ -634,11 +654,11 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
     const branchId = req.query.branchId ? String(req.query.branchId) : undefined;
     const period = req.query.period ? String(req.query.period) : 'current';
 
-    let dateFilter = 'ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)';
+    let dateFilter = `ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY) AND ${realRoster('ra')}`;
     if (period === 'last') {
-      dateFilter = `DATE_FORMAT(ra.roster_date, '%Y-%m') = DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m')`;
+      dateFilter = `DATE_FORMAT(ra.roster_date, '%Y-%m') = DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m') AND ${realRoster('ra')}`;
     } else if (period === 'quarter') {
-      dateFilter = 'ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)';
+      dateFilter = `ra.roster_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY) AND ${realRoster('ra')}`;
     }
 
     let branchFilter = '';
@@ -661,7 +681,7 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
          AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg,
          AVG(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 100 ELSE 0 END) AS shrinkage_pct,
          90 AS break_compliance_pct
-       FROM roster_assignment ra
+       FROM wfm_roster_assignment ra
        JOIN employees e ON ra.employee_id = e.id
        JOIN employees m ON e.reporting_manager_id = m.id
        LEFT JOIN process_master p ON e.process_id = p.id
@@ -707,7 +727,7 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
          AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct,
          AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg,
          AVG(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 100 ELSE 0 END) AS shrinkage_pct
-       FROM roster_assignment ra
+       FROM wfm_roster_assignment ra
        JOIN employees e ON ra.employee_id = e.id
        JOIN process_master p ON e.process_id = p.id
        LEFT JOIN branch_master b ON e.branch_id = b.id
@@ -746,7 +766,7 @@ router.get('/team-comparison', requireRole(...ANALYTICS_ROLES), async (req, res)
          AVG(CASE WHEN COALESCE(adr.attendance_status,'') IN ('present','half_day') THEN 100 ELSE 0 END) AS adherence_pct,
          AVG(COALESCE(qa.quality_percentage, 0)) AS quality_avg,
          AVG(CASE WHEN ra.is_week_off = 0 AND COALESCE(adr.attendance_status,'') NOT IN ('present','half_day') THEN 100 ELSE 0 END) AS shrinkage_pct
-       FROM roster_assignment ra
+       FROM wfm_roster_assignment ra
        JOIN employees e ON ra.employee_id = e.id
        JOIN branch_master b ON e.branch_id = b.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = ra.employee_id AND adr.record_date = ra.roster_date
@@ -820,7 +840,7 @@ router.get('/team-status-mobile', requireRole(...ANALYTICS_ROLES, 'manager', 'pr
               TIMESTAMPDIFF(MINUTE, CONCAT(?, ' ', sm.start_time), adr.clock_in_time) AS late_minutes,
               wb.on_break
        FROM employees e
-       LEFT JOIN roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
+       LEFT JOIN wfm_roster_assignment ra ON ra.employee_id = e.id AND ra.roster_date = ?
        LEFT JOIN wfm_shift_master sm ON ra.shift_template_id = sm.id
        LEFT JOIN attendance_daily_record adr ON adr.employee_id = e.id AND adr.record_date = ?
        LEFT JOIN (

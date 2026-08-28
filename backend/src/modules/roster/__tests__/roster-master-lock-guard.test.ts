@@ -2,13 +2,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Round 2 governance-matrix finding (2026-08-13): roster-master.service.ts
- * (the 4th, orphaned roster engine — writes roster_assignment, which
- * nothing in attendance/payroll reads today) was the only one of the four
+ * (the 4th roster engine — wrote roster_assignment, which
+ * nothing in attendance/payroll read) was the only one of the four
  * real roster-write engines with no attendance/payroll-lock check at all.
- * Lower real-world blast radius than the other three (since nothing
- * downstream consumes this table for pay), but "no roster engine should
- * mutate a locked date through an alternative path" doesn't carve out an
- * exception for a lower-traffic one, and the fix was cheap: unlike
+ *
+ * UPDATED 2026-08-28: the "lower blast radius" caveat this header used to
+ * carry no longer applies, and the reason it applied is worth keeping. That
+ * engine was the ONLY writer of roster_assignment, and it wrote to a table
+ * nothing else read — which is precisely why the table sat at 0 rows while
+ * the compliance and analytics engines reading it reported a false 100%
+ * all-clear. It now writes wfm_roster_assignment, the single roster source,
+ * so this lock guard protects the same table payroll and compliance read.
+ * The SQL matchers below follow that rename.
+ *
+ * The original reasoning still stands on its own terms: "no roster engine
+ * should mutate a locked date through an alternative path" doesn't carve out
+ * an exception for a lower-traffic one, and the fix was cheap — unlike
  * minimum-rest (which would need shift start/end times this table never
  * stores), the lock check only needs employee_id + date, both already in
  * hand in generateRoster()'s loop.
@@ -47,9 +56,9 @@ describe("roster-master.service.ts generateRoster — attendance/payroll lock gu
     execute.mockImplementation(async (sql: string) => {
       const text = String(sql);
       if (text.includes("SELECT * FROM roster_template")) return [[TEMPLATE_ROW], []];
-      if (text.includes("SELECT id FROM roster_assignment")) return [[], []]; // no existing assignment
+      if (text.includes("SELECT id FROM wfm_roster_assignment")) return [[], []]; // no existing assignment
       if (text.includes("SELECT is_locked FROM attendance_daily_record")) return [[{ is_locked: 1 }], []];
-      if (text.includes("INSERT INTO roster_assignment")) { insertCalled = true; return [{ affectedRows: 1 }, []]; }
+      if (text.includes("INSERT INTO wfm_roster_assignment")) { insertCalled = true; return [{ affectedRows: 1 }, []]; }
       return [[], []];
     });
 
@@ -66,9 +75,9 @@ describe("roster-master.service.ts generateRoster — attendance/payroll lock gu
     execute.mockImplementation(async (sql: string) => {
       const text = String(sql);
       if (text.includes("SELECT * FROM roster_template")) return [[TEMPLATE_ROW], []];
-      if (text.includes("SELECT id FROM roster_assignment")) return [[], []];
+      if (text.includes("SELECT id FROM wfm_roster_assignment")) return [[], []];
       if (text.includes("SELECT is_locked FROM attendance_daily_record")) return [[{ is_locked: 0 }], []];
-      if (text.includes("INSERT INTO roster_assignment")) { insertCalled = true; return [{ affectedRows: 1 }, []]; }
+      if (text.includes("INSERT INTO wfm_roster_assignment")) { insertCalled = true; return [{ affectedRows: 1 }, []]; }
       return [[], []];
     });
 
@@ -84,9 +93,9 @@ describe("roster-master.service.ts generateRoster — attendance/payroll lock gu
     execute.mockImplementation(async (sql: string) => {
       const text = String(sql);
       if (text.includes("SELECT * FROM roster_template")) return [[TEMPLATE_ROW], []];
-      if (text.includes("SELECT id FROM roster_assignment")) return [[], []];
+      if (text.includes("SELECT id FROM wfm_roster_assignment")) return [[], []];
       if (text.includes("SELECT is_locked FROM attendance_daily_record")) return [[], []]; // no row
-      if (text.includes("INSERT INTO roster_assignment")) { insertCalled = true; return [{ affectedRows: 1 }, []]; }
+      if (text.includes("INSERT INTO wfm_roster_assignment")) { insertCalled = true; return [{ affectedRows: 1 }, []]; }
       return [[], []];
     });
 

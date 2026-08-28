@@ -368,7 +368,7 @@ class RosterMasterService {
 
           // Check if assignment already exists
           const [existing] = await db.execute<RowDataPacket[]>(
-            `SELECT id FROM roster_assignment
+            `SELECT id FROM wfm_roster_assignment
              WHERE employee_id = ? AND roster_date = ?`,
             [employee_id, dateStr]
           );
@@ -381,15 +381,16 @@ class RosterMasterService {
           // Round 2 governance-matrix finding (2026-08-13): this engine had
           // no attendance/payroll-lock check at all — the same shared
           // roster-lock-guard.ts function the other three write engines use.
-          // This table (roster_assignment) is disconnected from the live
-          // attendance/payroll pipeline today (nothing downstream reads it
-          // for pay), so the blast radius is lower than the other engines'
-          // equivalent gap, but "no roster engine should mutate a locked
-          // date through an alternative path" doesn't carve out an
-          // exception for a lower-traffic one — and this is cheap to add:
-          // unlike minimum-rest (which needs shift start/end times this
-          // table never stores), the lock check only needs employee_id +
-          // date, both already in hand here.
+          //
+          // The note that used to sit here called this table "disconnected
+          // from the live attendance/payroll pipeline today (nothing
+          // downstream reads it for pay)" and reasoned the blast radius was
+          // therefore lower. That was true of `roster_assignment` and is the
+          // reason it sat at 0 rows: this engine was the only writer, and it
+          // wrote somewhere nothing else looked. As of 2026-08-28 the engine
+          // writes to `wfm_roster_assignment`, the single roster source, so
+          // the lock check below is now guarding the same table payroll and
+          // compliance actually read — not a lower-traffic sidecar.
           const lockResult = await checkEmployeeDateNotLocked(db, employee_id, dateStr);
           if (lockResult.blocked) {
             errors.push(`Employee ${employee_id} on ${dateStr}: ${lockResult.error}`);
@@ -399,12 +400,32 @@ class RosterMasterService {
 
           // Create assignment
           const assignmentId = randomUUID();
+          /*
+           * assignment_type is set explicitly, not left to default NULL. Two reasons, and the
+           * second is the one that bites:
+           *   - it is how every other consumer names the day (the import writes SHIFT /
+           *     WEEK_OFF / LEAVE / ABSENT / TRAINING), so a row without it reads as untyped;
+           *   - a row with assignment_type, import_batch_id, cycle_id and shift_template_id all
+           *     NULL matches the synthetic-cohort predicate the analytics and compliance
+           *     engines use to exclude the 412,032 seeded rows. Writing an untyped, cycle-less,
+           *     template-less row here would make genuine UI-created rosters invisible to both.
+           *
+           * employee_ack_status replaces the old acknowledgement_status column and already
+           * defaults to 'pending', so it is left to the default rather than restated.
+           */
           await db.execute(
-            `INSERT INTO roster_assignment
+            `INSERT INTO wfm_roster_assignment
              (id, employee_id, roster_date, shift_template_id, is_week_off,
-              acknowledgement_status, created_at)
-             VALUES (?, ?, ?, ?, ?, 'pending', NOW())`,
-            [assignmentId, employee_id, dateStr, shift_template_id, is_week_off ? 1 : 0]
+              assignment_type, decision_source, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'manual', NOW())`,
+            [
+              assignmentId,
+              employee_id,
+              dateStr,
+              shift_template_id,
+              is_week_off ? 1 : 0,
+              is_week_off ? 'WEEK_OFF' : 'SHIFT',
+            ]
           );
 
           created++;
@@ -439,9 +460,11 @@ class RosterMasterService {
       `SELECT
          SUM(CASE WHEN is_week_off = 0 THEN 1 ELSE 0 END) AS on_duty,
          SUM(CASE WHEN is_week_off = 1 THEN 1 ELSE 0 END) AS week_off
-       FROM roster_assignment ra
+       FROM wfm_roster_assignment ra
        JOIN employees e ON ra.employee_id = e.id
-       WHERE e.process_id = ? AND ra.roster_date = ?`,
+       WHERE e.process_id = ? AND ra.roster_date = ?
+         AND NOT (ra.import_batch_id IS NULL AND ra.cycle_id IS NULL
+                  AND ra.assignment_type IS NULL AND ra.shift_template_id IS NULL)`,
       [process_id, date]
     );
 
