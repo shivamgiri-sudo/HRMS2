@@ -359,7 +359,7 @@ export default function RosterComplianceMonitor() {
     queryFn: () => hrmsApi.get<{ data: Array<{ id: string; branch_name: string }> }>("/api/org/branches"),
   });
 
-  const { data: summaryData, isLoading: summaryLoading } = useQuery({
+  const { data: summaryData, isLoading: summaryLoading, isError: summaryError } = useQuery({
     queryKey: ["compliance", "summary", branchFilter],
     queryFn: () => {
       const params = new URLSearchParams();
@@ -446,6 +446,32 @@ export default function RosterComplianceMonitor() {
             </div>
           </div>
         </div>
+
+        {/*
+          Without this the page is actively misleading rather than merely empty. When the
+          summary request fails, `summary` falls back to a default whose every rule reads
+          score 100 / 0 violations — so a failure renders as "100% compliant, nothing to
+          fix", which is the opposite of the truth: nothing was checked at all. That breaks
+          CLAUDE.md's rule that UI must not hide missing backend functionality, and on a
+          compliance screen a false all-clear is the most expensive possible failure mode.
+        */}
+        {summaryError && (
+          <div className="mb-6 rounded-xl border border-red-300 bg-red-50 p-4">
+            <p className="font-semibold text-red-900">Compliance data could not be loaded</p>
+            <p className="mt-1 text-sm text-red-800">
+              The scores and violation counts below are placeholders, not a clean bill of health —
+              no roster rules were evaluated. Retry, and report it if it persists.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetch()}
+              className="mt-3 border-red-300 bg-white text-red-800 hover:bg-red-100"
+            >
+              Retry
+            </Button>
+          </div>
+        )}
 
         {/* KPI Row */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">

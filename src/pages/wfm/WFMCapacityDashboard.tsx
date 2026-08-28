@@ -450,7 +450,7 @@ export default function WFMCapacityDashboard() {
     },
   });
 
-  const { data: demandData } = useQuery({
+  const { data: demandData, isError: demandError } = useQuery({
     queryKey: ["capacity", "demand", branchFilter],
     queryFn: () => {
       const params = new URLSearchParams();
@@ -631,9 +631,21 @@ export default function WFMCapacityDashboard() {
                     </div>
                   </div>
                   <Badge className="text-lg px-4 py-1 bg-violet-100 text-violet-700">
-                    {demand.total} total
+                    {demandError ? "unavailable" : `${demand.total} total`}
                   </Badge>
                 </div>
+                {/*
+                  Scoped to this block on purpose: the rest of the page comes from
+                  /capacity-summary, which works. Only /workforce-mandate/hiring-demand is
+                  unserved, and `demand` falls back to all-zeros — so this section alone would
+                  otherwise claim there are no positions to fill.
+                */}
+                {demandError && (
+                  <p className="mt-3 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    Hiring demand could not be loaded — the priority counts below are placeholders,
+                    not zero open positions. Everything above this panel is live data.
+                  </p>
+                )}
               </div>
               <div className="p-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-3 rounded-xl bg-red-50 text-center">

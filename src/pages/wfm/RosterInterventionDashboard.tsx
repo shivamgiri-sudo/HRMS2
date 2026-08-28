@@ -317,7 +317,7 @@ export default function RosterInterventionDashboard() {
 
   const queryClient = useQueryClient();
 
-  const { data: summaryData } = useQuery({
+  const { data: summaryData, isError: summaryError } = useQuery({
     queryKey: ["interventions", "summary"],
     queryFn: () => hrmsApi.get<InterventionSummary>("/api/analytics/interventions/summary"),
   });
@@ -390,6 +390,22 @@ export default function RosterInterventionDashboard() {
             </Button>
           </div>
         </div>
+
+        {/*
+          `summary` falls back to an all-zero default, so a failed request renders as
+          "0 critical, 0 pending, 0% action rate" — indistinguishable from a genuinely quiet
+          week. On a retention screen that reads as "no one is at risk", which is exactly the
+          wrong conclusion to draw from an endpoint that never answered.
+        */}
+        {summaryError && (
+          <div className="mb-6 rounded-xl border border-red-300 bg-red-50 p-4">
+            <p className="font-semibold text-red-900">Intervention summary could not be loaded</p>
+            <p className="mt-1 text-sm text-red-800">
+              The counts below are placeholders, not a quiet week — no at-risk employees were
+              evaluated. Use Refresh above, and report it if it persists.
+            </p>
+          </div>
+        )}
 
         {/* KPI Tiles */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-6">
