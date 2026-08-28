@@ -38,6 +38,17 @@ import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import { asArray, asNumber, asRecord, metricDetail, metricUnavailableReason, metricValue } from "../reference-dashboard-model";
 import { deriveAtsStageSnapshot } from "../dashboard-data-contracts";
 import { ReferenceWorkInbox } from "./ReferenceOperationalPanels";
+/*
+ * Both panels were on this layout until 81075104 ("remove all dummy data") rewrote the HR
+ * dashboard bespoke and dropped every shared panel with it. They were collateral, not the
+ * target: each reads `data.metrics` through metricDetail/metricUnavailableReason and renders an
+ * explicit "unavailable" reason rather than a zero, so neither was ever a source of synthetic
+ * values. They stayed mounted on the CEO and Super Admin layouts throughout.
+ *
+ * HR is the role that acts on both — 1,043 of 1,117 onboarding requirements hold no document —
+ * so the two dashboards that can only watch had them while the one that can fix them did not.
+ */
+import { DocumentCompliancePanel, TrainingProgressPanel } from "./ReferenceSharedPanels";
 import {
   AnimNum,
   Sparkline,
@@ -723,6 +734,12 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
             )}
           </GlassPanel>
         </div>
+      </div>
+
+      {/* Document compliance and training — both real-data panels, see the import note above */}
+      <div className="mb-4 grid gap-4 lg:grid-cols-2">
+        <DocumentCompliancePanel data={data} />
+        <TrainingProgressPanel data={data} />
       </div>
 
       {/* Work Inbox - Full Width */}

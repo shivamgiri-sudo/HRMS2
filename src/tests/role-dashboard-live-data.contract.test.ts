@@ -157,24 +157,40 @@ describe("role dashboard live-data contracts", () => {
     expect(result.joined_today).toBe(2);
   });
 
-  it("builds the full recruitment funnel without treating shortlisted as offered", () => {
+  it("builds the recruitment stage snapshot without treating shortlisted as offered", () => {
+    /*
+     * Rewritten for 9080b511, which replaced the old 13-label funnel with five DISJOINT
+     * current-stage buckets. The old shape was not simplified for tidiness: it looked up exact
+     * keys ("hr_round", "skill_test", lowercase "offered") that do not exist verbatim in
+     * by_stage, whose keys are the ATS's literal current_stage values with genuinely
+     * inconsistent casing. Nine of its twelve bars therefore always evaluated to 0 while the
+     * ATS held 38,191 candidates and 1,272 at Offered. Matching is now case-insensitive
+     * substring against real observed stage names.
+     *
+     * Keys below are real current_stage values, not invented ones, so this exercises the
+     * matching rather than asserting against a vocabulary the data never uses.
+     */
     const funnel = buildRecruitmentFunnel({
       total_candidates: 20,
       by_stage: {
+        "Round1-HRScreening": 5,
+        "Interview-SkillTest": 3,
         shortlisted: 8,
-        offered: 2,
-        joined: 1,
+        Offered: 2,
+        converted: 1,
       },
     });
 
     expect(funnel.map((stage) => stage.label)).toEqual([
-      "Applied", "Screened", "HR Round", "Skill Test", "Operations Round",
-      "Client Round", "Selected", "Offered", "Offer Accepted", "Joined",
-      "Rejected", "Dropped", "No-show",
+      "Applications", "Screened", "Interviewed", "Offered", "Joined",
     ]);
-    expect(funnel.find((stage) => stage.label === "Screened")?.value).toBe(8);
+    expect(funnel.find((stage) => stage.label === "Screened")?.value).toBe(5);
+    expect(funnel.find((stage) => stage.label === "Interviewed")?.value).toBe(3);
+    expect(funnel.find((stage) => stage.label === "Joined")?.value).toBe(1);
+
+    // The original point of this test, and still the one that matters: `shortlisted` is not an
+    // offer. Offered must count only the real Offered bucket (2), never absorb the 8 shortlisted.
     expect(funnel.find((stage) => stage.label === "Offered")?.value).toBe(2);
-    expect(funnel.filter((stage) => stage.value === 0)).not.toHaveLength(0);
   });
 
   it("routes dedicated operational dashboards through the reference data pipeline", () => {
@@ -308,7 +324,17 @@ describe("role dashboard live-data contracts", () => {
 
     expect(hr).not.toContain("data.ats.total)");
     expect(hr).not.toContain("HR Operations AI Briefing");
-    expect(hr).toContain("Automated HR Operations Summary");
+    /*
+     * The positive assertion that used to sit here pinned a panel titled "Automated HR
+     * Operations Summary". 81075104 ("remove all dummy data") rewrote this dashboard around
+     * real workforce metrics and removed that block outright, so the assertion was holding the
+     * test to a panel the product had deliberately dropped.
+     *
+     * The two negatives above are the part that carries the anti-regression value and both
+     * still hold: the selected-candidate count must not fall back to the total ATS record
+     * count, and a static roll-up must not be dressed up as an AI briefing. Verified 0
+     * occurrences of each at the time of this change.
+     */
   });
 
   it("does not label processed attendance as CEO login adherence or static summaries as AI", () => {
