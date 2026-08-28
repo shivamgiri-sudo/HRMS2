@@ -23,15 +23,14 @@
 // computing tab visibility until `isResolved` is true.
 //
 // If zero tabs are visible once resolved, this renders the same "Access not available"
-// panel WorkforcePageGate renders elsewhere in the app (including its Request Access
-// button), copied field-for-field rather than reinvented, so the denied experience is
-// identical everywhere. WorkforcePageGate's RequestAccessButton isn't exported (it's a
-// module-private helper), so it's duplicated here rather than editing that already-
-// merged file for an export this is the only other caller of. The four page codes this
-// console covers don't collapse to one `page_code` value the request-access API can
-// take (POST /api/access/access-requests requires exactly one), so the button here
-// requests WFM_ATTENDANCE_EXCEPTIONS — the first tab in the target-design table — as
-// the representative code; see task-5-report.md for the reasoning.
+// panel WorkforcePageGate renders elsewhere in the app, reusing its actual
+// RequestAccessButton (now exported from that file — a review of this task flagged the
+// original duplicate copy as a maintenance risk) so the two surfaces cannot drift apart.
+// The four page codes this console covers don't collapse to one `page_code` value the
+// request-access API can take (POST /api/access/access-requests requires exactly one),
+// so the button here requests WFM_ATTENDANCE_EXCEPTIONS — the first tab in the
+// target-design table — as the representative code; see task-5-report.md for the
+// reasoning behind that choice.
 //
 // --- URL sync -------------------------------------------------------------------------
 // Active tab lives at `?tab=<key>`. Switching tabs rewrites only the `tab` key via the
@@ -48,22 +47,13 @@
 // opening the console fetches one panel's chunk and dataset, not all four — switching
 // tabs is what triggers the next chunk.
 
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { ShieldAlert, SendHorizonal, RefreshCw } from "lucide-react";
+import { ShieldAlert, RefreshCw } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { RequestAccessButton } from "@/components/security/WorkforcePageGate";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
-import { hrmsApi } from "@/lib/hrmsApi";
-import { toast } from "sonner";
 
 const ExceptionsPanel = lazy(() => import("@/pages/wfm/attendance-integrity/ExceptionsPanel"));
 const MismatchesPanel = lazy(() => import("@/pages/wfm/attendance-integrity/MismatchesPanel"));
@@ -96,86 +86,6 @@ function TabFallback() {
       <RefreshCw className="h-5 w-5 animate-spin" />
       <span className="text-sm font-medium">Loading…</span>
     </div>
-  );
-}
-
-/**
- * Duplicated from WorkforcePageGate's module-private RequestAccessButton, field for
- * field, so the "Access not available" experience is identical everywhere it appears.
- * WorkforcePageGate does not export this helper (it's the only caller today), so this
- * is a copy rather than an import — see the header comment for why editing that file
- * for a second caller wasn't done here.
- */
-function RequestAccessButton({ pageCode }: { pageCode: string }) {
-  const [open, setOpen] = useState(false);
-  const [reason, setReason] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-
-  async function handleSubmit() {
-    if (!reason.trim()) {
-      toast.error("Please enter a reason for your request.");
-      return;
-    }
-    setLoading(true);
-    try {
-      await hrmsApi.post("/api/access/access-requests", { page_code: pageCode, reason });
-      setSubmitted(true);
-      toast.success("Access request submitted. An admin will review it shortly.");
-      setOpen(false);
-    } catch {
-      toast.error("Failed to submit access request. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  if (submitted) {
-    return (
-      <p className="mt-4 text-xs font-semibold text-rose-600">
-        Your access request has been submitted for review.
-      </p>
-    );
-  }
-
-  return (
-    <>
-      <Button
-        variant="outline"
-        size="sm"
-        className="mt-4 border-rose-300 text-rose-700 hover:bg-rose-50"
-        onClick={() => setOpen(true)}
-      >
-        <SendHorizonal className="mr-2 h-4 w-4" />
-        Request Access
-      </Button>
-
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Request Page Access</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Explain why you need access to this page. Your request will be reviewed by an administrator.
-          </p>
-          <Textarea
-            placeholder="e.g. I need to view this section to complete my daily reporting tasks…"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            rows={4}
-            className="mt-2"
-          />
-          <DialogFooter className="mt-4">
-            <Button variant="ghost" onClick={() => setOpen(false)} disabled={loading}>
-              Cancel
-            </Button>
-            <Button onClick={handleSubmit} disabled={loading || !reason.trim()}>
-              {loading ? "Submitting…" : "Submit Request"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </>
   );
 }
 

@@ -15,7 +15,10 @@ type WorkforcePageGateProps = {
   children: ReactNode;
 };
 
-function RequestAccessButton({ pageCode }: { pageCode: string }) {
+// Exported so other gated surfaces that render their own denied state (e.g. a
+// multi-page-code console that can't use WorkforcePageGate's single-pageCode gate
+// directly) reuse this exact button/dialog instead of maintaining a second copy.
+export function RequestAccessButton({ pageCode }: { pageCode: string }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [loading, setLoading] = useState(false);
