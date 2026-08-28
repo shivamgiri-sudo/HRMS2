@@ -386,9 +386,8 @@ export default function PayrollValidationScreen() {
       const data = await hrmsApi.get<any>(
         `/api/payroll/runs/${runId}/lines`,
       );
-      const list: PayrollLine[] = Array.isArray(data)
-        ? data
-        : data?.lines ?? data?.data ?? [];
+      const raw = Array.isArray(data) ? data : (data?.lines ?? data?.data?.lines ?? (Array.isArray(data?.data) ? data?.data : null) ?? []);
+      const list: PayrollLine[] = Array.isArray(raw) ? raw : [];
       setLines(list);
     } catch (err: any) {
       toast.error(err?.message ?? "Failed to load payroll lines");

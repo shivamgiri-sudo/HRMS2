@@ -133,8 +133,9 @@ export default function PayrollOvertimeManagement() {
     queryKey: ["payroll-lines", selectedRun],
     queryFn: async () => {
       if (!selectedRun) return [];
-      const response = await hrmsApi.get<{ data: PayrollLine[] }>(`/api/payroll/runs/${selectedRun}/lines`);
-      return response.data;
+      const response = await hrmsApi.get<{ data: { lines: PayrollLine[] } | PayrollLine[] }>(`/api/payroll/runs/${selectedRun}/lines`);
+      const raw = response.data;
+      return Array.isArray(raw) ? raw : (raw?.lines ?? []);
     },
     enabled: !!selectedRun,
   });
