@@ -105,14 +105,26 @@ const KNOWN_GAPS: Record<string, string> = {
   // every session. Retiring an entry once the route lands is what that assertion is
   // for — a KNOWN_GAPS list that outlives its gaps stops being a record of what is
   // missing and becomes a blocker.
-  "GET /api/analytics/interventions/summary":
-    "REACHABLE but backend not built. RosterInterventionDashboard.tsx is mounted at /wfm/roster-interventions. Needs analytics/intervention-recommendation.service.ts + routes. Added 2026-08-23.",
-  "GET /api/analytics/interventions/pending":
-    "REACHABLE but backend not built. RosterInterventionDashboard.tsx is mounted at /wfm/roster-interventions. Needs analytics interventions routes (GET pending, POST action). Added 2026-08-23.",
-  "POST /api/analytics/interventions/:p/action":
-    "REACHABLE but backend not built. RosterInterventionDashboard.tsx is mounted at /wfm/roster-interventions. Parameterised action endpoint; needs intervention-recommendation service. Added 2026-08-23.",
-  "GET /api/workforce-mandate/hiring-demand":
-    "REACHABLE but backend not built. WFMCapacityDashboard.tsx is mounted at /wfm/capacity-dashboard. Needs hiring-demand endpoint in workforce-mandate routes (BPO HC formula output). Added 2026-08-23.",
+  // Retired 2026-08-28, all four for the same reason: the backend was never the thing that
+  // was missing, so "not built" described the wrong side of the gap.
+  //
+  //   GET  /api/analytics/interventions/summary
+  //   GET  /api/analytics/interventions/pending
+  //   POST /api/analytics/interventions/:p/action
+  //     The router has always been mounted at /api/analytics/intervention-recommendations,
+  //     serving /outcomes, /pending and PATCH /:id. RosterInterventionDashboard now calls
+  //     those paths. employee_retention_recommendation still holds 0 rows, so the page shows
+  //     zeros — a data gap, not a routing one, and not something this list should track.
+  //
+  //   GET /api/workforce-mandate/hiring-demand
+  //     /capacity-summary already returns the hiringDemand total AND a per-process
+  //     hiringByProcess breakdown with its own priority. It was a duplicated endpoint, not an
+  //     unbuilt one; WFMCapacityDashboard now derives the panel from the response it already
+  //     fetches, making one request fewer rather than one more.
+  //
+  // This is exactly what the "every known gap is still a real gap" assertion above exists to
+  // force — it failed this push and sent me here, rather than letting four stale entries sit
+  // in a list that is supposed to record what is actually missing.
 
 };
 
