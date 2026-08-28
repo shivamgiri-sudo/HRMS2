@@ -24,9 +24,13 @@ describe("getWorkforceDashboard pending_leave_approvals stays scoped", () => {
   function extractLeaveApprovalsQuery(): string {
     const start = source.indexOf("pending_leave_approvals");
     expect(start, "pending_leave_approvals query not found in management.service.ts").toBeGreaterThan(-1);
-    // The subquery is short; a generous window is enough to capture its own FROM/WHERE
-    // without pulling in the unrelated performance_alert subquery that follows it.
-    return source.slice(Math.max(0, start - 260), start + 40);
+    // Anchored on the subquery's own opening rather than a fixed character lookback.
+    // A 260-char window was enough when the WHERE had two predicates; the 25-Aug cutoff
+    // clause pushed the JOIN out of range and the test failed on a query that was still
+    // correct. Anchoring cannot drift as predicates are added.
+    const open = source.lastIndexOf("(SELECT COUNT(*) FROM leave_request lr", start);
+    expect(open, "leave_request subquery opening not found").toBeGreaterThan(-1);
+    return source.slice(open, start + 40);
   }
 
   it("joins to employees and requires active_status = 1", () => {

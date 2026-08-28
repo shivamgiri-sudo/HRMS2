@@ -95,7 +95,9 @@ describe("BGV drilldown matches the tile's pending bucket exactly", () => {
     // 280 check rows against 109 real people), so the outstanding-status list lives in
     // the named OUTSTANDING constant rather than inline in a `... AS pending` SUM CASE.
     // The list itself is what has to stay in step with the drilldown.
-    const pendingMatch = metricSlice.match(/const OUTSTANDING = `\(bgv\.status IS NULL OR bgv\.status IN \(([^)]+)\)\)`/);
+    // The list lives in OUTSTANDING_STATUS; OUTSTANDING is that AND the 25-Aug cutoff.
+    // The drilldown has to match the STATUS half — it applies the cutoff separately.
+    const pendingMatch = metricSlice.match(/const OUTSTANDING_STATUS = `\(bgv\.status IS NULL OR bgv\.status IN \(([^)]+)\)\)`/);
     expect(pendingMatch, "could not find getBgvMetrics' outstanding bucket definition").not.toBeNull();
     expect(pendingMatch![1]).toBe("'pending','not_started','queued','manual_review','in_progress'");
 

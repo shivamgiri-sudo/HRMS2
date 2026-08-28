@@ -7,6 +7,7 @@ import {
   drillQualityBaseline, drillAttrition, drillShrinkage, drillRevenue,
 } from "./performance-scorecard-drilldown.js";
 import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
+import { raisedOnOrAfterCutoffSql } from "./pendency-cutoff.js";
 
 export interface DrilldownResult {
   metricCode: string;
@@ -234,7 +235,8 @@ async function drillOnboarding(
       ? ` AND ${GENUINE_CANDIDATE_SQL}
           AND NOT (${DEAD_CANDIDATE_SQL})
           AND b.employee_id IS NULL
-          AND b.converted_at IS NULL`
+          AND b.converted_at IS NULL
+          AND ${raisedOnOrAfterCutoffSql("b.created_at")}`
       : "";
 
     const [rows] = await db.execute<RowDataPacket[]>(
@@ -530,6 +532,7 @@ async function drillBgv(scope: DashboardScope): Promise<DrilldownResult> {
          FROM candidate_bgv_check bgv
          ${candidateScopeJoin("bgv.candidate_id")}
         WHERE COALESCE(bgv.status,'pending') IN ('pending','not_started','queued','manual_review','in_progress')
+          AND ${raisedOnOrAfterCutoffSql("bgv.created_at")}
           AND ${GENUINE_CANDIDATE_SQL}
           AND NOT (${DEAD_CANDIDATE_SQL})
           AND ${scopeSql}
@@ -986,6 +989,7 @@ async function drillLeaveApprovals(scope: DashboardScope): Promise<DrilldownResu
         -- the tile it opens from.
         WHERE lr.status = 'pending'
           AND lr.legacy_leave_id IS NULL
+          AND ${raisedOnOrAfterCutoffSql("COALESCE(lr.applied_at, lr.created_at)")}
           AND ${scopeSql}
         ORDER BY lr.from_date ASC
         LIMIT 100`,

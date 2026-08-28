@@ -17,6 +17,7 @@ import {
   presentSql,
   statusList,
 } from "../../shared/attendanceStatus.js";
+import { PENDENCY_CUTOFF_DATE } from "../dashboards/pendency-cutoff.js";
 import type { Request } from "express";
 
 function numberValue(value: unknown): number {
@@ -746,7 +747,8 @@ export const managementService = {
            (SELECT COUNT(*) FROM leave_request lr
               JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
              WHERE LOWER(lr.status) = 'pending'
-               AND lr.legacy_leave_id IS NULL${empScopeJoinWhere}) AS pending_leave_approvals,
+               AND lr.legacy_leave_id IS NULL
+               AND COALESCE(lr.applied_at, lr.created_at) >= '${PENDENCY_CUTOFF_DATE}'${empScopeJoinWhere}) AS pending_leave_approvals,
            (SELECT COUNT(*) FROM leave_request lr
               JOIN employees e ON e.id = lr.employee_id AND e.active_status = 1
              WHERE LOWER(lr.status) = 'pending'

@@ -49,9 +49,11 @@ const ORG_SCOPE = {
 
 describe("leave approvals exclude the db_bill backlog", () => {
   it("counts only natively-filed requests as pending, in both serving layers", () => {
-    // getLeaveApprovalMetrics
+    // getLeaveApprovalMetrics. Matched across lines rather than as one literal: the
+    // pending bucket also carries the 25-Aug cutoff clause now, so pinning the exact
+    // line would break on every future predicate added to the same bucket.
     expect(metricSource).toMatch(
-      /lr\.status = 'pending' AND lr\.legacy_leave_id IS NULL THEN 1 ELSE 0 END\) AS pending/,
+      /lr\.status = 'pending' AND lr\.legacy_leave_id IS NULL[\s\S]{0,160}?AS pending,/,
     );
     // management.service.ts's workforce-dashboard tile reads the same thing under a
     // different name; the two disagreeing is what this whole audit started from.
@@ -189,3 +191,68 @@ describe("the db_bill status mappers no longer manufacture the wrong state", () 
     expect(body).toContain("not approve");
   });
 });
+
+describe("pendency cutoff — only work raised on or after 25-Aug-2026 counts", () => {
+  const cutoffSource = readFileSync(resolve(__dirname, "../pendency-cutoff.ts"), "utf-8");
+
+  it("keeps the date in exactly one place", () => {
+    expect(cutoffSource).toContain('export const PENDENCY_CUTOFF_DATE = "2026-08-25"');
+    // Nothing may hard-code the literal anywhere else — that is how one of two cutoffs
+    // gets moved and the tiles start disagreeing with each other.
+    expect(metricSource).not.toContain("2026-08-25");
+    expect(drilldownSource).not.toContain("2026-08-25");
+    expect(managementSource).not.toContain("2026-08-25");
+  });
+
+  it("applies to every pendency metric that has a raised-at date", () => {
+    for (const marker of [
+      "export async function getBgvMetrics",
+      "export async function getOnboardingMetrics",
+      "export async function getLeaveApprovalMetrics",
+      "export async function getAppointmentEsignMetrics",
+      "export async function getJoiningDocEsignMetrics",
+    ]) {
+      const start = metricSource.indexOf(marker);
+      expect(start, `${marker} not found`).toBeGreaterThan(-1);
+      const body = metricSource.slice(start, start + 7000);
+      expect(body, `${marker} does not apply the cutoff`).toContain("raisedOnOrAfterCutoffSql");
+      expect(body, `${marker} does not report what it held back`).toContain("BeforeCutoff");
+    }
+  });
+
+  it("filters leave on when it was FILED, not when the leave falls", () => {
+    // A request filed on 26-Aug for July leave is still someone's decision. Filtering on
+    // from_date would silently discard it — and from_date is the column a reader reaches
+    // for first, so this is worth pinning.
+    const start = metricSource.indexOf("export async function getLeaveApprovalMetrics");
+    const body = metricSource.slice(start, start + 4000);
+    expect(body).toContain('const LEAVE_RAISED_AT = "COALESCE(lr.applied_at, lr.created_at)"');
+    expect(body).toContain("raisedOnOrAfterCutoffSql(LEAVE_RAISED_AT)");
+  });
+
+  it("carries the cutoff date on the result, not in the numeric detail map", () => {
+    // detail is Record<string, number | null>; a date in there is a type error waiting
+    // for the next contributor. MetricResult.cutoffDate exists for this, next to asOf.
+    expect(metricSource).toContain("cutoffDate?: string | null;");
+    expect(metricSource).toContain("cutoffDate: cutoffDate ?? null,");
+  });
+
+  it("keeps the drilldowns on the same cutoff as their tiles", () => {
+    for (const fn of ["async function drillBgv", "async function drillOnboarding", "async function drillLeaveApprovals"]) {
+      const start = drilldownSource.indexOf(fn);
+      expect(start, `${fn} not found`).toBeGreaterThan(-1);
+      const body = drilldownSource.slice(start, start + 3000);
+      expect(body, `${fn} does not apply the cutoff`).toContain("raisedOnOrAfterCutoffSql");
+    }
+  });
+
+  it("does NOT apply to attendance exceptions, which already roll a 30-day window", () => {
+    // A fixed cutoff on top of a rolling window is two competing definitions of "recent",
+    // and this queue gates payroll — a payable-days mismatch stops a run.
+    const start = metricSource.indexOf("export async function getAttendanceExceptionMetrics");
+    const body = metricSource.slice(start, start + 3000);
+    expect(body).toContain("INTERVAL 30 DAY");
+    expect(body).not.toContain("raisedOnOrAfterCutoffSql");
+  });
+});
+

@@ -20,6 +20,7 @@ import {
 } from "../../shared/attendanceStatus.js";
 import { IST_DATE_EXPR } from "../../utils/dateUtils.js";
 import { excludeEmployeeShapedCandidatesSql } from "../ats/ats-reporting-scope.js";
+import { PENDENCY_CUTOFF_DATE, raisedOnOrAfterCutoffSql } from "./pendency-cutoff.js";
 
 // ─── Candidate-keyed pendency: what does NOT count as outstanding ─────────────
 /**
@@ -85,6 +86,13 @@ export interface MetricResult {
    * numbers.
    */
   asOf?: string | null;
+  /**
+   * The date from which this metric counts an item as live pendency, when it applies one.
+   * Same reason as `asOf`: `detail` is typed to numbers and cannot carry a date, and a
+   * tile that silently drops everything older than a cutoff is worse than one that says
+   * so. Null on metrics with no cutoff. See pendency-cutoff.ts.
+   */
+  cutoffDate?: string | null;
 }
 
 /**
@@ -113,6 +121,7 @@ async function wrapEnriched(
   branchId?: string | null,
   processId?: string | null,
   sourceRowCount?: number | null,
+  cutoffDate?: string | null,
 ): Promise<MetricResult> {
   let enrichment: Partial<MetricEnrichment> = {
     previousValue: null, target: null, variance: null, variancePct: null,
@@ -147,6 +156,7 @@ async function wrapEnriched(
     errorCode: null,
     errorMessage: null,
     sourceRowCount: sourceRowCount ?? null,
+    cutoffDate: cutoffDate ?? null,
   };
 }
 
@@ -281,7 +291,15 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
                      AND NOT (${DEAD_CANDIDATE_SQL})
                      AND b.employee_id IS NULL
                      AND b.converted_at IS NULL
+                     AND ${raisedOnOrAfterCutoffSql("b.created_at")}
                THEN 1 ELSE 0 END) AS pending,
+           SUM(CASE WHEN b.status IN ('pending','initiated')
+                     AND ${GENUINE_CANDIDATE_SQL}
+                     AND NOT (${DEAD_CANDIDATE_SQL})
+                     AND b.employee_id IS NULL
+                     AND b.converted_at IS NULL
+                     AND NOT (${raisedOnOrAfterCutoffSql("b.created_at")})
+               THEN 1 ELSE 0 END) AS pendingBeforeCutoff,
            SUM(CASE WHEN b.status IN ('pending','initiated')
                      AND (b.employee_id IS NOT NULL OR b.converted_at IS NOT NULL)
                THEN 1 ELSE 0 END) AS pendingAlreadyJoined,
@@ -327,6 +345,7 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
     const pendingAlreadyJoined = Number(r?.pendingAlreadyJoined ?? 0);
     const pendingClosedCandidate = Number(r?.pendingClosedCandidate ?? 0);
     const pendingNonCandidate = Number(r?.pendingNonCandidate ?? 0);
+    const pendingBeforeCutoff = Number(r?.pendingBeforeCutoff ?? 0);
     const stuck = Number(r?.stuck ?? 0);
     const joined = Number(r?.joined ?? 0);
     const total = Number(r?.total ?? 0);
@@ -357,9 +376,13 @@ export async function getOnboardingMetrics(scope: DashboardScope): Promise<Metri
         pendingAlreadyJoined,
         pendingClosedCandidate,
         pendingNonCandidate,
+        // Actionable in every respect except age — raised before the cutoff. Reported so
+        // the drop from pendingRaw is fully explained by the payload.
+        pendingBeforeCutoff,
         staleNotActionable: pendingAlreadyJoined + pendingClosedCandidate + pendingNonCandidate,
       },
       status, true, targetScopeId(scope.branchIds), targetScopeId(scope.processIds), total,
+      PENDENCY_CUTOFF_DATE,
     );
   } catch (err) {
     return nullResult("ONBOARDING", err);
@@ -853,10 +876,16 @@ export async function getAppointmentEsignMetrics(scope: DashboardScope): Promise
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS total,
-         SUM(CASE WHEN alr.current_state IN ('candidate_esign_pending','company_sign_pending','override_requested')
+         SUM(CASE WHEN (alr.current_state IN ('candidate_esign_pending','company_sign_pending','override_requested')
                    OR alr.candidate_esign_status = 'pending'
-                   OR alr.company_sign_status = 'pending'
+                   OR alr.company_sign_status = 'pending')
+                   AND ${raisedOnOrAfterCutoffSql("alr.created_at")}
              THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN (alr.current_state IN ('candidate_esign_pending','company_sign_pending','override_requested')
+                   OR alr.candidate_esign_status = 'pending'
+                   OR alr.company_sign_status = 'pending')
+                   AND NOT (${raisedOnOrAfterCutoffSql("alr.created_at")})
+             THEN 1 ELSE 0 END) AS pendingBeforeCutoff,
          SUM(CASE WHEN alr.current_state = 'candidate_esign_pending' OR alr.candidate_esign_status = 'pending' THEN 1 ELSE 0 END) AS candidatePending,
          SUM(CASE WHEN alr.current_state = 'company_sign_pending' OR alr.company_sign_status = 'pending' THEN 1 ELSE 0 END) AS companyPending,
          SUM(CASE WHEN alr.current_state = 'override_requested' THEN 1 ELSE 0 END) AS overrideRequested,
@@ -882,11 +911,16 @@ export async function getAppointmentEsignMetrics(scope: DashboardScope): Promise
         companyPending: Number(r.companyPending ?? 0),
         overrideRequested,
         completed: Number(r.completed ?? 0),
+        pendingBeforeCutoff: Number(r.pendingBeforeCutoff ?? 0),
       },
       status,
       false,
       targetScopeId(scope.branchIds),
       targetScopeId(scope.processIds),
+      // sourceRowCount is not reported by this metric; null keeps the cutoff in its own
+      // positional slot rather than silently landing in the row-count one.
+      null,
+      PENDENCY_CUTOFF_DATE,
     );
   } catch (err) {
     return nullResult("APPOINTMENT_ESIGN", err);
@@ -925,7 +959,11 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
     // Scope routes via the candidate, as the other candidate-keyed metrics do.
     const { sql: scopeSql, params: scopeParams } = buildScopeWhere(scope, "bm.id", "pm.id");
 
-    const OUTSTANDING = `(bgv.status IS NULL OR bgv.status IN ('pending','not_started','queued','manual_review','in_progress'))`;
+    const OUTSTANDING_STATUS = `(bgv.status IS NULL OR bgv.status IN ('pending','not_started','queued','manual_review','in_progress'))`;
+    // A check still open but raised before the cutoff is history, not queue. Counted
+    // separately as `outstandingBeforeCutoff` so the tile can say what it set aside.
+    const OUTSTANDING = `(${OUTSTANDING_STATUS} AND ${raisedOnOrAfterCutoffSql("bgv.created_at")})`;
+    const OUTSTANDING_OLD = `(${OUTSTANDING_STATUS} AND NOT (${raisedOnOrAfterCutoffSql("bgv.created_at")}))`;
     const FLAGGED = `bgv.status IN ('flagged','failed','mismatch','discrepancy')`;
     const SETTLED = `bgv.status IN ('cleared','verified','passed','waived')`;
 
@@ -938,12 +976,14 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
          SUM(CASE WHEN c.breached = 0 AND c.flagged > 0 THEN 1 ELSE 0 END) AS flagged,
          SUM(CASE WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding > 0 THEN 1 ELSE 0 END) AS pending,
          SUM(CASE WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding = 0 THEN 1 ELSE 0 END) AS cleared,
+         SUM(CASE WHEN c.breached = 0 AND c.flagged = 0 AND c.outstanding = 0 AND c.outstandingOld > 0 THEN 1 ELSE 0 END) AS pendingBeforeCutoff,
          COALESCE(SUM(c.checks), 0) AS totalChecks,
          COALESCE(SUM(c.outstanding), 0) AS checksPending
        FROM (
          SELECT bgv.candidate_id,
                 COUNT(*) AS checks,
                 SUM(CASE WHEN ${OUTSTANDING} THEN 1 ELSE 0 END) AS outstanding,
+                SUM(CASE WHEN ${OUTSTANDING_OLD} THEN 1 ELSE 0 END) AS outstandingOld,
                 SUM(CASE WHEN ${FLAGGED} THEN 1 ELSE 0 END) AS flagged,
                 SUM(CASE WHEN bgv.status = 'breached' THEN 1 ELSE 0 END) AS breached,
                 SUM(CASE WHEN ${SETTLED} THEN 1 ELSE 0 END) AS settled
@@ -1000,6 +1040,9 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
         // to guess why the number moved.
         checksPending: Number(r.checksPending ?? 0),
         totalChecks: Number(r.totalChecks ?? 0),
+        // Candidates whose only outstanding checks predate the cutoff. They are still
+        // open; they are just not this queue. See pendency-cutoff.ts.
+        pendingBeforeCutoff: Number(r.pendingBeforeCutoff ?? 0),
         excludedNonCandidateRecords: x?.nonCandidateRecords == null ? null : Number(x.nonCandidateRecords),
         excludedClosedCandidates: x?.closedCandidates == null ? null : Number(x.closedCandidates),
       },
@@ -1008,6 +1051,7 @@ export async function getBgvMetrics(scope: DashboardScope): Promise<MetricResult
       targetScopeId(scope.branchIds),
       targetScopeId(scope.processIds),
       candidates,
+      PENDENCY_CUTOFF_DATE,
     );
   } catch (err) {
     return nullResult("BGV", err);
@@ -1064,7 +1108,10 @@ export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT
          COUNT(*) AS total,
-         SUM(CASE WHEN c.status IN ('pending_candidate_esign','esign_initiated') THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN c.status IN ('pending_candidate_esign','esign_initiated')
+                   AND ${raisedOnOrAfterCutoffSql("c.created_at")} THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN c.status IN ('pending_candidate_esign','esign_initiated')
+                   AND NOT (${raisedOnOrAfterCutoffSql("c.created_at")}) THEN 1 ELSE 0 END) AS pendingBeforeCutoff,
          SUM(CASE WHEN c.status IN ('esign_completed','completed','signed_verified') THEN 1 ELSE 0 END) AS completed,
          SUM(CASE WHEN c.status = 'esign_failed' THEN 1 ELSE 0 END) AS failed,
          SUM(CASE WHEN c.status IN ('pending_candidate_esign','esign_initiated') AND c.due_at < NOW() THEN 1 ELSE 0 END) AS overdue
@@ -1090,11 +1137,14 @@ export async function getJoiningDocEsignMetrics(scope: DashboardScope): Promise<
         completed: Number(r.completed ?? 0),
         failed,
         overdue,
+        pendingBeforeCutoff: Number(r.pendingBeforeCutoff ?? 0),
       },
       status,
       false,
       targetScopeId(scope.branchIds),
       targetScopeId(scope.processIds),
+      null,
+      PENDENCY_CUTOFF_DATE,
     );
   } catch (err) {
     return nullResult("JOINING_DOC_ESIGN", err);
@@ -1547,6 +1597,11 @@ export async function getLeaveApprovalMetrics(scope: DashboardScope): Promise<Me
   try {
     const { sql: scopeSql, params: scopeParams } = buildScopeWhereEmployees(scope, "e");
 
+    // When the request was FILED, not when the leave falls. A request filed on 26-Aug for
+    // leave taken in July is still somebody's decision to make; filtering on from_date
+    // would discard it. applied_at is NULL on some rows, hence the COALESCE.
+    const LEAVE_RAISED_AT = "COALESCE(lr.applied_at, lr.created_at)";
+
     const [rows] = await db.execute<RowDataPacket[]>(
       // `pending` is what a manager can still decide; `legacyBacklog` is what the
       // db_bill import left behind.
@@ -1570,7 +1625,10 @@ export async function getLeaveApprovalMetrics(scope: DashboardScope): Promise<Me
       // data repair is backend/scripts/repair-legacy-leave-status.mjs.
       `SELECT
          COUNT(*) AS source_rows,
-         SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL
+                   AND ${raisedOnOrAfterCutoffSql(LEAVE_RAISED_AT)} THEN 1 ELSE 0 END) AS pending,
+         SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL
+                   AND NOT (${raisedOnOrAfterCutoffSql(LEAVE_RAISED_AT)}) THEN 1 ELSE 0 END) AS pendingBeforeCutoff,
          SUM(CASE WHEN lr.status = 'pending' THEN 1 ELSE 0 END) AS pendingAllSources,
          SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NOT NULL THEN 1 ELSE 0 END) AS legacyBacklog,
          SUM(CASE WHEN lr.status = 'pending' AND lr.legacy_leave_id IS NULL AND lr.from_date < CURDATE() THEN 1 ELSE 0 END) AS pendingAlreadyStarted,
@@ -1608,12 +1666,14 @@ export async function getLeaveApprovalMetrics(scope: DashboardScope): Promise<Me
         // reconcilable against a plain status count.
         legacyBacklog: Number(r.legacyBacklog ?? 0),
         pendingAllSources: Number(r.pendingAllSources ?? 0),
+        pendingBeforeCutoff: Number(r.pendingBeforeCutoff ?? 0),
       },
       status,
       false,
       targetScopeId(scope.branchIds),
       targetScopeId(scope.processIds),
       Number(r.source_rows ?? 0),
+      PENDENCY_CUTOFF_DATE,
     );
   } catch (err) {
     return nullResult("LEAVE_APPROVALS", err);
