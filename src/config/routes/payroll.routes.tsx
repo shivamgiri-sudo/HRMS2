@@ -1,4 +1,4 @@
-import { Route, Navigate } from "react-router-dom";
+import { Route, Navigate, useLocation } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
@@ -93,6 +93,21 @@ function PayslipCenterRoute() {
   return <NativePayslipCenter />;
 }
 
+
+/**
+ * The old readiness URLs redirect to the merged page. A plain
+ * `<Navigate to="/payroll/readiness?scope=process">` discarded the incoming
+ * query string, which silently broke the WFM dashboard's Payroll Prep widget:
+ * it deep-links to `/payroll/process-readiness?open=<processId>` and the
+ * `open` param never survived the hop. Carry the caller's params across.
+ */
+function ReadinessScopeRedirect({ scope }: { scope: "branch" | "process" }) {
+  const { search } = useLocation();
+  const params = new URLSearchParams(search);
+  params.set("scope", scope);
+  return <Navigate to={`/payroll/readiness?${params.toString()}`} replace />;
+}
+
 export const payrollRouteElements = (
   <>
       <Route path="/payroll" element={<ProtectedRoute><Gate pageCode="PAYROLL"><Payroll /></Gate></ProtectedRoute>} />
@@ -176,8 +191,8 @@ export const payrollRouteElements = (
       <Route path="/payroll/noc"                 element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch','payroll','admin']}><Gate pageCode="PAYROLL_NOC"><NocManagement /></Gate></ProtectedRoute>} />
       {/* Payroll Readiness Dashboard — merged page with scope toggle for branch/process */}
       <Route path="/payroll/readiness" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','admin','hr','finance','payroll','process_manager','wfm']}><Gate pageCode="PAYROLL_BRANCH_READINESS"><PayrollReadinessDashboard /></Gate></ProtectedRoute>} />
-      <Route path="/payroll/branch-readiness"   element={<Navigate to="/payroll/readiness?scope=branch" replace />} />
-      <Route path="/payroll/process-readiness"  element={<Navigate to="/payroll/readiness?scope=process" replace />} />
+      <Route path="/payroll/branch-readiness"   element={<ReadinessScopeRedirect scope="branch" />} />
+      <Route path="/payroll/process-readiness"  element={<ReadinessScopeRedirect scope="process" />} />
       <Route path="/payroll/salary-verification" element={<ProtectedRoute roles={['super_admin','payroll_head','branch_head','payroll_branch','wfm','process_manager','admin']}><Gate pageCode="PAYROLL_SALARY_VERIFICATION"><ProcessSalaryVerify /></Gate></ProtectedRoute>} />
       <Route path="/payroll/calendar"            element={<ProtectedRoute roles={['super_admin','payroll_head','payroll_branch']}><Gate pageCode="PAYROLL_CALENDAR"><PayrollCalendar /></Gate></ProtectedRoute>} />
       <Route path="/payroll/cost-summary"        element={<Navigate to="/reports?view=library&report=payroll-cost-summary" replace />} />

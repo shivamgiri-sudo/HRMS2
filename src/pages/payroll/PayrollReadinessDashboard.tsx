@@ -1160,6 +1160,378 @@ function ProcessScopeHOView({ month, roleKeys }: { month: string; roleKeys: stri
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// BRANCH-SIDE OWN VIEW  (wfm / branch_head / payroll_branch / process_manager)
+//
+// The merged readiness page previously rendered "You do not have access to the
+// branch view" for every branch-side role, on BOTH tabs — so the wfm,
+// branch_head and process_manager users had no surface at all for the thing the
+// page exists to collect, even though the backend has shipped
+// POST /branch-readiness/:branchId/{checklist,signoff,request-freeze} (wfm
+// allowed on checklist + request-freeze, branch_head on signoff) since
+// migration 400. branch_head_signoff was 0 on every row of every month as a
+// direct result. This view is that missing surface.
+//
+// Maker/checker is the backend's, unchanged: WFM ticks the five manual items and
+// requests the freeze; branch_head signs the branch off; attendance_frozen and
+// the percentage items stay read-only because Payroll Head / the nightly
+// refresh own them.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+type OwnChecklistDef = {
+  key: keyof BranchReadiness;
+  label: string;
+  editable: boolean;
+  isPercent?: boolean;
+  hint?: string;
+};
+
+// The five `editable` keys are exactly ALLOWED_CHECKLIST_ITEMS in
+// payroll-branch-readiness.routes.ts — posting anything else 400s.
+const BRANCH_OWN_CHECKLIST: OwnChecklistDef[] = [
+  { key: "attendance_data_ready",      label: "Attendance Data Ready", editable: true,  hint: "Punches and exceptions resolved for the whole month" },
+  { key: "leave_finalized",            label: "Leaves Finalized",      editable: true,  hint: "Every leave request approved or rejected" },
+  { key: "regularization_complete",    label: "Regularizations Done",  editable: true,  hint: "No pending attendance regularizations" },
+  { key: "custom_deductions_uploaded", label: "Custom Deductions",     editable: true,  hint: "Advances, recoveries and one-off deductions uploaded" },
+  { key: "overtime_entered",           label: "Overtime Entered",      editable: true,  hint: "OT hours captured for the month" },
+  { key: "attendance_frozen",          label: "Attendance Frozen",     editable: false, hint: "Payroll Head freezes this after your request" },
+  { key: "incentives_status",          label: "Incentives Approved",   editable: false, hint: "Approved on the incentive module" },
+  { key: "bank_details_pct",           label: "Bank Details",          editable: false, isPercent: true },
+  { key: "uan_complete_pct",           label: "UAN",                   editable: false, isPercent: true },
+  { key: "noc_resolved",               label: "NOC Resolved",          editable: false },
+  { key: "holiday_work_approved",      label: "Holiday Work Approved", editable: false },
+];
+
+function ownChecklistDone(branch: BranchReadiness, def: OwnChecklistDef): boolean {
+  if (def.key === "incentives_status") return branch.incentives_status === "approved";
+  if (def.isPercent) return Number(branch[def.key] ?? 0) >= 100;
+  return Boolean(branch[def.key]);
+}
+
+function BranchScopeOwnView({ month, processOnly = false }: { month: string; processOnly?: boolean }) {
+  const { roleKeys, scopes } = useWorkforceAccess();
+  const qc = useQueryClient();
+  const [urlParams] = useSearchParams();
+  const openProcessId = urlParams.get("open");
+
+  const [branchId, setBranchId] = useState<string>("");
+  const [branchNames, setBranchNames] = useState<Record<string, string>>({});
+  const [signOffOpen, setSignOffOpen] = useState(false);
+  const [signOffRemarks, setSignOffRemarks] = useState("");
+  const [selectedProcess, setSelectedProcess] = useState<ProcessReadiness | null>(null);
+
+  // Branch options come from the user's own assignment scopes, so this can only
+  // ever address a branch the backend's requireScopedRole would allow anyway.
+  const branchOptions = useMemo(
+    () => Array.from(new Set(scopes.map((s) => s.branch_id).filter((b): b is string => !!b))),
+    [scopes]
+  );
+
+  useEffect(() => {
+    if (!branchId && branchOptions.length) setBranchId(branchOptions[0]);
+  }, [branchOptions, branchId]);
+
+  const canEditChecklist = roleKeys.some((r) => ["wfm", "branch_head", "payroll_branch"].includes(r));
+  const canSignOff = roleKeys.includes("branch_head");
+
+  const branchQuery = useQuery({
+    queryKey: ["branch-readiness", "own", branchId, month],
+    queryFn: () => apiFetch(`/api/payroll/branch-readiness/${branchId}?month=${month}`),
+    enabled: !!branchId,
+    staleTime: 30_000,
+  });
+
+  const processQuery = useQuery({
+    queryKey: ["branch-readiness", "own-processes", branchId, month],
+    queryFn: () => apiFetch(`/api/payroll/branch-readiness/${branchId}/processes?month=${month}`),
+    enabled: !!branchId,
+    staleTime: 30_000,
+  });
+
+  const branch: BranchReadiness | undefined = branchQuery.data?.data;
+  const branchName = branch?.branch_name;
+
+  useEffect(() => {
+    if (branchName && branchId) {
+      setBranchNames((prev) => (prev[branchId] === branchName ? prev : { ...prev, [branchId]: branchName }));
+    }
+  }, [branchName, branchId]);
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["branch-readiness"] });
+
+  const checklistMutation = useMutation({
+    mutationFn: ({ item, value }: { item: string; value: number }) =>
+      apiFetch(`/api/payroll/branch-readiness/${branchId}/checklist`, {
+        method: "POST",
+        body: JSON.stringify({ month, item, value }),
+      }),
+    onSuccess: () => { toast.success("Checklist updated"); invalidate(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const freezeMutation = useMutation({
+    mutationFn: () =>
+      apiFetch(`/api/payroll/branch-readiness/${branchId}/request-freeze`, {
+        method: "POST",
+        body: JSON.stringify({ month }),
+      }),
+    onSuccess: () => toast.success("Attendance freeze requested from Payroll Head"),
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const signOffMutation = useMutation({
+    mutationFn: () =>
+      apiFetch(`/api/payroll/branch-readiness/${branchId}/signoff`, {
+        method: "POST",
+        body: JSON.stringify({ month, remarks: signOffRemarks.trim() }),
+      }),
+    onSuccess: () => {
+      toast.success("Branch sign-off recorded");
+      invalidate();
+      setSignOffRemarks("");
+      setSignOffOpen(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const processes: ProcessReadiness[] = processQuery.data?.data ?? [];
+
+  // Deep link from the WFM dashboard's Payroll Prep widget:
+  // /payroll/process-readiness?open=<processId>. Opened once, then the user
+  // owns the drawer — re-opening on every render would trap them in it.
+  const [deepLinkHandled, setDeepLinkHandled] = useState(false);
+  useEffect(() => {
+    if (deepLinkHandled || !openProcessId || !processes.length) return;
+    const match = processes.find((p) => p.process_id === openProcessId);
+    setDeepLinkHandled(true);
+    if (match) setSelectedProcess({ ...match, branch_id: match.branch_id || branchId });
+  }, [deepLinkHandled, openProcessId, processes, branchId]);
+
+  if (!branchOptions.length) {
+    return (
+      <div className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-amber-200 bg-amber-50/50 py-14 text-center">
+        <AlertTriangle className="mb-3 h-9 w-9 text-amber-400" />
+        <p className="text-sm font-semibold text-amber-800">No branch is assigned to your account</p>
+        <p className="mt-1 max-w-md text-xs text-amber-700">
+          Payroll readiness is captured per branch, so your login needs a branch assignment scope before you can
+          update it. Ask HR or the admin team to add one, then reload this page.
+        </p>
+      </div>
+    );
+  }
+
+  const editableDefs = BRANCH_OWN_CHECKLIST.filter((d) => d.editable);
+  const allEditableDone = !!branch && editableDefs.every((d) => ownChecklistDone(branch, d));
+  const doneCount = branch ? BRANCH_OWN_CHECKLIST.filter((d) => ownChecklistDone(branch, d)).length : 0;
+  const locked = Boolean(branch?.branch_head_signoff);
+
+  const branchPicker = branchOptions.length > 1 ? (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {branchOptions.map((id, i) => (
+        <Button
+          key={id}
+          size="sm"
+          variant={id === branchId ? "default" : "outline"}
+          className="h-8 rounded-xl text-xs"
+          onClick={() => setBranchId(id)}
+        >
+          {branchNames[id] ?? `Branch ${i + 1}`}
+        </Button>
+      ))}
+    </div>
+  ) : null;
+
+  const processSection = (
+    <div className="space-y-3">
+      <h3 className="flex items-center gap-2 text-sm font-bold text-slate-700">
+        <Briefcase className="h-4 w-4 text-slate-400" />
+        Process-Level Readiness
+      </h3>
+      {processQuery.isLoading ? (
+        <div className="space-y-2">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-24 rounded-2xl" />)}</div>
+      ) : processes.length === 0 ? (
+        <div className="rounded-2xl border-2 border-dashed border-slate-200 py-10 text-center text-sm text-slate-400">
+          No processes mapped to this branch for {month}.
+        </div>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {processes.map((proc) => (
+            <ProcessCard
+              key={proc.process_id || proc.process_name}
+              process={proc}
+              onClick={() => setSelectedProcess({ ...proc, branch_id: proc.branch_id || branchId })}
+            />
+          ))}
+        </div>
+      )}
+      <ProcessDetailDrawer
+        process={selectedProcess}
+        month={month}
+        open={!!selectedProcess}
+        onClose={() => setSelectedProcess(null)}
+        roleKeys={roleKeys}
+      />
+    </div>
+  );
+
+  if (processOnly) {
+    return (
+      <div className="space-y-4">
+        {branchPicker}
+        {processSection}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {branchPicker}
+
+      {branchQuery.isLoading || !branch ? (
+        <Skeleton className="h-64 rounded-2xl" />
+      ) : (
+        <>
+          {/* Branch summary */}
+          <div className="rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="truncate text-lg font-extrabold text-slate-900">{branch.branch_name}</h2>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  {branch.employee_count_active || branch.employee_count} active · {month}
+                </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <StatusBadge status={branch.readiness_status} />
+                  <span className="text-[11px] font-semibold text-slate-400">
+                    {doneCount}/{BRANCH_OWN_CHECKLIST.length} checks
+                  </span>
+                  {locked && (
+                    <Badge className="border border-emerald-200 bg-emerald-100 text-xs text-emerald-700">
+                      Signed off {fmtDate(branch.branch_head_signoff_at)}
+                    </Badge>
+                  )}
+                  {Boolean(branch.ho_override_ready) && (
+                    <Badge className="border border-purple-200 bg-purple-100 text-xs text-purple-700">HO Overridden</Badge>
+                  )}
+                </div>
+              </div>
+              <ScoreCircle score={branch.readiness_score} size={64} />
+            </div>
+            <Progress value={branch.readiness_score} className="mt-4 h-2" />
+          </div>
+
+          {/* Checklist */}
+          <div className="rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Monthly Checklist</p>
+              {!canEditChecklist && (
+                <span className="text-[11px] font-medium text-slate-400">Read-only for your role</span>
+              )}
+            </div>
+
+            <div className="divide-y divide-slate-100">
+              {BRANCH_OWN_CHECKLIST.map((def) => {
+                const done = ownChecklistDone(branch, def);
+                const showToggle = def.editable && canEditChecklist && !locked;
+                return (
+                  <div key={String(def.key)} className="flex items-start justify-between gap-3 py-2.5">
+                    <div className="flex min-w-0 items-start gap-2">
+                      {done
+                        ? <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-500" />
+                        : <Clock className="mt-0.5 h-4 w-4 flex-shrink-0 text-slate-300" />}
+                      <div className="min-w-0">
+                        <p className={cn("text-sm font-medium", done ? "text-slate-700" : "text-slate-500")}>
+                          {def.label}
+                          {def.isPercent && (
+                            <span className="ml-1.5 text-xs font-semibold tabular-nums text-slate-400">
+                              {Math.round(Number(branch[def.key] ?? 0))}%
+                            </span>
+                          )}
+                        </p>
+                        {def.hint && <p className="mt-0.5 text-[11px] leading-snug text-slate-400">{def.hint}</p>}
+                      </div>
+                    </div>
+                    {showToggle ? (
+                      <Button
+                        size="sm"
+                        variant={done ? "outline" : "default"}
+                        className="h-7 flex-shrink-0 rounded-xl px-2.5 text-xs"
+                        disabled={checklistMutation.isPending}
+                        onClick={() => checklistMutation.mutate({ item: String(def.key), value: done ? 0 : 1 })}
+                      >
+                        {done ? "Undo" : "Mark Done"}
+                      </Button>
+                    ) : (
+                      <span className="flex-shrink-0 text-[11px] font-medium text-slate-300">
+                        {def.editable ? "" : "auto"}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Actions */}
+            <div className="mt-4 flex flex-col gap-2 border-t border-slate-100 pt-4 sm:flex-row">
+              {canEditChecklist && !branch.attendance_frozen && (
+                <Button
+                  variant="outline"
+                  className="flex-1 rounded-xl"
+                  disabled={freezeMutation.isPending}
+                  onClick={() => freezeMutation.mutate()}
+                >
+                  <Lock className="mr-1.5 h-4 w-4" />
+                  {freezeMutation.isPending ? "Sending…" : "Request Attendance Freeze"}
+                </Button>
+              )}
+              {canSignOff && !locked && (
+                <Button
+                  className="flex-1 rounded-xl"
+                  disabled={!allEditableDone}
+                  title={allEditableDone ? undefined : "Complete every checklist item you own before signing off"}
+                  onClick={() => setSignOffOpen(true)}
+                >
+                  <ShieldCheck className="mr-1.5 h-4 w-4" /> Branch Sign-Off
+                </Button>
+              )}
+            </div>
+            {canSignOff && !locked && !allEditableDone && (
+              <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
+                <Info className="h-3 w-3" /> Sign-off unlocks once all five branch-owned items are marked done.
+              </p>
+            )}
+          </div>
+
+          {processSection}
+        </>
+      )}
+
+      <Dialog open={signOffOpen} onOpenChange={(v) => !v && setSignOffOpen(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Branch Sign-Off — {branch?.branch_name}</DialogTitle>
+            <DialogDescription>
+              Confirms every payroll input for {month} is complete for this branch. This is recorded against your
+              user and is visible to the Payroll Head.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={signOffRemarks}
+            onChange={(e) => setSignOffRemarks(e.target.value)}
+            placeholder="Remarks (required)"
+            rows={3}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSignOffOpen(false)}>Cancel</Button>
+            <Button disabled={!signOffRemarks.trim() || signOffMutation.isPending} onClick={() => signOffMutation.mutate()}>
+              {signOffMutation.isPending ? "Submitting…" : "Confirm Sign-Off"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ROOT PAGE
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1177,6 +1549,15 @@ export default function PayrollReadinessDashboard() {
     roleKeys.includes("payroll") ||
     roleKeys.includes("admin") ||
     roleKeys.includes("hr");
+
+  // Branch-side roles get their own branch's readiness instead of the HO roll-up.
+  // Every one of these role keys is already allowed on the branch/process
+  // readiness endpoints server-side, and requireScopedRole pins each request to
+  // the caller's own assignment scope, so this only re-opens a surface the API
+  // was always willing to serve them.
+  const isBranchSideRole =
+    !isHORole &&
+    roleKeys.some((r) => ["wfm", "branch_head", "payroll_branch", "process_manager"].includes(r));
 
   const canExport = roleKeys.includes("payroll_head") || roleKeys.includes("super_admin") || roleKeys.includes("admin");
 
@@ -1245,6 +1626,8 @@ export default function PayrollReadinessDashboard() {
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-64" />)}</div>
             ) : isHORole ? (
               <BranchScopeHOView month={month} />
+            ) : isBranchSideRole ? (
+              <BranchScopeOwnView month={month} />
             ) : (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <X className="w-8 h-8 mb-2" />
@@ -1258,6 +1641,8 @@ export default function PayrollReadinessDashboard() {
               <div className="text-center py-10 text-slate-400">Loading…</div>
             ) : isHORole ? (
               <ProcessScopeHOView month={month} roleKeys={roleKeys} />
+            ) : isBranchSideRole ? (
+              <BranchScopeOwnView month={month} processOnly />
             ) : (
               <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                 <X className="w-8 h-8 mb-2" />
