@@ -446,6 +446,41 @@ export async function resolveDashboardScope(userId: string, _role: string): Prom
   };
 }
 
+/**
+ * Forces SELF_ONLY scope regardless of the caller's role.
+ *
+ * EMPLOYEE_SELF_DASHBOARD's /summary route resolved scope through the exact same
+ * requestedScope() as every operational dashboard, which builds scope from the caller's
+ * ROLE (resolveDashboardScope). So a branch_head opening their own "My Dashboard" got
+ * BRANCH_ALL — the identical scope HR_DASHBOARD gives them — not their own record. The
+ * tiles bound to it currently render "—" because nothing consumes attendance/leave
+ * figures from this dashboard yet, which is the only reason it has not already shown one
+ * employee the whole branch's attendance as their own personal number.
+ *
+ * A personal dashboard's scope is not a role question — it is always "this one person,
+ * whoever they are, however privileged" — so this bypasses resolveDashboardScope's role
+ * ladder entirely (SYSTEM_WIDE_ROLES, HEAD_OFFICE_ROLES, assignment rows, all of it) and
+ * resolves straight to the caller's own employee record. An admin or super_admin with no
+ * employee row (there is no personal attendance/leave to show them) gets the same
+ * DashboardScopeConfigurationError any other unmapped user would — a personal dashboard
+ * has nothing scope-widening to fall back to.
+ */
+export async function resolveSelfOnlyDashboardScope(userId: string): Promise<DashboardScope> {
+  const context = await getUserRoleContext(userId);
+  const employee = await resolveEmployeeScope(userId);
+  if (!employee.employeeId) {
+    throw new DashboardScopeConfigurationError(context.primaryRole, "employee mapping");
+  }
+  return {
+    level: "SELF_ONLY",
+    branchIds: employee.branchIds,
+    processIds: employee.processIds,
+    employeeIds: unique([employee.employeeId]),
+    userId,
+    role: context.primaryRole,
+  };
+}
+
 export async function narrowDashboardScope(
   scope: DashboardScope,
   requestedBranchId?: string | null,

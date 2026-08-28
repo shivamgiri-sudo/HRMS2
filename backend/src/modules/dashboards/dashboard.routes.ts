@@ -7,6 +7,7 @@ import {
   buildScopeWhere,
   narrowDashboardScope,
   resolveDashboardScope,
+  resolveSelfOnlyDashboardScope,
   type DashboardScope,
 } from "../../shared/dashboardScope.js";
 import { getUserRoleContext } from "../../shared/roleResolver.js";
@@ -88,8 +89,24 @@ const requireFixedDashboard = (dashboardCode: DashboardCode) =>
     requireDashboardEntitlement(req, dashboardCode).then(() => next()).catch(next);
   };
 
-async function requestedScope(req: AuthenticatedRequest) {
+async function requestedScope(req: AuthenticatedRequest, dashboardCode?: DashboardCode) {
   const user = req.authUser!;
+
+  // EMPLOYEE_SELF_DASHBOARD is a personal view — scope is always "this one caller", never
+  // a function of their role. Every other branch below resolves scope from the caller's
+  // ROLE (resolveDashboardScope / the demo ORG_ALL bypass), which is correct for an
+  // operational dashboard shared across a team but wrong here: it previously gave a
+  // branch_head's own "My Dashboard" the identical BRANCH_ALL scope HR_DASHBOARD shows
+  // them. See resolveSelfOnlyDashboardScope's own comment for the full history.
+  if (dashboardCode === "EMPLOYEE_SELF_DASHBOARD") {
+    const context = await getUserRoleContext(user.id);
+    const scope = await narrowDashboardScope(
+      await resolveSelfOnlyDashboardScope(user.id),
+      String(req.query.branchId ?? ""),
+      String(req.query.processId ?? ""),
+    );
+    return { user, context, scope };
+  }
 
   // Demo-bypass identities (INTERNAL_DEMO_BYPASS) have no backing row in any MySQL table, so
   // resolveDashboardScope's own internal getUserRoleContext(userId) call always misses and
@@ -506,7 +523,7 @@ router.get("/PAYROLL_HR_DASHBOARD/operational-summary", requireFixedDashboard("P
 
 router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: any) => {
   const dashboardCode = req.params.dashboardCode as DashboardCode;
-  const { user, context, scope } = await requestedScope(req);
+  const { user, context, scope } = await requestedScope(req, dashboardCode);
   const generatedAt = new Date();
 
   // Unions work_item with work_inbox_item. Reading work_item alone showed an empty
@@ -575,8 +592,8 @@ router.get("/:dashboardCode/summary", h(async (req: AuthenticatedRequest, res: a
 }));
 
 router.get("/:dashboardCode/metric-values", h(async (req: AuthenticatedRequest, res: any) => {
-  const { scope } = await requestedScope(req);
   const dashboardCode = req.params.dashboardCode as DashboardCode;
+  const { scope } = await requestedScope(req, dashboardCode);
   const generatedAt = new Date();
   return res.json({
     success: true,
@@ -627,7 +644,7 @@ router.get("/:dashboardCode/good-bad-insights", h(async (req: AuthenticatedReque
 router.get("/:dashboardCode/metric/:metricCode/drilldown", h(async (req: AuthenticatedRequest, res: any) => {
   const dashboardCode = req.params.dashboardCode as DashboardCode;
   requireDashboardMetric(dashboardCode, req.params.metricCode);
-  const { scope } = await requestedScope(req);
+  const { scope } = await requestedScope(req, dashboardCode);
   const result = await getDrilldown(req.params.metricCode, scope, req.query as Record<string, unknown>);
   return res.json({ success: true, data: result });
 }));
@@ -635,7 +652,7 @@ router.get("/:dashboardCode/metric/:metricCode/drilldown", h(async (req: Authent
 router.get("/:dashboardCode/metric/:metricCode/trend", h(async (req: AuthenticatedRequest, res: any) => {
   const dashboardCode = req.params.dashboardCode as DashboardCode;
   requireDashboardMetric(dashboardCode, req.params.metricCode);
-  const { scope } = await requestedScope(req);
+  const { scope } = await requestedScope(req, dashboardCode);
 
   // dashboard_metric_snapshot stores (metric_code, scope_type, scope_id, snapshot_date,
   // value, previous_value, trend). The previous query selected `metric_value` and
@@ -686,7 +703,8 @@ router.get("/:dashboardCode/metric/:metricCode/trend", h(async (req: Authenticat
 }));
 
 router.get("/:dashboardCode/filters", h(async (req: AuthenticatedRequest, res: any) => {
-  const { scope } = await requestedScope(req);
+  const dashboardCode = req.params.dashboardCode as DashboardCode;
+  const { scope } = await requestedScope(req, dashboardCode);
   const branchScope = buildScopeWhere(scope, "bm.id", "pm.id");
   const processScope = buildScopeWhere(scope, "e.branch_id", "pm.id");
 
@@ -713,7 +731,8 @@ router.get("/:dashboardCode/filters", h(async (req: AuthenticatedRequest, res: a
 }));
 
 router.get("/:dashboardCode/root-causes", h(async (req: AuthenticatedRequest, res: any) => {
-  const { scope } = await requestedScope(req);
+  const dashboardCode = req.params.dashboardCode as DashboardCode;
+  const { scope } = await requestedScope(req, dashboardCode);
   // This query shipped six columns that exist on neither table: b.bridge_status,
   // b.branch_id, b.process_id, b.updated_at, c.first_name and c.last_name. It threw
   // ER_BAD_FIELD_ERROR on every call, so the root-cause panel was empty on all 12
