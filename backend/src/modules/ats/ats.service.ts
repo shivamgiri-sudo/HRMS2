@@ -7,6 +7,7 @@ import { sendOnboardingToken } from "./ats.onboarding.service.js";
 import { transitionCandidateState } from "./ats.status-machine.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { excludeEmployeeShapedCandidatesSql } from "./ats-reporting-scope.js";
+import { JOINED_STAGE_PREDICATE } from "./analytics.unified.service.js";
 import { toStoredNameRequired } from "../../shared/nameFormat.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { maskPii } from "../../shared/piiMask.js";
@@ -491,14 +492,26 @@ export const atsService = {
     const [sourceRows] = await db.execute<RowDataPacket[]>(
       `SELECT sourcing_channel, COUNT(*) AS count FROM ats_candidate ${where} GROUP BY sourcing_channel`, params
     );
+    // Was `current_stage IN ('converted','Onboarded','Selected')` — a second, hand-copied
+    // stage list that had drifted from the one in analytics.unified.service.ts: it missed
+    // 'payroll_validated' (undercounting — 3 of 6 live conversions invisible) and wrongly
+    // included 'Selected', an offer/selection stage that has not necessarily joined, on a
+    // card labelled "Conversion Rate". Verified live 2026-08-28: the old query returned 3,
+    // the corrected one 6. Not a case-sensitivity fix — current_stage is utf8mb4_unicode_ci,
+    // already case-insensitive; confirmed 'converted','Onboarded','Selected' and
+    // 'converted','onboarded','selected' returned the identical count before this change.
     const [convRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM ats_candidate ${where} AND current_stage IN ('converted','Onboarded','Selected')`, params
+      `SELECT COUNT(*) AS cnt FROM ats_candidate ${where} AND ${JOINED_STAGE_PREDICATE}`, params
     );
-    // Approximate time-to-hire using updated_at as proxy for converted candidates
+    // Approximate time-to-hire using updated_at as proxy for converted candidates.
+    // Was `current_stage = 'converted'` only — narrower than the conversion-rate count
+    // right above it, so the two cards on this page could describe different populations.
+    // Broadened to the same predicate so "how many converted" and "how long it took" agree
+    // on who counts as converted.
     const [timeRows] = await db.execute<RowDataPacket[]>(
       `SELECT AVG(DATEDIFF(updated_at, created_at)) AS avg_days
          FROM ats_candidate
-        WHERE active_status = 1 AND current_stage = 'converted' AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}${scopeSql}`, scopeParams
+        WHERE active_status = 1 AND ${JOINED_STAGE_PREDICATE} AND ${excludeEmployeeShapedCandidatesSql("ats_candidate")}${scopeSql}`, scopeParams
     );
 
     const totalCount = Number(total[0]?.total ?? 0);
