@@ -85,10 +85,27 @@ vi.mock("@/components/ui/tabs", () => ({
 
 import ClientBillingWorkspacePage from "@/pages/finance/ClientBillingWorkspacePage";
 
-function renderPage(seed?: { proformas?: unknown[]; creditNotes?: unknown[] }) {
+/**
+ * Mirrors EMPTY_FILTERS in ClientBillingWorkspacePage.tsx — the initial state of each tab's
+ * filter bar. The page's list queries are keyed BY that filter object
+ * (`["client-billing", "proformas", proformaFilters]`), so a cache entry seeded under the bare
+ * `["client-billing", "proformas"]` key never matches, every list query stays in its loading
+ * state, and the assertions below then run against a spinner instead of a row. Keep this in
+ * step with the page's own EMPTY_FILTERS.
+ */
+const EMPTY_FILTERS = (status: string) => ({
+  status, fromDate: "", toDate: "", costCentreId: "", search: "", page: 1,
+});
+
+function renderPage(seed?: { proformas?: unknown[]; invoices?: unknown[]; creditNotes?: unknown[] }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  client.setQueryData(["client-billing", "proformas"], { success: true, data: seed?.proformas ?? [] });
-  client.setQueryData(["client-billing", "credit-notes"], { success: true, data: seed?.creditNotes ?? [] });
+  // `total` accompanies `data` in the real list responses — the page reads it for pagination.
+  const list = (data: unknown[]) => ({ success: true, data, total: data.length });
+  client.setQueryData(["client-billing", "proformas", EMPTY_FILTERS("proforma")], list(seed?.proformas ?? []));
+  // Invoices is its own server-filtered query now (listProformas with the status overridden to
+  // "approved"), not a client-side filter over the proformas response, so it needs its own seed.
+  client.setQueryData(["client-billing", "invoices", EMPTY_FILTERS("approved")], list(seed?.invoices ?? []));
+  client.setQueryData(["client-billing", "credit-notes", EMPTY_FILTERS("_all")], list(seed?.creditNotes ?? []));
   return renderToStaticMarkup(
     <QueryClientProvider client={client}>
       <ClientBillingWorkspacePage />
@@ -193,8 +210,12 @@ describe("ClientBillingWorkspacePage — rendering", () => {
     expect(html).toContain("No proformas found");
   });
 
-  it("Invoices tab renders only invoice_status='approved' rows from the same listProformas data", () => {
-    const html = renderPage({ proformas: [proformaRow, approvedInvoiceRow] });
+  it("Invoices tab renders approved rows from its own status-filtered query", () => {
+    // The Invoices tab no longer client-filters the proformas response: it runs its own query
+    // (listProformas with status forced to "approved"), so the approved row is seeded there.
+    // The proforma row is seeded on the Proformas tab in the same pass to prove the two lists
+    // stay separate rather than both rendering everything.
+    const html = renderPage({ proformas: [proformaRow], invoices: [approvedInvoiceRow] });
 
     expect(html).toContain("BILL/2026-27/0007");
     // Approved rows get an Audit log action, not Approve/Reject.
@@ -297,16 +318,24 @@ describe("ClientBillingWorkspacePage — mutation wiring (source-verified)", () 
   });
 
   it("PDF download button calls downloadInvoicePdf", () => {
-    expect(apiSource).toContain(
-      'export async function downloadInvoicePdf(kind: "proforma" | "invoice", id: string, filename: string)',
-    );
-    expect(pageSource).toContain("async function handleDownload(kind:");
+    // Signature asserted piecewise: it is declared across multiple lines and has grown a
+    // "credit-note" kind and a `letterhead` flag since this test was first written. Matching
+    // the parts keeps the assertion honest about the real contract without re-breaking on the
+    // next reformat.
+    expect(apiSource).toContain("export async function downloadInvoicePdf(");
+    expect(apiSource).toContain('kind: "proforma" | "invoice" | "credit-note"');
+    expect(apiSource).toContain("letterhead = true");
+
+    expect(pageSource).toContain("async function handleDownload(");
     expect(pageSource).toContain(
-      'await downloadInvoicePdf(kind, row.id, `${row.bill_no || row.proforma_no || row.id}.pdf`);',
+      "await downloadInvoicePdf(kind, id, `${docNumber || id}${suffix}.pdf`, letterhead);",
     );
-    // Both tabs' Download PDF buttons route through the same handler.
-    expect(pageSource).toContain('onClick={() => void handleDownload("proforma", row)}');
-    expect(pageSource).toContain('onClick={() => void handleDownload("invoice", row)}');
+    // All three tabs route through one shared DownloadPdfButton bound to that same handler,
+    // rather than each wiring its own onClick — so the kinds are asserted on the button props.
+    expect(pageSource).toContain('<DownloadPdfButton kind="proforma"');
+    expect(pageSource).toContain('<DownloadPdfButton kind="invoice"');
+    expect(pageSource).toContain('<DownloadPdfButton kind="credit-note"');
+    expect(pageSource).toContain("onDownload={handleDownload}");
   });
 
   it("Credit Notes: create Sheet submits createCreditNote with the payload clientBillingApi.ts actually declares", () => {
