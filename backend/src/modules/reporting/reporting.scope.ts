@@ -166,18 +166,31 @@ export async function resolveFullScope(userId: string): Promise<ExecScope> {
       .filter((id): id is string => !!id);
 
     if (ids.length > 0) return dimRestricted(ids);
-    if (fallback)        return dimRestricted([fallback]);
+
+    // An explicit assignment grant exists (branch/process/self) but does not restrict
+    // this particular dimension — e.g. a process manager's scope_type 'process' row
+    // carries no branch_id. That is a grant across every branch for their process, not
+    // "narrow them to their own employee record's branch instead" — the grant is what
+    // was given, the employee record is just where the person happens to sit.
+    // departmentScope and costCentreScope below already treat an unrestricted dimension
+    // this way; this brings branch_id and process_id in line with them. Confirmed live,
+    // not theoretical: 20 active scope_type 'process' rows have branch_id NULL (real
+    // process-manager accounts), and one branch_head's scope_type 'branch' row with
+    // process_id NULL was turning "see this whole branch" into "see the one employee who
+    // shares your own process" on every AON & Attrition report.
+    if (scopes.length > 0) return dimAll();
+
+    // No assignment scope at all — a bare, ungranted account. Self-service narrows to the
+    // caller's own record rather than dimAll(), so an unmapped employee sees their own
+    // branch/process instead of everyone's.
+    if (fallback) return dimRestricted([fallback]);
 
     // No scope data and no fallback → fail closed
     return dimRestricted([NO_BRANCH_SCOPE_SENTINEL]);
   }
 
   const branchScope     = buildDim('branch_id',      emp?.branch_id);
-  const processScope    = hasAllScope ? dimAll() : (
-    scopes.some(s => s.process_id) ? dimRestricted(
-      scopes.map(s => s.process_id).filter((id): id is string => !!id)
-    ) : emp?.process_id ? dimRestricted([String(emp.process_id)]) : dimAll()
-  );
+  const processScope    = buildDim('process_id',     emp?.process_id);
   const departmentScope = hasAllScope ? dimAll() : (
     scopes.some(s => s.department_id) ? dimRestricted(
       scopes.map(s => s.department_id).filter((id): id is string => !!id)
