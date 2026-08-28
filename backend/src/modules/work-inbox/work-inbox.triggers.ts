@@ -6,8 +6,38 @@ function ttlMs(itemType: string, fallbackHours = 24): number {
   return (def?.defaultTtlHours ?? fallbackHours) * 60 * 60 * 1000;
 }
 
+/**
+ * MySQL DATETIME literal, not ISO-8601.
+ *
+ * This returned `.toISOString()` — "2026-08-30T11:38:45.248Z" — which MySQL rejects for a
+ * DATETIME column with ER_TRUNCATED_WRONG_VALUE (1292) because of the "T" separator and the
+ * "Z" suffix. createWorkItemIfNotExists swallows the resulting error, so every trigger in
+ * this file failed silently: the caller's own work succeeded and the work item was simply
+ * never created.
+ *
+ * Verified live 2026-08-28: 0 of 35 work_item rows have a non-NULL due_at — the column has
+ * never once been populated, so anything keyed on it (SLA countdowns, escalation, overdue
+ * queues) has never fired. All 19 dueAt() call sites in this file share this helper, so
+ * they were all affected.
+ *
+ * Host-LOCAL wall clock, not UTC. work_item.created_at and due_at are both plain DATETIME
+ * (no timezone), and created_at is written with NOW(), which on this database is IST.
+ * Formatting UTC here stored a due date 5.5 hours EARLIER than the created_at it is
+ * compared against — a 48h TTL measured as 42.5h, expiring early and silently.
+ *
+ * Confirm the server's wall clock with DATE_FORMAT(NOW(), ...), never by reading NOW()
+ * through mysql2. The driver parses a DATETIME in the connection's timezone and hands back
+ * a JS Date, so `SELECT NOW()` surfaces as "...T11:40:06.000Z" on an IST server and reads
+ * exactly like proof the server is UTC. DATE_FORMAT returns the stored characters and shows
+ * 17:10. This masking is what made the first attempt at this fix wrong.
+ */
 function dueAt(itemType: string, fallbackHours = 24): string {
-  return new Date(Date.now() + ttlMs(itemType, fallbackHours)).toISOString();
+  const d = new Date(Date.now() + ttlMs(itemType, fallbackHours));
+  const p = (n: number): string => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+  );
 }
 
 export async function triggerOnboardingStuck(
