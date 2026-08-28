@@ -63,7 +63,11 @@ export class QualityExecutiveService {
       );
 
       const currentRow = currentMetrics?.[0] as any;
-      const currentQuality = currentRow?.current_quality || 0;
+      // ROUND(AVG(...), 2) is a MySQL DECIMAL, and mysql2 hands DECIMALs back as *strings*
+      // ("73.45", not 73.45) — the same defect class as the frontend .toFixed() crash on
+      // /quality-dashboard earlier this session. Number(...) here, not `|| 0` alone: `|| 0`
+      // only guards a missing row, it does nothing about the value still being a string.
+      const currentQuality = Number(currentRow?.current_quality) || 0;
 
       // Get 7-day average for trend
       const [sevenDayMetrics] = await conn.execute<RowDataPacket[]>(
@@ -72,7 +76,7 @@ export class QualityExecutiveService {
          WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 7 DAY)`
       );
 
-      const sevenDayQuality = (sevenDayMetrics?.[0] as any)?.avg_quality || currentQuality;
+      const sevenDayQuality = Number((sevenDayMetrics?.[0] as any)?.avg_quality) || currentQuality;
 
       // Get 30-day baseline for 30-day trend
       const [thirtyDayMetrics] = await conn.execute<RowDataPacket[]>(
@@ -81,9 +85,20 @@ export class QualityExecutiveService {
          WHERE cqa.CallDate >= DATE_SUB(NOW(), INTERVAL 30 DAY)`
       );
 
-      const thirtyDayQuality = (thirtyDayMetrics?.[0] as any)?.avg_quality || currentQuality;
+      const thirtyDayQuality = Number((thirtyDayMetrics?.[0] as any)?.avg_quality) || currentQuality;
 
-      // Calculate trends
+      // Calculate trends.
+      //
+      // Before the Number() coercions above, `sevenDayQuality > currentQuality` compared two
+      // DECIMAL *strings* lexically, not numerically: "9.50" > "73.45" is true (both start
+      // with a digit, '9' > '7' lexically), a wrong ↗ for what is actually a steep decline.
+      // The bug only ever showed below a 10% value on either side — everything in this
+      // dataset's normal range (60-90%) happens to compare the same way lexically as
+      // numerically, which is exactly why this went unnoticed: the arrow was right unless
+      // quality itself had already collapsed, i.e. right whenever nobody was looking closely.
+      // `- currentQuality` and `>= 85` below were never affected: `-` and `>=`-against-a-
+      // number-literal both coerce a string operand to a number per the JS spec: only
+      // string-vs-string relational comparison (`>`, `<`) stays lexical.
       const trend7day = {
         direction: sevenDayQuality > currentQuality ? '↗' : sevenDayQuality < currentQuality ? '↘' : '→',
         change_pct: Math.round((sevenDayQuality - currentQuality) * 100) / 100
