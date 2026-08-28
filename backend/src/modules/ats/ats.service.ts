@@ -7,7 +7,7 @@ import { sendOnboardingToken } from "./ats.onboarding.service.js";
 import { transitionCandidateState } from "./ats.status-machine.js";
 import { hasScopedAccess } from "../../shared/scopeAccess.js";
 import { excludeEmployeeShapedCandidatesSql } from "./ats-reporting-scope.js";
-import { JOINED_STAGE_PREDICATE } from "./analytics.unified.service.js";
+import { JOINED_STAGE_PREDICATE, candidateBecameEmployee, getEmployeeMobileJoinMap } from "./analytics.unified.service.js";
 import { toStoredNameRequired } from "../../shared/nameFormat.js";
 import { stripCryptoPlumbing } from "../../shared/cryptoColumnHygiene.js";
 import { maskPii } from "../../shared/piiMask.js";
@@ -497,17 +497,40 @@ export const atsService = {
     // 'payroll_validated' (undercounting — 3 of 6 live conversions invisible) and wrongly
     // included 'Selected', an offer/selection stage that has not necessarily joined, on a
     // card labelled "Conversion Rate". Verified live 2026-08-28: the old query returned 3,
-    // the corrected one 6. Not a case-sensitivity fix — current_stage is utf8mb4_unicode_ci,
-    // already case-insensitive; confirmed 'converted','Onboarded','Selected' and
-    // 'converted','onboarded','selected' returned the identical count before this change.
-    const [convRows] = await db.execute<RowDataPacket[]>(
-      `SELECT COUNT(*) AS cnt FROM ats_candidate ${where} AND ${JOINED_STAGE_PREDICATE}`, params
+    // the corrected one (stage-only) 6. Not a case-sensitivity fix — current_stage is
+    // utf8mb4_unicode_ci, already case-insensitive; confirmed 'converted','Onboarded',
+    // 'Selected' and 'converted','onboarded','selected' returned the identical count
+    // before this change.
+    //
+    // Stage-only still undercounts the same way getSourceChannelROI's did before its own
+    // fix (99696137): the field is simply not kept current, even for candidates
+    // demonstrably on payroll today. Adds the same identity signal — mobile-matched to an
+    // employees row that joined on/after this candidate's created_at — OR'd with the
+    // stage check, via the same cached map and pure combine function
+    // (candidateBecameEmployee / getEmployeeMobileJoinMap in analytics.unified.service.ts).
+    // One extra SELECT scoped identically to every other query in this function; the
+    // expensive part (grouping the whole employees table by mobile) is the shared
+    // 15-minute cache, not paid per request — see getEmployeeMobileJoinMap's own comment.
+    const [convCandidateRows] = await db.execute<RowDataPacket[]>(
+      `SELECT current_stage, mobile, created_at FROM ats_candidate ${where}`, params
     );
+    const mobileJoinMap = await getEmployeeMobileJoinMap();
+    const convertedCount = (convCandidateRows as RowDataPacket[]).filter((row) =>
+      candidateBecameEmployee(
+        row as unknown as { current_stage: string | null; mobile: string | null; created_at: string },
+        mobileJoinMap,
+      ),
+    ).length;
     // Approximate time-to-hire using updated_at as proxy for converted candidates.
-    // Was `current_stage = 'converted'` only — narrower than the conversion-rate count
-    // right above it, so the two cards on this page could describe different populations.
-    // Broadened to the same predicate so "how many converted" and "how long it took" agree
-    // on who counts as converted.
+    // Deliberately stage-only, NOT the identity-match convertedCount above: updated_at is
+    // only a meaningful hire-date proxy for a candidate whose stage was actually moved at
+    // hire time. An identity-matched row was — by definition of needing that match at all
+    // — never moved past its interview stage, so its updated_at reflects whatever
+    // unrelated edit happened last, not when it converted. Including those rows here would
+    // make "time to hire" measure noise, not latency. Was `current_stage = 'converted'`
+    // only (narrower even than the old stage list); broadened to the full JOINED_STAGE_
+    // PREDICATE so it at least agrees with the STAGE-only count, which is real progress
+    // even though it does not (and should not) match the identity-enhanced total above.
     const [timeRows] = await db.execute<RowDataPacket[]>(
       `SELECT AVG(DATEDIFF(updated_at, created_at)) AS avg_days
          FROM ats_candidate
@@ -515,7 +538,6 @@ export const atsService = {
     );
 
     const totalCount = Number(total[0]?.total ?? 0);
-    const convertedCount = Number(convRows[0]?.cnt ?? 0);
 
     // Build by_stage as Record<string, number> keyed by stage name
     const by_stage: Record<string, number> = {};

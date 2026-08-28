@@ -71,8 +71,12 @@ let _mobileJoinMapCache: { value: Map<string, string>; at: number } | null = nul
  * request. The mapping changes only as fast as people join, so a 15-minute TTL is coarse
  * on purpose; force a refresh with `{ force: true }`, same pattern as
  * loadBgvDbConfig() in bgv-config.store.ts.
+ *
+ * Exported so ats.service.ts's getDashboardStats() shares this cache instead of building
+ * its own — that endpoint is hit on every load of a real, frequently-visited page, so a
+ * second independent 6.4s query would defeat the point of caching this at all.
  */
-async function getEmployeeMobileJoinMap(opts?: { force?: boolean }): Promise<Map<string, string>> {
+export async function getEmployeeMobileJoinMap(opts?: { force?: boolean }): Promise<Map<string, string>> {
   const now = Date.now();
   if (!opts?.force && _mobileJoinMapCache && now - _mobileJoinMapCache.at < MOBILE_JOIN_MAP_TTL_MS) {
     return _mobileJoinMapCache.value;
