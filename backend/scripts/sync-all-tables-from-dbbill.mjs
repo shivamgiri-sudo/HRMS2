@@ -871,7 +871,21 @@ async function syncSalaryUpload(bill, hrms) {
              ESIC AS esic_employee, ESICCompany AS esic_employer,
              IncomeTax AS income_tax, ProTaxDeduction AS professional_tax,
              WorkingDays AS working_days, EarnedDays AS earned_days,
-             SalDate AS sal_date, FinanceYear AS finance_year, FinanceMonth AS finance_month,
+             -- SalDate is varchar(100) in db_bill, NOT a date, and carries four shapes:
+             -- 'D-Mon-YY' (29,999 rows), an Excel serial like '43343' (5,614),
+             -- 'M/D/YYYY' (1,456) and empty string (2,030). Copying it straight into
+             -- this DATETIME column does not error -- every row silently became
+             -- '0000-00-00 00:00:00', all 39,099 of them, which later stopped migration
+             -- 1627 from converting the table and blocked every deploy for three days.
+             -- Parse it here instead; anything unrecognised becomes NULL, never a zero date.
+             CASE
+               WHEN SalDate IS NULL OR TRIM(SalDate) = '' THEN NULL
+               WHEN SalDate REGEXP '^[0-9]{5}$' THEN DATE_ADD('1899-12-30', INTERVAL CAST(SalDate AS UNSIGNED) DAY)
+               WHEN STR_TO_DATE(SalDate, '%d-%b-%y') IS NOT NULL THEN STR_TO_DATE(SalDate, '%d-%b-%y')
+               WHEN STR_TO_DATE(SalDate, '%m/%d/%Y') IS NOT NULL THEN STR_TO_DATE(SalDate, '%m/%d/%Y')
+               ELSE NULL
+             END AS sal_date,
+             FinanceYear AS finance_year, FinanceMonth AS finance_month,
              SalaryPaymentMode AS salary_payment_mode
       FROM salary_master_upload ORDER BY DataId LIMIT ${PAGE} OFFSET ${offset}`);
     if (!rows.length) break;
