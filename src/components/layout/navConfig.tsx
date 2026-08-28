@@ -213,6 +213,11 @@ export const navGroups: NavGroup[] = [
           { label: "Roster Command Center", href: "/wfm/roster-command-center", icon: ic(Activity),      pageCode: "WFM_ROSTER",      description: "Real-time attendance monitoring, manager effectiveness, live alerts" },
           { label: "Roster Interventions",  href: "/wfm/roster-interventions",  icon: ic(ShieldAlert),   pageCode: "WFM_ROSTER",      description: "Track and manage retention interventions for at-risk employees" },
           { label: "Roster Compliance",     href: "/wfm/roster-compliance",     icon: ic(ShieldCheck),   pageCode: "WFM_ROSTER",      description: "WFM rule violations — rest policy, consecutive days, week-off fairness" },
+          // Linked 2026-08-28, once its endpoints were mounted. It was deliberately kept out of
+          // the menu while /api/quality-dashboard/tni-* returned 401 — a sidebar entry to a page
+          // that cannot load is worse than no entry. Verified serving live: August returns 58
+          // agents, 51 of them flagged for coaching.
+          { label: "Training Needs (TNI)",  href: "/wfm/tni-analysis",          icon: ic(GraduationCap), pageCode: "WFM_ROSTER",      description: "Agent × parameter quality heatmap — who needs coaching, on what" },
           { label: "Shift Effectiveness",   href: "/wfm/shift-effectiveness",   icon: ic(BarChart3),     pageCode: "WFM_ROSTER",      description: "Shift performance, break compliance, and optimization recommendations" },
           { label: "Capacity Dashboard",    href: "/wfm/capacity-dashboard",    icon: ic(Users),         pageCode: "WFM_ROSTER",      description: "Headcount vs mandate, gap analysis, hiring demand projections" },
           { label: "Team Comparison",       href: "/wfm/team-comparison",       icon: ic(Trophy),        pageCode: "WFM_ROSTER",      description: "Compare adherence across managers, processes, and branches" },

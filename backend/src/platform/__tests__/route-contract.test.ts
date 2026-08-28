@@ -90,12 +90,13 @@ const KNOWN_GAPS: Record<string, string> = {
     "NOT REACHABLE: NativeOpsCommandCenter.tsx is an untracked file (never committed). No lazy import or Route mounts it. Backend route should be built when the page is wired up. 2026-08-22.",
   "GET /api/operations-live/summary":
     "NOT REACHABLE: Same page (NativeOpsCommandCenter.tsx). Not tracked, not mounted. 2026-08-22.",
-  "GET /api/quality-dashboard/tni-agent-params":
-    "NOT REACHABLE: NativeTNIAnalysis.tsx is an untracked file (never committed). No Route entry exists for it in any routes config. Backend route needed when the page is wired into the router. 2026-08-22.",
-  "GET /api/quality-dashboard/tni-analysis":
-    "NOT REACHABLE: Same page (NativeTNIAnalysis.tsx). Not tracked, not mounted. 2026-08-22.",
+  // The two TNI entries are retired 2026-08-28. Their premise had gone stale: NativeTNIAnalysis
+  // .tsx is committed and IS mounted, at /wfm/tni-analysis. And the backend was not "needed" —
+  // tni.service.ts already exported getTniAnalysis and getTniAgentCalls in full and was simply
+  // imported by nothing, so the page 401'd on both. Mounting the two routes was the whole fix.
+  // Verified live: 452,620 audit rows through today; August returns 58 agents, 51 flagged.
   "POST /api/lms-integration/assign":
-    "NOT REACHABLE: NativeTNIAnalysis.tsx is untracked and unmounted. When the page is wired up, the LMS integration assign endpoint (Package 6 charter) must be built. Do not stub — needs real LMS integration scaffolding. 2026-08-22.",
+    "NOT BUILT, deliberately. NativeTNIAnalysis.tsx is now mounted at /wfm/tni-analysis and its TNI endpoints are served, so this is the page's one remaining gap: assigning a flagged agent to LMS training. It is NOT a routing oversight like the TNI pair was. lmsIntegrationRouter is mounted at /api/lms and exposes read-only surfaces (/dashboard-summary, /risk-summary, /batches) — by design. CLAUDE.md's LMS boundary rule makes the deployed LMS the system of record and forbids HRMS writing into it without explicit authorisation, so an assign endpoint is a charter decision (Package 6 integration scaffolding), not a handler to add. Do not stub. 2026-08-28.",
 
   // ── WFM intelligence pages added 2026-08-23 — pages are mounted and reachable;
   // backend endpoints are not yet built. Live defects pending backend implementation.

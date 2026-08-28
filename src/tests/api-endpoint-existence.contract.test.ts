@@ -307,13 +307,16 @@ const KNOWN_MISSING: Record<string, string> = {
   // stays 0 on purpose: the API buckets HIGH/MEDIUM/LOW and has no CRITICAL tier, and inventing
   // a threshold to fill that tile would manufacture a severity the data does not express.
 
-  // ── NativeTNIAnalysis (/wfm/tni-analysis) — not linked from the sidebar ───────────────
-  "/api/quality-dashboard/tni-agent-params":
-    "Unserved. quality-dashboard.routes.ts has no TNI paths at all; training-needs analysis was never built on the backend.",
-  "/api/quality-dashboard/tni-analysis":
-    "Unserved, same as tni-agent-params — no TNI surface exists behind /api/quality-dashboard.",
+  // ── NativeTNIAnalysis (/wfm/tni-analysis) ─────────────────────────────────────────────
+  // The two /api/quality-dashboard/tni-* entries are gone as of 2026-08-28, and my note on
+  // them ("training-needs analysis was never built on the backend") was wrong. tni.service.ts
+  // already exported getTniAnalysis and getTniAgentCalls in full — the exact two calls this
+  // page documents in its own header — and was imported by nothing, so both 401'd. Mounting
+  // them in quality-dashboard.routes.ts was the entire fix. Verified live before wiring:
+  // db_audit.call_quality_assessment holds 452,620 rows through today, and August returns 58
+  // agents with 51 flagged for coaching. The page is now linked in the sidebar.
   "/api/lms-integration/assign":
-    "Unserved. lmsIntegrationRouter is mounted at /api/lms (not /api/lms-integration) and exposes /dashboard-summary, /risk-summary and /batches — there is no /assign on it. Assigning a learner from HRMS would also need the LMS boundary rule honoured (integration layer, no direct writes), so this is a design question, not a missing line.",
+    "NOT BUILT, deliberately — and now this page's only remaining gap, since its TNI endpoints are served. lmsIntegrationRouter is mounted at /api/lms (not /api/lms-integration) and exposes read-only surfaces (/dashboard-summary, /risk-summary, /batches) BY DESIGN: CLAUDE.md's LMS boundary rule makes the deployed LMS the system of record and forbids HRMS writing into it without explicit authorisation. Assigning a flagged agent to training is therefore a charter decision about integration scaffolding, not a handler someone forgot. Do not stub it.",
 
   // ── NativeOpsCommandCenter (/ops/command-center) — not linked from the sidebar ────────
   "/api/call-master/inbound/today":

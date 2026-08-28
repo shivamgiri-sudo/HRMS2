@@ -19,6 +19,8 @@ import {
   generateComprehensiveObjectionReport,
 } from "./objection-analysis.service.js";
 import { getInboundSummary } from "./inbound-ops.service.js";
+import { getTniAnalysis, getTniAgentCalls } from "./tni.service.js";
+import { dashboardConsumerRoles } from "../../shared/dashboardAccessRegistry.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -26,7 +28,11 @@ router.use(requireAuth);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const h = (fn: (req: any, res: any) => Promise<unknown>) => (req: any, res: any, next: any) => fn(req, res).catch(next);
 
-const ALLOWED_ROLES = ["admin", "hr", "super_admin", "ceo", "qa", "quality_analyst", "manager", "process_manager", "branch_head"] as const;
+// Derived from the registry. `hr` stays as a literal (HR reads quality outside the
+// Quality dashboard); the rest come from QUALITY_DASHBOARD itself, which admits
+// quality_lead, qa_manager, operations_manager, tq_head and coo — none of which the
+// hand-written list carried, so the T&Q head was locked out of the quality figures.
+const ALLOWED_ROLES = ["admin", "hr", ...dashboardConsumerRoles("QUALITY_DASHBOARD")] as const;
 
 /**
  * Resolve caller's data scope:
@@ -102,6 +108,57 @@ function dateDefaults(query: Record<string, unknown>): { from: string; to: strin
   const from = query.from ? String(query.from) : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
   return { from, to };
 }
+
+/*
+ * Training Need Identification.
+ *
+ * tni.service.ts was written in full — getTniAnalysis and getTniAgentCalls, the exact two
+ * calls NativeTNIAnalysis.tsx documents in its own header — and then imported by nothing, so
+ * the page 401'd on both (a missing /api/* route 401s here rather than 404s, which made it
+ * look like a permissions problem). The service is unchanged; this only mounts it.
+ *
+ * Backing data verified live 2026-08-28: db_audit.call_quality_assessment holds 452,620 rows
+ * through today, 440,725 of them with both a quality_percentage and an agent — so this is a
+ * routing gap, not an empty feature.
+ */
+
+// GET /api/quality-dashboard/tni-analysis?from=&to=&client_id=
+router.get("/tni-analysis", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  const { from, to } = dateDefaults(req.query);
+  const clientId = typeof req.query.client_id === "string" && req.query.client_id.trim()
+    ? req.query.client_id.trim()
+    : null;
+  const data = await getTniAnalysis(from, to, clientId);
+  // Spread rather than nested under `data`: the page reads `agents` and `summary` off the
+  // response root, matching how it documents the endpoint.
+  return res.json({ success: true, ...data });
+}));
+
+// GET /api/quality-dashboard/tni-agent-params?from=&to=&agent_code=&param=&client_id=
+router.get("/tni-agent-params", requireRole(...ALLOWED_ROLES), h(async (req, res) => {
+  const { from, to } = dateDefaults(req.query);
+  const agentCode = typeof req.query.agent_code === "string" ? req.query.agent_code.trim() : "";
+  const param = typeof req.query.param === "string" ? req.query.param.trim() : "";
+  if (!agentCode || !param) {
+    return res.status(400).json({ success: false, message: "agent_code and param are required" });
+  }
+  const clientId = typeof req.query.client_id === "string" && req.query.client_id.trim()
+    ? req.query.client_id.trim()
+    : null;
+  try {
+    const calls = await getTniAgentCalls(agentCode, param as Parameters<typeof getTniAgentCalls>[1], from, to, clientId);
+    return res.json({ success: true, calls });
+  } catch (err) {
+    // getTniAgentCalls throws on an unrecognised param — it interpolates the column name into
+    // SQL after checking it against TNI_PARAMS, so an unknown value is a client error, not a
+    // 500, and must not be reported as an outage.
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.startsWith("Unknown TNI param")) {
+      return res.status(400).json({ success: false, message });
+    }
+    throw err;
+  }
+}));
 
 // GET /api/quality-dashboard/inbound-ops/summary
 router.get("/inbound-ops/summary", requireRole(...ALLOWED_ROLES), h(async (req, res) => {

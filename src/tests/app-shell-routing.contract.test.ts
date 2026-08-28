@@ -282,13 +282,21 @@ describe("application shell routing contracts", () => {
       "/ux-skill-compare",
       "/ux-skill-demo",
 
-      // (c) Unlinked because their backend does not answer. /ops/command-center calls
-      // /api/call-master/inbound/today and /api/operations-live/summary; /wfm/tni-analysis
-      // calls two /api/quality-dashboard/tni-* paths and /api/lms-integration/assign. None
-      // is served (see api-endpoint-existence.contract.test.ts's KNOWN_MISSING). Putting
-      // either in the sidebar would advertise a page that cannot load.
+      // (c) Unlinked because their backend does not answer. Putting one in the sidebar would
+      // advertise a page that cannot load.
+      //
+      // /wfm/tni-analysis LEFT this group on 2026-08-28 and is now in the menu: its two
+      // /api/quality-dashboard/tni-* endpoints turned out to be a fully-written service that
+      // nothing imported, and mounting them was the whole fix. Its LMS-assign action is still
+      // unbuilt, but that is one action on a page whose analysis now works, not a page that
+      // cannot load.
+      //
+      // /ops/command-center stays. It is not only the two unserved endpoints
+      // (/api/call-master/inbound/today, /api/operations-live/summary) — the page also
+      // hardcodes its Escalation Signals and Process Utilization sections to empty arrays
+      // behind "mock for now - replace with real endpoints" comments. Serving the two feeds
+      // would still leave half the screen stubbed, so linking it is premature regardless.
       "/ops/command-center",
-      "/wfm/tni-analysis",
 
       // (d) Was an undifferentiated "ORPHANED — someone must decide" block. Each of the eight
       // has since been checked against the router, page_catalog and role_page_access, and they
