@@ -49,7 +49,11 @@ describe("computedFieldsFromPreview", () => {
     expect(fields.notice_recovery?.value).toBe(11000);
     expect(fields.advances_recovery?.value).toBe(5000);
     expect(fields.gratuity_amount?.value).toBe(45000); // gratuity.status === 'draft' -> treated as computed
-    expect(fields.earned_leave_encashment?.status).toBe("not_applicable"); // present, but not a comparable baseline (deviatingFields only acts on status === "computed")
+    // Leave encashment is deliberately NOT surfaced as a computed field (6cf1a6c8 removed it
+    // from the F&F form entirely). The preview payload still carries a leave_encashment block —
+    // the backend keeps sending it — so this asserts the mapper drops it rather than that the
+    // upstream field is gone. Guards the removal against being silently re-added.
+    expect(fields.earned_leave_encashment).toBeUndefined();
   });
 
   it("omits gratuity when it isn't in draft status (pending_configuration/not_eligible)", () => {
@@ -101,9 +105,12 @@ describe("DEVIATION_TOLERANCE matches the backend's FF_NET_TOLERANCE", () => {
 });
 
 describe("netFromForm", () => {
-  it("is leave encashment + gratuity - notice recovery - salary hold - advances", () => {
+  it("is gratuity - notice recovery - salary hold - advances, EXCLUDING leave encashment", () => {
     const form: FFFormState = { ...BASE_FORM, earned_leave_encashment: "10000", gratuity_amount: "45000", notice_recovery: "11000", salary_hold: "2000", advances_recovery: "5000" };
-    expect(netFromForm(form)).toBe(10000 + 45000 - 11000 - 2000 - 5000);
+    // earned_leave_encashment is set to a non-zero value on purpose: 6cf1a6c8 removed leave
+    // encashment from the F&F payout, so a form still carrying the figure must not let it back
+    // into the net. If it ever re-enters the formula this reads 10000 higher and fails.
+    expect(netFromForm(form)).toBe(45000 - 11000 - 2000 - 5000);
   });
 });
 
