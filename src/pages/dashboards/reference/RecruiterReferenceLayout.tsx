@@ -64,7 +64,7 @@ export function RecruiterReferenceLayout({ data, filters }: { data: ReferenceDas
     <div className="reference-dashboard-page">
       <ReferenceHeader
         title="Recruitment Dashboard"
-        subtitle="ATS pipeline, walk-ins, offers and joining funnel"
+        subtitle="ATS pipeline, walk-ins, offers and joining stages"
         badge="Recruiter View"
         right={filters}
       />
@@ -112,7 +112,13 @@ export function RecruiterReferenceLayout({ data, filters }: { data: ReferenceDas
       />
 
       <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
-        <ReferencePanel title="Hiring Funnel" bodyClassName="p-4">
+        {/* "Pipeline by Stage", not "Hiring Funnel" — these are disjoint counts of who is
+            sitting in each stage right now, not sequential pass-through counts. A stage
+            further down this list can legitimately show a higher number than one above
+            it (more candidates currently at Offered than currently at Interview is not a
+            contradiction), so this must not imply monotonic drop-off the way a funnel
+            shape does. See deriveAtsStageSnapshot in dashboard-data-contracts.ts. */}
+        <ReferencePanel title="Pipeline by Stage" bodyClassName="p-4">
           {totalApplications !== null ? (
             <div className="space-y-3">
               {funnelStages.map((stage) => {

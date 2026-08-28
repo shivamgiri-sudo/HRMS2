@@ -50,31 +50,66 @@ export interface RecruitmentFunnelStage {
   color: string;
 }
 
+export interface AtsStageSnapshot {
+  applications: number | null;
+  screened: number | null;
+  interviewed: number | null;
+  offered: number | null;
+  joined: number | null;
+}
+
+/**
+ * Derives five stage counts from the ATS's raw by_stage breakdown.
+ *
+ * by_stage's keys are the literal current_stage values candidates are sitting in right
+ * now — "Applied", "Round1-HRScreening", "Interview-SkillTest", "Offered", "converted" —
+ * not a normalized vocabulary, and casing is genuinely inconsistent in the underlying
+ * data itself (Title Case from the candidate web form, snake_case from later ATS
+ * workflow stages). buildRecruitmentFunnel below used to look up exact keys like
+ * "hr_round", "skill_test" and "offered" (lowercase) against this object — none of which
+ * exist verbatim — so 9 of its 12 bars always evaluated to 0 and the Recruiter
+ * Dashboard's panel showed "Recruitment funnel source unavailable" while the ATS held a
+ * real, populated pipeline (38,191 candidates, 1,272 at Offered, verified 2026-08-27).
+ * Matching here is case-insensitive substring matching against the real observed stage
+ * names, the same technique already proven correct on the HR Dashboard's own funnel.
+ *
+ * These five are DISJOINT current-stage buckets, not sequential pass-through counts: a
+ * candidate who has reached Offered is no longer counted under Interviewed, so Offered
+ * can legitimately exceed Interviewed without anything being wrong — it says more people
+ * are sitting at Offered right now than are sitting at Interview right now, not that more
+ * people were ever interviewed. Present this as a stage snapshot, not a funnel implying
+ * monotonic drop-off; ats_candidate_stage_log, the one table that could reconstruct a true
+ * sequential funnel, covers only 1,903 of 38,191 candidates (5%) and is not a usable
+ * source for one yet.
+ */
+export function deriveAtsStageSnapshot(byStagePayload: unknown, totalCandidates: number | null): AtsStageSnapshot {
+  const byStage = asRecord(byStagePayload);
+  const stageSum = (...needles: string[]) =>
+    Object.entries(byStage).reduce((sum, [name, count]) => {
+      const normalized = name.toLowerCase();
+      return needles.some((needle) => normalized.includes(needle)) ? sum + (asNumber(count) ?? 0) : sum;
+    }, 0);
+
+  return {
+    applications: totalCandidates,
+    screened: stageSum("screening") || null,
+    interviewed: stageSum("interview", "skill test", "op's", "round 2", "round 3", "client") || null,
+    offered: stageSum("offer") || null,
+    joined: stageSum("onboard", "joined", "converted", "payroll_validated") || null,
+  };
+}
+
 export function buildRecruitmentFunnel(payload: unknown): RecruitmentFunnelStage[] {
   const record = asRecord(payload);
-  const byStage = asRecord(record.by_stage);
-  const firstCount = (...keys: string[]) => {
-    for (const key of keys) {
-      const value = asNumber(byStage[key] ?? record[key]);
-      if (value !== null) return value;
-    }
-    return 0;
-  };
+  const totalCandidates = asNumber(record.total_candidates ?? record.total_applications);
+  const snapshot = deriveAtsStageSnapshot(record.by_stage, totalCandidates);
 
   return [
-    { label: "Applied", value: firstCount("applied", "total_candidates", "total_applications"), color: "#3b82f6" },
-    { label: "Screened", value: firstCount("screened", "shortlisted", "Shortlisted"), color: "#6366f1" },
-    { label: "HR Round", value: firstCount("hr_round", "hr interview", "hr_interview"), color: "#8b5cf6" },
-    { label: "Skill Test", value: firstCount("skill_test", "assessment", "test"), color: "#a855f7" },
-    { label: "Operations Round", value: firstCount("operations_round", "ops_round"), color: "#06b6d4" },
-    { label: "Client Round", value: firstCount("client_round", "client_interview"), color: "#0891b2" },
-    { label: "Selected", value: firstCount("selected", "Selected", "selected_candidates"), color: "#f59e0b" },
-    { label: "Offered", value: firstCount("offered", "offer_extended", "offers_extended", "offers_today"), color: "#f97316" },
-    { label: "Offer Accepted", value: firstCount("offer_accepted", "accepted"), color: "#84cc16" },
-    { label: "Joined", value: firstCount("joined", "converted", "onboarded", "Onboarded"), color: "#22c55e" },
-    { label: "Rejected", value: firstCount("rejected"), color: "#ef4444" },
-    { label: "Dropped", value: firstCount("dropped", "drop_off"), color: "#dc2626" },
-    { label: "No-show", value: firstCount("no_show", "noshow"), color: "#991b1b" },
+    { label: "Applications", value: snapshot.applications ?? 0, color: "#3b82f6" },
+    { label: "Screened", value: snapshot.screened ?? 0, color: "#6366f1" },
+    { label: "Interviewed", value: snapshot.interviewed ?? 0, color: "#a855f7" },
+    { label: "Offered", value: snapshot.offered ?? 0, color: "#f97316" },
+    { label: "Joined", value: snapshot.joined ?? 0, color: "#22c55e" },
   ];
 }
 

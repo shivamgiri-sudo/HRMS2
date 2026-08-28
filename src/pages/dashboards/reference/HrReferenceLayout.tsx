@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 
 import type { ReferenceDashboardData } from "../reference-dashboard-model";
 import { asArray, asNumber, asRecord, metricDetail, metricUnavailableReason, metricValue } from "../reference-dashboard-model";
+import { deriveAtsStageSnapshot } from "../dashboard-data-contracts";
 import { ReferenceWorkInbox } from "./ReferenceOperationalPanels";
 import {
   AnimNum,
@@ -492,34 +493,18 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
             )}
           </GlassPanel>
 
-          <GlassPanel title="Hiring Funnel" icon={Target} iconColor="#F59E0B">
+          {/* "Pipeline by Stage", not "Hiring Funnel" — by_stage is disjoint current-stage
+              counts, not sequential pass-through counts. Offered can legitimately exceed
+              Interviewed (more candidates sitting at Offered right now than sitting at
+              Interview right now), so this must not imply monotonic drop-off. Shared with
+              the Recruiter Dashboard's own panel via deriveAtsStageSnapshot, so both read
+              the same numbers off the same data instead of two independently-hand-rolled
+              (and previously differently wrong) stage classifiers. */}
+          <GlassPanel title="Pipeline by Stage" icon={Target} iconColor="#F59E0B">
             {(() => {
-              /**
-               * Built from the stage breakdown the ATS actually returns.
-               *
-               * These five bars read `total_applications`, `applications`, `screened`,
-               * `interviewed` and `offered`. Not one of those keys exists on the payload — it
-               * carries `total_candidates`, `by_stage`, `by_source`, `conversion_rate` and
-               * `selected_candidates`. So every bar resolved to null, the guard below reported
-               * "no data", and a complete funnel (Applied 5,039 · Offered 1,247 · HR Screening
-               * 863 · Ops Round 491) was discarded on every page load.
-               *
-               * Stage names are matched as substrings because the same stage is written several
-               * ways across the candidate form, the recruiter app and the legacy import —
-               * "Round 1- HR Screening" and "Screening" are the same step.
-               */
-              const byStage = asRecord(data.ats.by_stage);
-              const stageSum = (...needles: string[]) =>
-                Object.entries(byStage).reduce((sum, [name, count]) => {
-                  const n = name.toLowerCase();
-                  return needles.some((x) => n.includes(x)) ? sum + (asNumber(count) ?? 0) : sum;
-                }, 0);
               const totalCandidates = asNumber(data.ats.total_candidates ?? data.ats.total_applications);
-              const applications = totalCandidates;
-              const screened = stageSum("screening") || null;
-              const interviewed = stageSum("interview", "skill test", "op's", "round 2", "round 3", "client") || null;
-              const offered = stageSum("offer") || null;
-              const joined = stageSum("onboard", "joined", "converted", "payroll_validated") || null;
+              const { applications, screened, interviewed, offered, joined } =
+                deriveAtsStageSnapshot(data.ats.by_stage, totalCandidates);
               const hasAtsData = applications !== null || screened !== null || interviewed !== null || offered !== null || joined !== null;
               const maxVal = Math.max(applications ?? 0, screened ?? 0, interviewed ?? 0, offered ?? 0, joined ?? 0, 1);
 
@@ -534,7 +519,7 @@ export function HrReferenceLayout({ data, filters }: { data: ReferenceDashboardD
               ) : (
                 <div className="flex flex-col items-center justify-center py-6 text-center">
                   <Target className="h-8 w-8 text-gray-300 mb-2" />
-                  <p className="text-xs text-gray-400">ATS funnel data not available</p>
+                  <p className="text-xs text-gray-400">ATS pipeline data not available</p>
                 </div>
               );
             })()}
