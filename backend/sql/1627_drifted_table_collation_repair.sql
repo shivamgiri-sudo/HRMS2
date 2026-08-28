@@ -123,6 +123,30 @@ EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
 
 --  8. salary_upload_snapshot  (39259 rows, 12 MB)
+--
+-- This one table needs sql_mode relaxed around its CONVERT, and it is the ONLY one of the 49
+-- that does. CONVERT TO CHARACTER SET rewrites every row, which re-validates it against the
+-- session sql_mode -- and the server runs STRICT_TRANS_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE
+-- while all 39,099 rows of salary_upload_snapshot.sal_date hold '0000-00-00 00:00:00'. So the
+-- rewrite aborts with "Incorrect datetime value: '0000-00-00 00:00:00' for column 'sal_date' at
+-- row 1", the migration is recorded success=0, and the boot guard then refuses to start the
+-- backend -- which is why every Deploy to Production run failed from 2026-08-26 to 2026-08-28
+-- (10 consecutive, health check never satisfied, dist rolled back each time). The migration's
+-- own pre-flight exercised cosec_daily_agg, billing_provision_snapshot and lms_learner_progress;
+-- salary_upload_snapshot was not among them, so this never surfaced before it shipped.
+--
+-- Relaxing the mode does NOT change any data: the zero dates are preserved exactly as they are.
+-- It only stops a collation change from doubling as a date-validation gate, which was never this
+-- migration's job. Fixing the data instead would mean writing 39,099 rows of a salary table, so
+-- it is deliberately not done here. Verified 2026-08-28 that this is the only affected table:
+-- every date/datetime/timestamp column on all 42 still-drifted tables was scanned for
+-- '0000-00-00%' and salary_upload_snapshot.sal_date is the sole hit.
+--
+-- The previous mode is captured and restored so the remaining 41 conversions still run under
+-- the server's normal strictness.
+SET @prev_sql_mode = @@SESSION.sql_mode;
+SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION';
+
 SET @col = (SELECT TABLE_COLLATION FROM information_schema.TABLES
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'salary_upload_snapshot');
 SET @sql = IF(@col IS NOT NULL AND @col <> 'utf8mb4_unicode_ci',
@@ -132,6 +156,8 @@ SET @sql = IF(@col IS NOT NULL AND @col <> 'utf8mb4_unicode_ci',
 PREPARE stmt FROM @sql;
 EXECUTE stmt;
 DEALLOCATE PREPARE stmt;
+
+SET SESSION sql_mode = @prev_sql_mode;
 
 --  9. qual_leave_snapshot  (18389 rows, 2 MB)
 SET @col = (SELECT TABLE_COLLATION FROM information_schema.TABLES
