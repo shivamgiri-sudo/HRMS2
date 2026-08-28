@@ -1204,7 +1204,7 @@ const REPORTS: Record<string, ReportDef> = {
     },
   },
 
-  // "resignation-tracker" — uses exit_request table
+  // "resignation-tracker" — uses exit_request table (all exit types)
   "resignation-tracker": {
     label: "Resignation Tracker",
     columns: [
@@ -1212,6 +1212,7 @@ const REPORTS: Record<string, ReportDef> = {
       { key: "employee_name",    label: "Employee Name",    format: "text" },
       { key: "branch_name",      label: "Branch",           format: "text" },
       { key: "exit_type",        label: "Exit Type",        format: "text" },
+      { key: "exit_sub_type",    label: "Exit Sub-Type",    format: "text" },
       { key: "reason",           label: "Reason",           format: "text" },
       { key: "lwd_proposed",     label: "LWD Proposed",     format: "date" },
       { key: "lwd_confirmed",    label: "LWD Confirmed",    format: "date" },
@@ -1224,7 +1225,8 @@ const REPORTS: Record<string, ReportDef> = {
       return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name,
-               er.exit_type, er.exit_reason_category AS reason,
+               er.exit_type, er.exit_sub_type,
+               er.exit_reason_category AS reason,
                er.last_working_day_proposed AS lwd_proposed,
                er.last_working_day_confirmed AS lwd_confirmed,
                er.status
@@ -1232,23 +1234,25 @@ const REPORTS: Record<string, ReportDef> = {
         JOIN employees e ON e.id = er.employee_id
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
         ${pj}
-        WHERE er.exit_sub_type = 'resignation' ${pw} ${nw}
+        WHERE 1=1 ${pw} ${nw}
         ORDER BY er.submitted_at DESC, e.employee_code
         LIMIT ${f._limit ?? 50000}
       `, [...pv, ...nv]);
     },
   },
 
-  // "exit-checklist" — uses exit_clearance_task
+  // "exit-checklist" — shows all exit_request employees, LEFT JOIN tasks
   "exit-checklist": {
     label: "Exit Clearance Checklist",
     columns: [
       { key: "employee_code",  label: "Emp Code",       format: "text" },
       { key: "employee_name",  label: "Employee Name",  format: "text" },
       { key: "branch_name",    label: "Branch",         format: "text" },
+      { key: "exit_type",      label: "Exit Type",      format: "text" },
+      { key: "exit_status",    label: "Exit Status",    format: "text" },
       { key: "clearance_area", label: "Clearance Area", format: "text" },
       { key: "task_title",     label: "Task",           format: "text" },
-      { key: "status",         label: "Status",         format: "text" },
+      { key: "status",         label: "Task Status",    format: "text" },
     ],
     async query(f: LegacyFilter) {
       const [nw, nv] = nameWhere("e.full_name", f.employee_name);
@@ -1257,10 +1261,14 @@ const REPORTS: Record<string, ReportDef> = {
       return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name,
-               ect.clearance_area, ect.task_title, ect.status
-        FROM exit_clearance_task ect
-        JOIN employees e ON e.id = ect.employee_id
+               er.exit_type, er.status AS exit_status,
+               COALESCE(ect.clearance_area, 'none') AS clearance_area,
+               COALESCE(ect.task_title, 'No tasks assigned') AS task_title,
+               COALESCE(ect.status, 'not_started') AS status
+        FROM exit_request er
+        JOIN employees e ON e.id = er.employee_id
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
+        LEFT JOIN exit_clearance_task ect ON ect.employee_id = e.id
         ${pj}
         WHERE 1=1 ${pw} ${nw}
         ORDER BY e.employee_code, ect.clearance_area, ect.task_title
@@ -1294,9 +1302,9 @@ const REPORTS: Record<string, ReportDef> = {
       return q(`
         SELECT e.employee_code, e.full_name AS employee_name,
                bm.branch_name,
-               COALESCE(eu.uan, e.uan_number) AS uan_number,
-               e.epf_number AS pf_number,
-               e.esic_number,
+               COALESCE(eu.uan, esi.uan_number, e.uan_number) AS uan_number,
+               COALESCE(e.epf_number, esi.epf_number) AS pf_number,
+               COALESCE(e.esic_number, esi.esi_number) AS esic_number,
                spl.basic AS epf_wages, spl.gross_salary AS esic_wages,
                spl.pf_employee + spl.pf_employer AS total_pf,
                spl.esic_employee + spl.esic_employer AS total_esic,
@@ -1306,6 +1314,7 @@ const REPORTS: Record<string, ReportDef> = {
         JOIN employees e ON e.id = spl.employee_id
         LEFT JOIN branch_master bm ON bm.id = e.branch_id
         LEFT JOIN employee_uan eu ON eu.employee_id = e.id AND eu.is_active = 1
+        LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
         ${pj}
         WHERE 1=1 ${mCond} ${pw} ${nw}
         ORDER BY bm.branch_name, e.employee_code

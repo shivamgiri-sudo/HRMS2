@@ -319,12 +319,12 @@ const QUERIES: Record<string, Builder> = {
                d.designation_name,
                e.date_of_joining,
                e.date_of_exit,
-               -- exit_request has neither of these names: the resignation date lives on
-               -- employees, and the last working day is stored as a proposed/confirmed pair.
                e.resignation_date,
                COALESCE(er.last_working_day_confirmed, er.last_working_day_proposed, e.date_of_exit)
                  AS last_working_day,
                er.exit_type,
+               er.exit_sub_type,
+               er.status AS exit_status,
                ffc.calculation_date,
                ffc.notice_period_days,
                ffc.notice_shortfall_days,
@@ -334,17 +334,17 @@ const QUERIES: Record<string, Builder> = {
                ffc.salary_hold,
                ffc.advances_recovery,
                ffc.net_payable,
-               ffc.status AS ff_status
-             FROM full_final_calculation ffc
-             JOIN exit_request er ON er.id = ffc.exit_request_id
-             JOIN employees e ON e.id = ffc.employee_id
+               COALESCE(ffc.status, 'pending') AS ff_status
+             FROM exit_request er
+             JOIN employees e ON e.id = er.employee_id
+             LEFT JOIN full_final_calculation ffc ON ffc.exit_request_id = er.id
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN designation_master d ON d.id = e.designation_id
             WHERE ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.dateFrom ? 'AND ffc.calculation_date >= ?' : ''}
-              ${f.dateTo ? 'AND ffc.calculation_date <= ?' : ''}
-            ORDER BY ffc.calculation_date DESC`,
+              ${f.dateFrom ? 'AND (ffc.calculation_date >= ? OR ffc.id IS NULL)' : ''}
+              ${f.dateTo ? 'AND (ffc.calculation_date <= ? OR ffc.id IS NULL)' : ''}
+            ORDER BY COALESCE(ffc.calculation_date, er.submitted_at) DESC`,
       params: [
         ...sc.params,
         ...(f.branch ? [f.branch] : []),
@@ -1183,7 +1183,7 @@ const QUERIES: Record<string, Builder> = {
                b.branch_name,
                e.employee_code,
                CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS employee_name,
-               e.esic_number,
+               COALESCE(e.esic_number, esi.esi_number) AS esic_number,
                spl.gross_salary AS esic_wages,
                spl.esic_employee AS employee_esic,
                spl.esic_employer AS employer_esic,
@@ -1192,6 +1192,7 @@ const QUERIES: Record<string, Builder> = {
              JOIN salary_prep_run spr ON spr.id = spl.run_id
              JOIN employees e ON e.id = spl.employee_id
              LEFT JOIN branch_master b ON b.id = e.branch_id
+             LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
             WHERE LOWER(spr.status) IN ('approved','disbursed','finalized')
               AND spl.esic_employee > 0
               AND ${sc.sql}
@@ -1273,6 +1274,14 @@ const QUERIES: Record<string, Builder> = {
 
   emp_probation: (f, scope) => {
     const sc = scopeClause(scope, 'e.branch_id');
+    // employee_probation table has no rows; derive from employees.date_of_joining
+    // using 90-day standard BPO probation period
+    const statusExpr = `CASE
+               WHEN e.date_of_joining IS NULL THEN 'unknown'
+               WHEN DATEDIFF(CURDATE(), e.date_of_joining) < 90 THEN 'on_probation'
+               WHEN DATEDIFF(CURDATE(), e.date_of_joining) < 180 THEN 'due_for_confirmation'
+               ELSE 'confirmation_overdue'
+             END`;
     return {
       sql: `SELECT
                e.employee_code,
@@ -1281,24 +1290,25 @@ const QUERIES: Record<string, Builder> = {
                proc.process_name,
                desig.designation_name,
                e.date_of_joining,
-               ep.probation_start_date,
-               ep.probation_end_date,
-               ep.actual_end_date,
-               ep.extended_end_date,
-               ep.status AS probation_status,
-               ep.extension_reason,
-               ep.confirmation_remarks,
-               CONCAT(conf.first_name,' ',COALESCE(conf.last_name,'')) AS confirmed_by
-             FROM employee_probation ep
-             JOIN employees e ON e.id = ep.employee_id
+               e.date_of_joining AS probation_start_date,
+               DATE_ADD(e.date_of_joining, INTERVAL 90 DAY) AS probation_end_date,
+               NULL AS actual_end_date,
+               NULL AS extended_end_date,
+               ${statusExpr} AS probation_status,
+               NULL AS extension_reason,
+               NULL AS confirmation_remarks,
+               NULL AS confirmed_by,
+               DATEDIFF(CURDATE(), e.date_of_joining) AS days_since_joining
+             FROM employees e
              LEFT JOIN branch_master b ON b.id = e.branch_id
              LEFT JOIN process_master proc ON proc.id = e.process_id
              LEFT JOIN designation_master desig ON desig.id = e.designation_id
-             LEFT JOIN employees conf ON conf.id = ep.confirmed_by
-            WHERE ${sc.sql}
+            WHERE e.active_status = 1
+              AND e.date_of_joining IS NOT NULL
+              AND ${sc.sql}
               ${f.branch ? 'AND e.branch_id = ?' : ''}
-              ${f.status ? 'AND ep.status = ?' : ''}
-            ORDER BY ep.probation_end_date, b.branch_name`,
+              ${f.status ? `AND (${statusExpr}) = ?` : ''}
+            ORDER BY DATE_ADD(e.date_of_joining, INTERVAL 90 DAY), b.branch_name`,
       params: [
         ...sc.params,
         ...(f.branch ? [f.branch] : []),
