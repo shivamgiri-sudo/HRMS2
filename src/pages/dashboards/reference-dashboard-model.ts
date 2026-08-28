@@ -50,6 +50,10 @@ export interface ReferenceDashboardData {
   devices: JsonRecord;
   opsPulse: JsonRecord;
   managerLeaves: JsonRecord[];
+  /** True when the /api/leave/requests fetch behind managerLeaves failed — lets the panel
+   * distinguish "0 requests" from "could not load", since a failed query and a genuinely
+   * empty result both leave managerLeaves as []. */
+  managerLeavesError?: boolean;
   managerInsights: JsonRecord;
   managerAccountability: JsonRecord[];
   quality: JsonRecord;

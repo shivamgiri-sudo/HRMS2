@@ -61,10 +61,17 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
-  const approvedLeaves = statusCount(data.managerLeaves, "approved");
+  // /api/leave/requests can fail (it was slow enough in production to 500 — see the
+  // query fix in leave.secure.routes.ts). managerLeaves defaults to [] on any query
+  // failure the same as it would on a genuinely empty result, so leaveDataFailed is the
+  // only way this panel can tell "0 requests" from "could not load" — without it a
+  // manager reading a failed fetch as "nothing pending" is the exact failure this page
+  // must not produce.
+  const leaveDataFailed = Boolean(data.managerLeavesError);
+  const approvedLeaves = leaveDataFailed ? null : statusCount(data.managerLeaves, "approved");
   const employeesOnLeaveToday = countEmployeesOnLeaveOnDate(data.managerLeaves, today);
-  const pendingLeaves = statusCount(data.managerLeaves, "pending");
-  const rejectedLeaves = statusCount(data.managerLeaves, "rejected");
+  const pendingLeaves = leaveDataFailed ? null : statusCount(data.managerLeaves, "pending");
+  const rejectedLeaves = leaveDataFailed ? null : statusCount(data.managerLeaves, "rejected");
   const positiveInsights = arrayAt(data.managerInsights, "good", "items");
   const overdueInsights = arrayAt(data.managerInsights, "bad", "items");
   const accountabilityRows = data.managerAccountability;
@@ -122,7 +129,10 @@ export function ManagerReferenceLayout({ data, managerName, filters }: { data: R
             <ReferenceListRow icon={Clock3} title="Pending Approval" value={pendingLeaves} tone="amber" href="/leaves" />
             <ReferenceListRow icon={CheckCircle2} title="Approved" value={approvedLeaves} tone="green" href="/leaves" />
             <ReferenceListRow icon={TriangleAlert} title="Rejected" value={rejectedLeaves} tone="red" href="/leaves" />
-            <div className="flex items-center justify-between px-4 py-3 text-xs"><span className="font-semibold text-[#61708a]">Total Requests</span><span className="font-bold text-[#0b1f44]">{formatValue(data.managerLeaves.length)}</span></div>
+            <div className="flex items-center justify-between px-4 py-3 text-xs"><span className="font-semibold text-[#61708a]">Total Requests</span><span className="font-bold text-[#0b1f44]">{formatValue(leaveDataFailed ? null : data.managerLeaves.length)}</span></div>
+            {leaveDataFailed && (
+              <div className="px-4 py-2 text-[11px] text-amber-700 bg-amber-50">Leave requests could not be loaded — these counts are unavailable, not zero.</div>
+            )}
           </div>
         </ReferencePanel>
 

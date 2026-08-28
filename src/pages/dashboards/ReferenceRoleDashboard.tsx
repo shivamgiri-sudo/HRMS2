@@ -513,6 +513,12 @@ export default function ReferenceRoleDashboard({ variant, subheader }: { variant
     devices: devicesQuery.data ?? {},
     opsPulse: pulseQuery.data ?? {},
     managerLeaves: managerLeavesQuery.data ?? [],
+    // /api/leave/requests was slow enough in production to 500 (its COUNT ran display
+    // joins it did not need — fixed separately). A failed query and "genuinely zero
+    // leave requests" must not render the same way: managerLeaves defaults to [] on
+    // error like any query result, so this flag is how the Leave Requests Summary panel
+    // can tell "0" from "unknown" instead of quietly showing whichever the fetch gave it.
+    managerLeavesError: managerLeavesQuery.isError,
     managerInsights: managerInsightsQuery.data ?? {},
     managerAccountability: asArray(managerAccountabilityQuery.data?.accountability),
     quality: mergedQuality,
