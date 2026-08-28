@@ -192,10 +192,23 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/wfm/dashboard": "WFM_DASHBOARD",
   "/wfm/extensions": "WFM_EXTENSIONS",
   "/wfm/live-tracker": "WFM_LIVE_TRACKER",
-  "/wfm/mismatch-queue": "WFM_LIVE_TRACKER",
-  // Own code as of migration 1083 — WFM_LIVE_TRACKER is shared with 4 unrelated pages and
-  // excluded payroll, who own the payable-days blockers this page lists.
-  "/wfm/attendance-exceptions": "WFM_ATTENDANCE_EXCEPTIONS",
+  // "/wfm/mismatch-queue" and "/wfm/attendance-exceptions" (along with "/attendance/billing-
+  // config" and "/wfm/cosec-monitoring", which were never mapped here) no longer render a
+  // page of their own — Task 6 of the WFM attendance-page merge turned all four into
+  // query-string-preserving redirects into "/wfm/attendance-integrity" (see
+  // AttendanceIntegrityRedirect.tsx). A mapping here would point ProtectedRoute's hard
+  // routePageCode gate at a route that isn't wrapped in ProtectedRoute any more, so the
+  // entries are removed rather than left stale.
+  //
+  // "/wfm/attendance-integrity" is deliberately NOT added below: the merged console covers
+  // four different page codes (one per tab, see AttendanceIntegrityConsole.tsx) that don't
+  // collapse into one value, and ProtectedRoute's `routePageCode && !hasRoutePageAccess`
+  // check is a hard deny before the console renders at all — mapping this route to any
+  // single code would 403 a viewer whose grant only covers some of the four tabs, before
+  // the console's own per-tab canViewPage() gating ever gets a chance to show the tabs
+  // they DO hold. The route carries no Gate wrapper for the same reason (see
+  // workforce.routes.tsx). navConfig.tsx's merged nav entry supplies its own explicit
+  // pageCode instead of relying on this map's fallback.
   // Its own code, not WFM_LIVE_TRACKER: this page is for reporting managers, who are
   // not in that code's audience, and the string must match workforce.routes.tsx and
   // navConfig.tsx exactly or nav visibility and page access disagree.

@@ -90,7 +90,7 @@ export function AttendanceBreakdownPanel({ data }: { data: ReferenceDashboardDat
           <ReferenceListRow icon={UserCheck} title="Present" subtitle="Full day attended" value={metricDetail(m, "att", "present")} tone="green" />
           <ReferenceListRow icon={Clock3} title="Half Day" subtitle="Counted as half a day in the rate" value={metricDetail(m, "att", "halfDay")} tone="amber" />
           <ReferenceListRow icon={Clock3} title="Late Marks" subtitle="Flagged late on arrival" value={metricDetail(m, "att", "late")} tone="amber" />
-          <ReferenceListRow icon={TriangleAlert} title="Missing Punch" subtitle="Needs punch correction" value={metricDetail(m, "att", "missedPunch")} tone="red" href="/wfm/attendance-exceptions" />
+          <ReferenceListRow icon={TriangleAlert} title="Missing Punch" subtitle="Needs punch correction" value={metricDetail(m, "att", "missedPunch")} tone="red" href="/wfm/attendance-integrity?tab=exceptions" />
           <ReferenceListRow icon={Users} title="Absent" subtitle="No attendance recorded" value={metricDetail(m, "att", "absent")} tone="red" />
           <ReferenceListRow icon={CalendarClock} title="On Approved Leave" subtitle="Excluded from the attendance rate" value={metricDetail(m, "att", "onLeave")} tone="blue" href="/leaves" />
           {/*
@@ -107,7 +107,7 @@ export function AttendanceBreakdownPanel({ data }: { data: ReferenceDashboardDat
               subtitle="Active employees with no biometric punch in 30 days — they cannot be marked present"
               value={noSource}
               tone="amber"
-              href="/wfm/mismatch-queue"
+              href="/wfm/attendance-integrity?tab=mismatches"
             />
           ) : null}
         </div>
@@ -309,12 +309,12 @@ export function AttendanceExceptionPanel({ data }: { data: ReferenceDashboardDat
               carries its own filter into the exception engine, which now reads that same
               table. Payable Days Mismatch previously pointed at /wfm/mismatch-queue, which
               reads `attendance_daily_record` and could never show these rows. */}
-          <ReferenceListRow icon={WalletCards} title="Payable Days Mismatch" subtitle="Blocks the payroll run until reconciled" value={metricDetail(m, "attException", "payableMismatch")} tone="red" href="/wfm/attendance-exceptions?issueType=salary_payable_days_mismatch&status=open" />
-          <ReferenceListRow icon={FileWarning} title="Missing Attendance Record" subtitle="No daily record was created" value={metricDetail(m, "attException", "missingAdr")} tone="red" href="/wfm/attendance-exceptions?issueType=missing_adr&status=open" />
-          <ReferenceListRow icon={Fingerprint} title="Unmapped Biometric User" subtitle="Punches cannot be matched to an employee" value={metricDetail(m, "attException", "unmappedCosec")} tone="amber" href="/wfm/attendance-exceptions?issueType=unmapped_cosec_user&status=open" />
-          <ReferenceListRow icon={TriangleAlert} title="Warnings" subtitle="Non-blocking, needs review" value={metricDetail(m, "attException", "warnings")} tone="amber" href="/wfm/attendance-exceptions?severity=warning&status=open" />
-          <ReferenceListRow icon={UserCheck} title="Resolved (30d)" subtitle="Cleared in the last 30 days" value={metricDetail(m, "attException", "resolved")} tone="green" href="/wfm/attendance-exceptions?status=resolved" />
-          <ReferenceListRow icon={FileWarning} title="Total Open" subtitle="All unresolved exceptions in the last 30 days" value={metricDetail(m, "attException", "openTotal")} tone="amber" href="/wfm/attendance-exceptions?status=open" />
+          <ReferenceListRow icon={WalletCards} title="Payable Days Mismatch" subtitle="Blocks the payroll run until reconciled" value={metricDetail(m, "attException", "payableMismatch")} tone="red" href="/wfm/attendance-integrity?tab=exceptions&issueType=salary_payable_days_mismatch&status=open" />
+          <ReferenceListRow icon={FileWarning} title="Missing Attendance Record" subtitle="No daily record was created" value={metricDetail(m, "attException", "missingAdr")} tone="red" href="/wfm/attendance-integrity?tab=exceptions&issueType=missing_adr&status=open" />
+          <ReferenceListRow icon={Fingerprint} title="Unmapped Biometric User" subtitle="Punches cannot be matched to an employee" value={metricDetail(m, "attException", "unmappedCosec")} tone="amber" href="/wfm/attendance-integrity?tab=exceptions&issueType=unmapped_cosec_user&status=open" />
+          <ReferenceListRow icon={TriangleAlert} title="Warnings" subtitle="Non-blocking, needs review" value={metricDetail(m, "attException", "warnings")} tone="amber" href="/wfm/attendance-integrity?tab=exceptions&severity=warning&status=open" />
+          <ReferenceListRow icon={UserCheck} title="Resolved (30d)" subtitle="Cleared in the last 30 days" value={metricDetail(m, "attException", "resolved")} tone="green" href="/wfm/attendance-integrity?tab=exceptions&status=resolved" />
+          <ReferenceListRow icon={FileWarning} title="Total Open" subtitle="All unresolved exceptions in the last 30 days" value={metricDetail(m, "attException", "openTotal")} tone="amber" href="/wfm/attendance-integrity?tab=exceptions&status=open" />
           {unscopeable !== null && unscopeable > 0 ? (
             <ReferenceListRow icon={Users} title="No Employee Link" subtitle="Counted org-wide only — cannot be attributed to a branch" value={unscopeable} tone="blue" />
           ) : null}
@@ -408,7 +408,7 @@ export function BiometricCoveragePanel({ data }: { data: ReferenceDashboardData 
             }
             value={metricDetail(m, "biometric", "singlePunchOnly")}
             tone="red"
-            href="/wfm/attendance-exceptions"
+            href="/wfm/attendance-integrity?tab=exceptions"
           />
           <ReferenceListRow icon={Clock3} title="Average Punches Per Employee" subtitle="Device events recorded" value={metricDetail(m, "biometric", "avgPunches")} tone="blue" />
         </div>

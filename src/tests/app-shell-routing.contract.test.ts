@@ -52,8 +52,7 @@ describe("application shell routing contracts", () => {
       ["ATS Reconciliation", "/ats/reconciliation"],
       ["ATS Extensions", "/ats/extensions"],
       ["Enhanced BGV", "/ats/bgv-enhanced"],
-      ["Attendance Mismatch", "/wfm/mismatch-queue"],
-      ["Attendance Billing", "/attendance/billing-config"],
+      ["Attendance Integrity", "/wfm/attendance-integrity"],
       ["WFM Manager Approvals", "/wfm-manager-approvals"],
       ["KPI Master", "/kpi-master"],
       ["My KPI", "/my-kpi"],
@@ -84,8 +83,7 @@ describe("application shell routing contracts", () => {
     const shellRequiredRoutes = [
       "/ats/name-consistency",
       "/ats/reconciliation",
-      "/wfm/mismatch-queue",
-      "/attendance/billing-config",
+      "/wfm/attendance-integrity",
       "/my-kpi",
       "/salary-increment",
       "/peopleos/copilot",
@@ -143,6 +141,15 @@ describe("application shell routing contracts", () => {
       "/ats/recruiter/calling-entry",
       "/ats/recruiter/workspace",
       "/attendance-regularization",
+      // The four pre-merge attendance paths (Task 6 of the WFM attendance-page merge) —
+      // each is now a bare query-string-preserving redirect into /wfm/attendance-integrity
+      // (AttendanceIntegrityRedirect), which is what the sidebar links to instead. Kept
+      // resolvable for bookmarks and the reference dashboards' deep links, but they no
+      // longer render a page of their own, so they don't belong in the sidebar.
+      "/attendance/billing-config",
+      "/wfm/attendance-exceptions",
+      "/wfm/cosec-monitoring",
+      "/wfm/mismatch-queue",
       "/auth",
       "/candidate-onboarding-full",
       "/candidate-portal/dashboard",

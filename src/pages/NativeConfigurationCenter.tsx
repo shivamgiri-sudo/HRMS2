@@ -65,7 +65,7 @@ const DOMAINS: ConfigDomainRecord[] = [
     Icon: Clock,
     pages: [
       { label: "Attendance Rules Master", href: "/attendance-rules-master" },
-      { label: "Attendance Billing Config", href: "/attendance/billing-config" },
+      { label: "Attendance Billing Config", href: "/wfm/attendance-integrity?tab=billing" },
     ],
     tables: ["attendance_rule_config"],
     governanceLevel: "basic",

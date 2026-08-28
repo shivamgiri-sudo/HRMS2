@@ -136,7 +136,7 @@ export function WfmAttendanceReferenceLayout({ data, filters }: { data: Referenc
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[0.75fr_1.25fr_1fr]">
-        <ReferencePanel title="Biometric Device Status" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/wfm/cosec-monitoring">View All</a>} bodyClassName="p-0">
+        <ReferencePanel title="Biometric Device Status" action={<a className="text-xs font-semibold text-[#0b63e5]" href="/wfm/attendance-integrity?tab=biometric">View All</a>} bodyClassName="p-0">
           <div className="divide-y divide-[#edf1f6]">
             {deviceRows.length ? deviceRows.slice(0, 6).map((row, index) => (
               <ReferenceListRow key={String(row.id ?? index)} icon={Fingerprint} title={String(row.name ?? row.device_name ?? `Device ${index + 1}`)} value={String(row.status ?? "Unknown")} tone={["online", "success", "completed"].includes(String(row.status).toLowerCase()) ? "green" : "red"} />
@@ -200,7 +200,7 @@ export function WfmAttendanceReferenceLayout({ data, filters }: { data: Referenc
             {alertRows.length ? alertRows.slice(0, 5).map((row, index) => <ReferenceListRow key={String(row.id ?? index)} icon={ShieldAlert} title={String(row.title ?? row.label ?? "Attendance alert")} value={row.count ?? row.value} tone={String(row.severity ?? "").toLowerCase().includes("high") ? "red" : "amber"} href={String(row.action_url ?? "/work-inbox")} />) : (
               <>
                 <ReferenceListRow icon={ShieldAlert} title="Missing attendance" value={notMarked} tone="red" href="/attendance" />
-                <ReferenceListRow icon={Clock3} title="Missing punches" value={missingPunch} tone="red" href="/wfm/mismatch-queue" />
+                <ReferenceListRow icon={Clock3} title="Missing punches" value={missingPunch} tone="red" href="/wfm/attendance-integrity?tab=mismatches" />
               </>
             )}
           </div>

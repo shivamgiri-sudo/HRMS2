@@ -243,10 +243,13 @@ export const navGroups: NavGroup[] = [
         children: [
           { label: "WFM Tracker",           href: "/wfm/live-tracker",          icon: ic(Clock),     pageCode: "WFM_LIVE_TRACKER", description: "Live" },
           { label: "RTA Board",             href: "/rta-board",                 icon: ic(Activity),  pageCode: "RTA_BOARD",        description: "RTA" },
-          { label: "Attendance Exceptions", href: "/wfm/attendance-exceptions", icon: ic(Clock),     pageCode: "WFM_ATTENDANCE_EXCEPTIONS", description: "Reconciliation & data-integrity exceptions" },
-          { label: "Attendance Mismatch", href: "/wfm/mismatch-queue", icon: ic(ClipboardList), roles: ["admin","hr","wfm","manager","super_admin"], description: "Resolve attendance mismatches" },
-          { label: "Attendance Billing", href: "/attendance/billing-config", icon: ic(Settings2), roles: ["admin","hr","wfm","super_admin"], description: "Attendance billing rules" },
-          { label: "COSEC Monitoring",      href: "/wfm/cosec-monitoring",      icon: ic(Activity),  pageCode: "WFM_LIVE_TRACKER", description: "Biometric sync" },
+          // Exceptions, Mismatch, Billing and COSEC Monitoring merged into one tabbed
+          // console (Task 6 of the WFM attendance-page merge). pageCode is the broadest of
+          // the three grants the four sibling entries used to carry — the console's own
+          // per-tab canViewPage() gating does the real work (see
+          // AttendanceIntegrityConsole.tsx); this is only a visibility hint for the nav
+          // item itself.
+          { label: "Attendance Integrity",  href: "/wfm/attendance-integrity",  icon: ic(Clock),     pageCode: "WFM_ATTENDANCE_EXCEPTIONS", description: "Exceptions, mismatches, biometric sync & billing rules" },
           { label: "Operations Board",      href: "/display/ops-board",         icon: ic(Activity),  roles: ["super_admin","admin","wfm","manager","process_manager","operations_manager"], description: "Live operations display" },
           { label: "Break Desk",            href: "/break-desk",                icon: ic(ShieldCheck), roles: ["super_admin","admin","wfm","security_head","visitor_security","visitor_reception"], description: "Guard desk portal" },
           { label: "Break Reports",         href: "/break-reports",             icon: ic(Clock),     roles: ["super_admin","admin","hr","wfm","manager","process_manager"], description: "Daily break & attendance report" },

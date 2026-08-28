@@ -311,7 +311,13 @@ export default function ExceptionsPanel() {
           <p className="mt-2 max-w-2xl text-sm text-slate-600">
             Reconciliation and data-integrity exceptions detected against biometric, APR and
             payroll sources. To correct an individual attendance record instead, use the{" "}
-            <Link to="/wfm/mismatch-queue" className="font-semibold text-blue-600 hover:underline">
+            {/* Same-page tab switch, not a route navigation — Task 6 merged this panel and
+                the mismatch queue into sibling tabs of one console. A relative "?tab=..."
+                Link only rewrites the search string on the current route, which the
+                console's own useSearchParams sync picks up (see
+                AttendanceIntegrityConsole.tsx), rather than a full navigation through the
+                /wfm/mismatch-queue redirect. */}
+            <Link to="?tab=mismatches" className="font-semibold text-blue-600 hover:underline">
               attendance mismatch queue <ArrowRight className="inline h-3 w-3" />
             </Link>.
           </p>

@@ -3,6 +3,7 @@ import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { lazy } from "./lazy";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
 import WorkforcePageGate from "@/components/security/WorkforcePageGate";
+import { AttendanceIntegrityRedirect } from "./AttendanceIntegrityRedirect";
 
 const Gate = ({ pageCode, children }: { pageCode: string; children: React.ReactNode }) =>
   <WorkforcePageGate pageCode={pageCode}>{children}</WorkforcePageGate>;
@@ -14,10 +15,11 @@ const AdminAttendanceView          = lazy(() => import("@/pages/AdminAttendanceV
 const TeamAttendanceMonth          = lazy(() => import("@/pages/wfm/TeamAttendanceMonth"));
 const NativeAttendanceDisputes     = lazy(() => import("@/pages/NativeAttendanceDisputes"));
 const NativeDiscardCenter          = lazy(() => import("@/pages/NativeDiscardCenter"));
-const NativeAttendanceMismatchQueue = lazy(() => import("@/pages/NativeAttendanceMismatchQueue"));
-const NativeAttendanceExceptionEngine = lazy(() => import("@/pages/NativeAttendanceExceptionEngine"));
+// Exceptions / Mismatch Queue / Billing Config / COSEC Monitoring merged into one tabbed
+// console (Task 6) — see AttendanceIntegrityConsole below. The four old paths still exist
+// as query-string-preserving redirects into it (AttendanceIntegrityRedirect).
+const AttendanceIntegrityConsole   = lazy(() => import("@/pages/wfm/AttendanceIntegrityConsole"));
 const NativeAttendanceRulesMaster  = lazy(() => import("@/pages/NativeAttendanceRulesMaster"));
-const NativeAttendanceBillingConfig = lazy(() => import("@/pages/NativeAttendanceBillingConfig"));
 const Leaves                       = lazy(() => import("@/pages/Leaves"));
 const NativeLeaveTypeConfig        = lazy(() => import("@/pages/NativeLeaveTypeConfig"));
 const NativeMaternityLeave         = lazy(() => import("@/pages/NativeMaternityLeave"));
@@ -37,7 +39,6 @@ const NativeRosterManagerQueue     = lazy(() => import("@/pages/NativeRosterMana
 const NativeRosterMasterBuilder    = lazy(() => import("@/pages/NativeRosterMasterBuilder"));
 const NativeRosterCapacityConfig   = lazy(() => import("@/pages/NativeRosterCapacityConfig"));
 const NativeBiometricCommandCenter = lazy(() => import("@/pages/NativeBiometricCommandCenter"));
-const NativeCosecSyncMonitoring    = lazy(() => import("@/pages/NativeCosecSyncMonitoring"));
 const AonAnalyticsPage             = lazy(() => import("@/pages/AonAnalyticsPage"));
 const NativeWorkforcePlanning      = lazy(() => import("@/pages/NativeWorkforcePlanning"));
 const NativeRTABoard               = lazy(() => import("@/pages/NativeRTABoard"));
@@ -84,11 +85,28 @@ export const workforceRouteElements = (
       {/* Audit surface for reversed approvals. Discards themselves are performed
           inline on the Leaves / Regularization / Disputes pages. */}
       <Route path="/admin/discard-center"       element={<ProtectedRoute roles={['super_admin','wfm']}><Gate pageCode="DISCARD_CENTER"><NativeDiscardCenter /></Gate></ProtectedRoute>} />
-      <Route path="/attendance/billing-config"  element={<ProtectedRoute><Gate pageCode="ATTENDANCE_BILLING_CONFIG"><DashboardLayout><NativeAttendanceBillingConfig /></DashboardLayout></Gate></ProtectedRoute>} />
-      <Route path="/wfm/mismatch-queue"         element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><DashboardLayout><NativeAttendanceMismatchQueue /></DashboardLayout></Gate></ProtectedRoute>} />
-      {/* Requires migration 1083 to have been applied — prod runs SKIP_MIGRATIONS=true, so
-          deploying this ahead of the seed leaves the page dark for every role. */}
-      <Route path="/wfm/attendance-exceptions"  element={<ProtectedRoute><Gate pageCode="WFM_ATTENDANCE_EXCEPTIONS"><NativeAttendanceExceptionEngine /></Gate></ProtectedRoute>} />
+      {/*
+        Attendance Integrity console — Exceptions, Mismatches, Biometric Sync and Billing
+        Rules merged into one tabbed page (Task 6 of the WFM attendance-page merge plan).
+        No Gate wrapper here: one page code cannot express the union of all four panels'
+        audiences, so the console does its own per-tab canViewPage() gating internally
+        (see AttendanceIntegrityConsole.tsx) — ProtectedRoute + DashboardLayout is the only
+        wrapper the route itself provides, and it is the one and only wrapper now that the
+        four original pages (which were inconsistent about self-wrapping) are gone.
+      */}
+      <Route path="/wfm/attendance-integrity"   element={<ProtectedRoute><DashboardLayout><AttendanceIntegrityConsole /></DashboardLayout></ProtectedRoute>} />
+      {/*
+        The four pre-merge paths, kept resolvable as query-string-preserving redirects
+        rather than deleted outright — bookmarks, the reference dashboards' deep links
+        (?issueType=..., ?status=..., ?severity=...) and external references still use
+        them. See AttendanceIntegrityRedirect.tsx. Deliberately unwrapped (no ProtectedRoute
+        / Gate here), matching every other redirect-only route in this file (e.g.
+        /wfm/auto-roster, /roster-master-builder below) — the redirect itself renders
+        nothing sensitive, and the destination route enforces auth and page access.
+      */}
+      <Route path="/attendance/billing-config"  element={<AttendanceIntegrityRedirect toTab="billing" />} />
+      <Route path="/wfm/mismatch-queue"         element={<AttendanceIntegrityRedirect toTab="mismatches" />} />
+      <Route path="/wfm/attendance-exceptions"  element={<AttendanceIntegrityRedirect toTab="exceptions" />} />
       <Route path="/attendance-rules-master"    element={<ProtectedRoute roles={['super_admin','admin','hr']}><Gate pageCode="ATTENDANCE_RULES_MASTER"><NativeAttendanceRulesMaster /></Gate></ProtectedRoute>} />
       <Route path="/hr/attendance-lookup"       element={
         <ProtectedRoute roles={['super_admin','admin','hr','payroll_head','payroll_admin','wfm']}>
@@ -227,7 +245,7 @@ export const workforceRouteElements = (
       <Route path="/wfm/live-tracker"              element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativeBiometricCommandCenter /></Gate></ProtectedRoute>} />
       <Route path="/wfm/adherence-command-center"  element={<Navigate to="/wfm/live-tracker" replace />} />
       <Route path="/wfm/agent-attendance-view"     element={<Navigate to="/wfm/live-tracker" replace />} />
-      <Route path="/wfm/cosec-monitoring"          element={<ProtectedRoute><Gate pageCode="WFM_LIVE_TRACKER"><NativeCosecSyncMonitoring /></Gate></ProtectedRoute>} />
+      <Route path="/wfm/cosec-monitoring"          element={<AttendanceIntegrityRedirect toTab="biometric" />} />
 
       {/* RTA */}
       <Route path="/rta-board" element={<ProtectedRoute><Gate pageCode="RTA_BOARD"><NativeRTABoard /></Gate></ProtectedRoute>} />

@@ -112,7 +112,7 @@ const NAV_BY_VARIANT: Partial<Record<RoleDashboardVariant, NavigationItem[]>> = 
     { label: "Attendance", href: "/attendance", icon: Clock },
     { label: "Shift & Roster", href: "/wfm/roster", icon: CalendarDays },
     { label: "Reports", href: "/reports", icon: BarChart3 },
-    { label: "Devices", href: "/wfm/cosec-monitoring", icon: Server },
+    { label: "Devices", href: "/wfm/attendance-integrity?tab=biometric", icon: Server },
   ],
   wfm_attendance: [
     { label: "Dashboard", href: "/wfm/dashboard", icon: Home },
@@ -121,7 +121,7 @@ const NAV_BY_VARIANT: Partial<Record<RoleDashboardVariant, NavigationItem[]>> = 
     { label: "Attendance", href: "/attendance", icon: Clock },
     { label: "Shift & Roster", href: "/wfm/roster", icon: CalendarDays },
     { label: "Reports", href: "/reports", icon: BarChart3 },
-    { label: "Devices", href: "/wfm/cosec-monitoring", icon: Server },
+    { label: "Devices", href: "/wfm/attendance-integrity?tab=biometric", icon: Server },
   ],
   hr: [
     { label: "Dashboard", href: "/dashboard", icon: Home },

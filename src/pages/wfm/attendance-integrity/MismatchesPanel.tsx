@@ -227,7 +227,9 @@ export default function MismatchesPanel() {
           <p className="text-sm text-slate-500 mt-1">
             Review APR vs biometric mismatches, missing punches, and week-off worked records.
             {" "}For reconciliation and data-integrity exceptions, see the{" "}
-            <Link to="/wfm/attendance-exceptions" className="font-semibold text-blue-600 hover:underline">
+            {/* Same-page tab switch, not a route navigation — see ExceptionsPanel.tsx's
+                matching comment on its own cross-link back to this tab. */}
+            <Link to="?tab=exceptions" className="font-semibold text-blue-600 hover:underline">
               attendance exception engine
             </Link>.
           </p>
