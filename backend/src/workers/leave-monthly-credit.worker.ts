@@ -51,9 +51,13 @@ export async function creditMonthlyLeaves(
     return;
   }
 
-  // Fetch all active employees
+  // Fetch all active employees. Accrual starts from salary_start_date when set
+  // (falls back to date_of_joining) — leave allocation must not begin before
+  // the employee is actually drawing salary (e.g. a training/probation
+  // period with a later salary start).
   const [employees]: any = await db.execute(
-    `SELECT id, date_of_joining FROM employees WHERE active_status = 1 AND employment_status = 'active'`
+    `SELECT id, COALESCE(salary_start_date, date_of_joining) AS accrual_start_date
+     FROM employees WHERE active_status = 1 AND employment_status = 'active'`
   );
 
   // Load CL/ML schedule for this month (whole-number credits via leave_credit_schedule)
@@ -71,7 +75,7 @@ export async function creditMonthlyLeaves(
     try {
       // Credit from schedule (CL/ML whole numbers)
       for (const schedule of scheduleRows) {
-        const proration = prorateMonthlyCredit(emp.date_of_joining, creditMonth, creditYear);
+        const proration = prorateMonthlyCredit(emp.accrual_start_date, creditMonth, creditYear);
         const daysToCredit = Math.round(proration * schedule.credit_days * 10) / 10;
         if (daysToCredit <= 0) continue;
 
@@ -103,7 +107,7 @@ export async function creditMonthlyLeaves(
         continue;
       }
       const elRate = 1.500;
-      const elDaysToCredit = prorateMonthlyCredit(emp.date_of_joining, creditMonth, creditYear) * elRate;
+      const elDaysToCredit = prorateMonthlyCredit(emp.accrual_start_date, creditMonth, creditYear) * elRate;
       if (elDaysToCredit > 0) {
         const elRoundedDays = Math.round(elDaysToCredit * 1000) / 1000;
 
@@ -146,14 +150,15 @@ export async function creditMonthlyLeaves(
  *
  * A month qualifies for catch-up only when:
  *   (a) the worker already ran it for SOME employees (evidence in leave_el_credit_log), AND
- *   (b) at least one currently-active employee who joined BEFORE that month
- *       has no credit log entry for any leave type scheduled for that month.
+ *   (b) at least one currently-active employee whose accrual start
+ *       (salary_start_date, falling back to date_of_joining) is BEFORE that
+ *       month has no credit log entry for any leave type scheduled for that month.
  *
  * Condition (a) prevents double-crediting months that were seeded manually
  * (e.g. EL Jan–Jun 2026 were seeded via migration, not worker-run).
- * Condition (b) uses strict "joined before month-start" so proration = 1.0 is
- * guaranteed — employees who joined mid-month and got 0 days by proration are
- * not incorrectly flagged as missed.
+ * Condition (b) uses strict "accrual start before month-start" so proration =
+ * 1.0 is guaranteed — employees whose accrual started mid-month and got 0
+ * days by proration are not incorrectly flagged as missed.
  */
 async function runCatchUp(year: number, upToMonth: number): Promise<void> {
   const [scheduleRows]: any = await db.execute(
@@ -173,15 +178,16 @@ async function runCatchUp(year: number, upToMonth: number): Promise<void> {
     );
     if (Number(ran[0]?.cnt ?? 0) === 0) continue;
 
-    // (b) Any active employee who joined strictly before this month and has no entry?
+    // (b) Any active employee whose accrual start (salary_start_date, falling
+    // back to date_of_joining) is strictly before this month and has no entry?
     const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
     const [result]: any = await db.execute(
       `SELECT COUNT(*) AS gap
        FROM employees e
        WHERE e.active_status = 1
          AND e.employment_status = 'active'
-         AND e.date_of_joining IS NOT NULL
-         AND e.date_of_joining < ?
+         AND COALESCE(e.salary_start_date, e.date_of_joining) IS NOT NULL
+         AND COALESCE(e.salary_start_date, e.date_of_joining) < ?
          AND NOT EXISTS (
            SELECT 1
            FROM leave_el_credit_log l2
