@@ -73,170 +73,183 @@ biometricSummaryRouter.get("/adherence-summary", roleGuard, h(async (req: any, r
   const params: any[] = [];
   const where = commonWhere(req.query, params);
 
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT COUNT(*) AS mandate_agent_days,
-            SUM(adr.attendance_status = 'present') AS present_days,
-            SUM(adr.attendance_status = 'half_day') AS half_days,
-            SUM(adr.attendance_status = 'absent') AS absent_days,
-            SUM(adr.late_mark = 1) AS late_days,
-            SUM(adr.work_mode IN ('wfh','remote')) AS wfh_days,
-            ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS adherence_pct,
-            ROUND(SUM(adr.late_mark = 1) * 100.0 / NULLIF(COUNT(*), 0), 2) AS late_pct,
-            ROUND(SUM(adr.attendance_status = 'absent') * 100.0 / NULLIF(COUNT(*), 0), 2) AS shrinkage_pct,
-            ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS on_time_in_pct,
-            ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS on_time_out_pct,
-            ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS weekly_compliance_pct,
-            ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS biometric_compliance_pct,
-            SUM(CASE WHEN adr.clock_in_time IS NOT NULL AND adr.clock_out_time IS NULL AND adr.attendance_status NOT IN ('absent','week_off','holiday') THEN 1 ELSE 0 END) AS missed_out,
-            SUM(CASE WHEN adr.clock_in_time IS NULL AND adr.attendance_status NOT IN ('absent','week_off','holiday') THEN 1 ELSE 0 END) AS missed_in,
-            SUM(CASE WHEN adr.clock_in_time IS NOT NULL AND adr.clock_out_time IS NOT NULL THEN 1 ELSE 0 END) AS valid_punch,
-            0 AS multiple_punch,
-            0 AS invalid_punch,
-            SUM(CASE WHEN adr.late_by_minutes > 30 THEN 1 ELSE 0 END) AS variance_0_1,
-            SUM(CASE WHEN adr.late_by_minutes > 60 AND adr.late_by_minutes <= 240 THEN 1 ELSE 0 END) AS variance_1_4,
-            SUM(CASE WHEN adr.late_by_minutes > 240 THEN 1 ELSE 0 END) AS variance_4_plus,
-            ROUND(SUM(COALESCE(adr.raw_minutes,0)) / 60, 2) AS total_ot_hours,
-            COUNT(DISTINCT CASE WHEN adr.raw_minutes > 480 THEN adr.employee_id END) AS overtime_employees,
-            ROUND((SUM(CASE WHEN adr.raw_minutes > 480 THEN adr.raw_minutes - 480 ELSE 0 END)) / 60, 2) AS overtime_hours,
-            ROUND(AVG(CASE WHEN adr.late_mark = 1 THEN adr.late_by_minutes ELSE NULL END), 1) AS avg_late_minutes,
-            ROUND(SUM(CASE WHEN adr.work_mode IN ('wfh','remote') THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 2) AS early_leave_pct
-       FROM attendance_daily_record adr
-       JOIN employees e ON e.id = adr.employee_id
-      WHERE ${where}`,
-    params,
-  );
-
-  // Live counts: on_leave and working_remotely (today only)
-  //
-  // leave_request carries two parallel date pairs — from_date/to_date and
-  // start_date/end_date — and they are not equally populated: 2,678 rows have
-  // from_date/to_date, only 2,661 have start_date/end_date (verified 2026-08-07).
-  // Reading start_date alone silently drops 17 approved requests, so COALESCE to the
-  // complete pair and fall back to the other.
-  const [liveRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       (SELECT COUNT(DISTINCT employee_id) FROM leave_request
-        WHERE status = 'approved'
-          AND CURDATE() BETWEEN COALESCE(from_date, start_date) AND COALESCE(to_date, end_date)) AS on_leave,
-       (SELECT COUNT(DISTINCT adr2.employee_id) FROM attendance_daily_record adr2
-        WHERE adr2.record_date = CURDATE() AND adr2.work_mode IN ('wfh','remote')) AS working_remotely`,
-    []
-  ).catch((err: unknown) => {
-    // null, not 0. "Nobody is on leave today" is a claim; a failed query is not evidence
-    // for it, and this tile sits next to headcount where a false zero reads as coverage.
-    console.warn("[biometric-summary] live on-leave/remote counts failed:", (err as Error).message);
-    return [[{ on_leave: null, working_remotely: null }]] as any;
-  });
-
-  // Regularization summary.
-  //
-  // This read `attendance_regularization_request`, which does not exist — the
-  // table is `attendance_regularization` (31 rows). The .catch() below turned
-  // the resulting error into an empty object, so the whole tile has always
-  // rendered blank.
-  //
-  // The breakdown columns were wrong too. There is no `request_type`; the real
-  // column is `dispute_type`. And the status vocabulary differs: the live values
-  // are approved / rejected / discarded, with no 'cancelled' at all, so the old
-  // categories could not have matched even against the right table.
-  const [regRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       SUM(status = 'pending')   AS pending,
-       SUM(status = 'approved')  AS approved,
-       SUM(status = 'rejected')  AS rejected,
-       SUM(status = 'discarded') AS discarded,
-       SUM(dispute_type = 'work_from_home')             AS work_from_home,
-       SUM(dispute_type IN ('late_in','early_out'))     AS timing,
-       SUM(dispute_type IN ('missed_punch','missing_punch')) AS missed_punch
-     FROM attendance_regularization`,
-    []
-  ).catch(() => [[{}]] as any);
-
-  // Shift summary — breakdown by shift timing.
-  //
-  // This joined `shift_master` on `adr.shift_id`, and read `adr.shift_code`.
-  // None of the three exist: there is no shift_master table, and
-  // attendance_daily_record (114,593 rows) carries no shift column whatsoever.
-  // The .catch() below turned the error into an empty array, so this tile has
-  // rendered as "no shifts" for its entire life.
-  //
-  // The shift an employee was on comes from the roster, not the attendance row:
-  // wfm_roster_assignment links employee + date to a shift, and 412,032 of its
-  // 413,386 rows resolve through wfm_shift_master.
-  //
-  // Coverage is partial and deliberately visible rather than hidden — only
-  // ~4.5% of attendance rows currently have a matching roster row, so
-  // `rostered_employees` is returned alongside the counts. A caller that reads
-  // these as whole-workforce totals would overstate; the field is there so it
-  // does not have to guess.
-  //
-  // present/absent/late are counted per distinct employee, matching `total`.
-  // They were sums over rows against a DISTINCT-employee denominator, which
-  // could report more present than total.
-  const [shiftRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       COALESCE(
-         NULLIF(sm.shift_name, ''),
-         CONCAT(TIME_FORMAT(ra.shift_start_time, '%H:%i'), '-', TIME_FORMAT(ra.shift_end_time, '%H:%i')),
-         'Unassigned'
-       ) AS shift_name,
-       COUNT(DISTINCT adr.employee_id) AS total,
-       COUNT(DISTINCT CASE WHEN adr.attendance_status IN ('present','half_day') THEN adr.employee_id END) AS present,
-       COUNT(DISTINCT CASE WHEN adr.attendance_status = 'absent' THEN adr.employee_id END) AS absent,
-       COUNT(DISTINCT CASE WHEN adr.late_mark = 1 THEN adr.employee_id END) AS late,
-       COUNT(DISTINCT adr.employee_id) AS rostered_employees,
-       ROUND(
-         COUNT(DISTINCT CASE WHEN adr.attendance_status IN ('present','half_day') THEN adr.employee_id END) * 100.0
-         / NULLIF(COUNT(DISTINCT adr.employee_id), 0), 2) AS coverage_pct
-     FROM attendance_daily_record adr
-     JOIN employees e ON e.id = adr.employee_id
-     JOIN wfm_roster_assignment ra
-       ON ra.employee_id = adr.employee_id AND ra.roster_date = adr.record_date
-     LEFT JOIN wfm_shift_master sm ON sm.id = ra.shift_id
-     WHERE ${where}
-     GROUP BY shift_name
-     ORDER BY total DESC
-     LIMIT 10`,
-    params,
-  ).catch(() => [[]] as any);
-
-  // Late arrival trend — hourly buckets for today
+  // Six independent aggregates over the same tables — none reads another's result, so
+  // running them one after another only adds up their latencies for no reason. Measured
+  // directly against the live DB in a quiet moment (2026-08-28): 2118ms + 922ms + 1023ms +
+  // 896ms for four of them alone, before the remaining two — and the route as a whole took
+  // 9.4s end to end, which is what made this endpoint look structurally slow when it was
+  // first flagged. It is not: every query here runs in ~1-2s on its own. Same fix already
+  // applied elsewhere in this codebase (dashboard-metric.service.ts, work-inbox.service.ts,
+  // management.service.ts) for the identical shape of problem. Query text, params and every
+  // .catch() fallback below are unchanged — only the ordering is.
   const todayParams: any[] = [today(), today()];
-  const [lateArrivalRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       HOUR(adr.clock_in_time) AS hour_bucket,
-       COUNT(*) AS count
-     FROM attendance_daily_record adr
-     JOIN employees e ON e.id = adr.employee_id
-     WHERE adr.record_date = ? AND adr.late_mark = 1 AND adr.clock_in_time IS NOT NULL
-       AND adr.record_date = ?
-     GROUP BY HOUR(adr.clock_in_time)
-     ORDER BY hour_bucket`,
-    todayParams,
-  ).catch(() => [[]] as any);
+  const [rows, liveRows, regRows, shiftRows, lateArrivalRows, rosterCoverageRows] = await Promise.all([
+    db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS mandate_agent_days,
+              SUM(adr.attendance_status = 'present') AS present_days,
+              SUM(adr.attendance_status = 'half_day') AS half_days,
+              SUM(adr.attendance_status = 'absent') AS absent_days,
+              SUM(adr.late_mark = 1) AS late_days,
+              SUM(adr.work_mode IN ('wfh','remote')) AS wfh_days,
+              ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS adherence_pct,
+              ROUND(SUM(adr.late_mark = 1) * 100.0 / NULLIF(COUNT(*), 0), 2) AS late_pct,
+              ROUND(SUM(adr.attendance_status = 'absent') * 100.0 / NULLIF(COUNT(*), 0), 2) AS shrinkage_pct,
+              ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS on_time_in_pct,
+              ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS on_time_out_pct,
+              ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS weekly_compliance_pct,
+              ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS biometric_compliance_pct,
+              SUM(CASE WHEN adr.clock_in_time IS NOT NULL AND adr.clock_out_time IS NULL AND adr.attendance_status NOT IN ('absent','week_off','holiday') THEN 1 ELSE 0 END) AS missed_out,
+              SUM(CASE WHEN adr.clock_in_time IS NULL AND adr.attendance_status NOT IN ('absent','week_off','holiday') THEN 1 ELSE 0 END) AS missed_in,
+              SUM(CASE WHEN adr.clock_in_time IS NOT NULL AND adr.clock_out_time IS NOT NULL THEN 1 ELSE 0 END) AS valid_punch,
+              0 AS multiple_punch,
+              0 AS invalid_punch,
+              SUM(CASE WHEN adr.late_by_minutes > 30 THEN 1 ELSE 0 END) AS variance_0_1,
+              SUM(CASE WHEN adr.late_by_minutes > 60 AND adr.late_by_minutes <= 240 THEN 1 ELSE 0 END) AS variance_1_4,
+              SUM(CASE WHEN adr.late_by_minutes > 240 THEN 1 ELSE 0 END) AS variance_4_plus,
+              ROUND(SUM(COALESCE(adr.raw_minutes,0)) / 60, 2) AS total_ot_hours,
+              COUNT(DISTINCT CASE WHEN adr.raw_minutes > 480 THEN adr.employee_id END) AS overtime_employees,
+              ROUND((SUM(CASE WHEN adr.raw_minutes > 480 THEN adr.raw_minutes - 480 ELSE 0 END)) / 60, 2) AS overtime_hours,
+              ROUND(AVG(CASE WHEN adr.late_mark = 1 THEN adr.late_by_minutes ELSE NULL END), 1) AS avg_late_minutes,
+              ROUND(SUM(CASE WHEN adr.work_mode IN ('wfh','remote') THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0), 2) AS early_leave_pct
+         FROM attendance_daily_record adr
+         JOIN employees e ON e.id = adr.employee_id
+        WHERE ${where}`,
+      params,
+    ).then(([r]) => r),
 
-  // Roster coverage buckets — fully/partially/understaffed by process today
-  const [rosterCoverageRows] = await db.execute<RowDataPacket[]>(
-    `SELECT
-       SUM(CASE WHEN present_pct >= 90 THEN 1 ELSE 0 END) AS fully_covered,
-       SUM(CASE WHEN present_pct >= 70 AND present_pct < 90 THEN 1 ELSE 0 END) AS partially_covered,
-       SUM(CASE WHEN present_pct < 70 THEN 1 ELSE 0 END) AS understaffed
-     FROM (
-       SELECT
-         e.process_id,
-         ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS present_pct
+    // Live counts: on_leave and working_remotely (today only)
+    //
+    // leave_request carries two parallel date pairs — from_date/to_date and
+    // start_date/end_date — and they are not equally populated: 2,678 rows have
+    // from_date/to_date, only 2,661 have start_date/end_date (verified 2026-08-07).
+    // Reading start_date alone silently drops 17 approved requests, so COALESCE to the
+    // complete pair and fall back to the other.
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         (SELECT COUNT(DISTINCT employee_id) FROM leave_request
+          WHERE status = 'approved'
+            AND CURDATE() BETWEEN COALESCE(from_date, start_date) AND COALESCE(to_date, end_date)) AS on_leave,
+         (SELECT COUNT(DISTINCT adr2.employee_id) FROM attendance_daily_record adr2
+          WHERE adr2.record_date = CURDATE() AND adr2.work_mode IN ('wfh','remote')) AS working_remotely`,
+      []
+    ).then(([r]) => r).catch((err: unknown) => {
+      // null, not 0. "Nobody is on leave today" is a claim; a failed query is not evidence
+      // for it, and this tile sits next to headcount where a false zero reads as coverage.
+      console.warn("[biometric-summary] live on-leave/remote counts failed:", (err as Error).message);
+      return [{ on_leave: null, working_remotely: null }] as any;
+    }),
+
+    // Regularization summary.
+    //
+    // This read `attendance_regularization_request`, which does not exist — the
+    // table is `attendance_regularization` (31 rows). The .catch() below turned
+    // the resulting error into an empty object, so the whole tile has always
+    // rendered blank.
+    //
+    // The breakdown columns were wrong too. There is no `request_type`; the real
+    // column is `dispute_type`. And the status vocabulary differs: the live values
+    // are approved / rejected / discarded, with no 'cancelled' at all, so the old
+    // categories could not have matched even against the right table.
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(status = 'pending')   AS pending,
+         SUM(status = 'approved')  AS approved,
+         SUM(status = 'rejected')  AS rejected,
+         SUM(status = 'discarded') AS discarded,
+         SUM(dispute_type = 'work_from_home')             AS work_from_home,
+         SUM(dispute_type IN ('late_in','early_out'))     AS timing,
+         SUM(dispute_type IN ('missed_punch','missing_punch')) AS missed_punch
+       FROM attendance_regularization`,
+      []
+    ).then(([r]) => r).catch(() => [{}] as any),
+
+    // Shift summary — breakdown by shift timing.
+    //
+    // This joined `shift_master` on `adr.shift_id`, and read `adr.shift_code`.
+    // None of the three exist: there is no shift_master table, and
+    // attendance_daily_record (114,593 rows) carries no shift column whatsoever.
+    // The .catch() below turned the error into an empty array, so this tile has
+    // rendered as "no shifts" for its entire life.
+    //
+    // The shift an employee was on comes from the roster, not the attendance row:
+    // wfm_roster_assignment links employee + date to a shift, and 412,032 of its
+    // 413,386 rows resolve through wfm_shift_master.
+    //
+    // Coverage is partial and deliberately visible rather than hidden — only
+    // ~4.5% of attendance rows currently have a matching roster row, so
+    // `rostered_employees` is returned alongside the counts. A caller that reads
+    // these as whole-workforce totals would overstate; the field is there so it
+    // does not have to guess.
+    //
+    // present/absent/late are counted per distinct employee, matching `total`.
+    // They were sums over rows against a DISTINCT-employee denominator, which
+    // could report more present than total.
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         COALESCE(
+           NULLIF(sm.shift_name, ''),
+           CONCAT(TIME_FORMAT(ra.shift_start_time, '%H:%i'), '-', TIME_FORMAT(ra.shift_end_time, '%H:%i')),
+           'Unassigned'
+         ) AS shift_name,
+         COUNT(DISTINCT adr.employee_id) AS total,
+         COUNT(DISTINCT CASE WHEN adr.attendance_status IN ('present','half_day') THEN adr.employee_id END) AS present,
+         COUNT(DISTINCT CASE WHEN adr.attendance_status = 'absent' THEN adr.employee_id END) AS absent,
+         COUNT(DISTINCT CASE WHEN adr.late_mark = 1 THEN adr.employee_id END) AS late,
+         COUNT(DISTINCT adr.employee_id) AS rostered_employees,
+         ROUND(
+           COUNT(DISTINCT CASE WHEN adr.attendance_status IN ('present','half_day') THEN adr.employee_id END) * 100.0
+           / NULLIF(COUNT(DISTINCT adr.employee_id), 0), 2) AS coverage_pct
        FROM attendance_daily_record adr
        JOIN employees e ON e.id = adr.employee_id
-       WHERE adr.record_date = (SELECT MAX(record_date) FROM attendance_daily_record WHERE record_date <= CURDATE())
-         AND e.process_id IS NOT NULL
-       GROUP BY e.process_id
-     ) process_pcts`,
-    [],
-    // null, not 0. This query works today, but the fallback decides what is
-    // shown if it ever stops working — and `understaffed: 0` is a claim that
-    // no process is short-staffed, which is the single most reassuring thing
-    // this tile can say. null renders as unavailable instead.
-  ).catch(() => [[{ fully_covered: null, partially_covered: null, understaffed: null }]] as any);
+       JOIN wfm_roster_assignment ra
+         ON ra.employee_id = adr.employee_id AND ra.roster_date = adr.record_date
+       LEFT JOIN wfm_shift_master sm ON sm.id = ra.shift_id
+       WHERE ${where}
+       GROUP BY shift_name
+       ORDER BY total DESC
+       LIMIT 10`,
+      params,
+    ).then(([r]) => r).catch(() => [] as any),
+
+    // Late arrival trend — hourly buckets for today
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         HOUR(adr.clock_in_time) AS hour_bucket,
+         COUNT(*) AS count
+       FROM attendance_daily_record adr
+       JOIN employees e ON e.id = adr.employee_id
+       WHERE adr.record_date = ? AND adr.late_mark = 1 AND adr.clock_in_time IS NOT NULL
+         AND adr.record_date = ?
+       GROUP BY HOUR(adr.clock_in_time)
+       ORDER BY hour_bucket`,
+      todayParams,
+    ).then(([r]) => r).catch(() => [] as any),
+
+    // Roster coverage buckets — fully/partially/understaffed by process today
+    db.execute<RowDataPacket[]>(
+      `SELECT
+         SUM(CASE WHEN present_pct >= 90 THEN 1 ELSE 0 END) AS fully_covered,
+         SUM(CASE WHEN present_pct >= 70 AND present_pct < 90 THEN 1 ELSE 0 END) AS partially_covered,
+         SUM(CASE WHEN present_pct < 70 THEN 1 ELSE 0 END) AS understaffed
+       FROM (
+         SELECT
+           e.process_id,
+           ROUND(SUM(adr.attendance_status IN ('present','half_day')) * 100.0 / NULLIF(COUNT(*), 0), 2) AS present_pct
+         FROM attendance_daily_record adr
+         JOIN employees e ON e.id = adr.employee_id
+         WHERE adr.record_date = (SELECT MAX(record_date) FROM attendance_daily_record WHERE record_date <= CURDATE())
+           AND e.process_id IS NOT NULL
+         GROUP BY e.process_id
+       ) process_pcts`,
+      [],
+    ).then(([r]) => r).catch(() =>
+      // null, not 0. This query works today, but the fallback decides what is
+      // shown if it ever stops working — and `understaffed: 0` is a claim that
+      // no process is short-staffed, which is the single most reassuring thing
+      // this tile can say. null renders as unavailable instead.
+      [{ fully_covered: null, partially_covered: null, understaffed: null }] as any
+    ),
+  ]);
 
   const summary = rows[0] ?? {};
   const live = liveRows[0] ?? {};
