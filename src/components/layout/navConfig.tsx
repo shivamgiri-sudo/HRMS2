@@ -165,6 +165,11 @@ export const navGroups: NavGroup[] = [
           { label: "BGV API Monitor",     href: "/ats/bgv-api-monitor",      icon: ic(Activity),    roles: ["admin","hr","super_admin"],                  description: "BGV API monitoring" },
           { label: "Employee BGV Status", href: "/employees/bgv-status",     icon: ic(ShieldCheck), roles: ["admin","hr","payroll_hr","payroll","super_admin"], description: "Employee BGV status" },
           { label: "Bulk Upload",         href: "/bulk-upload",              icon: ic(Package),     roles: ["admin","hr","super_admin","wfm","payroll","payroll_hr"], description: "Bulk data import" },
+          // Added 2026-08-28. This is a live approval gate — BULK_UPLOAD is in page_catalog
+          // with 6 roles and 51 users holding it, and /api/bulk-upload/approvals/* is mounted
+          // and serving — but nothing in the menu pointed at it, so reaching the queue meant
+          // typing the URL. It was the clearest of the eight routes found outside navigation.
+          { label: "Bulk Upload Approvals", href: "/bulk-upload/approvals",  icon: ic(FileCheck),   pageCode: "BULK_UPLOAD", description: "Review and approve pending bulk-upload batches" },
           { label: "Historical Import",   href: "/ats/bulk-import",          icon: ic(Upload),      roles: ["admin","super_admin"], description: "Import historical candidates" },
         ],
       },

@@ -259,12 +259,20 @@ const KNOWN_MISSING: Record<string, string> = {
   // total_shifts = 0, the backend itself returns 100% compliance with 0 violations. Repointing
   // the table is a product decision about which roster is authoritative — both are live code
   // paths — so it is deliberately not made here.
-  "/api/roster-compliance/summary":
-    "Unserved. Nearest real backend is GET /api/wfm/compliance/summary, but its response shape does not match what RosterComplianceMonitor consumes, and it computes over the empty roster_assignment table. See the block above.",
-  "/api/roster-compliance/violations":
-    "Unserved, and NOT substitutable by /api/wfm/compliance/violations, which returns attendance exceptions rather than roster-rule breaches. The page's OPEN/ACKNOWLEDGED/RESOLVED violation workflow has no backing table anywhere.",
-  "/api/roster-compliance/trend":
-    "Unserved. GET /api/wfm/compliance/trend returns {month, compliancePct, totalShifts, violations} against the page's {week, violations, score}; adaptable, but blocked behind the same empty-table and shape questions as /summary.",
+  // /api/roster-compliance/{summary,violations,trend} used to sit here. RESOLVED 2026-08-28 —
+  // RosterComplianceMonitor now calls /api/wfm/compliance/* with adapters, so these paths are
+  // no longer requested by anything and listing them would describe a call that does not exist.
+  //
+  // The blocker was never only the prefix. That engine queried roster_assignment (0 rows) and
+  // returned a flat 100% through its own `: 100` fallback, so repointing alone would have
+  // swapped an error state for a false all-clear. It was repointed to wfm_roster_assignment
+  // first (bbe27b4b), and only then was the frontend wired up.
+  //
+  // One genuine gap remains and is NOT hidden by that wiring: /violations serves
+  // attendance-derived breaches (ABSENT_NO_CALL, LATE_ARRIVAL), not the five roster rules the
+  // summary counts, and the page's OPEN/ACKNOWLEDGED/RESOLVED workflow still has no backing
+  // table. The rows render under their own honest labels rather than being forced into rule
+  // buckets they do not belong to.
 
   // ── RosterInterventionDashboard (/wfm/roster-interventions) ───────────────────────────
   // Served in substance at /api/analytics/intervention-recommendations (/outcomes, /pending,
@@ -273,12 +281,20 @@ const KNOWN_MISSING: Record<string, string> = {
   // renders. Repointing is cheap; it would also change nothing a user sees, because
   // employee_retention_recommendation holds 0 rows. This is an unpopulated feature, not a
   // broken one, so the honest fix is to generate recommendations, not to move a URL.
-  "/api/analytics/interventions/summary":
-    "Unserved. Closest is GET /api/analytics/intervention-recommendations/outcomes, which lacks the byTier breakdown this page renders. Moot until employee_retention_recommendation has rows — it has 0.",
-  "/api/analytics/interventions/pending":
-    "Unserved. GET /api/analytics/intervention-recommendations/pending is the same query under a different path. Returns nothing today regardless: employee_retention_recommendation holds 0 rows.",
-  "/api/analytics/interventions/:x/action":
-    "Unserved. The equivalent mutation is PATCH /api/analytics/intervention-recommendations/:id — different verb and path. Nothing to action while the table is empty.",
+  // /api/analytics/interventions/* used to sit here. RESOLVED 2026-08-28 —
+  // RosterInterventionDashboard now calls /api/analytics/intervention-recommendations/{outcomes,
+  // pending} and PATCH /:id, which is where that router has always been mounted.
+  //
+  // Two mismatches beyond the path were fixed with it: the API is snake_case and returns a
+  // narrower column set than the page's camelCase type described, and the page sent `tier` and
+  // `outcome` parameters the handler ignores (tier is now filtered client-side; outcome is not
+  // filtered at all, because /pending already selects outcome = 'pending' and filtering on
+  // anything else would blank the list rather than narrow it).
+  //
+  // What wiring does NOT fix, and is deliberately left visible: employee_retention_recommendation
+  // holds 0 rows, so the page honestly shows zeros until recommendations are generated. The
+  // difference is that a 401 from an unserved URL was indistinguishable from a quiet week.
+  // /outcomes also carries no per-tier split, so byTier is counted from the pending rows.
 
   // ── WFMCapacityDashboard (/wfm/capacity-dashboard) ────────────────────────────────────
   "/api/workforce-mandate/hiring-demand":

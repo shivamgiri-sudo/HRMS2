@@ -290,19 +290,39 @@ describe("application shell routing contracts", () => {
       "/ops/command-center",
       "/wfm/tni-analysis",
 
-      // (d) ⚠️ ORPHANED — real features with ZERO inbound links and no sidebar entry, so
-      // today they are reachable only by typing the URL. These are listed to make this
-      // contract pass on a truthful inventory, NOT because anyone decided they should be
-      // hidden. Each needs an owner to say "link it" or "retire it"; /bulk-upload/approvals
-      // in particular is a live, shipped approval gate. Do not read this block as settled.
-      "/ats/onboarding",
-      "/bulk-upload/approvals",
-      "/finance/client-payments",
+      // (d) Was an undifferentiated "ORPHANED — someone must decide" block. Each of the eight
+      // has since been checked against the router, page_catalog and role_page_access, and they
+      // are not one problem. /bulk-upload/approvals is gone from this list entirely: it is now
+      // in navConfig, which is what it always needed.
+
+      // (d1) Redirects. `<Navigate to=... replace />` shims onto a tab of a page that IS in the
+      // menu — exactly the "redirect" category this list's own header names. Nothing orphaned.
+      //   salary-disputes/{queue,team} -> /payroll/salary-disputes?tab=... (in navConfig)
       "/payroll/salary-disputes/queue",
       "/payroll/salary-disputes/team",
       "/payroll/salary-package-manager",
+
+      // (d2) ⚠️ Gated shut, so a menu entry would be a dead link. FINANCE_CLIENT_PAYMENTS has
+      // NO page_catalog row and ZERO role grants, so <Gate> denies every user — the page is
+      // unreachable today even by URL. Registering and granting the page code is a governance
+      // action, not a nav change; linking it first would only add a menu item nobody can open.
+      "/finance/client-payments",
+
+      // (d3) Reachable (WFM_ROSTER: 8 roles, 64 users) and backed by live endpoints, but each
+      // raises an information-architecture question a contract test cannot answer:
+      //   roster-analytics-panel — RosterAnalyticsPanel, a DIFFERENT component from the
+      //     RosterAnalyticsDashboard already in the menu at /wfm/roster-analytics. Which is
+      //     canonical is an owner's call; linking both would put two "Roster Analytics" entries
+      //     side by side.
+      //   mobile-attendance — a phone-oriented view of a desktop page that is already in the
+      //     menu; plausibly meant to be opened on a device rather than listed in a sidebar.
       "/wfm/mobile-attendance",
       "/wfm/roster-analytics-panel",
+
+      // (d4) Ungated (ProtectedRoute only, no pageCode) and overlapping two entries already in
+      // the menu — "Onboarding Bridge" and "Onboarding Requests". Whether this hub supersedes
+      // them or predates them is not answerable from the routing table.
+      "/ats/onboarding",
     ]);
     const navPaths = new Set(
       [...navSource.matchAll(/href:\s*"([^"]+)"/g)].map((match) => match[1].split("?")[0]),

@@ -90,6 +90,94 @@ interface InterventionSummary {
   retentionRate: number;
 }
 
+/**
+ * Shape of a GET .../pending row. The API is snake_case and returns a narrower set of columns
+ * than the camelCase interface above describes — the page's type was written against a
+ * response nothing ever produced, which is why it needs mapping rather than a rename.
+ */
+interface PendingInterventionApiRow {
+  id: string;
+  employee_id: string;
+  employee_name: string;
+  branch_name: string | null;
+  process_name: string | null;
+  designation_name: string | null;
+  generated_at: string;
+  days_since_generated: number;
+  risk_tier: string;
+  prediction_score: number;
+  recommendations: InterventionRecommendation["recommendations"] | string | null;
+}
+
+function adaptPendingRow(r: PendingInterventionApiRow): InterventionRecommendation {
+  // recommendations is a JSON column; mysql2 hands it back parsed on some drivers and as a
+  // string on others, so both are accepted rather than assuming one.
+  let recs: InterventionRecommendation["recommendations"] = [];
+  try {
+    recs = typeof r.recommendations === "string"
+      ? JSON.parse(r.recommendations)
+      : (r.recommendations ?? []);
+  } catch { recs = []; }
+
+  return {
+    id: r.id,
+    employeeId: r.employee_id,
+    // Not selected by the endpoint. Left blank rather than filled with the id, so the column
+    // reads as absent instead of as a code that would not match anything.
+    employeeCode: "",
+    employeeName: r.employee_name,
+    processName: r.process_name || null,
+    branchName: r.branch_name || null,
+    managerId: null,
+    managerName: null,
+    generatedAt: r.generated_at,
+    riskTier: String(r.risk_tier ?? "LOW").toUpperCase() as InterventionRecommendation["riskTier"],
+    predictionScore: Number(r.prediction_score ?? 0),
+    recommendations: Array.isArray(recs) ? recs : [],
+    // /pending selects WHERE action_taken = 0 AND outcome = 'pending', so these are constants
+    // for every row it can return — not guesses.
+    actionTaken: false,
+    actionTakenAt: null,
+    actionTakenBy: null,
+    actionNotes: null,
+    outcome: "pending",
+    outcomeDate: null,
+    signals: { attendancePct: null, qualityPct: null, lateMarks30d: null, aonDays: null },
+  };
+}
+
+/** Shape of GET /api/analytics/intervention-recommendations/outcomes -> data. */
+interface InterventionOutcomesApi {
+  total_generated: number;
+  action_taken_count: number;
+  retained_count: number;
+  exited_count: number;
+  pending_count: number;
+  retention_success_rate: number;
+  avg_days_to_action: number | null;
+}
+
+/**
+ * The outcomes endpoint carries every figure this page shows EXCEPT the per-tier split — it
+ * aggregates by outcome, not by risk tier. byTier is therefore derived from the pending list
+ * (see below) rather than invented here, and stays at zero when that list is empty.
+ */
+function adaptSummary(raw: InterventionOutcomesApi | undefined): InterventionSummary {
+  const total = Number(raw?.total_generated ?? 0);
+  const actioned = Number(raw?.action_taken_count ?? 0);
+  return {
+    total,
+    byTier: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
+    byOutcome: {
+      retained: Number(raw?.retained_count ?? 0),
+      exited: Number(raw?.exited_count ?? 0),
+      pending: Number(raw?.pending_count ?? 0),
+    },
+    actionRate: total > 0 ? Math.round((actioned / total) * 100) : 0,
+    retentionRate: Number(raw?.retention_success_rate ?? 0),
+  };
+}
+
 // ── Design Tokens (MAS HRMS Frozen) ──────────────────────────────────────────
 
 const TONE = {
@@ -317,27 +405,48 @@ export default function RosterInterventionDashboard() {
 
   const queryClient = useQueryClient();
 
+  /*
+   * These three called /api/analytics/interventions/*, which nothing serves. The real router is
+   * mounted at /api/analytics/intervention-recommendations and exposes /outcomes, /pending and
+   * PATCH /:id — different paths, and a different verb for the mutation.
+   *
+   * Note on what this does and does not fix: the paths are now right, but
+   * employee_retention_recommendation holds 0 rows, so the page will honestly show zeros until
+   * recommendations are generated. That is a data gap, not a wiring one — the difference being
+   * that a 401 from an unserved URL used to be indistinguishable from a genuinely quiet week.
+   */
   const { data: summaryData, isError: summaryError } = useQuery({
     queryKey: ["interventions", "summary"],
-    queryFn: () => hrmsApi.get<InterventionSummary>("/api/analytics/interventions/summary"),
+    queryFn: async () => {
+      const raw = await hrmsApi.get<{ data?: InterventionOutcomesApi }>(
+        "/api/analytics/intervention-recommendations/outcomes",
+      );
+      return adaptSummary(raw?.data);
+    },
   });
 
   const { data: interventionsData, isLoading } = useQuery({
     queryKey: ["interventions", "list", tierFilter, ownerFilter, outcomeFilter],
-    queryFn: () => {
+    queryFn: async () => {
       const params = new URLSearchParams();
-      if (tierFilter !== ALL) params.set("tier", tierFilter);
+      // The API supports `owner` and `limit` only; tier and outcome are filtered client-side
+      // below rather than sent as parameters the handler would silently ignore.
       if (ownerFilter !== ALL) params.set("owner", ownerFilter);
-      if (outcomeFilter !== ALL) params.set("outcome", outcomeFilter);
-      return hrmsApi.get<{ interventions: InterventionRecommendation[]; total: number }>(
-        `/api/analytics/interventions/pending?${params}`
+      const raw = await hrmsApi.get<{ data?: PendingInterventionApiRow[]; count?: number }>(
+        `/api/analytics/intervention-recommendations/pending?${params}`,
       );
+      let rows = (raw?.data ?? []).map(adaptPendingRow);
+      if (tierFilter !== ALL) rows = rows.filter((r) => r.riskTier === tierFilter);
+      // outcomeFilter is deliberately NOT applied: the endpoint already selects
+      // `outcome = 'pending'`, so every row it returns has the same outcome and filtering on
+      // anything else would blank the list rather than narrow it.
+      return { interventions: rows, total: rows.length };
     },
   });
 
   const markActionMutation = useMutation({
     mutationFn: (data: { id: string; notes: string }) =>
-      hrmsApi.post(`/api/analytics/interventions/${data.id}/action`, { notes: data.notes }),
+      hrmsApi.patch(`/api/analytics/intervention-recommendations/${data.id}`, { notes: data.notes }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["interventions"] });
       setSelectedIntervention(null);
@@ -356,13 +465,28 @@ export default function RosterInterventionDashboard() {
   };
 
   const interventions = interventionsData?.interventions ?? [];
-  const summary = summaryData ?? {
+  const summaryBase = summaryData ?? {
     total: 0,
     byTier: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
     byOutcome: { retained: 0, exited: 0, pending: 0 },
     actionRate: 0,
     retentionRate: 0,
   };
+
+  /*
+   * byTier is counted from the pending rows rather than taken from /outcomes, which aggregates
+   * by outcome and carries no tier breakdown. Two honest limits follow, and neither is hidden:
+   * these are counts of OPEN interventions (which is what the tiles are labelled), and they
+   * reflect the filtered list, so narrowing by owner narrows the tiles with it.
+   */
+  const summary: InterventionSummary = (() => {
+    const byTier = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+    for (const row of interventionsData?.interventions ?? []) {
+      const tier = String(row.riskTier ?? "").toUpperCase();
+      if (tier in byTier) byTier[tier as keyof typeof byTier] += 1;
+    }
+    return { ...summaryBase, byTier };
+  })();
 
   return (
     <DashboardLayout>
