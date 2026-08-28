@@ -152,8 +152,10 @@ export function FeedPostCard({
   isModerator = false,
   showEngagement = true,
 }: FeedPostCardProps) {
-  // Delegate celebration posts to their own rich card
-  if (post.post_type === "birthday" || post.post_type === "anniversary") {
+  // Delegate celebration posts to their own rich card. 'festival' was missing here —
+  // festival_calendar posts fell through to this plain generic card with no festive
+  // visual identity at all.
+  if (post.post_type === "birthday" || post.post_type === "anniversary" || post.post_type === "festival") {
     return (
       <CelebrationPostCard
         post={post}

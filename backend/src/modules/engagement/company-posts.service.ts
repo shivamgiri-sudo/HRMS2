@@ -274,6 +274,9 @@ async function listCompanyPosts(
             e.full_name AS author_name, e.employee_code AS author_code,
             cp.content_text, cp.status,
             cp.post_type, cp.is_system_post, cp.celebrated_employee_id,
+            ce.full_name AS celebrated_employee_name,
+            ce.employee_code AS celebrated_employee_code,
+            ce.avatar_url AS celebrated_employee_avatar,
             cp.moderation_state, cp.moderation_score, cp.auto_reject_reason, cp.review_notes,
             cp.submitted_at, cp.approved_at, cp.approved_by,
             ea.full_name AS approved_by_name,
@@ -284,6 +287,7 @@ async function listCompanyPosts(
             cp.created_at, cp.updated_at
        FROM company_posts cp
        LEFT JOIN employees e  ON cp.author_employee_id COLLATE utf8mb4_unicode_ci = e.id
+       LEFT JOIN employees ce ON cp.celebrated_employee_id COLLATE utf8mb4_unicode_ci = ce.id
        LEFT JOIN employees ea ON cp.approved_by COLLATE utf8mb4_unicode_ci = ea.user_id
        LEFT JOIN employees er ON cp.rejected_by COLLATE utf8mb4_unicode_ci = er.user_id
       WHERE ${whereClause}

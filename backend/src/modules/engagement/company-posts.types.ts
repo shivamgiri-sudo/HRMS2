@@ -35,7 +35,9 @@ export interface CreateCompanyPostMediaDTO {
   sort_order: number;
 }
 
-export type CompanyPostType = 'user' | 'birthday' | 'anniversary';
+// festival-greeting.cron.ts has written 'festival' into post_type since it was built —
+// missing here meant the INSERT's own literal was never checked against this union.
+export type CompanyPostType = 'user' | 'birthday' | 'anniversary' | 'festival';
 
 export interface CompanyPostDTO {
   id: string;
@@ -47,6 +49,12 @@ export interface CompanyPostDTO {
   post_type: CompanyPostType;
   is_system_post: boolean;
   celebrated_employee_id: string | null;
+  // The person a birthday/anniversary post is actually about. Never selected before —
+  // the feed had no way to show that employee's real name or photo at all, only whatever
+  // could be parsed back out of the generated message text.
+  celebrated_employee_name: string | null;
+  celebrated_employee_code: string | null;
+  celebrated_employee_avatar: string | null;
   status: CompanyPostStatus;
   moderation_state: CompanyPostModerationState;
   moderation_score: number | null;

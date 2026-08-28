@@ -28,7 +28,10 @@ export interface CompanyPostMedia {
   moderation_reason?: string | null;
 }
 
-export type CompanyPostType = "user" | "birthday" | "anniversary";
+// The backend writes 'festival' too (festival-greeting.cron.ts, company_posts.post_type) —
+// missing here meant TypeScript could never distinguish a festival post from a plain 'user'
+// one, which is exactly why FeedPostCard's celebration routing below silently excluded it.
+export type CompanyPostType = "user" | "birthday" | "anniversary" | "festival";
 
 export interface CompanyPost {
   id: string;
@@ -40,6 +43,9 @@ export interface CompanyPost {
   post_type: CompanyPostType;
   is_system_post: boolean;
   celebrated_employee_id: string | null;
+  celebrated_employee_name: string | null;
+  celebrated_employee_code: string | null;
+  celebrated_employee_avatar: string | null;
   status: CompanyPostStatus;
   moderation_state: CompanyPostModerationState;
   moderation_score: number | null;
