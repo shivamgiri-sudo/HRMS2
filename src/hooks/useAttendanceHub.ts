@@ -154,7 +154,10 @@ export interface PayslipSummary {
 export interface PayslipComponent {
   component_code: string;
   component_name: string;
-  component_type: "earning" | "deduction";
+  // Matches the live column: enum('earning','deduction','employer_cost'). The
+  // third member was missing here, so employer PF / ESI / admin charges could not
+  // even be typed, let alone rendered.
+  component_type: "earning" | "deduction" | "employer_cost";
   amount: number;
   taxable: number;
   reason?: string;

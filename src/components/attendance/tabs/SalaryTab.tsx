@@ -10,6 +10,15 @@ const INR = (v: number | null | undefined) =>
 
 const MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+/**
+ * Deduction heads that already have their own tile above, so they must not also
+ * appear under "Other Deductions". This previously listed `ADV_REC`, but the real
+ * component_code is `ADV` — advance recovery was therefore shown twice on every
+ * payslip that had one. Every other head falls through to Other Deductions by
+ * design, so a new head is never silently hidden.
+ */
+const TILED_DEDUCTIONS = new Set(["PF_EMP", "ESIC_EMP", "PT", "TDS", "LWP", "ADV"]);
+
 function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: string }) {
   const [open, setOpen] = useState(false);
   const {
@@ -147,7 +156,9 @@ function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: st
                     { label: "LWP Deduction", value: detail.lwp_deduction },
                     { label: "Advance Recovery", value: detail.advance_recovery },
                   ]
-                    .filter(d => d.value != null)
+                    // Only heads actually deducted. `!= null` also passed 0, so a
+                    // payslip showed "₹0 TDS" tiles beside real deductions.
+                    .filter(d => Number(d.value ?? 0) > 0)
                     .map(d => (
                       <div key={d.label} className="rounded-lg border border-slate-200 bg-white p-2.5">
                         <p className="text-sm font-bold text-rose-600">{INR(d.value)}</p>
@@ -160,7 +171,7 @@ function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: st
                   .filter(c =>
                     c.component_type === "deduction" &&
                     Number(c.amount) > 0 &&
-                    !["PF_EMP", "ESIC_EMP", "PT", "TDS", "LWP", "ADV_REC"].includes(c.component_code.toUpperCase())
+                    !TILED_DEDUCTIONS.has(c.component_code.toUpperCase())
                   ).length > 0 && (
                   <div className="mt-3 pt-3 border-t border-slate-100">
                     <p className="text-[9px] text-slate-400 uppercase font-semibold mb-2">Other Deductions</p>
@@ -169,7 +180,7 @@ function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: st
                         .filter(c =>
                           c.component_type === "deduction" &&
                           Number(c.amount) > 0 &&
-                          !["PF_EMP", "ESIC_EMP", "PT", "TDS", "LWP", "ADV_REC"].includes(c.component_code.toUpperCase())
+                          !TILED_DEDUCTIONS.has(c.component_code.toUpperCase())
                         )
                         .map(c => (
                           <div key={c.component_code} className="flex justify-between items-start text-xs gap-2">
@@ -183,6 +194,28 @@ function PayslipRow({ line, employeeId }: { line: PayslipSummary; employeeId: st
                     </div>
                   </div>
                 )}
+                {/* Employer contributions — paid by the company, not deducted from
+                    the employee. component_type 'employer_cost' reached no screen
+                    before this, so employer PF, employer ESI and EPF admin charges
+                    were invisible even though they are part of CTC. */}
+                {(detail.components ?? []).filter(c => c.component_type === "employer_cost" && Number(c.amount) > 0).length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-slate-100">
+                    <p className="text-[9px] text-violet-500 uppercase font-semibold mb-2">
+                      Employer Contributions <span className="text-slate-400 normal-case font-normal">· not deducted from your pay</span>
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {(detail.components ?? [])
+                        .filter(c => c.component_type === "employer_cost" && Number(c.amount) > 0)
+                        .map(c => (
+                          <div key={c.component_code} className="rounded-lg border border-violet-200 bg-violet-50/60 p-2.5">
+                            <p className="text-sm font-bold text-violet-700">{INR(Number(c.amount))}</p>
+                            <p className="text-[9px] text-slate-500 mt-0.5">{c.component_name}</p>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex justify-between text-sm font-bold border-t border-slate-200 pt-2 mt-3 px-1">
                   <span className="text-slate-700">Net Pay</span>
                   <span className="text-slate-950">{INR(detail.net_salary)}</span>

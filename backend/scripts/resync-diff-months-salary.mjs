@@ -291,7 +291,7 @@ async function repairComponents(hrms, bill) {
       const batch = allCompVals.slice(i, i + BATCH);
       const ph = batch.map(() => '(?,?,?,?,?,?,?,?,?)').join(',');
       await hrms.execute(
-        `INSERT IGNORE INTO salary_prep_line_component
+        `INSERT INTO salary_prep_line_component
            (id,run_id,line_id,employee_id,component_code,component_name,component_type,amount,source)
          VALUES ${ph}`,
         batch.flat()

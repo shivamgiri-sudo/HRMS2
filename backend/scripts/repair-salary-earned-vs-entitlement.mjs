@@ -15,12 +15,27 @@
  *   total_deductions    <- ESIC+EPF+IncomeTax+AdvPaid+LoanDed+TotalDeduction
  *   attendance_data_source '' -> 'NO_DATA'  (enum value coerced away on write)
  *
- * On salary_prep_line_component, for the eight earned earning heads only:
- *   amount              <- the `1`-suffixed column
- *   a head whose earned value is 0 is deleted (the importers skip zeros)
- *   source ''           -> 'snapshot'
- * Deduction and employer-cost components are NOT touched - they were always
- * correct, and PT/TDS/PF/ESI figures are statutory filings.
+ * On salary_prep_line_component it brings every head in COMPONENT_MAP into line
+ * with db_bill:
+ *   value non-zero, row absent  -> INSERT. SHSH (54,953 rows, Rs 9,01,315),
+ *                                  ShortCollection (462, Rs 8,50,876) and PLI (92)
+ *                                  were never mapped by any importer, so those
+ *                                  deductions have never been itemised on a payslip.
+ *   value non-zero, row present -> amount + canonical component_name + source
+ *   value zero,     row present -> DELETE. 56,701 such rows exist: a full-month
+ *                                  entitlement line item for an employee who
+ *                                  earned nothing that month.
+ *   source ''                   -> 'snapshot'
+ *
+ * Deduction and employer-cost AMOUNTS were already exact on every row (PF 70,798/
+ * 70,798, ESI 60,719/60,719, PT 7,390/7,390, TDS 1,686/1,686 ...), so for those
+ * heads only the name and the two never-imported ones change. Adding SHSH and
+ * ShortCollection double-counts nothing: TotalDeduction is exactly the sum of its
+ * eight buckets on all 137,278 db_bill rows.
+ *
+ * PORTFOLIO is renamed "Personal Allowance" - that is what db_bill's own issued
+ * payslip (SalarySlipMaster.PersonalAllowance) has always called it. Amount and
+ * component_code are unchanged.
  *
  * Then recomputes salary_prep_run.total_employees / total_gross / total_net from
  * the lines, so a header can no longer disagree with its own rows.
@@ -40,11 +55,12 @@
  *   node backend/scripts/repair-salary-earned-vs-entitlement.mjs --apply
  */
 import mysql from 'mysql2/promise';
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
-  EARNED_COLUMN, totalDeductions, earnedGross, num,
+  COMPONENT_MAP, EARNED_COLUMN, totalDeductions, earnedGross, num,
 } from './lib/dbbill-salary-mapping.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -75,17 +91,7 @@ const log = m => process.stdout.write(`[${new Date().toLocaleTimeString('en-IN')
 const money = v => Math.round(num(v) * 100) / 100;
 const differs = (a, b) => Math.abs(money(a) - money(b)) > 0.005;
 
-/** The eight earning heads that have an earned counterpart, keyed by component_code. */
-const EARNED_HEADS = {
-  BASIC:     EARNED_COLUMN.Basic,
-  HRA:       EARNED_COLUMN.HRA,
-  BONUS:     EARNED_COLUMN.Bonus,
-  CONV:      EARNED_COLUMN.Conv,
-  PORTFOLIO: EARNED_COLUMN.Portfolio,
-  MA:        EARNED_COLUMN.MedicalAllowance,
-  SPECIAL:   EARNED_COLUMN.SpecialAllowance,
-  OA:        EARNED_COLUMN.OtherAllowance,
-};
+const uuid = () => crypto.randomUUID();
 
 async function ensureBackups(hrms) {
   for (const [src, dst] of [['salary_prep_line', BK_LINE],
@@ -128,7 +134,7 @@ async function main() {
 
   const [months] = await hrms.query('SELECT DISTINCT run_month m FROM salary_prep_run ORDER BY m');
   const T = { months: 0, lines: 0, unmatched: 0, ambiguous: 0,
-              lineUpd: 0, grossFix: 0, netFix: 0, dedFix: 0, srcFix: 0,
+              lineUpd: 0, grossFix: 0, netFix: 0, dedFix: 0, srcFix: 0, compIns: 0,
               compUpd: 0, compDel: 0, compSrcFix: 0, runUpd: 0, netFixAmt: 0 };
 
   for (const { m } of months) {
@@ -143,11 +149,10 @@ async function main() {
         WHERE l.run_id IN (SELECT id FROM salary_prep_run WHERE run_month = ?)`, [m]);
     if (!hr.length) continue;
 
+    // SELECT * because COMPONENT_MAP reads 27 different columns and a column
+    // missing from an explicit list would silently repair that head to zero.
     const [bl] = await bill.query(
-      `SELECT EmpCode, Gross1, Basic1, HRA1, Bonus1, Conv1, Portfolio1,
-              MedicalAllowance1, SpecialAllowance1, OtherAllowance1,
-              NetSalary, ESIC, EPF, IncomeTax, AdvPaid, LoanDed, TotalDeduction
-         FROM salary_data WHERE DATE_FORMAT(SalDate, '%Y-%m') = ?`, [m]);
+      `SELECT * FROM salary_data WHERE DATE_FORMAT(SalDate, '%Y-%m') = ?`, [m]);
 
     const B = new Map(), dupes = new Set();
     for (const r of bl) {
@@ -157,8 +162,20 @@ async function main() {
     }
 
     const lineUpdates = [];   // [gross, basic, hra, sa, net, ded, ads, id]
-    const compUpdates = [];   // [amount, line_id, code]
+    const compUpdates = [];   // [amount, name, line_id, code]
+    const compInserts = [];   // full row
     const compDeletes = [];   // [line_id, code]
+
+    // Which component heads each line already has, so a missing head can be
+    // inserted rather than silently skipped.
+    const [existing] = await hrms.query(
+      `SELECT line_id, component_code FROM salary_prep_line_component
+        WHERE run_id IN (SELECT id FROM salary_prep_run WHERE run_month = ?)`, [m]);
+    const held = new Map();
+    for (const c of existing) {
+      if (!held.has(c.line_id)) held.set(c.line_id, new Set());
+      held.get(c.line_id).add(c.component_code);
+    }
 
     for (const r of hr) {
       T.lines++;
@@ -191,15 +208,31 @@ async function main() {
         if (sFix) T.srcFix++;
       }
 
-      for (const [code, col] of Object.entries(EARNED_HEADS)) {
+      // Every head db_bill knows about, not just the pro-ratable earnings:
+      //  - value non-zero, row absent  -> insert (SHSH, SHORT_COLL, PLI were never imported)
+      //  - value non-zero, row present -> set amount + canonical name
+      //  - value zero,     row present -> delete (a full-entitlement line item for
+      //                                   someone who earned nothing that month)
+      const has = held.get(r.id) ?? new Set();
+      for (const [code, name, ctype, col] of COMPONENT_MAP) {
         const want = money(s[col]);
-        if (want === 0) compDeletes.push([r.id, code]);
-        else compUpdates.push([want, r.id, code]);
+        if (want === 0) { if (has.has(code)) compDeletes.push([r.id, code]); continue; }
+        if (has.has(code)) compUpdates.push([want, name, r.id, code]);
+        else compInserts.push([uuid(), r.run_id, r.id, r.employee_id,
+                               code, name, ctype, want, 'snapshot']);
       }
     }
 
     if (!APPLY) {
-      log(`  ${m}: ${hr.length} lines — ${lineUpdates.length} would change`
+      // Count what would happen so the dry run reports the same shape as --apply.
+      // compUpd is an upper bound here: the UPDATE is a no-op where the row
+      // already holds the right amount and name.
+      T.compUpd += compUpdates.length;
+      T.compIns += compInserts.length;
+      T.compDel += compDeletes.length;
+      T.runUpd  += 1;
+      log(`  ${m}: ${hr.length} lines — ${lineUpdates.length} lines, `
+        + `${compInserts.length} comp inserts, ${compDeletes.length} comp deletes`
         + `${dupes.size ? `, ${dupes.size} ambiguous db_bill codes skipped` : ''}`);
       T.months++;
       continue;
@@ -214,12 +247,24 @@ async function main() {
                   net_salary = ?, total_deductions = ?, attendance_data_source = ?
             WHERE id = ?`, u);
       }
-      for (const [amt, lineId, code] of compUpdates) {
+      for (const [amt, name, lineId, code] of compUpdates) {
         const [res] = await hrms.execute(
-          `UPDATE salary_prep_line_component SET amount = ?, source = 'snapshot'
-            WHERE line_id = ? AND component_code = ? AND (amount <> ? OR source = '')`,
-          [amt, lineId, code, amt]);
+          `UPDATE salary_prep_line_component
+              SET amount = ?, component_name = ?, source = 'snapshot'
+            WHERE line_id = ? AND component_code = ?
+              AND (amount <> ? OR component_name <> ? OR source = '')`,
+          [amt, name, lineId, code, amt, name]);
         T.compUpd += res.affectedRows;
+      }
+      for (let i = 0; i < compInserts.length; i += 200) {
+        const chunk = compInserts.slice(i, i + 200);
+        const ph = chunk.map(() => '(?,?,?,?,?,?,?,?,?)').join(',');
+        const [res] = await hrms.execute(
+          `INSERT INTO salary_prep_line_component
+             (id, run_id, line_id, employee_id, component_code, component_name,
+              component_type, amount, source)
+           VALUES ${ph}`, chunk.flat());
+        T.compIns += res.affectedRows;
       }
       for (const [lineId, code] of compDeletes) {
         const [res] = await hrms.execute(

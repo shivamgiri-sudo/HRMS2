@@ -293,6 +293,12 @@ export const payslipService = {
       .filter((component) => (component.component_type || "").toLowerCase() === "earning")
     rec.deductions = rec.components
       .filter((component) => (component.component_type || "").toLowerCase() === "deduction")
+    // component_type is enum('earning','deduction','employer_cost'). The third
+    // member was dropped here, so employer PF, employer ESI and EPF admin charges
+    // — real money the company pays on the employee's behalf, and the largest
+    // single omission from the payslip — reached no UI at all.
+    rec.employer_costs = rec.components
+      .filter((component) => (component.component_type || "").toLowerCase() === "employer_cost")
     return rec;
   },
 

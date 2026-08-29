@@ -27,6 +27,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import {
+  Building2,
   CalendarCheck,
   ChevronDown,
   ChevronUp,
@@ -133,6 +134,9 @@ interface PayslipRecord {
   payment_date?: string | null;
   earnings?: PayslipComponent[];
   deductions?: PayslipComponent[];
+  /** Employer-side cost — employer PF, employer ESI, EPF admin charges. Not
+   *  deducted from the employee; shown so the payslip states full CTC honestly. */
+  employer_costs?: PayslipComponent[];
 }
 
 const MONTHS = [
@@ -405,8 +409,22 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     const arrear = getEarning('ARREAR') || Number(record.arrear ?? 0);
     const incentive = getEarning('INCENTIVE') || Number(record.incentive ?? 0);
     const lta = Number(record.lta ?? 0);
-    const knownEarnings = basic + hra + bonus + conv + pa + ma + sa + arrear + incentive + lta;
-    const oa = Math.max(Number(record.gross_salary ?? record.gross_earned ?? 0) - knownEarnings, 0);
+
+    // The PDF template has a fixed set of earning slots. Anything the template has
+    // no slot for must still reach the employee, so it is summed into "Other
+    // Allowance" FROM THE COMPONENT LIST — not inferred as a gross-minus-known
+    // remainder, which silently absorbed both genuinely unmapped heads and any
+    // arithmetic error into one unexplained number.
+    const SLOTTED_EARNINGS = new Set([
+      "BASIC", "HRA", "BONUS", "CONV", "CONVEYANCE", "PA", "PERSONAL_ALLOWANCE",
+      "PORTFOLIO", "MA", "MEDICAL_ALLOWANCE", "MEDICAL", "SPECIAL",
+      "SPECIAL_ALLOWANCE", "ARREAR", "INCENTIVE", "LTA", "OA", "OTHER_ALLOWANCE",
+    ]);
+    const unslottedEarnings = (record.earnings || [])
+      .filter((e) => !SLOTTED_EARNINGS.has(e.component_code.toUpperCase()))
+      .reduce((t, e) => t + Number(e.amount || 0), 0);
+    const oa = getEarning('OA') || getEarning('OTHER_ALLOWANCE') || Number(record.other_allowance ?? 0);
+    const otherEarnings = oa + unslottedEarnings;
 
     // Deductions — component array with flat-field fallback (legacy records use flat fields directly)
     const pf = getDeduction('PF_EMPLOYEE') || getDeduction('PF_EMP') || Number(record.pf_employee ?? 0);
@@ -415,9 +433,22 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
     const tds = getDeduction('TDS') || Number(record.tds ?? record.income_tax ?? 0);
     const lwpDed = getDeduction('LWP_DEDUCTION') || getDeduction('LWP') || Number(record.lwp_deduction ?? record.leave_deduction ?? 0);
     const loan = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY') || getDeduction('LOAN_EMI') || Number(record.loan_deduction ?? 0);
-    const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || Number(record.advance_recovery ?? record.advance_paid ?? 0);
+    const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || getDeduction('ADV') || Number(record.advance_recovery ?? record.advance_paid ?? 0);
+
+    // Same rule on the deduction side. SHSH, SHORT_COLL, MOBILE_DED, ASSET_REC and
+    // INS have no slot in the template; sum them by name rather than as a residual,
+    // and keep the residual only as a floor so a template gap never understates
+    // what was withheld.
+    const SLOTTED_DEDUCTIONS = new Set([
+      "PF_EMPLOYEE", "PF_EMP", "ESIC_EMPLOYEE", "ESIC_EMP", "PROFESSIONAL_TAX",
+      "PT", "TDS", "LWP_DEDUCTION", "LWP", "LOAN", "LOAN_RECOVERY", "LOAN_EMI",
+      "ADVANCE", "ADVANCE_RECOVERY", "ADV",
+    ]);
+    const unslottedDeductions = (record.deductions || [])
+      .filter((d) => !SLOTTED_DEDUCTIONS.has(d.component_code.toUpperCase()))
+      .reduce((t, d) => t + Number(d.amount || 0), 0);
     const knownDeductions = pf + esic + pt + tds + lwpDed + loan + adDed;
-    const otherDed = Math.max(effectiveDeductions(record) - knownDeductions, 0);
+    const otherDed = Math.max(unslottedDeductions, effectiveDeductions(record) - knownDeductions, 0);
 
     await downloadMasCallnetPayslip({
       companyName: "Mas Callnet India Pvt Ltd",
@@ -436,7 +467,7 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
       earnedDays: Number(record.present_days ?? record.earned_days ?? record.working_days ?? 30),
       lwpDays: Number(record.lwp_days ?? 0),
       totalDaysInMonth: Number(record.working_days ?? 30),
-      basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
+      basic, hra, bonus, conv, pa, ma, sa, oa: otherEarnings, arrear, incentive,
       pf, esic, pt, tds, lwpDeduction: lwpDed, loan, adDed, otherDed,
       employerPf: Number(record.pf_employer ?? 0),
       employerEsic: Number(record.esic_employer ?? 0),
@@ -898,19 +929,22 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                         </TableRow>
                         {isExpanded && (
                           <TableRow>
-                            <TableCell colSpan={8} className="bg-slate-50 p-5">
-                              <div className="grid gap-4 md:grid-cols-2">
-                                <div className="space-y-2">
-                                  <p className="font-medium text-green-600 flex items-center gap-1">
-                                    <Plus className="h-3 w-3" /> Earnings Breakdown
+                            <TableCell colSpan={8} className="bg-slate-50 p-4 sm:p-5">
+                              <div className="grid gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+                                <div className="space-y-2 rounded-2xl border border-emerald-200/70 bg-gradient-to-b from-emerald-50/80 to-white p-3 sm:p-4">
+                                  <p className="font-semibold text-emerald-700 flex items-center gap-1.5 text-sm">
+                                    <Plus className="h-3.5 w-3.5" /> Earnings
+                                    <span className="ml-auto text-[10px] font-bold uppercase tracking-wide text-emerald-600/70">
+                                      {(record.earnings ?? []).filter((e) => Number(e.amount) > 0).length} heads
+                                    </span>
                                   </p>
                                   <table className="w-full text-sm">
                                     <tbody>
                                       {record.earnings && record.earnings.length > 0 ? (
                                         record.earnings.filter((e) => Number(e.amount) > 0).map((earning) => (
-                                          <tr key={earning.component_code} className="border-b last:border-0">
-                                            <td className="py-1 text-muted-foreground">{earning.component_name}</td>
-                                            <td className="py-1 text-right font-mono font-semibold text-green-600">
+                                          <tr key={earning.component_code} className="border-b border-emerald-100 last:border-0">
+                                            <td className="py-1 text-gray-700">{earning.component_name}</td>
+                                            <td className="py-1 text-right font-mono font-semibold text-emerald-700">
                                               {renderSensitive(`+${formatCurrency(Number(earning.amount))}`)}
                                             </td>
                                           </tr>
@@ -938,17 +972,20 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                     </tbody>
                                   </table>
                                 </div>
-                                <div className="space-y-2">
-                                  <p className="font-medium text-red-600 flex items-center gap-1">
-                                    <Minus className="h-3 w-3" /> Deductions Breakdown
+                                <div className="space-y-2 rounded-2xl border border-rose-200/70 bg-gradient-to-b from-rose-50/80 to-white p-3 sm:p-4">
+                                  <p className="font-semibold text-rose-700 flex items-center gap-1.5 text-sm">
+                                    <Minus className="h-3.5 w-3.5" /> Deductions
+                                    <span className="ml-auto text-[10px] font-bold uppercase tracking-wide text-rose-600/70">
+                                      {(record.deductions ?? []).filter((d) => Number(d.amount) > 0).length} heads
+                                    </span>
                                   </p>
                                   <table className="w-full text-sm">
                                     <tbody>
                                       {record.deductions && record.deductions.length > 0 ? (
                                         record.deductions.filter((d) => Number(d.amount) > 0).map((deduction) => (
-                                          <tr key={deduction.component_code} className="border-b last:border-0">
-                                            <td className="py-1 text-muted-foreground">{deduction.component_name}</td>
-                                            <td className="py-1 text-right font-mono font-semibold text-red-600">
+                                          <tr key={deduction.component_code} className="border-b border-rose-100 last:border-0">
+                                            <td className="py-1 text-gray-700">{deduction.component_name}</td>
+                                            <td className="py-1 text-right font-mono font-semibold text-rose-700">
                                               {renderSensitive(`-${formatCurrency(Number(deduction.amount))}`)}
                                             </td>
                                           </tr>
@@ -975,7 +1012,70 @@ export function PayslipViewer({ employeeId, employeeName, employeeCode }: Paysli
                                     </tbody>
                                   </table>
                                 </div>
+
+                                {/* Employer-side cost. Not deducted from the employee — shown so the
+                                    payslip accounts for the full cost to company rather than leaving
+                                    employer PF, employer ESI and admin charges invisible. */}
+                                {(record.employer_costs ?? []).some((c) => Number(c.amount) > 0) && (
+                                  <div className="space-y-2 rounded-2xl border border-violet-200/70 bg-gradient-to-b from-violet-50/80 to-white p-3 sm:p-4">
+                                    <p className="font-semibold text-violet-700 flex items-center gap-1.5 text-sm">
+                                      <Building2 className="h-3.5 w-3.5" /> Employer Contributions
+                                      <span className="ml-auto text-[10px] font-bold uppercase tracking-wide text-violet-600/70">
+                                        not deducted
+                                      </span>
+                                    </p>
+                                    <table className="w-full text-sm">
+                                      <tbody>
+                                        {(record.employer_costs ?? [])
+                                          .filter((c) => Number(c.amount) > 0)
+                                          .map((cost) => (
+                                            <tr key={cost.component_code} className="border-b border-violet-100 last:border-0">
+                                              <td className="py-1 text-gray-700">{cost.component_name}</td>
+                                              <td className="py-1 text-right font-mono font-semibold text-violet-700">
+                                                {renderSensitive(formatCurrency(Number(cost.amount)))}
+                                              </td>
+                                            </tr>
+                                          ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
                               </div>
+
+                              {/* Reconciliation strip. The components must explain the amount paid —
+                                  the whole point of the breakdown. When they don't, say so plainly
+                                  instead of showing a total the itemisation cannot support. */}
+                              {(() => {
+                                const sum = (rows?: PayslipComponent[]) =>
+                                  (rows ?? []).reduce((t, c) => t + Number(c.amount || 0), 0);
+                                const earned = sum(record.earnings);
+                                const deducted = sum(record.deductions);
+                                const net = Number(record.net_salary ?? 0);
+                                if (!record.earnings?.length) return null;
+                                const gap = Math.round((earned - deducted - net) * 100) / 100;
+                                const reconciles = Math.abs(gap) <= 1;
+                                return (
+                                  <div className={`mt-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border px-3 py-2.5 text-sm ${
+                                    reconciles
+                                      ? "border-slate-200 bg-white/80"
+                                      : "border-amber-300 bg-amber-50"}`}>
+                                    <span className="text-gray-600">
+                                      Total earnings <span className="font-mono font-semibold text-emerald-700">{renderSensitive(formatCurrency(earned))}</span>
+                                    </span>
+                                    <span className="text-gray-600">
+                                      Total deductions <span className="font-mono font-semibold text-rose-700">{renderSensitive(formatCurrency(deducted))}</span>
+                                    </span>
+                                    <span className="text-gray-600">
+                                      Net pay <span className="font-mono font-bold text-gray-900">{renderSensitive(formatCurrency(net))}</span>
+                                    </span>
+                                    {!reconciles && (
+                                      <span className="ml-auto text-xs font-semibold text-amber-800">
+                                        Breakdown differs from net pay by {renderSensitive(formatCurrency(Math.abs(gap)))} — raise a payslip query
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </TableCell>
                           </TableRow>
                         )}

@@ -66,33 +66,45 @@ export const EARNED_COLUMN = {
  * 'manual','system'). Imported rows are 'snapshot'.
  */
 export const COMPONENT_MAP = [
-  ["BASIC",         "Basic",               "earning",       "Basic1"],
-  ["HRA",           "HRA",                 "earning",       "HRA1"],
-  ["BONUS",         "Bonus",               "earning",       "Bonus1"],
-  ["CONV",          "Conveyance",          "earning",       "Conv1"],
-  ["PORTFOLIO",     "Portfolio",           "earning",       "Portfolio1"],
-  ["MA",            "Medical Allowance",   "earning",       "MedicalAllowance1"],
-  ["LTA",           "LTA",                 "earning",       "LTA"],
-  ["SPECIAL",       "Special Allowance",   "earning",       "SpecialAllowance1"],
-  ["OA",            "Other Allowance",     "earning",       "OtherAllowance1"],
-  ["INCENTIVE",     "Incentive",           "earning",       "Incentive"],
-  ["EXTRA_DAY_INC", "Extra Day Incentive", "earning",       "ExtraDayIncentive"],
-  ["ARREAR",        "Arrear",              "earning",       "Arrear"],
-  ["PLI",           "PLI",                 "earning",       "PLI"],
-  ["PF_EMP",        "PF Employee",         "deduction",     "EPF"],
-  ["ESIC_EMP",      "ESIC Employee",       "deduction",     "ESIC"],
-  ["PT",            "Professional Tax",    "deduction",     "ProTaxDeduction"],
-  ["TDS",           "Income Tax / TDS",    "deduction",     "IncomeTax"],
-  ["ADV",           "Advance Recovery",    "deduction",     "AdvPaid"],
-  ["LOAN",          "Loan Deduction",      "deduction",     "LoanDed"],
-  ["LWP",           "LWP Deduction",       "deduction",     "LeaveDeduction"],
-  ["MOBILE_DED",    "Mobile Deduction",    "deduction",     "MobileDedcution"],
-  ["ASSET_REC",     "Asset Recovery",      "deduction",     "AssetRecovery"],
-  ["INS",           "Insurance",           "deduction",     "Insurance"],
-  ["OTHER_DED",     "Other Deduction",     "deduction",     "OtherDeduction"],
-  ["PF_EMP_CO",     "PF Employer",         "employer_cost", "EPFCompany"],
-  ["ESIC_EMP_CO",   "ESIC Employer",       "employer_cost", "ESICCompany"],
-  ["ADMIN_CHG",     "Admin Charge",        "employer_cost", "AdminChrg"],
+  ["BASIC",         "Basic Salary",              "earning",       "Basic1"],
+  ["HRA",           "House Rent Allowance",      "earning",       "HRA1"],
+  ["BONUS",         "Bonus",                     "earning",       "Bonus1"],
+  ["CONV",          "Conveyance Allowance",      "earning",       "Conv1"],
+  // The legacy column is `Portfolio`, but the payslip db_bill actually issues
+  // (SalarySlipMaster) prints it as "PersonalAllowance" — verified equal on
+  // MAS54221 (3,238), MAS54639 (1,390), MAS54643 (1,345) for 2026-07. The
+  // employee-facing name wins; the code stays PORTFOLIO so nothing has to migrate.
+  ["PORTFOLIO",     "Personal Allowance",        "earning",       "Portfolio1"],
+  ["MA",            "Medical Allowance",         "earning",       "MedicalAllowance1"],
+  ["LTA",           "LTA",                       "earning",       "LTA"],
+  ["SPECIAL",       "Special Allowance",         "earning",       "SpecialAllowance1"],
+  ["OA",            "Other Allowance",           "earning",       "OtherAllowance1"],
+  ["INCENTIVE",     "Incentive",                 "earning",       "Incentive"],
+  ["EXTRA_DAY_INC", "Extra Day Incentive",       "earning",       "ExtraDayIncentive"],
+  ["ARREAR",        "Arrear",                    "earning",       "Arrear"],
+  ["PLI",           "PLI",                       "earning",       "PLI"],
+  ["PF_EMP",        "PF Employee",               "deduction",     "EPF"],
+  ["ESIC_EMP",      "ESIC Employee",             "deduction",     "ESIC"],
+  ["PT",            "Professional Tax",          "deduction",     "ProTaxDeduction"],
+  ["TDS",           "Income Tax (TDS)",          "deduction",     "IncomeTax"],
+  ["ADV",           "Advance Recovery",          "deduction",     "AdvPaid"],
+  ["LOAN",          "Loan Deduction",            "deduction",     "LoanDed"],
+  ["LWP",           "LWP Deduction",             "deduction",     "LeaveDeduction"],
+  ["MOBILE_DED",    "Mobile Deduction",          "deduction",     "MobileDedcution"],
+  ["ASSET_REC",     "Asset Recovery",            "deduction",     "AssetRecovery"],
+  ["INS",           "Insurance",                 "deduction",     "Insurance"],
+  // Two heads no importer ever mapped. Their money was never lost — it sits
+  // inside TotalDeduction, which the net already reflects — but 54,953 + 462
+  // payslips could not tell the employee what the deduction was for.
+  // `TotalDeduction = ProTax + Leave + Other + Mobile + ShortCollection +
+  //  AssetRecovery + Insurance + SHSH` holds on all 137,278 db_bill rows, so
+  // itemising these two double-counts nothing.
+  ["SHSH",          "Stay Healthy Stay Happy",   "deduction",     "SHSH"],
+  ["SHORT_COLL",    "Short & Access in A/C",     "deduction",     "ShortCollection"],
+  ["OTHER_DED",     "Other Deduction",           "deduction",     "OtherDeduction"],
+  ["PF_EMP_CO",     "PF Employer",               "employer_cost", "EPFCompany"],
+  ["ESIC_EMP_CO",   "ESIC Employer",             "employer_cost", "ESICCompany"],
+  ["ADMIN_CHG",     "EPF Admin Charges",         "employer_cost", "AdminChrg"],
 ];
 
 /** The eight earned earning columns that sum to Gross1. */
@@ -138,4 +150,17 @@ export const REQUIRED_COLUMNS = [
   "LeaveDeduction", "MobileDedcution", "ShortCollection", "AssetRecovery",
   "Insurance", "OtherDeduction", "SHSH", "TotalDeduction",
   "EPFCompany", "ESICCompany", "AdminChrg", "NetSalary",
+];
+
+/**
+ * The non-statutory buckets `TotalDeduction` rolls up. Verified exact on all
+ * 137,278 db_bill rows:
+ *   TotalDeduction = ProTaxDeduction + LeaveDeduction + OtherDeduction
+ *                  + MobileDedcution + ShortCollection + AssetRecovery
+ *                  + Insurance + SHSH
+ * Itemising these individually therefore reconciles to TotalDeduction exactly.
+ */
+export const TOTAL_DEDUCTION_PARTS = [
+  "ProTaxDeduction", "LeaveDeduction", "OtherDeduction", "MobileDedcution",
+  "ShortCollection", "AssetRecovery", "Insurance", "SHSH",
 ];
