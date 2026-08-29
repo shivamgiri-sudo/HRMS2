@@ -87,6 +87,7 @@ export const PAGE_CODE_BY_ROUTE: Record<string, string> = {
   "/it-provisioning": "IT_PROVISIONING_TRACKER",
   "/kpi-config": "KPI_CONFIG",
   "/kpi-master": "KPI_MASTER",
+  "/kpi/my-team": "TEAM_KPI_SCORECARD",
   "/leave-types": "LEAVE_TYPES",
   "/letters": "LETTERS",
   "/lms/admin": "LMS_ADMIN",

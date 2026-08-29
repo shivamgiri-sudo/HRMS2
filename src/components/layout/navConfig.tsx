@@ -319,6 +319,7 @@ export const navGroups: NavGroup[] = [
           { label: "KPI Targets", href: "/kpi-targets", icon: ic(Target), pageCode: "KPI_MASTER", description: "Targets by process & designation" },
           { label: "KPI Master", href: "/kpi-master", icon: ic(Settings2), pageCode: "KPI_MASTER", description: "KPI master configuration" },
           { label: "My KPI", href: "/my-kpi", icon: ic(Target), pageCode: "MY_KPI", description: "Personal KPI dashboard" },
+          { label: "Team KPI Scorecard", href: "/kpi/my-team", icon: ic(Users2), pageCode: "TEAM_KPI_SCORECARD", description: "Direct reports KPI vs target" },
           { label: "PIP Management", href: "/pip-management", icon: ic(ClipboardList), pageCode: "PIP_MANAGEMENT", description: "Performance improvement plans" },
           { label: "Performance Scorecard", href: "/performance-command-center", icon: ic(Gauge), pageCode: "PERFORMANCE_SCORECARD_COMMAND_CENTER", description: "Full-scope performance scorecard across your team/branch/org" },
           { label: "TAT Matrix", href: "/governance/tat-matrix", icon: ic(Settings2), pageCode: "TAT_MATRIX", description: "Turnaround-time policy" },

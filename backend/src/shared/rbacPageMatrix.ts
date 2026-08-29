@@ -97,6 +97,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",
     // Employee Performance Scorecard (migration 1607).
     "PERFORMANCE_SCORECARD_COMMAND_CENTER",
+    // Team KPI Scorecard — /kpi/my-team (migration 1628).
+    "TEAM_KPI_SCORECARD",
   ],
   recruiter: [
     "JOB_REQUISITION",
@@ -135,6 +137,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "QUALITY_DASHBOARD",
     // Employee Performance Scorecard (migration 1607).
     "PERFORMANCE_SCORECARD_COMMAND_CENTER",
+    // Team KPI Scorecard — /kpi/my-team (migration 1628).
+    "TEAM_KPI_SCORECARD",
   ],
   process_manager: [
     "JOB_REQUISITION",
@@ -161,6 +165,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "OPERATIONS_DASHBOARD",
     // Employee Performance Scorecard (migration 1607).
     "PERFORMANCE_SCORECARD_COMMAND_CENTER",
+    // Team KPI Scorecard — /kpi/my-team (migration 1628).
+    "TEAM_KPI_SCORECARD",
   ],
   team_leader: [
     "WFM_ROSTER",
@@ -172,6 +178,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "QUALITY_TEAM",
     // Employee Performance Scorecard (migration 1607).
     "PERFORMANCE_SCORECARD_COMMAND_CENTER",
+    // Team KPI Scorecard — /kpi/my-team (migration 1628).
+    "TEAM_KPI_SCORECARD",
   ],
   tl: [
     "WFM_ROSTER",
@@ -183,6 +191,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "QUALITY_TEAM",
     // Employee Performance Scorecard (migration 1607).
     "PERFORMANCE_SCORECARD_COMMAND_CENTER",
+    // Team KPI Scorecard — /kpi/my-team (migration 1628).
+    "TEAM_KPI_SCORECARD",
   ],
   wfm: [
     "WFM_DASHBOARD",
@@ -335,6 +345,9 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "PERFORMANCE_HUB",
     // Employee Performance Scorecard (migration 1607).
     "PERFORMANCE_SCORECARD_COMMAND_CENTER",
+    // Team KPI Scorecard — /kpi/my-team (migration 1628). Granted despite the CEO's
+    // MY_KPI exclusion above: this page is about other people's KPIs, not his own.
+    "TEAM_KPI_SCORECARD",
   ],
   trainer: [
     "LMS_MY_LEARNING",
@@ -476,6 +489,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "REPORTS_CENTER",
     // Employee Performance Scorecard (migration 1607).
     "PERFORMANCE_SCORECARD_COMMAND_CENTER",
+    // Team KPI Scorecard — /kpi/my-team (migration 1628).
+    "TEAM_KPI_SCORECARD",
   ],
 
   // Named alongside coo/ceo in the scorecard's allowedRoleKeys but with no other
@@ -485,7 +500,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
 
   // HO-level HR role named in dashboardAccessRegistry's PERFORMANCE_SCORECARD
   // allowedRoleKeys but otherwise absent from this file. Migration 1607.
-  ho_hr: ["PERFORMANCE_SCORECARD_COMMAND_CENTER"],
+  // TEAM_KPI_SCORECARD added by migration 1628.
+  ho_hr: ["PERFORMANCE_SCORECARD_COMMAND_CENTER", "TEAM_KPI_SCORECARD"],
 
   // Process-level HR role named in dashboardAccessRegistry's PERFORMANCE_SCORECARD
   // allowedRoleKeys but otherwise absent from this file. Migration 1607.
@@ -493,8 +509,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
 
   // Named in dashboardAccessRegistry's PERFORMANCE_SCORECARD allowedRoleKeys
   // alongside branch_head, but no branch_manager entry exists anywhere else in
-  // this file. Migration 1607.
-  branch_manager: ["PERFORMANCE_SCORECARD_COMMAND_CENTER"],
+  // this file. Migration 1607. TEAM_KPI_SCORECARD added by migration 1628.
+  branch_manager: ["PERFORMANCE_SCORECARD_COMMAND_CENTER", "TEAM_KPI_SCORECARD"],
 
   // 7 active users. Grants existed only in the 2026-06 SQL seed, and most of
   // those page codes have no mounted route. Dashboard registry already allows
@@ -515,6 +531,8 @@ export const ROLE_SPECIFIC_PAGE_CODES = {
     "REPORTS_CENTER",
     // Payroll Head review-rejection notification links straight here (migration 1542).
     "PAYROLL_HEAD_SALARY_REVIEW_DETAIL",
+    // Team KPI Scorecard — /kpi/my-team (migration 1628).
+    "TEAM_KPI_SCORECARD",
   ],
 
   // 5 active users. Declared on /provisioning/admin alongside hr and admin.
@@ -626,6 +644,10 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "TEAM_ATTENDANCE",
     // Employee Performance Scorecard (migration 1607).
     "PERFORMANCE_SCORECARD_COMMAND_CENTER",
+    // Team KPI Scorecard (migration 1628). Recorded here rather than in
+    // ROLE_SPECIFIC_PAGE_CODES because this role has no curated entry — same
+    // placement the scorecard grant above took, and it keeps the two sets disjoint.
+    "TEAM_KPI_SCORECARD",
   ],
   branch_head: [
     // Re-imported 2026-08-08 — live grants the matrix had fallen behind on.
@@ -775,6 +797,9 @@ export const LIVE_IMPORTED_PAGE_CODES: Readonly<Record<string, readonly string[]
     "SALARY_CERTIFICATE",
   ],
   hr_admin: [
+    // Team KPI Scorecard (migration 1628). Placed here for the same reason as
+    // assistant_manager above: no curated entry exists for this role.
+    "TEAM_KPI_SCORECARD",
     "PAYROLL_DEDUCTION_TYPES",
     "PAYROLL_DEDUCTION_UPLOAD",
     // Employee Performance Scorecard (migration 1607).
