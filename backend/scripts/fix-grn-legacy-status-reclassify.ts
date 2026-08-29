@@ -66,7 +66,7 @@ if (!DECISION || !['paid', 'cancelled'].includes(DECISION)) {
   process.exit(1);
 }
 
-const MIGRATION_ACTOR = '00000000-0000-0000-0000-migration0002';
+const MIGRATION_ACTOR = '00000000-0000-0000-0000-migrat000002';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
