@@ -881,7 +881,7 @@ git commit -m "feat: add resolveRule() — the deterministic Attendance_Source_R
 
 This test uses the same mocked-`db` harness pattern this repository's backend tests already use
 (per repo convention: demo-token auth is irrelevant here since this is a pure service test, not a
-route test, but the `db.execute` mock follows the same `vi.mock('../../db/mysql.js', ...)` shape
+route test, but the `db.execute` mock follows the same `vi.mock('../../../db/mysql.js', ...)` shape
 used throughout `backend/src/modules/wfm/__tests__/`).
 
 - [ ] **Step 1: Write the failing test**
@@ -891,7 +891,7 @@ used throughout `backend/src/modules/wfm/__tests__/`).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const executeMock = vi.fn();
-vi.mock('../../db/mysql.js', () => ({
+vi.mock('../../../db/mysql.js', () => ({
   db: { execute: (...args: unknown[]) => executeMock(...args) },
 }));
 
@@ -1149,7 +1149,7 @@ git commit -m "feat: add attendance-source-rule.service.ts — DB-backed resolve
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const executeMock = vi.fn();
-vi.mock('../../db/mysql.js', () => ({
+vi.mock('../../../db/mysql.js', () => ({
   db: { execute: (...args: unknown[]) => executeMock(...args) },
 }));
 
@@ -1352,7 +1352,7 @@ git commit -m "feat: add day-threshold-rule.service.ts — resolveDayThresholds(
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const executeMock = vi.fn();
-vi.mock('../../db/mysql.js', () => ({
+vi.mock('../../../db/mysql.js', () => ({
   db: { execute: (...args: unknown[]) => executeMock(...args) },
 }));
 
