@@ -12,7 +12,7 @@ import { toast } from "sonner";
 interface VendorSummary { id: string; vendor_code: string; vendor_name: string; vendor_type: string; is_active: number; mapping_count: number; }
 interface ExpenseHead { id: string; headCode: string; headName: string; subHeads: SubHead[]; }
 interface SubHead { id: string; subHeadCode: string; subHeadName: string; capexOpex?: string | null; }
-interface MappingRow { head_code: string; sub_head_code: string; }
+interface MappingRow { headCode: string; subHeadCode: string; }
 
 export function VendorHeadMappingTab() {
   const qc = useQueryClient();
@@ -80,8 +80,8 @@ export function VendorHeadMappingTab() {
 
   function saveAll() {
     const mappings: MappingRow[] = Array.from(localMappings).map(key => {
-      const [head_code, sub_head_code] = key.split("::");
-      return { head_code, sub_head_code: sub_head_code === "*" ? "" : sub_head_code };
+      const [headCode, subHeadCode] = key.split("::");
+      return { headCode, subHeadCode: subHeadCode === "*" ? "" : subHeadCode };
     });
     saveMutation.mutate(mappings);
   }

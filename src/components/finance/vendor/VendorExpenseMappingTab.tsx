@@ -27,8 +27,8 @@ import { hrmsApi } from "@/lib/hrmsApi";
 
 const ALL_SUB_HEADS = "*";
 
-type SubHead = { id: string; sub_head_code: string; sub_head_name: string };
-type Head = { id: string; head_code: string; head_name: string; subHeads?: SubHead[] };
+type SubHead = { id: string; subHeadCode: string; subHeadName: string };
+type Head = { id: string; headCode: string; headName: string; subHeads?: SubHead[] };
 type Mapping = {
   id: string;
   head_code: string;
@@ -82,13 +82,13 @@ export function VendorExpenseMappingTab({
       .map((m) => ({ headCode: m.head_code, subHeadCode: m.sub_head_code }));
 
   const labelFor = useMemo(() => {
-    const headByCode = new Map(heads.map((h) => [h.head_code, h]));
+    const headByCode = new Map(heads.map((h) => [h.headCode, h]));
     return (row: Draft) => {
       const head = headByCode.get(row.headCode);
-      const sub = head?.subHeads?.find((s) => s.sub_head_code === row.subHeadCode);
+      const sub = head?.subHeads?.find((s) => s.subHeadCode === row.subHeadCode);
       return {
-        head: head?.head_name ?? row.headCode,
-        sub: row.subHeadCode === ALL_SUB_HEADS ? "All sub-heads" : sub?.sub_head_name ?? row.subHeadCode,
+        head: head?.headName ?? row.headCode,
+        sub: row.subHeadCode === ALL_SUB_HEADS ? "All sub-heads" : sub?.subHeadName ?? row.subHeadCode,
         // A row whose code no longer resolves is worth surfacing: it will never match anything.
         orphaned: !head || (row.subHeadCode !== ALL_SUB_HEADS && !sub),
       };
@@ -96,7 +96,7 @@ export function VendorExpenseMappingTab({
   }, [heads]);
 
   const importedCount = saved.filter((m) => m.created_by === "LEGACY_IMPORT" && m.active_status === 1).length;
-  const subHeadsForPending = heads.find((h) => h.head_code === pendingHead)?.subHeads ?? [];
+  const subHeadsForPending = heads.find((h) => h.headCode === pendingHead)?.subHeads ?? [];
 
   const saveMutation = useMutation({
     mutationFn: async () =>
@@ -223,8 +223,8 @@ export function VendorExpenseMappingTab({
                 </SelectTrigger>
                 <SelectContent>
                   {heads.map((h) => (
-                    <SelectItem key={h.head_code} value={h.head_code} className="text-sm">
-                      {h.head_name}
+                    <SelectItem key={h.headCode} value={h.headCode} className="text-sm">
+                      {h.headName}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -241,8 +241,8 @@ export function VendorExpenseMappingTab({
                     All sub-heads
                   </SelectItem>
                   {subHeadsForPending.map((s) => (
-                    <SelectItem key={s.sub_head_code} value={s.sub_head_code} className="text-sm">
-                      {s.sub_head_name}
+                    <SelectItem key={s.subHeadCode} value={s.subHeadCode} className="text-sm">
+                      {s.subHeadName}
                     </SelectItem>
                   ))}
                 </SelectContent>
