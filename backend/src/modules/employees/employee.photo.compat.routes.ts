@@ -95,6 +95,42 @@ async function savePhotoForEmployee(employeeId: string, uploadedFile: Express.Mu
   return fileUrl;
 }
 
+/**
+ * Write a pre-processed photo buffer (e.g. the output of the activation-time
+ * face-crop pipeline in employee-creation-orchestrator.service.ts) straight
+ * to the same public employee-photos store and avatar_url/photo_url format
+ * that manual uploads use, without going through multer. Mirrors
+ * savePhotoForEmployee's rename/cleanup/DB-update pattern above so every
+ * code path that reads avatar_url/photo_url (ID card, dashboards) sees the
+ * same URL shape regardless of how the photo was produced.
+ */
+export async function writeEmployeePhotoBuffer(
+  employeeId: string,
+  buffer: Buffer,
+  ext: string = ".jpg",
+): Promise<string> {
+  const finalName = `${employeeId}${ext}`;
+  const finalPath = path.join(PHOTOS_DIR, finalName);
+
+  for (const existingExt of [".jpg", ".jpeg", ".png", ".webp"]) {
+    const oldPath = path.join(PHOTOS_DIR, `${employeeId}${existingExt}`);
+    if (oldPath !== finalPath && fs.existsSync(oldPath)) {
+      fs.unlinkSync(oldPath);
+    }
+  }
+  fs.writeFileSync(finalPath, buffer);
+
+  const fileUrl = `/api/files/employee-photos/${finalName}`;
+  await db.execute(
+    `UPDATE employees
+        SET avatar_url = ?, photo_url = ?, updated_at = COALESCE(updated_at, NOW())
+      WHERE id = ?`,
+    [fileUrl, fileUrl, employeeId],
+  );
+
+  return fileUrl;
+}
+
 employeePhotoCompatRouter.get("/directory-masters", requireRole("admin", "hr", "manager"), h(async (_req: any, res: any) => {
   const activeEmployeeJoin = `
     AND e.active_status = 1

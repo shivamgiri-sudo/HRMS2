@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, CheckCircle2 } from 'lucide-react';
+import { LiveSelfieCapture } from '@/components/onboarding-full/LiveSelfieCapture';
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
@@ -31,8 +32,17 @@ export default function CandidateOnboardingPage() {
     aadhar_number: '', pan_number: '', uan_number: '',
     bank_account_no: '', bank_ifsc: '', bank_name: '',
     emergency_contact_name: '', emergency_contact_mobile: '',
-    resume_url: '', selfie_url: '',
+    resume_url: '',
   });
+
+  // A live selfie is a mandatory document, not a form field — it's captured
+  // via the webcam and uploaded to candidate_onboarding_document (doc_type
+  // "Live Selfie"), the same store and mandatory-gate check the canonical
+  // full-onboarding flow uses. submitProfile() now rejects submission
+  // without one; see ats.onboarding.service.ts.
+  const [selfieCaptured, setSelfieCaptured] = useState(false);
+  const [selfieUploading, setSelfieUploading] = useState(false);
+  const [selfieError, setSelfieError] = useState('');
 
   useEffect(() => {
     if (!token) { setTokenError('No onboarding token provided.'); setLoading(false); return; }
@@ -42,6 +52,28 @@ export default function CandidateOnboardingPage() {
   }, [token]);
 
   const set = (k: keyof typeof form, v: string) => setForm(prev => ({ ...prev, [k]: v }));
+
+  const handleSelfieCapture = async (file: File) => {
+    setSelfieUploading(true);
+    setSelfieError('');
+    try {
+      const fd = new FormData();
+      fd.append('token', token);
+      fd.append('docType', 'Live Selfie');
+      fd.append('docName', 'Live Selfie (Identity Verification)');
+      fd.append('pageNo', '');
+      fd.append('file', file);
+      // Same document-upload endpoint the canonical full-onboarding flow
+      // uses (see useOnboardingFull.ts's uploadDoc) — token-scoped, not
+      // step-scoped, so it works unchanged against a legacy-flow token too.
+      await hrmsApi.postForm('/api/ats/onboarding-full/documents', fd);
+      setSelfieCaptured(true);
+    } catch (e: any) {
+      setSelfieError(e?.response?.data?.error ?? 'Selfie upload failed. Please try again.');
+    } finally {
+      setSelfieUploading(false);
+    }
+  };
 
   const handleSubmit = async () => {
     setLoading(true);
@@ -131,9 +163,13 @@ export default function CandidateOnboardingPage() {
 
           {step === 6 && (
             <>
-              <p className="text-sm text-muted-foreground">Provide document URLs if available. HR will follow up for hard copies during joining.</p>
+              <p className="text-sm text-muted-foreground">Provide a resume link if available, and complete the mandatory live selfie below. HR will follow up for hard copies during joining.</p>
               <div><Label>Resume URL</Label><Input value={form.resume_url} onChange={e => set('resume_url', e.target.value)} placeholder="https://..." /></div>
-              <div><Label>Photo URL</Label><Input value={form.selfie_url} onChange={e => set('selfie_url', e.target.value)} placeholder="https://..." /></div>
+              <div>
+                <Label>Live Selfie *</Label>
+                <LiveSelfieCapture onCapture={handleSelfieCapture} captured={selfieCaptured} disabled={selfieUploading} />
+                {selfieError && <p className="text-xs text-red-600 mt-1">{selfieError}</p>}
+              </div>
             </>
           )}
 
@@ -151,9 +187,17 @@ export default function CandidateOnboardingPage() {
 
           <div className="flex justify-between pt-2">
             {step > 1 && <Button variant="outline" onClick={() => setStep(s => (s - 1) as Step)}>Back</Button>}
-            {step < 7 && <Button className="ml-auto" onClick={() => setStep(s => (s + 1) as Step)}>Next</Button>}
+            {step < 7 && (
+              <Button
+                className="ml-auto"
+                onClick={() => setStep(s => (s + 1) as Step)}
+                disabled={step === 6 && !selfieCaptured}
+              >
+                Next
+              </Button>
+            )}
             {step === 7 && (
-              <Button className="ml-auto" onClick={handleSubmit} disabled={loading}>
+              <Button className="ml-auto" onClick={handleSubmit} disabled={loading || !selfieCaptured}>
                 {loading ? <Loader2 className="animate-spin mr-2 w-4 h-4" /> : null}
                 Submit Profile
               </Button>

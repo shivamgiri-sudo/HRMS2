@@ -718,7 +718,7 @@ export default function NativeITProvisioningTracker() {
   });
 
   // Dialogs
-  const [actionDialog, setActionDialog] = useState<{ open: boolean; request: ProvisioningRequest | null; mode: "action" | "waive" | "confirm" }>({
+  const [actionDialog, setActionDialog] = useState<{ open: boolean; request: ProvisioningRequest | null; mode: "action" | "waive" | "confirm" | "reopen" }>({
     open: false, request: null, mode: "action",
   });
 
@@ -866,9 +866,11 @@ export default function NativeITProvisioningTracker() {
 
       const endpoint = mode === "confirm"
         ? `/api/it-provisioning/requests/${id}/confirm`
-        : mode === "action"
-          ? `/api/it-provisioning/tasks/${id}/complete`
-          : `/api/onboarding-provisioning/tasks/${id}/waive`;
+        : mode === "reopen"
+          ? `/api/it-provisioning/tasks/${id}/reopen`
+          : mode === "action"
+            ? `/api/it-provisioning/tasks/${id}/complete`
+            : `/api/onboarding-provisioning/tasks/${id}/waive`;
       await hrmsApi.post(endpoint, body);
     },
     onSuccess: () => {
@@ -889,7 +891,7 @@ export default function NativeITProvisioningTracker() {
     setWfmForm({ processId: "", shiftId: "", rosterEffectiveDate: "", weekOffDay: "", attendanceEffectiveDate: "", evidenceNote: "" });
   }
 
-  function openDialog(request: ProvisioningRequest, mode: "action" | "waive" | "confirm") {
+  function openDialog(request: ProvisioningRequest, mode: "action" | "waive" | "confirm" | "reopen") {
     setActionDialog({ open: true, request, mode });
     resetForms();
     // Pre-populate if already has values
@@ -909,9 +911,16 @@ export default function NativeITProvisioningTracker() {
       return;
     }
 
+    if (mode === "reopen" && evidenceNote.trim().length < 10) {
+      toast.error("A reason of at least 10 characters is required to reopen a locked request");
+      return;
+    }
+
     let body: Record<string, unknown> = {};
 
-    if (mode === "action") {
+    if (mode === "reopen") {
+      body = { reason: evidenceNote.trim() };
+    } else if (mode === "action") {
       if (request.task_code === "IT_EMAIL_DOMAIN_ASSET") {
         if (!itForm.officialEmail.trim() || !itForm.domainAccount.trim()) {
           toast.error("Official Email and Domain Account are required");
@@ -1325,9 +1334,20 @@ export default function NativeITProvisioningTracker() {
                       </TableCell>
                       <TableCell className="text-right">
                         {req.locked ? (
-                          <span className="text-xs text-muted-foreground flex items-center justify-end gap-1">
-                            <Lock className="h-3 w-3" aria-hidden="true" /> Evidence locked
-                          </span>
+                          <div className="flex items-center justify-end gap-2">
+                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Lock className="h-3 w-3" aria-hidden="true" /> Evidence locked
+                            </span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openDialog(req, "reopen")}
+                              aria-label={`Reopen locked provisioning record for ${req.employee_name}`}
+                              className="min-h-[36px] text-xs"
+                            >
+                              Reopen
+                            </Button>
+                          </div>
                         ) : (
                           <div className="flex items-center justify-end gap-2">
                             {req.status === "pending_unassigned" && (
@@ -1410,6 +1430,7 @@ export default function NativeITProvisioningTracker() {
               {actionDialog.mode === "action"  && (isITTask ? "Submit IT Provisioning Details" : isAdminTask ? "Record Admin Actions" : isWfmTask ? "Submit WFM Alignment" : "Mark Request as Actioned")}
               {actionDialog.mode === "waive"   && "Waive Provisioning Request"}
               {actionDialog.mode === "confirm" && "Lock Request as Evidence"}
+              {actionDialog.mode === "reopen"  && "Reopen Locked Request"}
             </DialogTitle>
           </DialogHeader>
 
@@ -1421,7 +1442,23 @@ export default function NativeITProvisioningTracker() {
                 <TypeBadge type={actionDialog.request.request_type} />
               </div>
 
-              {actionDialog.mode === "confirm" ? (
+              {actionDialog.mode === "reopen" ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    This record is locked as immutable audit evidence. Reopening it is logged
+                    permanently — who reopened it, when, and why — and reverts it to editable
+                    so a genuine correction can be made through the normal action.
+                  </p>
+                  <Label htmlFor="reopen_reason">Reason for reopening <span className="text-rose-500">*</span></Label>
+                  <Textarea
+                    id="reopen_reason"
+                    placeholder="Explain why this locked record needs to be corrected (min 10 characters)..."
+                    value={evidenceNote}
+                    onChange={(e) => setEvidenceNote(e.target.value)}
+                    rows={3}
+                  />
+                </div>
+              ) : actionDialog.mode === "confirm" ? (
                 <p className="text-sm text-muted-foreground">This will immediately lock the record as immutable evidence. This cannot be undone.</p>
               ) : actionDialog.mode === "waive" ? (
                 <div className="space-y-2">
@@ -1535,14 +1572,15 @@ export default function NativeITProvisioningTracker() {
             </Button>
             <Button
               onClick={handleSubmitAction}
-              disabled={actionMutation.isPending}
+              disabled={actionMutation.isPending || (actionDialog.mode === "reopen" && evidenceNote.trim().length < 10)}
               variant={actionDialog.mode === "waive" ? "destructive" : "default"}
               className="min-h-[44px]"
             >
               {actionMutation.isPending && <Loader2 className="animate-spin h-4 w-4 mr-1" aria-hidden="true" />}
               {actionMutation.isPending ? "Saving..." : (
                 actionDialog.mode === "action"  ? (isITTask ? "Submit & Mark Done" : isAdminTask ? "Save Status" : isWfmTask ? "Submit WFM Alignment" : "Confirm Action") :
-                actionDialog.mode === "waive"   ? "Waive Request" : "Lock Evidence"
+                actionDialog.mode === "waive"   ? "Waive Request" :
+                actionDialog.mode === "reopen"  ? "Reopen Request" : "Lock Evidence"
               )}
             </Button>
           </DialogFooter>

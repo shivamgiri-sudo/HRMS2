@@ -129,8 +129,10 @@ describe("the provisioning queue offers a way back into an actioned request", ()
     expect(tracker).toContain('"Update Details"');
   });
 
-  it("keeps every action hidden once the row is locked", () => {
-    // The lock branch must still short-circuit the whole action cell.
+  it("keeps every completion action hidden once the row is locked, offering only Reopen", () => {
+    // The lock branch must still short-circuit the whole action cell — the only
+    // way back in is the audited Reopen action (see reopen-locked-request.contract.test.ts),
+    // not a plain completion/waive/lock button reappearing.
     expect(tracker).toMatch(/req\.locked \?/);
     expect(tracker).toContain("Evidence locked");
   });

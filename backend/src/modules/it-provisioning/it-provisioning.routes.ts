@@ -18,6 +18,7 @@ import {
   actionProvisioningRequest,
   waiveProvisioningRequest,
   confirmAndLockRequest,
+  reopenLockedRequest,
   getProvisioningStats,
   OFFICIAL_EMAIL_REGEX,
 } from './it-provisioning.service.js';
@@ -445,6 +446,20 @@ router.post('/tasks/:id/complete', requireRole(...PROVISIONING_ROLES), h(async (
 
   const data = await getProvisioningRequest(taskId);
   return res.json({ success: true, data, taskCode });
+}));
+
+// ── POST /api/it-provisioning/tasks/:id/reopen ────────────────────────────────
+// Explicitly-authorized override of a locked (immutable-audit) request — see
+// reopenLockedRequest()'s doc comment. Reason required, same as the
+// attendance/payroll unlock precedent this mirrors.
+router.post('/tasks/:id/reopen', requireRole(...PROVISIONING_ROLES), h(async (req: AuthenticatedRequest, res: Response) => {
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+  if (reason.length < 10) {
+    return res.status(400).json({ success: false, error: 'A reason of at least 10 characters is required to reopen a locked request' });
+  }
+  await reopenLockedRequest(req.params.id, req.authUser!.id, reason);
+  const data = await getProvisioningRequest(req.params.id);
+  return res.json({ success: true, data });
 }));
 
 // ── PATCH /api/it-provisioning/requests/:id/waive ────────────────────────────

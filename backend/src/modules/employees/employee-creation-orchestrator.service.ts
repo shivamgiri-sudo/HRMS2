@@ -44,6 +44,9 @@ import { appendJourneyEvent } from '../employees/journeyLog.service.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { sendPayrollHrJoiningDocNotification } from '../ats/ats.email.service.js';
 import { issueCandidatePortalAccess } from '../ats/interview.service.js';
+import { resolveOnboardingDocumentFile } from '../ats/onboardingDocumentPath.js';
+import { cropFaceForProfilePhoto } from './face-crop.util.js';
+import { writeEmployeePhotoBuffer } from './employee.photo.compat.routes.js';
 import { env } from '../../config/env.js';
 import { resolveVerifiedDob } from "../ats/ageVerification.service.js";
 import { encryptPanForSync, blindIndexPan } from "../../shared/syncPiiEncryption.js";
@@ -521,27 +524,35 @@ export async function createEmployeeFromCandidate(
         console.error(`[EmployeeOrchestrator] AML screening not queued for ${employeeCode}:`, (error as Error)?.message);
       });
 
-    // Promote ATS candidate selfie to employee avatar_url/photo_url (non-blocking)
-    // NOTE: selfie_url from ATS is /api/files/candidate/{uuid} — an auth-gated endpoint.
-    // We only promote it if it is already a public employee-photos path; otherwise we skip
-    // to avoid storing a broken URL that would fail ID card / public verify rendering.
-    // TODO: implement physical file copy from candidate_file.storage_path to PHOTOS_DIR
-    // so selfie can be properly promoted to the public employee-photos endpoint.
+    // Promote the candidate's mandatory onboarding Live Selfie to employee
+    // avatar_url/photo_url (non-blocking). Previously this read
+    // ats_candidate.selfie_url — the legacy short-form's flat field, not the
+    // real onboarding document — and self-admittedly no-op'd whenever that
+    // value was an auth-gated /api/files/candidate/ URL, which is the normal
+    // case. The correct source is the candidate_onboarding_document row
+    // (doc_type "Live Selfie") the mandatory-gate onboarding flow writes.
     try {
-      const [selfieRows] = await db.execute<RowDataPacket[]>(
-        `SELECT selfie_url FROM ats_candidate WHERE id = ? LIMIT 1`,
+      const [selfieDocRows] = await db.execute<RowDataPacket[]>(
+        `SELECT file_path FROM candidate_onboarding_document
+          WHERE candidate_id = ? AND doc_type = 'Live Selfie' AND deleted_at IS NULL
+          ORDER BY uploaded_at DESC LIMIT 1`,
         [candidateId]
       );
-      const selfieUrl: string | null = (selfieRows as any[])[0]?.selfie_url ?? null;
-      if (selfieUrl && !selfieUrl.startsWith('/api/files/candidate/')) {
-        await db.execute(
-          `UPDATE employees SET photo_url = ?, avatar_url = ? WHERE id = ?`,
-          [selfieUrl, selfieUrl, employeeId]
-        );
-        result.warnings.push('ATS selfie promoted to employee avatar');
-      } else if (selfieUrl) {
-        console.warn(`[EmployeeOrchestrator] Selfie promotion skipped — URL is auth-gated (${selfieUrl}). Physical file copy required.`);
-        result.warnings.push('ATS selfie not promoted — requires physical file copy to employee-photos directory');
+      const storedPath: string | null = (selfieDocRows as any[])[0]?.file_path ?? null;
+      const resolvedPath = storedPath ? resolveOnboardingDocumentFile(storedPath) : null;
+
+      if (resolvedPath) {
+        const croppedBuffer = await cropFaceForProfilePhoto(resolvedPath);
+        await writeEmployeePhotoBuffer(employeeId, croppedBuffer, '.jpg');
+        result.warnings.push('Onboarding Live Selfie auto-cropped and promoted to employee avatar');
+      } else if (storedPath) {
+        // Row exists but the file isn't reachable on this machine (see
+        // onboardingDocumentPath.ts — a known, separate, unrecoverable-by-
+        // path-resolution class of already-missing files).
+        console.warn(`[EmployeeOrchestrator] Live Selfie document row exists but file not found on disk for candidate ${candidateId}.`);
+        result.warnings.push('Onboarding Live Selfie not promoted — source file missing on disk');
+      } else {
+        result.warnings.push('Onboarding Live Selfie not promoted — no Live Selfie document on file');
       }
     } catch (selfieErr) {
       console.warn('[EmployeeOrchestrator] Selfie promotion failed (non-blocking):', selfieErr);

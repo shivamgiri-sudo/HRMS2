@@ -1025,6 +1025,55 @@ export async function confirmAndLockRequest(requestId: string, actionedBy: strin
   });
 }
 
+/**
+ * Reverse a lock (manual confirmAndLockRequest or the 48h auto-lock cron) so
+ * a genuine correction can be made — e.g. an "ID card printed" entry that
+ * was mistakenly ticked, or a task that was blocked on a missing employee
+ * photo and only now has one. The lock itself stays as-is elsewhere (it's
+ * deliberate audit-evidence immutability, see the module's own commit
+ * history) — this is the explicitly-authorized override path, mirroring the
+ * attendance/payroll unlock (attendance-engine.routes.ts's
+ * POST /:employeeId/:date/unlock): reason required, durably audited.
+ *
+ * locked=1 only ever coincides with status='confirmed' — both writers
+ * (confirmAndLockRequest, autoLockConfirmedRequests) flip that pair
+ * together — so reopening just reverses it back to status='actioned',
+ * locked=0. Once status is 'actioned' again, POST /tasks/:id/complete
+ * already handles everything else: alreadyActioned becomes true, so it
+ * skips actionProvisioningRequest (which 400s on a 'confirmed' row) and
+ * goes straight to the already-idempotent persistStructuredFields().
+ */
+export async function reopenLockedRequest(requestId: string, actorUserId: string, reason: string): Promise<void> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT * FROM it_provisioning_request WHERE id = ? LIMIT 1`, [requestId],
+  );
+  const rec = (rows as any[])[0];
+  if (!rec) throw Object.assign(new Error('Not found'), { statusCode: 404 });
+  if (!rec.locked) {
+    throw Object.assign(new Error('Request is not locked'), { statusCode: 400 });
+  }
+
+  await db.execute(
+    `UPDATE it_provisioning_request SET status = 'actioned', locked = 0, updated_at = NOW() WHERE id = ?`,
+    [requestId],
+  );
+
+  // Reason lives only in the audit log, not on the row itself — reopening
+  // must not clobber the original completion evidence_note.
+  await logSensitiveAction({
+    actor_user_id: actorUserId,
+    action_type: 'it_provisioning_reopened',
+    module_key: 'it_provisioning',
+    entity_type: 'it_provisioning_request',
+    entity_id: requestId,
+    employee_id: rec.employee_id,
+    reason,
+    old_value_json: { status: 'confirmed', locked: 1 },
+    new_value_json: { status: 'actioned', locked: 0 },
+    change_summary: { task_code: rec.task_code, employee_id: rec.employee_id },
+  });
+}
+
 // ── Auto-lock cron (called hourly) ────────────────────────────────────────────
 
 export async function autoLockConfirmedRequests(): Promise<{ locked: number }> {

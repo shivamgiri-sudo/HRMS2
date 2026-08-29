@@ -1805,6 +1805,23 @@ async function findMissingMandatoryDocuments(candidateId: string): Promise<strin
   }).map((r) => r.label);
 }
 
+/**
+ * Whether this candidate has an active "Live Selfie" onboarding document.
+ * Exported so other submission paths (e.g. the legacy submitProfile() in
+ * ats.onboarding.service.ts) can enforce the same live-capture requirement
+ * without duplicating the query or pulling in the unrelated DigiLocker/
+ * Aadhaar/PAN logic that findMissingMandatoryDocuments() also handles.
+ */
+export async function hasLiveSelfieDocument(candidateId: string): Promise<boolean> {
+  const [docRows] = await db.execute<RowDataPacket[]>(
+    `SELECT doc_type, doc_name FROM candidate_onboarding_document WHERE candidate_id = ? AND deleted_at IS NULL`,
+    [candidateId],
+  );
+  return docRows.some((r) =>
+    `${String(r.doc_type ?? "")} ${String(r.doc_name ?? "")}`.toLowerCase().includes("selfie"),
+  );
+}
+
 export async function submitFullOnboarding(token: string, meta?: { ip?: string; userAgent?: string }) {
   const tokenData = await validateOnboardingToken(token);
   const candidateId = tokenData.candidate_id as string;

@@ -17,6 +17,7 @@ import { createTemporaryPasswordCredential } from '../auth/tempPassword.service.
 import { getIstDateString } from '../../utils/dateUtils.js';
 import { providerFactory } from '../communication/providers/provider.factory.js';
 import { buildSMS } from '../communication/smartping-dlt-registry.js';
+import { hasLiveSelfieDocument } from './onboarding-full.service.js';
 
 // ── PII Helpers ───────────────────────────────────────────────────────────────
 
@@ -262,6 +263,22 @@ export async function validateToken(token: string) {
 export async function submitProfile(token: string, profile: Record<string, unknown>) {
   const tokenData = await validateToken(token);
   const candidateId: string = tokenData.candidate_id;
+
+  // This "legacy short form" used to accept a free-text selfie_url with no
+  // validation, which silently defeated the mandatory live-capture rule the
+  // canonical full-onboarding flow enforces (see findMissingMandatoryDocuments
+  // / hasLiveSelfieDocument in onboarding-full.service.ts). Require the same
+  // real Live Selfie document here before allowing submission — the frontend
+  // now uploads it via the same document endpoint the full flow uses before
+  // calling this route. Only the selfie is enforced here; the other 6
+  // mandatory document types are out of scope for this short form.
+  const hasSelfie = await hasLiveSelfieDocument(candidateId);
+  if (!hasSelfie) {
+    throw Object.assign(
+      new Error('Please capture a live selfie before submitting.'),
+      { statusCode: 400, code: 'MISSING_REQUIRED_DOCUMENTS' },
+    );
+  }
 
   // CI-001 fix: store masked display values and SHA-256 hashes; never write raw PII to ats_candidate
   const aadharMasked = maskAadhaar(profile.aadhar_number);
