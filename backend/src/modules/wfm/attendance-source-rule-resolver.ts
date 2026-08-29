@@ -21,14 +21,14 @@ export type RuleDimension =
   | 'employment_profile';
 
 // requirements.md decision A1: cost centre, process, branch, department, designation, profile.
-export const DIMENSION_PRIORITY_ORDER: readonly RuleDimension[] = [
+export const DIMENSION_PRIORITY_ORDER: readonly RuleDimension[] = Object.freeze([
   'cost_centre',
   'process',
   'branch',
   'department',
   'designation',
   'employment_profile',
-];
+]);
 
 export interface DimensionScopedRule {
   id: string;
@@ -112,23 +112,26 @@ export function resolveRule<T extends DimensionScopedRule>(
     (d) => employeeAttributeFor(d, employeeAttrs) === null,
   );
 
-  const eliminatedAt = new Map<string, EliminationStep>();
+  const eliminatedAt = new Map<T, EliminationStep>();
 
   // Step 1 (criterion 2.2, 2.8): candidacy — active + in-window is already guaranteed by the
   // caller; here we filter to dimension-matching.
   const matching = windowedRules.filter((r) => {
     const ok = ruleMatchesEmployee(r, employeeAttrs);
-    if (!ok) eliminatedAt.set(r.id, 'not_candidate');
+    if (!ok) eliminatedAt.set(r, 'not_candidate');
     return ok;
   });
 
   if (matching.length === 0) {
     return {
       winner: null,
+      // -1 is a sentinel: no candidate matched at all, which should never happen once the
+      // System_Default_Rule invariant is enforced at write time (criteria 1.10, 1.11) — this
+      // defensive branch exists so the pure function never assumes that invariant silently.
       specificityCount: -1,
       candidates: windowedRules.map((r) => ({
         rule: r,
-        eliminatedAtStep: eliminatedAt.get(r.id) ?? null,
+        eliminatedAtStep: eliminatedAt.get(r) ?? null,
       })),
       unresolvedDimensions,
     };
@@ -138,7 +141,7 @@ export function resolveRule<T extends DimensionScopedRule>(
   const maxSpec = Math.max(...matching.map(specificityCount));
   let survivors = matching.filter((r) => {
     const keep = specificityCount(r) === maxSpec;
-    if (!keep) eliminatedAt.set(r.id, 'below_max_specificity');
+    if (!keep) eliminatedAt.set(r, 'below_max_specificity');
     return keep;
   });
 
@@ -150,8 +153,9 @@ export function resolveRule<T extends DimensionScopedRule>(
         (r) => r.dimensionValues[dim] && r.dimensionValues[dim]!.size > 0,
       );
       if (constrainedBy.length > 0 && constrainedBy.length < survivors.length) {
+        const constrainedByIds = new Set(constrainedBy);
         for (const r of survivors) {
-          if (!constrainedBy.includes(r)) eliminatedAt.set(r.id, 'priority_order');
+          if (!constrainedByIds.has(r)) eliminatedAt.set(r, 'priority_order');
         }
         survivors = constrainedBy;
         break;
@@ -171,7 +175,7 @@ export function resolveRule<T extends DimensionScopedRule>(
     return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
   for (const r of survivors.slice(1)) {
-    eliminatedAt.set(r.id, 'deterministic_tail');
+    eliminatedAt.set(r, 'deterministic_tail');
   }
 
   const winner = survivors[0];
@@ -181,7 +185,7 @@ export function resolveRule<T extends DimensionScopedRule>(
     specificityCount: maxSpec,
     candidates: windowedRules.map((r) => ({
       rule: r,
-      eliminatedAtStep: r.id === winner.id ? null : eliminatedAt.get(r.id) ?? null,
+      eliminatedAtStep: r === winner ? null : eliminatedAt.get(r) ?? null,
     })),
     unresolvedDimensions,
   };
