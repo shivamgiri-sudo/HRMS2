@@ -643,6 +643,7 @@
     "1624_employee_manager_history.sql",
     "1625_client_billing_seed_number_sequences.sql",
     "1626_vendor_payment_due_date_backfill.sql",
+    "1628_team_kpi_scorecard_page.sql",
     "migrations/440_salary_date_revision_requests.sql"
   ],
   "approvedDeletions": [
