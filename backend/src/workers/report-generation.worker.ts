@@ -21,9 +21,6 @@ import {
 } from '../modules/reporting/executors/index.js';
 import { isBpoMasterCode, isIdentityBuilderCode } from '../modules/reporting/all-reports.registry.js';
 import { REPORT_CATALOG } from '../modules/reporting/report-catalog.js';
-import { buildCatalogWorkbook } from '../modules/reporting/catalog-workbook.js';
-import { withDayColumnLabels } from '../modules/reporting/attendance-register-columns.js';
-import { CATALOG_FORMAT_CODES } from '../modules/reporting/report-suite.routes.js';
 
 // ── Configuration (all values from env) ───────────────────────────────────────
 const WORKER_NAME             = 'report-generation';
@@ -372,39 +369,15 @@ async function processOneRequest(): Promise<void> {
       ? 'ALL BRANCHES'
       : `BRANCHES: ${scope.branchScope.mode === 'all' ? 'ALL' : scope.branchScope.ids.join(', ')}`;
 
-    // ── Catalog-driven exact-label workbook ─────────────────────────────────────
-    // Mirrors the immediate `/export` route's CATALOG_FORMAT_CODES branch (see
-    // report-suite.routes.ts) so scheduled/emailed exports of these report codes
-    // show the catalog's exact labels (e.g. "Mon-DD" day headers for
-    // attendance-register-monthly) instead of the generic builder's uppercased
-    // row keys. Falls through to the generic builder for every other code, or
-    // if the catalog entry cannot be found for some reason.
-    const catalogEntry = CATALOG_FORMAT_CODES.has(req.report_code)
-      ? (REPORT_CATALOG as Array<{ code: string; name: string; columns: Array<{ key: string; label: string; format?: string; width?: number; align?: 'left' | 'center' | 'right' }> }>).find(r => r.code === req.report_code)
-      : undefined;
-
-    let buffer: Buffer;
-    if (catalogEntry) {
-      const exportColumns = req.report_code === 'attendance-register-monthly'
-        ? withDayColumnLabels(catalogEntry.columns, filters.month)
-        : catalogEntry.columns;
-
-      buffer = await buildCatalogWorkbook({
-        rows: allRows,
-        columns: exportColumns,
-        sheetName: catalogEntry.name,
-      });
-    } else {
-      buffer = await buildSecureXlsxBuffer({
-        reportName:            req.report_name_snapshot,
-        requestReference:      req.request_reference,
-        requesterEmployeeCode: req.requested_by_employee_code ?? 'UNKNOWN',
-        filters:               filters as Record<string, unknown>,
-        scopeSummary,
-        rows:                  allRows,
-        totalRows:             totalWritten,
-      });
-    }
+    const buffer = await buildSecureXlsxBuffer({
+      reportName:            req.report_name_snapshot,
+      requestReference:      req.request_reference,
+      requesterEmployeeCode: req.requested_by_employee_code ?? 'UNKNOWN',
+      filters:               filters as Record<string, unknown>,
+      scopeSummary,
+      rows:                  allRows,
+      totalRows:             totalWritten,
+    });
 
     const filename = buildSecureFilename(req.report_code, req.request_reference);
 

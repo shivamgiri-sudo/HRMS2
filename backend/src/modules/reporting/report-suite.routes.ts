@@ -32,6 +32,7 @@ import {
   businessMonth,
 } from "./leave-balance-format.js";
 import { buildCatalogWorkbook } from "./catalog-workbook.js";
+import type { CatalogWorkbookColumn } from "./catalog-workbook.js";
 import { recordReportAuditEvent, REPORT_AUDIT_EVENTS } from "./report-audit.service.js";
 
 /** Report codes that render through the business-mandated Leave Balance workbook. */
@@ -42,7 +43,7 @@ const LEAVE_BALANCE_CODES = new Set(["leave-balance", "leave-balance-export"]);
  * carries the catalog's exact labels ("SR#", "LEAVE TYPE", "LEAVE REQUST DATE")
  * instead of the generic builder's uppercased row keys.
  */
-const CATALOG_FORMAT_CODES = new Set(["leave-utilization", "attendance-register-monthly"]);
+export const CATALOG_FORMAT_CODES = new Set(["leave-utilization", "attendance-register-monthly"]);
 
 export const reportSuiteRouter = Router();
 reportSuiteRouter.use(requireAuth);
@@ -326,18 +327,20 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
     // For attendance-register-monthly the day columns carry static labels ("Day 1" … "Day 31")
     // in the catalog. Replace them with the actual calendar dates derived from the month filter
     // so the Excel header reads "01-Aug-26", "02-Aug-26" etc.
-    let exportColumns = catalogEntry.columns as Array<{ key: string; label: string; format?: string; width?: number; align?: string }>;
+    let exportColumns: CatalogWorkbookColumn[] = catalogEntry.columns as CatalogWorkbookColumn[];
     if (code === "attendance-register-monthly" && filters.month) {
       const SHORT_MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-      const [fyStr, fmStr] = (filters.month as string).split("-");
-      const fy = Number(fyStr); const fm = Number(fmStr);
-      const shortYY = String(fy).slice(2);
+      const [, fmStr] = (filters.month as string).split("-");
+      const [fyStr] = (filters.month as string).split("-");
+      const fm = Number(fmStr);
+      const shortYY = String(Number(fyStr)).slice(2);
       exportColumns = exportColumns.map(c => {
         const m = c.key.match(/^day_(\d+)$/);
         if (!m) return c;
         const d = Number(m[1]);
         const dateLabel = `${String(d).padStart(2, "0")}-${SHORT_MONTHS[fm - 1]}-${shortYY}`;
-        const align = (c.align === "left" || c.align === "center" || c.align === "right") ? c.align : undefined;
+        const align: "center" | "left" | "right" | undefined =
+          (c.align === "left" || c.align === "center" || c.align === "right") ? c.align : undefined;
         return { key: c.key, label: dateLabel, format: c.format, width: 55, align };
       });
     }
