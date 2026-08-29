@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const executeMock = vi.fn();
-vi.mock('../../db/mysql.js', () => ({
+vi.mock('../../../db/mysql.js', () => ({
   db: { execute: (...args: unknown[]) => executeMock(...args) },
 }));
 
