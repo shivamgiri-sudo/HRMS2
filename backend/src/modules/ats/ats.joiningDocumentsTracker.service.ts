@@ -42,6 +42,8 @@ export interface EmployeeDocumentRow {
   verified_count: number;
   needs_correction_count: number;
   overdue_count: number;
+  esign_completed_count: number;
+  esign_pending_count: number;
   last_document_update: string | null;
   assigned_hr_name: string | null;
   key_documents: KeyDocumentStatus[];
@@ -160,6 +162,8 @@ interface TrackerQueryRow extends RowDataPacket {
   verified_count: number;
   needs_correction_count: number;
   overdue_count: number;
+  esign_completed_count: number;
+  esign_pending_count: number;
   last_document_update: string | null;
   assigned_hr_name: string | null;
 }
@@ -289,6 +293,8 @@ export async function getJoiningDocumentsTracker(
       SUM(CASE WHEN c.verification_status = 'verified' THEN 1 ELSE 0 END) AS verified_count,
       SUM(CASE WHEN c.status LIKE '%needs_correction%' THEN 1 ELSE 0 END) AS needs_correction_count,
       SUM(CASE WHEN c.due_at < NOW() AND c.verification_status IS NULL THEN 1 ELSE 0 END) AS overdue_count,
+      SUM(CASE WHEN c.status = 'esign_completed' THEN 1 ELSE 0 END) AS esign_completed_count,
+      SUM(CASE WHEN c.status IN ('esign_initiated', 'pending_candidate_esign') THEN 1 ELSE 0 END) AS esign_pending_count,
       MAX(c.updated_at) AS last_document_update,
       MAX(emp_hr.full_name) AS assigned_hr_name
 
@@ -324,6 +330,8 @@ export async function getJoiningDocumentsTracker(
     verified_count: Number(row.verified_count),
     needs_correction_count: Number(row.needs_correction_count),
     overdue_count: Number(row.overdue_count),
+    esign_completed_count: Number(row.esign_completed_count ?? 0),
+    esign_pending_count: Number(row.esign_pending_count ?? 0),
     last_document_update: row.last_document_update,
     assigned_hr_name: row.assigned_hr_name,
     key_documents: parseKeyDocuments(row.key_documents_raw),
