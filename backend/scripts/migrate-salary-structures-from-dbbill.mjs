@@ -58,7 +58,10 @@ async function run() {
   }
   console.log(`[LOAD] ${billMap.size} unique MAS employees in db_bill\n`);
 
-  // Load all active mas_hrms employees with their SCA row (if any)
+  // Load all active mas_hrms employees with their MOST RECENT active SCA row.
+  // Using a subquery to get the latest effective_date row per employee so that
+  // the UPDATE targets exactly the row the payroll engine reads (ORDER BY
+  // effective_date DESC LIMIT 1 in payrollCalculate.service.ts).
   const [employees] = await hrms.execute(
     `SELECT e.id, e.employee_code,
             sca.id        AS sca_id,
@@ -74,27 +77,20 @@ async function run() {
             sca.gross     AS sca_gross
      FROM employees e
      LEFT JOIN salary_component_assignments sca
-       ON sca.employee_id = e.id AND sca.status = 'active'
+       ON sca.id = (
+         SELECT id FROM salary_component_assignments
+         WHERE employee_id = e.id AND status = 'active'
+         ORDER BY effective_date DESC, assigned_at DESC
+         LIMIT 1
+       )
      WHERE e.employment_status = 'Active'`
   );
-  console.log(`[LOAD] ${employees.length} active employee rows in mas_hrms`);
-
-  // Deduplicate — keep first SCA row per employee (most recent effective_date
-  // guaranteed by the JOIN; if multiple active rows exist, take the first seen)
-  const seenEmp = new Set();
-  const uniq = [];
-  for (const e of employees) {
-    if (!seenEmp.has(e.id)) {
-      seenEmp.add(e.id);
-      uniq.push(e);
-    }
-  }
-  console.log(`[LOAD] ${uniq.length} unique active employees\n`);
+  console.log(`[LOAD] ${employees.length} unique active employees (most-recent SCA row per person)\n`);
 
   let updated = 0, inserted = 0, skipped = 0;
 
-  for (let i = 0; i < uniq.length; i += BATCH) {
-    const batch = uniq.slice(i, i + BATCH);
+  for (let i = 0; i < employees.length; i += BATCH) {
+    const batch = employees.slice(i, i + BATCH);
     for (const emp of batch) {
       const src = billMap.get(emp.employee_code);
       if (!src) { skipped++; continue; }
@@ -166,7 +162,7 @@ async function run() {
         inserted++;
       }
     }
-    process.stdout.write(`\r[PROGRESS] ${Math.min(i + BATCH, uniq.length)} / ${uniq.length}`);
+    process.stdout.write(`\r[PROGRESS] ${Math.min(i + BATCH, employees.length)} / ${employees.length}`);
   }
 
   await hrms.end();
