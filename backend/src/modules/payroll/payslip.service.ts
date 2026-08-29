@@ -74,6 +74,14 @@ export interface PayslipData {
     taxable: number;
     reason?: string | null;
   }>;
+  employer_costs?: Array<{
+    component_code: string;
+    component_name: string;
+    component_type: string;
+    amount: number;
+    taxable: number;
+    reason?: string | null;
+  }>;
 }
 
 export const payslipService = {
