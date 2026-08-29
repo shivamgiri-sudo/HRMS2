@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
   "tableCount": 1024,
-  "columnCount": 14622,
+  "columnCount": 14630,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -13310,6 +13310,14 @@
       "basic",
       "hra",
       "conveyance",
+      "bonus",
+      "portfolio",
+      "medical_allowance",
+      "lta",
+      "other_allowance",
+      "pli",
+      "mobile_deduction",
+      "insurance_deduction",
       "special_allowance",
       "gross",
       "pf_applicable",
