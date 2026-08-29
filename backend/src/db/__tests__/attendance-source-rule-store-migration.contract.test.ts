@@ -12,7 +12,8 @@ describe('attendance source rule store migrations (1633-1635)', () => {
   it('1633 declares attendance_source_rule with the ENUM and COLLATE this design requires', () => {
     const sql = readMigration('1633_attendance_source_rule_store.sql');
     expect(sql).toContain("attendance_source ENUM('dialler','biometric') NOT NULL");
-    expect(sql).toContain('COLLATE=utf8mb4_unicode_ci');
+    expect((sql.match(/COLLATE=utf8mb4_unicode_ci/g) || []).length).toBe(2);
+    expect((sql.match(/ENGINE=InnoDB/g) || []).length).toBe(2);
     expect(sql).not.toMatch(/FOREIGN KEY/i);
   });
 
@@ -40,6 +41,18 @@ describe('attendance source rule store migrations (1633-1635)', () => {
     expect(sql).toContain('branch_id     CHAR(36)     NULL');
     expect(sql).toContain("pay_month     VARCHAR(7)   NULL");
     expect(sql).toContain('UNIQUE KEY uq_adrc_scope (branch_id, pay_month)');
+  });
+
+  it('1634 declares utf8mb4_unicode_ci COLLATE and ENGINE=InnoDB on both its tables', () => {
+    const sql = readMigration('1634_day_threshold_rule_store.sql');
+    expect((sql.match(/COLLATE=utf8mb4_unicode_ci/g) || []).length).toBe(2);
+    expect((sql.match(/ENGINE=InnoDB/g) || []).length).toBe(2);
+  });
+
+  it('1635 declares utf8mb4_unicode_ci COLLATE and ENGINE=InnoDB on all three of its tables', () => {
+    const sql = readMigration('1635_attendance_threshold_and_ceiling_store.sql');
+    expect((sql.match(/COLLATE=utf8mb4_unicode_ci/g) || []).length).toBe(3);
+    expect((sql.match(/ENGINE=InnoDB/g) || []).length).toBe(3);
   });
 
   it('none of the three migrations use a FOREIGN KEY constraint', () => {

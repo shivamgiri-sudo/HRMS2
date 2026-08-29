@@ -62,6 +62,9 @@ CREATE TABLE IF NOT EXISTS attendance_dual_review_ceiling (
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    DATETIME     NULL ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
+  -- Note: UNIQUE KEY uq_adrc_scope cannot prevent multiple (NULL, NULL) rows because MySQL's
+  -- unique index treats NULL-vs-NULL as distinct. At most one truly-global (branch_id, pay_month
+  -- both NULL) ceiling row is a write-path invariant, not something this key enforces alone.
   UNIQUE KEY uq_adrc_scope (branch_id, pay_month)
 ) ENGINE=InnoDB
   DEFAULT CHARSET=utf8mb4
