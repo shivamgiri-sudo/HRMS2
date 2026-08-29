@@ -69,3 +69,40 @@ describe("F-02 + F-03: reclassify script", () => {
     expect(src).toContain("rollback");
   });
 });
+
+describe("F-04: imprest re-attribution scripts exist and are structured correctly", () => {
+  it("fix-imprest-reattribute.ts exists", () => {
+    expect(() => read("scripts/fix-imprest-reattribute.ts")).not.toThrow();
+  });
+
+  it("fix-imprest-reattribute.ts is idempotent — only deletes migration-origin entries", () => {
+    const src = read("scripts/fix-imprest-reattribute.ts");
+    // Delete step uses created_by = MIGRATION_USER so live entries are never touched
+    expect(src).toContain("MIGRATION_USER");
+    expect(src).toContain("created_by = ?");
+    // INSERT IGNORE prevents duplicate ledger entries on re-run
+    expect(src).toContain("INSERT IGNORE");
+  });
+
+  it("fix-imprest-rebalance.ts exists", () => {
+    expect(() => read("scripts/fix-imprest-rebalance.ts")).not.toThrow();
+  });
+
+  it("fix-imprest-rebalance.ts handles deficit branches proportionally", () => {
+    const src = read("scripts/fix-imprest-rebalance.ts");
+    expect(src).toContain("MIGRATION_USER");
+    // Deficit branches get proportional distribution, not zero-balance guarantee
+    expect(src).toMatch(/deficit|proportion/i);
+  });
+
+  it("assertSufficientBalance in imprest-ledger.service.ts has no date filter", () => {
+    // The balance check must include ALL ledger history — filtering by date would
+    // make a manager with old debits appear to have funds they do not hold.
+    const ledgerSvc = read("src/modules/finance/imprest-ledger.service.ts");
+    // Extract just the assertSufficientBalance function body
+    const start = ledgerSvc.indexOf("assertSufficientBalance");
+    const body = ledgerSvc.slice(start, start + 800);
+    expect(body).not.toMatch(/transaction_date\s*[<>]/);
+    expect(body).not.toMatch(/created_at\s*[<>]/);
+  });
+});
