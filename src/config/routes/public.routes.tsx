@@ -43,6 +43,8 @@ const ProfileV3Demo       = lazy(() => import("@/pages/ProfileV3Demo"));
 const Step10Demo          = lazy(() => import("@/components/onboarding-full/Step10Demo"));
 const OnboardingFullDemo  = lazy(() => import("@/components/onboarding-full/OnboardingFullDemo"));
 const CandidateOnboardingFullPageV2 = lazy(() => import("@/pages/CandidateOnboardingFullPageV2"));
+const PublicKpiCapture        = lazy(() => import("@/pages/PublicKpiCapture"));
+const PublicKpiCaptureResults = lazy(() => import("@/pages/PublicKpiCaptureResults"));
 
 export const publicRouteElements = (
   <>
@@ -121,6 +123,13 @@ export const publicRouteElements = (
       {/* One link, all joining documents. joiningKitDispatch.service.ts emails this exact path. */}
       <Route path="/employee/joining-kit/esign/:token"       element={<EmployeeJoiningKitEsignPage />} />
       <Route path="/employee/epf-compliance/review/:token"   element={<EmployeeEpfComplianceReviewPage />} />
+
+      {/* KPI capture — intentionally open so process owners can fill it from a link with no
+          HRMS account. The form writes only to the kpi_capture_submission staging table.
+          Results carry client names and targets, so they sit behind an unguessable token
+          rather than a plain path, and the page sets robots noindex. */}
+      <Route path="/kpi-capture"                element={<PublicKpiCapture />} />
+      <Route path="/kpi-capture/results/:token" element={<PublicKpiCaptureResults />} />
 
       {/* Visitor management — public unauthenticated surfaces */}
       <Route path="/visitor-register"        element={<VisitorSelfRegister />} />

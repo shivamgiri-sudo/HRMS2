@@ -9,7 +9,7 @@ import path from "path";
 
 import { env } from "./config/env.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
-import { globalLimiter, listEndpointLimiter, payrollRunLimiter, reportLimiter, publicRegistrationLimiter } from "./middleware/rateLimiter.js";
+import { globalLimiter, listEndpointLimiter, payrollRunLimiter, reportLimiter, publicRegistrationLimiter, kpiCaptureLimiter } from "./middleware/rateLimiter.js";
 import { healthRouter } from "./routes/health.routes.js";
 import { processRouter } from "./modules/process/process.routes.js";
 import { integrationRouter } from "./modules/integration-hub/integration.routes.js";
@@ -268,6 +268,7 @@ import { orgChartRouter } from "./modules/org-chart/org-chart.routes.js";
 import { visitorRouter } from "./modules/visitor/visitor.routes.js";
 import { visitorPublicRouter } from "./modules/visitor/visitor-public.routes.js";
 import { loginInfoRouter } from "./modules/public/login-info.routes.js";
+import { kpiCaptureRouter } from "./modules/public/kpi-capture.routes.js";
 import { visitorSecurityRouter } from "./modules/visitor/visitor-security.routes.js";
 import { pushRouter } from "./modules/push/push.routes.js";
 import { locationRouter } from "./modules/location/location.routes.js";
@@ -470,6 +471,11 @@ app.use("/api/test-report", testDailyReportRouter); // TEMP TEST - REMOVE AFTER 
 app.use("/api/ats/queue", queuePublicRouter); // public display endpoints (no auth)
 app.use("/api/public/verify", employeeVerifyRouter); // public QR code verification (no auth)
 app.use("/api/public/login-info", loginInfoRouter);  // public login page stats (no auth, aggregate only)
+// Open KPI capture page (/kpi-capture). Unauthenticated by design so process owners can fill it
+// from a link without an HRMS account; writes only to the kpi_capture_submission staging table,
+// never to live KPI config. Must stay ABOVE the "/api" clientRouter mount, which applies
+// requireAuth to every /api/* path and would 401 the form before it loaded.
+app.use("/api/public/kpi-capture", kpiCaptureLimiter, kpiCaptureRouter);
 app.use("/api/ats/bgv", bgvVerificationRouter); // BGV token-driven routes (consent, verify, digilocker) — mount BEFORE requireAuth
 app.use("/api/ats", atsPublicRouter); // PUBLIC: candidate file uploads (no auth, 1-hour window)
 app.use("/api/visitor/public", visitorPublicRouter); // PUBLIC: token-scoped visitor registration and status only
