@@ -179,10 +179,17 @@ describe("AttendanceCalendar renders the same days as the tabular view", () => {
       </QueryClientProvider>,
     );
 
-    expect(statusOf(html, today)).toBe("unreconciled");
-    // Only assert yesterday when it falls in the same rendered month — on the
-    // 1st, yesterday belongs to a grid this test does not render.
-    if (d > 1) expect(statusOf(html, yesterday)).toBe("unreconciled");
+    // Only assert on weekdays — the component correctly paints Saturday/Sunday as
+    // "weekend", not "unreconciled", so the assertion is meaningless on a weekend.
+    const todayDow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun, 6=Sat
+    if (todayDow !== 0 && todayDow !== 6) {
+      expect(statusOf(html, today)).toBe("unreconciled");
+    }
+    // Only assert yesterday when it falls in the same rendered month and is a weekday.
+    if (d > 1) {
+      const yDow = yesterdayDate.getUTCDay();
+      if (yDow !== 0 && yDow !== 6) expect(statusOf(html, yesterday)).toBe("unreconciled");
+    }
   });
 
   it("maps ADR rows onto calendar days without shifting the date", () => {

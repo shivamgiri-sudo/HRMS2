@@ -331,6 +331,10 @@ describe("application shell routing contracts", () => {
       // the menu — "Onboarding Bridge" and "Onboarding Requests". Whether this hub supersedes
       // them or predates them is not answerable from the routing table.
       "/ats/onboarding",
+
+      // (d5) Token-gated KPI capture page — opened via a direct link with an access token,
+      // not navigable from the sidebar.
+      "/kpi-capture",
     ]);
     const navPaths = new Set(
       [...navSource.matchAll(/href:\s*"([^"]+)"/g)].map((match) => match[1].split("?")[0]),
