@@ -202,6 +202,7 @@ async function main() {
       const toStatus   = DECISION;
       const grnId      = String(row.id);
 
+      await conn.beginTransaction();
       try {
         const [upd] = await conn.execute<ResultSetHeader>(
           `UPDATE grn_request
@@ -233,9 +234,13 @@ async function main() {
               }),
             ],
           );
+          await conn.commit();
           f02Done++;
+        } else {
+          await conn.rollback();
         }
       } catch (err) {
+        await conn.rollback();
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`  FAILED F-02 GRN id=${grnId}: ${msg}`);
         f02Failed++;
@@ -269,6 +274,7 @@ async function main() {
         continue;
       }
 
+      await conn.beginTransaction();
       try {
         const [upd] = await conn.execute<ResultSetHeader>(
           `UPDATE grn_request
@@ -300,9 +306,13 @@ async function main() {
               }),
             ],
           );
+          await conn.commit();
           f03Done++;
+        } else {
+          await conn.rollback();
         }
       } catch (err) {
+        await conn.rollback();
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`  FAILED F-03 GRN id=${grnId}: ${msg}`);
         f03Failed++;
