@@ -941,6 +941,38 @@ export default function BranchBudgetManagementWorkspace() {
       { budgeted: 0, reserved: 0, consumed: 0, available: 0 }
     );
   }, [detailQuery.data?.lines]);
+
+  /** Variance tab rows grouped by head + sub_head so that multiple budget lines for the same
+   *  expense category (one per cost centre) appear as a single aggregated row instead of
+   *  repeating N times — the duplication users reported for multi-process branches like Noida. */
+  const varianceGroupedLines = useMemo(() => {
+    const map = new Map<string, {
+      key: string; head: string; subHead: string | null;
+      budgeted: number; reserved: number; consumed: number; available: number;
+      lineIds: string[];
+    }>();
+    for (const line of detailQuery.data?.lines ?? []) {
+      const k = `${line.head}|${line.sub_head ?? ""}`;
+      const row = map.get(k);
+      if (row) {
+        row.budgeted  += Number(line.gross_amount ?? 0);
+        row.reserved  += Number(line.reserved_amount ?? 0);
+        row.consumed  += Number(line.consumed_amount ?? 0);
+        row.available += Number(line.available_gross_amount ?? 0);
+        row.lineIds.push(String(line.id));
+      } else {
+        map.set(k, {
+          key: k, head: String(line.head), subHead: line.sub_head ?? null,
+          budgeted:  Number(line.gross_amount ?? 0),
+          reserved:  Number(line.reserved_amount ?? 0),
+          consumed:  Number(line.consumed_amount ?? 0),
+          available: Number(line.available_gross_amount ?? 0),
+          lineIds: [String(line.id)],
+        });
+      }
+    }
+    return [...map.values()];
+  }, [detailQuery.data?.lines]);
   /** Data-quality signals surfaced as warning banners in both tabs.
    *  consumptionDrift: variance tab consumed exceeds CC tab total consumed — simple GRNs that
    *  previously had no allocation rows may show a residual until they are re-queried post-fix.
@@ -2857,19 +2889,19 @@ export default function BranchBudgetManagementWorkspace() {
                           </tr>
                         </thead>
                         <tbody className="divide-y">
-                          {detailQuery.data.lines.map((line) => {
-                            const consumed = Number(line.consumed_amount ?? 0);
-                            const budgeted = Number(line.gross_amount ?? 0);
-                            const reserved = Number(line.reserved_amount ?? 0);
-                            const available = Number(line.available_gross_amount ?? 0);
+                          {varianceGroupedLines.map((line) => {
+                            const consumed = line.consumed;
+                            const budgeted = line.budgeted;
+                            const reserved = line.reserved;
+                            const available = line.available;
                             const pctConsumed = consumedPct(consumed, budgeted);
                             const variance = budgeted - consumed; // positive = under budget (favourable)
-                            const subHead = line.sub_head ?? null;
-                            const rowKey = `${line.head}|${subHead ?? ""}`;
+                            const subHead = line.subHead;
+                            const rowKey = line.key;
                             const isOpen = expandedVarianceRows.has(rowKey);
                             const ccBreakdown = isOpen ? costCentresForHeadSubHead(line.head, subHead) : [];
                             return (
-                              <Fragment key={line.id}>
+                              <Fragment key={line.key}>
                                 <tr
                                   className="cursor-pointer hover:bg-slate-50/70"
                                   onClick={() => toggleVarianceRow(rowKey)}
@@ -2904,7 +2936,7 @@ export default function BranchBudgetManagementWorkspace() {
                                   </td>
                                   <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
                                     {(() => {
-                                      const requests = topupsByLineId.get(line.id) ?? [];
+                                      const requests = line.lineIds.flatMap((id) => topupsByLineId.get(id) ?? []);
                                       const pending = requests.find((r) => r.is_pending);
                                       if (!pending) return <span className="text-slate-400">—</span>;
                                       return (

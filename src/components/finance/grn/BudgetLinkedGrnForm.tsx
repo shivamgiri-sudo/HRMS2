@@ -1042,9 +1042,16 @@ export function BudgetLinkedGrnForm({
    *  applies identically to both once Imprest reuses that flow instead of its own cascade. */
   const isUnbudgetedExpense = useMemo(() => {
     if (!form.head || !form.subHead) return false;
-    // Check if ANY cost centre has a budget line for this HEAD/SUB-HEAD
-    return vendorCostCentreGroups.length > 0 && vendorCostCentreGroups.every((g) => g.lines.length === 0);
-  }, [form.head, form.subHead, vendorCostCentreGroups]);
+    if (!vendorCostCentreGroups.length) return false;
+    // All cost centres have no budget line for this head/subhead
+    if (vendorCostCentreGroups.every((g) => g.lines.length === 0)) return true;
+    // Some cost centres have lines, but the raiser used "Direct to cost centre" and picked one
+    // that has no line (the dropdown shows "— no budget line" for it). All currently INCLUDED
+    // split rows have budgetLineId = "" — treat this GRN as unbudgeted so it takes the right path.
+    const included = costCentreSplits.filter((r) => r.included);
+    if (included.length > 0 && included.every((r) => !r.budgetLineId)) return true;
+    return false;
+  }, [form.head, form.subHead, vendorCostCentreGroups, costCentreSplits]);
 
   /** Imprest equivalent of isUnbudgetedExpense above: the raiser picked a Head/Sub-head/cost
    *  centre combination that genuinely has no approved budget line — headOptions/subHeadOptions
@@ -1100,7 +1107,10 @@ export function BudgetLinkedGrnForm({
         // For branch-common expenses, lines may not have a specific budget line ID per CC
         const firstLineId = group.lines[0]?.id ?? "";
         const hasBudgetLine = group.lines.length > 0;
-        const stillValid = existing && (group.lines.length === 0 || group.lines.some((line) => line.id === existing.budgetLineId));
+        // Only preserve an existing selection when the group still has budget lines AND the
+        // previously chosen line is still among them. When lines.length === 0 the old ID is stale
+        // (the line was depleted or the head/subhead no longer matches) and must be cleared.
+        const stillValid = existing && group.lines.length > 0 && group.lines.some((line) => line.id === existing.budgetLineId);
         return {
           key: existing?.key ?? crypto.randomUUID(),
           costCentreKey: group.costCentreKey,
