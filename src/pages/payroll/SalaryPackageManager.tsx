@@ -171,6 +171,10 @@ interface PackageFormState {
   grade_id: string;
   slab_id: string;
   basic_amt: string;
+  hra_amt: string;
+  hra_type: ComponentType;
+  lta_amt: string;
+  lta_type: ComponentType;
   conveyance_amt: string;
   conveyance_type: ComponentType;
   medical_amt: string;
@@ -202,14 +206,16 @@ function resolveAmt(base: number, amt: string, type: ComponentType): number {
 
 function computeGross(f: PackageFormState): number {
   const basic = toNum(f.basic_amt);
-  const conv = resolveAmt(basic, f.conveyance_amt, f.conveyance_type);
-  const med = resolveAmt(basic, f.medical_amt, f.medical_type);
+  const hra   = resolveAmt(basic, f.hra_amt, f.hra_type);
+  const lta   = resolveAmt(basic, f.lta_amt, f.lta_type);
+  const conv  = resolveAmt(basic, f.conveyance_amt, f.conveyance_type);
+  const med   = resolveAmt(basic, f.medical_amt, f.medical_type);
   const other = resolveAmt(basic, f.other_allowance_amt, f.other_allowance_type);
   const bonus = resolveAmt(basic, f.bonus_amt, f.bonus_type);
   const portfolio = toNum(f.portfolio_amt);
-  const special = toNum(f.special_allowance_amt);
-  const pli = toNum(f.pli_amt);
-  return basic + conv + med + other + bonus + portfolio + special + pli;
+  const special   = toNum(f.special_allowance_amt);
+  const pli       = toNum(f.pli_amt);
+  return basic + hra + lta + conv + med + other + bonus + portfolio + special + pli;
 }
 
 function computeCTC(f: PackageFormState): number {
@@ -229,6 +235,10 @@ function defaultForm(gradeId: string, slabId?: string): PackageFormState {
     grade_id: gradeId,
     slab_id: slabId ?? "",
     basic_amt: "",
+    hra_amt: "",
+    hra_type: "AMT",
+    lta_amt: "",
+    lta_type: "AMT",
     conveyance_amt: "",
     conveyance_type: "AMT",
     medical_amt: "",
@@ -249,6 +259,10 @@ function pkgToForm(pkg: SalaryPackage): PackageFormState {
     grade_id: String(pkg.grade_id),
     slab_id: String(pkg.slab_id),
     basic_amt: String(pkg.basic_amt ?? ""),
+    hra_amt: String(pkg.hra ?? pkg.hra_amt ?? ""),
+    hra_type: "AMT",
+    lta_amt: String(pkg.lta ?? pkg.lta_amt ?? ""),
+    lta_type: "AMT",
     conveyance_amt: String(pkg.conveyance_amt ?? ""),
     conveyance_type: pkg.conveyance_type === "PCT" || pkg.conveyance_type === "pct" ? "PCT" : "AMT",
     medical_amt: String(pkg.medical_amt ?? ""),
@@ -329,10 +343,12 @@ function PackageDialog({
           </div>
 
           {[
-            { key: "conveyance", label: "Conveyance", typeKey: "conveyance_type" },
-            { key: "medical", label: "Medical", typeKey: "medical_type" },
+            { key: "hra",             label: "HRA",            typeKey: "hra_type" },
+            { key: "lta",             label: "LTA",            typeKey: "lta_type" },
+            { key: "conveyance",      label: "Conveyance",     typeKey: "conveyance_type" },
+            { key: "medical",         label: "Medical",        typeKey: "medical_type" },
             { key: "other_allowance", label: "Other Allowance", typeKey: "other_allowance_type" },
-            { key: "bonus", label: "Bonus", typeKey: "bonus_type" },
+            { key: "bonus",           label: "Bonus",          typeKey: "bonus_type" },
           ].map(({ key, label, typeKey }) => (
             <div key={key}>
               <Label>{label}</Label>
@@ -479,6 +495,8 @@ function PackageMatrixTab() {
         grade_id: formData.grade_id,
         slab_id: formData.slab_id,
         basic_amt: basic,
+        hra: resolveAmt(basic, formData.hra_amt, formData.hra_type),
+        lta: resolveAmt(basic, formData.lta_amt, formData.lta_type),
         conveyance_amt: resolveAmt(basic, formData.conveyance_amt, formData.conveyance_type),
         conveyance_type: formData.conveyance_type === "PCT" ? "pct" : "fixed",
         medical_amt: resolveAmt(basic, formData.medical_amt, formData.medical_type),
