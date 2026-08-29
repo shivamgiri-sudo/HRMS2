@@ -9,13 +9,18 @@
  *  exists in both db_bill.salary_data and mas_hrms.employees but does NOT have a
  *  salary_prep_line row for that run. Insert those rows + their components.
  *
- * Safe to re-run: INSERT IGNORE on UNIQUE (run_id, employee_id).
+ * Safe to re-run: the existingSet check below skips employees who already hold a
+ * line for the run. INSERT IGNORE was removed — silently swallowing a failed
+ * money INSERT is how bad rows landed here unnoticed in the first place.
  */
 import mysql from 'mysql2/promise';
 import crypto from 'crypto';
 import fs    from 'fs';
 import path  from 'path';
 import { fileURLToPath } from 'url';
+import {
+  COMPONENT_MAP, EARNED_COLUMN, totalDeductions, earnedGross, num,
+} from './lib/dbbill-salary-mapping.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -40,39 +45,12 @@ const BATCH     = 300;
 
 function log(m) { process.stdout.write(`[${new Date().toLocaleTimeString('en-IN')}] ${m}\n`); }
 function uuid() { return crypto.randomUUID(); }
-function n(v)   { const x = parseFloat(v); return isNaN(x) ? 0 : x; }
+const n = num; // shared parse, tolerant of the thousands separators salary_data stores
 
-// salary_data column → component mapping
-const COMPONENT_MAP = [
-  // code,            name,                       type,            billCol
-  ['BASIC',           'Basic',                    'earning',       'Basic'],
-  ['HRA',             'HRA',                      'earning',       'HRA'],
-  ['BONUS',           'Bonus',                    'earning',       'Bonus'],
-  ['CONV',            'Conveyance',               'earning',       'Conv'],
-  ['PORTFOLIO',       'Portfolio',                'earning',       'Portfolio'],
-  ['MA',              'Medical Allowance',        'earning',       'MedicalAllowance'],
-  ['LTA',             'LTA',                      'earning',       'LTA'],
-  ['SPECIAL',         'Special Allowance',        'earning',       'SpecialAllowance'],
-  ['OA',              'Other Allowance',          'earning',       'OtherAllowance'],
-  ['INCENTIVE',       'Incentive',                'earning',       'Incentive'],
-  ['EXTRA_DAY_INC',   'Extra Day Incentive',      'earning',       'ExtraDayIncentive'],
-  ['ARREAR',          'Arrear',                   'earning',       'Arrear'],
-  ['PLI',             'PLI',                      'earning',       'PLI'],
-  ['PF_EMP',          'PF Employee',              'deduction',     'EPF'],
-  ['ESIC_EMP',        'ESIC Employee',            'deduction',     'ESIC'],
-  ['PT',              'Professional Tax',         'deduction',     'ProTaxDeduction'],
-  ['TDS',             'Income Tax / TDS',         'deduction',     'IncomeTax'],
-  ['ADV',             'Advance Recovery',         'deduction',     'AdvPaid'],
-  ['LOAN',            'Loan Deduction',           'deduction',     'LoanDed'],
-  ['LWP',             'LWP Deduction',            'deduction',     'LeaveDeduction'],
-  ['MOBILE_DED',      'Mobile Deduction',         'deduction',     'MobileDedcution'],
-  ['ASSET_REC',       'Asset Recovery',           'deduction',     'AssetRecovery'],
-  ['INS',             'Insurance',                'deduction',     'Insurance'],
-  ['OTHER_DED',       'Other Deduction',          'deduction',     'OtherDeduction'],
-  ['PF_EMP_CO',       'PF Employer',              'employer_cost', 'EPFCompany'],
-  ['ESIC_EMP_CO',     'ESIC Employer',            'employer_cost', 'ESICCompany'],
-  ['ADMIN_CHG',       'Admin Charge',             'employer_cost', 'AdminChrg'],
-];
+// The column mapping, the earned-vs-entitlement rule and the legacy net identity
+// all live in ./lib/dbbill-salary-mapping.mjs. Read the docblock there before
+// changing any of it — the entitlement columns look like the obvious choice and
+// are the wrong one.
 
 async function main() {
   log(`Connecting HRMS=${HRMS_HOST}  db_bill=${BILL_HOST}${DRY_RUN ? ' [DRY-RUN]' : ''}`);
@@ -139,12 +117,18 @@ async function main() {
 
       for (const { br, empId, runId } of batch) {
         const lineId = uuid();
-        const gross   = n(br.Gross);
+        // EARNED, not entitlement. `Gross`/`Basic`/`HRA`/`SpecialAllowance` hold the
+        // full-month sticker price; the `1`-suffixed columns hold what the employee
+        // actually earned for days worked. Every importer written before 2026-08-29
+        // took the wrong set — see lib/dbbill-salary-mapping.mjs.
+        const gross   = earnedGross(br);
         const netSal  = n(br.NetSalary);
-        const totalDed= n(br.TotalDeduction);
-        const basic   = n(br.Basic);
-        const hra     = n(br.HRA);
-        const sa      = n(br.SpecialAllowance);
+        // NOT n(br.TotalDeduction): that column rolls up only the non-statutory
+        // buckets and excludes EPF / ESIC / TDS / advance / loan.
+        const totalDed= totalDeductions(br);
+        const basic   = n(br[EARNED_COLUMN.Basic]);
+        const hra     = n(br[EARNED_COLUMN.HRA]);
+        const sa      = n(br[EARNED_COLUMN.SpecialAllowance]);
         const wdays   = n(br.WorkingDays);
         const edays   = n(br.EarnedDays);
         const ldays   = n(br.Leave);
@@ -161,13 +145,19 @@ async function main() {
           gross, totalDed, netSal,
           pfEmp, pfEmpr, esicEmp, esicEmpr,
           pt, tds, basic, hra, sa,
-          'legacy_migration', 'finalized'
+          // attendance_data_source is enum('ADR','SESSION_FALLBACK','NO_DATA').
+          // 'legacy_migration' is not a member, so it was silently coerced to ''
+          // on 19,263 rows. NO_DATA is the honest value: these days were never
+          // derived from an attendance record, they came from the legacy register.
+          'NO_DATA', 'finalized'
         ]);
 
         for (const [code, cname, ctype, billCol] of COMPONENT_MAP) {
           const amt = n(br[billCol]);
           if (amt === 0) continue;
-          compRows.push([uuid(), runId, lineId, empId, code, cname, ctype, amt, 'legacy_migration']);
+          // source is enum('snapshot','structure','statutory','manual','system').
+          // 'legacy_migration' is not a member — coerced to '' on 118,114 rows.
+          compRows.push([uuid(), runId, lineId, empId, code, cname, ctype, amt, 'snapshot']);
         }
       }
 
@@ -175,7 +165,7 @@ async function main() {
       if (lineRows.length) {
         const ph = lineRows.map(() => '(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').join(',');
         const [res] = await hrms.execute(
-          `INSERT IGNORE INTO salary_prep_line
+          `INSERT INTO salary_prep_line
             (id,run_id,employee_id,employee_code,
              working_days,present_days,leave_days,
              gross_salary,total_deductions,net_salary,
@@ -192,7 +182,7 @@ async function main() {
       if (compRows.length) {
         const ph = compRows.map(() => '(?,?,?,?,?,?,?,?,?)').join(',');
         const [res] = await hrms.execute(
-          `INSERT IGNORE INTO salary_prep_line_component
+          `INSERT INTO salary_prep_line_component
             (id,run_id,line_id,employee_id,component_code,component_name,component_type,amount,source)
            VALUES ${ph}`,
           compRows.flat()

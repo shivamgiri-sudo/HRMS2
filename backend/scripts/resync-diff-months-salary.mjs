@@ -17,6 +17,9 @@ import fs    from 'fs';
 import path  from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import {
+  COMPONENT_MAP, EARNED_COLUMN, totalDeductions, earnedGross, num,
+} from './lib/dbbill-salary-mapping.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -56,7 +59,10 @@ async function findDiffMonths(hrms, bill) {
   // db_bill: all non-IDC active months
   const [bd] = await bill.execute(`
     SELECT DATE_FORMAT(SalayDate,'%Y-%m') AS mon,
-           SUM(Gross) AS gross
+           -- Gross1 (EARNED), to match what salary_prep_line.gross_salary now holds.
+           -- Comparing against the entitlement Gross column would report every
+           -- month as divergent and trigger a full destructive re-sync.
+           SUM(Gross1) AS gross
     FROM salary_data
     WHERE EmpCode NOT LIKE 'IDC%'
       AND (Status = '1' OR Status IS NULL OR Status = '')
@@ -121,11 +127,16 @@ async function syncMonth(hrms, bill, empMap, mon, existingRunId = null) {
   // Fetch all salary rows for this month from db_bill
   const [rows] = await bill.execute(`
     SELECT EmpCode, Branch, Basic, HRA, Bonus, Conv, Portfolio, MedicalAllowance, LTA,
-           SpecialAllowance, OtherAllowance, Incentive, ExtraDayIncentive, Arrear,
+           SpecialAllowance, OtherAllowance, Incentive, ExtraDayIncentive, Arrear, PLI,
            EPF, ESIC, ProTaxDeduction, IncomeTax, AdvPaid, LoanDed,
-           LeaveDeduction, MobileDedcution, AssetRecovery, Insurance, OtherDeduction,
+           LeaveDeduction, MobileDedcution, ShortCollection, AssetRecovery, Insurance,
+           OtherDeduction, SHSH,
            EPFCompany, ESICCompany, AdminChrg,
-           Gross, NetSalary, WorkingDays, EarnedDays, \`Leave\`, TotalDeduction
+           Gross, NetSalary, WorkingDays, EarnedDays, \`Leave\`, TotalDeduction,
+           -- the EARNED (pro-rated) set: what the employee actually earned for days
+           -- worked. The unsuffixed columns above are the full-month entitlement.
+           Basic1, HRA1, Bonus1, Conv1, Portfolio1, MedicalAllowance1,
+           SpecialAllowance1, OtherAllowance1, Gross1
     FROM salary_data
     WHERE DATE_FORMAT(SalayDate,'%Y-%m') = ?
       AND (Status = '1' OR Status IS NULL OR Status = '')
@@ -142,8 +153,11 @@ async function syncMonth(hrms, bill, empMap, mon, existingRunId = null) {
   const runId = existingRunId || uuid();
   const [y, m] = mon.split('-').map(Number);
   const fy = m >= 4 ? `${y}-${String(y+1).slice(2)}` : `${y-1}-${String(y).slice(2)}`;
-  const totalGross = rows.reduce((s,r) => s + (parseFloat(r.Gross)||0), 0);
-  const totalNet   = rows.reduce((s,r) => s + (parseFloat(r.NetSalary)||0), 0);
+  // Run header totals must be the EARNED gross, so the header agrees with the sum
+  // of its own lines. Using entitlement here is what made 102 of 103 run headers
+  // disagree with their lines.
+  const totalGross = rows.reduce((s,r) => s + earnedGross(r), 0);
+  const totalNet   = rows.reduce((s,r) => s + num(r.NetSalary), 0);
   if (existingRunId) {
     // Update totals on the kept run
     await hrms.execute(`
@@ -158,20 +172,10 @@ async function syncMonth(hrms, bill, empMap, mon, existingRunId = null) {
   }
 
   let inserted = 0, noEmp = 0, errors = 0;
-  const COMP_FIELDS = [
-    ['BASIC','Basic','earning'],['HRA','HRA','earning'],['BONUS','Bonus','earning'],
-    ['CONV','Conv','earning'],['PORTFOLIO','Portfolio','earning'],['MA','MedicalAllowance','earning'],
-    ['LTA','LTA','earning'],['SPECIAL','SpecialAllowance','earning'],['OA','OtherAllowance','earning'],
-    ['INCENTIVE','Incentive','earning'],['EXTRA_DAY_INC','ExtraDayIncentive','earning'],
-    ['ARREAR','Arrear','earning'],
-    ['PF_EMP','EPF','deduction'],['ESIC_EMP','ESIC','deduction'],['PT','ProTaxDeduction','deduction'],
-    ['TDS','IncomeTax','deduction'],['ADV','AdvPaid','deduction'],['LOAN','LoanDed','deduction'],
-    ['LWP','LeaveDeduction','deduction'],['MOBILE_DED','MobileDedcution','deduction'],
-    ['ASSET_REC','AssetRecovery','deduction'],['INS','Insurance','deduction'],
-    ['OTHER_DED','OtherDeduction','deduction'],
-    ['PF_EMP_CO','EPFCompany','employer_cost'],['ESIC_EMP_CO','ESICCompany','employer_cost'],
-    ['ADMIN_CHG','AdminChrg','employer_cost'],
-  ];
+  // Was a second, independently maintained copy of the component map that took the
+  // ENTITLEMENT columns (Basic/HRA/Conv/...) rather than the EARNED ones
+  // (Basic1/HRA1/Conv1/...). Now shares the one source of truth.
+  const COMP_FIELDS = COMPONENT_MAP.map(([code, , ctype, billCol]) => [code, billCol, ctype]);
 
   for (const r of rows) {
     const empId = empMap.get(r.EmpCode);
@@ -188,20 +192,23 @@ async function syncMonth(hrms, bill, empMap, mon, existingRunId = null) {
            attendance_data_source, status)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'ADR','included')
       `, [lineId, runId, empId, r.EmpCode,
-          parseFloat(r.Gross)||0, parseFloat(r.NetSalary)||0,
-          parseFloat(r.Basic)||0, parseFloat(r.HRA)||0,
-          parseFloat(r.SpecialAllowance)||0,
-          parseFloat(r.EPF)||0, parseFloat(r.EPFCompany)||0,
-          parseFloat(r.ESIC)||0, parseFloat(r.ESICCompany)||0,
-          parseFloat(r.ProTaxDeduction)||0, parseFloat(r.IncomeTax)||0,
-          parseFloat(r.TotalDeduction)||0,
+          // EARNED gross and earned component values, not the full-month entitlement.
+          // TotalDeduction alone is not the total withheld — it excludes EPF/ESIC/TDS/
+          // advance/loan. See lib/dbbill-salary-mapping.mjs.
+          earnedGross(r), num(r.NetSalary),
+          num(r[EARNED_COLUMN.Basic]), num(r[EARNED_COLUMN.HRA]),
+          num(r[EARNED_COLUMN.SpecialAllowance]),
+          num(r.EPF)||0, num(r.EPFCompany)||0,
+          num(r.ESIC)||0, num(r.ESICCompany)||0,
+          num(r.ProTaxDeduction), num(r.IncomeTax),
+          totalDeductions(r),
           parseInt(r.WorkingDays)||0, parseInt(r.EarnedDays)||0,
           parseInt(r.Leave)||0]);
 
       // Insert components (skip zeros)
       const compVals = [];
       for (const [code, field, ctype] of COMP_FIELDS) {
-        const amt = parseFloat(r[field]) || 0;
+        const amt = num(r[field]);
         if (amt === 0) continue;
         compVals.push([uuid(), runId, lineId, empId, code, code, ctype, amt, 'snapshot']);
       }
@@ -224,20 +231,8 @@ async function syncMonth(hrms, bill, empMap, mon, existingRunId = null) {
 }
 
 // ─── Repair missing components for runs that have lines but 0 components ─────
-const COMP_FIELDS_GLOBAL = [
-  ['BASIC','Basic','earning'],['HRA','HRA','earning'],['BONUS','Bonus','earning'],
-  ['CONV','Conv','earning'],['PORTFOLIO','Portfolio','earning'],['MA','MedicalAllowance','earning'],
-  ['LTA','LTA','earning'],['SPECIAL','SpecialAllowance','earning'],['OA','OtherAllowance','earning'],
-  ['INCENTIVE','Incentive','earning'],['EXTRA_DAY_INC','ExtraDayIncentive','earning'],
-  ['ARREAR','Arrear','earning'],
-  ['PF_EMP','EPF','deduction'],['ESIC_EMP','ESIC','deduction'],['PT','ProTaxDeduction','deduction'],
-  ['TDS','IncomeTax','deduction'],['ADV','AdvPaid','deduction'],['LOAN','LoanDed','deduction'],
-  ['LWP','LeaveDeduction','deduction'],['MOBILE_DED','MobileDedcution','deduction'],
-  ['ASSET_REC','AssetRecovery','deduction'],['INS','Insurance','deduction'],
-  ['OTHER_DED','OtherDeduction','deduction'],
-  ['PF_EMP_CO','EPFCompany','employer_cost'],['ESIC_EMP_CO','ESICCompany','employer_cost'],
-  ['ADMIN_CHG','AdminChrg','employer_cost'],
-];
+// Third copy of the same map, also on the entitlement columns. Now one source.
+const COMP_FIELDS_GLOBAL = COMPONENT_MAP.map(([code, , ctype, billCol]) => [code, billCol, ctype]);
 
 async function repairComponents(hrms, bill) {
   const [runsNeedRepair] = await hrms.execute(`
@@ -257,11 +252,13 @@ async function repairComponents(hrms, bill) {
     log(`\n[REPAIR] ${mon}  runId=${runId}  lines=${lineCnt}`);
 
     const [billRows] = await bill.execute(`
-      SELECT EmpCode, Basic, HRA, Bonus, Conv, Portfolio, MedicalAllowance, LTA,
-             SpecialAllowance, OtherAllowance, Incentive, ExtraDayIncentive, Arrear,
+      SELECT EmpCode, LTA, Incentive, ExtraDayIncentive, Arrear, PLI,
              EPF, ESIC, ProTaxDeduction, IncomeTax, AdvPaid, LoanDed,
              LeaveDeduction, MobileDedcution, AssetRecovery, Insurance, OtherDeduction,
-             EPFCompany, ESICCompany, AdminChrg
+             EPFCompany, ESICCompany, AdminChrg,
+             -- EARNED component values, not the full-month entitlement.
+             Basic1, HRA1, Bonus1, Conv1, Portfolio1, MedicalAllowance1,
+             SpecialAllowance1, OtherAllowance1
       FROM salary_data
       WHERE DATE_FORMAT(SalayDate,'%Y-%m') = ?
         AND (Status = '1' OR Status IS NULL OR Status = '')
@@ -282,7 +279,7 @@ async function repairComponents(hrms, bill) {
       if (!lineInfo) { skipped++; continue; }
       const { line_id: lineId, employee_id: empId } = lineInfo;
       for (const [code, field, ctype] of COMP_FIELDS_GLOBAL) {
-        const amt = parseFloat(r[field]) || 0;
+        const amt = num(r[field]);
         if (amt === 0) continue;
         allCompVals.push([uuid(), runId, lineId, empId, code, code, ctype, amt, 'snapshot']);
       }
