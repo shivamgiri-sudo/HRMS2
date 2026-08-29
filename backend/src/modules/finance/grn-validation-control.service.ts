@@ -45,6 +45,36 @@ async function applyOverridesToLatestResults(grnId: string) {
 }
 
 async function addLobAttributionValidation(grnId: string) {
+  // Auto-resolve processes that have exactly one active LOB before counting
+  // missing attributions. Without this, single-LOB processes block submission
+  // even though there is no ambiguity — the user would have to open the LOB
+  // Attribution Queue just to confirm something the system already knows.
+  const [unresolved] = await db.execute<RowDataPacket[]>(
+    `SELECT a.id AS allocation_id, a.process_id
+       FROM grn_cost_allocation a
+      WHERE a.grn_request_id = ?
+        AND a.process_id IS NOT NULL
+        AND a.process_lob_id IS NULL`,
+    [grnId]
+  );
+  for (const alloc of unresolved as RowDataPacket[]) {
+    const [lobs] = await db.execute<RowDataPacket[]>(
+      `SELECT id FROM process_lob_master
+        WHERE process_id = ?
+          AND active_status = 1
+          AND approval_status = 'approved'
+          AND (effective_to IS NULL OR effective_to >= CURDATE())
+          AND effective_from <= CURDATE()`,
+      [alloc.process_id]
+    );
+    if ((lobs as RowDataPacket[]).length === 1) {
+      await db.execute(
+        `UPDATE grn_cost_allocation SET process_lob_id = ? WHERE id = ?`,
+        [(lobs as RowDataPacket[])[0].id, alloc.allocation_id]
+      ).catch(() => undefined);
+    }
+  }
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.sequence_no, a.process_id, a.process_lob_id, pm.process_name
        FROM grn_cost_allocation a

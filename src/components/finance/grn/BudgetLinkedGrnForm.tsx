@@ -2152,7 +2152,11 @@ export function BudgetLinkedGrnForm({
   const primaryDocument =
     workspace?.documents?.find((item) => Number(item.is_primary) === 1) ?? workspace?.documents?.[0];
 
-  const locked = Boolean(created);
+  // When editing an existing draft (editGrnId is set), the form must remain
+  // fully editable. Without this guard, created is pre-seeded on mount and
+  // locked flips true immediately, making every field read-only before the
+  // workspace even loads. Lock only applies to brand-new GRNs after first save.
+  const locked = Boolean(created) && !editGrnId;
   const submitted = Boolean(created?.submitted);
 
   const actionButtons = (
