@@ -933,17 +933,16 @@ export function BudgetLinkedGrnForm({
     // "UNRESTRICTED, not nothing selectable" comment; narrowing that case would block every GRN
     // for the ~875 vendors Finance hasn't mapped yet.
     if (expenseSelectable?.vendorHasMappings) {
-      if (expenseSelectable.selectable.length > 0) {
-        const mappedHeads = new Set(expenseSelectable.selectable.map((row) => row.head_name));
-        const filtered = fullList.filter((option) => mappedHeads.has(option.value));
-        if (filtered.length) return filtered;
-      }
-      // Mapped, but none of the mapped heads currently have approved budget headroom for this
-      // branch/period — fall back to the mapping itself (flagged unbudgeted) instead of an
-      // empty dropdown; expense-selectable only returns this list when selectable is empty.
-      if (expenseSelectable.mappedButUnbudgeted.length > 0) {
-        const unbudgetedHeads = [...new Set(expenseSelectable.mappedButUnbudgeted.map((row) => row.head_name))];
-        return unbudgetedHeads.map((head) => ({ value: head, label: head, hasBudget: false }));
+      // Merge budgeted heads (selectable) with all vendor-mapped heads (mappedButUnbudgeted) so
+      // every head the vendor is approved for appears, regardless of whether a budget line exists.
+      const budgetedHeads = new Set(expenseSelectable.selectable.map((row) => row.head_name));
+      const allVendorHeads = new Set([
+        ...expenseSelectable.selectable.map((row) => row.head_name),
+        ...expenseSelectable.mappedButUnbudgeted.map((row) => row.head_name),
+      ]);
+      if (allVendorHeads.size > 0) {
+        const filtered = fullList.filter((option) => allVendorHeads.has(option.value));
+        if (filtered.length) return filtered.map((opt) => ({ ...opt, hasBudget: budgetedHeads.has(opt.value) }));
       }
     }
     return fullList;
