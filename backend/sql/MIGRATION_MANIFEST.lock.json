@@ -644,7 +644,15 @@
     "1625_client_billing_seed_number_sequences.sql",
     "1626_vendor_payment_due_date_backfill.sql",
     "1628_team_kpi_scorecard_page.sql",
-    "migrations/440_salary_date_revision_requests.sql"
+    "1629_salary_component_assignments_full_components.sql",
+    "1627_drifted_table_collation_repair.sql",
+    "1630_grn_funding_cost_centre.sql",
+    "1631_topup_allocation_driver.sql",
+    "1631_kpi_capture_submission.sql",
+    "migrations/440_salary_date_revision_requests.sql",
+    "1633_attendance_source_rule_store.sql",
+    "1634_day_threshold_rule_store.sql",
+    "1635_attendance_threshold_and_ceiling_store.sql"
   ],
   "approvedDeletions": [
     {
@@ -781,6 +789,7 @@
     "133_phase2_security_fixes.sql",
     "136_incentive_module.sql",
     "1622_vendor_head_subhead_backfill.sql",
+    "1632_salary_revision_page.sql",
     "175_clean_department_master.sql",
     "204_personal_contact_fields.sql",
     "205_branch_alias_examples.sql",
