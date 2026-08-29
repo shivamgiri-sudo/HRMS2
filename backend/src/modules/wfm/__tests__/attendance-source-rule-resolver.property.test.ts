@@ -13,6 +13,18 @@ type TestRule = DimensionScopedRule & { attendanceSource: 'biometric' | 'dialler
 
 // Small alphabets so generated rules and employees collide often enough to exercise
 // specificity/priority/tie-break, not just the trivial "nothing matches" case.
+// A local, independently-declared copy of the dimension priority order — deliberately NOT
+// the same reference as the resolver's own DIMENSION_PRIORITY_ORDER import, so a mutant that
+// silently reorders the resolver's constant cannot also silently reorder this file's oracle.
+const TEST_DIMENSION_PRIORITY_ORDER: readonly RuleDimension[] = [
+  'cost_centre',
+  'process',
+  'branch',
+  'department',
+  'designation',
+  'employment_profile',
+];
+
 const VALUE_ALPHABET = ['A', 'B'] as const;
 
 const employeeAttrsArb: fc.Arbitrary<EmployeeAttributes> = fc.record({
@@ -60,7 +72,7 @@ const testRuleArb: fc.Arbitrary<TestRule> = fc
       id: r.id,
       dimensionValues,
       effectiveFrom: r.effectiveFrom,
-      createdAt: `2026-01-01T00:00:${String(r.createdAtOffset % 60).padStart(2, '0')}.000Z`,
+      createdAt: `2026-01-01T00:00:${String(r.createdAtOffset % 2).padStart(2, '0')}.000Z`,
       attendanceSource: r.attendanceSource,
     } satisfies TestRule;
   });
@@ -97,7 +109,7 @@ function testEmployeeAttributeFor(dim: RuleDimension, attrs: EmployeeAttributes)
 }
 
 function testRuleMatches(rule: TestRule, attrs: EmployeeAttributes): boolean {
-  for (const dim of DIMENSION_PRIORITY_ORDER) {
+  for (const dim of TEST_DIMENSION_PRIORITY_ORDER) {
     const constraint = rule.dimensionValues[dim];
     if (!constraint || constraint.size === 0) continue;
     const empValue = testEmployeeAttributeFor(dim, attrs);
@@ -108,7 +120,7 @@ function testRuleMatches(rule: TestRule, attrs: EmployeeAttributes): boolean {
 }
 
 function testSpecificity(rule: TestRule): number {
-  return DIMENSION_PRIORITY_ORDER.filter((d) => {
+  return TEST_DIMENSION_PRIORITY_ORDER.filter((d) => {
     const c = rule.dimensionValues[d];
     return c !== undefined && c.size > 0;
   }).length;
@@ -295,7 +307,8 @@ describe('resolveRule — Property 4: A missing dimension value never matches a 
 
             if (empValue === null) {
               expect(result.unresolvedDimensions).toContain(dim);
-              if (result.winner!.dimensionValues[dim]) {
+              const winnerConstrainsDim = result.winner!.dimensionValues[dim];
+              if (winnerConstrainsDim && winnerConstrainsDim.size > 0) {
                 throw new Error(
                   `winner ${result.winner!.id} constrains unresolved dimension ${dim}`,
                 );
@@ -392,5 +405,124 @@ describe('resolveRule — hand-traced example scenarios (review-verified)', () =
     expect(winners).toHaveLength(1);
     expect(winners[0].rule).toBe(ruleB); // later effective_from wins the tail
     expect(result.winner).toBe(ruleB);
+  });
+
+  it('tail id tier: when effective_from and created_at both tie, the lowest id wins', () => {
+    // Kills a tail comparator inverted to "highest id wins" deterministically — the property
+    // test covering this reaches the id-comparison tier in only ~0.03% of generated cases at
+    // the shipped generator settings, so this example does not depend on that probability.
+    const employee: EmployeeAttributes = {
+      costCentreId: 'CC1',
+      processId: null,
+      branchId: null,
+      departmentId: null,
+      designationId: null,
+      employmentProfile: null,
+    };
+    const ruleHigh: TestRule = {
+      id: 'zzz-high',
+      dimensionValues: { cost_centre: new Set(['CC1']) },
+      effectiveFrom: '2026-06-01',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      attendanceSource: 'biometric',
+    };
+    const ruleLow: TestRule = {
+      id: 'aaa-low',
+      dimensionValues: { cost_centre: new Set(['CC1']) },
+      effectiveFrom: '2026-06-01',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      attendanceSource: 'dialler',
+    };
+
+    const result = resolveRule([ruleHigh, ruleLow], employee);
+
+    expect(result.winner?.id).toBe('aaa-low');
+  });
+
+  it('priority-split boundary: a dimension constrained by ALL tied survivors does not split them, but the next one that splits some-but-not-all does', () => {
+    // Kills an inverted split-boundary condition deterministically — the property test
+    // covering this shape is seed-dependent (caught in only 4 of 5 runs against an
+    // unmutated seed in review testing) because no fast-check seed is pinned in this file.
+    // cost_centre is constrained by BOTH r1 and r2 (all survivors) and must NOT split them;
+    // process is constrained by r1 only (some but not all) and must split them, so r1 wins.
+    const employee: EmployeeAttributes = {
+      costCentreId: 'CC1',
+      processId: 'P1',
+      branchId: 'B1',
+      departmentId: null,
+      designationId: null,
+      employmentProfile: null,
+    };
+    const r1: TestRule = {
+      id: 'z-correct',
+      dimensionValues: { cost_centre: new Set(['CC1']), process: new Set(['P1']) },
+      effectiveFrom: '2026-01-01',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      attendanceSource: 'biometric',
+    };
+    const r2: TestRule = {
+      id: 'a-wrong',
+      dimensionValues: { cost_centre: new Set(['CC1']), branch: new Set(['B1']) },
+      effectiveFrom: '2026-01-01',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      attendanceSource: 'dialler',
+    };
+
+    const result = resolveRule([r1, r2], employee);
+
+    // r1 and r2 both constrain cost_centre (ALL survivors) — must not split on it.
+    // Only r1 constrains process (SOME but not all) — must split there, so r1 wins.
+    // r2's id ('a-wrong') sorts before r1's ('z-correct'), so if the boundary condition
+    // incorrectly breaks out of the walk at cost_centre instead of continuing to process,
+    // the tail's id tier would wrongly hand the win to r2.
+    expect(result.winner?.id).toBe('z-correct');
+  });
+
+  it('no candidate matches at all: winner is null and specificityCount is the -1 sentinel', () => {
+    const employee: EmployeeAttributes = {
+      costCentreId: 'CC1',
+      processId: null,
+      branchId: null,
+      departmentId: null,
+      designationId: null,
+      employmentProfile: null,
+    };
+    // No System_Default_Rule in this array on purpose — every rule constrains a dimension
+    // the employee doesn't match, so nothing is a candidate. This should never happen once
+    // the System_Default_Rule invariant is enforced at write time, but the pure function must
+    // still degrade to winner: null rather than throw or pick something arbitrary.
+    const rules: TestRule[] = [
+      {
+        id: 'r1',
+        dimensionValues: { cost_centre: new Set(['CC2']) },
+        effectiveFrom: '2026-01-01',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        attendanceSource: 'biometric',
+      },
+    ];
+
+    const result = resolveRule(rules, employee);
+
+    expect(result.winner).toBeNull();
+    expect(result.specificityCount).toBe(-1);
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0].eliminatedAtStep).toBe('not_candidate');
+  });
+});
+
+describe('DIMENSION_PRIORITY_ORDER contract', () => {
+  it('the resolver module exports the exact six-dimension order this spec requires', () => {
+    // Feature: payroll-attendance-source-rules, decision A1: cost centre, process, branch,
+    // department, designation, employment profile. Pinned explicitly so a change to the
+    // resolver's exported order is caught here even though the oracle above no longer shares
+    // the same reference.
+    expect(DIMENSION_PRIORITY_ORDER).toEqual([
+      'cost_centre',
+      'process',
+      'branch',
+      'department',
+      'designation',
+      'employment_profile',
+    ]);
   });
 });

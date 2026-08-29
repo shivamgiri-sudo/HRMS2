@@ -153,9 +153,9 @@ export function resolveRule<T extends DimensionScopedRule>(
         (r) => r.dimensionValues[dim] && r.dimensionValues[dim]!.size > 0,
       );
       if (constrainedBy.length > 0 && constrainedBy.length < survivors.length) {
-        const constrainedByIds = new Set(constrainedBy);
+        const constrainedBySet = new Set(constrainedBy);
         for (const r of survivors) {
-          if (!constrainedByIds.has(r)) eliminatedAt.set(r, 'priority_order');
+          if (!constrainedBySet.has(r)) eliminatedAt.set(r, 'priority_order');
         }
         survivors = constrainedBy;
         break;
