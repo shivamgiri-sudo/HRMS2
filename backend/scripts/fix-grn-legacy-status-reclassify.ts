@@ -217,7 +217,7 @@ async function main() {
           await conn.execute(
             `INSERT INTO sensitive_action_log
                (id, action_type, module_key, entity_type, entity_id,
-                actor_user_id, actor_role, change_summary, created_at)
+                actor_user_id, actor_role, change_summary, acted_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
             [
               uuidv4(),
@@ -289,7 +289,7 @@ async function main() {
           await conn.execute(
             `INSERT INTO sensitive_action_log
                (id, action_type, module_key, entity_type, entity_id,
-                actor_user_id, actor_role, change_summary, created_at)
+                actor_user_id, actor_role, change_summary, acted_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
             [
               uuidv4(),
