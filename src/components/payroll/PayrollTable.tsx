@@ -172,6 +172,12 @@ export function PayrollTable({
     "July", "August", "September", "October", "November", "December"
   ];
 
+  /** Sum of `full.employer_costs` (component_type='employer_cost') rows matching one code. */
+  const employerCostByCode = (full: any, code: string): number =>
+    (Array.isArray(full?.employer_costs) ? full.employer_costs : [])
+      .filter((c: any) => String(c.component_code ?? "").toUpperCase() === code)
+      .reduce((t: number, c: any) => t + Number(c.amount || 0), 0);
+
   const downloadPayslipPDF = async (record: PayrollRecord) => {
     setDownloadingId(record.id);
 
@@ -211,17 +217,33 @@ export function PayrollTable({
       const sa    = getEarning('SPECIAL') || getEarning('SPECIAL_ALLOWANCE');
       const arrear    = getEarning('ARREAR');
       const incentive = getEarning('INCENTIVE');
+
+      // Sum by name whatever component has no slot above, rather than inferring it
+      // as gross-minus-known — that silently absorbed any new head (SHSH, PLI, ...)
+      // and any arithmetic error into one unexplained "Other Allowance" figure.
+      const SLOTTED_E = new Set(['BASIC', 'HRA', 'BONUS', 'CONV', 'CONVEYANCE', 'PA',
+        'PERSONAL_ALLOWANCE', 'PORTFOLIO', 'MA', 'MEDICAL_ALLOWANCE', 'MEDICAL',
+        'SPECIAL', 'SPECIAL_ALLOWANCE', 'ARREAR', 'INCENTIVE']);
+      const unslottedEarnings = (earnings as any[])
+        .filter((e) => !SLOTTED_E.has(String(e.component_code ?? '').toUpperCase()))
+        .reduce((t, e) => t + Number(e.amount || 0), 0);
       const knownEarnings = basic + hra + bonus + conv + pa + ma + sa + arrear + incentive;
-      const oa = Math.max(Number(full?.gross_salary ?? record.grossSalary ?? 0) - knownEarnings, 0);
+      const oa = Math.max(Number(full?.gross_salary ?? record.grossSalary ?? 0) - knownEarnings - unslottedEarnings, 0) + unslottedEarnings;
 
       const pf    = getDeduction('PF_EMPLOYEE') || getDeduction('PF_EMP') || Number(full?.pf_employee ?? record.pfEmployee ?? 0);
       const esic  = getDeduction('ESIC_EMPLOYEE') || getDeduction('ESIC_EMP') || Number(full?.esic_employee ?? record.esicEmployee ?? 0);
       const pt    = getDeduction('PROFESSIONAL_TAX') || getDeduction('PT') || Number(full?.professional_tax ?? record.professionalTax ?? 0);
       const tds   = getDeduction('TDS') || Number(full?.tds ?? record.tdsAmount ?? 0);
       const loan  = getDeduction('LOAN') || getDeduction('LOAN_RECOVERY') || getDeduction('LOAN_EMI');
-      const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || Number(full?.advance_recovery ?? record.advanceRecovery ?? 0);
+      const adDed = getDeduction('ADVANCE') || getDeduction('ADVANCE_RECOVERY') || getDeduction('ADV') || Number(full?.advance_recovery ?? record.advanceRecovery ?? 0);
+      const SLOTTED_D = new Set(['PF_EMPLOYEE', 'PF_EMP', 'ESIC_EMPLOYEE', 'ESIC_EMP',
+        'PROFESSIONAL_TAX', 'PT', 'TDS', 'LOAN', 'LOAN_RECOVERY', 'LOAN_EMI',
+        'ADVANCE', 'ADVANCE_RECOVERY', 'ADV']);
+      const unslottedDeductions = (deductions as any[])
+        .filter((d) => !SLOTTED_D.has(String(d.component_code ?? '').toUpperCase()))
+        .reduce((t, d) => t + Number(d.amount || 0), 0);
       const knownDeductions = pf + esic + pt + tds + loan + adDed;
-      const otherDed = Math.max(Number(full?.total_deductions ?? record.totalDeductions ?? 0) - knownDeductions, 0);
+      const otherDed = Math.max(unslottedDeductions, Number(full?.total_deductions ?? record.totalDeductions ?? 0) - knownDeductions, 0);
 
       const netSalary = Number(full?.net_salary ?? full?.net_pay ?? record.netSalary ?? 0);
 
@@ -244,7 +266,12 @@ export function PayrollTable({
         totalDaysInMonth: Number(full?.working_days ?? record.workingDays ?? 30),
         basic, hra, bonus, conv, pa, ma, sa, oa, arrear, incentive,
         pf, esic, pt, tds, lwpDeduction: Number(full?.lwp_deduction ?? 0), loan, adDed, otherDed,
-        employerPf: Number(full?.pf_employer ?? 0),
+        // full?.employer_costs (component_type='employer_cost') carries EPF admin
+        // charges as a component distinct from pf_employer — the flat field this
+        // was built from never included it, so it never reached this PDF. The
+        // template has no dedicated admin-charge slot; folding it into the PF
+        // employer figure is the closest honest placement (both are EPFO remittances).
+        employerPf: Number(full?.pf_employer ?? 0) + employerCostByCode(full, 'ADMIN_CHG'),
         employerEsic: Number(full?.esic_employer ?? 0),
         grossSalary: Number(full?.gross_salary ?? record.grossSalary ?? 0),
         incomeTax: tds,

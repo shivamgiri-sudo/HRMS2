@@ -550,37 +550,47 @@ export function PayslipViewDialog({ open, onOpenChange, record }: PayslipViewDia
             </div>
           </div>
 
-          {/* ── Employer Contributions (CTC components, not deducted from employee) ── */}
-          {(pfEmployer > 0 || esicEmployer > 0) && (
-            <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Employer Contributions (CTC)
-              </p>
-              <table className="w-full text-sm">
-                <tbody>
-                  {pfEmployer > 0 && (
-                    <tr className="border-b border-slate-100">
-                      <td className="py-1.5 text-muted-foreground">PF Employer (EPF + EPS)</td>
-                      <td className="py-1.5 text-right font-mono font-semibold">{fmt(pfEmployer)}</td>
+          {/* ── Employer Contributions (CTC components, not deducted from employee) ──
+              Was hardcoded to only PF/ESIC employer from flat fields, so EPF Admin
+              Charges and any other employer_cost head (component_type='employer_cost')
+              never appeared here even though usePayroll.ts already exposes them as
+              employerCostComponents. Now renders every non-zero one, falling back to
+              the two flat fields only when the component array is empty (older lines). */}
+          {(() => {
+            const employerCosts: Array<{ component_code: string; component_name: string; amount: number }> =
+              record.employerCostComponents?.length
+                ? record.employerCostComponents.filter((c) => Number(c.amount) > 0)
+                : [
+                    ...(pfEmployer > 0 ? [{ component_code: "PF_EMP_CO", component_name: "PF Employer (EPF + EPS)", amount: pfEmployer }] : []),
+                    ...(esicEmployer > 0 ? [{ component_code: "ESIC_EMP_CO", component_name: "ESIC Employer (3.25%)", amount: esicEmployer }] : []),
+                  ];
+            if (!employerCosts.length) return null;
+            const total = employerCosts.reduce((s, c) => s + Number(c.amount), 0);
+            return (
+              <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Employer Contributions (CTC)
+                </p>
+                <table className="w-full text-sm">
+                  <tbody>
+                    {employerCosts.map((c) => (
+                      <tr key={c.component_code} className="border-b border-slate-100">
+                        <td className="py-1.5 text-muted-foreground">{c.component_name}</td>
+                        <td className="py-1.5 text-right font-mono font-semibold">{fmt(Number(c.amount))}</td>
+                      </tr>
+                    ))}
+                    <tr className="font-semibold">
+                      <td className="py-1.5">Total Employer Cost</td>
+                      <td className="py-1.5 text-right font-mono">{fmt(total)}</td>
                     </tr>
-                  )}
-                  {esicEmployer > 0 && (
-                    <tr className="border-b border-slate-100">
-                      <td className="py-1.5 text-muted-foreground">ESIC Employer (3.25%)</td>
-                      <td className="py-1.5 text-right font-mono font-semibold">{fmt(esicEmployer)}</td>
-                    </tr>
-                  )}
-                  <tr className="font-semibold">
-                    <td className="py-1.5">Total Employer Cost</td>
-                    <td className="py-1.5 text-right font-mono">{fmt(pfEmployer + esicEmployer)}</td>
-                  </tr>
-                </tbody>
-              </table>
-              <p className="mt-2 text-[11px] text-slate-400">
-                These are borne by the employer and are part of your CTC. They are not deducted from your in-hand salary.
-              </p>
-            </div>
-          )}
+                  </tbody>
+                </table>
+                <p className="mt-2 text-[11px] text-slate-400">
+                  These are borne by the employer and are part of your CTC. They are not deducted from your in-hand salary.
+                </p>
+              </div>
+            );
+          })()}
 
           {/* ── Salary Trend ─────────────────────────────────────────────── */}
           <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4">

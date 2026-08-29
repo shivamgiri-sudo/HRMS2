@@ -108,6 +108,13 @@ interface SalaryPackage {
   grade_name?: string;
   band?: string;
   basic_amt: number;
+  // Real backend columns (salary_package_master.hra / .lta) — the code below already
+  // reads pkg.hra / pkg.lta with an `_amt` fallback; only the type declaration was
+  // missing them, which TS caught but did not block at runtime.
+  hra?: number;
+  hra_amt?: number;
+  lta?: number;
+  lta_amt?: number;
   conveyance_amt: number;
   conveyance_type?: "AMT" | "PCT" | "fixed" | "pct";
   medical_amt: number;
