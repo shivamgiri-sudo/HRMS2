@@ -11,6 +11,7 @@ import {
 import { financeBranchFilter, type FinanceBranchScope } from "../finance/finance-access-scope.js";
 import { resolvePendingWith } from "../finance/finance-workflow-role.js";
 import { lockActiveBudgetLine } from "./budget-consumption.service.js";
+import { resyncLineAllocations } from "./branch-budget-allocation.service.js";
 import { isPeriodLocked } from "./finance-period-lock.js";
 import { refuse } from "./finance-error.js";
 import { recordFinanceApprovalEvent } from "../../shared/financeApprovalEvent.js";
@@ -227,7 +228,19 @@ async function applyTopupToLine(
   budgetLineId: string,
   additionalQuantity: number,
   splits: TopupSplit[] | undefined,
-  actorId: string
+  actorId: string,
+  /**
+   * A sharing rule chosen ON THIS TOP-UP, as distinct from whatever the line is already carrying.
+   *
+   * `resyncLineAllocations` divides by the driver already recorded on the LINE — it knows nothing
+   * about the request that triggered it. Passing splits-less meant the line's OWN driver ran, or
+   * nothing did if the line had none (a line raised before any driver existed, or one that was
+   * always split by hand). A raiser choosing "By headcount" on the top-up form for such a line
+   * would see the picker accept their choice and then watch it do nothing — the split either used
+   * a stale driver or stayed empty. When one is given here, it is written onto the line FIRST, so
+   * the top-up's choice is also the line's from this point forward, not a one-time detour.
+   */
+  allocationDriver: string | null | undefined
 ) {
   const [rows] = await connection.execute<RowDataPacket[]>(
     `SELECT id, budget_id, head, item_name, quantity, unit, unit_rate,
@@ -294,6 +307,37 @@ async function applyTopupToLine(
       splits,
       actorId
     );
+  } else {
+    /*
+     * NO HAND-TYPED SPLITS MEANS "SHARE IT THE WAY THIS LINE IS SHARED — using the rule chosen
+     * on this top-up if one was, otherwise whatever the line already carries".
+     *
+     * The line's amount has just gone up. On a branch-level line the split that describes it is
+     * now stale — it still divides the pre-top-up figure, so the extra money belongs to nobody
+     * and the shares no longer sum to the line. Until now the only way to avoid that was for the
+     * requester to hand-type per-cost-centre amounts on every top-up; omitting them wrote nothing
+     * at all, which is the same defect found on four other amount-changing paths.
+     *
+     * A driver chosen ON THE TOP-UP is written onto the line before resyncing, not passed around
+     * it — a line that had none (raised before any driver existed, or always split by hand) would
+     * otherwise accept the raiser's choice on the form and then silently do nothing with it,
+     * because resyncLineAllocations only ever reads the LINE's own column.
+     *
+     * resyncLineAllocations re-runs the (now current) driver over the new total, so a top-up
+     * divides exactly the way the budget does. Hand-typed splits still win where they are given:
+     * those carry is_manual_override = 1 and are a deliberate instruction, not a default.
+     *
+     * Reports rather than throws when the branch is short of driver data, so a gap elsewhere
+     * cannot block an approved top-up from being applied.
+     */
+    const chosenDriver = String(allocationDriver ?? "").trim();
+    if (chosenDriver) {
+      await connection.execute(
+        `UPDATE finance_budget_line SET allocation_driver = ? WHERE id = ?`,
+        [chosenDriver, budgetLineId]
+      );
+    }
+    await resyncLineAllocations(connection, budgetLineId, actorId);
   }
 
   await resummarizeHeaderTotals(connection, String(line.budget_id));
@@ -343,22 +387,29 @@ async function applyTopupAsNewLine(
 
   const lineId = randomUUID();
   await connection.execute(
+    // allocation_driver is written from the request. It was previously omitted entirely, so every
+    // head/sub-head created by a top-up became a planning_level='branch' line with NO sharing
+    // method — a shared cost that could never be divided by rule, only by hand, for the rest of
+    // its life. NULL is still allowed and still means "the requester typed the splits instead".
     `INSERT INTO finance_budget_line
        (id, budget_id, cost_centre_id, planning_level, process_id, head, sub_head,
         item_name, quantity, unit, unit_rate,
         tax_treatment, gst_rate, gst_type, recoverable_tax_pct,
         cgst_amount, sgst_amount, igst_amount, base_amount, tax_amount,
         gross_amount, recoverable_tax_amount, pnl_cost_amount,
+        allocation_driver,
         justification, reserved_amount, consumed_amount, reserved_quantity, consumed_quantity)
      VALUES (?, ?, NULL, 'branch', NULL, ?, ?, ?, ?, ?, ?,
              'exclusive', 0, 'cgst_sgst', 100,
              ?, ?, ?, ?, ?,
              ?, ?, ?,
+             ?,
              ?, 0, 0, 0, 0)`,
     [
       lineId, String(request.budget_id), head, subHead, head, quantity, unit, unitRate,
       amounts.cgstAmount, amounts.sgstAmount, amounts.igstAmount, amounts.baseAmount, amounts.taxAmount,
       amounts.grossAmount, amounts.recoverableTaxAmount, amounts.pnlCostAmount,
+      String(request.allocation_driver ?? "").trim() || null,
       reason,
     ]
   );
@@ -388,6 +439,12 @@ async function applyTopupAsNewLine(
       ]
     );
   }
+  if (!splits.length) {
+    // No hand-typed splits: divide the new line by the driver just recorded on it, exactly as a
+    // budget-created line is divided. Without this a top-up-created head/sub-head arrived owned
+    // by nobody — the very state the branch-level backfill had to repair across 100 lines.
+    await resyncLineAllocations(connection, lineId, actorId);
+  }
   // No pre-existing allocation rows on a brand-new line, so renormalizing against ALL rows for
   // this line id (the same helper applyTopupToLine uses) is equivalent to computing each split's
   // share of the new line's own total directly — reusing it here avoids a second, slightly
@@ -409,9 +466,25 @@ function validateCostCentreSplits(
   splits: Array<{ costCentreId: string; amount: number; quantity: number }> | undefined,
   requestedAmount: number,
   requestedQuantity: number,
-  unitRate: number
+  unitRate: number,
+  /*
+   * True when the requester chose a sharing RULE instead of naming amounts by hand.
+   *
+   * Group D's own comment above the call site says "every top-up must now name where the money
+   * lands, both in aggregate and per split" — true when a person is doing the naming, and no
+   * longer true once a rule can do it. Without this flag, choosing "By headcount" on the top-up
+   * form was still refused here with TOPUP_SPLIT_REQUIRED before the driver ever got a chance to
+   * run: the two features contradicted each other at the very first step.
+   *
+   * Empty splits are then valid, and `applyTopupToLine`/`applyTopupAsNewLine` divide the money
+   * via `resyncLineAllocations` once the top-up is approved and applied — see their own
+   * comments for why deferring to apply time, not request time, is deliberate (the branch's
+   * driver data can change between submission and approval).
+   */
+  allocationDriverChosen = false
 ): Array<{ costCentreId: string; amount: number; quantity: number }> {
   if (!Array.isArray(splits) || !splits.length) {
+    if (allocationDriverChosen) return [];
     throw refuse(400, "TOPUP_SPLIT_REQUIRED", "At least one cost-centre split is required");
   }
   const tolerance = Math.max(1, unitRate * 0.0001);
@@ -521,6 +594,10 @@ export const budgetTopupService = {
       subHead?: string;
       unit?: string;
       unitRate?: number;
+      /** How this top-up should be shared across cost centres — the same driver a budget line
+       *  carries. Omit to supply explicit per-cost-centre splits instead, which are then treated
+       *  as the deliberate manual override they are. */
+      allocationDriver?: string | null;
       requestedAmount: number;
       requestedQuantity: number;
       reason: string;
@@ -554,6 +631,9 @@ export const budgetTopupService = {
       let branchId: string;
       let periodCode: string;
       let unitRate: number;
+      /** Set only for an existing-line request, so the split requirement below can recognise a
+       *  branch-level line that already has its own sharing driver — see allocationDriverChosen. */
+      let existingLine: RowDataPacket | undefined;
 
       if (isNewLine) {
         if (!input.budgetId) {
@@ -588,7 +668,8 @@ export const budgetTopupService = {
           throw refuse(400, "TOPUP_LINE_ID_REQUIRED", "A budget line is required");
         }
         const [lineRows] = await connection.execute<RowDataPacket[]>(
-          `SELECT l.id, l.budget_id, l.unit_rate, h.status AS budget_status, h.branch_id, h.period_code
+          `SELECT l.id, l.budget_id, l.unit_rate, l.planning_level, l.allocation_driver,
+                  h.status AS budget_status, h.branch_id, h.period_code
              FROM finance_budget_line l
              JOIN finance_budget_header h ON h.id = l.budget_id
             WHERE l.id = ?`,
@@ -596,6 +677,7 @@ export const budgetTopupService = {
         );
         const line = lineRows[0];
         if (!line) throw refuse(404, "BUDGET_LINE_NOT_FOUND", "Budget line not found");
+        existingLine = line;
         if (String(line.budget_status) !== "active") {
           throw refuse(
             409,
@@ -652,7 +734,23 @@ export const budgetTopupService = {
 
       // Group D: the split is the actual point of this request going forward — every top-up
       // must now name where the money lands, both in aggregate and per split.
-      const normalizedSplits = validateCostCentreSplits(input.costCentreSplits, requestedAmount, requestedQuantity, unitRate);
+      /*
+       * Splits are not required when a rule will decide the division instead of a person:
+       *   - a NEW line, when the requester picked a driver for it on this request, or
+       *   - an EXISTING branch-level line that already carries its own driver — the top-up then
+       *     shares by whatever the line already uses, with no need to repeat the choice.
+       * A line planned at cost_centre level has exactly one owner and was never a candidate for
+       * this at all; existingLine.planning_level guards against treating it as one.
+       */
+      const lineAlreadyShared = Boolean(
+        existingLine
+        && String(existingLine.planning_level) === "branch"
+        && String(existingLine.allocation_driver ?? "").trim()
+      );
+      const allocationDriverChosen = Boolean(String(input.allocationDriver ?? "").trim()) || lineAlreadyShared;
+      const normalizedSplits = validateCostCentreSplits(
+        input.costCentreSplits, requestedAmount, requestedQuantity, unitRate, allocationDriverChosen
+      );
       await assertCostCentresBelongToBranch(connection, branchId, normalizedSplits.map((s) => s.costCentreId));
 
       // The lock is re-checked inside review()'s transaction before anything is applied, but
@@ -671,19 +769,24 @@ export const budgetTopupService = {
         await connection.execute(
           `INSERT INTO finance_budget_topup_request
              (id, budget_line_id, budget_id, requested_by, requested_amount, requested_quantity, reason,
-              status, is_new_line, head, sub_head, unit, unit_rate)
-           VALUES (?, NULL, ?, ?, ?, ?, ?, 'submitted', 1, ?, ?, ?, ?)`,
+              status, is_new_line, head, sub_head, unit, unit_rate, allocation_driver)
+           VALUES (?, NULL, ?, ?, ?, ?, ?, 'submitted', 1, ?, ?, ?, ?, ?)`,
           [
             id, budgetId, actorId, requestedAmount, requestedQuantity, input.reason.trim(),
             input.head!.trim(), input.subHead!.trim(), input.unit!.trim(), unitRate,
+            String(input.allocationDriver ?? "").trim() || null,
           ]
         );
       } else {
         await connection.execute(
           `INSERT INTO finance_budget_topup_request
-             (id, budget_line_id, budget_id, requested_by, requested_amount, requested_quantity, reason, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted')`,
-          [id, input.budgetLineId, budgetId, actorId, requestedAmount, requestedQuantity, input.reason.trim()]
+             (id, budget_line_id, budget_id, requested_by, requested_amount, requested_quantity, reason, status,
+              allocation_driver)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 'submitted', ?)`,
+          [
+            id, input.budgetLineId, budgetId, actorId, requestedAmount, requestedQuantity,
+            input.reason.trim(), String(input.allocationDriver ?? "").trim() || null,
+          ]
         );
       }
 
@@ -1017,7 +1120,7 @@ export const budgetTopupService = {
           // Same lock GRN reserve()/consume() already use — a top-up and a GRN cannot race
           // against the same line's headroom.
           await lockActiveBudgetLine(connection, String(request.budget_line_id));
-          await applyTopupToLine(connection, String(request.budget_line_id), Number(request.requested_quantity), splits, actorId);
+          await applyTopupToLine(connection, String(request.budget_line_id), Number(request.requested_quantity), splits, actorId, request.allocation_driver);
         }
         await connection.execute(
           `UPDATE finance_budget_topup_request
@@ -1094,6 +1197,7 @@ export const budgetTopupService = {
       budgetLineId: string;
       additionalQuantity: number;
       reason: string;
+      allocationDriver?: string | null;
       costCentreSplits: Array<{ costCentreId: string; amount: number; quantity: number }>;
     },
     actorId: string,
@@ -1137,7 +1241,10 @@ export const budgetTopupService = {
       }
 
       const requestedAmount = roundMoney(additionalQuantity * unitRate);
-      const normalizedSplits = validateCostCentreSplits(input.costCentreSplits, requestedAmount, additionalQuantity, unitRate);
+      const allocationDriverChosen = Boolean(String(input.allocationDriver ?? "").trim());
+      const normalizedSplits = validateCostCentreSplits(
+        input.costCentreSplits, requestedAmount, additionalQuantity, unitRate, allocationDriverChosen
+      );
       await assertCostCentresBelongToBranch(connection, String(line.branch_id), normalizedSplits.map((s) => s.costCentreId));
 
       if (await isPeriodLocked(String(line.period_code), connection)) {
@@ -1151,7 +1258,7 @@ export const budgetTopupService = {
       // Same row lock GRN reserve()/consume() and the review() finance_head branch above use —
       // a direct increase and a GRN (or another top-up) cannot race against the same line.
       await lockActiveBudgetLine(connection, String(line.id));
-      await applyTopupToLine(connection, String(line.id), additionalQuantity, normalizedSplits, actorId);
+      await applyTopupToLine(connection, String(line.id), additionalQuantity, normalizedSplits, actorId, input.allocationDriver);
 
       const requestId = randomUUID();
       await connection.execute(

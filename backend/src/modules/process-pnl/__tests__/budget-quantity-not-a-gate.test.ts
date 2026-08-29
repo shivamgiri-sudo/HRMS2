@@ -115,8 +115,11 @@ describe("no GRN path gates on quantity any more", () => {
   it("neither GRN save path throws HEADROOM_EXCEEDED on quantity", () => {
     const service = read("src/modules/finance/grn-smart.service.ts");
     expect(service).not.toContain("split allocation exceeds available quantity");
-    // The money-side branch-aggregate gate is untouched and still the hard limit.
-    expect(service).toContain("const draws = allocateAcrossLines(preferredLineId, grossTarget, netLines);");
+    // The money-side branch-aggregate gate is untouched and still the hard limit. It now also
+    // passes the row's TAXABLE value, so a line planned as non_gst/exempt is weighed against the
+    // taxable figure it will actually be charged rather than the tax-inclusive one — still money,
+    // still the hard limit, just the right money.
+    expect(service).toContain("const draws = allocateAcrossLines(preferredLineId, grossTarget, netLines, netTarget);");
   });
 
   it("linking an unbudgeted split is not blocked by the line's unit count", () => {
@@ -127,6 +130,9 @@ describe("no GRN path gates on quantity any more", () => {
   it("the legacy single-line create path drops its quantity refusal, keeps the money one", () => {
     const service = read("src/modules/finance/grn.service.ts");
     expect(service).not.toContain("GRN quantity exceeds available approved quantity");
-    expect(service).toContain('throw new Error("GRN amount exceeds the available approved budget")');
+    // The money refusal survives; it is now the BRANCH AGGREGATE rather than the single line the
+    // raiser picked, so create and allocation-save answer alike instead of contradicting.
+    expect(service).toContain("if (amounts.grossAmount > absorbable + 0.01) {");
+    expect(service).toContain('"HEADROOM_EXCEEDED"');
   });
 });

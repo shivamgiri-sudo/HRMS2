@@ -245,21 +245,57 @@ async function readRevenue(period: string): Promise<Map<string, RevenueRow>> {
   return out;
 }
 
+/**
+ * GRN actual spend by cost centre, for the Live P&L / Alerts tab's grnActual column.
+ *
+ * RESOLVED 2026-08-29 — was mirror-only, is now app-side-first. Same defect, same fix, as
+ * ceo-overview.service.ts's spendByBranch() and the P&L Statement tab's getIndirectCostActuals():
+ * this read ONLY the db_bill mirror, which was the whole GRN story when it was written and has
+ * not been since — matching by GRN NUMBER found 97% of the app's own consumed allocations already
+ * present in the mirror under the same number, so this tab was double-counting the same real
+ * spend. The app's own grn_cost_allocation (carrying pnl_cost_amount, proper tax treatment) is now
+ * the primary source; the mirror UNION only ever contributes a GRN the app has not captured.
+ */
 async function readGrn(period: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
-  if (!(await tableExists("grn_entry_line_snapshot"))) return out;
-  const [rows] = await db.execute<MoneyRow[]>(
-    `SELECT ccm.id AS cost_centre_id, SUM(l.amount) AS amount
-       FROM grn_entry_line_snapshot l
-       JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
-       LEFT JOIN cost_centre_master ccm
-              ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-               = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-      WHERE g.period_code = ? AND g.is_rejected = 0 AND ${OWN_COMPANY_SQL}
-      GROUP BY ccm.id`,
+
+  const [appRows] = await db.execute<MoneyRow[]>(
+    `SELECT a.cost_centre_id AS cost_centre_id, SUM(a.pnl_cost_amount) AS amount
+       FROM grn_cost_allocation a
+       JOIN grn_request gr ON gr.id = a.grn_request_id
+      WHERE a.lifecycle_status = 'consumed'
+        AND DATE_FORMAT(gr.bill_date, '%Y-%m') = ?
+      GROUP BY a.cost_centre_id`,
     [period],
   );
-  for (const row of rows) if (row.cost_centre_id) out.set(String(row.cost_centre_id), n(row.amount));
+  for (const row of appRows) if (row.cost_centre_id) out.set(String(row.cost_centre_id), n(row.amount));
+
+  if (await tableExists("grn_entry_line_snapshot")) {
+    const [rows] = await db.execute<MoneyRow[]>(
+      `SELECT ccm.id AS cost_centre_id, SUM(l.amount) AS amount
+         FROM grn_entry_line_snapshot l
+         JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
+         LEFT JOIN cost_centre_master ccm
+                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                 = l.cost_centre_code COLLATE utf8mb4_unicode_ci
+        WHERE g.period_code = ? AND g.is_rejected = 0 AND ${OWN_COMPANY_SQL}
+          AND NOT EXISTS (
+                SELECT 1
+                  FROM grn_request gr2
+                  JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id
+                 WHERE gr2.grn_number = g.grn_no
+                   AND a2.lifecycle_status = 'consumed'
+              )
+        GROUP BY ccm.id`,
+      [period],
+    );
+    for (const row of rows) {
+      if (!row.cost_centre_id) continue;
+      const key = String(row.cost_centre_id);
+      out.set(key, (out.get(key) ?? 0) + n(row.amount));
+    }
+  }
+
   return out;
 }
 

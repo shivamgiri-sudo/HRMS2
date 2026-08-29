@@ -1014,7 +1014,21 @@ export function SmartGrnApprovalQueue({ onReopenForEdit }: { onReopenForEdit?: (
                             </>
                           )}
                         </GrnTd>
-                        <GrnTd>{alloc.cost_centre_name ?? "Branch common"}</GrnTd>
+                        <GrnTd>
+                          {alloc.cost_centre_name ?? "Branch common"}
+                          {/* funding_cost_centre_id (migration 1630) — the branch-wide headroom
+                              gate can fund this split from a SIBLING cost centre's line, or the
+                              branch-common pool, while this row still belongs to the cost centre
+                              above. Shown only when the two actually differ, so a reviewer isn't
+                              left assuming this row's own budget paid for it when it did not. */}
+                          {alloc.budget_line_id
+                            && (alloc.funding_cost_centre_id == null
+                              || String(alloc.funding_cost_centre_id) !== String(alloc.cost_centre_id ?? "")) && (
+                            <GrnCellSub className="truncate">
+                              funded from {alloc.funding_cost_centre_name ?? "branch pool"}
+                            </GrnCellSub>
+                          )}
+                        </GrnTd>
                         <GrnTd align="right">{money(alloc.amount_without_tax)}</GrnTd>
                         <GrnTd align="right" className="font-semibold">{money(alloc.amount_with_tax)}</GrnTd>
                         <GrnTd align="right">{Number(alloc.allocation_percentage).toFixed(2)}%</GrnTd>

@@ -102,13 +102,28 @@ describe("P0-1: zero-allocation GRNs cannot bypass Smart validation on submit", 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// P0-2  Provision GRNs fail closed at every entry point
+// P0-2  GRN types with no accounting lifecycle fail closed at every entry point
+//
+// The five checks below used to look for the literal "PROVISION_GRN_NOT_SUPPORTED", which meant
+// they proved only that PROVISION was guarded. `salary` — 39,099 rows in the enum, no create
+// branch, no payable branch, no float branch — had no guard at all and this suite passed anyway.
+// They now look for the shared guard, so a type added to the list is covered everywhere at once
+// instead of needing five more literals nobody remembers to add.
 // ─────────────────────────────────────────────────────────────────────────────
-describe("P0-2: provision GRNs blocked at all four entry points", () => {
+describe("P0-2: unsupported GRN types blocked at all four entry points", () => {
+  it("the guard covers salary as well as provision, and refuses with a forwardable status", () => {
+    const guard = read("src/modules/finance/grn-type-support.ts");
+    expect(guard).toContain("provision:");
+    expect(guard).toContain("salary:");
+    // Without statusCode, errorHandler.ts masks the message as an anonymous 500 reference in
+    // production and the raiser is never told which type was refused.
+    expect(guard).toContain("statusCode: 409");
+  });
+
   it("grn.service.ts createDraft blocks provision type before the branch guard", () => {
     const svc = read("src/modules/finance/grn.service.ts");
-    expect(svc).toContain("PROVISION_GRN_NOT_SUPPORTED");
-    const provIdx = svc.indexOf("PROVISION_GRN_NOT_SUPPORTED");
+    expect(svc).toContain("assertGrnTypeSupported");
+    const provIdx = svc.indexOf("assertGrnTypeSupported(payload.grnType");
     const branchIdx = svc.indexOf("if (!payload.branchId)");
     expect(provIdx).toBeLessThan(branchIdx);
   });
@@ -116,23 +131,23 @@ describe("P0-2: provision GRNs blocked at all four entry points", () => {
   it("grn.service.ts submitForApproval blocks provision type", () => {
     const svc = read("src/modules/finance/grn.service.ts");
     const submitFn = svc.slice(svc.indexOf("async submitForApproval("));
-    expect(submitFn).toContain("PROVISION_GRN_NOT_SUPPORTED");
+    expect(submitFn).toContain("assertGrnTypeSupported");
   });
 
   it("grn.service.ts reviewGrn blocks provision type inside the transaction", () => {
     const svc = read("src/modules/finance/grn.service.ts");
     const reviewFn = svc.slice(svc.indexOf("async reviewGrn("));
-    expect(reviewFn).toContain("PROVISION_GRN_NOT_SUPPORTED");
+    expect(reviewFn).toContain("assertGrnTypeSupported");
     const txIdx = reviewFn.indexOf("beginTransaction");
-    const provIdx = reviewFn.indexOf("PROVISION_GRN_NOT_SUPPORTED");
+    const provIdx = reviewFn.indexOf("assertGrnTypeSupported");
     expect(provIdx).toBeGreaterThan(txIdx);
   });
 
   it("grnValidationControlService.submit blocks provision before effectiveValidation", () => {
     const svc = read("src/modules/finance/grn-validation-control.service.ts");
     const submitFn = svc.slice(svc.indexOf("async submit("));
-    expect(submitFn).toContain("PROVISION_GRN_NOT_SUPPORTED");
-    const provIdx = submitFn.indexOf("PROVISION_GRN_NOT_SUPPORTED");
+    expect(submitFn).toContain("assertGrnTypeSupported");
+    const provIdx = submitFn.indexOf("assertGrnTypeSupported");
     const valIdx = submitFn.indexOf("effectiveValidation(grnId)");
     expect(provIdx).toBeLessThan(valIdx);
   });
@@ -140,9 +155,9 @@ describe("P0-2: provision GRNs blocked at all four entry points", () => {
   it("grn-smart.service.ts review blocks provision type inside the transaction", () => {
     const svc = read("src/modules/finance/grn-smart.service.ts");
     const reviewFn = svc.slice(svc.indexOf("async review("));
-    expect(reviewFn).toContain("PROVISION_GRN_NOT_SUPPORTED");
+    expect(reviewFn).toContain("assertGrnTypeSupported");
     const txIdx = reviewFn.indexOf("beginTransaction");
-    const provIdx = reviewFn.indexOf("PROVISION_GRN_NOT_SUPPORTED");
+    const provIdx = reviewFn.indexOf("assertGrnTypeSupported");
     expect(provIdx).toBeGreaterThan(txIdx);
   });
 });
@@ -769,5 +784,55 @@ describe("submitTransfer idempotency — runtime (DB mocked)", () => {
       actorId: "user-fh",
     });
     expect(result).toBeDefined();
+  });
+});
+
+
+/*
+ * POOLED_LINE_SHARE — owner decision, 2026-08-29: warn where a share is defined, never block.
+ *
+ * A branch-common budget line (`cost_centre_id IS NULL`) belongs to no cost centre, so the
+ * branch-wide headroom gate lets any of them draw the whole balance first come first served.
+ * 58 of 128 active lines for 2026-08 are pooled and hold Rs 48.2 lakh unspent — 46% of the
+ * branch budget — while the direct lines beside them are 73% consumed, so spill lands here.
+ * finance_budget_line_allocation records each cost centre's planned share and was read nowhere.
+ */
+describe("POOLED_LINE_SHARE: visible, and never a block", () => {
+  const service = read("src/modules/finance/grn-smart.service.ts");
+
+  it("is raised as a non-blocking validation", () => {
+    expect(service).toContain('code: "POOLED_LINE_SHARE"');
+    const block = service.slice(service.indexOf('code: "POOLED_LINE_SHARE"'));
+    const decl = block.slice(0, block.indexOf("details:"));
+    // A share is a PLAN, not an approval limit, and the money is genuinely available — so the
+    // severity tops out at warning and blocking is hard-coded false, not conditional.
+    expect(decl).toContain("blocking: false,");
+    expect(decl).not.toMatch(/blocking:\s*(true|overrun)/);
+    expect(decl).toContain('status: overrun.length ? "warning" : "passed"');
+  });
+
+  it("only warns where Finance has actually recorded a share", () => {
+    const block = service.slice(service.indexOf("const [pooledDraws]"));
+    // LEFT JOIN, so a pooled line with no recorded share still reports its balance rather than
+    // vanishing — 54 of the 58 pooled lines have no share defined today, and demanding one
+    // before anything works would make this useless until a data-entry programme finished.
+    expect(block).toContain("LEFT JOIN finance_budget_line_allocation alloc");
+    expect(block).toContain("row.defined_share != null");
+    expect(block).toContain("undefinedShareCount");
+  });
+
+  it("counts what other GRNs already drew, not just this one", () => {
+    const block = service.slice(service.indexOf("const [pooledDraws]"));
+    // A share is exhausted by the branch's cumulative draw. Looking at this GRN alone would
+    // never fire, because no single invoice is likely to exceed a share on its own.
+    expect(block).toContain("already_drawn");
+    expect(block).toContain("prior.lifecycle_status IN ('reserved','consumed')");
+    expect(block).toContain("prior.grn_request_id <> a.grn_request_id");
+  });
+
+  it("looks only at pooled lines, and only at rows that name a cost centre", () => {
+    const block = service.slice(service.indexOf("const [pooledDraws]"));
+    expect(block).toContain("l.cost_centre_id IS NULL");
+    expect(block).toContain("a.cost_centre_id IS NOT NULL");
   });
 });

@@ -46,7 +46,11 @@ function fakeExecutor(
   drivers: FakeDriver[] = [],
   meters: FakeMeter[] = [],
   readings: FakeReading[] = [],
-  gradeDrivers: FakeGradeDriver[] = []
+  gradeDrivers: FakeGradeDriver[] = [],
+  /** Live staff per cost centre, from `employees`. planned_headcount falls back to this when
+   *  Finance has not typed one — see getMonthlyDrivers. Empty by default, so every existing
+   *  fixture keeps behaving as though only the typed drivers exist. */
+  liveHeadcount: Array<{ cost_centre_id: string; live_headcount: number }> = []
 ) {
   return {
     async execute(sql: string, params?: unknown[]) {
@@ -55,6 +59,9 @@ function fakeExecutor(
       }
       if (sql.includes("FROM finance_cost_centre_monthly_driver")) {
         return [drivers, []];
+      }
+      if (sql.includes("AS live_headcount")) {
+        return [liveHeadcount, []];
       }
       if (sql.includes("FROM finance_meter_master")) {
         // Since migration 434 meters are resolved for the whole branch in one query, because a
@@ -191,14 +198,58 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     ).rejects.toThrow(/must total 100%.*90\.00%/);
   });
 
-  it("rejects total_manpower when a cost centre has no monthly driver row", async () => {
+  /*
+   * A cost centre with no headcount carries no share — it does not block the line.
+   *
+   * This used to reject the whole line, which reads as a data-quality gate and behaves as a denial
+   * of service: on 2026-08, 331 active cost centres had no headcount, 325 of them because they
+   * employ nobody — imported site codes on the master. One of those was enough to stop rent,
+   * electricity and the cafeteria being shared out across the cost centres that DO have people,
+   * and Rs 3.46 crore ended up owned by nobody. Zero is not missing; it is the arithmetic working.
+   * `revenue_share` and `meter_wise` already took this position — see the test directly below.
+   */
+  it("does not reject total_manpower when a cost centre has no headcount — it just carries no share", async () => {
     const drivers: FakeDriver[] = [
       { cost_centre_id: "cc1", planned_headcount: 10, revenue_rate_per_head: 0, remarks: null, status: "draft", updated_by: null, updated_at: null },
       // cc2, cc3 missing entirely
     ];
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "total_manpower", AMOUNTS, undefined,
+      fakeExecutor(THREE_COST_CENTRES, drivers)
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.costCentreId, r]));
+    expect(byId.cc1.grossAmount).toBe(72500); // the only staffed cost centre carries the pool
+    expect(byId.cc2.grossAmount).toBe(0);
+    expect(byId.cc3.grossAmount).toBe(0);
+    expect(sumOf(rows, "grossAmount")).toBe(72500);
+  });
+
+  it("falls back to live staff when Finance has typed no headcount", async () => {
+    // The number was always in `employees`; requiring it to be re-typed into Branch Budget is what
+    // left 331 cost centres blank. A typed plan still wins where one exists.
+    const drivers: FakeDriver[] = [
+      { cost_centre_id: "cc1", planned_headcount: 10, revenue_rate_per_head: 0, remarks: null, status: "draft", updated_by: null, updated_at: null },
+    ];
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "total_manpower", AMOUNTS, undefined,
+      fakeExecutor(THREE_COST_CENTRES, drivers, [], [], [], [
+        { cost_centre_id: "cc1", live_headcount: 999 }, // ignored — cc1 has a typed plan of 10
+        { cost_centre_id: "cc2", live_headcount: 10 },
+      ])
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.costCentreId, r]));
+    expect(byId.cc1.grossAmount).toBe(byId.cc2.grossAmount); // 10 planned vs 10 live, so an even split
+    expect(byId.cc3.grossAmount).toBe(0); // no plan, no staff
+    expect(sumOf(rows, "grossAmount")).toBe(72500);
+  });
+
+  it("still refuses when NO cost centre has the driver — there is nothing to share by", async () => {
+    // The one case that is genuinely an error. An even split here would be an invention, not a
+    // calculation, so it must refuse rather than quietly spread the cost evenly.
     await expect(
-      computeLineAllocations("branch-1", "2026-08", "total_manpower", AMOUNTS, undefined, fakeExecutor(THREE_COST_CENTRES, drivers))
-    ).rejects.toThrow(/planned headcount is missing/i);
+      computeLineAllocations("branch-1", "2026-08", "total_manpower", AMOUNTS, undefined,
+        fakeExecutor(THREE_COST_CENTRES, []))
+    ).rejects.toMatchObject({ code: "MONTHLY_DRIVER_MISSING" });
   });
 
   it("does not reject revenue_share when a cost centre has zero or missing revenue — it just carries no share", async () => {
@@ -244,16 +295,32 @@ describe("computeLineAllocations — branch-first sharing methods", () => {
     expect(rows.reduce((a, r) => a + r.grossAmount, 0)).toBe(AMOUNTS.grossAmount);
   });
 
-  it("names the missing driver correctly for a newly supported method", async () => {
+  it("names the driver correctly when no cost centre has any of it", async () => {
+    const drivers: FakeDriver[] = [
+      { cost_centre_id: "cc1", planned_headcount: 0, revenue_rate_per_head: 0, seat_count: 0 },
+      { cost_centre_id: "cc2", planned_headcount: 0, revenue_rate_per_head: 0, seat_count: 0 },
+      { cost_centre_id: "cc3", planned_headcount: 0, revenue_rate_per_head: 0, seat_count: 0 },
+    ];
+    await expect(
+      computeLineAllocations("branch-1", "2026-08", "seat_count", AMOUNTS, undefined,
+        fakeExecutor(THREE_COST_CENTRES, drivers))
+    ).rejects.toThrow(/seat count/i);
+  });
+
+  it("shares by seat count across only the cost centres that have seats", async () => {
     const drivers: FakeDriver[] = [
       { cost_centre_id: "cc1", planned_headcount: 0, revenue_rate_per_head: 0, seat_count: 10 },
       { cost_centre_id: "cc2", planned_headcount: 0, revenue_rate_per_head: 0, seat_count: 0 },
       { cost_centre_id: "cc3", planned_headcount: 0, revenue_rate_per_head: 0, seat_count: 5 },
     ];
-    await expect(
-      computeLineAllocations("branch-1", "2026-08", "seat_count", AMOUNTS, undefined,
-        fakeExecutor(THREE_COST_CENTRES, drivers))
-    ).rejects.toThrow(/seat count is missing/i);
+    const rows = await computeLineAllocations(
+      "branch-1", "2026-08", "seat_count", AMOUNTS, undefined,
+      fakeExecutor(THREE_COST_CENTRES, drivers)
+    );
+    const byId = Object.fromEntries(rows.map((r) => [r.costCentreId, r]));
+    expect(byId.cc2.grossAmount).toBe(0);
+    expect(byId.cc1.grossAmount).toBeGreaterThan(byId.cc3.grossAmount); // 10 seats vs 5
+    expect(sumOf(rows, "grossAmount")).toBe(72500);
   });
 
   // Cost-centre scope. Before this, a branch-common line always hit every active cost centre and

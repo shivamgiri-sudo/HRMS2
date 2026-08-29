@@ -4,6 +4,7 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { grnSmartService } from "./grn-smart.service.js";
 import { resolveGrnNumberOnSubmit } from "./grn-number-on-submit.js";
+import { assertGrnTypeSupported } from "./grn-type-support.js";
 
 const NON_OVERRIDABLE_VALIDATIONS = new Set(["LOB_ATTRIBUTION"]);
 
@@ -238,12 +239,7 @@ export const grnValidationControlService = {
       [grnId]
     );
     if (!typeRows[0]) throw new Error("GRN not found");
-    if (String(typeRows[0].grn_type) === "provision") {
-      throw Object.assign(
-        new Error("PROVISION_GRN_NOT_SUPPORTED: Provision GRN accounting lifecycle is not yet implemented. Contact Finance Admin."),
-        { code: "PROVISION_GRN_NOT_SUPPORTED" }
-      );
-    }
+    assertGrnTypeSupported(typeRows[0].grn_type, "Submission");
     const validation = await effectiveValidation(grnId);
     if (validation.blocking.length) {
       throw new Error(

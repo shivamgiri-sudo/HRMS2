@@ -179,8 +179,13 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
     // linked ones, or unbudgeted spend would vanish from the P&L entirely.
     expect(consumeFn).not.toContain("AND budget_line_id IS NOT NULL");
 
-    // The spend stays identifiable as unbudgeted rather than blending into budgeted spend.
-    expect(service).toContain("isUnbudgeted ? 1 : 0");
+    // is_unbudgeted marks spend with NO budget line behind it. It used to mark "the raiser picked
+    // no line", which stopped implying the same thing once the branch-wide headroom gate began
+    // funding every saved row from the aggregate — fully funded spend was being written, and
+    // reported, as off-budget. Whose budget paid is its own column now (migration 1630).
+    expect(service).toContain("item.line.id == null ? 1 : 0");
+    expect(service).toContain("cell.line.id == null ? 1 : 0");
+    expect(service).toContain("funding_cost_centre_id");
   });
 
   it("linking re-applies every draft-time budget check and reserves post-Branch-Head", () => {
@@ -189,9 +194,13 @@ describe("unbudgeted vendor GRN — raise, save, submit, link, approve", () => {
 
     expect(service).toContain("async linkUnbudgetedBudgetLines(");
 
-    // Only an unbudgeted GRN, and only while it is still awaiting review.
+    // Gated on the ROWS, not the header flag. Gating on is_unbudgeted made this endpoint
+    // unreachable for everything saved after the headroom gate: the flag is 0 whenever the
+    // aggregate funded the GRN, which is nearly always. What Finance re-points is a row funded
+    // from another cost centre's line, and that is a row-level fact.
+    expect(service).toContain("isRelinkable");
     expect(service).toContain(
-      'throw new Error("This GRN was raised against an approved budget — there is nothing to link")'
+      "Every cost-centre split on this GRN is already funded by its own cost centre's budget line"
     );
     expect(service).toContain('if (!["submitted", "branch_head_approved"].includes(String(grn.status)))');
 

@@ -90,9 +90,11 @@ type FakeBudgetLine = {
 };
 type FakeCostCentre = { id: string; cost_centre_code: string; cost_centre_name: string; branch_id: string; active_status: number };
 
+// funding_cost_centre_id sits beside cost_centre_id from migration 1630: WHO INCURRED the
+// spend and WHOSE BUDGET PAID it are separate facts now, so this fixture mirrors that order.
 const INSERT_COLUMNS = [
   "id", "grn_request_id", "sequence_no", "budget_id", "budget_line_id", "branch_id",
-  "process_id", "cost_centre_id", "cost_class", "allocation_percentage",
+  "process_id", "cost_centre_id", "funding_cost_centre_id", "cost_class", "allocation_percentage",
   "quantity", "unit", "unit_rate", "tax_treatment", "gst_rate", "gst_type",
   "recoverable_tax_pct", "amount_without_tax", "tax_amount", "cgst_amount",
   "sgst_amount", "igst_amount", "amount_with_tax", "recoverable_tax_amount",
@@ -151,8 +153,12 @@ function makeState(opts: {
       }], []];
     }
 
-    // getHeadSubHeadCoverage's lines query — distinctive via the UPPER(TRIM(l.head)) filter
-    if (s.includes("UPPER(TRIM(l.head))")) {
+    // getHeadSubHeadCoverage's lines query. Matched on the derived headroom column rather than
+    // on the head filter's exact text: that filter now resolves the LINE's head through
+    // finance_expense_head_master (a budget line may store head_code where the GRN carries
+    // head_name), and a matcher keyed to the old literal silently stopped matching, so the mock
+    // returned nothing and every headroom test failed as NO_BUDGET_FOR_HEAD.
+    if (s.includes("FROM finance_budget_line l") && s.includes("available_gross_amount")) {
       const [headerId, head, subHead] = params;
       const matches = opts.budgetLines.filter((l) =>
         String(l.budget_id) === String(headerId)
@@ -524,8 +530,13 @@ describe("saveAllocations — branch-wide headroom gate (Group C step 2a)", () =
     // it is no longer persisted NULL waiting for Finance Head to link one later.
     expect(rows[0].budget_line_id).toBe("line-T");
     expect(rows[0].budget_id).toBe("hdr-1");
-    // is_unbudgeted still records that the RAISER picked no line, independent of budget_line_id.
-    expect(rows[0].is_unbudgeted).toBe(1);
+    // is_unbudgeted means ONE thing now: no budget line funded this row. The raiser picked no
+    // line here, but the branch aggregate funded it in full from line-T — so this is BUDGETED
+    // spend and saying otherwise reported fully funded money as off-budget.
+    expect(rows[0].is_unbudgeted).toBe(0);
+    // Whose budget paid is its own column (migration 1630). line-T is a branch-common pooled
+    // line, so there is no owning cost centre — NULL, not the raiser's, and not a guess.
+    expect(rows[0].funding_cost_centre_id ?? null).toBeNull();
     // Cost-centre attribution is the raiser's own, not the funding line's (line-T is pooled/null).
     expect(rows[0].cost_centre_id).toBe("cc-X");
     expect(Number(rows[0].amount_with_tax)).toBeCloseTo(1000, 6); // 2 * 500, 0% GST
@@ -623,5 +634,92 @@ describe("saveAllocations — branch-wide headroom gate (Group C step 2a)", () =
         "branch_head"
       )
     ).rejects.toMatchObject({ code: "HEADROOM_EXCEEDED", statusCode: 409 });
+  });
+});
+
+
+/*
+ * WHO INCURRED the spend vs WHOSE BUDGET PAID for it.
+ *
+ * Cost centre A has no budget line of its own for a head/sub-head; cost centre B, in the same
+ * branch and month, does. The branch aggregate has always funded A's spend from B's line — that
+ * is what getHeadSubHeadCoverage's deliberate absence of a cost-centre filter means — but a
+ * BUDGETED row then overwrote the raiser's cost centre with the funding line's, so the cost
+ * landed on B. The only way to get the attribution right was to send no budgetLineId at all and
+ * have the GRN recorded as unbudgeted, which is neither obvious nor true.
+ */
+describe("cost centre A funded by cost centre B's line", () => {
+  it("attributes the cost to the raiser's cost centre and records B as the funding one", async () => {
+    // The ONLY line for this head/sub-head belongs to cost centre B.
+    const lineB: FakeBudgetLine = {
+      id: "line-B", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Stationery",
+      item_name: "Stationery", cost_centre_id: "cc-B", cost_centre_name: "CC B", process_id: null,
+      unit: "unit", unit_rate: 10, tax_treatment: "exclusive", gst_rate: 0, gst_type: "none",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
+      quantity: 500, reserved_quantity: 0, consumed_quantity: 0,
+      gross_amount: 5000, reserved_amount: 0, consumed_amount: 0,
+    };
+    stateRef.current = makeState({
+      grn: baseGrn(),
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
+      budgetLines: [lineB],
+      costCentres: [
+        { id: "cc-A", cost_centre_code: "CCA", cost_centre_name: "CC A", branch_id: "br-1", active_status: 1 },
+        { id: "cc-B", cost_centre_code: "CCB", cost_centre_name: "CC B", branch_id: "br-1", active_status: 1 },
+      ],
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+
+    // A raises against B's line, naming its OWN cost centre for the attribution.
+    await grnSmartService.saveAllocations(
+      "grn-1",
+      { allocations: [{ budgetLineId: "line-B", costCentreId: "cc-A", quantity: 100, unitRate: 10 }] },
+      "user-1",
+      "branch_head"
+    );
+
+    const rows = stateRef.current.insertedAllocations;
+    expect(rows).toHaveLength(1);
+    // The money came from B's line...
+    expect(rows[0].budget_line_id).toBe("line-B");
+    expect(rows[0].funding_cost_centre_id).toBe("cc-B");
+    // ...and the cost belongs to A. Before this fix cost_centre_id read "cc-B" and A's spend was
+    // invisible on A.
+    expect(rows[0].cost_centre_id).toBe("cc-A");
+    // Real budget funded it, so it is not unbudgeted spend whatever route it was raised by.
+    expect(rows[0].is_unbudgeted).toBe(0);
+    expect(Number(rows[0].amount_with_tax)).toBeCloseTo(1000, 6);
+  });
+
+  it("still refuses a cost centre from another branch", async () => {
+    const lineB: FakeBudgetLine = {
+      id: "line-B", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Stationery",
+      item_name: "Stationery", cost_centre_id: "cc-B", cost_centre_name: "CC B", process_id: null,
+      unit: "unit", unit_rate: 10, tax_treatment: "exclusive", gst_rate: 0, gst_type: "none",
+      recoverable_tax_pct: 100, justification: "Approved", period_code: "2026-08",
+      quantity: 500, reserved_quantity: 0, consumed_quantity: 0,
+      gross_amount: 5000, reserved_amount: 0, consumed_amount: 0,
+    };
+    stateRef.current = makeState({
+      grn: baseGrn(),
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
+      budgetLines: [lineB],
+      // cc-OTHER is active, but belongs to a different branch — the one thing no later step
+      // re-checks, so relaxing the line/cost-centre match must not relax this too.
+      costCentres: [
+        { id: "cc-B", cost_centre_code: "CCB", cost_centre_name: "CC B", branch_id: "br-1", active_status: 1 },
+        { id: "cc-OTHER", cost_centre_code: "CCO", cost_centre_name: "CC Other", branch_id: "br-2", active_status: 1 },
+      ],
+    });
+    const { grnSmartService } = await import("../grn-smart.service.js");
+
+    await expect(
+      grnSmartService.saveAllocations(
+        "grn-1",
+        { allocations: [{ budgetLineId: "line-B", costCentreId: "cc-OTHER", quantity: 10, unitRate: 10 }] },
+        "user-1",
+        "branch_head"
+      )
+    ).rejects.toThrow(/does not belong to this branch/);
   });
 });

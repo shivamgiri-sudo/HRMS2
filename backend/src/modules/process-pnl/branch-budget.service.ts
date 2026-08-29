@@ -6,6 +6,7 @@ import { financeBranchFilter, resolveFinanceBranchScope, type FinanceBranchScope
 import { tableExists } from "../../shared/dbHelpers.js";
 import {
   computeLineAllocations,
+  resyncLineAllocations,
   createAllocationLookupCache,
   getLineAllocations,
   replaceLineAllocations,
@@ -1573,6 +1574,13 @@ export const branchBudgetService = {
         ]
       );
 
+      // A branch-level line's cost-centre split is derived from its amount, so an amount change
+      // invalidates it. Recomputed here rather than left to the next full budget save — which is
+      // how 100 of 103 branch-level lines ended up carrying a driver with nothing computed from
+      // it. Reports rather than throws when the branch is missing driver data: a gap elsewhere in
+      // the branch must not block this amendment.
+      await resyncLineAllocations(connection, lineId, actorId);
+
       const [[totals]] = await connection.execute<RowDataPacket[]>(
         `SELECT COALESCE(SUM(base_amount),0)    AS base,
                 COALESCE(SUM(tax_amount),0)     AS tax,
@@ -1946,6 +1954,13 @@ export const branchBudgetService = {
           String(amend.line_id),
         ]
       );
+
+      // A branch-level line's cost-centre split is derived from its amount, so an amount change
+      // invalidates it. Recomputed here rather than left to the next full budget save — which is
+      // how 100 of 103 branch-level lines ended up carrying a driver with nothing computed from
+      // it. Reports rather than throws when the branch is missing driver data: a gap elsewhere in
+      // the branch must not block this amendment.
+      await resyncLineAllocations(connection, String(amend.line_id), actorId);
 
       const [[totals]] = await connection.execute<RowDataPacket[]>(
         `SELECT COALESCE(SUM(base_amount),0)     AS base,
@@ -2588,6 +2603,14 @@ export const branchBudgetService = {
         ]
       );
 
+      // Both sides of a transfer changed amount, so both branch-level splits are now stale.
+      // Recomputed here for the same reason the tax-amendment paths do it: the split is derived
+      // from the line's amount and must follow it, not wait for the next full budget save.
+      // Reports rather than throws on missing driver data — a transfer must not be blocked by a
+      // gap elsewhere in the branch.
+      await resyncLineAllocations(connection, String(fromLine.id), actorId);
+      await resyncLineAllocations(connection, String(toLine.id), actorId);
+
       // Re-sum header totals from the lines (same pattern as applyTopupToLine).
       await connection.execute(
         `UPDATE finance_budget_header h
@@ -2653,10 +2676,21 @@ export const branchBudgetService = {
               -- booked_amount above. Aliased back to the original names so callers are unchanged.
               ca.pnl_cost_amount AS allocation_amount,
               CASE WHEN ca.lifecycle_status = 'reserved' THEN ca.pnl_cost_amount ELSE 0 END AS reserved_amount,
-              CASE WHEN ca.lifecycle_status = 'consumed' THEN ca.pnl_cost_amount ELSE 0 END AS consumed_amount
+              CASE WHEN ca.lifecycle_status = 'consumed' THEN ca.pnl_cost_amount ELSE 0 END AS consumed_amount,
+              -- Added 2026-08-29 (migration 1630). This drill-through is already scoped to ONE
+              -- funding line — every row here is, by definition, paid from lineId's own budget —
+              -- which is exactly the view where "but who actually incurred it" is most likely to
+              -- differ and least likely to be obvious: a viewer drilling into their own cost
+              -- centre's budget line can otherwise see a GRN here with no indication it was really
+              -- raised by a sibling cost centre that had none of its own. incurred_cost_centre_id
+              -- is ca.cost_centre_id under its real name (not the funding one, which lineId
+              -- already tells the caller); NULL means the allocation predates this migration.
+              ca.cost_centre_id AS incurred_cost_centre_id,
+              incurred_ccm.cost_centre_name AS incurred_cost_centre_name
          FROM grn_cost_allocation ca
          JOIN grn_request gr ON gr.id = ca.grn_request_id
          LEFT JOIN vendor_master vm ON vm.id = gr.vendor_id
+         LEFT JOIN cost_centre_master incurred_ccm ON incurred_ccm.id = ca.cost_centre_id
         WHERE ca.budget_line_id = ?
         ORDER BY gr.bill_date DESC`,
       [lineId]

@@ -18,8 +18,13 @@ import { refuse } from "./finance-error.js";
 // TS method-parameter bivariance, letting the same functions run either on the shared pool (for
 // standalone reads) or inside branch-budget.service.ts's existing transaction connection (so a
 // branch-planned line's allocation rows commit atomically with the line itself).
+/** The pool wrapper and a PoolConnection both satisfy this. Their `execute` overloads differ
+ *  enough that a stricter signature rejects a connection outright — and a caller already inside a
+ *  transaction is exactly who must NOT be pushed onto the pool, or its reads miss its own
+ *  uncommitted writes. */
 interface Executor {
-  execute<T extends RowDataPacket[] = RowDataPacket[]>(sql: string, params?: unknown[]): Promise<[T, unknown]>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  execute(sql: string, params?: any[]): Promise<any>;
 }
 
 /**
@@ -124,6 +129,9 @@ export interface MonthlyDriverInput {
 }
 
 export interface MonthlyDriverRecord {
+  /** "planned" when Finance typed a headcount, "live_employees" when it was derived from the
+   *  staff actually posted to the cost centre. */
+  headcountSource?: "planned" | "live_employees";
   costCentreId: string;
   costCentreName: string;
   plannedHeadcount: number;
@@ -176,7 +184,7 @@ export async function listActiveCostCentres(
   // employees posted to the cost centre. This is the same derivation /api/org/cost-centres uses, so
   // the planner's column labels agree with the Org Masters screen instead of contradicting it.
   // The db_bill snapshot text is kept as a fallback for a cost centre with no staff mapped yet.
-  const [rows] = await executor.execute<RowDataPacket[]>(
+  const [rows] = (await executor.execute(
     `SELECT ccm.id, ccm.cost_centre_code, ccm.cost_centre_name,
             COALESCE(
               (SELECT pm.process_name
@@ -195,7 +203,7 @@ export async function listActiveCostCentres(
         AND (ccm.go_live_date IS NULL OR ccm.go_live_date <= CURDATE())
       ORDER BY ccm.cost_centre_name`,
     [branchId]
-  );
+  )) as [RowDataPacket[], unknown];
   return rows.map((row) => {
     const processName = row.resolved_process_name ? String(row.resolved_process_name).trim() : null;
     return {
@@ -215,19 +223,47 @@ export async function getMonthlyDrivers(
   executor: Executor = db
 ): Promise<MonthlyDriverRecord[]> {
   const costCentres = await listActiveCostCentres(branchId, executor);
-  const [driverRows] = await executor.execute<RowDataPacket[]>(
+  const [driverRows] = (await executor.execute(
     `SELECT cost_centre_id, planned_headcount, revenue_rate_per_head,
             seat_count, floor_area_sqft, device_count, hiring_volume, remarks,
             status, updated_by, updated_at
        FROM finance_cost_centre_monthly_driver
       WHERE branch_id = ? AND period_code = ?`,
     [branchId, periodCode]
-  );
+  )) as [RowDataPacket[], unknown];
   const byCostCentre = new Map(driverRows.map((row) => [String(row.cost_centre_id), row]));
+
+  /*
+   * HEADCOUNT FALLS BACK TO THE PEOPLE ACTUALLY POSTED TO THE COST CENTRE.
+   *
+   * planned_headcount is a number somebody types into Branch Budget → Drivers, once per cost
+   * centre per month, and the sharing methods that use it refuse to run until every active cost
+   * centre has one. On 2026-08 that was 331 cost centres short across the live budget branches,
+   * which is not a data-entry backlog anyone was going to clear — and it silently stopped every
+   * branch-common cost (rent, electricity, cafeteria) from being shared out at all.
+   *
+   * The number was already in the database. `employees.cost_centre_id` says who works where, and
+   * it is the same derivation the cost-centre master screen uses for its own process mapping.
+   * A typed plan still wins where one exists — planning ahead of a hire is the whole point of a
+   * PLANNED headcount — but where nobody has typed one, the real staff count is a far better
+   * answer than zero.
+   */
+  const [liveHeadcountRows] = (await executor.execute(
+    `SELECT e.cost_centre_id, COUNT(*) AS live_headcount
+       FROM employees e
+       JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
+      WHERE cc.branch_id = ? AND e.active_status = 1 AND e.cost_centre_id IS NOT NULL
+      GROUP BY e.cost_centre_id`,
+    [branchId]
+  )) as [RowDataPacket[], unknown];
+  const liveHeadcount = new Map(
+    liveHeadcountRows.map((row) => [String(row.cost_centre_id), Number(row.live_headcount ?? 0)])
+  );
 
   return costCentres.map((cc) => {
     const row = byCostCentre.get(cc.id);
-    const plannedHeadcount = Number(row?.planned_headcount ?? 0);
+    const typedHeadcount = Number(row?.planned_headcount ?? 0);
+    const plannedHeadcount = typedHeadcount > 0 ? typedHeadcount : (liveHeadcount.get(cc.id) ?? 0);
     const revenueRatePerHead = Number(row?.revenue_rate_per_head ?? 0);
     return {
       costCentreId: cc.id,
@@ -235,6 +271,9 @@ export async function getMonthlyDrivers(
       plannedHeadcount,
       revenueRatePerHead,
       calculatedPlannedRevenue: Math.round(plannedHeadcount * revenueRatePerHead * 100) / 100,
+      /** Where plannedHeadcount came from, so a screen can show a derived number as derived
+       *  rather than passing it off as something Finance entered. */
+      headcountSource: typedHeadcount > 0 ? ("planned" as const) : ("live_employees" as const),
       seatCount: Number(row?.seat_count ?? 0),
       floorAreaSqft: Number(row?.floor_area_sqft ?? 0),
       deviceCount: Number(row?.device_count ?? 0),
@@ -541,22 +580,41 @@ export async function computeLineAllocations(
       getMonthlyDrivers(branchId, periodCode, executor)
     );
     const driverByCostCentre = new Map(drivers.map((d) => [d.costCentreId, d]));
-    const missingDrivers = costCentres.filter((cc) => {
+    /*
+     * A COST CENTRE WITH NOTHING IN IT CARRIES NO SHARE — it does not block the split.
+     *
+     * This branch used to demand a positive driver value for EVERY active cost centre and refuse
+     * the whole line otherwise. That reads as a data-quality gate and behaves as a denial of
+     * service: on 2026-08, 331 active cost centres across the live budget branches had no
+     * headcount, 325 of them because they have no staff at all — imported site codes that exist
+     * on the master and employ nobody. One of those was enough to stop rent, electricity and the
+     * cafeteria being shared out across the cost centres that DO have people, which is how
+     * Rs 3.46 crore ended up owned by nobody.
+     *
+     * Zero is not missing. A cost centre with no people should carry none of a headcount-shared
+     * cost — that is the arithmetic working, not failing. `meter_wise` and `revenue_share`
+     * directly above already take this position and say why; this branch was simply never given
+     * the same treatment.
+     *
+     * What IS still an error is every cost centre reading zero, because then there is nothing to
+     * apportion by and an "even" split would be an invention.
+     */
+    shares = costCentres.map((cc) => {
       const driver = driverByCostCentre.get(cc.id);
-      return !driver || driverWeight(method, driver) <= 0;
+      return { key: cc.id, weight: driver ? Math.max(0, driverWeight(method, driver)) : 0 };
     });
-    if (missingDrivers.length > 0) {
+    if (shares.every((share) => share.weight <= 0)) {
       throw refuse(409, "MONTHLY_DRIVER_MISSING",
-        `Monthly ${DRIVER_LABELS[method] ?? "driver data"} is missing for: ` +
-        missingDrivers.map((cc) => cc.costCentreName).join(", ") +
-        ". Set monthly drivers for every active cost centre before using this sharing method."
+        `No cost centre in this branch has any ${DRIVER_LABELS[method] ?? "driver data"} for ${periodCode}, ` +
+        "so there is nothing to share this cost out by. Set monthly drivers, or pick a different sharing method."
       );
     }
-    shares = costCentres.map((cc) => {
-      const driver = driverByCostCentre.get(cc.id)!;
-      return { key: cc.id, weight: driverWeight(method, driver) };
-    });
-    unitByCostCentre = new Map(costCentres.map((cc) => [cc.id, unitFor(method, driverByCostCentre.get(cc.id)!)]));
+    unitByCostCentre = new Map(
+      costCentres.map((cc) => {
+        const driver = driverByCostCentre.get(cc.id);
+        return [cc.id, driver ? unitFor(method, driver) : 0];
+      })
+    );
     driverValueByCostCentre = new Map(shares.map((s) => [s.key, s.weight]));
     mode = "weighted";
   }
@@ -651,6 +709,111 @@ export async function replaceLineAllocations(
   );
 }
 
+/**
+ * Re-derives a branch-level line's cost-centre split from the driver already recorded on it.
+ *
+ * THE SPLIT HAS TO FOLLOW THE LINE, and until now it did not.
+ *
+ * A branch-level line (`planning_level = 'branch'`) is a cost nobody owns on their own — rent,
+ * electricity, the cafeteria — and the raiser records HOW it should be shared by picking an
+ * allocation driver. `finance_budget_line_allocation` is where that sharing becomes real numbers.
+ * It was written in exactly one place: the full budget save. Every other path that changes a
+ * line's amount — a tax amendment, its review, and both sides of a budget transfer — updated
+ * `gross_amount` and left the split behind, so it silently stopped describing the line it belongs
+ * to. And a line that never went through a full save after being set to branch level had no split
+ * at all.
+ *
+ * The state that produced: 100 of 103 branch-level lines, Rs 3.46 crore, with a driver recorded
+ * and nothing computed from it. Replayed read-only, 78 of those 100 would compute cleanly today —
+ * the data was never the problem, nothing had asked.
+ *
+ * REFUSALS ARE REPORTED, NOT THROWN. `computeLineAllocations` refuses when the branch is missing
+ * driver data (19 of the 100) or when a manual split has no percentages (3). Letting that abort a
+ * tax amendment would block unrelated finance work on a data gap somewhere else in the branch —
+ * the same trap `revenue_share` already documents above. The caller gets the reason back and can
+ * surface it; the previous split, if any, is left untouched rather than deleted.
+ *
+ * MANUAL SPLITS KEEP THEIR PERCENTAGES. For a manual driver the percentages ARE the plan and are
+ * not re-derivable from anything, so they are read back off the existing split and re-applied to
+ * the new amount. A manual line with no split yet has nothing to read and is reported instead.
+ */
+export async function resyncLineAllocations(
+  connection: PoolConnection,
+  budgetLineId: string,
+  actorUserId: string
+): Promise<{ status: "written" | "not_applicable" | "skipped"; rows?: number; reason?: string }> {
+  const [lineRows] = await connection.execute<RowDataPacket[]>(
+    `SELECT l.id, l.planning_level, l.allocation_driver,
+            l.base_amount, l.tax_amount, l.gross_amount, l.pnl_cost_amount,
+            h.branch_id, h.period_code
+       FROM finance_budget_line l
+       JOIN finance_budget_header h ON h.id = l.budget_id
+      WHERE l.id = ?
+      LIMIT 1`,
+    [budgetLineId]
+  );
+  const line = lineRows[0] as any;
+  if (!line) return { status: "not_applicable", reason: "LINE_NOT_FOUND" };
+  if (String(line.planning_level) !== "branch") return { status: "not_applicable" };
+
+  // The cost centres this line actually covers. A branch-level line may deliberately exclude part
+  // of the branch (one floor's air conditioning), and that scope lives only in the split it
+  // already has — so re-deriving without it would silently widen the line to the whole branch.
+  const [existing] = await connection.execute<RowDataPacket[]>(
+    `SELECT cost_centre_id, allocation_percentage
+       FROM finance_budget_line_allocation
+      WHERE budget_line_id = ?`,
+    [budgetLineId]
+  );
+  const scope = (existing as RowDataPacket[]).map((row) => String(row.cost_centre_id));
+
+  const method = String(line.allocation_driver ?? "").trim();
+  let manualAllocations: ManualAllocationInput[] | undefined;
+  if (method === "manual") {
+    if (!existing.length) {
+      return { status: "skipped", reason: "MANUAL_SPLIT_INCOMPLETE" };
+    }
+    manualAllocations = (existing as RowDataPacket[]).map((row) => ({
+      costCentreId: String(row.cost_centre_id),
+      percentage: Number(row.allocation_percentage),
+    }));
+  }
+
+  try {
+    const rows = await computeLineAllocations(
+      String(line.branch_id),
+      String(line.period_code),
+      line.allocation_driver,
+      {
+        baseAmount: Number(line.base_amount),
+        taxAmount: Number(line.tax_amount),
+        grossAmount: Number(line.gross_amount),
+        pnlCostAmount: Number(line.pnl_cost_amount),
+      },
+      manualAllocations,
+      connection,
+      undefined,
+      scope.length ? scope : undefined
+    );
+    await replaceLineAllocations(connection, budgetLineId, rows, actorUserId);
+    return { status: "written", rows: rows.length };
+  } catch (error) {
+    const refusal = error as { code?: string; statusCode?: number };
+    /*
+     * Only OUR OWN refusals are survivable, and they are identified by `statusCode` — which
+     * refuse() sets and nothing else does.
+     *
+     * Keying on `code` alone looked equivalent and is not: every mysql2 error carries one too, so
+     * a genuine database fault (ER_DATA_TOO_LONG on a mis-sized actor id, a lock timeout, a
+     * dropped column) was caught here and reported as though it were a routine missing-driver
+     * gap. Found exactly that way — 78 lines reported as "needs a person" when the computation had
+     * in fact succeeded and only the write failed.
+     */
+    if (typeof refusal.statusCode !== "number") throw error;
+    return { status: "skipped", reason: refusal.code ?? `HTTP_${refusal.statusCode}` };
+  }
+}
+
 export async function getLineAllocations(budgetLineId: string): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT a.*, ccm.cost_centre_name, ccm.cost_centre_code
@@ -669,5 +832,6 @@ export const branchBudgetAllocationService = {
   saveMonthlyDrivers,
   computeLineAllocations,
   replaceLineAllocations,
+  resyncLineAllocations,
   getLineAllocations,
 };

@@ -101,6 +101,11 @@ function fakeExecutor(options: {
         const [lineId] = params as [string];
         return [[{ total: manualTotals[lineId] ?? 0 }], []];
       }
+      if (sql.includes("AS live_headcount")) {
+        // planned_headcount now falls back to the staff actually posted to the cost centre when
+        // Finance has typed none. Empty here, so these fixtures keep asserting the typed drivers.
+        return [[], []];
+      }
       throw new Error(`fakeExecutor: unexpected query — ${sql}`);
     },
   } as any;

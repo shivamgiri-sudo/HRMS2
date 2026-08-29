@@ -29,15 +29,30 @@ beforeAll(async () => {
   ({ imprestService } = await import("../imprest.service.js"));
 }, 120_000);
 
-/** A connection whose overlap query returns `clashes`, recording every statement issued. */
-function makeConnection(clashes: unknown[]) {
+/**
+ * A connection whose overlap query returns `clashes`, recording every statement issued.
+ *
+ * `current` fixtures the row saveManager's update path now locks and re-reads before deciding
+ * whether an overlap re-check is even needed (the 2026-08-29 regression fix) — distinct from the
+ * overlap-check query itself, which this distinguishes by requiring `branch_id = ?` in the SQL
+ * text (the by-id lookup only ever filters on `id`).
+ */
+function makeConnection(clashes: unknown[], current?: Record<string, unknown>) {
   const statements: string[] = [];
   return {
     statements,
     execute: vi.fn(async (sql: string) => {
       const flat = String(sql).replace(/\s+/g, " ").trim();
       statements.push(flat);
-      if (/FROM imprest_manager/.test(flat) && /FOR UPDATE/.test(flat)) return [clashes, []];
+      if (/FROM imprest_manager/.test(flat) && /branch_id = \?/.test(flat) && /FOR UPDATE/.test(flat)) {
+        return [clashes, []];
+      }
+      if (/FROM imprest_manager\s+WHERE id = \?\s+FOR UPDATE/.test(flat)) {
+        return [
+          [current ?? { id: "m-self", branch_id: "br1", effective_from: "2026-01-01", effective_to: null, active_status: 1 }],
+          [],
+        ];
+      }
       return [[], []];
     }),
     beginTransaction: vi.fn(async () => {}),
@@ -99,7 +114,12 @@ describe("the overlap predicate itself", () => {
     const conn = makeConnection([]);
     getConnection.mockResolvedValue(conn);
     await imprestService.saveManager(input, "actor");
-    const call = conn.execute.mock.calls.find(([s]) => /FOR UPDATE/.test(String(s)));
+    // Requiring `branch_id = ?` isolates the overlap-check query itself from the update path's
+    // preceding "lock and re-read the row being edited" fetch, which also runs under FOR UPDATE
+    // but filters only on id — see makeConnection's own comment.
+    const call = conn.execute.mock.calls.find(
+      ([s]) => /FOR UPDATE/.test(String(s)) && /branch_id = \?/.test(String(s)),
+    );
     return { sql: String(call?.[0] ?? "").replace(/\s+/g, " "), params: (call?.[1] ?? []) as unknown[] };
   }
 

@@ -1022,7 +1022,30 @@ export function BudgetLinkedGrnForm({
       const ccLines = linesByCC.get(cc.id) ?? [];
       // Branch-common lines are available to all cost centres
       const allLines = [...ccLines, ...branchCommonLines];
+      /*
+       * Lines that can FUND this cost centre's share, which is a wider set than the lines this
+       * cost centre OWNS.
+       *
+       * The server has funded a row from any line in the branch sharing its head/sub-head since
+       * 2026-08-22 — direct or pooled, whoever owns it — and attributes the cost to the raiser's
+       * cost centre regardless. This list was still the pre-2026-08-22 one: own lines plus
+       * branch-common, so a cost centre with no line of its own read "— no budget line" while a
+       * sibling cost centre in the same branch had budget for that exact head/sub-head sitting
+       * there. The only way to spend it was to leave the field blank and let the GRN be raised as
+       * unbudgeted, which is neither obvious nor what it was.
+       *
+       * Ordered the way the allocator will actually draw: this cost centre's own lines, then the
+       * branch-common pool, then siblings by descending headroom. Sibling lines carry the owner's
+       * name so picking one is a visible, deliberate act rather than a surprise on the P&L.
+       */
+      const siblingLines = vendorMatchingLines
+        .filter((line) => line.cost_centre_id && line.cost_centre_id !== cc.id)
+        .sort(
+          (a, b) => Number(b.available_gross_amount || 0) - Number(a.available_gross_amount || 0)
+        );
       return {
+        siblingLines,
+        fundableLines: [...allLines, ...siblingLines],
         costCentreKey: cc.id,
         costCentreName: cc.costCentreName || cc.costCentreCode || "Unknown",
         // Shown alongside the cost centre so the raiser can tell near-identical cost centres
@@ -1044,15 +1067,21 @@ export function BudgetLinkedGrnForm({
   const isUnbudgetedExpense = useMemo(() => {
     if (!form.head || !form.subHead) return false;
     if (!vendorCostCentreGroups.length) return false;
-    // All cost centres have no budget line for this head/subhead
-    if (vendorCostCentreGroups.every((g) => g.lines.length === 0)) return true;
+    // Unbudgeted means the BRANCH holds no line for this head/sub-head — not that the cost centre
+    // the raiser picked holds none. Those stopped being the same question when the server began
+    // funding a row from any line in the branch sharing its head/sub-head: a spend that cost
+    // centre B's budget covers in full is a budgeted spend, whoever raises it. Testing the old way
+    // (every group's OWN lines empty) is nearly the same test, because branch-common lines are in
+    // every group — but it missed exactly the case this is about, where only a sibling cost centre
+    // is budgeted.
+    if (vendorMatchingLines.length === 0) return true;
     // Some cost centres have lines, but the raiser used "Direct to cost centre" and picked one
     // that has no line (the dropdown shows "— no budget line" for it). All currently INCLUDED
     // split rows have budgetLineId = "" — treat this GRN as unbudgeted so it takes the right path.
     const included = costCentreSplits.filter((r) => r.included);
     if (included.length > 0 && included.every((r) => !r.budgetLineId)) return true;
     return false;
-  }, [form.head, form.subHead, vendorCostCentreGroups, costCentreSplits]);
+  }, [form.head, form.subHead, vendorCostCentreGroups, vendorMatchingLines, costCentreSplits]);
 
   /** Imprest equivalent of isUnbudgetedExpense above: the raiser picked a Head/Sub-head/cost
    *  centre combination that genuinely has no approved budget line — headOptions/subHeadOptions
@@ -1306,7 +1335,7 @@ export function BudgetLinkedGrnForm({
       .reduce(
         (sum, row, rowIndex) => {
           const group = vendorCostCentreGroups.find((g) => g.costCentreKey === row.costCentreKey);
-          const line = group?.lines.find((item) => item.id === row.budgetLineId);
+          const line = (group?.fundableLines ?? group?.lines)?.find((item) => item.id === row.budgetLineId);
           const shareGross = shares[rowIndex] ?? 0;
           const perUnit = line ? computeLine(line, 1) : null;
           const basis = perUnit ? (isVendor ? Number(perUnit.base) : Number(perUnit.gross)) : 0;
@@ -1423,7 +1452,7 @@ export function BudgetLinkedGrnForm({
           const overBudgetMessages: string[] = [];
           for (const split of costCentreSplits) {
             const group = vendorCostCentreGroups.find((g) => g.costCentreKey === split.costCentreKey);
-            const line = group?.lines.find((l) => l.id === split.budgetLineId);
+            const line = (group?.fundableLines ?? group?.lines)?.find((l) => l.id === split.budgetLineId);
             if (line) {
               const splitGross = componentsPreview.rawTotalGross * (split.percentage / 100);
               const available = Number(line.available_gross_amount);
@@ -1463,7 +1492,7 @@ export function BudgetLinkedGrnForm({
             for (const split of costCentreSplits) {
               if (!split.included) continue;
               const group = vendorCostCentreGroups.find((g) => g.costCentreKey === split.costCentreKey);
-              const line = group?.lines.find((l) => l.id === split.budgetLineId);
+              const line = (group?.fundableLines ?? group?.lines)?.find((l) => l.id === split.budgetLineId);
               if (line) {
                 const splitGross = Number(form.amount) * (split.percentage / 100);
                 const available = Number(line.available_gross_amount);
@@ -1784,7 +1813,7 @@ export function BudgetLinkedGrnForm({
             return includedRows
               .map((row, rowIndex) => {
                 const group = vendorCostCentreGroups.find((g) => g.costCentreKey === row.costCentreKey);
-                const line = group?.lines.find((item) => item.id === row.budgetLineId);
+                const line = (group?.fundableLines ?? group?.lines)?.find((item) => item.id === row.budgetLineId);
                 const shareGross = shares[rowIndex] ?? 0;
                 // Unbudgeted: no budget line to read a rate off, so the raw share IS the row —
                 // unit_rate 1, the same convention the vendor unbudgeted synthetic line uses.
@@ -2658,21 +2687,48 @@ export function BudgetLinkedGrnForm({
                         onChange={(value) => {
                           const picked = vendors.find((vendor) => vendor.id === value);
                           setForm((current) => {
-                            const gstin = current.vendorGstin || (picked?.gst_number ?? "");
-                            // vendor_master already stores gst_state_code (derived from the GSTIN
-                            // on write by erp.service.ts) and payment_terms, and NOTHING in the
-                            // GRN path read either of them — Vendor State was hand-picked and the
-                            // due date hand-typed on every GRN. Both are seeded here and both stay
-                            // editable: a prefill, not a lock, so a one-off term still works.
-                            const vendorState =
-                              current.vendorStateCode
-                              || (picked?.gst_state_code ?? "")
-                              || extractStateCodeFromGstin(gstin)
-                              || "";
+                            /*
+                             * VENDOR-DERIVED FIELDS FOLLOW THE VENDOR.
+                             *
+                             * vendor_master stores gst_number, gst_state_code (derived from the
+                             * GSTIN on write by erp.service.ts) and payment_terms. These were
+                             * already seeded here — but only with `current.x || picked.x`, which
+                             * fills an EMPTY field and never corrects a filled one. Selecting a
+                             * vendor worked; CHANGING one did not: the form kept the previous
+                             * vendor's GSTIN, their state code, and the due date derived from
+                             * their terms, all sitting under the new vendor's name. A wrong GSTIN
+                             * is not cosmetic — vendor_state_code vs billing_state_code is what
+                             * decides CGST/SGST against IGST on every allocation row, and the
+                             * GSTIN is what the invoice reconciles against in GSTR-2B.
+                             *
+                             * So: when the vendor actually changes, its own mapped values win,
+                             * including when the new vendor has none — a blank field is correct
+                             * and the previous vendor's GSTIN never is. When the vendor is
+                             * unchanged (re-picking the same one), anything typed by hand is left
+                             * alone. It remains a prefill and not a lock: every field below stays
+                             * editable for the one-off cases.
+                             */
+                            const vendorChanged = current.vendorId !== value;
+                            const mappedGstin = (picked?.gst_number ?? "").trim().toUpperCase();
+                            const gstin = vendorChanged
+                              ? mappedGstin
+                              : current.vendorGstin || mappedGstin;
+                            const vendorState = vendorChanged
+                              ? ((picked?.gst_state_code ?? "") || extractStateCodeFromGstin(gstin) || "")
+                              : (current.vendorStateCode
+                                || (picked?.gst_state_code ?? "")
+                                || extractStateCodeFromGstin(gstin)
+                                || "");
                             const termDays = parsePaymentTermDays(picked?.payment_terms);
+                            // The due date is a function of the vendor's terms and the bill date,
+                            // so a new vendor re-derives it. With no terms mapped there is nothing
+                            // to derive from, and whatever is on screen is left as it stands.
                             const seededDue =
-                              current.dueDate
-                              || (termDays !== null && current.billDate ? addDays(current.billDate, termDays) : current.dueDate);
+                              termDays !== null && current.billDate
+                                ? (vendorChanged || !current.dueDate
+                                  ? addDays(current.billDate, termDays)
+                                  : current.dueDate)
+                                : current.dueDate;
                             return {
                               ...current,
                               vendorId: value,
@@ -3784,6 +3840,42 @@ function SplitAllocationEditor({
  *  same "only when genuinely ambiguous" rule the single-line cascade already uses.
  *  G15: Now supports driver-based auto-split methods (headcount, revenue, seat count, etc.) like
  *  Branch Budget planning — same infrastructure, same sharing weights. */
+/**
+ * Every budget line that can fund one cost centre's share, as picker options.
+ *
+ * A sibling cost centre's line is offered — the allocator has drawn on those since the branch-wide
+ * headroom gate, and the cost still lands on the cost centre on this row — but it is never offered
+ * silently: the owner's name is on the option, so choosing to spend another team's budget is a
+ * decision the raiser makes with their eyes open. Own and branch-common lines come first, so the
+ * obvious choice stays the first choice.
+ */
+function budgetLineOptions(group: {
+  costCentreKey: string;
+  lines: BudgetLine[];
+  fundableLines?: BudgetLine[];
+}) {
+  return (group.fundableLines ?? group.lines).map((item) => {
+    const isSibling = Boolean(item.cost_centre_id) && item.cost_centre_id !== group.costCentreKey;
+    const owner = isSibling ? (item.cost_centre_name ?? "another cost centre") : null;
+    // A branch-common line has no owning cost centre: it is a shared pot, first come first
+    // served across the whole branch, and 46% of the branch's budget currently sits in these.
+    // Saying so on the option means the raiser knows what they are drawing from — the server
+    // additionally warns (never blocks) if Finance has recorded a share for this cost centre and
+    // the draw passes it. See POOLED_LINE_SHARE in grn-smart.service.ts.
+    const isPooled = !item.cost_centre_id;
+    const suffix = owner ? " · funds this cost centre" : isPooled ? " · shared branch pool" : "";
+    return {
+      value: item.id,
+      label: owner
+        ? `${item.item_name} — ${owner}'s budget`
+        : isPooled
+          ? `${item.item_name} — branch-common`
+          : item.item_name,
+      hint: `${money(Number(item.available_gross_amount))} left${suffix}`,
+    };
+  });
+}
+
 function CostCentreSplitEditor({
   groups,
   rows,
@@ -3800,7 +3892,17 @@ function CostCentreSplitEditor({
   isUnbudgeted,
   hideGstColumn,
 }: {
-  groups: Array<{ costCentreKey: string; costCentreName: string; processName?: string | null; lines: BudgetLine[] }>;
+  groups: Array<{
+    costCentreKey: string;
+    costCentreName: string;
+    processName?: string | null;
+    /** This cost centre's OWN lines plus branch-common ones — what it is budgeted for. */
+    lines: BudgetLine[];
+    /** Lines belonging to OTHER cost centres in the branch for the same head/sub-head. */
+    siblingLines?: BudgetLine[];
+    /** Everything that can fund this cost centre's share: own, then pooled, then siblings. */
+    fundableLines?: BudgetLine[];
+  }>;
   rows: CostCentreSplitDraft[];
   total: number;
   error?: string;
@@ -3856,7 +3958,15 @@ function CostCentreSplitEditor({
                   // no approved line for this Head/Sub-head — they'd only find out from the "Select
                   // a budget line" error after Apply. Label it up front instead.
                   const available = group.lines.reduce((sum, l) => sum + Number(l.available_gross_amount || 0), 0);
-                  const suffix = group.lines.length > 0 ? ` — ${money(available)} available` : " — no budget line";
+                  const siblingCount = group.siblingLines?.length ?? 0;
+                  // "No budget line" was only ever true of this cost centre, and the raiser read it
+                  // as true of the branch — then raised the spend as unbudgeted while a sibling
+                  // cost centre held budget for the same head/sub-head. Say which it is.
+                  const suffix = group.lines.length > 0
+                    ? ` — ${money(available)} available`
+                    : siblingCount > 0
+                      ? ` — no budget of its own · ${siblingCount} branch line${siblingCount > 1 ? "s" : ""} can fund it`
+                      : " — no budget line";
                   const processHint = group.processName ? ` (${group.processName})` : "";
                   return (
                     <option key={group.costCentreKey} value={group.costCentreKey}>
@@ -3881,7 +3991,7 @@ function CostCentreSplitEditor({
       <div className="space-y-3 p-4 md:hidden">
         {rows.map((row, index) => {
           const group = groups.find((item) => item.costCentreKey === row.costCentreKey);
-          const line = group?.lines.find((item) => item.id === row.budgetLineId);
+          const line = (group?.fundableLines ?? group?.lines)?.find((item) => item.id === row.budgetLineId);
           const nonTaxable = line && ["exempt", "non_gst"].includes(line.tax_treatment);
           const hasOwnBudget = Boolean(line && line.cost_centre_id === row.costCentreKey);
           const ownBudgetAvailable = hasOwnBudget && Number(line?.available_gross_amount || 0) > 0;
@@ -3922,14 +4032,10 @@ function CostCentreSplitEditor({
                 )}
               </div>
               <div className="space-y-2">
-                {group && group.lines.length > 1 && (
+                {group && budgetLineOptions(group).length > 1 && (
                   <SearchableSelect
                     aria-label={`Budget item for ${group.costCentreName}`}
-                    options={group.lines.map((item) => ({
-                      value: item.id,
-                      label: item.item_name,
-                      hint: `${money(Number(item.available_gross_amount))} left`,
-                    }))}
+                    options={budgetLineOptions(group)}
                     value={row.budgetLineId}
                     onChange={(value) => onUpdate(row.key, { budgetLineId: value })}
                     placeholder="Select the item"
@@ -3971,7 +4077,7 @@ function CostCentreSplitEditor({
           <tbody>
             {rows.map((row, index) => {
               const group = groups.find((item) => item.costCentreKey === row.costCentreKey);
-              const line = group?.lines.find((item) => item.id === row.budgetLineId);
+              const line = (group?.fundableLines ?? group?.lines)?.find((item) => item.id === row.budgetLineId);
               const nonTaxable = line && ["exempt", "non_gst"].includes(line.tax_treatment);
               // A branch-common line (cost_centre_id NULL) is offered to every cost centre, so
               // several rows can resolve to the SAME line and would otherwise all show its full
@@ -3999,15 +4105,11 @@ function CostCentreSplitEditor({
                     {group?.processName && <GrnCellSub>{group.processName}</GrnCellSub>}
                   </GrnTd>
                   <GrnTd className="min-w-[200px]">
-                    {group && group.lines.length > 1 ? (
+                    {group && budgetLineOptions(group).length > 1 ? (
                       <SearchableSelect
                         aria-label={`Budget item for ${group.costCentreName}`}
                         className="h-[34px]"
-                        options={group.lines.map((item) => ({
-                          value: item.id,
-                          label: item.item_name,
-                          hint: `${money(Number(item.available_gross_amount))} left`,
-                        }))}
+                        options={budgetLineOptions(group)}
                         value={row.budgetLineId}
                         onChange={(value) => onUpdate(row.key, { budgetLineId: value })}
                         placeholder="Select item"

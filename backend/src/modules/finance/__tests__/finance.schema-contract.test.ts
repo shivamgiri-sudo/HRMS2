@@ -82,8 +82,18 @@ describe("finance database and API contract", () => {
     expect(sql414).toContain("PRIMARY KEY (branch_id, financial_year)");
     expect(sql414).toContain("uq_grn_number");
     expect(allocator).toContain("FOR UPDATE");
-    expect(allocator).toContain("next_sequence = next_sequence + 1");
-    expect(grnService).toContain("allocateGrnNumber");
+    // A plain `next_sequence + 1` was replaced by a self-healing high-water-mark computation —
+    // the db_bill -> grn_request sync inserts rows using its own, much-further-ahead counter,
+    // bypassing finance_grn_sequence entirely, so a naive increment could hand out a number the
+    // sync had already used. See grn-number.service.ts's own "Do not simplify this back to a
+    // plain next_sequence + 1" comment. Both markers of that mechanism are asserted here instead.
+    expect(allocator).toContain("MAX(CAST(SUBSTRING_INDEX(grn_number");
+    expect(allocator).toContain("SET next_sequence = ?");
+    // grn.service.ts no longer calls allocateGrnNumber() directly — it goes through
+    // resolveGrnNumberOnSubmit(), which allocates on draft -> submitted and nowhere else, and
+    // which format runs (legacy_branch_fy vs monthly_company) is a config flag rather than a
+    // code path. See grn-number-on-submit.ts.
+    expect(grnService).toContain("resolveGrnNumberOnSubmit");
     expect(grnService).not.toContain("SELECT COUNT(*) AS cnt");
     expect(runner).toContain('"414_finance_grn_sequence.sql"');
   });
@@ -113,8 +123,14 @@ describe("finance database and API contract", () => {
     expect(service).toContain("calculateBudgetLine");
     expect(service).toContain("lockBudgetLine");
     expect(service).toContain("FOR UPDATE");
-    expect(service).toContain("split allocation exceeds available budget");
-    expect(service).toContain("split allocation exceeds available quantity");
+    // Both old refusal strings named a single line's own shortfall. Since the branch-wide
+    // headroom gate (2026-08-22) money is checked against the branch aggregate for the
+    // head/sub-head, not the one line the raiser picked, and refuses as HEADROOM_EXCEEDED.
+    // Quantity stopped being a gate at all on 2026-08-27 — see
+    // budget-consumption.service.ts's file-level banner — so "exceeds available quantity" is
+    // gone on purpose and must stay gone, not merely renamed.
+    expect(service).toContain("HEADROOM_EXCEEDED");
+    expect(service).not.toContain("split allocation exceeds available quantity");
     expect(service).toContain("Cost-centre splits must equal the invoice total exactly");
     expect(service).toContain("allocation_percentage");
     expect(service).toContain("budgetConsumptionService.reserve");

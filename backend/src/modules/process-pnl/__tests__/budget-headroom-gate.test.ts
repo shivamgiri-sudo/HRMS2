@@ -27,7 +27,9 @@ describe("getHeadSubHeadCoverage", () => {
 
     const result = await getHeadSubHeadCoverage("branch-1", "2026-08", "Travel", null);
 
-    expect(result).toEqual({ headerActive: false, lines: [], aggregateAvailable: 0 });
+    // budgetId comes back too, so a caller can run the sub-head closure check without a second
+    // header lookup — null here because there is no active header to name.
+    expect(result).toEqual({ headerActive: false, budgetId: null, lines: [], aggregateAvailable: 0 });
     expect(execute).toHaveBeenCalledTimes(1);
     const [sql] = execute.mock.calls[0];
     expect(String(sql)).not.toMatch(/finance_budget_line/);

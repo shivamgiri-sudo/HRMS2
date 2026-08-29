@@ -17,9 +17,12 @@ import { isPeriodLocked } from "../process-pnl/finance-period-lock.js";
 import {
   getHeadSubHeadCoverage,
   allocateAcrossLines,
+  assertCoverageExists,
 } from "../process-pnl/budget-headroom-gate.service.js";
+import { budgetClosureService } from "../process-pnl/budget-closure.service.js";
 import { refuse } from "../process-pnl/finance-error.js";
 import { applyImprestNoGst, IMPREST_TAX_PROFILE } from "./grn-imprest-tax.js";
+import { assertGrnTypeSupported } from "./grn-type-support.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import { imprestLedgerService } from "./imprest-ledger.service.js";
 import {
@@ -237,6 +240,57 @@ async function lockBudgetLine(
   return line;
 }
 
+/**
+ * WHO INCURRED the spend, which is not the same question as WHOSE BUDGET pays for it.
+ *
+ * The branch-wide headroom gate (2026-08-22) made a row's funding line and its cost centre two
+ * genuinely independent facts: cost centre A with no line of its own for a head/sub-head is
+ * funded from cost centre B's line in the same branch, and the cost still belongs to A. The
+ * unbudgeted branch of saveAllocations already worked this way. The BUDGETED branch did not — it
+ * set the attribution to `line.cost_centre_id` and threw away whatever the raiser sent, so the
+ * moment A picked B's line the spend was booked to B. That single assignment is why the whole
+ * A-funded-by-B case had to be raised through the "unbudgeted" door to come out right.
+ *
+ * The cost centre still gets exactly the scrutiny it got on the unbudgeted branch — it must
+ * exist, be active, and belong to this GRN's branch — because that is the only thing stopping a
+ * raiser attributing spend to another branch. What it no longer has to do is match the funding
+ * line's own cost centre.
+ *
+ * Falls back to the line's cost centre when the caller sends none, so every existing client that
+ * only ever sent `budgetLineId` behaves exactly as before.
+ */
+async function resolveAttributionCostCentre(
+  connection: PoolConnection,
+  requestedCostCentreId: string | null | undefined,
+  branchId: string,
+  fallbackLine: { cost_centre_id?: unknown; cost_centre_name?: unknown } | null,
+  label: string
+): Promise<{ costCentreId: string | null; costCentreName: string | null }> {
+  const requested = String(requestedCostCentreId ?? "").trim();
+  if (!requested) {
+    return {
+      costCentreId: fallbackLine?.cost_centre_id ? String(fallbackLine.cost_centre_id) : null,
+      costCentreName: fallbackLine?.cost_centre_name ? String(fallbackLine.cost_centre_name) : null,
+    };
+  }
+  const [rows] = await connection.execute<RowDataPacket[]>(
+    `SELECT id, cost_centre_name, branch_id
+       FROM cost_centre_master
+      WHERE id = ? AND active_status = 1
+      LIMIT 1`,
+    [requested]
+  );
+  const costCentre = rows[0] as any;
+  if (!costCentre) throw new Error(`${label}: cost centre not found or inactive`);
+  if (String(costCentre.branch_id) !== String(branchId)) {
+    throw new Error(`${label}: cost centre does not belong to this branch`);
+  }
+  return {
+    costCentreId: String(costCentre.id),
+    costCentreName: costCentre.cost_centre_name ? String(costCentre.cost_centre_name) : null,
+  };
+}
+
 async function loadAllocations(connection: PoolConnection, grnId: string, forUpdate = false) {
   /*
    * LEFT JOIN, not JOIN, on the two budget tables.
@@ -260,13 +314,20 @@ async function loadAllocations(connection: PoolConnection, grnId: string, forUpd
    * about to be mutated. Verified against the live MySQL 8.0.42 that this parses and runs.
    */
   const [rows] = await connection.execute<RowDataPacket[]>(
+    // `a.*` already carries funding_cost_centre_id (migration 1630) as a raw id; funding_ccm's
+    // join resolves it to a name so the reviewer sees "Funded from: X" without the frontend
+    // needing a second lookup. NULL when the row is funded from a pooled/branch-common line (no
+    // owning cost centre) or predates the migration — both real, both worth showing as-is rather
+    // than papered over with a guessed label.
     `SELECT a.*, pm.process_name, ccm.cost_centre_name, h.budget_number,
-            l.head AS budget_head, l.sub_head AS budget_sub_head, l.item_name AS budget_item_name
+            l.head AS budget_head, l.sub_head AS budget_sub_head, l.item_name AS budget_item_name,
+            funding_ccm.cost_centre_name AS funding_cost_centre_name
        FROM grn_cost_allocation a
        LEFT JOIN finance_budget_line l ON l.id = a.budget_line_id
        LEFT JOIN finance_budget_header h ON h.id = a.budget_id
        LEFT JOIN process_master pm ON pm.id = a.process_id
        LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
+       LEFT JOIN cost_centre_master funding_ccm ON funding_ccm.id = a.funding_cost_centre_id
       WHERE a.grn_request_id = ?
       ORDER BY a.sequence_no${forUpdate ? " FOR UPDATE OF a" : ""}`,
     [grnId]
@@ -622,6 +683,89 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
     });
   }
 
+  /*
+   * POOLED_LINE_SHARE — a branch-common budget line is a shared pot, and this says who is
+   * drinking from it. Owner decision, 2026-08-29: WARN where Finance has defined a share,
+   * never block.
+   *
+   * A pooled line (`cost_centre_id IS NULL`) belongs to no cost centre, so the branch-wide
+   * headroom gate lets any of them draw the whole balance, first come first served. That is not
+   * a small corner: 58 of the 128 active lines for 2026-08 are pooled and they hold Rs 48.2 lakh
+   * still unspent — 46% of the branch's budget — while the direct lines beside them are already
+   * 73% consumed. As direct lines run dry, spill lands here, and until now nothing recorded or
+   * showed which cost centre had taken what.
+   *
+   * `finance_budget_line_allocation` holds each cost centre's planned share of such a line and
+   * was read NOWHERE in modules/finance. It is populated for 4 lines today, so this deliberately
+   * warns only where a share exists and stays silent — beyond reporting the pool balance — where
+   * one does not. That keeps it useful immediately without requiring Finance to define shares for
+   * 58 lines a month before anything works.
+   *
+   * Never blocking, by that same decision, and it is also the honest severity: a share is a plan,
+   * not an approval limit, and the money is genuinely available.
+   */
+  const [pooledDraws] = await connection.execute<RowDataPacket[]>(
+    `SELECT a.budget_line_id, a.cost_centre_id, ccm.cost_centre_name,
+            l.head, l.sub_head,
+            (l.gross_amount - l.reserved_amount - l.consumed_amount) AS pool_available,
+            alloc.gross_amount AS defined_share,
+            SUM(a.amount_with_tax) AS this_grn_amount,
+            (SELECT COALESCE(SUM(prior.amount_with_tax), 0)
+               FROM grn_cost_allocation prior
+              WHERE prior.budget_line_id = a.budget_line_id
+                AND prior.cost_centre_id = a.cost_centre_id
+                AND prior.grn_request_id <> a.grn_request_id
+                AND prior.lifecycle_status IN ('reserved','consumed')) AS already_drawn
+       FROM grn_cost_allocation a
+       JOIN finance_budget_line l ON l.id = a.budget_line_id
+       LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
+       LEFT JOIN finance_budget_line_allocation alloc
+              ON alloc.budget_line_id = a.budget_line_id
+             AND alloc.cost_centre_id = a.cost_centre_id
+      WHERE a.grn_request_id = ?
+        AND a.budget_line_id IS NOT NULL
+        AND l.cost_centre_id IS NULL
+        AND a.cost_centre_id IS NOT NULL
+      GROUP BY a.budget_line_id, a.cost_centre_id, ccm.cost_centre_name, l.head, l.sub_head,
+               pool_available, alloc.gross_amount`,
+    [grnId]
+  );
+  if (pooledDraws.length) {
+    const overrun = pooledDraws
+      .filter((row) => row.defined_share != null)
+      .map((row) => ({
+        costCentreName: row.cost_centre_name ? String(row.cost_centre_name) : "This cost centre",
+        head: `${row.head}${row.sub_head ? ` / ${row.sub_head}` : ""}`,
+        definedShare: roundMoney(Number(row.defined_share)),
+        totalDraw: roundMoney(Number(row.already_drawn) + Number(row.this_grn_amount)),
+      }))
+      .filter((row) => row.totalDraw > row.definedShare + 0.01);
+    const poolTotal = roundMoney(
+      pooledDraws.reduce((sum, row) => sum + Number(row.pool_available || 0), 0)
+    );
+    results.push({
+      code: "POOLED_LINE_SHARE",
+      status: overrun.length ? "warning" : "passed",
+      severity: overrun.length ? "warning" : "info",
+      blocking: false,
+      message: overrun.length
+        ? overrun
+          .map((row) =>
+            `${row.costCentreName} has now drawn ${row.totalDraw.toFixed(2)} from the branch-common `
+            + `${row.head} line against a planned share of ${row.definedShare.toFixed(2)}`
+          )
+          .join("; ")
+        : `Funded in part from ${pooledDraws.length} branch-common budget line(s), shared across every cost centre `
+          + `(${poolTotal.toFixed(2)} remaining in the pool)`,
+      details: {
+        pooledLineCount: pooledDraws.length,
+        poolAvailable: poolTotal,
+        overrun,
+        undefinedShareCount: pooledDraws.filter((row) => row.defined_share == null).length,
+      },
+    });
+  }
+
   await connection.execute("DELETE FROM grn_validation_result WHERE grn_request_id = ?", [grnId]);
   for (const result of results) {
     await connection.execute(
@@ -656,19 +800,133 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
  * lifecycle_status UPDATE that follows each loop still covers the unlinked rows, so their
  * reserved/consumed/released state stays in step with the rest of the GRN.
  */
+/**
+ * Rows Finance Head may still re-point at a budget line of their choosing.
+ *
+ * Originally this was `budget_line_id IS NULL` — the only rows the link flow could act on. The
+ * branch-wide headroom gate then guaranteed every saved row gets a real funding line, which
+ * silently killed the flow: `linkUnbudgetedBudgetLines` refused everything, and only two legacy
+ * rows in the whole database could still reach it. The button stayed on screen.
+ *
+ * What Finance actually wants from that button did not disappear with the NULL, though. It is
+ * "this cost centre spent against somebody else's budget — put it where I want it". So the
+ * condition is now that, plus the legacy no-line case:
+ *
+ *   no funding line at all                          -> nothing has paid for this yet
+ *   funding line belongs to another cost centre      -> paid, but not out of this centre's budget
+ *   funding line is branch-common (pooled)           -> paid out of the shared buffer
+ *
+ * A row funded by its own cost centre's line is already where it belongs and is left alone.
+ */
+function isRelinkable(allocation: any) {
+  if (!hasBudgetLine(allocation)) return true;
+  const funding = allocation.funding_cost_centre_id;
+  if (funding == null || String(funding).length === 0) return true;
+  return String(funding) !== String(allocation.cost_centre_id ?? "");
+}
+
 function hasBudgetLine(allocation: any) {
   return allocation.budget_line_id != null && String(allocation.budget_line_id).length > 0;
 }
 
+/**
+ * Reserves at Branch Head approval, re-running the branch-wide split if the line chosen at save
+ * time can no longer carry the row.
+ *
+ * The spill decision (which line funds which row) is made when the allocations are SAVED, but the
+ * money is not taken until HERE, at approval. In between, another GRN can consume the line this
+ * one was pointed at. `budgetConsumptionService.reserve()` re-checks availability per line under
+ * FOR UPDATE — correctly, it must never over-reserve — but it knows nothing about the branch
+ * aggregate, so it refused with GRN_EXCEEDS_BUDGET_AMOUNT even when siblings of that line still
+ * held plenty for the same head/sub-head. The GRN was rejected for a shortfall that the save-time
+ * allocator would simply have spilled around.
+ *
+ * So: try the stored line first, exactly as before. Only when it comes up short, re-run
+ * `allocateAcrossLines` over the branch aggregate for that row's own head/sub-head and reserve
+ * the draws, re-pointing the row at whichever line actually paid. Nothing a reviewer saw changes
+ * — cost centre, amounts and tax are untouched; only the funding source moves, which is the
+ * allocator's decision to make and was already remade on every re-save.
+ *
+ * If the branch aggregate genuinely cannot cover it, the refusal is HEADROOM_EXCEEDED naming the
+ * shortfall — the same answer the raiser would have got at save time, instead of a per-line
+ * message about a line they never chose.
+ */
 async function reserveAllocations(connection: PoolConnection, allocations: any[]) {
   for (const allocation of allocations) {
     if (!hasBudgetLine(allocation)) continue;
-    await budgetConsumptionService.reserve(
-      connection,
-      String(allocation.budget_line_id),
-      Number(allocation.amount_with_tax),
-      Number(allocation.quantity),
-      Number(allocation.amount_without_tax) || undefined
+    const amount = Number(allocation.amount_with_tax);
+    const netAmount = Number(allocation.amount_without_tax) || undefined;
+    try {
+      await budgetConsumptionService.reserve(
+        connection,
+        String(allocation.budget_line_id),
+        amount,
+        Number(allocation.quantity),
+        netAmount
+      );
+      continue;
+    } catch (error) {
+      // Only a headroom shortfall on this one line is recoverable. A closed sub-head, an
+      // inactive budget or an invalid amount are real refusals and must propagate untouched.
+      if ((error as { code?: string })?.code !== "GRN_EXCEEDS_BUDGET_AMOUNT") throw error;
+    }
+
+    const [lineRows] = await connection.execute<RowDataPacket[]>(
+      `SELECT l.head, l.sub_head, h.branch_id, h.period_code
+         FROM finance_budget_line l
+         JOIN finance_budget_header h ON h.id = l.budget_id
+        WHERE l.id = ? LIMIT 1`,
+      [String(allocation.budget_line_id)]
+    );
+    const origin = lineRows[0] as any;
+    if (!origin) throw refuse(409, "HEADROOM_EXCEEDED", "The budget line this allocation was funded from no longer exists.");
+
+    const coverage = await getHeadSubHeadCoverage(
+      String(origin.branch_id),
+      String(origin.period_code),
+      String(origin.head),
+      origin.sub_head ? String(origin.sub_head) : null,
+      connection
+    );
+    assertCoverageExists(
+      coverage,
+      String(origin.period_code),
+      String(origin.head),
+      origin.sub_head ? String(origin.sub_head) : null
+    );
+
+    // Throws HEADROOM_EXCEEDED with the exact shortfall when the whole branch cannot cover it.
+    const draws = allocateAcrossLines(String(allocation.budget_line_id), amount, coverage.lines, netAmount);
+    for (const draw of draws) {
+      // Quantity and net amount are apportioned by this draw's share of the row so the ledgers
+      // stay consistent with the money actually moved onto each line.
+      const share = amount > 0 ? draw.amount / amount : 0;
+      await budgetConsumptionService.reserve(
+        connection,
+        draw.lineId,
+        draw.amount,
+        roundQuantity(Number(allocation.quantity) * share),
+        netAmount == null ? undefined : roundMoney(netAmount * share)
+      );
+    }
+    // Re-point the row at the line that carried the largest share, so the allocation still names
+    // a real funding source. A row split across lines at reserve time is rare enough — and its
+    // full draw set is on the audit record below — that a second allocation row is not worth
+    // creating after a reviewer has already signed off on the row count they saw.
+    const primary = draws.reduce((max, draw) => (draw.amount > max.amount ? draw : max), draws[0]);
+    const primaryLine = coverage.lines.find((line) => String(line.id) === String(primary.lineId)) as any;
+    await connection.execute(
+      `UPDATE grn_cost_allocation
+          SET budget_line_id = ?, budget_id = ?, funding_cost_centre_id = ?,
+              remarks = CONCAT(COALESCE(remarks, ''), ?)
+        WHERE id = ?`,
+      [
+        primary.lineId,
+        primaryLine?.budget_id ?? allocation.budget_id,
+        primaryLine?.cost_centre_id ?? null,
+        ` — Re-funded at approval from branch aggregate headroom (${draws.length} line(s)); the line chosen at save time was exhausted meanwhile`,
+        allocation.id,
+      ]
     );
   }
   await connection.execute(
@@ -838,9 +1096,14 @@ export const grnSmartService = {
 
         let head: string;
         let subHead: string | null;
-        let originalCostCentreId: string;
+        // "original" = the cost centre the SPEND belongs to, which after the branch-wide headroom
+        // gate is independent of whichever line funds it. Nullable because a budgeted row that
+        // sends no cost centre inherits the funding line's, and a pooled line has none.
+        let originalCostCentreId: string | null;
         let originalCostCentreName: string | null;
         let grossTarget: number;
+        /** The same spend's TAXABLE value — what a non_gst/exempt funding line is charged. */
+        let netTarget: number;
         let preferredLineId: string | null;
 
         if (isUnbudgetedRow) {
@@ -849,18 +1112,13 @@ export const grnSmartService = {
           }
           // Same branch-membership check createUnbudgetedDraft() already applied to the header's
           // own cost centre — repeated here because a raiser could still pass a different one.
-          const [ccRows] = await connection.execute<RowDataPacket[]>(
-            `SELECT id, cost_centre_code, cost_centre_name, branch_id
-               FROM cost_centre_master
-              WHERE id = ? AND active_status = 1
-              LIMIT 1`,
-            [allocation.costCentreId]
+          const cc = await resolveAttributionCostCentre(
+            connection,
+            allocation.costCentreId,
+            String(grn.branch_id),
+            null,
+            `Allocation ${index + 1}`
           );
-          const cc = ccRows[0] as any;
-          if (!cc) throw new Error(`Allocation ${index + 1}: cost centre not found or inactive`);
-          if (String(cc.branch_id) !== String(grn.branch_id)) {
-            throw new Error(`Allocation ${index + 1}: cost centre does not belong to this branch`);
-          }
           const quantity = Number(allocation.quantity);
           if (!Number.isFinite(quantity) || quantity <= 0) {
             throw new Error(`Allocation ${index + 1}: quantity must be greater than zero`);
@@ -892,8 +1150,9 @@ export const grnSmartService = {
             justification: "Unbudgeted expense",
           });
           grossTarget = targetAmounts.grossAmount;
-          originalCostCentreId = cc.id;
-          originalCostCentreName = cc.cost_centre_name;
+          netTarget = targetAmounts.baseAmount;
+          originalCostCentreId = cc.costCentreId;
+          originalCostCentreName = cc.costCentreName;
           preferredLineId = null;
         } else {
           // Already locked and period-checked in the pre-pass above.
@@ -940,28 +1199,34 @@ export const grnSmartService = {
             justification: String(line.justification || "Approved budget allocation"),
           });
           grossTarget = targetAmounts.grossAmount;
+          netTarget = targetAmounts.baseAmount;
           head = String(line.head);
           subHead = line.sub_head;
-          originalCostCentreId = line.cost_centre_id;
-          originalCostCentreName = line.cost_centre_name;
+          // The raiser's own cost centre when they sent one, the line's otherwise. See
+          // resolveAttributionCostCentre — this is what lets cost centre A raise against cost
+          // centre B's line and still carry the cost itself.
+          const attribution = await resolveAttributionCostCentre(
+            connection,
+            allocation.costCentreId,
+            String(grn.branch_id),
+            line,
+            `Allocation ${index + 1}`
+          );
+          originalCostCentreId = attribution.costCentreId;
+          originalCostCentreName = attribution.costCentreName;
           preferredLineId = String(allocation.budgetLineId);
         }
 
         const coverage = await getHeadSubHeadCoverage(String(grn.branch_id), period, head, subHead);
-        if (!coverage.headerActive) {
-          throw refuse(
-            409,
-            "NO_BRANCH_BUDGET",
-            `No approved budget exists for this branch for ${period}. A GRN cannot be raised until one is approved.`
-          );
-        }
-        if (!coverage.lines.length) {
-          throw refuse(
-            409,
-            "NO_BUDGET_FOR_HEAD",
-            `${head}/${subHead || ""} has no budget anywhere in this branch. Raise a budget addition request before submitting this GRN.`
-          );
-        }
+        assertCoverageExists(coverage, period, head, subHead);
+        // A closed head/sub-head refuses NEW spend. This used to be checked in exactly one
+        // place — inside budgetConsumptionService.reserve(), which does not run until BRANCH HEAD
+        // APPROVAL — so a closed sub-head accepted the draft, accepted the allocations, accepted
+        // the submission, and only refused once a reviewer pressed Approve. Checked here as well
+        // so the raiser is told at the step where they can still do something about it.
+        await budgetClosureService.assertSubheadOpen(
+          connection, String(coverage.budgetId), head, subHead
+        );
 
         // Net out whatever earlier rows in this same save already drew against each of these
         // lines before handing them to the allocator — see drawnAmountByLineId's comment above.
@@ -974,7 +1239,11 @@ export const grnSmartService = {
 
         // Branch-wide money split. Can throw HEADROOM_EXCEEDED if the branch aggregate (not just
         // the one line the raiser picked) cannot cover this row — let it propagate.
-        const draws = allocateAcrossLines(preferredLineId, grossTarget, netLines);
+        // netTarget is this row's taxable value. A line planned as non_gst/exempt is charged the
+        // taxable value, not the tax-inclusive one — see allocateAcrossLines' netAmount. Without
+        // it a Rs 21,000 non-taxable line refused a Rs 21,000 invoice carrying Rs 3,204 of GST,
+        // even though only Rs 17,796 of it would ever have been charged to that line.
+        const draws = allocateAcrossLines(preferredLineId, grossTarget, netLines, netTarget);
         const baseRemarks = allocation.remarks?.trim() || null;
 
         for (let drawIndex = 0; drawIndex < draws.length; drawIndex += 1) {
@@ -1048,10 +1317,15 @@ export const grnSmartService = {
             unitRate: fundingUnitRate,
             amounts: rowAmounts,
             remarks,
-            // Inherited from the ORIGINAL allocation row, regardless of which line ended up
-            // funding it — a budgeted row that merely spilled onto a sibling line is not
-            // "unbudgeted"; only a row that started with no budgetLineId at all is.
-            isUnbudgeted: isUnbudgetedRow,
+            // WHOSE BUDGET paid, kept beside WHO INCURRED it (the cost_centre_id override above)
+            // rather than overwriting it. NULL when a branch-common pooled line funded the row.
+            // This is what makes "cost centre A spent against cost centre B's budget" a fact the
+            // database records instead of one that had to be inferred from is_unbudgeted.
+            fundingCostCentreId: fundingLine.cost_centre_id ?? null,
+            // Whether the RAISER picked a line. Kept for the audit trail and for the
+            // link-budget flow; it is no longer what is written to is_unbudgeted, because after
+            // the headroom gate a row with no picked line is still funded by a real one.
+            raiserPickedNoLine: isUnbudgetedRow,
           });
 
           drawnAmountByLineId.set(String(fundingLine.id), (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + draw.amount);
@@ -1076,30 +1350,36 @@ export const grnSmartService = {
           ? Math.round((item.amounts.grossAmount / totalGross) * 100 * 1_000_000) / 1_000_000
           : 0;
         await connection.execute(
-          // is_unbudgeted written per row. IMPORTANT — this differs from saveComponentAllocations()
-          // (untouched, vendor-only path): as of the Group C step 2a headroom gate (2026-08-22),
-          // an unbudgeted row saved HERE always gets a REAL budget_id/budget_line_id, drawn from
-          // the branch aggregate for its head+sub-head (see getHeadSubHeadCoverage/
-          // allocateAcrossLines above) — it is no longer persisted with a NULL budget_line_id
-          // waiting to be linked. is_unbudgeted is the only surviving signal that the raiser
-          // themselves picked no line; do not assume NULL budget_line_id identifies such a row any
-          // more for allocations saved through this method. See flagged concern in the step-2a
-          // report about linkUnbudgetedBudgetLines() (Finance Head's manual "link a budget line"
-          // action, which required budget_line_id IS NULL): it becomes unreachable for any
-          // allocation saved through this method after this change, since hasBudgetLine() now
-          // returns true immediately. It remains reachable only for legacy rows already in the
-          // database with a NULL budget_line_id from before this deploy.
+          /*
+           * is_unbudgeted means ONE thing: no budget line funded this row.
+           *
+           * It used to mean "the raiser picked no line", which stopped being the same statement
+           * on 2026-08-22. Since the branch-wide headroom gate, a row with no picked line is
+           * still funded from a real line drawn out of the branch aggregate — so spend that a
+           * budget genuinely covered was being written to the database, and reported, as
+           * off-budget. The two facts are now stored separately and neither is inferred from the
+           * other:
+           *
+           *   budget_line_id IS NULL                      -> no budget behind this rupee
+           *   funding_cost_centre_id <> cost_centre_id    -> funded by another cost centre's line
+           *   funding_cost_centre_id IS NULL, line set    -> funded from the branch-common pool
+           *
+           * `raiserPickedNoLine` survives on the prepared row for the audit entry below; it is
+           * deliberately not a column, because nothing downstream asks that question and a third
+           * near-synonym is how this got confused in the first place.
+           */
           `INSERT INTO grn_cost_allocation
            (id, grn_request_id, sequence_no, budget_id, budget_line_id, branch_id,
-            process_id, cost_centre_id, cost_class, allocation_percentage,
+            process_id, cost_centre_id, funding_cost_centre_id, cost_class, allocation_percentage,
             quantity, unit, unit_rate, tax_treatment, gst_rate, gst_type,
             recoverable_tax_pct, amount_without_tax, tax_amount, cgst_amount,
             sgst_amount, igst_amount, amount_with_tax, recoverable_tax_amount,
             pnl_cost_amount, lifecycle_status, remarks, is_unbudgeted, created_by)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             randomUUID(), grnId, index + 1, item.line.budget_id, item.line.id,
             grn.branch_id, item.line.process_id ?? null, item.line.cost_centre_id ?? null,
+            item.fundingCostCentreId ?? null,
             item.line.process_id || item.line.cost_centre_id ? "direct" : "indirect",
             percentage, item.quantity, item.line.unit, item.unitRate,
             isImprest ? IMPREST_TAX_PROFILE.taxTreatment : item.line.tax_treatment,
@@ -1110,7 +1390,7 @@ export const grnSmartService = {
             item.amounts.taxAmount, item.amounts.cgstAmount, item.amounts.sgstAmount,
             item.amounts.igstAmount, item.amounts.grossAmount,
             item.amounts.recoverableTaxAmount, item.amounts.pnlCostAmount,
-            "draft", item.remarks, item.isUnbudgeted ? 1 : 0, actorUserId,
+            "draft", item.remarks, item.line.id == null ? 1 : 0, actorUserId,
           ]
         );
       }
@@ -1191,11 +1471,13 @@ export const grnSmartService = {
           // Not sent now means leave it alone (the COALESCE the extraction-confirm path already
           // uses); an explicit 0 still clears it.
           input.roundOffAmount == null ? null : roundMoney(Number(input.roundOffAmount)),
-          // Derived from the rows just written, not the flag stored at create time — a GRN
-          // created as an ordinary budgeted draft can still end up with an unbudgeted cost
-          // centre once split, and that has to route through the same stricter approval an
-          // originally-unbudgeted GRN does.
-          prepared.some((item) => item.isUnbudgeted) ? 1 : 0,
+          // Derived from the rows just written, not the flag stored at create time — and now on
+          // the same definition the rows use: unbudgeted means at least one rupee of this GRN has
+          // no budget line behind it, NOT that the raiser declined to pick one. A GRN raised
+          // through the unbudgeted form whose every split was funded from the branch aggregate is
+          // a budgeted GRN, and createUnbudgetedDraft's optimistic `is_unbudgeted = 1` is
+          // corrected here — it was stamped before any allocation existed to judge.
+          prepared.some((item) => item.line.id == null) ? 1 : 0,
           grnId,
         ]
       );
@@ -1207,6 +1489,14 @@ export const grnSmartService = {
       await writeAuditInTransaction(connection, "ALLOCATIONS_SAVED", grnId, actorUserId, actorRole, {
         recognition_months: periodSplit?.eligibleCount ?? 1,
         allocation_count: prepared.length,
+        // The three facts that used to be collapsed into one is_unbudgeted flag, so an auditor
+        // asking "what did we commit to before budgeting it?" still has an answer.
+        raiser_picked_no_line_count: prepared.filter((item) => item.raiserPickedNoLine).length,
+        funded_by_other_cost_centre_count: prepared.filter(
+          (item) => item.fundingCostCentreId
+            && String(item.fundingCostCentreId) !== String(item.line.cost_centre_id ?? "")
+        ).length,
+        unfunded_count: prepared.filter((item) => item.line.id == null).length,
         amount_without_tax: totalBase,
         tax_amount: totalTax,
         amount_with_tax: totalGross,
@@ -1293,24 +1583,21 @@ export const grnSmartService = {
           // No budget line for this row: fall back to the cost centre the raiser picked directly.
           if (!split?.costCentreId) throw new Error(`Cost centre ${index + 1}: select a budget line, or a cost centre for an unbudgeted allocation`);
           // Verify cost centre exists and belongs to the branch
-          const [ccRows] = await connection.execute<RowDataPacket[]>(
-            `SELECT id, cost_centre_code, cost_centre_name, branch_id
-             FROM cost_centre_master WHERE id = ? AND active_status = 1 LIMIT 1`,
-            [split.costCentreId]
+          const cc = await resolveAttributionCostCentre(
+            connection,
+            split.costCentreId,
+            String(grn.branch_id),
+            null,
+            `Cost centre ${index + 1}`
           );
-          if (!ccRows.length) throw new Error(`Cost centre ${index + 1}: cost centre not found or inactive`);
-          const cc = ccRows[0];
-          if (String(cc.branch_id) !== String(grn.branch_id)) {
-            throw new Error(`Cost centre ${index + 1}: cost centre does not belong to this branch`);
-          }
           percentageSum += percentage;
           resolvedSplits.push({
             line: null, // No budget line for this row — filled in with a synthetic one below
-            costCentreId: split.costCentreId,
-            costCentreCode: cc.cost_centre_code,
+            costCentreId: cc.costCentreId,
+            costCentreCode: cc.costCentreName,
             percentage,
             remarks: split.remarks?.trim() || null,
-            isUnbudgeted: true,
+            raiserPickedNoLine: true,
           });
         } else {
           const line = await lockBudgetLine(connection, split.budgetLineId, String(grn.branch_id));
@@ -1323,10 +1610,30 @@ export const grnSmartService = {
             );
           }
           percentageSum += percentage;
-          resolvedSplits.push({ line, percentage, remarks: split.remarks?.trim() || null, isUnbudgeted: false });
+          // The split's own cost centre when the raiser named one, the line's otherwise — the
+          // same WHO-INCURRED / WHOSE-BUDGET separation saveAllocations() applies. Spread onto a
+          // fresh object so `line` keeps the funding line's identity (period, rate, tax profile)
+          // while the attribution reads as the raiser meant it, and so each split still has its
+          // own distinct object for the cellsBySplitLine identity map below.
+          const attribution = await resolveAttributionCostCentre(
+            connection,
+            split.costCentreId,
+            String(grn.branch_id),
+            line,
+            `Cost centre ${index + 1}`
+          );
+          resolvedSplits.push({
+            line: {
+              ...line,
+              cost_centre_id: attribution.costCentreId,
+              cost_centre_name: attribution.costCentreName,
+            },
+            percentage,
+            remarks: split.remarks?.trim() || null,
+            raiserPickedNoLine: false,
+          });
         }
       }
-      const isUnbudgeted = resolvedSplits.some((item) => item.isUnbudgeted);
       if (Math.abs(percentageSum - 100) > 0.5) {
         throw new Error(`Cost-centre split percentages must total 100% (currently ${roundMoney(percentageSum)}%)`);
       }
@@ -1340,11 +1647,11 @@ export const grnSmartService = {
       // columns (those are only populated at create time for a WHOLLY unbudgeted GRN — see
       // createUnbudgetedDraft / isUnbudgetedFlow on the frontend, e2c8db0d — so they can be
       // stale/blank here for a GRN that started out mixed).
-      const referenceLine = resolvedSplits.find((item) => !item.isUnbudgeted)?.line;
+      const referenceLine = resolvedSplits.find((item) => !item.raiserPickedNoLine)?.line;
       const fallbackHead = referenceLine ? String(referenceLine.head) : String(grn.head || "Unbudgeted");
       const fallbackSubHead = referenceLine ? (referenceLine.sub_head ?? null) : (grn.sub_head || null);
       for (const split of resolvedSplits) {
-        if (!split.isUnbudgeted) continue;
+        if (!split.raiserPickedNoLine) continue;
         split.line = {
           id: null,
           budget_id: null,
@@ -1489,7 +1796,7 @@ export const grnSmartService = {
             unitRate,
             amounts,
             remarks: [split.remarks, component.remarks?.trim() || null].filter(Boolean).join(" — ") || null,
-            isUnbudgeted: Boolean(split.isUnbudgeted),
+            raiserPickedNoLine: Boolean(split.raiserPickedNoLine),
           });
         }
       }
@@ -1524,20 +1831,12 @@ export const grnSmartService = {
       const sharedHead = String(resolvedSplits[0].line.head);
       const sharedSubHead = resolvedSplits[0].line.sub_head ?? null;
       const coverage = await getHeadSubHeadCoverage(String(grn.branch_id), period, sharedHead, sharedSubHead);
-      if (!coverage.headerActive) {
-        throw refuse(
-          409,
-          "NO_BRANCH_BUDGET",
-          `No approved budget exists for this branch for ${period}. A GRN cannot be raised until one is approved.`
-        );
-      }
-      if (!coverage.lines.length) {
-        throw refuse(
-          409,
-          "NO_BUDGET_FOR_HEAD",
-          `${sharedHead}/${sharedSubHead || ""} has no budget anywhere in this branch. Raise a budget addition request before submitting this GRN.`
-        );
-      }
+      assertCoverageExists(coverage, period, sharedHead, sharedSubHead);
+      // Same closure gate as saveAllocations(): refuse new spend on a head/sub-head Finance has
+      // closed for the month, here rather than only at Branch Head approval.
+      await budgetClosureService.assertSubheadOpen(
+        connection, String(coverage.budgetId), sharedHead, sharedSubHead
+      );
 
       // Group grid cells by the split they came from. cell.line is the SAME OBJECT reference as
       // split.line for every cell built from that split (each split — budgeted or synthetic
@@ -1567,6 +1866,11 @@ export const grnSmartService = {
         const splitTotalGross = roundMoney(
           cellsForSplit.reduce((sum, cell) => sum + cell.amounts.grossAmount, 0)
         );
+        // The taxable half of the same split, for lines planned without tax. See
+        // allocateAcrossLines' netAmount.
+        const splitTotalNet = roundMoney(
+          cellsForSplit.reduce((sum, cell) => sum + cell.amounts.baseAmount, 0)
+        );
         const preferredLineId = split.line.id != null ? String(split.line.id) : null;
 
         // Net out whatever earlier splits in this same save already drew against each of these
@@ -1581,7 +1885,7 @@ export const grnSmartService = {
         // Branch-wide money split for this split's total. Can throw HEADROOM_EXCEEDED if the
         // branch aggregate (not just the one line the raiser picked) cannot cover it — let it
         // propagate.
-        const draws = allocateAcrossLines(preferredLineId, splitTotalGross, netLines);
+        const draws = allocateAcrossLines(preferredLineId, splitTotalGross, netLines, splitTotalNet);
 
         const subRowsByCell = new Map<any, any[]>();
         for (const cell of cellsForSplit) subRowsByCell.set(cell, []);
@@ -1649,7 +1953,10 @@ export const grnSmartService = {
               unitRate: fundingUnitRate,
               amounts: scaledAmounts,
               remarks,
-              isUnbudgeted: Boolean(split.isUnbudgeted),
+              // WHOSE BUDGET paid this sub-row, kept beside WHO INCURRED it above. NULL when a
+              // branch-common pooled line funded it. See migration 1630.
+              fundingCostCentreId: fundingLine.cost_centre_id ?? null,
+              raiserPickedNoLine: Boolean(split.raiserPickedNoLine),
             });
 
             drawnQuantityByLineId.set(
@@ -1714,24 +2021,24 @@ export const grnSmartService = {
           ? Math.round((cell.amounts.grossAmount / declaredTotal) * 100 * 1_000_000) / 1_000_000
           : 0;
         await connection.execute(
-          // is_unbudgeted is written per row, not left to its DEFAULT 0. Migration 1218 added this
-          // column for exactly this case and nothing had ever populated it, so an unbudgeted split
-          // would have been indistinguishable from a budgeted one the moment a budget line was
-          // linked during approval — the NULL budget_line_id that identifies it is overwritten by
-          // that very step. Nothing reads the column yet; this stops it being another half-built
-          // signal that reads 0 for every row forever.
+          // is_unbudgeted carries the same single meaning it does in saveAllocations(): no budget
+          // line funded this row. "The raiser picked no line" is a different statement that has
+          // not implied this one since the branch-wide headroom gate, and conflating them
+          // reported fully funded spend as off-budget. funding_cost_centre_id (migration 1630)
+          // holds whose budget actually paid, so neither fact has to be inferred from the other.
           `INSERT INTO grn_cost_allocation
            (id, grn_request_id, sequence_no, budget_id, budget_line_id, invoice_component_id,
-            branch_id, process_id, cost_centre_id, cost_class, allocation_percentage,
+            branch_id, process_id, cost_centre_id, funding_cost_centre_id, cost_class, allocation_percentage,
             quantity, unit, unit_rate, tax_treatment, gst_rate, gst_type,
             recoverable_tax_pct, amount_without_tax, tax_amount, cgst_amount,
             sgst_amount, igst_amount, amount_with_tax, recoverable_tax_amount,
             pnl_cost_amount, lifecycle_status, remarks, is_unbudgeted, created_by)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [
             randomUUID(), grnId, sequenceNo, cell.line.budget_id, cell.line.id,
             componentIds[cell.componentIndex], grn.branch_id, cell.line.process_id ?? null,
             cell.line.cost_centre_id ?? null,
+            cell.fundingCostCentreId ?? null,
             cell.line.process_id || cell.line.cost_centre_id ? "direct" : "indirect",
             percentage, cell.quantity, cell.line.unit, cell.unitRate,
             "exclusive", cell.component.gstRate, cell.line.gst_type,
@@ -1739,7 +2046,7 @@ export const grnSmartService = {
             cell.amounts.taxAmount, cell.amounts.cgstAmount, cell.amounts.sgstAmount,
             cell.amounts.igstAmount, cell.amounts.grossAmount,
             cell.amounts.recoverableTaxAmount, cell.amounts.pnlCostAmount,
-            "draft", cell.remarks, cell.isUnbudgeted ? 1 : 0, actorUserId,
+            "draft", cell.remarks, cell.line.id == null ? 1 : 0, actorUserId,
           ]
         );
       }
@@ -1821,7 +2128,11 @@ export const grnSmartService = {
           input.gstEnabled != null ? (input.gstEnabled ? 1 : 0) : null,
           input.vendorStateCode?.trim() || null,
           input.billingStateCode?.trim() || null,
-          isUnbudgeted ? 1 : 0,
+          // Same definition as the rows above: at least one rupee of this GRN has no budget line
+          // behind it. Derived from the FUNDED grid, not from whether the raiser picked a line —
+          // after the headroom gate a split with no picked line is normally funded from the
+          // branch aggregate, and calling that off-budget was the defect.
+          fundedGrid.some((cell) => cell.line.id == null) ? 1 : 0,
           grnId,
         ]
       );
@@ -1834,6 +2145,14 @@ export const grnSmartService = {
         recognition_months: periodSplit?.eligibleCount ?? 1,
         component_count: components.length,
         cost_centre_count: resolvedSplits.length,
+        // The facts is_unbudgeted used to carry on its own, kept on the record now that the
+        // column means only "no budget line funded this".
+        raiser_picked_no_line_count: resolvedSplits.filter((item) => item.raiserPickedNoLine).length,
+        funded_by_other_cost_centre_count: fundedGrid.filter(
+          (cell) => cell.fundingCostCentreId
+            && String(cell.fundingCostCentreId) !== String(cell.line.cost_centre_id ?? "")
+        ).length,
+        unfunded_count: fundedGrid.filter((cell) => cell.line.id == null).length,
         amount_without_tax: rawTotalBase,
         tax_amount: rawTotalTax,
         amount_with_tax: totalGrossFinal,
@@ -2139,8 +2458,15 @@ export const grnSmartService = {
     try {
       await connection.beginTransaction();
       const grn = await lockGrn(connection, grnId);
-      if (Number(grn.is_unbudgeted) !== 1) {
-        throw new Error("This GRN was raised against an approved budget — there is nothing to link");
+      // Gated on the ROWS, not on the header's is_unbudgeted flag. That flag now means "some
+      // rupee of this GRN has no budget line at all", which after the headroom gate is almost
+      // never true — so gating on it made this whole endpoint unreachable. What Finance is
+      // re-pointing is a row funded from another cost centre's line, and that is a row-level fact.
+      const relinkableCandidates = (await loadAllocations(connection, grnId)).filter(isRelinkable);
+      if (!relinkableCandidates.length) {
+        throw new Error(
+          "Every cost-centre split on this GRN is already funded by its own cost centre's budget line — there is nothing to link"
+        );
       }
       // Linking is an approval-stage action. Before submission the raiser still owns the splits
       // and the next invoice-components save replaces every allocation row wholesale, which would
@@ -2164,9 +2490,9 @@ export const grnSmartService = {
       for (const link of links) {
         const allocation = byId.get(String(link?.allocationId ?? ""));
         if (!allocation) throw new Error("Cost-centre split not found on this GRN");
-        if (hasBudgetLine(allocation)) {
+        if (!isRelinkable(allocation)) {
           throw new Error(
-            `${allocation.cost_centre_name || "This cost centre"} is already linked to a budget line`
+            `${allocation.cost_centre_name || "This cost centre"} is already funded by its own cost centre's budget line`
           );
         }
         if (!link?.budgetLineId) {
@@ -2230,13 +2556,18 @@ export const grnSmartService = {
         // whether the link is allowed — reserve() below enforces the money. See budget-consumption.service.ts's file-level banner.
 
         await connection.execute(
+          // funding_cost_centre_id and is_unbudgeted move with the line: after this the row IS
+          // funded, by THIS line's cost centre. cost_centre_id is deliberately untouched — who
+          // incurred the spend does not change because Finance re-pointed who pays for it.
           `UPDATE grn_cost_allocation
-              SET budget_id = ?, budget_line_id = ?, process_id = ?, cost_class = ?,
+              SET budget_id = ?, budget_line_id = ?, funding_cost_centre_id = ?,
+                  is_unbudgeted = 0, process_id = ?, cost_class = ?,
                   quantity = ?, unit = ?, unit_rate = ?
             WHERE id = ? AND grn_request_id = ?`,
           [
             line.budget_id,
             line.id,
+            line.cost_centre_id ?? null,
             line.process_id ?? allocation.process_id ?? null,
             line.process_id || line.cost_centre_id ? "direct" : "indirect",
             linkedQuantity,
@@ -2247,10 +2578,29 @@ export const grnSmartService = {
           ]
         );
 
-        // Branch Head has already approved: the split is marked 'reserved' but nothing was
-        // reserved, because there was no line. Place that reservation now against the line just
-        // linked, so the amounts stay in step with every budgeted GRN at the same stage.
+        /*
+         * Move the reservation, not just the label.
+         *
+         * Two cases now reach here, and they are not the same:
+         *   - the split had NO line, so nothing was ever reserved against anything even though
+         *     the row is marked 'reserved'. Place the reservation.
+         *   - the split WAS funded, from another cost centre's line, and that line is currently
+         *     holding the money. Release it there before reserving here, or the branch shows the
+         *     same rupee committed twice and the old line never recovers its headroom.
+         *
+         * Only the reserved stage moves money. At 'submitted' nothing is held yet, so re-pointing
+         * is a pure relabel and neither call is needed.
+         */
         if (String(allocation.lifecycle_status) === "reserved") {
+          if (hasBudgetLine(allocation)) {
+            await budgetConsumptionService.release(
+              connection,
+              String(allocation.budget_line_id),
+              Number(allocation.amount_with_tax),
+              Number(allocation.quantity),
+              Number(allocation.amount_without_tax) || undefined
+            );
+          }
           await budgetConsumptionService.reserve(
             connection,
             String(line.id),
@@ -2286,9 +2636,15 @@ export const grnSmartService = {
         );
       }
 
-      // is_unbudgeted deliberately stays 1. It records how the GRN was RAISED — which is the
-      // fact an auditor asking "what did we commit to before budgeting it?" needs — not whether
-      // it currently has a budget line, which the allocation rows already answer.
+      // The header flag is re-derived from the rows, on the same definition they use: unbudgeted
+      // means at least one rupee still has no budget line behind it. "How the GRN was RAISED" —
+      // the fact an auditor asking "what did we commit to before budgeting it?" needs — is on the
+      // ALLOCATIONS_SAVED audit entry as raiser_picked_no_line_count, where it cannot be confused
+      // with the current funding state.
+      await connection.execute(
+        `UPDATE grn_request SET is_unbudgeted = ? WHERE id = ?`,
+        [stillUnlinked.length ? 1 : 0, grnId]
+      );
       await writeAuditInTransaction(
         connection,
         "GRN_UNBUDGETED_BUDGET_LINKED",
@@ -2337,13 +2693,9 @@ export const grnSmartService = {
       if (!allocations.length) throw new Error("Smart GRN has no saved cost allocations");
       const role = actorRole.toLowerCase();
 
-      // P0-2: Provision GRNs have no payment/ledger/reversal lifecycle — block approval.
-      if (String(grn.grn_type) === "provision") {
-        throw Object.assign(
-          new Error("PROVISION_GRN_NOT_SUPPORTED: Provision GRN approval is not yet implemented. Contact Finance Admin."),
-          { code: "PROVISION_GRN_NOT_SUPPORTED" }
-        );
-      }
+      // P0-2: a type with no payment/ledger/reversal lifecycle must not be approved. Covers
+      // `salary` as well as `provision` now — see grn-type-support.ts.
+      assertGrnTypeSupported(grn.grn_type, "Approval");
 
       // P0-3: Re-check period lock inside the transaction immediately before the financial
       // mutation so a concurrent lock cannot slip through between API check and this UPDATE.

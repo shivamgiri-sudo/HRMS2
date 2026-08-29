@@ -678,6 +678,10 @@ router.post(
           subHead: req.body?.subHead != null ? String(req.body.subHead) : undefined,
           unit: req.body?.unit != null ? String(req.body.unit) : undefined,
           unitRate: req.body?.unitRate != null ? Number(req.body.unitRate) : undefined,
+          // How the top-up should be shared across cost centres. Validated by
+          // computeLineAllocations when it is applied, which is the only place that knows the
+          // supported set — echoing that list here would be a second copy to keep in step.
+          allocationDriver: req.body?.allocationDriver != null ? String(req.body.allocationDriver) : undefined,
           requestedAmount: Number(req.body?.requestedAmount ?? 0),
           requestedQuantity: Number(req.body?.requestedQuantity ?? 0),
           reason: String(req.body?.reason ?? ""),
@@ -705,6 +709,9 @@ router.post(
         requestedAmount: Number(req.body?.requestedAmount ?? 0),
         requestedQuantity: Number(req.body?.requestedQuantity ?? 0),
         reason: String(req.body?.reason ?? ""),
+        // Omitted means "share it the way this line is already shared" — the line's own driver is
+        // re-run over the new total when the top-up is applied. Explicit splits still override.
+        allocationDriver: req.body?.allocationDriver != null ? String(req.body.allocationDriver) : undefined,
         costCentreSplits,
       },
       user.id,

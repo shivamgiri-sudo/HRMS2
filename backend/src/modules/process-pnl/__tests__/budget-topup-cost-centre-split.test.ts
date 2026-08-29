@@ -238,14 +238,19 @@ function makeExecute(state: ReturnType<typeof makeState>) {
       return [[], []];
     }
 
-    // finance_budget_line — create()/directApply() line+header fetch (aliased, joined).
-    if (/SELECT l\.id, l\.budget_id, l\.unit_rate, h\.status AS budget_status, h\.branch_id, h\.period_code/i.test(s)) {
+    // finance_budget_line — create()/directApply() line+header fetch (aliased, joined). Matched
+    // on the columns common to both create()'s existing-line fetch (which also reads
+    // planning_level/allocation_driver, added 2026-08-29 for the sharing-driver top-up feature —
+    // see budget-topup-allocation-driver.test.ts) and directApply()'s narrower one, rather than
+    // the exact column list, so either shape hits this branch.
+    if (/SELECT l\.id, l\.budget_id, l\.unit_rate,[\s\S]*h\.status AS budget_status, h\.branch_id, h\.period_code/i.test(s)) {
       const [id] = params;
       const line = state.lines.get(id);
       if (!line) return [[], []];
       const header = state.headers.get(line.budget_id)!;
       return [[{
         id: line.id, budget_id: line.budget_id, unit_rate: line.unit_rate,
+        planning_level: line.planning_level, allocation_driver: (line as any).allocation_driver ?? null,
         budget_status: header.status, branch_id: header.branch_id, period_code: header.period_code,
       }], []];
     }

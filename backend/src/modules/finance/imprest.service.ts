@@ -152,9 +152,66 @@ export const imprestService = {
     try {
       await connection.beginTransaction();
 
-      // For updates, handle differently — we're typically just ending an appointment
+      // For updates: lock and re-read the row being edited, so a partial update (e.g. renaming
+      // the tally name) only needs to supply the fields actually changing.
       if (input.id) {
-        // When ending an appointment (activeStatus = 0), no overlap check needed
+        /*
+         * REGRESSION FIX, 2026-08-29. Restores a check this branch used to run and stopped
+         * running.
+         *
+         * PR 494b2af2 (8 Aug) closed "two different people can hold one branch's float at once"
+         * by checking every save — including an update — for an overlap against other active
+         * appointments in the branch, excluding the row itself via `id <> ?`. A later broad
+         * commit (0b197520, 24 Aug) restructured this into an early return for any update BEFORE
+         * that check runs, so the exact bug the original commit fixed was silently reopened for
+         * the update path: extending an ended appointment's effective_to, or reactivating one,
+         * can create a real overlap with a manager appointed in the meantime, and nothing catches
+         * it. Only DEACTIVATING was ever meant to be exempt — "ending is how you make room for the
+         * next holder" — not every update.
+         *
+         * The same commit introduced a second, adjacent bug: `active_status = ?` was bound to
+         * `input.activeStatus ?? 1`, so any update that omitted activeStatus (a plain rename, for
+         * instance) silently reactivated a previously-ended appointment regardless of its current
+         * value. Fixed by merging into the row's own current value instead of defaulting to 1.
+         */
+        const [currentRows] = await connection.execute<RowDataPacket[]>(
+          `SELECT id, branch_id, effective_from, effective_to, active_status
+             FROM imprest_manager
+            WHERE id = ?
+            FOR UPDATE`,
+          [input.id],
+        );
+        const current = currentRows[0];
+        if (!current) throw new Error("Imprest manager appointment not found");
+
+        // Mirrors the UPDATE's own COALESCE(?, effective_to)/`?? current` semantics: an omitted
+        // (or explicitly null) field keeps the row's existing value rather than clearing it.
+        const nextEffectiveTo = input.effectiveTo ?? current.effective_to;
+        const nextActiveStatus = input.activeStatus ?? current.active_status;
+
+        if (Number(nextActiveStatus) === 1) {
+          const [clashes] = await connection.execute<RowDataPacket[]>(
+            `SELECT id, user_id, effective_from, effective_to
+               FROM imprest_manager
+              WHERE branch_id = ?
+                AND active_status = 1
+                AND id <> ?
+                AND effective_from <= COALESCE(?, '9999-12-31')
+                AND ? <= COALESCE(effective_to, '9999-12-31')
+              FOR UPDATE`,
+            [current.branch_id, input.id, nextEffectiveTo ?? null, current.effective_from],
+          );
+          if (clashes.length) {
+            const clash = clashes[0];
+            throw new Error(
+              `This branch already has an imprest manager for that period `
+              + `(${String(clash.effective_from).slice(0, 10)} to `
+              + `${clash.effective_to ? String(clash.effective_to).slice(0, 10) : "open-ended"}). `
+              + `End that appointment before starting another.`,
+            );
+          }
+        }
+
         await connection.execute(
           `UPDATE imprest_manager
               SET tally_name = COALESCE(?, tally_name),
@@ -165,7 +222,7 @@ export const imprestService = {
           [
             input.tallyName !== undefined ? input.tallyName : null,
             input.effectiveTo ?? null,
-            input.activeStatus ?? 1,
+            nextActiveStatus,
             actorUserId,
             input.id,
           ],

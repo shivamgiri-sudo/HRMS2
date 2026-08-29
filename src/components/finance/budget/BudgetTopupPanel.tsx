@@ -107,10 +107,22 @@ export const SPLIT_AMOUNT_TOLERANCE = 1;
  * UNIQUE(topup_request_id, cost_centre_id)), and the rows must sum to the request's own top-level
  * amount. The server remains authoritative — this only saves a round trip on the common mistakes.
  */
+/**
+ * A discriminated union declared as a named type rather than inline.
+ *
+ * Written inline, TypeScript would not narrow `splitCheck` to the failure arm after
+ * `if (!splitCheck.ok) throw ...`, so every `splitCheck.message` in this file — and in its own
+ * test — was a type error. The union is identical; naming it is what lets the discriminant do its
+ * job.
+ */
+export type TopupSplitValidation =
+  | { ok: true; message?: undefined; sum: number }
+  | { ok: false; message: string; sum: number };
+
 export function validateTopupSplits(
   rows: TopupSplitRow[],
   requestedAmountNumber: number
-): { ok: true; sum: number } | { ok: false; message: string; sum: number } {
+): TopupSplitValidation {
   if (!rows.length) {
     return { ok: false, message: "Add at least one cost-centre split", sum: 0 };
   }
@@ -394,6 +406,31 @@ function CostCentreSplitEditor({
  * here with a pre-selected budgetLineId; the queue itself lists every request for the current
  * branch so branch_head/finance_head can act on it in the same place they already review budgets.
  */
+/**
+ * The sharing rules a branch-level line can be divided by, matching SUPPORTED_SHARING_METHODS in
+ * branch-budget-allocation.service.ts. Labelled in the words a budget owner uses rather than the
+ * column names — "Headcount", not "total_manpower".
+ *
+ * `manual` is offered as the FIRST option and as the empty value, because typing each cost
+ * centre's amount is what this page did before and must stay one click away. Everything below it
+ * hands the division to the same engine the budget uses, so a top-up lands the way the budget did
+ * instead of leaving the split describing the pre-top-up amount.
+ */
+const MANUAL_SHARE = "__manual__";
+const SHARING_METHODS: Array<{ value: string; label: string }> = [
+  { value: MANUAL_SHARE, label: "Enter each cost centre's amount myself" },
+  { value: "total_manpower", label: "By headcount" },
+  { value: "agent_headcount", label: "By agent headcount" },
+  { value: "grade_weighted_headcount", label: "By headcount, weighted by grade" },
+  { value: "seat_count", label: "By seat count" },
+  { value: "floor_area", label: "By floor area" },
+  { value: "device_count", label: "By device count" },
+  { value: "hiring_volume", label: "By hiring volume" },
+  { value: "revenue_share", label: "By revenue share" },
+  { value: "meter_wise", label: "By metered consumption" },
+  { value: "equal_split", label: "Equally across every cost centre" },
+];
+
 export function BudgetTopupPanel({
   branchId,
   period,
@@ -451,6 +488,9 @@ export function BudgetTopupPanel({
   const [newLineSubHead, setNewLineSubHead] = useState(presetNewLineSubHead ?? "");
   const [newLineUnit, setNewLineUnit] = useState("");
   const [newLineUnitRate, setNewLineUnitRate] = useState("");
+  /** How the top-up should be shared across cost centres. "" means the requester will type the
+   *  per-cost-centre amounts themselves, which is what this page used to do and only do. */
+  const [allocationDriver, setAllocationDriver] = useState("");
   const [reviewNotes, setReviewNotes] = useState<Record<string, string>>({});
   const [directOpen, setDirectOpen] = useState(false);
   const [directLineId, setDirectLineId] = useState("");
@@ -533,6 +573,7 @@ export function BudgetTopupPanel({
     setNewLineSubHead("");
     setNewLineUnit("");
     setNewLineUnitRate("");
+    setAllocationDriver("");
   };
 
   const createMutation = useMutation({
@@ -554,13 +595,20 @@ export function BudgetTopupPanel({
               + "before a new line can be requested against it."
           );
         }
-        const splitCheck = validateTopupSplits(createSplitRows, amount);
-        if (!splitCheck.ok) throw new Error(splitCheck.message);
-        const costCentreSplits = createSplitRows.map((row) => ({
-          costCentreId: row.costCentreId,
-          amount: Number(row.amount),
-          quantity: Number(row.amount) / unitRate,
-        }));
+        // A sharing rule and hand-typed amounts are alternatives, not both. With a rule chosen
+        // the server divides the money the same way the budget does; without one the requester
+        // must say who carries what, which is the only behaviour this page used to have.
+        const costCentreSplits = allocationDriver
+          ? []
+          : (() => {
+            const splitCheck = validateTopupSplits(createSplitRows, amount);
+            if (!splitCheck.ok) throw new Error(splitCheck.message);
+            return createSplitRows.map((row) => ({
+              costCentreId: row.costCentreId,
+              amount: Number(row.amount),
+              quantity: Number(row.amount) / unitRate,
+            }));
+          })();
         return hrmsApi.post("/api/finance/pnl/budget-topups", {
           isNewLine: true,
           budgetId: budgetIdForNewLine,
@@ -568,6 +616,7 @@ export function BudgetTopupPanel({
           subHead: newLineSubHead.trim(),
           unit: newLineUnit.trim(),
           unitRate,
+          allocationDriver: allocationDriver || undefined,
           requestedAmount: amount,
           requestedQuantity: amount / unitRate,
           reason,
@@ -593,18 +642,26 @@ export function BudgetTopupPanel({
         throw new Error("This budget line has no unit rate, so an increase cannot be sized in units.");
       }
       const requestedQuantity = amount / line.unit_rate;
-      const splitCheck = validateTopupSplits(createSplitRows, amount);
-      if (!splitCheck.ok) throw new Error(splitCheck.message);
-      const costCentreSplits = createSplitRows.map((row) => ({
-        costCentreId: row.costCentreId,
-        amount: Number(row.amount),
-        quantity: Number(row.amount) / line.unit_rate,
-      }));
+      // Sending no splits now means "share it the way this line is already shared" — the server
+      // re-runs the line's own driver over the new total. It used to mean "write nothing", which
+      // left the split describing the pre-top-up amount.
+      const costCentreSplits = allocationDriver
+        ? []
+        : (() => {
+          const splitCheck = validateTopupSplits(createSplitRows, amount);
+          if (!splitCheck.ok) throw new Error(splitCheck.message);
+          return createSplitRows.map((row) => ({
+            costCentreId: row.costCentreId,
+            amount: Number(row.amount),
+            quantity: Number(row.amount) / line.unit_rate,
+          }));
+        })();
       return hrmsApi.post("/api/finance/pnl/budget-topups", {
         budgetLineId: selectedLineId,
         requestedAmount: amount,
         requestedQuantity,
         reason,
+        allocationDriver: allocationDriver || undefined,
         costCentreSplits,
       });
     },
@@ -1001,13 +1058,35 @@ export function BudgetTopupPanel({
                 onChange={(event) => setRequestedAmount(event.target.value)}
               />
             </div>
-            <CostCentreSplitEditor
-              rows={createSplitRows}
-              onChange={setCreateSplitRows}
-              costCentreOptions={costCentreOptions}
-              costCentresLoading={costCentresQuery.isLoading}
-              requestedAmountNumber={requestedAmountNumber}
-            />
+            <div>
+              <Label className="text-xs">How should this be shared across cost centres? *</Label>
+              <Select value={allocationDriver || MANUAL_SHARE} onValueChange={(value) => setAllocationDriver(value === MANUAL_SHARE ? "" : value)}>
+                <SelectTrigger className="mt-1 h-9">
+                  <SelectValue placeholder="Choose a sharing rule" />
+                </SelectTrigger>
+                <SelectContent>
+                  {SHARING_METHODS.map((method) => (
+                    <SelectItem key={method.value} value={method.value}>
+                      {method.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                {allocationDriver
+                  ? "The amount is divided across the branch's cost centres by this rule, the same way the budget itself is — a cost centre with none of the driver carries none of the cost."
+                  : "You will enter each cost centre's amount by hand below. Pick a rule instead to have it divided automatically."}
+              </p>
+            </div>
+            {!allocationDriver && (
+              <CostCentreSplitEditor
+                rows={createSplitRows}
+                onChange={setCreateSplitRows}
+                costCentreOptions={costCentreOptions}
+                costCentresLoading={costCentresQuery.isLoading}
+                requestedAmountNumber={requestedAmountNumber}
+              />
+            )}
             <div>
               <Label className="text-xs">Reason *</Label>
               <Textarea

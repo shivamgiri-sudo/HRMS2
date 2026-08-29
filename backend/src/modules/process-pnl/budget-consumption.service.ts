@@ -3,6 +3,7 @@ import type { PoolConnection } from "mysql2/promise";
 
 import { refuse } from "./finance-error.js";
 import { budgetClosureService } from "./budget-closure.service.js";
+import { budgetCostRatio } from "./budget-tax-basis.js";
 
 /*
  * QUANTITY IS NOT A SPENDING CONTROL — MONEY IS. (2026-08-27, owner decision)
@@ -69,9 +70,6 @@ function availability(line: RowDataPacket) {
   };
 }
 
-/** Budget lines whose planned amount carries no tax, so tax must not be consumed against them. */
-const NON_TAXABLE_TREATMENTS = new Set(["non_gst", "exempt"]);
-
 /**
  * Which invoice figure to charge against this budget line.
  *
@@ -81,12 +79,14 @@ const NON_TAXABLE_TREATMENTS = new Set(["non_gst", "exempt"]);
  * consumed Rs 1,18,000 against a Rs 1,02,000 line and reserve() then REFUSED it — legitimate
  * purchases were hard-blocked at Branch Head approval, not merely shown as overspent.
  *
- * Falls back to the gross figure when no net is supplied, so a caller that has not been updated
- * keeps its previous behaviour rather than silently consuming zero.
+ * The rule itself lives in budget-tax-basis.ts, because the headroom gate has to apply the same
+ * one when it decides whether a line can carry an invoice at SAVE time and was applying the
+ * opposite. Falls back to the gross figure when no net is supplied, so a caller that has not been
+ * updated keeps its previous behaviour rather than silently consuming zero.
  */
 function consumptionBasis(line: RowDataPacket, grossAmount: number, netAmount?: number): number {
-  if (!NON_TAXABLE_TREATMENTS.has(String(line.tax_treatment ?? ""))) return grossAmount;
-  return Number.isFinite(netAmount) && (netAmount as number) > 0 ? roundMoney(netAmount as number) : grossAmount;
+  const ratio = budgetCostRatio(line.tax_treatment, grossAmount, netAmount);
+  return ratio >= 1 ? grossAmount : roundMoney(netAmount as number);
 }
 
 function validatePositive(amount: number, quantity: number) {

@@ -18,6 +18,14 @@ import { grnSmartService } from "./grn-smart.service.js";
 import { resolveGrnNumberOnSubmit } from "./grn-number-on-submit.js";
 import { vendorPaymentService } from "./vendor-payment.service.js";
 import { applyImprestNoGst, IMPREST_TAX_PROFILE } from "./grn-imprest-tax.js";
+import { assertGrnTypeSupported } from "./grn-type-support.js";
+import {
+  getHeadSubHeadCoverage,
+  assertCoverageExists,
+  absorbableGrossFor,
+} from "../process-pnl/budget-headroom-gate.service.js";
+import { budgetClosureService } from "../process-pnl/budget-closure.service.js";
+import { refuse } from "../process-pnl/finance-error.js";
 
 export type GrnType = "vendor" | "imprest";
 export type GrnStatus =
@@ -236,10 +244,22 @@ function legacyBranchCondition(
  * them back off this row to build its synthetic budget lines for the unbudgeted case, so the
  * classification the raiser chose has to survive this insert.
  *
- * budget_id and budget_line_id are left NULL and is_unbudgeted is set to 1. Approval is NOT
- * open-ended: grnSmartService.review() refuses a Finance Head approval while any cost-centre
- * split still has no budget line, so the spend cannot reach payment without a real budget behind
- * it — it just does not need one to be RAISED.
+ * budget_id and budget_line_id are left NULL and is_unbudgeted is set to 1 OPTIMISTICALLY — both
+ * are corrected by the allocation save, which is the first step that knows what actually funded
+ * the GRN. In the ordinary case the branch aggregate funds every split and the flag is cleared
+ * back to 0 there.
+ *
+ * CORRECTION, 2026-08-29. This comment used to claim that "grnSmartService.review() refuses a
+ * Finance Head approval while any cost-centre split still has no budget line". It does not, and
+ * never did — review()'s own block comment says the opposite and is the accurate one: an
+ * unbudgeted GRN approves WITHOUT a budget line, deliberately, because linking is an option
+ * Finance Head has and not a gate they must pass. Two contradictory descriptions of the same rule
+ * sat in one module; this is the one that was wrong.
+ *
+ * What genuinely bounds this path is the coverage check below: the branch must hold budget for
+ * the head/sub-head, and the allocation step then funds every split out of that aggregate. A
+ * split that reaches approval with budget_line_id still NULL records spend with no budget behind
+ * it — visible as is_unbudgeted = 1 on the row — rather than being prevented.
  */
 async function createUnbudgetedDraft(
   payload: CreateGrnPayload,
@@ -283,6 +303,30 @@ async function createUnbudgetedDraft(
       `${accountingPeriod} is locked for P&L close. Raise this against the current open period.`
     );
   }
+
+  /*
+   * The branch aggregate is checked HERE too, even though this path has no budget line.
+   *
+   * "Unbudgeted" describes what the raiser picked, not what the branch holds. The commonest
+   * reason to arrive on this path is cost centre A having no line of its own for a head/sub-head
+   * that cost centre B is budgeted for — in which case the branch DOES have the money and the
+   * allocation step will fund it from B. Running the same coverage lookup at create means the
+   * raiser is told the truth at the first step: either the branch has budget for this
+   * head/sub-head, or NO_BUDGET_FOR_HEAD names exactly what to request.
+   *
+   * Deliberately NOT an amount check. The header's amount is not final on this path — the
+   * cost-centre splits decide it — so the aggregate arithmetic belongs at the allocation step,
+   * which does it per row. What is checked here is existence, which is knowable now and saves the
+   * raiser filling in an invoice against a head nobody in the branch has budget for.
+   */
+  const coverage = await getHeadSubHeadCoverage(
+    String(payload.branchId),
+    accountingPeriod,
+    head,
+    subHead
+  );
+  assertCoverageExists(coverage, accountingPeriod, head, subHead);
+  await budgetClosureService.assertSubheadOpen(db, String(coverage.budgetId), head, subHead);
 
   // Derived from the booking month rather than the budget line's period_code, which is the same
   // value in every budgeted case — getLineForGrn()'s period_code must already equal the bill month
@@ -368,13 +412,9 @@ async function createUnbudgetedDraft(
 
 export const grnService = {
   async createDraft(payload: CreateGrnPayload, actorUserId: string, actorRole: string) {
-    // P0-2: Provision type has no accounting lifecycle in application code.
-    if ((payload.grnType as string) === "provision") {
-      throw Object.assign(
-        new Error("PROVISION_GRN_NOT_SUPPORTED: Provision GRN accounting lifecycle is not yet implemented. Contact Finance Admin."),
-        { code: "PROVISION_GRN_NOT_SUPPORTED" }
-      );
-    }
+    // P0-2: a type with no accounting lifecycle in application code cannot be raised. Covers
+    // `salary` as well as `provision` — see grn-type-support.ts.
+    assertGrnTypeSupported(payload.grnType, "Creation");
     if (!payload.branchId) throw new Error("Branch is required");
     const isUnbudgeted = Boolean(payload.isUnbudgeted);
     if (!isUnbudgeted && !payload.budgetLineId) {
@@ -414,8 +454,31 @@ export const grnService = {
     if (payload.processId && payload.processId !== budgetLine.process_id) {
       throw new Error("GRN process does not match the approved budget line");
     }
+    /*
+     * The GRN's cost centre no longer has to be the budget line's cost centre.
+     *
+     * It used to, and that single check was what made "cost centre A raises against cost centre
+     * B's line in the same branch" impossible to express — A had no line of its own for the
+     * head/sub-head, B had budget sitting there, and the only way through was to declare the
+     * spend unbudgeted. Since the branch-wide headroom gate the funding line and the cost centre
+     * are deliberately independent (see budget-headroom-gate.service.ts), so requiring them to
+     * agree here contradicted the rule the allocation step already applies.
+     *
+     * What still has to hold is the thing this check was really protecting: the cost centre must
+     * exist, be active, and belong to THIS GRN's branch. Otherwise a raiser could attribute spend
+     * to another branch entirely, which is the one thing no later step re-checks.
+     */
     if (payload.costCentreId && payload.costCentreId !== budgetLine.cost_centre_id) {
-      throw new Error("GRN cost centre does not match the approved budget line");
+      const [ccRows] = await db.execute<RowDataPacket[]>(
+        `SELECT id, branch_id FROM cost_centre_master
+          WHERE id = ? AND active_status = 1 LIMIT 1`,
+        [payload.costCentreId]
+      );
+      const costCentre = ccRows[0] as any;
+      if (!costCentre) throw new Error("GRN cost centre not found or inactive");
+      if (String(costCentre.branch_id) !== String(payload.branchId)) {
+        throw new Error("GRN cost centre does not belong to this branch");
+      }
     }
 
     const quantity = Number(payload.quantity);
@@ -449,8 +512,49 @@ export const grnService = {
     const isImprest = payload.grnType === "imprest";
     const amountsForGrn = isImprest ? applyImprestNoGst(amounts) : amounts;
 
-    if (amounts.grossAmount > Number(budgetLine.available_gross_amount) + 0.01) {
-      throw new Error("GRN amount exceeds the available approved budget");
+    /*
+     * Checked against the BRANCH AGGREGATE, not against the one line the raiser picked.
+     *
+     * This was the last gate still applying the pre-2026-08-22 rule, and it contradicted the very
+     * next step. Create refused on a single line's shortfall — "GRN amount exceeds the available
+     * approved budget" — for money that saveAllocations() would then have spilled onto a sibling
+     * line for the same head/sub-head without comment. A raiser was told there was no budget by
+     * step one and shown budget by step two, or the reverse. Same coverage lookup, same two 409s
+     * and the same headroom arithmetic as the allocation step, so both steps now answer alike.
+     */
+    const coverage = await getHeadSubHeadCoverage(
+      String(payload.branchId),
+      String(budgetLine.period_code),
+      String(budgetLine.head),
+      budgetLine.sub_head ? String(budgetLine.sub_head) : null
+    );
+    assertCoverageExists(
+      coverage,
+      String(budgetLine.period_code),
+      String(budgetLine.head),
+      budgetLine.sub_head ? String(budgetLine.sub_head) : null
+    );
+    // A head/sub-head Finance has closed for the month refuses new spend. Previously enforced
+    // only inside reserve(), i.e. not until Branch Head pressed Approve.
+    await budgetClosureService.assertSubheadOpen(
+      db,
+      String(coverage.budgetId),
+      String(budgetLine.head),
+      budgetLine.sub_head ? String(budgetLine.sub_head) : null
+    );
+    // Compared against how much invoice GROSS the branch can absorb, not against the raw budget
+    // sum. On a line planned as non_gst/exempt the GST on this invoice is never charged, so a
+    // Rs 21,000 line carries more than Rs 21,000 of tax-inclusive invoice — reserve() has always
+    // charged those lines the taxable value, and weighing the inclusive figure here refused GRNs
+    // that Branch Head approval would then have accepted.
+    const absorbable = absorbableGrossFor(coverage, amounts.grossAmount, amounts.baseAmount);
+    if (amounts.grossAmount > absorbable + 0.01) {
+      throw refuse(
+        409,
+        "HEADROOM_EXCEEDED",
+        `Requested amount exceeds available budget for ${budgetLine.head}/${budgetLine.sub_head || ""} across the branch by `
+        + `₹${(amounts.grossAmount - absorbable).toFixed(2)}`
+      );
     }
 
     const vendor = await resolveCanonicalVendor(
@@ -571,13 +675,8 @@ export const grnService = {
     actorRole: string
   ) {
     const grn = await getGrnOrThrow(grnId);
-    // P0-2: Provision type has no accounting lifecycle — fail closed.
-    if (String(grn.grn_type) === "provision") {
-      throw Object.assign(
-        new Error("PROVISION_GRN_NOT_SUPPORTED: Provision GRNs cannot be submitted until the accounting lifecycle is implemented."),
-        { code: "PROVISION_GRN_NOT_SUPPORTED" }
-      );
-    }
+    // P0-2: a type with no accounting lifecycle cannot be submitted — fail closed.
+    assertGrnTypeSupported(grn.grn_type, "Submission");
     if (grn.status !== "draft") {
       throw new Error(`GRN is already ${grn.status}, cannot submit`);
     }
@@ -672,13 +771,8 @@ export const grnService = {
             : null
         : role;
 
-      // P0-2: Provision GRNs have no payment/ledger/reversal lifecycle — block approval.
-      if (String(grn.grn_type) === "provision") {
-        throw Object.assign(
-          new Error("PROVISION_GRN_NOT_SUPPORTED: Provision GRNs cannot be approved until the accounting lifecycle is implemented."),
-          { code: "PROVISION_GRN_NOT_SUPPORTED" }
-        );
-      }
+      // P0-2: a type with no payment/ledger/reversal lifecycle cannot be approved.
+      assertGrnTypeSupported(grn.grn_type, "Approval");
 
       // P0-3: Re-check period lock inside the transaction immediately before the financial
       // mutation. Guards against a concurrent lock applied after the API-level check in

@@ -194,6 +194,14 @@ type CostCentreUtilizationHead = {
   consumed: number;
   available: number;
 };
+/** One OTHER budget that paid part of this cost centre's spend. costCentreId null = the
+ *  branch-common pool, not "unknown" — see the service's own FUNDED-ELSEWHERE banner. */
+type FundingSourceRow = {
+  costCentreId: string | null;
+  costCentreName: string;
+  reserved: number;
+  consumed: number;
+};
 type CostCentreUtilizationRow = {
   costCentreId: string | null;
   costCentreCode: string | null;
@@ -204,6 +212,12 @@ type CostCentreUtilizationRow = {
   reserved: number;
   consumed: number;
   available: number;
+  /** Portion of reserved/consumed above that this cost centre's OWN budget did not pay for —
+   *  funded from a sibling cost centre's line, or the branch-common pool. Additive: reserved and
+   *  consumed already include it, exactly as before this field existed. Zero on every row unless
+   *  a GRN actually spilled across cost centres. */
+  fundedElsewhere: { reserved: number; consumed: number };
+  fundingSources: FundingSourceRow[];
   lineCount: number;
   heads: CostCentreUtilizationHead[];
 };
@@ -3207,6 +3221,38 @@ export default function BranchBudgetManagementWorkspace() {
                                       >
                                         (no cost centre on the GRN)
                                       </span>
+                                    )}
+                                    {(cc.fundedElsewhere.reserved + cc.fundedElsewhere.consumed) > 0 && (
+                                      <HoverCard openDelay={150}>
+                                        <HoverCardTrigger asChild>
+                                          <Badge
+                                            variant="outline"
+                                            className="ml-2 cursor-default border-violet-300 bg-violet-50 text-violet-700"
+                                          >
+                                            {money(cc.fundedElsewhere.reserved + cc.fundedElsewhere.consumed)} funded elsewhere
+                                          </Badge>
+                                        </HoverCardTrigger>
+                                        <HoverCardContent className="w-80 text-xs">
+                                          <p className="mb-2 font-medium text-slate-700">
+                                            This cost centre incurred the spend shown here, but part of it was paid from
+                                            another cost centre's budget line — the branch-wide headroom rule spilled it
+                                            over when this cost centre had none of its own for that head/sub-head.
+                                          </p>
+                                          <ul className="space-y-1">
+                                            {cc.fundingSources.map((source) => (
+                                              <li
+                                                key={source.costCentreId ?? "__pool__"}
+                                                className="flex items-center justify-between gap-3"
+                                              >
+                                                <span className="text-slate-600">{source.costCentreName}</span>
+                                                <span className="tabular-nums font-medium text-slate-800">
+                                                  {money(source.reserved + source.consumed)}
+                                                </span>
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </HoverCardContent>
+                                      </HoverCard>
                                     )}
                                   </td>
                                   <td className="px-3 py-2 text-right tabular-nums text-slate-600">{cc.lineCount}</td>

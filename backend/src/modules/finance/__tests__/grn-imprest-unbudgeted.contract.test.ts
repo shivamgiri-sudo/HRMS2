@@ -50,9 +50,14 @@ describe("unbudgeted Imprest GRN — raise, save, submit, approve", () => {
     // isUnbudgetedExpense is the one authoritative "no budget anywhere for this Head/Sub-head"
     // signal now, shared by both grn types — no isVendor gate on it.
     expect(form).toContain("if (!form.head || !form.subHead) return false;");
-    expect(form).toContain(
-      "return vendorCostCentreGroups.length > 0 && vendorCostCentreGroups.every((g) => g.lines.length === 0);"
-    );
+    // 2026-08-29: the single-line check above was replaced by a check against
+    // vendorMatchingLines — the branch's raw budget lines for this head/sub-head, before they are
+    // grouped per cost centre. The old form (every group's OWN lines empty) was ALMOST the same
+    // test, because a branch-common line sits in every group — but it missed exactly the case
+    // this fix exists for: a cost centre with no line of its own, funded from a SIBLING cost
+    // centre's line elsewhere in the branch. That is budgeted spend, and the old check called it
+    // unbudgeted.
+    expect(form).toContain("if (vendorMatchingLines.length === 0) return true;");
 
     // A cost-centre row with no budgetLineId is not a save-blocking error any more — the
     // backend resolves it per row as an unbudgeted allocation against that row's own cost
@@ -116,22 +121,24 @@ describe("unbudgeted Imprest GRN — raise, save, submit, approve", () => {
       "head = referenceLine ? String(referenceLine.head) : String(grn.head || \"Unbudgeted\");"
     );
 
-    // is_unbudgeted is written per allocation row, unchanged from before.
+    // is_unbudgeted is written per allocation row, and it now says ONE thing: no budget line
+    // funded this row.
     //
-    // Updated for Group C step 2a: it is NO LONGER true that budget_line_id starts NULL for an
-    // unbudgeted row and gets overwritten only if Finance Head later links one — the headroom gate
-    // now supplies a real funding line (drawn from the branch aggregate) at save time, so
-    // budget_line_id is real from the start. is_unbudgeted is the only surviving signal that the
-    // raiser themselves picked no line; it must stay independent of budget_line_id for that
-    // reason, not because that column changes later.
+    // Group C step 2a made the headroom gate supply a real funding line, drawn from the branch
+    // aggregate, at save time — so budget_line_id is real from the start. For a while the column
+    // was kept as "the raiser picked no line" instead, which meant fully funded spend was written,
+    // and reported, as off-budget. Those are two different facts and they now have two different
+    // homes: this column for "nothing funded it", and funding_cost_centre_id (migration 1630) for
+    // "whose budget paid". "The raiser picked no line" is on the ALLOCATIONS_SAVED audit entry,
+    // where it cannot be mistaken for the current funding state.
     expect(service).toContain("pnl_cost_amount, lifecycle_status, remarks, is_unbudgeted, created_by)");
-    expect(service).toContain("item.isUnbudgeted ? 1 : 0, actorUserId,");
+    expect(service).toContain("item.line.id == null ? 1 : 0, actorUserId,");
+    expect(service).toContain("raiser_picked_no_line_count");
 
-    // The GRN header's own is_unbudgeted flag is now derived from the rows just written
-    // (true if ANY row came back unbudgeted), not left untouched from create time — a GRN
-    // created as an ordinary budgeted draft can still end up with an unbudgeted cost centre
-    // once split, and that must route through the same stricter approval.
-    expect(service).toContain("prepared.some((item) => item.isUnbudgeted) ? 1 : 0,");
+    // The GRN header's own flag is derived from the rows just written, on the same definition —
+    // true when ANY row has no budget line behind it — not left untouched from create time, where
+    // createUnbudgetedDraft stamps it optimistically before any allocation exists to judge.
+    expect(service).toContain("prepared.some((item) => item.line.id == null) ? 1 : 0,");
   });
 
   it("reuses the already-generic backend lifecycle instead of duplicating it", () => {

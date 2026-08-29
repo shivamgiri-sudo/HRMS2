@@ -142,8 +142,11 @@ describe("both GRN write paths apply the imprest rule", () => {
     expect(service).toContain('const isImprest = payload.grnType === "imprest";');
     expect(service).toContain("const amountsForGrn = isImprest ? applyImprestNoGst(amounts) : amounts;");
     expect(service).toContain("amountsForGrn.pnlCostAmount,");
-    // The budget-line headroom check still runs on the untouched gross.
-    expect(service).toContain("if (amounts.grossAmount > Number(budgetLine.available_gross_amount) + 0.01) {");
+    // The headroom check still runs on the UNTOUCHED gross — applyImprestNoGst moves tax into
+    // base and must not change what is checked against budget. It is now the BRANCH AGGREGATE
+    // rather than the single line the raiser picked, matching what the allocation step does one
+    // step later; before, create refused a shortfall that allocation would simply have spilled.
+    expect(service).toContain("if (amounts.grossAmount > absorbable + 0.01) {");
   });
 
   it("the GRN form shows the full amount as P&L impact for imprest", () => {

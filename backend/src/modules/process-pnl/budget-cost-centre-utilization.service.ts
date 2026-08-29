@@ -33,6 +33,23 @@ import { db } from "../../db/mysql.js";
  *
  * Only 'reserved' and 'consumed' count. 'draft' is a GRN still being typed and reserves nothing;
  * 'released' and 'reversed' have given their money back.
+ *
+ * FUNDED-ELSEWHERE, added 2026-08-29
+ * -----------------------------------
+ * Since the branch-wide headroom gate (2026-08-22), the cost centre a GRN is attributed to
+ * (`cost_centre_id`, who incurred it — what this whole file already reports) and the cost centre
+ * whose budget line actually paid for it (`funding_cost_centre_id`, migration 1630) are routinely
+ * different: cost centre A with no line of its own for a head/sub-head is funded from cost centre
+ * B's line and still carries the cost on A's own row here. Every P&L-facing query in this module
+ * was checked and NONE of them read `funding_cost_centre_id` at all — not a double-count (each
+ * allocation row is summed once, on `cost_centre_id`, exactly as it always was), but a real loss
+ * of the one fact migration 1630 exists to preserve: which budget actually absorbed the money.
+ *
+ * `fundedElsewhere` is additive, not a new total: it is the portion of THIS row's own
+ * reserved+consumed whose `funding_cost_centre_id` differs from `cost_centre_id` (funded by a
+ * named sibling centre) or is NULL on a real allocation (funded from the branch-common pool).
+ * `budgeted`/`reserved`/`consumed`/`available` above are completely unchanged by this addition —
+ * a reader who ignores the new field sees exactly the report that existed before it.
  */
 
 export type BudgetCostCentreHeadRow = {
@@ -42,6 +59,16 @@ export type BudgetCostCentreHeadRow = {
   reserved: number;
   consumed: number;
   available: number;
+};
+
+/** One OTHER budget that funded part of this cost centre's spend — a named sibling cost centre,
+ *  or the branch-common pool when the funding line has no owning cost centre of its own. */
+export type FundingSourceRow = {
+  /** Null means the branch-common pool (a pooled/branch-level line), not "unknown". */
+  costCentreId: string | null;
+  costCentreName: string;
+  reserved: number;
+  consumed: number;
 };
 
 export type BudgetCostCentreRow = {
@@ -55,6 +82,14 @@ export type BudgetCostCentreRow = {
   reserved: number;
   consumed: number;
   available: number;
+  /** Portion of reserved+consumed above whose funding_cost_centre_id differs from this row's own
+   *  cost_centre_id (or is NULL on a real allocation — the branch pool). Additive, not a new
+   *  total: reserved/consumed already include this money: it always did, under the old
+   *  attribution-only view. This says how much of it this cost centre's OWN budget did not pay
+   *  for. Zero for every row until a GRN actually spills across cost centres or draws the pool. */
+  fundedElsewhere: { reserved: number; consumed: number };
+  /** Broken down by who actually funded it, for the row above. Empty when fundedElsewhere is 0. */
+  fundingSources: FundingSourceRow[];
   lineCount: number;
   heads: BudgetCostCentreHeadRow[];
 };
@@ -124,6 +159,28 @@ export const budgetCostCentreUtilizationService = {
       [budgetId]
     );
 
+    // Same rows as spendRows, split out where funding_cost_centre_id names a DIFFERENT centre
+    // than cost_centre_id (a sibling's budget paid) or is NULL (the branch pool paid) — see this
+    // file's own "FUNDED-ELSEWHERE" banner above. Deliberately a separate query rather than an
+    // extra column on spendRows: this one is grouped by (incurring centre, FUNDING centre) so the
+    // per-source breakdown below can be built directly, and it only ever contains the subset that
+    // actually spilled — most cost centres will have zero rows here.
+    const [fundedElsewhereRows] = await db.query<RowDataPacket[]>(
+      `SELECT g.cost_centre_id AS cost_centre_id, g.funding_cost_centre_id AS funding_cost_centre_id,
+              SUM(CASE WHEN g.lifecycle_status = 'reserved' THEN g.amount_with_tax ELSE 0 END) AS reserved,
+              SUM(CASE WHEN g.lifecycle_status = 'consumed' THEN g.amount_with_tax ELSE 0 END) AS consumed
+         FROM grn_cost_allocation g
+         JOIN finance_budget_line l ON l.id = g.budget_line_id
+        WHERE l.budget_id = ?
+          AND g.lifecycle_status IN ('reserved', 'consumed')
+          AND g.budget_line_id IS NOT NULL
+          AND (g.funding_cost_centre_id IS NULL
+               OR g.funding_cost_centre_id <> g.cost_centre_id
+               OR g.cost_centre_id IS NULL)
+        GROUP BY g.cost_centre_id, g.funding_cost_centre_id`,
+      [budgetId]
+    );
+
     // Simple GRNs: budget lines that are pinned to a specific cost centre but whose spend was
     // tracked ONLY in finance_budget_line.reserved_amount / consumed_amount (the simple GRN path
     // via budgetConsumptionService) with NO grn_cost_allocation rows written. Without this, the
@@ -167,6 +224,12 @@ export const budgetCostCentreUtilizationService = {
     for (const row of [...budgetRows, ...spendRows, ...simpleGrnRows]) {
       if (row.cost_centre_id != null) centreIds.add(String(row.cost_centre_id));
     }
+    // funding_cost_centre_id names a centre that may hold no BUDGET on this header at all (it
+    // funded from a line that could belong to any active cost centre in the branch) — collected
+    // separately so its name is still resolved even when it never appears as an incurring centre.
+    for (const row of fundedElsewhereRows) {
+      if (row.funding_cost_centre_id != null) centreIds.add(String(row.funding_cost_centre_id));
+    }
 
     // Names are looked up in one pass rather than joined into both aggregates above, so a missing
     // master row cannot drop a cost centre that genuinely holds budget out of the report.
@@ -187,7 +250,11 @@ export const budgetCostCentreUtilizationService = {
       }
     }
 
-    const centres = new Map<string, BudgetCostCentreRow & { _heads: Map<string, BudgetCostCentreHeadRow>; _lines: Set<string> }>();
+    const centres = new Map<string, BudgetCostCentreRow & {
+      _heads: Map<string, BudgetCostCentreHeadRow>;
+      _lines: Set<string>;
+      _fundingSources: Map<string, FundingSourceRow>;
+    }>();
 
     const centreFor = (rawId: unknown) => {
       const id = rawId == null ? null : String(rawId);
@@ -206,10 +273,13 @@ export const budgetCostCentreUtilizationService = {
           reserved: 0,
           consumed: 0,
           available: 0,
+          fundedElsewhere: { reserved: 0, consumed: 0 },
+          fundingSources: [],
           lineCount: 0,
           heads: [],
           _heads: new Map(),
           _lines: new Set(),
+          _fundingSources: new Map<string, FundingSourceRow>(),
         };
         centres.set(key, centre);
       }
@@ -265,6 +335,33 @@ export const budgetCostCentreUtilizationService = {
       headRow.consumed += consumed;
     }
 
+    // fundedElsewhere: additive on top of the centre.reserved/consumed already accumulated above
+    // from spendRows — this does not add new money, it labels a portion of what is already there.
+    for (const row of fundedElsewhereRows) {
+      const centre = centreFor(row.cost_centre_id);
+      const reserved = num(row.reserved);
+      const consumed = num(row.consumed);
+      centre.fundedElsewhere.reserved += reserved;
+      centre.fundedElsewhere.consumed += consumed;
+
+      const fundingId = row.funding_cost_centre_id == null ? null : String(row.funding_cost_centre_id);
+      const sourceKey = fundingId ?? "__pool__";
+      let source = centre._fundingSources.get(sourceKey);
+      if (!source) {
+        source = {
+          costCentreId: fundingId,
+          costCentreName: fundingId
+            ? (names.get(fundingId)?.name ?? "Unknown cost centre")
+            : "Branch-common pool",
+          reserved: 0,
+          consumed: 0,
+        };
+        centre._fundingSources.set(sourceKey, source);
+      }
+      source.reserved += reserved;
+      source.consumed += consumed;
+    }
+
     const round = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
     const rows = [...centres.values()]
@@ -278,6 +375,9 @@ export const budgetCostCentreUtilizationService = {
             available: round(head.budgeted - head.reserved - head.consumed),
           }))
           .sort((a, b) => b.budgeted - a.budgeted || a.head.localeCompare(b.head));
+        const fundingSources = [...centre._fundingSources.values()]
+          .map((source) => ({ ...source, reserved: round(source.reserved), consumed: round(source.consumed) }))
+          .sort((a, b) => (b.reserved + b.consumed) - (a.reserved + a.consumed));
         return {
           costCentreId: centre.costCentreId,
           costCentreCode: centre.costCentreCode,
@@ -287,6 +387,11 @@ export const budgetCostCentreUtilizationService = {
           reserved: round(centre.reserved),
           consumed: round(centre.consumed),
           available: round(centre.budgeted - centre.reserved - centre.consumed),
+          fundedElsewhere: {
+            reserved: round(centre.fundedElsewhere.reserved),
+            consumed: round(centre.fundedElsewhere.consumed),
+          },
+          fundingSources,
           lineCount: centre._lines.size,
           heads,
         };

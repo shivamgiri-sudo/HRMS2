@@ -276,7 +276,15 @@ export const budgetClosureService = {
    *  release()/consume()/reverseConsumption(): those correct or complete a GRN that was validly
    *  reserved before closure, and must keep working regardless of the head's current closure
    *  state, or a returned/rejected GRN could leave a permanently stuck reservation. */
-  async assertSubheadOpen(connection: PoolConnection, budgetId: string, head: string, subHeadInput: string | null) {
+  async assertSubheadOpen(
+    /** Any executor: the caller's transaction where one is open, the pool otherwise. Create-time
+     *  callers have no transaction of their own and must not have to open one just to read a
+     *  closure flag. */
+    connection: Pick<PoolConnection, "execute"> | Pick<typeof db, "execute">,
+    budgetId: string,
+    head: string,
+    subHeadInput: string | null
+  ) {
     const subHead = normSubHead(subHeadInput);
     const [rows] = await connection.execute<RowDataPacket[]>(
       `SELECT status FROM finance_budget_subhead_closure WHERE budget_id = ? AND head = ? AND sub_head = ?`,

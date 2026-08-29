@@ -93,9 +93,11 @@ type FakeBudgetLine = {
 };
 type FakeCostCentre = { id: string; cost_centre_code: string; cost_centre_name: string; branch_id: string; active_status: number };
 
+// funding_cost_centre_id sits beside cost_centre_id from migration 1630: WHO INCURRED the
+// spend and WHOSE BUDGET PAID it are separate facts now, so this fixture mirrors that order.
 const INSERT_COLUMNS = [
   "id", "grn_request_id", "sequence_no", "budget_id", "budget_line_id", "branch_id",
-  "process_id", "cost_centre_id", "cost_class", "allocation_percentage",
+  "process_id", "cost_centre_id", "funding_cost_centre_id", "cost_class", "allocation_percentage",
   "quantity", "unit", "unit_rate", "tax_treatment", "gst_rate", "gst_type",
   "recoverable_tax_pct", "amount_without_tax", "tax_amount", "cgst_amount",
   "sgst_amount", "igst_amount", "amount_with_tax", "recoverable_tax_amount",
@@ -155,8 +157,12 @@ function makeState(opts: {
       }], []];
     }
 
-    // getHeadSubHeadCoverage's lines query — distinctive via the UPPER(TRIM(l.head)) filter
-    if (s.includes("UPPER(TRIM(l.head))")) {
+    // getHeadSubHeadCoverage's lines query. Matched on the derived headroom column rather than
+    // on the head filter's exact text: that filter now resolves the LINE's head through
+    // finance_expense_head_master (a budget line may store head_code where the GRN carries
+    // head_name), and a matcher keyed to the old literal silently stopped matching, so the mock
+    // returned nothing and every headroom test failed as NO_BUDGET_FOR_HEAD.
+    if (s.includes("FROM finance_budget_line l") && s.includes("available_gross_amount")) {
       const [headerId, head, subHead] = params;
       const matches = opts.budgetLines.filter((l) =>
         String(l.budget_id) === String(headerId)

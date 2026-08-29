@@ -108,10 +108,21 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
     // grn_cost_allocation, while the ordinary GRN keeps budget_line_id and the amount on
     // grn_request itself. Both are union'd, and the union is over allocation rows plus the
     // ordinary GRNs that have NO allocation rows, so a Smart GRN is never counted twice.
+    //
+    // 2026-08-29 FIX: both legs read pnl_cost_amount, not amount_without_tax. They are equal
+    // only when GST is 100% recoverable; on any line with a lower recoverable_tax_pct (e.g. an
+    // exempt/non_gst budget line, which defaults to 0%) amount_without_tax excludes the
+    // non-recoverable tax slice that IS a real P&L expense, understating indirect cost by
+    // exactly that amount. pnl_cost_amount is what calculateBudgetLine() computes for precisely
+    // this reason (baseAmount + taxAmount - recoverableTaxAmount) and is what every other GRN
+    // P&L consumer (vw_process_pnl_grn_allocation, branch-budget.service.ts's own GRN
+    // drill-through) already reads. No live row currently has the two differ — confirmed against
+    // production on 2026-08-29 — so this changes no number today; it stops the two tabs
+    // (P&L Statement here vs the Process Matrix's view) silently disagreeing the day one does.
     `SELECT branch_id, process_id, SUM(amount) AS amount FROM (
        SELECT COALESCE(ccm.branch_id, g.branch_id) AS branch_id,
               COALESCE(a.process_id, ${PROCESS_FROM_EMPLOYEES}) AS process_id,
-              a.amount_without_tax AS amount
+              a.pnl_cost_amount AS amount
          FROM grn_cost_allocation a
          JOIN grn_request g ON g.id = a.grn_request_id
          LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
@@ -122,7 +133,7 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
 
        SELECT COALESCE(ccm.branch_id, g.branch_id) AS branch_id,
               COALESCE(g.process_id, ${PROCESS_FROM_EMPLOYEES}) AS process_id,
-              g.amount_without_tax AS amount
+              g.pnl_cost_amount AS amount
          FROM grn_request g
          LEFT JOIN cost_centre_master ccm ON ccm.id = g.cost_centre_id
         WHERE g.budget_line_id IS NOT NULL
@@ -136,21 +147,36 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
   const actuals = accumulate(rows);
 
   /*
-   * The mirrored GRN from db_bill.
+   * The mirrored GRN from db_bill — fills in GRNs the app has NOT captured yet.
    *
-   * The two sources above are mas_hrms's own GRN tables, and in production they are empty:
-   * grn_cost_allocation has 0 consumed rows and grn_request has 1. Meanwhile db_bill — the
-   * system finance actually raises GRNs in — held 417 approved entries for June alone. The
-   * P&L was reporting near-zero indirect cost against real spend of tens of lakhs a month,
-   * and looked correct while doing it because zero is a plausible-looking number.
+   * RESOLVED 2026-08-29. This comment originally justified the UNION on "the two sources above
+   * are mas_hrms's own GRN tables, and in production they are empty: grn_cost_allocation has 0
+   * consumed rows and grn_request has 1." That stopped being true well before this was caught:
+   * confirmed live, grn_cost_allocation now holds real volume concentrated in exactly the months
+   * (2026-04 through 2026-08) this mirror also covers, and matching by GRN NUMBER (grn_no here,
+   * grn_number on the app side — the same physical voucher's own identifier, not a fuzzy
+   * vendor/amount/date guess) found 1,452 of 1,495 consumed GRNs — 97% — already present in this
+   * mirror. Every one of those was being counted TWICE: once from grn_cost_allocation above, once
+   * again from here, with nothing between the two blocks stopping it. Measured overstatement on
+   * the P&L Statement tab for Apr-Aug 2026: Rs 3,37,46,372.
+   *
+   * The NOT EXISTS below closes it, mirroring the guard the block above already has for its own
+   * second leg (ordinary GRNs the app never wrote an allocation row for). Direction of the fix:
+   * the APP'S OWN consumed allocation wins whenever a GRN number appears in both places — it
+   * carries pnl_cost_amount (proper non-recoverable-GST treatment, cost-centre attribution),
+   * which this mirror's flat l.amount does not. The mirror now only ever contributes a GRN the
+   * app has not captured, which is its original, intended job — filling the gap that was empty in
+   * production when this block was first written, not re-counting what the app has since taken
+   * over.
    *
    * Read at LINE level: grn_entry_line_snapshot carries the cost centre, which the header
    * does not, so this is the only path that can attribute spend below branch.
    *
    * Uses l.amount (net-of-tax) — NOT l.total. l.total = l.amount + l.tax (GST). GST on
    * business purchases is ITC-recoverable and is not a P&L expense; including it overstates
-   * IDC by the GST rate (~18%) on each GRN line. grn_request above uses amount_without_tax
-   * for the same reason. See column definitions in migration 1070.
+   * IDC by the GST rate (~18%) on each GRN line. grn_request above uses pnl_cost_amount for the
+   * same reason (fixed 2026-08-29 from amount_without_tax — see that block's own comment for why
+   * the two differ on a partially-recoverable line). See column definitions in migration 1070.
    *
    * Guarded by tableExists so an installation without the mirror keeps its previous
    * behaviour rather than throwing.
@@ -172,6 +198,13 @@ export async function getIndirectCostActuals(periodCode: string): Promise<Actual
                  = l.cost_centre_code COLLATE utf8mb4_unicode_ci
          LEFT JOIN ${PROCESS_BY_COST_CENTRE} pc ON pc.cost_centre_id = ccm.id
         WHERE g.period_code = ? AND g.is_rejected = 0 AND ${OWN_COMPANY_SQL}
+          AND NOT EXISTS (
+                SELECT 1
+                  FROM grn_request gr
+                  JOIN grn_cost_allocation a ON a.grn_request_id = gr.id
+                 WHERE gr.grn_number = g.grn_no
+                   AND a.lifecycle_status = 'consumed'
+              )
         GROUP BY ccm.branch_id, ccm.id, pc.process_id`,
       [periodCode]
     );

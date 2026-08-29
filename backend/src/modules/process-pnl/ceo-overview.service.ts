@@ -409,34 +409,85 @@ async function peopleByBranch(period: string, s: CeoScope): Promise<Map<string, 
   return out;
 }
 
-/** GRN spend by branch. Rejections excluded via RejectDate, never the Reject flag — that flag is
- *  1 on 85,255 of 85,463 source rows and means nothing. */
+/**
+ * GRN spend by branch. Rejections excluded via RejectDate, never the Reject flag — that flag is
+ * 1 on 85,255 of 85,463 source rows and means nothing.
+ *
+ * RESOLVED 2026-08-29 — was mirror-only, is now app-side-first. This used to read ONLY the
+ * db_bill mirror (grn_entry_line_snapshot). That was the whole GRN story when this was written:
+ * the app's own grn_cost_allocation had 0 consumed rows in production. It does not any more —
+ * confirmed live, real volume concentrated in exactly the months the mirror also covers — and
+ * matching by GRN NUMBER (the same physical voucher's own identifier) found 97% of the app's
+ * consumed GRNs already present in the mirror under the same number. The exact double-count
+ * already found and fixed on the P&L Statement tab (pnl-actuals.service.ts) applies here too, on
+ * the CEO's own headline spend figure.
+ *
+ * Same resolution as that fix, for the same reason: the app's own consumed allocation is the
+ * PRIMARY source — it carries pnl_cost_amount (proper non-recoverable-GST treatment) which the
+ * mirror's flat l.amount does not — and the mirror UNION only ever contributes a GRN number the
+ * app has not captured, via the same NOT EXISTS guard.
+ */
 async function spendByBranch(period: string, s: CeoScope): Promise<Map<string, number>> {
   const out = new Map<string, number>();
-  if (!(await tableExists("grn_entry_line_snapshot"))) return out;
-  const where: string[] = ["g.period_code = ?", "g.is_rejected = 0", OWN_COMPANY_SQL];
-  const params: unknown[] = [period];
+
+  const appWhere: string[] = ["a.lifecycle_status = 'consumed'", "DATE_FORMAT(gr.bill_date, '%Y-%m') = ?"];
+  const appParams: unknown[] = [period];
   if (s.costCentreIds.length) {
-    where.push(`ccm.id IN (${marks(s.costCentreIds)})`);
-    params.push(...s.costCentreIds);
+    appWhere.push(`ccm.id IN (${marks(s.costCentreIds)})`);
+    appParams.push(...s.costCentreIds);
   }
   if (s.processIds.length) {
-    where.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
-                            WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
-    params.push(...s.processIds);
+    appWhere.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                               WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
+    appParams.push(...s.processIds);
   }
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT ccm.branch_id AS branch_id, SUM(l.amount) AS amount
-       FROM grn_entry_line_snapshot l
-       JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
-       LEFT JOIN cost_centre_master ccm
-              ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
-               = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-      WHERE ${where.join(" AND ")}
+  const [appRows] = await db.execute<RowDataPacket[]>(
+    `SELECT ccm.branch_id AS branch_id, SUM(a.pnl_cost_amount) AS amount
+       FROM grn_cost_allocation a
+       JOIN grn_request gr ON gr.id = a.grn_request_id
+       LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
+      WHERE ${appWhere.join(" AND ")}
       GROUP BY ccm.branch_id`,
-    params,
+    appParams,
   );
-  for (const r of rows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
+  for (const r of appRows) out.set(r.branch_id ? String(r.branch_id) : "", n(r.amount));
+
+  if (await tableExists("grn_entry_line_snapshot")) {
+    const where: string[] = ["g.period_code = ?", "g.is_rejected = 0", OWN_COMPANY_SQL];
+    const params: unknown[] = [period];
+    if (s.costCentreIds.length) {
+      where.push(`ccm.id IN (${marks(s.costCentreIds)})`);
+      params.push(...s.costCentreIds);
+    }
+    if (s.processIds.length) {
+      where.push(`ccm.id IN (SELECT DISTINCT e.cost_centre_id FROM employees e
+                              WHERE e.process_id IN (${marks(s.processIds)}) AND e.cost_centre_id IS NOT NULL)`);
+      params.push(...s.processIds);
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ccm.branch_id AS branch_id, SUM(l.amount) AS amount
+         FROM grn_entry_line_snapshot l
+         JOIN grn_entry_snapshot g ON g.bill_source_id = l.grn_source_id
+         LEFT JOIN cost_centre_master ccm
+                ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
+                 = l.cost_centre_code COLLATE utf8mb4_unicode_ci
+        WHERE ${where.join(" AND ")}
+          AND NOT EXISTS (
+                SELECT 1
+                  FROM grn_request gr2
+                  JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id
+                 WHERE gr2.grn_number = g.grn_no
+                   AND a2.lifecycle_status = 'consumed'
+              )
+        GROUP BY ccm.branch_id`,
+      params,
+    );
+    for (const r of rows) {
+      const key = r.branch_id ? String(r.branch_id) : "";
+      out.set(key, (out.get(key) ?? 0) + n(r.amount));
+    }
+  }
+
   return out;
 }
 
@@ -992,6 +1043,22 @@ async function buildFocus(
     // not a standalone P&L, and saying so is the difference between a usable figure and a wrong one.
     const branchId = codes[0]?.branch_id ? String(codes[0].branch_id) : null;
     if (branchId && totals.indirectCost > 0 && hasGrnSnap) {
+      // `totals.indirectCost` (the figure this branchTotal is compared against, two lines below)
+      // is built from spendByBranch(), fixed 2026-08-29 to be app-side-first with the mirror only
+      // filling gaps. This comparison query was still mirror-only — comparing an already
+      // de-duplicated figure against a doubled one would have thrown the 95% "is this really the
+      // whole branch's overhead" heuristic off by roughly 2x on any branch with real Smart GRN
+      // activity. Same fix, same reason: see spendByBranch()'s own banner.
+      const [appGrn] = await db.execute<RowDataPacket[]>(
+        `SELECT COALESCE(SUM(a.pnl_cost_amount), 0) AS a
+           FROM grn_cost_allocation a
+           JOIN grn_request gr ON gr.id = a.grn_request_id
+           LEFT JOIN cost_centre_master ccm ON ccm.id = a.cost_centre_id
+          WHERE a.lifecycle_status = 'consumed'
+            AND DATE_FORMAT(gr.bill_date, '%Y-%m') = ?
+            AND ccm.branch_id = ?`,
+        [period, branchId],
+      );
       const [branchGrn] = await db.execute<RowDataPacket[]>(
         `SELECT COALESCE(SUM(l.amount), 0) AS a
            FROM grn_entry_line_snapshot l
@@ -999,10 +1066,17 @@ async function buildFocus(
            LEFT JOIN cost_centre_master ccm
                   ON ccm.cost_centre_code COLLATE utf8mb4_unicode_ci
                    = l.cost_centre_code COLLATE utf8mb4_unicode_ci
-          WHERE g.period_code = ? AND g.is_rejected = 0 AND ccm.branch_id = ?`,
+          WHERE g.period_code = ? AND g.is_rejected = 0 AND ccm.branch_id = ?
+            AND NOT EXISTS (
+                  SELECT 1
+                    FROM grn_request gr2
+                    JOIN grn_cost_allocation a2 ON a2.grn_request_id = gr2.id
+                   WHERE gr2.grn_number = g.grn_no
+                     AND a2.lifecycle_status = 'consumed'
+                )`,
         [period, branchId],
       );
-      const branchTotal = n(branchGrn[0]?.a);
+      const branchTotal = n(appGrn[0]?.a) + n(branchGrn[0]?.a);
       if (branchTotal > 0 && totals.indirectCost / branchTotal >= 0.95) {
         notes.push(
           `The indirect figure is effectively the whole branch's overhead (${lakh(branchTotal)}) `

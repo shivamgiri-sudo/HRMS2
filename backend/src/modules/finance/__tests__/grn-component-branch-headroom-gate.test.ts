@@ -80,9 +80,11 @@ type FakeBudgetLine = {
 };
 type FakeCostCentre = { id: string; cost_centre_code: string; cost_centre_name: string; branch_id: string; active_status: number };
 
+// funding_cost_centre_id sits beside cost_centre_id from migration 1630: WHO INCURRED the
+// spend and WHOSE BUDGET PAID it are separate facts now, so this fixture mirrors that order.
 const ALLOCATION_INSERT_COLUMNS = [
   "id", "grn_request_id", "sequence_no", "budget_id", "budget_line_id", "invoice_component_id",
-  "branch_id", "process_id", "cost_centre_id", "cost_class", "allocation_percentage",
+  "branch_id", "process_id", "cost_centre_id", "funding_cost_centre_id", "cost_class", "allocation_percentage",
   "quantity", "unit", "unit_rate", "tax_treatment", "gst_rate", "gst_type",
   "recoverable_tax_pct", "amount_without_tax", "tax_amount", "cgst_amount",
   "sgst_amount", "igst_amount", "amount_with_tax", "recoverable_tax_amount",
@@ -147,8 +149,12 @@ function makeState(opts: {
       }], []];
     }
 
-    // getHeadSubHeadCoverage's lines query — distinctive via the UPPER(TRIM(l.head)) filter.
-    if (s.includes("UPPER(TRIM(l.head))")) {
+    // getHeadSubHeadCoverage's lines query. Matched on the derived headroom column rather than
+    // on the head filter's exact text: that filter now resolves the LINE's head through
+    // finance_expense_head_master (a budget line may store head_code where the GRN carries
+    // head_name), and a matcher keyed to the old literal silently stopped matching, so the mock
+    // returned nothing and every headroom test failed as NO_BUDGET_FOR_HEAD.
+    if (s.includes("FROM finance_budget_line l") && s.includes("available_gross_amount")) {
       const [headerId, head, subHead] = params;
       const matches = opts.budgetLines.filter((l) =>
         String(l.budget_id) === String(headerId)
@@ -647,9 +653,98 @@ describe("saveComponentAllocations — branch-wide headroom gate (Group C step 2
     expect(rows).toHaveLength(1);
     expect(rows[0].budget_line_id).toBe("line-T");
     expect(rows[0].budget_id).toBe("hdr-1");
-    expect(rows[0].is_unbudgeted).toBe(1);
+    // is_unbudgeted means ONE thing now: no budget line funded this row. The raiser picked no
+    // line here, but the branch aggregate funded it in full from line-T — so this is BUDGETED
+    // spend and saying otherwise reported fully funded money as off-budget.
+    expect(rows[0].is_unbudgeted).toBe(0);
+    // Whose budget paid is its own column (migration 1630). line-T is a branch-common pooled
+    // line, so there is no owning cost centre — NULL, not the raiser's, and not a guess.
+    expect(rows[0].funding_cost_centre_id ?? null).toBeNull();
     // Cost-centre attribution is the raiser's own, not the funding line's (line-T is pooled/null).
     expect(rows[0].cost_centre_id).toBe("cc-X");
     expect(Number(rows[0].amount_with_tax)).toBeCloseTo(1000, 6);
+  });
+});
+
+
+/*
+ * A non-taxable budget line is weighed against the invoice's TAXABLE value, not its total.
+ *
+ * This is the path where the two can genuinely diverge. Invoice GST rates are ground truth here,
+ * so a cell's gross carries the real tax off the vendor's invoice — while a budget line planned
+ * as `non_gst` or `exempt` holds a figure that never contained any tax. reserve() has charged
+ * such lines the taxable value since consumptionBasis() was written; the headroom gate weighed
+ * the tax-inclusive total, so it refused at SAVE TIME invoices that Branch Head approval would
+ * then have accepted.
+ *
+ * Reported live: "I have budget of 21000 and I am raising a vendor GRN of 21000 (GST + non-GST),
+ * it says budget not available — the non-GST amount is less than 21000."
+ */
+describe("tax basis: a non-taxable line carries the taxable value, not the invoice total", () => {
+  const nonTaxableLine = (): FakeBudgetLine => ({
+    id: "line-N", budget_id: "hdr-1", head: "Office Supplies", sub_head: "Stationery",
+    item_name: "Stationery", cost_centre_id: "cc-X", cost_centre_name: "CC X", process_id: null,
+    unit: "amount", unit_rate: 1,
+    // Planned WITHOUT tax: this Rs 21,000 is a taxable figure, not a tax-inclusive one.
+    tax_treatment: "non_gst", gst_rate: 0, gst_type: "none",
+    recoverable_tax_pct: 0, justification: "Approved", period_code: "2026-08",
+    quantity: 21000, reserved_quantity: 0, consumed_quantity: 0,
+    gross_amount: 21000, reserved_amount: 0, consumed_amount: 0,
+  });
+
+  const setup = () => {
+    stateRef.current = makeState({
+      grn: baseGrn(),
+      budgetHeaders: [{ id: "hdr-1", branch_id: "br-1", period_code: "2026-08", status: "active" }],
+      budgetLines: [nonTaxableLine()],
+      costCentres: [{ id: "cc-X", cost_centre_code: "CCX", cost_centre_name: "CC X", branch_id: "br-1", active_status: 1 }],
+    });
+  };
+
+  it("accepts an invoice whose taxable value fits even though its GST-inclusive total does not", async () => {
+    setup();
+    const { grnSmartService } = await import("../grn-smart.service.js");
+
+    // Rs 20,000 taxable + 18% = Rs 23,600 booked. The taxable value fits the Rs 21,000 plan and is
+    // the only part that will ever be charged to it; the total does not, and weighing THAT is
+    // what refused the invoice.
+    await grnSmartService.saveComponentAllocations(
+      "grn-1",
+      {
+        declaredInvoiceTotal: 23600,
+        components: [{ amountWithoutTax: 20000, gstRate: 18 }],
+        costCentreSplits: [{ budgetLineId: "line-N", costCentreId: "cc-X", percentage: 100 }],
+      },
+      "user-1",
+      "branch_head"
+    );
+
+    const rows = stateRef.current.insertedAllocations;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].budget_line_id).toBe("line-N");
+    // The invoice's own GST survives untouched — the basis rule decides what the BUDGET is
+    // charged, and must not rewrite what the invoice says.
+    expect(Number(rows[0].amount_without_tax)).toBeCloseTo(20000, 2);
+    expect(Number(rows[0].amount_with_tax)).toBeCloseTo(23600, 2);
+  });
+
+  it("still refuses when the TAXABLE value itself exceeds the plan", async () => {
+    setup();
+    const { grnSmartService } = await import("../grn-smart.service.js");
+
+    // Rs 25,000 taxable against a Rs 21,000 plan. The basis rule must not turn a real overspend
+    // into an accepted one — only the tax is excused, never the taxable value.
+    await expect(
+      grnSmartService.saveComponentAllocations(
+        "grn-1",
+        {
+          declaredInvoiceTotal: 29500,
+          components: [{ amountWithoutTax: 25000, gstRate: 18 }],
+          costCentreSplits: [{ budgetLineId: "line-N", costCentreId: "cc-X", percentage: 100 }],
+        },
+        "user-1",
+        "branch_head"
+      )
+    ).rejects.toMatchObject({ code: "HEADROOM_EXCEEDED", statusCode: 409 });
   });
 });
