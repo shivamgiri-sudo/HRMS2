@@ -117,10 +117,12 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
 
   await db.execute(
     `INSERT INTO salary_component_assignments (
-       id, candidate_id, effective_date, salary_slab, package_id, basic, hra, conveyance,
-       special_allowance, gross, pf_applicable, esi_applicable, employer_pf,
+       id, candidate_id, effective_date, salary_slab, package_id,
+       basic, hra, conveyance, special_allowance,
+       bonus, portfolio, medical_allowance, lta, other_allowance, pli,
+       gross, pf_applicable, esi_applicable, employer_pf,
        employer_esi, ctc, net_estimate, assigned_by, assigned_at, approval_reference, status
-     ) VALUES (UUID(),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),?,'active')`,
+     ) VALUES (UUID(),?,?,?,?,  ?,?,?,?,  ?,?,?,?,?,?,  ?,?,?,?,?,  ?,?,?,NOW(),?,'active')`,
     [
       candidateId,
       f.effective_date,
@@ -130,6 +132,12 @@ router.post('/:candidateId', requireAuth, requireWriteAccess, requireRole('payro
       f.hra != null ? Number(f.hra) : null,
       f.conveyance != null ? Number(f.conveyance) : null,
       f.special_allowance != null ? Number(f.special_allowance) : null,
+      f.bonus != null ? Number(f.bonus) : 0,
+      f.portfolio != null ? Number(f.portfolio) : 0,
+      f.medical != null ? Number(f.medical) : 0,
+      f.lta != null ? Number(f.lta) : 0,
+      f.other_allowance != null ? Number(f.other_allowance) : 0,
+      f.pli != null ? Number(f.pli) : 0,
       f.gross != null ? Number(f.gross) : null,
       f.pf_applicable ? 1 : 0,
       f.esi_applicable ? 1 : 0,

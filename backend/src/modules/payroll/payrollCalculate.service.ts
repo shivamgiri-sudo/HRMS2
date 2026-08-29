@@ -1144,7 +1144,8 @@ export async function calculatePayrollRunScoped(
     // fall back to salary_structure_component via structure_id.
     // Use conn so reads are within the transaction snapshot.
     const [scaRows] = await conn.execute<RowDataPacket[]>(
-      `SELECT basic, hra, conveyance, special_allowance, gross
+      `SELECT basic, hra, conveyance, special_allowance,
+              bonus, portfolio, medical_allowance, lta, other_allowance, pli, gross
          FROM salary_component_assignments
         WHERE employee_id = ? AND status = 'active'
         ORDER BY effective_date DESC LIMIT 1`,
@@ -1188,14 +1189,19 @@ export async function calculatePayrollRunScoped(
       // scaRow fields onto that dictionary left those leftover template values
       // in place, so they were written as extra payslip earning components with
       // no corresponding contribution to fixedGross/gross_salary (confirmed:
-      // MAS00175, Portfolio Allowance ₹11,612.90 double-counted). The scaRow
-      // path only ever knows about basic/hra/conveyance/special_allowance —
-      // reset rather than overlay, so nothing the template alone defined can
-      // survive into this employee's payslip.
+      // MAS00175, Portfolio Allowance ₹11,612.90 double-counted). Reset rather
+      // than overlay, so nothing the template alone defined can survive into
+      // this employee's payslip.
       for (const key of Object.keys(compAmounts)) delete compAmounts[key];
-      compAmounts.BASIC  = fixedBasic;
-      compAmounts.HRA    = fixedHRA;
-      compAmounts.CONV   = Number(scaRow.conveyance) || 0;
+      compAmounts.BASIC        = fixedBasic;
+      compAmounts.HRA          = fixedHRA;
+      compAmounts.CONV         = Number(scaRow.conveyance)        || 0;
+      compAmounts.BONUS        = Number(scaRow.bonus)             || 0;
+      compAmounts.PORTFOLIO    = Number(scaRow.portfolio)         || 0;
+      compAmounts.MEDICAL      = Number(scaRow.medical_allowance) || 0;
+      compAmounts.LTA          = Number(scaRow.lta)               || 0;
+      compAmounts.OTHER_ALLOW  = Number(scaRow.other_allowance)   || 0;
+      compAmounts.PLI          = Number(scaRow.pli)               || 0;
       // SPECIAL is deliberately NOT set from scaRow.special_allowance here —
       // that stored value is static and can drift from the residual
       // calculateNetSalary actually computes and gross_salary is built from

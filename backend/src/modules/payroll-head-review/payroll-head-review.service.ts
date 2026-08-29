@@ -726,14 +726,19 @@ async function writeComponentAssignment(
 ) {
   await db.execute(
     `INSERT INTO salary_component_assignments
-       (id, employee_id, effective_date, package_id, basic, hra, conveyance,
-        special_allowance, gross, pf_applicable, esi_applicable, employer_pf,
+       (id, employee_id, effective_date, package_id,
+        basic, hra, conveyance, special_allowance,
+        bonus, portfolio, medical_allowance, lta, other_allowance, pli,
+        gross, pf_applicable, esi_applicable, employer_pf,
         employer_esi, pf_employee, esic_employee, ctc, net_estimate, assigned_by,
         assigned_at, approval_reference, status)
-     VALUES (UUID(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
+     VALUES (UUID(), ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
     [
       employeeId, effectiveDate, pkg.id,
-      pkg.basic, pkg.hra, pkg.conveyance, pkg.special_allowance, pkg.gross,
+      pkg.basic, pkg.hra, pkg.conveyance, pkg.special_allowance ?? 0,
+      pkg.bonus ?? 0, pkg.portfolio ?? 0, pkg.medical ?? 0, pkg.lta ?? 0,
+      pkg.other_allowance ?? 0, pkg.pli ?? 0,
+      pkg.gross,
       Number(pkg.epf_employee) > 0 ? 1 : 0, Number(pkg.esic_employee) > 0 ? 1 : 0,
       pkg.epf_employer, pkg.esic_employer, pkg.epf_employee, pkg.esic_employee,
       pkg.ctc, pkg.net_in_hand,
@@ -845,14 +850,18 @@ export async function approveOfferedPackage(employeeId: string, effectiveDate: s
   // Write directly to salary_component_assignments from offer values (no catalog package)
   await db.execute(
     `INSERT INTO salary_component_assignments
-       (id, employee_id, effective_date, package_id, basic, hra, conveyance,
-        special_allowance, gross, pf_applicable, esi_applicable, employer_pf,
+       (id, employee_id, effective_date, package_id,
+        basic, hra, conveyance, special_allowance,
+        bonus, portfolio, medical_allowance, lta, other_allowance, pli,
+        gross, pf_applicable, esi_applicable, employer_pf,
         employer_esi, pf_employee, esic_employee, ctc, net_estimate, assigned_by,
         assigned_at, approval_reference, status)
-     VALUES (UUID(), ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
+     VALUES (UUID(), ?, ?, NULL,  ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?, ?, ?, ?, ?, NOW(), ?, 'active')`,
     [
       employeeId, effectiveDate,
       offer.basic ?? 0, offer.hra ?? 0, offer.conveyance ?? 0, offer.special_allowance ?? 0,
+      offer.bonus ?? 0, offer.portfolio ?? 0, offer.medical ?? 0, offer.lta ?? 0,
+      offer.other_allowance ?? 0, offer.pli ?? 0,
       offer.gross ?? 0,
       Number(offer.pf_employee) > 0 ? 1 : 0, Number(offer.esic_employee) > 0 ? 1 : 0,
       offer.pf_employer ?? 0, offer.esic_employer ?? 0, offer.pf_employee ?? 0, offer.esic_employee ?? 0,
