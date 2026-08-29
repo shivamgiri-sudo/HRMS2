@@ -20,8 +20,8 @@
  *   will skip rows that were already assigned.
  *
  * USAGE
- *   npx ts-node backend/scripts/fix-grn-null-numbers.ts           # dry-run (default)
- *   npx ts-node backend/scripts/fix-grn-null-numbers.ts --apply   # write
+ *   cd backend && npx ts-node scripts/fix-grn-null-numbers.ts           # dry-run (default)
+ *   cd backend && npx ts-node scripts/fix-grn-null-numbers.ts --apply   # write
  */
 
 import mysql, { type PoolConnection, type RowDataPacket } from 'mysql2/promise';
@@ -180,6 +180,7 @@ async function main() {
           });
           console.log(`  GRN id=${row.id}  status=${row.status}  period=${periodCode}  → Would assign: ${preview}`);
         }
+        console.log('\n (dry-run: numbers shown are the SAME for all rows — in --apply each transaction increments the counter and numbers will be sequential)');
         console.log('\n DRY RUN complete — nothing written.');
         console.log(' Re-run with --apply to execute.\n');
       } else {
