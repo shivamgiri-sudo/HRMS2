@@ -390,3 +390,54 @@ Task 2: complete (landed inside sweep commit 6566e77e — implementer killed by 
   but admin's WFM_LIVE_TRACKER grant is inactive and hr has none -> API access with no page = Constraint 3 gap.
   Pre-existing, not introduced. Narrowing would break ReferenceRoleDashboard.tsx:294 which calls /sync-status. Recommend leave.
   OPEN (Minor): GET /billing-config/:id still finance_head/super_admin/admin — wfm/hr can list but not drill down.
+
+
+---
+
+# Attendance Source Rule Foundation (Phase 1 of 11) — SDD Progress Ledger
+# Started: 2026-08-30
+# Plan: docs/superpowers/plans/2026-08-30-attendance-source-rules-foundation.md
+# Branch start commit: fe5966ea83e67aa1504e6fa1c7d471c3bf630783
+# Worktree: .claude/worktrees/attendance-source-rule-foundation (branch worktree-attendance-source-rule-foundation)
+# Artifact prefix: asrf- (this feature's dir is shared by many unrelated features; generic task-N-* names collide)
+
+## Tasks
+Task 1: complete (commit 70363131..c00a21c4, review clean — spec OK, quality Approved)
+Task 2: complete (commits c00a21c4..17148aa6, base c00a21c4 — 1 fix round: 2 Important test-coverage gaps + 1 Minor comment, all verified fixed. Review clean 8/8)
+Task 3: complete (commits 17148aa6..59d97282, base 17148aa6 — 2 fix rounds. Round 1 (Critical): property tests did not guard tie-break logic at all, 5/6 hand-written mutants of priority-order+tail survived undetected, incl. deleting the entire priority step; also fixed duplicate-id winner mislabeling (Map keyed by id string -> by object reference) and unfrozen shared DIMENSION_PRIORITY_ORDER constant. Round 2 (Critical+Important): M5 tail id-tier still survived at numRuns:200 (reachable in only 0.03% of generated cases) and M1 boundary detection was seed-dependent (flaky) -- both fixed with deterministic hand-traced example tests, plus decoupled test oracle from SUT constant. Algorithm logic itself was correct throughout all 3 rounds (verified via 20k+30k-case differential fuzzing against independent oracles) -- every fix was bookkeeping/test-quality, never a winner-selection behavior change. Final: 14/14 tests, review clean, no further round warranted.)
+Task 4: complete (commits 59d97282..944ff8eb, base 59d97282 — implementer correctly reported DONE_WITH_CONCERNS on a genuine plan-authoring bug: brief's vi.mock path was 2 levels (../../db/mysql.js), needed 3 (../../../) since test files nest inside __tests__/. Controller fixed the 1-line path directly, 2/2 pass, also pre-corrected the same bug in Task 5/6 briefs + plan doc before dispatch. Review clean, no findings.)
+Task 5: complete (commit 53d2b47e, base 03ff3ae8 — mirrors Task 4 pattern exactly, path already correct. Review clean, no findings.)
+Task 6: complete (commit f2c4b120, base 53d2b47e — review clean, 1 Minor accepted: queryCeiling() uses bare RowDataPacket[]+as any cast instead of a typed CeilingRow interface like the file's own loadActiveWindowedRules() convention; cosmetic, no behavioral effect, left for final review triage.)
+Task 7: complete (commit 5e737b18, base f2c4b120 — brief's anchor assumption (1632 present in manifest) was wrong, 1632 is deliberately unregistered pending-approval; implementer correctly inserted after the true last entry (1631_kpi_capture_submission.sql) and reported the deviation. Pre-existing manifest-guard failure (62 vs 61 duplicate-number count, caused by an unrelated pre-existing 1631 duplicate pair) independently confirmed by both reviewer and controller as predating this task by 1 commit. Review clean, 1 Minor accepted (report imprecise about lock.json diff scope, diff itself correct).)
+
+## ALL 7 TASKS COMPLETE — final whole-branch review next
+
+## Final whole-branch review (opus) — ready to merge, 1 Important owner-decision item, 3 Minor/Nit
+  VERDICT: ready to merge, no code fixes required.
+  IMPORTANT (needs owner decision, not a code defect): registering 1633-1635 in MIGRATION_MANIFEST means
+    they auto-execute at the next pm2 restart/deploy (this repo runs the manifest at boot) -- but each
+    migration's own header says "NOT YET EXECUTED...needs owner approval". This was a deliberate design
+    choice (design.md: schema-only + additive is safe to register now, the DANGEROUS part -- the rule set
+    going live -- is gated separately by the future Requirement 15 approval workflow) but CLAUDE.md's hard
+    stop on production migrations means only the user can bless this. Two options: (a) leave registered as-is
+    (low real risk: 7x CREATE TABLE IF NOT EXISTS, no ALTER/DML/reader), or (b) move to knownUnlisted like
+    1632, matching this repo's established "pending approval" idiom, until explicit go-ahead.
+  MINOR: 1635's header comment about a global (NULL,NULL) ceiling row is write-path-only and currently
+    unreadable by resolveDualReviewCeiling() (comment drifted vs actual 3-tier+default-100 design, which IS
+    what the plan specifies) -- 1-line comment fix, not urgent.
+  MINOR: Task 6's `as any` cast in queryCeiling() (logged, cosmetic, confirmed unnecessary but harmless).
+  NIT: resolver's createdAt comment says "ISO timestamp" but all 3 services feed MySQL space-separated
+    format (dateStrings:true confirmed set in db/mysql.ts, so lexicographic tail-break is safe either way).
+  Cross-task consistency: clean (tsc --strict 0 diagnostics across all 4 source files). SQL-vs-migration
+    column/ENUM agreement: clean. Duplication: 3 near-identical dimension-assembly loops flagged as
+    acceptable now, worth extracting when Phase 2 adds a 4th store. All 3 logged open items independently
+    re-verified non-blocking.
+  TEST RUN: 5 files / 28 tests, all green (composition: 8 contract + 14 resolver + 2 source-rule + 1 day-
+    threshold + 3 threshold-config -- exceeds the plan's original 16 estimate because of the 2 review-
+    round additions in Tasks 2 and 3).
+  SCOPE: exactly the 17 files the plan named, zero production dependency changes, zero engine wiring (by
+    design -- Phase 1 is schema+pure-functions only).
+  OUTSTANDING: canonical Desktop\HRMS2-latest copy of the plan doc still needs the same mock-path fix
+    applied to the worktree copy in 03ff3ae8 (cosmetic doc-sync, not code).
+
+## PHASE 1 COMPLETE — NOT MERGED to main, pending user decision on migration-registration question above
