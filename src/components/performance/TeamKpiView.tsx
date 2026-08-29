@@ -256,10 +256,10 @@ function DistributionBar({ dist, total }: { dist: Record<string, number>; total:
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 interface Props {
-  teamMembers: TeamMember[];
+  teamMembers?: TeamMember[];
 }
 
-export function TeamKpiView({ teamMembers }: Props) {
+export function TeamKpiView({ teamMembers = [] }: Props) {
   const [period, setPeriod] = useState<Period>("mtd");
   const [summary, setSummary] = useState<TeamSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -328,9 +328,9 @@ export function TeamKpiView({ teamMembers }: Props) {
     }
   }
 
-  // Get unique processes from team
+  // Get unique processes from the API summary (works with or without the teamMembers prop)
   const processes = Array.from(new Set(
-    teamMembers.map(m => m.process_name).filter(Boolean) as string[]
+    (summary?.members ?? []).map(m => m.process_name).filter(Boolean) as string[]
   )).sort();
 
   // Filter members
