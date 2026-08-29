@@ -204,6 +204,9 @@ export async function attendanceRegisterMonthly(
     if (doj) doj.setHours(0, 0, 0, 0);
 
     // Fill in cells that have no attendance record.
+    // Rule: blank only for pre-joining dates and future dates.
+    // Every other date with no record → A (absent).
+    // Week-off days come from actual attendance_daily_record rows (status = week_off).
     for (let d = 1; d <= daysInMonth; d++) {
       if (emp[`day_${d}`] !== undefined) continue; // already populated
 
@@ -212,10 +215,8 @@ export async function attendanceRegisterMonthly(
         emp[`day_${d}`] = ""; // before joining date → blank
       } else if (dayDate > todayTs) {
         emp[`day_${d}`] = ""; // future date → blank
-      } else if (dayDate.getDay() === 0) {
-        emp[`day_${d}`] = "W"; // Sunday with no record → week off
       } else {
-        emp[`day_${d}`] = "A"; // active working day, no record → absent
+        emp[`day_${d}`] = "A"; // no record for an active date → absent
       }
     }
 
