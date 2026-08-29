@@ -80,12 +80,31 @@ const WEEKOFF_SLABS = [
   { from: 24, to: 25, max: 4 },
 ] as const;
 
+function findSlabMaxWeekoffs(paidBase: number): number | undefined {
+  // See findSlabMaxWeekoffs in payroll/weekoff-eligibility.service.ts for the full explanation:
+  // slab boundaries are whole numbers but paidBase is fractional whenever the month has a
+  // half-day or on-duty day, so an exact-integer-range match leaves every boundary value
+  // (6.5, 11.5, 17.5, 23.5) unmatched -- and unmatched was being read as unlimited eligibility,
+  // not zero. Fixed the same way: a slab's upper bound is the next slab's from-field (exclusive),
+  // so the ranges are continuous. Only the last slab keeps its own to-field as a real ceiling.
+  for (let i = 0; i < WEEKOFF_SLABS.length; i++) {
+    const slab = WEEKOFF_SLABS[i];
+    const isLast = i === WEEKOFF_SLABS.length - 1;
+    if (isLast) {
+      if (paidBase >= slab.from && paidBase <= slab.to) return slab.max;
+    } else if (paidBase >= slab.from && paidBase < WEEKOFF_SLABS[i + 1].from) {
+      return slab.max;
+    }
+  }
+  return undefined;
+}
+
 function calcEligibleWeekoffs(paidBase: number, actualSundays: number, daysInMonth: number): number {
   const availableWorkingDays = daysInMonth - actualSundays;
   if (paidBase >= availableWorkingDays) return actualSundays;
-  const slab = WEEKOFF_SLABS.find(s => paidBase >= s.from && paidBase <= s.to);
-  if (!slab) return actualSundays; // paidBase > 25 → full eligibility
-  return Math.min(slab.max, actualSundays);
+  const slabMax = findSlabMaxWeekoffs(paidBase);
+  if (slabMax === undefined) return actualSundays; // paidBase > 25 -> full eligibility
+  return Math.min(slabMax, actualSundays);
 }
 
 export async function attendanceRegisterMonthly(

@@ -1,4 +1,4 @@
-import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
+﻿import { getPolicyValue } from "../policy-engine/policy-engine.cache.js";
 
 // ─── Slab helper ──────────────────────────────────────────────────────────────
 
@@ -12,10 +12,40 @@ async function loadWeekoffSlabs(): Promise<Array<{ from: number; to: number; max
 
 export async function getSlabMaxWeekoffs(paidBase: number): Promise<number> {
   const slabs = await loadWeekoffSlabs();
-  for (const slab of slabs) {
-    if (paidBase >= slab.from && paidBase <= slab.to) return slab.max_weekoffs;
+  return findSlabMaxWeekoffs(paidBase, slabs) ?? Infinity;
+}
+
+/**
+ * Slab lookup used by getSlabMaxWeekoffs.
+ *
+ * Slab boundaries (from/to) are whole numbers, but paidBase is fractional the moment the
+ * month has even one half-day or on-duty day (present + halfDay*0.5 + onDuty). The previous
+ * version matched a slab with `paidBase >= slab.from && paidBase <= slab.to`, which is an
+ * exact-integer-range test: a paidBase of exactly 23.5 satisfies neither the 18-23 slab (fails
+ * <= 23) nor the 24-25 slab (fails >= 24), so no slab matched. Both callers treat "no slab
+ * matched" as full/unlimited eligibility, so every fractional value sitting on a slab boundary
+ * (6.5, 11.5, 17.5, 23.5) was silently granted MORE week-offs than the slab table intends,
+ * not fewer -- the gap is a leak, not a cap.
+ *
+ * Fixed by treating the boundary between two adjacent slabs as continuous: a slab's effective
+ * upper bound is the next slab's `from` (exclusive), not its own `to`. Only the final slab keeps
+ * its own `to` as a real ceiling, since paidBase values above it are intentionally uncapped
+ * (full eligibility) per the original slab table's design.
+ */
+export function findSlabMaxWeekoffs(
+  paidBase: number,
+  slabs: Array<{ from: number; to: number; max_weekoffs: number }>
+): number | undefined {
+  for (let i = 0; i < slabs.length; i++) {
+    const slab = slabs[i];
+    const isLast = i === slabs.length - 1;
+    if (isLast) {
+      if (paidBase >= slab.from && paidBase <= slab.to) return slab.max_weekoffs;
+    } else if (paidBase >= slab.from && paidBase < slabs[i + 1].from) {
+      return slab.max_weekoffs;
+    }
   }
-  return Infinity;
+  return undefined;
 }
 
 // ─── Last day of month ────────────────────────────────────────────────────────
