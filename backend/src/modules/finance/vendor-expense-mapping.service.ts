@@ -261,23 +261,26 @@ export const vendorExpenseMappingService = {
 
     const selectable = rows as ExpenseClassification[];
 
-    // When the answer is empty, say which side of the intersection emptied it. A bare empty
-    // dropdown is indistinguishable from a broken page, and the two causes need different
-    // fixes: raise a top-up, or map the vendor.
+    // Always return the full vendor mapping list alongside the budget-filtered selectable so the
+    // frontend can show all vendor-approved sub-heads (not just the ones with live budget headroom).
+    // Previously this was only populated when selectable was empty, which hid valid sub-heads
+    // whenever even one other sub-head happened to have an active budget line.
     let reason: string | undefined;
     let mappedButUnbudgeted: SelectableResult["mappedButUnbudgeted"] = [];
+    if (applyVendorFilter) {
+      const [mapped] = await db.execute<RowDataPacket[]>(
+        `SELECT h.head_name, COALESCE(s.sub_head_name, 'All sub-heads') AS sub_head_name
+           FROM vendor_expense_mapping m
+           JOIN finance_expense_head_master h ON h.head_code = m.head_code
+           LEFT JOIN finance_expense_sub_head_master s
+                  ON s.head_id = h.id AND s.sub_head_code = m.sub_head_code
+          WHERE m.vendor_id = ? AND m.active_status = 1`,
+        [vendorId],
+      );
+      mappedButUnbudgeted = mapped as SelectableResult["mappedButUnbudgeted"];
+    }
     if (selectable.length === 0) {
       if (applyVendorFilter) {
-        const [mapped] = await db.execute<RowDataPacket[]>(
-          `SELECT h.head_name, COALESCE(s.sub_head_name, 'All sub-heads') AS sub_head_name
-             FROM vendor_expense_mapping m
-             JOIN finance_expense_head_master h ON h.head_code = m.head_code
-             LEFT JOIN finance_expense_sub_head_master s
-                    ON s.head_id = h.id AND s.sub_head_code = m.sub_head_code
-            WHERE m.vendor_id = ? AND m.active_status = 1`,
-          [vendorId],
-        );
-        mappedButUnbudgeted = mapped as SelectableResult["mappedButUnbudgeted"];
         reason = mappedButUnbudgeted.length
           ? "This vendor is mapped to expense heads that have no approved budget with remaining balance for this branch and period."
           : "This vendor has no active expense mapping.";

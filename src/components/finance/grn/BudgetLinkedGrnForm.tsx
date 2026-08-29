@@ -969,16 +969,18 @@ export function BudgetLinkedGrnForm({
       : allExpenseMasterSubHeads.map((sh) => ({ value: sh, label: sh }));
 
     // Same vendor-mapping narrowing as vendorHeadOptions, scoped to the currently selected head.
+    // Merge budgeted (selectable) and unbudgeted (mappedButUnbudgeted) so ALL vendor-approved
+    // sub-heads appear regardless of whether a budget line exists for this period.
     if (expenseSelectable?.vendorHasMappings && form.head) {
       const mappedForHead = expenseSelectable.selectable.filter((row) => row.head_name === form.head);
-      if (mappedForHead.length > 0) {
-        const mappedSubHeads = new Set(mappedForHead.map((row) => row.sub_head_name));
-        const filtered = fullList.filter((option) => mappedSubHeads.has(option.value));
-        if (filtered.length) return filtered;
-      }
       const unbudgetedForHead = expenseSelectable.mappedButUnbudgeted.filter((row) => row.head_name === form.head);
-      if (unbudgetedForHead.length > 0) {
-        return unbudgetedForHead.map((row) => ({ value: row.sub_head_name, label: row.sub_head_name }));
+      const allMappedSubHeads = new Set([
+        ...mappedForHead.map((row) => row.sub_head_name),
+        ...unbudgetedForHead.map((row) => row.sub_head_name),
+      ]);
+      if (allMappedSubHeads.size > 0) {
+        const filtered = fullList.filter((option) => allMappedSubHeads.has(option.value));
+        if (filtered.length) return filtered;
       }
     }
     return fullList;
