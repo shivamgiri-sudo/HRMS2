@@ -404,7 +404,8 @@ export async function getLatestDigilockerFile(candidateId: string): Promise<Digi
 export async function syncEsignStatus(clientTransactionId: string): Promise<SyncOutcome> {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT id, checklist_id, employee_id, candidate_id, document_code,
-            client_transaction_id, provider_reference_id, status, signed_file_id
+            client_transaction_id, provider_reference_id, status, signed_file_id,
+            scope, kit_id
        FROM employee_document_esign_transaction
       WHERE provider = 'luckpay' AND client_transaction_id = ?
       LIMIT 1`,
@@ -435,6 +436,22 @@ export async function syncEsignStatus(clientTransactionId: string): Promise<Sync
       [status.state, JSON.stringify(status.sanitized), status.state === "failed" ? status.message : null, row.id],
     );
     return { state: status.state, providerStatus: status.providerStatus, clientTransactionId, transactionId, message: status.message, changed: true };
+  }
+
+  // Kit transactions cover several documents under one signature. Delegate to
+  // finalizeKitEsign which closes ALL member checklists, sets the kit row to
+  // 'signed', clears open_marker, and consumes the token by kit_id. Without
+  // this branch the reconciliation worker only updated the anchor checklist,
+  // leaving the kit perpetually open and reminders firing indefinitely.
+  if (String(row.scope ?? "document") === "kit" && row.kit_id) {
+    const { finalizeKitEsign } = await import("../../employees/joiningKitDispatch.service.js");
+    await finalizeKitEsign({
+      kitId: String(row.kit_id),
+      transactionId: String(row.id),
+      clientTransactionId: clientTransactionId,
+      providerReferenceId: transactionId,
+    });
+    return { state: "completed", providerStatus: status.providerStatus, clientTransactionId, transactionId, changed: true };
   }
 
   const storedFiles: string[] = [];
