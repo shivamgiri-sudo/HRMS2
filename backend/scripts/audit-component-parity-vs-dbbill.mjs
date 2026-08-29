@@ -16,11 +16,11 @@
  *   node backend/scripts/audit-component-parity-vs-dbbill.mjs --month=2026-07
  *   node backend/scripts/audit-component-parity-vs-dbbill.mjs --samples=10
  */
-import mysql from 'mysql2/promise';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { COMPONENT_MAP, num } from './lib/dbbill-salary-mapping.mjs';
+import { connect } from './lib/db-connect.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 function fromEnvFile(key) {
@@ -34,21 +34,23 @@ const arg = (n, fb) => process.argv.find(a => a.startsWith(`--${n}=`))?.split('=
 
 const ONLY_MONTH = arg('month', null);
 const SAMPLES    = Number(arg('samples', 3));
-const HRMS_HOST  = arg('hrms-host', fromEnvFile('DB_HOST') ?? '192.168.10.6');
-const BILL_HOST  = arg('bill-host', fromEnvFile('BILL_DB_HOST') ?? '192.168.10.22');
-const USER = fromEnvFile('DB_USER'), PASS = fromEnvFile('DB_PASSWORD');
+// null = let lib/db-connect.mjs try LAN then public. A flag forces one address.
+const HRMS_HOST  = arg('hrms-host', null);
+const BILL_HOST  = arg('bill-host', null);
 
-/** db_bill money columns that no importer maps to any HRMS head. */
-const UNMAPPED = ['SHSH', 'ShortCollection'];
+/**
+ * db_bill money columns to report separately if they ever fall out of
+ * COMPONENT_MAP again. Both were unmapped until 2026-08-29; the section should
+ * now print zeros, and a non-zero here means a head has been dropped.
+ */
+const UNMAPPED = COMPONENT_MAP.some(([c]) => c === 'SHSH') ? [] : ['SHSH', 'ShortCollection'];
 
 const money = v => Math.round(num(v) * 100) / 100;
 const log = m => process.stdout.write(m + '\n');
 
 async function main() {
-  const hrms = await mysql.createConnection({ host: HRMS_HOST, port: 3306, user: USER,
-    password: PASS, database: 'mas_hrms', connectTimeout: 30000 });
-  const bill = await mysql.createConnection({ host: BILL_HOST, port: 3306, user: USER,
-    password: PASS, database: 'db_bill', connectTimeout: 30000, dateStrings: true });
+  const hrms = await connect('mas_hrms', { host: HRMS_HOST, log });
+  const bill = await connect('db_bill', { host: BILL_HOST, log });
 
   const byCode = {};                       // component_code -> stats
   for (const [code, , , col] of COMPONENT_MAP) {

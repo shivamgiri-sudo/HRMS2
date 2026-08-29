@@ -54,7 +54,6 @@
  *   node backend/scripts/repair-salary-earned-vs-entitlement.mjs --backup
  *   node backend/scripts/repair-salary-earned-vs-entitlement.mjs --apply
  */
-import mysql from 'mysql2/promise';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -62,6 +61,7 @@ import { fileURLToPath } from 'url';
 import {
   COMPONENT_MAP, EARNED_COLUMN, totalDeductions, earnedGross, num,
 } from './lib/dbbill-salary-mapping.mjs';
+import { connect } from './lib/db-connect.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -77,10 +77,9 @@ const arg = (name, fb) => process.argv.find(a => a.startsWith(`--${name}=`))?.sp
 const APPLY       = process.argv.includes('--apply');
 const MAKE_BACKUP = process.argv.includes('--backup');
 const ONLY_MONTH  = arg('month', null);
-const HRMS_HOST   = arg('hrms-host', fromEnvFile('DB_HOST') ?? '192.168.10.6');
-const BILL_HOST   = arg('bill-host', fromEnvFile('BILL_DB_HOST') ?? '192.168.10.22');
-const DB_USER     = fromEnvFile('DB_USER');
-const DB_PASS     = fromEnvFile('DB_PASSWORD');
+// null = let lib/db-connect.mjs try LAN then public. A flag forces one address.
+const HRMS_HOST   = arg('hrms-host', null);
+const BILL_HOST   = arg('bill-host', null);
 
 const STAMP = '20260829';
 const BK_LINE = `salary_prep_line_bk_${STAMP}`;
@@ -118,13 +117,11 @@ async function backupsPresent(hrms) {
 }
 
 async function main() {
-  log(`HRMS=${HRMS_HOST}  db_bill=${BILL_HOST}  mode=${APPLY ? 'APPLY' : 'DRY-RUN'}`);
-  const hrms = await mysql.createConnection({
-    host: HRMS_HOST, port: 3306, user: DB_USER, password: DB_PASS,
-    database: 'mas_hrms', connectTimeout: 30000 });
-  const bill = await mysql.createConnection({
-    host: BILL_HOST, port: 3306, user: DB_USER, password: DB_PASS,
-    database: 'db_bill', connectTimeout: 30000, dateStrings: true });
+  log(`mode=${APPLY ? 'APPLY' : 'DRY-RUN'}`);
+  // LAN first, public second — see lib/db-connect.mjs. Which address works flips
+  // with the network the machine is on, sometimes mid-run.
+  const hrms = await connect('mas_hrms', { host: HRMS_HOST, log });
+  const bill = await connect('db_bill', { host: BILL_HOST, log });
 
   if (MAKE_BACKUP) { log('Backups:'); await ensureBackups(hrms); }
   if (APPLY && !await backupsPresent(hrms)) {
