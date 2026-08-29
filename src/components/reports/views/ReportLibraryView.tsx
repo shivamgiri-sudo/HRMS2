@@ -44,7 +44,6 @@ import { hrmsApi } from "@/lib/hrmsApi";
 import { HrmsBentoTile, HrmsModernShell } from "@/components/ui/hrms-modern";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 import { REPORT_CATALOG as CENTRAL_CATALOG, type ReportMeta, type ColumnDef, type ColumnFormat } from "@/lib/report-catalog";
-import { withDayColumnLabels } from "@/lib/attendance-register-columns";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -887,6 +886,26 @@ function detectDuplicates(rows: Record<string, unknown>[], primaryKey: string[])
  *   that param and passed it here, but this component took no props at all, so it was dropped and
  *   the deep link only ever opened the library — never the report it named.
  */
+// Resolves a catalog column label to a date-based label for attendance-register-monthly.
+// For day_1..day_31 columns when a month like "2026-08" is active, returns "01-Aug" format.
+const SHORT_MONTHS_UI = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function resolveColLabel(
+  colKey: string,
+  colLabel: string,
+  reportCode: string,
+  activeMonth: string | undefined
+): string {
+  if (reportCode !== "attendance-register-monthly" || !activeMonth) return colLabel;
+  const m = colKey.match(/^day_(\d+)$/);
+  if (!m) return colLabel;
+  const parts = activeMonth.split("-");
+  if (parts.length < 2) return colLabel;
+  const mo = Number(parts[1]);
+  if (!Number.isFinite(mo) || mo < 1 || mo > 12) return colLabel;
+  const d = Number(m[1]);
+  return `${String(d).padStart(2, "0")}-${SHORT_MONTHS_UI[mo - 1]}`;
+}
+
 export default function NativeReportsCenterV2({ preselectedReport }: { preselectedReport?: string } = {}) {
   const { roleKeys, isLoading: rolesLoading } = useWorkforceAccess();
   const userRoles = roleKeys;
@@ -994,14 +1013,6 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
     if (!searchQ.trim()) return null;
     return visibleCatalog.filter(r => r.name.toLowerCase().includes(searchQ.toLowerCase()));
   }, [searchQ, visibleCatalog]);
-
-  // Derives "Mon-DD" day-column labels from the selected month filter. A no-op for every
-  // report other than attendance-register-monthly, since no other catalog entry declares
-  // day_N keys today.
-  const displayColumns = useMemo(
-    () => withDayColumnLabels(selectedReport?.columns ?? [], filterValues.month),
-    [selectedReport, filterValues.month]
-  );
 
   function selectReport(r: ReportDef) {
     setSelectedReport(r);
@@ -1427,10 +1438,10 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                             selectedReport.headerGroups ? "top-[33px]" : "top-0"
                           }`}
                         >
-                          {displayColumns.map(col => (
+                          {selectedReport.columns.map(col => (
                             <th
                               key={col.key}
-                              className={`px-3 py-2.5 font-semibold text-gray-500 ${/^day_\d+$/.test(col.key) ? "" : "uppercase"} tracking-wider whitespace-nowrap ${
+                              className={`px-3 py-2.5 font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap ${
                                 col.align === "right"
                                   ? "text-right"
                                   : col.align === "center"
@@ -1439,7 +1450,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                               }`}
                               style={{ minWidth: col.width }}
                             >
-                              {col.label}
+                              {resolveColLabel(col.key, col.label, selectedReport.code, filterValues.month)}
                             </th>
                           ))}
                         </tr>
@@ -1447,7 +1458,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                       <tbody className="divide-y divide-gray-50">
                         {rows.map((row, i) => (
                           <tr key={i} className={`hover:bg-blue-50/50 ${i % 2 === 0 ? "" : "bg-gray-50/50"}`}>
-                            {displayColumns.map(col => (
+                            {selectedReport.columns.map(col => (
                               <td
                                 key={col.key}
                                 className={`px-3 py-2 text-gray-700 whitespace-nowrap max-w-[220px] truncate ${

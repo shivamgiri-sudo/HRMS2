@@ -70,6 +70,24 @@ async function count(baseSql: string, params: unknown[]): Promise<number> {
  *
  * Verified as a no-op on the data by checksumming all 1,124 rows x 50 columns before and after.
  */
+// Payroll-aligned week-off eligibility slab table (mirrors weekoff-eligibility.service.ts).
+// Inline to avoid an async import and the payroll module coupling inside a reporting executor.
+const WEEKOFF_SLABS = [
+  { from: 0,  to: 6,  max: 0 },
+  { from: 7,  to: 11, max: 1 },
+  { from: 12, to: 17, max: 2 },
+  { from: 18, to: 23, max: 3 },
+  { from: 24, to: 25, max: 4 },
+] as const;
+
+function calcEligibleWeekoffs(paidBase: number, actualSundays: number, daysInMonth: number): number {
+  const availableWorkingDays = daysInMonth - actualSundays;
+  if (paidBase >= availableWorkingDays) return actualSundays;
+  const slab = WEEKOFF_SLABS.find(s => paidBase >= s.from && paidBase <= s.to);
+  if (!slab) return actualSundays; // paidBase > 25 → full eligibility
+  return Math.min(slab.max, actualSundays);
+}
+
 export async function attendanceRegisterMonthly(
   filters: ExecFilters,
   scope: ExecScope,
@@ -81,13 +99,25 @@ export async function attendanceRegisterMonthly(
   const firstDay = `${month}-01`;
   const lastDay  = `${month}-${String(daysInMonth).padStart(2, "0")}`;
 
+  // Count Sundays in the reporting month (payroll week-off denominator).
+  let actualSundays = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    if (new Date(yr, mo - 1, d).getDay() === 0) actualSundays++;
+  }
+
+  // Scope and filter conditions apply to the employees table (alias "e").
+  // The attendance date range moves to the LEFT JOIN ON clause so employees
+  // with no records in the month still appear — their day cells are filled
+  // post-pivot (A for working days after DOJ, W for Sundays, blank for
+  // pre-DOJ and future dates).
   const clauses: string[] = ["e.id IS NOT NULL"];
   const params: unknown[] = [];
   appendScopeConditions(scope, clauses, params);
   appendFilterConditions(filters, clauses, params);
   clauses.push("e.active_status = 1");
-  clauses.push("adr.record_date BETWEEN ? AND ?");
-  params.push(firstDay, lastDay);
+
+  // Date range binds before the WHERE params (JOIN ON is evaluated first in positional binding).
+  params.unshift(firstDay, lastDay);
 
   const attSql = `
     SELECT
@@ -101,84 +131,133 @@ export async function attendanceRegisterMonthly(
       COALESCE(cc.cost_centre_name, '') AS cost_center,
       COALESCE(b.branch_name, '') AS emp_location,
       CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
+      e.date_of_joining,
       DAY(adr.record_date) AS day_num,
-      adr.attendance_status
-    FROM attendance_daily_record adr
-    JOIN employees e ON e.id = adr.employee_id
-    LEFT JOIN department_master dept ON dept.id = e.department_id
+      adr.attendance_status,
+      COALESCE(adr.raw_minutes, 0) AS raw_minutes
+    FROM employees e
+    LEFT JOIN attendance_daily_record adr
+           ON adr.employee_id = e.id
+          AND adr.record_date BETWEEN ? AND ?
+    LEFT JOIN department_master dept  ON dept.id  = e.department_id
     LEFT JOIN designation_master desig ON desig.id = e.designation_id
-    LEFT JOIN cost_centre_master cc ON cc.id = e.cost_centre_id
-    LEFT JOIN branch_master b ON b.id = e.branch_id
+    LEFT JOIN cost_centre_master cc   ON cc.id    = e.cost_centre_id
+    LEFT JOIN branch_master b         ON b.id     = e.branch_id
     WHERE ${clauses.join(" AND ")}
     ORDER BY e.employee_code, adr.record_date
   `;
 
   const attRows = await query(attSql, params);
 
-  // Status code mapping
+  // Status code mapping.
+  // missing_punch = no biometric record for the date → Absent.
+  // week_off_worked = employee worked on their week-off day → Present
+  //   (the attendance engine sets half_day when hours < threshold on any day,
+  //   so week_off_worked always represents a full day worked on week off).
+  // unreconciled = anomalous punch data → Absent (same as legacy).
   const statusCode: Record<string, string> = {
-    present: "P", absent: "A", half_day: "HD", week_off: "W",
-    holiday: "H", leave_approved: "L", on_duty: "OD",
-    unreconciled: "A",
+    present:        "P",
+    absent:         "A",
+    half_day:       "HD",
+    week_off:       "W",
+    holiday:        "H",
+    leave_approved: "L",
+    on_duty:        "OD",
+    missing_punch:  "A",
+    week_off_worked:"P",
+    unreconciled:   "A",
   };
 
-  // Pivot into per-employee rows
+  // Pivot: fold attendance rows into one map entry per employee.
   const empMap = new Map<string, any>();
   for (const row of attRows) {
     if (!empMap.has(row.employee_id)) {
       empMap.set(row.employee_id, {
-        emp_code:    row.employee_code,
-        bio_code:    row.bio_code,
-        emp_name:    row.emp_name,
-        department:  row.department,
-        designation: row.designation,
-        profile:     row.profile,
-        cost_center: row.cost_center,
-        emp_location:row.emp_location,
-        billable:    row.billable,
+        emp_code:       row.employee_code,
+        bio_code:       row.bio_code,
+        emp_name:       row.emp_name,
+        department:     row.department,
+        designation:    row.designation,
+        profile:        row.profile,
+        cost_center:    row.cost_center,
+        emp_location:   row.emp_location,
+        billable:       row.billable,
+        date_of_joining: row.date_of_joining,
       });
     }
+    // row.day_num is NULL when the LEFT JOIN found no attendance record.
+    if (row.day_num == null) continue;
+
     const emp = empMap.get(row.employee_id);
     const code = statusCode[row.attendance_status] ?? row.attendance_status ?? "";
     emp[`day_${row.day_num}`] = code;
   }
 
+  // "Today" threshold: future dates stay blank (no data yet).
+  const todayTs = new Date();
+  todayTs.setHours(0, 0, 0, 0);
+
   const pivotRows = Array.from(empMap.values()).map((emp, idx) => {
-    let absent = 0, present = 0, od = 0, hd = 0, leave = 0, holiday = 0, weekoff = 0;
+    // Normalise date_of_joining to midnight for day-boundary comparisons.
+    const dojRaw = emp.date_of_joining;
+    const doj = dojRaw ? new Date(dojRaw) : null;
+    if (doj) doj.setHours(0, 0, 0, 0);
+
+    // Fill in cells that have no attendance record.
     for (let d = 1; d <= daysInMonth; d++) {
-      const v = emp[`day_${d}`] ?? "";
-      if (v === "A") absent++;
-      else if (v === "P") present++;
+      if (emp[`day_${d}`] !== undefined) continue; // already populated
+
+      const dayDate = new Date(yr, mo - 1, d);
+      if (doj && dayDate < doj) {
+        emp[`day_${d}`] = ""; // before joining date → blank
+      } else if (dayDate > todayTs) {
+        emp[`day_${d}`] = ""; // future date → blank
+      } else if (dayDate.getDay() === 0) {
+        emp[`day_${d}`] = "W"; // Sunday with no record → week off
+      } else {
+        emp[`day_${d}`] = "A"; // active working day, no record → absent
+      }
+    }
+
+    let absent = 0, present = 0, od = 0, hd = 0, leave = 0, holiday = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const v = emp[`day_${d}`];
+      if      (v === "A")  absent++;
+      else if (v === "P")  present++;
       else if (v === "OD") od++;
       else if (v === "HD") hd++;
-      else if (v === "L") leave++;
-      else if (v === "H") holiday++;
-      else if (v === "W") weekoff++;
+      else if (v === "L")  leave++;
+      else if (v === "H")  holiday++;
     }
-    const salDays = present + hd * 0.5 + od + holiday + weekoff;
+
+    // Payroll-aligned eligible week-offs (slab-based, mirrors payrollCalculate.service.ts).
+    const paidBase   = present + hd * 0.5 + od;
+    const eligibleWO = calcEligibleWeekoffs(paidBase, actualSundays, daysInMonth);
+    const salDays    = Math.round((paidBase + eligibleWO + holiday) * 100) / 100;
+
     return {
-      sno: idx + 1,
-      emp_code: emp.emp_code,
-      bio_code: emp.bio_code,
-      emp_name: emp.emp_name,
-      department: emp.department,
-      designation: emp.designation,
-      profile: emp.profile,
-      cost_center: emp.cost_center,
+      sno:          idx + 1,
+      emp_code:     emp.emp_code,
+      bio_code:     emp.bio_code,
+      emp_name:     emp.emp_name.trim(),
+      department:   emp.department,
+      designation:  emp.designation,
+      profile:      emp.profile,
+      cost_center:  emp.cost_center,
       emp_location: emp.emp_location,
-      billable: emp.billable,
+      billable:     emp.billable,
       ...Object.fromEntries(
         Array.from({ length: daysInMonth }, (_, i) => [`day_${i + 1}`, emp[`day_${i + 1}`] ?? ""])
       ),
-      absent_count: absent,
+      absent_count:  absent,
       present_count: present,
-      od_count: od,
-      hd_count: hd,
-      leave_count: leave,
+      od_count:      od,
+      hd_count:      hd,
+      leave_count:   leave,
       holiday_count: holiday,
-      weekoff_count: weekoff,
-      sal_days: salDays,
-      total: daysInMonth,
+      weekoff_count: eligibleWO,
+      sal_days:      salDays,
+      total:         daysInMonth,
     };
   });
 
