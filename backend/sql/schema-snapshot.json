@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1024,
-  "columnCount": 14630,
+  "tableCount": 1026,
+  "columnCount": 14665,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -6156,19 +6156,6 @@
       "rejected_at",
       "rejection_reason"
     ],
-    "employee_manager_history": [
-      "id",
-      "employee_id",
-      "manager_id",
-      "process_id",
-      "branch_id",
-      "effective_from",
-      "effective_to",
-      "provenance",
-      "changed_by",
-      "reason",
-      "created_at"
-    ],
     "employee_lob_assignment": [
       "id",
       "employee_id",
@@ -6192,6 +6179,19 @@
       "longitude",
       "accuracy",
       "captured_at"
+    ],
+    "employee_manager_history": [
+      "id",
+      "employee_id",
+      "manager_id",
+      "process_id",
+      "branch_id",
+      "effective_from",
+      "effective_to",
+      "provenance",
+      "changed_by",
+      "reason",
+      "created_at"
     ],
     "employee_move_snapshot": [
       "id",
@@ -9520,6 +9520,45 @@
       "status",
       "message",
       "actor_user_id",
+      "created_at"
+    ],
+    "kpi_capture_access_token": [
+      "id",
+      "token",
+      "label",
+      "active_status",
+      "last_used_at",
+      "created_at"
+    ],
+    "kpi_capture_submission": [
+      "id",
+      "submitter_name",
+      "submitter_email",
+      "cost_centre_id",
+      "cost_centre_label",
+      "designation_id",
+      "designation_label",
+      "is_new_kpi",
+      "existing_metric_id",
+      "existing_metric_code",
+      "new_kpi_name",
+      "new_kpi_formula",
+      "unit",
+      "direction",
+      "aggregation_method",
+      "measure_frequency",
+      "target_value",
+      "min_threshold",
+      "max_achievement",
+      "weightage",
+      "data_source",
+      "owner_name",
+      "notes",
+      "status",
+      "reviewed_by",
+      "reviewed_at",
+      "review_note",
+      "source_ip",
       "created_at"
     ],
     "kpi_daily_actual": [
