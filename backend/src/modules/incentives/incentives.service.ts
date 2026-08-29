@@ -272,7 +272,7 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
       await db.execute(
         `INSERT INTO salary_prep_line_component
            (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable, reason)
-         VALUES (?, ?, ?, ?, ?, ?, 'earning', ?, 'incentive', ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, 'earning', ?, 'manual', ?, ?)
          ON DUPLICATE KEY UPDATE amount=VALUES(amount), reason=VALUES(reason)`,
         [randomUUID(), runId, prepLineId, line.employee_id,
          `INCEN_${batch.incentive_code}`, batch.incentive_name,
@@ -298,7 +298,7 @@ export async function applyToRun(runId: string, payMonth: string, actorId: strin
     await db.execute(
       `INSERT INTO salary_prep_line_component
          (id, run_id, line_id, employee_id, component_code, component_name, component_type, amount, source, taxable)
-       VALUES (?, ?, ?, ?, 'INCENTIVE', 'Total Incentive', 'earning', ?, 'incentive', 1)
+       VALUES (?, ?, ?, ?, 'INCENTIVE', 'Total Incentive', 'earning', ?, 'manual', 1)
        ON DUPLICATE KEY UPDATE amount=VALUES(amount)`,
       [randomUUID(), runId, prepLineId, employeeId, total]
     );

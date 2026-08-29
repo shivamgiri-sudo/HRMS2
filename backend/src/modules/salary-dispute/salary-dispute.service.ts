@@ -357,9 +357,15 @@ export const salaryDisputeService = {
       if (line) {
         arrearLineId = randomUUID();
         await db.execute(
-          `INSERT INTO salary_prep_line_component (id, line_id, component_code, component_name, amount, component_type, notes)
-           VALUES (?, ?, 'DISPUTE_ARREAR', 'Salary Dispute Arrear', ?, 'earning', ?)`,
-          [arrearLineId, (line as any).id, dispute.differential_amount,
+          // run_id and employee_id are NOT NULL with no default on
+          // salary_prep_line_component. Omitting them made this INSERT fail on every
+          // call, so no approved dispute has ever posted its arrear component while the
+          // approver was shown success. source is enum(...,'manual',...).
+          `INSERT INTO salary_prep_line_component
+             (id, run_id, line_id, employee_id, component_code, component_name, amount, component_type, source, taxable, notes)
+           VALUES (?, ?, ?, ?, 'DISPUTE_ARREAR', 'Salary Dispute Arrear', ?, 'earning', 'manual', 1, ?)`,
+          [arrearLineId, (run as any).id, (line as any).id, dispute.employee_id,
+           dispute.differential_amount,
            `Dispute #${dispute.id.substring(0, 8)} — ${dispute.dispute_type} for ${dispute.run_month}`]
         );
         // Update line gross/net

@@ -1692,12 +1692,25 @@ export async function calculatePayrollRunScoped(
       if (comp.amount <= 0) continue;
       batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, comp.code, comp.name, 'earning', comp.amount, 'structure', 1]);
     }
-    // Record incentive and reimbursement as distinct earning components
+    // Record incentive and reimbursement as distinct earning components.
+    //
+    // component_type is enum('earning','deduction','employer_cost') and source is
+    // enum('snapshot','structure','statutory','manual','system') on the live column.
+    // These two pushes previously supplied 'reimbursement' / 'incentive_upload' /
+    // 'reimbursement_claim', none of which are members. The server runs with
+    // STRICT_TRANS_TABLES, so the multi-row INSERT that flushes batchComponents raised
+    // a data error and rolled back the WHOLE run transaction the moment any employee in
+    // the population had an approved incentive or reimbursement. Zero rows in
+    // salary_prep_line_component carry source='structure' or 'statutory' today, which is
+    // consistent with this batch never having landed in production.
+    //
+    // The provenance that mattered is already carried by component_code (INCENTIVE /
+    // REIMBURSEMENT); 'manual' is the correct enum member for a human-approved intake.
     if (approvedIncentives > 0) {
-      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, 'INCENTIVE', 'Incentive', 'earning', approvedIncentives, 'incentive_upload', 0]);
+      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, 'INCENTIVE', 'Incentive', 'earning', approvedIncentives, 'manual', 0]);
     }
     if (approvedReimbursements > 0) {
-      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, 'REIMBURSEMENT', 'Reimbursement', 'reimbursement', approvedReimbursements, 'reimbursement_claim', 0]);
+      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, 'REIMBURSEMENT', 'Reimbursement', 'earning', approvedReimbursements, 'manual', 0]);
     }
 
     const statutoryDeductions = [
@@ -1715,7 +1728,10 @@ export async function calculatePayrollRunScoped(
     }
 
     for (const ded of miscComponents) {
-      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, 'deduction', ded.amount, 'custom_deduction', 0]);
+      // 'custom_deduction' is not a member of the source enum — see the note above the
+      // incentive/reimbursement pushes. This has not aborted a run yet only because no
+      // active employee_deduction_entries row exists; it would on the first one.
+      batchComponents.push([randomUUID(), runId, prepLineId, emp.employee_id, ded.code, ded.name, 'deduction', ded.amount, 'manual', 0]);
     }
 
     // Step 10b: Read advance state now (needed to compute newRecovered); defer the UPDATE to batch after loop.
