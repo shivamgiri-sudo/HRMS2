@@ -224,8 +224,8 @@ async function createOrUpdateCheck(candidateId: string, checkType: string, statu
   // instead of a duplicate nested copy that could drift from it — see that function for the
   // one canonical set of weights, also now used by getBgvStatusForCandidate.
   setImmediate(() => {
-    void syncBgvChecksToReport(candidateId).catch(() => {});
-    void computeAndSaveScore(candidateId).catch(() => {});
+    void syncBgvChecksToReport(candidateId).catch((err: unknown) => console.error("[BGV] syncBgvChecksToReport failed for", candidateId, err));
+    void computeAndSaveScore(candidateId).catch((err: unknown) => console.error("[BGV] computeAndSaveScore failed for", candidateId, err));
   });
 
   await propagate();
@@ -454,7 +454,7 @@ export async function getBgvStatusForCandidate(candidateId: string) {
     documents,
     bank_verifications: bankRows,
     score,
-    overall_status: criticalMismatch ? "hold" : missing.length === 0 ? "clear" : score >= 60 ? "conditional" : "pending",
+    overall_status: criticalMismatch ? "refer" : missing.length === 0 ? "clear" : score >= 60 ? "conditional" : "pending",
     missing_mandatory_checks: missing,
     employee_creation_ready: !criticalMismatch && missing.length === 0,
     payroll_activation_ready: !criticalMismatch && clearChecks.has("pan") && bankClear,
@@ -1356,7 +1356,10 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
   const precedence: Record<string, number> = { passed: 4, partial: 3, failed: 2, not_run: 1 };
   const bestByColumn = new Map<string, string>();
 
-  // Best name per identity check type — for *_name_match report columns.
+  // Best match score per identity check type — stored in *_name_match report columns (VARCHAR(10)).
+  // Stores a percentage string like "97%" derived from match_score; falls back to "matched" when
+  // the API confirmed a match but returned no numeric score. Never stores matched_name (a full
+  // person name) because VARCHAR(10) silently truncates it to 10 chars.
   const bestNameByType = new Map<string, string>();
 
   for (const row of checks as RowDataPacket[]) {
@@ -1370,10 +1373,23 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
       }
     }
 
-    // Capture best matched_name per identity check type for name_match columns.
-    if (row.matched_name && ['aadhaar','aadhaar_offline','pan','bank','name_match'].includes(checkType)) {
+    // Capture best match score per identity check type for *_name_match report columns.
+    if (['aadhaar','aadhaar_offline','pan','bank','name_match'].includes(checkType)) {
       const norm = checkType === 'aadhaar_offline' ? 'aadhaar' : checkType;
-      if (!bestNameByType.has(norm)) bestNameByType.set(norm, String(row.matched_name));
+      if (!bestNameByType.has(norm)) {
+        let scoreStr: string | null = null;
+        if (row.match_score != null) {
+          const n = parseFloat(String(row.match_score));
+          if (!isNaN(n)) {
+            scoreStr = n <= 1 ? `${Math.round(n * 100)}%` : `${Math.round(n)}%`;
+          }
+        }
+        // Fall back to "matched" if no numeric score but name was confirmed by the API.
+        if (!scoreStr && row.matched_name && ['verified','waived'].includes(String(row.status))) {
+          scoreStr = 'matched';
+        }
+        if (scoreStr) bestNameByType.set(norm, scoreStr);
+      }
     }
   }
 
@@ -1390,7 +1406,7 @@ export async function syncBgvChecksToReport(candidateId: string): Promise<{ sync
   // DigiLocker verified covers both aadhaar and pan as mandatory checks.
   const digilockerClear = clearSet.has('digilocker');
   const effectiveMissing = mandatoryMissing.filter(t => !(digilockerClear && ['aadhaar','pan'].includes(t)));
-  const overallStatus = hasCriticalMismatch ? 'hold'
+  const overallStatus = hasCriticalMismatch ? 'refer'
     : effectiveMissing.length === 0 ? 'clear'
     : 'pending';
 

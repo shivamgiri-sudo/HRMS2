@@ -81,6 +81,12 @@ const STATUS_COLOR: Record<string, string> = {
   sent: "bg-blue-50 text-blue-700",
   result_received: "bg-amber-50 text-amber-700",
   completed: "bg-emerald-50 text-emerald-700",
+  clear: "bg-emerald-50 text-emerald-700",
+  refer: "bg-amber-50 text-amber-700",
+  conditional: "bg-orange-50 text-orange-700",
+  negative: "bg-red-50 text-red-700",
+  in_progress: "bg-blue-50 text-blue-700",
+  not_started: "bg-slate-100 text-slate-600",
 };
 
 const CHECK_LABELS: Record<string, string> = {

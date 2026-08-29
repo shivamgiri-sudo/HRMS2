@@ -173,6 +173,7 @@ function drawStatusBadge(doc: jsPDF, x: number, y: number, status: string, width
     not_run: { color: [148, 163, 184], label: "NOT RUN" },
     clear: { color: [16, 185, 129], label: "CLEAR" },
     refer: { color: [245, 158, 11], label: "REFER" },
+    conditional: { color: [249, 115, 22], label: "CONDITIONAL" },
     negative: { color: [220, 38, 38], label: "NEGATIVE" },
     pending: { color: [148, 163, 184], label: "PENDING" },
     in_progress: { color: [37, 99, 235], label: "IN PROGRESS" },

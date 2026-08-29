@@ -602,8 +602,8 @@ router.get("/report/full", requireAuth, requireRole("admin", "hr"), h(async (req
   // are never stale when the report is opened, even if the fire-and-forget sync
   // that runs after each check update failed silently.
   await Promise.all([
-    syncBgvChecksToReport(candidateId).catch(() => {}),
-    computeAndSaveScore(candidateId).catch(() => {}),
+    syncBgvChecksToReport(candidateId).catch((err: unknown) => console.error("[BGV] pre-report sync failed for", candidateId, err)),
+    computeAndSaveScore(candidateId).catch((err: unknown) => console.error("[BGV] pre-report score failed for", candidateId, err)),
   ]);
 
   // Fetch all data in parallel
