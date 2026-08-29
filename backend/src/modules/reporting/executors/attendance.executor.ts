@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Attendance executor
  *
  * Covers codes: attendance-daily, daily-hc-shift, shift-adherence-detail,
@@ -342,9 +342,9 @@ export async function attendanceDaily(
          COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
          desig.designation_name,
          COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager,
-         COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
-         TIME_FORMAT(ws.start_time, '%H:%i') AS shift_start,
-         TIME_FORMAT(ws.end_time, '%H:%i') AS shift_end,
+         COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned') AS shift_name,
+         TIME_FORMAT(COALESCE(wst.start_time, ws.start_time), '%H:%i') AS shift_start,
+         TIME_FORMAT(COALESCE(wst.end_time, ws.end_time), '%H:%i') AS shift_end,
          TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
          TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
          CASE
@@ -371,6 +371,7 @@ export async function attendanceDaily(
     LEFT JOIN employees rm ON rm.id = e.reporting_manager_id
     LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = e.id AND wra.roster_date = adr.record_date
     LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+    LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
     LEFT JOIN (
       -- Date-restricted. Without the WHERE this grouped the whole of
       -- wfm_attendance_session — 34,398 rows — on every request, against 792 for
@@ -423,11 +424,19 @@ export async function dailyHcShift(
   clauses.push("adr.record_date BETWEEN ? AND ?");
   params.push(from, to);
 
+  // Roster shift resolution has two live sources, not one: shift_template_id is populated
+  // by the cycle-based roster generator, shift_id by the legacy/manual-assign path -- the
+  // same split documented in wfm.routes.ts's my-roster week view and roster-view.service.ts.
+  // Joining only wfm_shift_master via shift_id (as this query used to) reports 'Roster Not
+  // Assigned' for every employee whose current roster was written by the newer generator,
+  // even though wfm_roster_assignment genuinely has a row for that date. COALESCE prefers
+  // the template source, falling back to the legacy shift master, matching the pattern
+  // already proven correct elsewhere in this codebase (see lateArrivalSummary below).
   const base = `
     SELECT adr.record_date,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
+           COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned') AS shift_name,
            COUNT(*) AS scheduled_headcount,
            SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS present_count,
            SUM(adr.attendance_status = 'absent') AS absent_count,
@@ -445,8 +454,9 @@ export async function dailyHcShift(
       LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
         AND wra.roster_date = adr.record_date
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+      LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY adr.record_date, b.branch_name, p.process_name, ws.shift_name
+     GROUP BY adr.record_date, b.branch_name, p.process_name, COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned')
      ORDER BY adr.record_date DESC, b.branch_name, p.process_name, shift_name`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
@@ -490,6 +500,12 @@ export async function shiftAdherenceDetail(
   clauses.push("adr.record_date BETWEEN ? AND ?");
   params.push(from, to);
 
+  // Roster shift resolution has two live sources, not one: shift_template_id is populated
+  // by the cycle-based roster generator, shift_id by the legacy/manual-assign path. Joining
+  // only wfm_shift_master via shift_id reports 'Roster Not Assigned' for every employee
+  // whose current roster was written by the newer generator. COALESCE prefers the template
+  // source, falling back to the legacy shift master. wfm_shift_template's equivalent of
+  // required_minutes is named productive_minutes -- both are read, in that order.
   const base = `SELECT adr.record_date,
          e.employee_code,
          COALESCE(NULLIF(e.full_name,''), CONCAT(e.first_name,' ',COALESCE(e.last_name,''))) AS employee_name,
@@ -497,9 +513,9 @@ export async function shiftAdherenceDetail(
          COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
          COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-         COALESCE(ws.shift_name, 'Roster Not Assigned') AS shift_name,
-         TIME_FORMAT(ws.start_time, '%H:%i') AS scheduled_start,
-         TIME_FORMAT(ws.end_time, '%H:%i') AS scheduled_end,
+         COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned') AS shift_name,
+         TIME_FORMAT(COALESCE(wst.start_time, ws.start_time), '%H:%i') AS scheduled_start,
+         TIME_FORMAT(COALESCE(wst.end_time, ws.end_time), '%H:%i') AS scheduled_end,
          TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
          TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
          CASE
@@ -507,26 +523,26 @@ export async function shiftAdherenceDetail(
            THEN TIME_FORMAT(SEC_TO_TIME(TIMESTAMPDIFF(SECOND, agg_ses.earliest_punch, agg_ses.latest_punch)), '%H:%i')
            ELSE NULL
          END AS total_login_duration,
-         COALESCE(ws.required_minutes, 540) AS scheduled_minutes,
+         COALESCE(wst.productive_minutes, ws.required_minutes, 540) AS scheduled_minutes,
          COALESCE(agg_ses.total_login_minutes, 0) AS actual_minutes,
          adr.late_by_minutes AS late_minutes,
          CASE
-           WHEN agg_ses.latest_punch IS NOT NULL AND ws.end_time IS NOT NULL
-                AND TIME(agg_ses.latest_punch) < ws.end_time
-           THEN TIMESTAMPDIFF(MINUTE, TIME(agg_ses.latest_punch), ws.end_time)
+           WHEN agg_ses.latest_punch IS NOT NULL AND COALESCE(wst.end_time, ws.end_time) IS NOT NULL
+                AND TIME(agg_ses.latest_punch) < COALESCE(wst.end_time, ws.end_time)
+           THEN TIMESTAMPDIFF(MINUTE, TIME(agg_ses.latest_punch), COALESCE(wst.end_time, ws.end_time))
            ELSE 0
          END AS early_logout_minutes,
          CASE
-           WHEN ws.required_minutes IS NOT NULL AND ws.required_minutes > 0
-           THEN ROUND(LEAST(COALESCE(agg_ses.total_login_minutes, 0), ws.required_minutes) / ws.required_minutes * 100, 1)
+           WHEN COALESCE(wst.productive_minutes, ws.required_minutes) IS NOT NULL AND COALESCE(wst.productive_minutes, ws.required_minutes) > 0
+           THEN ROUND(LEAST(COALESCE(agg_ses.total_login_minutes, 0), COALESCE(wst.productive_minutes, ws.required_minutes)) / COALESCE(wst.productive_minutes, ws.required_minutes) * 100, 1)
            ELSE NULL
          END AS adherence_pct,
          adr.attendance_status,
          CASE
            WHEN adr.attendance_status = 'absent' THEN 'ABSENT'
-           WHEN adr.late_mark = 1 AND COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'LATE_AND_SHORT'
+           WHEN adr.late_mark = 1 AND COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(wst.productive_minutes, ws.required_minutes, 540) * 0.85 THEN 'LATE_AND_SHORT'
            WHEN adr.late_mark = 1 THEN 'LATE'
-           WHEN COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(ws.required_minutes, 540) * 0.85 THEN 'SHORT'
+           WHEN COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(wst.productive_minutes, ws.required_minutes, 540) * 0.85 THEN 'SHORT'
            ELSE 'ON_TIME'
          END AS adherence_status,
          CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS exception_applied
@@ -537,6 +553,7 @@ export async function shiftAdherenceDetail(
     LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
       AND wra.roster_date = adr.record_date
     LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+    LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
     LEFT JOIN (
       SELECT employee_id, session_date,
              MIN(login_time) AS earliest_punch,
@@ -678,6 +695,14 @@ export async function lateArrivalSummary(
     params.push(options.cursor);
   }
 
+  // Roster shift resolution has two live sources, not one: shift_template_id is populated
+  // by the cycle-based roster generator, shift_id by the legacy/manual-assign path -- the
+  // same split documented in wfm.routes.ts's my-roster week view and roster-view.service.ts.
+  // Joining only wfm_shift_master via shift_id (as this query used to) reports 'Roster Not
+  // Assigned' for every employee whose current roster was written by the newer generator,
+  // even though wfm_roster_assignment genuinely has a row for that date. COALESCE prefers
+  // the template source, falling back to the legacy shift master, matching the pattern
+  // already proven correct elsewhere in this codebase.
   const base = `
     SELECT adr.id AS _cursor,
            adr.record_date,
@@ -687,8 +712,8 @@ export async function lateArrivalSummary(
            COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(ws.shift_name, 'Roster Not Assigned') AS roster_shift,
-           ws.start_time AS scheduled_start,
+           COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned') AS roster_shift,
+           COALESCE(wst.start_time, ws.start_time) AS scheduled_start,
            was.login_time AS punch_in,
            adr.late_by_minutes AS late_minutes,
            COALESCE(arc.grace_minutes, 15) AS grace_minutes,
@@ -709,6 +734,7 @@ export async function lateArrivalSummary(
       LEFT JOIN wfm_roster_assignment wra ON wra.employee_id = adr.employee_id
         AND wra.roster_date = adr.record_date
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
+      LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
       LEFT JOIN (
         SELECT employee_id, session_date, MIN(login_time) AS login_time
         FROM wfm_attendance_session
