@@ -167,12 +167,19 @@ describe("migration manifest — duplicates", () => {
     // Duplicate NUMBERS are documented as intentional here — tracking is by full
     // filename — so this asserts the count is understood rather than banning it.
     // A sudden jump means someone is numbering blind.
+    //
+    // 61 -> 62 (2026-08-30): 1631_topup_allocation_driver.sql and
+    // 1631_kpi_capture_submission.sql — two unrelated features from concurrent
+    // sessions independently picked the same next-available number. Both are
+    // real, already-applied migrations tracked by their distinct full filenames,
+    // so renaming either risks the system treating an already-run migration as
+    // new on a server where it already applied. Acknowledged, not renumbered.
     const byNumber = new Map<string, string[]>();
     for (const f of readManifest()) {
       const n = f.match(/^(\d+)_/)?.[1];
       if (n) byNumber.set(n, [...(byNumber.get(n) ?? []), f]);
     }
     const shared = [...byNumber.values()].filter((v) => v.length > 1);
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(61);
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(62);
   });
 });

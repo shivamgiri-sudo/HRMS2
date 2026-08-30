@@ -89,8 +89,36 @@ const BK_RUN  = `salary_prep_run_bk_${STAMP}`;
 const log = m => process.stdout.write(`[${new Date().toLocaleTimeString('en-IN')}] ${m}\n`);
 const money = v => Math.round(num(v) * 100) / 100;
 const differs = (a, b) => Math.abs(money(a) - money(b)) > 0.005;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const uuid = () => crypto.randomUUID();
+
+/**
+ * Long-lived connections to a remote server over a slow/public-IP link die
+ * mid-run — proven live: 13 months committed cleanly (2018-01..2019-01), then
+ * "Can't add new command when connection is in closed state" on month 14. The
+ * network dropped, not the data. Reconnect on any transient error and retry the
+ * SAME month from scratch: safe because nothing commits until every step for
+ * that month succeeds, and re-diffing an already-fixed month is a cheap no-op
+ * (differs() finds nothing to change).
+ */
+const TRANSIENT_CODES = new Set([
+  'PROTOCOL_CONNECTION_LOST', 'ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED',
+  'EPIPE', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH',
+  // Live proof (2026-08-30, month 2018-11): a connection killed mid-transaction
+  // does not always release its row locks immediately server-side. The very next
+  // attempt, on a fresh connection, hit ER_LOCK_WAIT_TIMEOUT on the same table
+  // this session had just been writing when it died. Retrying (with the existing
+  // backoff) is correct here — the lock is transient, not a real conflict; two
+  // concurrent runs of this script never touch the same month, and no other
+  // writer in the codebase updates salary_prep_line_component within a
+  // transaction spanning more than a few rows.
+  'ER_LOCK_WAIT_TIMEOUT', 'ER_LOCK_DEADLOCK',
+]);
+function isTransient(e) {
+  return TRANSIENT_CODES.has(e.code)
+    || /closed state|connection lost|read ECONNRESET|lock wait timeout|deadlock/i.test(e.message || '');
+}
 
 async function ensureBackups(hrms) {
   for (const [src, dst] of [['salary_prep_line', BK_LINE],
@@ -119,9 +147,31 @@ async function backupsPresent(hrms) {
 async function main() {
   log(`mode=${APPLY ? 'APPLY' : 'DRY-RUN'}`);
   // LAN first, public second — see lib/db-connect.mjs. Which address works flips
-  // with the network the machine is on, sometimes mid-run.
-  const hrms = await connect('mas_hrms', { host: HRMS_HOST, log });
-  const bill = await connect('db_bill', { host: BILL_HOST, log });
+  // with the network the machine is on, sometimes mid-run. `let` because a
+  // reconnect replaces the connection object outright.
+  let hrms = await connect('mas_hrms', { host: HRMS_HOST, log });
+  let bill = await connect('db_bill', { host: BILL_HOST, log });
+  const reconnect = async () => {
+    try { await hrms.end(); } catch {}
+    try { await bill.end(); } catch {}
+    // A transient full-network drop (both LAN and public unreachable at once,
+    // seen live: EHOSTUNREACH on both) used to crash reconnect() itself, taking
+    // the whole run down on the very error this function exists to survive. Give
+    // the network a chance to come back rather than dying on the first attempt.
+    const RECONNECT_ATTEMPTS = 6;
+    for (let i = 1; i <= RECONNECT_ATTEMPTS; i++) {
+      try {
+        log(`  reconnecting both connections (attempt ${i}/${RECONNECT_ATTEMPTS})...`);
+        hrms = await connect('mas_hrms', { host: HRMS_HOST, log });
+        bill = await connect('db_bill', { host: BILL_HOST, log });
+        return;
+      } catch (e) {
+        if (i === RECONNECT_ATTEMPTS) throw e;
+        log(`  reconnect attempt ${i} failed (${e.code || e.message}), waiting before retry...`);
+        await sleep(5000 * i);
+      }
+    }
+  };
 
   if (MAKE_BACKUP) { log('Backups:'); await ensureBackups(hrms); }
   if (APPLY && !await backupsPresent(hrms)) {
@@ -134,8 +184,15 @@ async function main() {
               lineUpd: 0, grossFix: 0, netFix: 0, dedFix: 0, srcFix: 0, compIns: 0,
               compUpd: 0, compDel: 0, compSrcFix: 0, runUpd: 0, netFixAmt: 0 };
 
+  const MAX_ATTEMPTS = 5;
+
+  monthLoop:
   for (const { m } of months) {
     if (ONLY_MONTH && m !== ONLY_MONTH) continue;
+
+  attemptLoop:
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
 
     const [hr] = await hrms.query(
       `SELECT l.id, l.run_id, l.employee_id, e.employee_code ec,
@@ -144,7 +201,7 @@ async function main() {
          FROM salary_prep_line l
          JOIN employees e ON e.id = l.employee_id
         WHERE l.run_id IN (SELECT id FROM salary_prep_run WHERE run_month = ?)`, [m]);
-    if (!hr.length) continue;
+    if (!hr.length) continue monthLoop;
 
     // SELECT * because COMPONENT_MAP reads 27 different columns and a column
     // missing from an explicit list would silently repair that head to zero.
@@ -232,7 +289,7 @@ async function main() {
         + `${compInserts.length} comp inserts, ${compDeletes.length} comp deletes`
         + `${dupes.size ? `, ${dupes.size} ambiguous db_bill codes skipped` : ''}`);
       T.months++;
-      continue;
+      continue monthLoop;
     }
 
     await hrms.beginTransaction();
@@ -288,10 +345,30 @@ async function main() {
       log(`  ${m}: ${lineUpdates.length} lines updated, run header recomputed`);
       T.months++;
     } catch (e) {
-      await hrms.rollback();
+      // A dead connection makes rollback() itself throw. That used to crash the
+      // whole process on a network blip — guard it so the ORIGINAL error still
+      // reaches the retry handler below, not a second, more confusing one.
+      try { await hrms.rollback(); }
+      catch (rollbackErr) {
+        log(`  ${m}: rollback itself failed (${rollbackErr.code || rollbackErr.message}) — connection is dead, not the data`);
+      }
       log(`  ${m}: ROLLED BACK — ${e.code || ''} ${e.message}`);
       throw e;
     }
+
+    break attemptLoop; // this month is fully committed (or was a clean dry-run pass)
+
+    } catch (monthErr) {
+      if (!isTransient(monthErr) || attempt === MAX_ATTEMPTS) throw monthErr;
+      log(`  ${m}: transient error (${monthErr.code || monthErr.message}) — `
+        + `attempt ${attempt}/${MAX_ATTEMPTS}, reconnecting and retrying this month...`);
+      await reconnect();
+      // A dead connection's locks aren't always released the instant it drops.
+      // Give the server time to finish that cleanup before retrying the same
+      // rows, or the retry can walk straight into ER_LOCK_WAIT_TIMEOUT.
+      await sleep(8000 * attempt);
+    }
+  } // attemptLoop
   }
 
   T.netFixAmt = Math.round(T.netFixAmt);
