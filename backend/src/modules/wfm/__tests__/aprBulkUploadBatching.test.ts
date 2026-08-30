@@ -79,6 +79,14 @@ describe("APR bulk upload batches writes instead of one row per round trip", () 
       if (sql.includes("FROM employees")) return [empRowsFor(n)];
       if (sql.includes("FROM attendance_daily_record adr")) return [[]];
       if (sql.includes("FROM apr") && sql.includes("campaign_id <>")) return [[]];
+      // Phase 3's evidence write is attributed (criterion 17.10): a registered Dialler_Source and
+      // its campaign, then one productivity_upload_batch row per (branch, process). Answered as
+      // already registered so these batching assertions keep measuring the chunking behaviour they
+      // were written for.
+      if (sql.includes("FROM dialler_source WHERE source_key")) return [[{ id: "ds-apr-bulk" }]];
+      if (sql.includes("FROM campaign_master WHERE campaign_code")) return [[{ id: "camp-apr-bulk" }]];
+      if (sql.startsWith("INSERT INTO productivity_upload_batch")) return [{ affectedRows: 1 }];
+      if (sql.startsWith("UPDATE productivity_upload_batch")) return [{ affectedRows: 1 }];
       if (sql.startsWith("INSERT INTO attendance_daily_record")) return [{ affectedRows: 1 }];
       if (sql.startsWith("INSERT INTO apr")) return [{ affectedRows: 1 }];
       return [[]];
@@ -112,6 +120,10 @@ describe("APR bulk upload batches writes instead of one row per round trip", () 
       if (sql.includes("FROM employees")) return [empRowsFor(n)];
       if (sql.includes("FROM attendance_daily_record adr")) return [[]];
       if (sql.includes("FROM apr") && sql.includes("campaign_id <>")) return [[]];
+      if (sql.includes("FROM dialler_source WHERE source_key")) return [[{ id: "ds-apr-bulk" }]];
+      if (sql.includes("FROM campaign_master WHERE campaign_code")) return [[{ id: "camp-apr-bulk" }]];
+      if (sql.startsWith("INSERT INTO productivity_upload_batch")) return [{ affectedRows: 1 }];
+      if (sql.startsWith("UPDATE productivity_upload_batch")) return [{ affectedRows: 1 }];
       if (sql.startsWith("INSERT INTO attendance_daily_record")) {
         adrInsertCallCount++;
         if (adrInsertCallCount === 1) {

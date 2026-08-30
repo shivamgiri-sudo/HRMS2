@@ -66,6 +66,20 @@ function baseStub(opts: { insertShouldThrow?: boolean; insertError?: Error } = {
     if (/attendance_feature_config/i.test(sql)) {
       return [[], []]; // half-day floor falls back to default
     }
+    // Phase 3's evidence write is attributed (requirements.md criterion 17.10): it resolves a
+    // registered Dialler_Source and its campaign, then opens a productivity_upload_batch row per
+    // (branch, process) before writing any apr row. Answered as "already registered" so this file
+    // keeps exercising the fully working path it was written for - the attribution behaviour itself
+    // is covered by src/modules/wfm/__tests__/attendance-apr-bulk-attribution.routes.test.ts.
+    if (/FROM dialler_source WHERE source_key/.test(sql)) {
+      return [[{ id: "ds-apr-bulk" }], []];
+    }
+    if (/FROM campaign_master WHERE campaign_code/.test(sql)) {
+      return [[{ id: "camp-apr-bulk" }], []];
+    }
+    if (/INSERT INTO productivity_upload_batch/.test(sql) || /UPDATE productivity_upload_batch/.test(sql)) {
+      return [{ affectedRows: 1 }, []];
+    }
     if (/INSERT INTO attendance_daily_record/.test(sql)) {
       if (opts.insertShouldThrow) {
         throw opts.insertError ?? Object.assign(new Error("Lock wait timeout exceeded; try restarting transaction"), { code: "ER_LOCK_WAIT_TIMEOUT" });

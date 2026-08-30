@@ -1,20 +1,32 @@
 import { Router } from 'express';
 import multer from 'multer';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { db } from '../../db/mysql.js';
 import type { RowDataPacket } from 'mysql2';
 import { isOperationsExecutiveByRegex as isOperationsExecutive, classifyOperationsNetLogin, resolveHalfDayFloorMinutes } from './attendance-engine.service.js';
+import {
+  resolveAprBulkUploadAttribution,
+  createAprBulkUploadBatch,
+  finaliseAprBulkUploadBatch,
+} from './attendance-apr-bulk-attribution.service.js';
 
 /**
- * Campaign filed against manually uploaded dialler minutes.
+ * The sentinel campaign this route used to WRITE, and now only READS.
  *
- * `apr` is keyed (ReportDate, UserID, campaign_id), so its own campaign keeps a
- * manual row from colliding with a synced one, makes uploads identifiable for
- * audit, and lets a corrected re-upload overwrite rather than accumulate.
+ * Every one of the 3,810 manual `apr` rows in production carries this single string as its
+ * campaign_id, with no owning Dialler_Source anywhere and a NULL upload_batch_id - the
+ * unattributed path requirements.md criterion 17.10 exists to close. It is closed: the evidence
+ * write in phase 3 below now files rows under a campaign owned by a registered Dialler_Source
+ * (attendance-apr-bulk-attribution.service.ts) and carries a real productivity_upload_batch id.
+ *
+ * The constant survives for exactly one purpose - recognising those legacy rows in the
+ * "is the dialler feed already reporting this day" read below, so a day evidenced by an old
+ * unattributed upload is still not mistaken for a synced day. It must never appear in an INSERT
+ * again; migration 1640's BEFORE INSERT trigger on `apr` rejects a manual row carrying it.
  */
-const MANUAL_UPLOAD_CAMPAIGN = 'MANUAL_UPLOAD';
+const LEGACY_MANUAL_UPLOAD_CAMPAIGN = 'MANUAL_UPLOAD';
 
 const router = Router();
 router.use(requireAuth);
@@ -328,6 +340,17 @@ router.post(
     // day's minutes would silently double. Where the feed already reports the day,
     // the upload still writes the attendance record exactly as before; only the
     // evidence row is withheld.
+    //
+    // "Reported by the feed" is now `source <> 'manual'` AND not the legacy sentinel campaign,
+    // where it used to be the campaign test alone. The campaign test alone was correct only while
+    // this route wrote exactly one campaign string: now that its rows carry their own registered
+    // campaign, a day this route itself evidenced yesterday would read back as a SYNCED day, the
+    // evidence write would be withheld, and a corrected re-upload would update
+    // attendance_daily_record while leaving the stale Net_Login in place - the two disagreeing
+    // silently. `apr.source` is ENUM('sync','manual') NOT NULL DEFAULT 'sync' (migration 1502), so
+    // it is the feed's own declaration and does not depend on any campaign naming choice; the
+    // legacy campaign test is kept alongside it for any historical manual row whose source column
+    // was never backfilled to 'manual'.
     const aprAlreadySynced = new Set<string>();
     // Chunked for the same reason as the lock check above: this was already
     // parameterised (never an injection risk), but one statement covering every
@@ -343,8 +366,9 @@ router.post(
         `SELECT UserID, DATE_FORMAT(ReportDate,'%Y-%m-%d') AS d
            FROM apr
           WHERE (UserID, ReportDate) IN (${pairPlaceholders})
+            AND source <> 'manual'
             AND campaign_id <> ?`,
-        [...pairParams, MANUAL_UPLOAD_CAMPAIGN],
+        [...pairParams, LEGACY_MANUAL_UPLOAD_CAMPAIGN],
       ).catch(() => [[]] as unknown as [RowDataPacket[], unknown]);
       for (const r of syncedRows as any[]) aprAlreadySynced.add(`${r.UserID}:${r.d}`);
     }
@@ -371,6 +395,13 @@ router.post(
       rowNum: number;
       employee_code: string;
       attendance_date: string;
+      // Carried explicitly, not read back out of `params`, because phase 3 groups rows by them to
+      // build one Upload_Batch per (branch, process) - see the grouping comment there. Either can
+      // be NULL: employees.branch_id / process_id are nullable, and productivity_upload_batch's
+      // branch_id / process_id are NOT NULL, so a row without both cannot be attributed to a batch
+      // at all.
+      branch_id: string | null;
+      process_id: string | null;
       params: [string, string, unknown, unknown, number, number, string, number, string];
     }
     const toInsert: InsertCandidate[] = [];
@@ -404,6 +435,8 @@ router.post(
         rowNum: row.rowNum,
         employee_code: row.employee_code,
         attendance_date: row.attendance_date,
+        branch_id: emp.branch_id ?? null,
+        process_id: emp.process_id ?? null,
         params: [
           emp.employee_id, row.attendance_date, emp.branch_id, emp.process_id,
           row.net_login_minutes, row.net_login_minutes,
@@ -487,7 +520,15 @@ router.post(
     // ever evidenced: the employee stayed "not covered" and every day this file
     // did not mention kept falling back to their biometric punch.
     //
-    // Filed under its own campaign so it is distinguishable from a synced row,
+    // ATTRIBUTED, as of criterion 17.10. Every row written below carries a campaign owned by a
+    // registered Dialler_Source and a real productivity_upload_batch id, where it used to carry the
+    // bare 'MANUAL_UPLOAD' string and a NULL upload_batch_id - the path that produced the 3,810
+    // rows with empty process_name and empty branch_name. There is no fallback: if the source, the
+    // campaign or a batch row cannot be created, the affected rows are reported per row exactly as
+    // a failed chunk is, and nothing unattributed is written. Migration 1640's BEFORE INSERT
+    // trigger enforces the same rule at the database, which is why these two ship together.
+    //
+    // Still filed under its own campaign so it is distinguishable from a synced row,
     // and re-uploading a corrected figure overwrites it rather than adding to it.
     // The attendance record above is unchanged and still authoritative for the
     // days in this file; this only gives the engine the evidence behind it.
@@ -504,29 +545,158 @@ router.post(
       return true;
     });
 
-    for (const evidenceChunk of chunkArray(toEvidence, INSERT_CHUNK_SIZE)) {
-      const valuesSql = evidenceChunk.map(() => `(?, ?, ?, SEC_TO_TIME(? * 60), 'manual', ?)`).join(',\n           ');
-      const flatParams = evidenceChunk.flatMap(c => [
-        c.attendance_date, c.employee_code, MANUAL_UPLOAD_CAMPAIGN, c.params[4], (req.authUser as any).id,
-      ]);
+    // Resolved once per request, before any evidence row is written, and never per row: it is two
+    // reads plus at most two inserts, and it is the same answer for every row in the file. A
+    // failure here means NO row can be attributed, so every row is reported and the phase writes
+    // nothing - the one behaviour criterion 17.10 forbids is falling back to an unattributed write.
+    let attribution: { diallerSourceId: string; campaignCode: string } | null = null;
+    if (toEvidence.length > 0) {
       try {
-        // Set source='manual' to protect from sync overwrites
-        await db.execute(
-          `INSERT INTO apr (ReportDate, UserID, campaign_id, Net_Login, source, uploaded_by)
-           VALUES ${valuesSql}
-           ON DUPLICATE KEY UPDATE
-             Net_Login = VALUES(Net_Login),
-             source = 'manual',
-             uploaded_by = VALUES(uploaded_by)`,
-          flatParams,
-        );
-        evidenceRecorded += evidenceChunk.length;
+        attribution = await resolveAprBulkUploadAttribution((req.authUser as any).id ?? null);
       } catch (err) {
-        const reason = `Attendance saved, but the dialler evidence row could not be recorded (batch rows ${
-          evidenceChunk[0]!.rowNum}-${evidenceChunk[evidenceChunk.length - 1]!.rowNum} of this file): ${
-          err instanceof Error ? err.message : String(err)}`;
-        for (const c of evidenceChunk) {
+        const reason = `Attendance saved, but the dialler evidence row was not recorded: this upload could not be attributed to a registered dialler source, and an unattributed evidence row is no longer written. Retry the upload. (${
+          err instanceof Error ? err.message : String(err)})`;
+        for (const c of toEvidence) {
           rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason });
+        }
+      }
+    }
+
+    // ONE Upload_Batch PER (branch, process), not one per request.
+    //
+    // productivity_upload_batch (migration 1638) is shaped around one Dialler_Source, one branch,
+    // one process and one date range, all NOT NULL. An apr-bulk file is shaped around nothing but
+    // employee codes: it routinely spans many branches, many processes and up to 90 days, because
+    // its three-column CSV contract names none of them. So one batch per request would have to put
+    // SOMETHING in branch_id and process_id - the first row's, or a sentinel - and would then
+    // attribute every other branch's rows to it. That is the same class of defect as the
+    // 'MANUAL_UPLOAD' sentinel this phase exists to remove, one level up.
+    //
+    // Grouping by the employee's own (branch_id, process_id) makes every column of the batch row
+    // literally true of every row that points at it, and date_from/date_to are the real min and max
+    // within the group.
+    //
+    // The tension with criterion 17.11 (accepted + rejected = submitted), stated plainly: a batch's
+    // submitted_row_count counts the rows OF THAT GROUP, so the identity holds per batch. It cannot
+    // be made to hold across the file, because the rows this route rejects earliest - an unparseable
+    // date, an employee code that resolves to nobody, an employee who is not an Operations
+    // Executive, a payroll-locked day - never resolve to a (branch, process) at all, and several
+    // never resolve to an employee. There is no batch they could belong to without inventing one.
+    // Those rows stay accounted for where they always were: `errors` in this response names every
+    // row of the file that did not land, and the file-level identity is
+    // `uploaded + errors.length === rows in the file` (see the response comment below). The
+    // Upload_Batch accounting is therefore about what was EVIDENCED, not about what was submitted to
+    // the route - and 17.11 holds exactly on that scope.
+    const evidenceBatchIds: string[] = [];
+    const evidenceWarnings: string[] = [];
+
+    if (attribution !== null && toEvidence.length > 0) {
+      // The digest of the bytes actually uploaded (criterion 17.2). Computed once; every group's
+      // batch row carries the same digest because they all came from the one file.
+      const contentDigest = createHash('sha256').update(req.file.buffer).digest('hex');
+      const fileName: string = req.file.originalname ?? 'apr-bulk-upload.csv';
+
+      const byScope = new Map<string, InsertCandidate[]>();
+      const unattributableRows: InsertCandidate[] = [];
+      for (const c of toEvidence) {
+        // employees.branch_id / process_id are nullable; productivity_upload_batch.branch_id /
+        // process_id are NOT NULL. A row for an employee mapped to neither cannot be attributed to
+        // any batch, and under strict mode letting it reach the INSERT would fail the whole group.
+        // Reported with the actionable cause instead - and NOT written unattributed.
+        if (!c.branch_id || !c.process_id) {
+          unattributableRows.push(c);
+          continue;
+        }
+        const key = `${c.branch_id}|${c.process_id}`;
+        const bucket = byScope.get(key);
+        if (bucket) bucket.push(c);
+        else byScope.set(key, [c]);
+      }
+
+      for (const c of unattributableRows) {
+        rowErrors.push({
+          row: c.rowNum,
+          employee_code: c.employee_code,
+          reason: 'Attendance saved, but no dialler evidence row was recorded: this employee has no branch and/or no process mapping, so the upload batch that every evidence row must reference cannot be created. Set the employee\'s branch and process, then re-upload this row.',
+        });
+      }
+
+      for (const group of byScope.values()) {
+        const dates = group.map(c => c.attendance_date).sort();
+        let batchId: string;
+        try {
+          batchId = await createAprBulkUploadBatch(attribution.diallerSourceId, {
+            branchId: group[0]!.branch_id!,
+            processId: group[0]!.process_id!,
+            dateFrom: dates[0]!,
+            dateTo: dates[dates.length - 1]!,
+            fileName,
+            contentDigest,
+            uploadedBy: (req.authUser as any).id,
+            submittedRowCount: group.length,
+          });
+        } catch (err) {
+          // Fail closed for this group only, exactly as a failed insert chunk does. Other groups
+          // are independent and still write; the attendance rows already committed in phase 2 are
+          // never rolled back.
+          const reason = `Attendance saved, but the dialler evidence row was not recorded: the upload batch record it must reference could not be created, and an unattributed evidence row is no longer written. Retry the upload. (${
+            err instanceof Error ? err.message : String(err)})`;
+          for (const c of group) {
+            rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason });
+          }
+          continue;
+        }
+        evidenceBatchIds.push(batchId);
+
+        let groupAccepted = 0;
+        let groupRejected = 0;
+        for (const evidenceChunk of chunkArray(group, INSERT_CHUNK_SIZE)) {
+          const valuesSql = evidenceChunk.map(() => `(?, ?, ?, SEC_TO_TIME(? * 60), 'manual', ?, ?)`).join(',\n           ');
+          const flatParams = evidenceChunk.flatMap(c => [
+            c.attendance_date, c.employee_code, attribution!.campaignCode, c.params[4],
+            (req.authUser as any).id, batchId,
+          ]);
+          try {
+            // source='manual' both protects the row from sync overwrites (the vicidial worker's
+            // ON DUPLICATE clause preserves every column of a manual row) and is what marks this
+            // as a manual write for migration 1640's trigger. upload_batch_id is assigned in the
+            // ON DUPLICATE branch too: a corrected re-upload must move the row's attribution to
+            // the batch that actually last evidenced the day, not leave it pointing at a batch
+            // whose figures no longer describe it.
+            await db.execute(
+              `INSERT INTO apr (ReportDate, UserID, campaign_id, Net_Login, source, uploaded_by, upload_batch_id)
+               VALUES ${valuesSql}
+               ON DUPLICATE KEY UPDATE
+                 Net_Login = VALUES(Net_Login),
+                 source = 'manual',
+                 uploaded_by = VALUES(uploaded_by),
+                 upload_batch_id = VALUES(upload_batch_id)`,
+              flatParams,
+            );
+            evidenceRecorded += evidenceChunk.length;
+            groupAccepted += evidenceChunk.length;
+          } catch (err) {
+            groupRejected += evidenceChunk.length;
+            const reason = `Attendance saved, but the dialler evidence row could not be recorded (batch rows ${
+              evidenceChunk[0]!.rowNum}-${evidenceChunk[evidenceChunk.length - 1]!.rowNum} of this file): ${
+              err instanceof Error ? err.message : String(err)}`;
+            for (const c of evidenceChunk) {
+              rowErrors.push({ row: c.rowNum, employee_code: c.employee_code, reason });
+            }
+          }
+        }
+
+        try {
+          await finaliseAprBulkUploadBatch(batchId, groupAccepted, groupRejected);
+        } catch (err) {
+          // The rows themselves are saved and attributed - the batch id on them is real. Only the
+          // batch's own counts are unrecorded, so this is a warning about the audit trail, not a
+          // per-row failure: reporting it in `errors` would tell the uploader that rows which did
+          // land had not, and would bury a real row error under one line per row.
+          evidenceWarnings.push(
+            `Upload batch ${batchId} recorded ${group.length} evidence row(s) but its own row counts could not be written, so it is still marked pending: ${
+              err instanceof Error ? err.message : String(err)}`,
+          );
         }
       }
     }
@@ -537,6 +707,13 @@ router.post(
       skipped_locked: skippedLocked,
       evidence_recorded: evidenceRecorded,
       evidence_skipped_already_synced: evidenceSkippedAlreadySynced,
+      // ADDED, never renamed or removed: src/components/attendance/AprBulkUpload.tsx reads
+      // success, uploaded, skipped_locked and errors[] only, and all four behave exactly as before.
+      // These two make the new attribution visible to an operator without a DB query - which batch
+      // rows this upload created (criterion 17.13's history screen reads the same rows), and any
+      // audit-trail problem that did NOT cost a row.
+      evidence_batch_ids: evidenceBatchIds,
+      evidence_warnings: evidenceWarnings,
       // Atomicity contract: rows are written in chunks of up to INSERT_CHUNK_SIZE
       // via a single multi-row statement per chunk, so each chunk is all-or-nothing
       // but chunks are independent of each other — one chunk's DB error does not
