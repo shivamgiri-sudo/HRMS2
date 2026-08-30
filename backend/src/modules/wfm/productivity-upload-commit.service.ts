@@ -14,6 +14,19 @@ import type { PreviewAcceptedRow, PreviewRejectedRow } from './productivity-uplo
 
 const INSERT_CHUNK_SIZE = 300; // matches attendance-apr-bulk.routes.ts's proven chunk size
 
+/**
+ * Thrown by the duplicate-submission guard in commitUploadBatch(). Typed (not a plain Error) so
+ * the route layer can map it to 409 by `instanceof`, not by matching a message substring that
+ * either side could reword without the other noticing — see the guard's own comment for why
+ * that distinction mattered.
+ */
+export class DuplicateUploadBatchError extends Error {
+  constructor(public readonly priorBatchId: string, message: string) {
+    super(message);
+    this.name = 'DuplicateUploadBatchError';
+  }
+}
+
 function chunkArray<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
@@ -124,6 +137,12 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
   // supersedesBatchId — to force it through), and cannot defeat a real supersede
   // (supersedesBatchId always bypasses this guard entirely and goes straight to the supersede
   // logic below, unconditionally).
+  //
+  // Thrown as a typed error, not a plain Error matched by message substring at the route layer:
+  // a round-4 review found the original plain-Error version coupled the route's 409 mapping to
+  // an untested string that both sides could independently reword without either test suite
+  // noticing, silently degrading a real duplicate submission back into a masked 500 — exactly
+  // this codebase's dominant defect class.
   if (!params.supersedesBatchId) {
     const [existingBatch] = await db.execute<ExistingBatchRow[]>(
       `SELECT id, batch_reference, accepted_row_count, rejected_row_count
@@ -136,8 +155,9 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
     );
     if (existingBatch.length > 0) {
       const row = existingBatch[0];
-      throw new Error(
-        `A batch (${row.batch_reference}) already exists for this exact file and scope ` +
+      throw new DuplicateUploadBatchError(
+        row.id,
+        `A batch (${row.id}) already exists for this exact file and scope ` +
         `(dialler_source ${params.diallerSourceId}, branch ${params.branchId}, process ${params.processId}, ` +
         `${params.dateFrom} to ${params.dateTo}). If this is a deliberate re-upload, resubmit with ` +
         `supersedesBatchId set to ${row.id}.`,
@@ -152,26 +172,57 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
                                    // scheme is specified anywhere in requirements.md
 
   if (params.supersedesBatchId) {
-    // Checked and resolved BEFORE the new batch row is written, so an invalid
-    // supersedesBatchId aborts the whole commit rather than leaving a new batch pointing at
-    // nothing (1638 deliberately carries no FK to enforce this at the schema level).
-    const [updateResult]: any = await db.execute(
-      `UPDATE productivity_upload_batch
-          SET status = 'superseded', superseded_at = NOW(), superseded_by_batch_id = ?
-        WHERE id = ? AND status <> 'superseded'`,
-      [batchId, params.supersedesBatchId],
-    );
-    if (updateResult.affectedRows === 0) {
-      const [check] = await db.execute<RowDataPacket[]>(
-        `SELECT id FROM productivity_upload_batch WHERE id = ? LIMIT 1`,
-        [params.supersedesBatchId],
-      );
-      if (check.length === 0) {
-        throw new Error(`supersedesBatchId ${params.supersedesBatchId} does not name an existing Upload_Batch`);
-      }
-      // Row exists but was already superseded by something else — idempotent no-op is
-      // acceptable here (a retried "supersede" request should not itself error).
+    // Looked up BEFORE any write, and checked against BOTH existence and scope. A round-4
+    // review found that checking existence alone (the version this replaced) let a caller
+    // supersede a batch from a completely different dialler_source/branch/process/date scope —
+    // e.g. pasting the wrong id off the Upload_Batch history screen (criterion 17.13 lists many
+    // batches per branch) — which would wrongly exclude an UNRELATED batch's rows from
+    // Canonical_Productive_Minutes via 17.7, while this submission's own rows land as an
+    // undetected duplicate for ITS scope (the guard above cannot catch this, since the batch it
+    // would have matched on is a different one than the caller named). Both are real
+    // double-write/undercount outcomes, not hypothetical.
+    interface PriorBatchRow extends RowDataPacket {
+      id: string;
+      dialler_source_id: string;
+      branch_id: string;
+      process_id: string;
+      date_from: string;
+      date_to: string;
+      status: string;
     }
+    const [priorRows] = await db.execute<PriorBatchRow[]>(
+      `SELECT id, dialler_source_id, branch_id, process_id, date_from, date_to, status
+         FROM productivity_upload_batch
+        WHERE id = ?
+        LIMIT 1`,
+      [params.supersedesBatchId],
+    );
+    if (priorRows.length === 0) {
+      throw new Error(`supersedesBatchId ${params.supersedesBatchId} does not name an existing Upload_Batch`);
+    }
+    const prior = priorRows[0];
+    const sameScope = prior.dialler_source_id === params.diallerSourceId
+      && prior.branch_id === params.branchId
+      && prior.process_id === params.processId
+      && prior.date_from === params.dateFrom
+      && prior.date_to === params.dateTo; // db pool has dateStrings:true — plain string compare is safe
+    if (!sameScope) {
+      throw new Error(
+        `supersedesBatchId ${params.supersedesBatchId} names an Upload_Batch for a different ` +
+        `dialler_source, branch, process or date range than this submission — refusing to ` +
+        `supersede across scopes`,
+      );
+    }
+    if (prior.status !== 'superseded') {
+      await db.execute(
+        `UPDATE productivity_upload_batch
+            SET status = 'superseded', superseded_at = NOW(), superseded_by_batch_id = ?
+          WHERE id = ?`,
+        [batchId, params.supersedesBatchId],
+      );
+    }
+    // else: already superseded by something else — idempotent no-op, a retried "supersede"
+    // request should not itself error.
   }
 
   // No transaction spans the writes below, matching this codebase's established convention
@@ -200,6 +251,20 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
   //    submitted_row_count still records what was requested — the two only disagree when
   //    writeErrors is non-empty, which is the signal a caller should watch instead of the raw
   //    counts alone.
+  //
+  // A third, KNOWN, NOT YET CLOSED gap a round-4 review surfaced and this note deliberately does
+  // not paper over: the duplicate-submission guard above is advisory, not exclusive. It SELECTs,
+  // then this function's writes happen over several seconds for a large file, and the new batch
+  // row is only INSERTed at the very end — so two concurrent commit requests for the identical
+  // (scope + digest) can both pass the guard's SELECT before either's batch row exists, and both
+  // proceed to write. Nothing in the schema stops it: apr_manual_upload has no natural unique
+  // key (noted above), and productivity_upload_batch (1638) carries no uniqueness on
+  // (dialler_source_id, branch_id, process_id, date_from, date_to, content_digest) either. This
+  // is a real double-click / retry-during-still-writing race, not a hypothetical — closing it
+  // needs a schema change (1638 is still unexecuted, so it is still cheap to make one), most
+  // plausibly reserving the batch row up front as 1638's already-declared 'pending' status
+  // before any chunk writes, guarded by a uniqueness constraint that excludes superseded rows.
+  // That is a deliberate scope decision for a future task, not an oversight here.
   const writeErrors: string[] = [];
   let actualAccepted = 0;
   let actualRejected = 0;

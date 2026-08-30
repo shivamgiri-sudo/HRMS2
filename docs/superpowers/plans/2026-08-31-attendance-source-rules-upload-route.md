@@ -502,6 +502,14 @@ git commit -m "feat: add buildUploadPreview() — orchestrates Phase 3's parser 
 
 ### Task 3: `productivity-upload-commit.service.ts` — default-campaign resolution and the write path
 
+> **STATUS: DONE — this section is the original brief, kept for history only.** The code below
+> predates 4 rounds of review that changed the write path's retry/supersede behavior materially
+> (a `DuplicateUploadBatchError` class, a scope-checked supersede, `CommitBatchResult.writeErrors`
+> that this brief's interface omits). Do not re-implement from this section — the live file at
+> `backend/src/modules/wfm/productivity-upload-commit.service.ts` and its test file are the
+> source of truth. This note exists because Task 4 below depends on the CURRENT interface, not
+> this one.
+
 **Files:**
 - Create: `backend/src/modules/wfm/productivity-upload-commit.service.ts`
 - Test: `backend/src/modules/wfm/__tests__/productivity-upload-commit.service.test.ts`
@@ -849,15 +857,28 @@ git commit -m "feat: add commitUploadBatch() + resolveOrCreateDefaultCampaign() 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+import { DuplicateUploadBatchError } from '../productivity-upload-commit.service.js';
 
 const buildUploadPreviewMock = vi.fn();
 const commitUploadBatchMock = vi.fn();
 vi.mock('../productivity-upload-preview.service.js', () => ({
   buildUploadPreview: (...args: unknown[]) => buildUploadPreviewMock(...args),
 }));
-vi.mock('../productivity-upload-commit.service.js', () => ({
-  commitUploadBatch: (...args: unknown[]) => commitUploadBatchMock(...args),
-}));
+// Only commitUploadBatch itself is mocked — DuplicateUploadBatchError is re-exported from the
+// REAL module via importActual, so a test that does `new DuplicateUploadBatchError(...)` and the
+// route's own `err instanceof DuplicateUploadBatchError` check refer to the exact same class. A
+// locally redeclared lookalike class here would make `instanceof` silently false in the test
+// while passing in production, hiding exactly the kind of drift a round-4 review flagged this
+// error-mapping code for once already.
+vi.mock('../productivity-upload-commit.service.js', async () => {
+  const actual = await vi.importActual<typeof import('../productivity-upload-commit.service.js')>(
+    '../productivity-upload-commit.service.js',
+  );
+  return {
+    ...actual,
+    commitUploadBatch: (...args: unknown[]) => commitUploadBatchMock(...args),
+  };
+});
 
 const resolveUserBusinessScopeMock = vi.fn();
 vi.mock('../../../shared/enterpriseScope.js', () => ({
@@ -1013,7 +1034,8 @@ describe('POST /api/wfm/productivity-upload/commit', () => {
       rejected: [],
     });
     commitUploadBatchMock.mockRejectedValueOnce(
-      new Error(
+      new DuplicateUploadBatchError(
+        'batch-existing',
         'A batch (batch-existing) already exists for this exact file and scope (dialler_source ds-1, ' +
         'branch branch-1, process process-1, 2026-07-01 to 2026-07-31). If this is a deliberate ' +
         're-upload, resubmit with supersedesBatchId set to batch-existing.',
@@ -1033,6 +1055,7 @@ describe('POST /api/wfm/productivity-upload/commit', () => {
     expect(res.status).toBe(409);
     expect(res.body.success).toBe(false);
     expect(res.body.message).toContain('supersedesBatchId set to batch-existing');
+    expect(res.body.priorBatchId).toBe('batch-existing');
   });
 
   it('rejects a non-CSV file with a real status, not a masked 500', async () => {
@@ -1082,7 +1105,7 @@ import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
 import { resolveUserBusinessScope, type UserBusinessScope } from '../../shared/enterpriseScope.js';
 import { buildUploadPreview } from './productivity-upload-preview.service.js';
-import { commitUploadBatch } from './productivity-upload-commit.service.js';
+import { commitUploadBatch, DuplicateUploadBatchError } from './productivity-upload-commit.service.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -1225,13 +1248,17 @@ router.post(
     const mappingVersionUsed = Number(req.body.mappingVersionUsed) || 1;
     const supersedesBatchId: string | undefined = req.body.supersedesBatchId || undefined;
 
-    // commitUploadBatch() throws a plain Error, not a statused one, when its duplicate-submission
-    // guard fires (an identical file+scope was already committed and this request did not declare
-    // itself a re-upload via supersedesBatchId). That is an expected, actionable outcome — not a
-    // server fault — so it is caught here and turned into 409 with the guard's own message (which
-    // already names the prior batch id the caller needs to pass back as supersedesBatchId to force
-    // it through). Any other error from commitUploadBatch is a genuine unexpected failure and is
-    // deliberately rethrown to the global error handler rather than also mapped to 409.
+    // commitUploadBatch() throws DuplicateUploadBatchError, not a plain Error, when its
+    // duplicate-submission guard fires (an identical file+scope was already committed and this
+    // request did not declare itself a re-upload via supersedesBatchId). That is an expected,
+    // actionable outcome — not a server fault — so it is caught here and turned into 409 with the
+    // guard's own message (which already names the prior batch id the caller needs to pass back
+    // as supersedesBatchId to force it through). Matched by `instanceof`, not by a message
+    // substring: an earlier draft matched on message text, which coupled the route to a string
+    // the service could reword without this file's own tests noticing, silently degrading a real
+    // duplicate submission back into a masked 500 (caught in a round-4 review). Any other error
+    // from commitUploadBatch is a genuine unexpected failure and is deliberately rethrown to the
+    // global error handler rather than also mapped to 409.
     let result;
     try {
       result = await commitUploadBatch({
@@ -1249,9 +1276,8 @@ router.post(
         rejectedRows: preview.rejected,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (message.includes('already exists for this exact file and scope')) {
-        return res.status(409).json({ success: false, message });
+      if (err instanceof DuplicateUploadBatchError) {
+        return res.status(409).json({ success: false, message: err.message, priorBatchId: err.priorBatchId });
       }
       throw err;
     }

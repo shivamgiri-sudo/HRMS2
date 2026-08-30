@@ -8,6 +8,7 @@ vi.mock('../../../db/mysql.js', () => ({
 import {
   resolveOrCreateDefaultCampaign,
   commitUploadBatch,
+  DuplicateUploadBatchError,
 } from '../productivity-upload-commit.service.js';
 
 describe('resolveOrCreateDefaultCampaign', () => {
@@ -80,18 +81,26 @@ describe('commitUploadBatch', () => {
 
   it('rejects a resubmission of the exact same file and scope when no supersedesBatchId is given (duplicate-submission guard)', async () => {
     executeMock.mockResolvedValueOnce([
-      [{ id: 'batch-existing', batch_reference: 'batch-existing', accepted_row_count: 1, rejected_row_count: 0 }],
+      [{ id: 'batch-existing', batch_reference: 'UPL-2026-07-0012', accepted_row_count: 1, rejected_row_count: 0 }],
     ]);
 
-    await expect(
-      commitUploadBatch({
-        ...baseParams,
-        acceptedRows: [
-          { rowNumber: 2, employeeId: 'emp-1', employeeCode: 'MAS1', reportDate: '2026-07-15', loginMinutes: 420 },
-        ],
-        rejectedRows: [],
-      }),
-    ).rejects.toThrow(/batch-existing.*already exists.*supersedesBatchId set to batch-existing/s);
+    const call = commitUploadBatch({
+      ...baseParams,
+      acceptedRows: [
+        { rowNumber: 2, employeeId: 'emp-1', employeeCode: 'MAS1', reportDate: '2026-07-15', loginMinutes: 420 },
+      ],
+      rejectedRows: [],
+    });
+
+    await expect(call).rejects.toBeInstanceOf(DuplicateUploadBatchError);
+    await expect(call).rejects.toThrow(/batch-existing.*already exists.*supersedesBatchId set to batch-existing/s);
+    // The message must name the SAME id in both places (the id the caller can actually pass
+    // back as supersedesBatchId), not a human-readable batch_reference in one spot and the raw
+    // id in the other — a Minor finding from a round-4 review.
+    await expect(call).rejects.not.toThrow(/UPL-2026-07-0012/);
+    await call.catch((err) => {
+      expect((err as DuplicateUploadBatchError).priorBatchId).toBe('batch-existing');
+    });
 
     // Never reached campaign resolution or any write — rejecting is the whole point: it must
     // not risk double-writing apr_manual_upload rows that may have already landed.
@@ -103,10 +112,15 @@ describe('commitUploadBatch', () => {
     // byte-identical re-upload (same digest) declaring supersedesBatchId must never be
     // intercepted by the duplicate-submission guard above. The guard's SELECT must not even
     // run — proven here by there being no leading "no existing batch" mock to consume before
-    // the UPDATE.
+    // the scope-check SELECT.
     executeMock
       .mockResolvedValueOnce([[{ id: 'camp-1', campaign_code: 'DEFAULT_ds-1' }]]) // resolveOrCreateDefaultCampaign
-      .mockResolvedValueOnce([{ affectedRows: 1 }]) // UPDATE prior batch superseded — 1 row matched
+      .mockResolvedValueOnce([[{ // scope-check SELECT: prior batch, same scope, not yet superseded
+        id: 'batch-old', dialler_source_id: baseParams.diallerSourceId, branch_id: baseParams.branchId,
+        process_id: baseParams.processId, date_from: baseParams.dateFrom, date_to: baseParams.dateTo,
+        status: 'accepted',
+      }]])
+      .mockResolvedValueOnce([{}]) // UPDATE prior batch superseded
       .mockResolvedValueOnce([{}]) // INSERT apr_manual_upload
       .mockResolvedValueOnce([{}]); // INSERT productivity_upload_batch (no rejected rows, so no rejection insert)
 
@@ -123,9 +137,9 @@ describe('commitUploadBatch', () => {
 
     expect(result.writeErrors).toEqual([]);
     const guardCall = executeMock.mock.calls.find((c) =>
-      String(c[0]).includes('status <> \'superseded\'') && String(c[0]).includes('SELECT'),
+      String(c[0]).includes('SELECT') && String(c[0]).includes('content_digest = ?'),
     );
-    expect(guardCall).toBeUndefined();
+    expect(guardCall).toBeUndefined(); // the duplicate-submission guard's SELECT never ran
     const updateCall = executeMock.mock.calls.find((c) =>
       String(c[0]).includes('UPDATE productivity_upload_batch'),
     );
@@ -133,11 +147,42 @@ describe('commitUploadBatch', () => {
     expect(updateCall![1]).toContain('batch-old');
   });
 
+  it('throws when supersedesBatchId names a batch for a different scope, and does not supersede it (round-4 finding)', async () => {
+    // A round-4 review found the previous version of this check verified only that the target
+    // batch EXISTS, not that it belongs to the SAME dialler_source/branch/process/date range as
+    // this submission. Pasting the wrong id (e.g. off the Upload_Batch history screen, which
+    // legitimately lists many batches per branch per criterion 17.13) would wrongly supersede an
+    // unrelated batch's rows out of Canonical_Productive_Minutes while this submission's own
+    // rows land undetected. This must be refused before any write.
+    executeMock
+      .mockResolvedValueOnce([[{ id: 'camp-1', campaign_code: 'DEFAULT_ds-1' }]]) // resolveOrCreateDefaultCampaign
+      .mockResolvedValueOnce([[{ // scope-check SELECT: prior batch exists, but for a DIFFERENT branch
+        id: 'batch-other-branch', dialler_source_id: baseParams.diallerSourceId, branch_id: 'branch-999',
+        process_id: baseParams.processId, date_from: baseParams.dateFrom, date_to: baseParams.dateTo,
+        status: 'accepted',
+      }]]);
+
+    await expect(
+      commitUploadBatch({
+        ...baseParams,
+        supersedesBatchId: 'batch-other-branch',
+        acceptedRows: [],
+        rejectedRows: [],
+      }),
+    ).rejects.toThrow(/batch-other-branch names an Upload_Batch for a different .* refusing to supersede across scopes/);
+
+    // No UPDATE was ever attempted, and no write followed.
+    const updateCall = executeMock.mock.calls.find((c) =>
+      String(c[0]).includes('UPDATE productivity_upload_batch'),
+    );
+    expect(updateCall).toBeUndefined();
+    expect(executeMock).toHaveBeenCalledTimes(2); // campaign resolution, then the scope-check SELECT
+  });
+
   it('throws when supersedesBatchId does not name an existing Upload_Batch (criterion 17.7 safety)', async () => {
     executeMock
       .mockResolvedValueOnce([[{ id: 'camp-1', campaign_code: 'DEFAULT_ds-1' }]]) // resolveOrCreateDefaultCampaign
-      .mockResolvedValueOnce([{ affectedRows: 0 }]) // UPDATE matched nothing
-      .mockResolvedValueOnce([[]]); // existence check: batch truly doesn't exist
+      .mockResolvedValueOnce([[]]); // scope-check SELECT: batch truly doesn't exist
 
     await expect(
       commitUploadBatch({
@@ -149,15 +194,18 @@ describe('commitUploadBatch', () => {
     ).rejects.toThrow('supersedesBatchId batch-does-not-exist does not name an existing Upload_Batch');
 
     // Never reached the row-writing or final batch-insert phase
-    expect(executeMock).toHaveBeenCalledTimes(3);
+    expect(executeMock).toHaveBeenCalledTimes(2);
   });
 
-  it('does not throw when supersedesBatchId names a batch that is already superseded (idempotent no-op)', async () => {
+  it('does not throw when supersedesBatchId names a same-scope batch that is already superseded (idempotent no-op)', async () => {
     executeMock
       .mockResolvedValueOnce([[{ id: 'camp-1', campaign_code: 'DEFAULT_ds-1' }]]) // resolveOrCreateDefaultCampaign
-      .mockResolvedValueOnce([{ affectedRows: 0 }]) // UPDATE matched nothing (already superseded)
-      .mockResolvedValueOnce([[{ id: 'batch-old' }]]) // existence check: it DOES exist
-      .mockResolvedValueOnce([{}]); // INSERT productivity_upload_batch (no accepted/rejected rows)
+      .mockResolvedValueOnce([[{ // scope-check SELECT: same scope, already superseded by something else
+        id: 'batch-old', dialler_source_id: baseParams.diallerSourceId, branch_id: baseParams.branchId,
+        process_id: baseParams.processId, date_from: baseParams.dateFrom, date_to: baseParams.dateTo,
+        status: 'superseded',
+      }]])
+      .mockResolvedValueOnce([{}]); // INSERT productivity_upload_batch (no accepted/rejected rows, no UPDATE — already superseded)
 
     const result = await commitUploadBatch({
       ...baseParams,
@@ -167,6 +215,38 @@ describe('commitUploadBatch', () => {
     });
 
     expect(result.batchId).toBeTruthy();
+    const updateCall = executeMock.mock.calls.find((c) =>
+      String(c[0]).includes('UPDATE productivity_upload_batch'),
+    );
+    expect(updateCall).toBeUndefined(); // no redundant UPDATE against an already-superseded row
+  });
+
+  it('recovers a fully-failed prior batch when retried WITH supersedesBatchId (the exact recovery path the guard exists to preserve)', async () => {
+    // Proves the guard's claimed property "cannot permanently strand a failed upload" actually
+    // works end to end, not only as a code comment — this exact claim was wrong in three
+    // consecutive prior review rounds.
+    executeMock
+      .mockResolvedValueOnce([[{ id: 'camp-1', campaign_code: 'DEFAULT_ds-1' }]]) // resolveOrCreateDefaultCampaign
+      .mockResolvedValueOnce([[{ // scope-check SELECT: the previously fully-failed batch
+        id: 'batch-failed', dialler_source_id: baseParams.diallerSourceId, branch_id: baseParams.branchId,
+        process_id: baseParams.processId, date_from: baseParams.dateFrom, date_to: baseParams.dateTo,
+        status: 'rejected', // status the function itself writes when actualAccepted === 0
+      }]])
+      .mockResolvedValueOnce([{}]) // UPDATE prior batch superseded
+      .mockResolvedValueOnce([{}]) // INSERT apr_manual_upload — this time it lands
+      .mockResolvedValueOnce([{}]); // INSERT productivity_upload_batch
+
+    const result = await commitUploadBatch({
+      ...baseParams,
+      supersedesBatchId: 'batch-failed',
+      acceptedRows: [
+        { rowNumber: 2, employeeId: 'emp-1', employeeCode: 'MAS1', reportDate: '2026-07-15', loginMinutes: 420 },
+      ],
+      rejectedRows: [],
+    });
+
+    expect(result.acceptedCount).toBe(1);
+    expect(result.writeErrors).toEqual([]);
   });
 
   it('records a write error and keeps going when one chunk fails, rather than throwing or silently reporting success', async () => {
@@ -239,17 +319,17 @@ describe('commitUploadBatch', () => {
       [{ id: 'batch-partial', batch_reference: 'batch-partial', accepted_row_count: 1, rejected_row_count: 0 }],
     ]);
 
-    await expect(
-      commitUploadBatch({
-        ...baseParams,
-        acceptedRows: [
-          { rowNumber: 2, employeeId: 'emp-1', employeeCode: 'MAS1', reportDate: '2026-07-15', loginMinutes: 420 },
-          { rowNumber: 3, employeeId: 'emp-2', employeeCode: 'MAS2', reportDate: '2026-07-15', loginMinutes: 400 },
-        ],
-        rejectedRows: [],
-      }),
-    ).rejects.toThrow(/batch-partial/);
+    const call = commitUploadBatch({
+      ...baseParams,
+      acceptedRows: [
+        { rowNumber: 2, employeeId: 'emp-1', employeeCode: 'MAS1', reportDate: '2026-07-15', loginMinutes: 420 },
+        { rowNumber: 3, employeeId: 'emp-2', employeeCode: 'MAS2', reportDate: '2026-07-15', loginMinutes: 400 },
+      ],
+      rejectedRows: [],
+    });
 
+    await expect(call).rejects.toBeInstanceOf(DuplicateUploadBatchError);
+    await expect(call).rejects.toThrow(/batch-partial/);
     expect(executeMock).toHaveBeenCalledTimes(1); // no write of any kind was attempted
   });
 });
