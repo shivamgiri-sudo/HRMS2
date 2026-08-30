@@ -58,6 +58,7 @@ export const PII_COLUMNS = new Set([
   'personal_email',
   'alternate_mobile',
   'emergency_contact_phone',
+  'carrier_mobile',
   'passport_number',
   'voter_id',
   'driving_license',
@@ -145,6 +146,16 @@ const TABLE_SETS = {
     'roster_slot',
     'roster_shift_master',
     'roster_demand',
+    // Asset & Material Exit Pass (IT & Admin). NOT employee offboarding —
+    // employee_exit / exit_checklist / resignation_request in the hr tier are a
+    // different thing entirely; these four track physical items leaving a branch.
+    // Placed at management rather than hr because the module is governed by
+    // branch heads and admins, and carries destination/carrier/vehicle detail
+    // that has no bearing on an HR query.
+    'exit_pass_requests',
+    'exit_pass_items',
+    'exit_pass_approvals',
+    'exit_pass_audit_logs',
   ],
 
   finance: [
