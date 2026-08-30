@@ -55,9 +55,17 @@ export function deriveCanonical(contributions: Contribution[]): CanonicalResult 
 
   // Secondary rule (18.6): ANY unusable contribution demotes the WHOLE employee-date.
   if (usable.length < contributions.length) {
-    const maxMagnitude = Math.max(...contributions.map((c) => c.magnitudeMinutes));
+    // Sanitize magnitude before taking the max: a negative or non-finite value (a real risk
+    // from a junk Excel cell in a manual upload, parsed by Phase 3's column mapping) must never
+    // propagate into the result — NaN in particular would collide with the wire value
+    // criterion 18.10 reserves for "absent" once serialized. Treat an invalid magnitude as 0,
+    // not as an excuse to throw or drop the contribution.
+    const sanitizedMagnitudes = contributions.map((c) =>
+      Number.isFinite(c.magnitudeMinutes) && c.magnitudeMinutes >= 0 ? c.magnitudeMinutes : 0,
+    );
+    const maxMagnitude = Math.max(...sanitizedMagnitudes);
     return {
-      minutes: Math.min(maxMagnitude, 1440),
+      minutes: Math.max(0, Math.min(maxMagnitude, 1440)),
       rule: 'max_contribution',
       excludedCount,
     };
@@ -81,7 +89,7 @@ export function deriveCanonical(contributions: Contribution[]): CanonicalResult 
   totalMinutes += mergedEnd - mergedStart;
 
   return {
-    minutes: Math.min(totalMinutes, 1440),
+    minutes: Math.max(0, Math.min(totalMinutes, 1440)),
     rule: 'interval_union',
     excludedCount: 0,
   };
