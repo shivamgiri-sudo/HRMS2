@@ -6,11 +6,23 @@
 -- NOT YET EXECUTED. Purely additive: one page_catalog row, a set of role_page_access grants.
 -- Needs owner approval before it runs (CLAUDE.md).
 --
+-- WHY page_path IS '/bulk-upload' AND NOT '/wfm/productivity-upload'
+-- WFM_PRODUCTIVITY_UPLOAD is a SECTION-LEVEL grant inside an existing page, not a page of its
+-- own. The upload UI is a third tab on the existing /bulk-upload page (src/pages/BulkUploadHub.tsx)
+-- — no /wfm/productivity-upload route exists in the frontend router and none is being added, so
+-- registering that path here would put a dead link in page_catalog for any nav entry, access
+-- screen or deep link that reads page_path back: a guaranteed 404. page_path must name a route a
+-- browser can actually reach, which is /bulk-upload.
+--
+-- page_code stays 'WFM_PRODUCTIVITY_UPLOAD' precisely because it is NOT the page's identity: it
+-- is the separately grantable permission the new tab is gated on, so a role can hold /bulk-upload
+-- (roster import) without holding productivity upload, and vice versa. Two page_catalog rows may
+-- therefore share page_path '/bulk-upload' — page_code is the unique key, not page_path.
+--
 -- Per the five-things-must-agree convention (backend/sql/1129_cost_centre_page_access.sql):
 -- this migration is the page_catalog + role_page_access half. The route + Gate pageCode and the
--- PAGE_CODE_BY_ROUTE entry land in Task 4 of this plan. The navConfig.tsx entry is deliberately
--- NOT added this phase (see design.md, roadmap for this plan) — no UI page exists yet to route
--- to, so a nav entry today would link to a 404.
+-- PAGE_CODE_BY_ROUTE entry land in Task 4 of this plan. No navConfig.tsx entry is added, and none
+-- is needed: /bulk-upload is already in the nav, and the tab is reached from there.
 --
 -- Grants mirror the existing attendance-apr-bulk.routes.ts's requireRole list
 -- (wfm, hr, payroll_head, super_admin, admin) plus branch_head, since criterion 17's
@@ -29,6 +41,9 @@
 -- costs one row and closes the gap for any user actually holding that role_key.
 --
 -- ROLLBACK
+-- Keyed on page_code, never on page_path: page_path '/bulk-upload' is shared with the page_catalog
+-- row for the existing roster-import page, and a rollback matched on the path would deactivate
+-- that page for everyone. page_code touches only this grant.
 --   UPDATE role_page_access SET active_status = 0 WHERE page_code = 'WFM_PRODUCTIVITY_UPLOAD';
 --   UPDATE page_catalog     SET active_status = 0 WHERE page_code = 'WFM_PRODUCTIVITY_UPLOAD';
 
@@ -36,7 +51,7 @@ INSERT INTO page_catalog (page_code, page_name, page_path, module, description, 
 VALUES (
   'WFM_PRODUCTIVITY_UPLOAD',
   'WFM Productivity Upload',
-  '/wfm/productivity-upload',
+  '/bulk-upload',
   'WFM',
   'Branch WFM manual dialler productivity report upload (requirements.md Requirement 17)',
   1

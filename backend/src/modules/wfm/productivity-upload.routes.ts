@@ -9,6 +9,8 @@ import multer from 'multer';
 import { createHash } from 'crypto';
 import { requireAuth } from '../../middleware/authMiddleware.js';
 import { requireRole } from '../../middleware/requireRole.js';
+import { db } from '../../db/mysql.js';
+import type { RowDataPacket } from 'mysql2';
 import { resolveUserBusinessScope, type UserBusinessScope } from '../../shared/enterpriseScope.js';
 import { buildUploadPreview, type UploadPreviewResult } from './productivity-upload-preview.service.js';
 import { commitUploadBatch, DuplicateUploadBatchError } from './productivity-upload-commit.service.js';
@@ -388,6 +390,141 @@ async function prepareUpload(req: any): Promise<PreparedRequest> {
 // ROLE_ALIASES, so 'wfm' here also admits 'wfm_analyst'; 1639 grants that role explicitly for
 // exactly that reason.
 const UPLOAD_ROLES: string[] = ['wfm', 'branch_head', 'hr', 'payroll_head', 'super_admin', 'admin'];
+
+// migration 1636's own vocabulary: dialler_source.ingestion_mode is
+// ENUM('integrated_pull','manual_upload'), and only the manual_upload half can be uploaded to by
+// hand. An integrated_pull source is served by Phase 3's ingestion job, so offering one in this
+// picker would let a human submit a file against a source whose rows arrive by API — two writers
+// for the same (source, employee, date) with no reconciliation between them.
+const MANUAL_UPLOAD_MODE = 'manual_upload';
+
+interface DiallerSourceListRow extends RowDataPacket {
+  id: string;
+  source_key: string;
+  display_name: string;
+  ingestion_mode: 'integrated_pull' | 'manual_upload';
+  // dialler_source_column_mapping.column_mappings is a JSON column. mysql2 hands a JSON column
+  // back already parsed as an object, but the driver returns a string when the column is served
+  // through anything that types it as text, so both shapes are handled. NULL when the LEFT JOIN
+  // found no mapping row.
+  column_mappings: string | Record<string, unknown> | null;
+  mapping_version: number | null;
+}
+
+/**
+ * Turns a stored column_mappings blob into the flat {"csv header": "target field"} object the
+ * frontend hands straight back to /preview and /commit, or null when the blob cannot be trusted.
+ *
+ * Defensive on purpose. The write path for these rows is a later admin screen, so nothing has
+ * validated what is in this column yet, and a JSON column can legitimately hold `null`, a scalar
+ * or an array — none of which are a mapping. A throw here would take out the whole picker
+ * response for every other source because of one bad row, which is the opposite of useful: the
+ * uploader could not even see which source is broken. A null mapping is a shape the frontend
+ * already has to handle (a source with no mapping row yet), so a bad blob degrades into that
+ * same case rather than into a 500.
+ */
+function readColumnMappings(raw: unknown): Record<string, string> | null {
+  if (raw === null || raw === undefined) return null;
+
+  let parsed: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+
+  const mappings: Record<string, string> = {};
+  for (const [header, target] of Object.entries(parsed as Record<string, unknown>)) {
+    // A non-string target is not a target field, and readRequestFields() below would reject it
+    // anyway once the frontend echoed it back. Treated as a malformed blob rather than silently
+    // dropped, so the caller sees "this source has no usable mapping" instead of a mapping that
+    // quietly lost a column.
+    if (typeof target !== 'string') return null;
+    mappings[header] = target;
+  }
+  return mappings;
+}
+
+/**
+ * Lists the registered Dialler_Sources a human may upload a report for, each with its current
+ * Column_Mapping (criteria 16.12-16.14). Without this, /preview and /commit are undrivable from a
+ * UI: both require a diallerSourceId and a full columnMappings object, and nothing else exposes
+ * either over HTTP.
+ *
+ * Behind the same requireRole(...UPLOAD_ROLES) gate as /preview and /commit, deliberately: this
+ * response names every source, its stable code and its mapping — the shape of the business's
+ * productivity feeds — and the set of people who may see that is the set who may upload.
+ *
+ * Only active_status = 1 is filtered, NOT the effective-date window that
+ * resolveActiveDiallerSource() applies. That helper answers "may this source contribute a row on
+ * this date", which is a per-row question with a date to answer it against; this endpoint is
+ * populating a picker before any date window is chosen, and a manual upload is routinely a
+ * backfill for a past month. Hiding a source whose effective_to has passed would make those
+ * backfills unsubmittable while showing one costs nothing.
+ */
+router.get(
+  '/sources',
+  requireRole(...UPLOAD_ROLES),
+  asyncRoute(async (_req: any, res: any) => {
+    let rows: DiallerSourceListRow[];
+    try {
+      // One row per source guaranteed by uq_dscm (dialler_source_id, mapping_version) in
+      // migration 1636: the join pins mapping_version to the highest ACTIVE version, and that
+      // pair is unique, so no source can be duplicated by a second mapping row. Amending a
+      // mapping bumps mapping_version, so "highest active version" is the current mapping.
+      const [result] = await db.execute<DiallerSourceListRow[]>(
+        `SELECT s.id, s.source_key, s.display_name, s.ingestion_mode,
+                m.column_mappings, m.mapping_version
+           FROM dialler_source s
+           LEFT JOIN dialler_source_column_mapping m
+                  ON m.dialler_source_id = s.id
+                 AND m.active_status = 1
+                 AND m.mapping_version = (
+                       SELECT MAX(m2.mapping_version)
+                         FROM dialler_source_column_mapping m2
+                        WHERE m2.dialler_source_id = s.id
+                          AND m2.active_status = 1
+                     )
+          WHERE s.active_status = 1
+            AND s.ingestion_mode = ?
+          ORDER BY s.display_name ASC, s.source_key ASC`,
+        [MANUAL_UPLOAD_MODE],
+      );
+      rows = result;
+    } catch (err) {
+      // Answered here rather than left to asyncRoute()'s catch only so the message fits a read:
+      // asyncRoute's text talks about what was or was not saved, which is meaningless on a GET
+      // and reads as though an upload had been attempted. Driver text is logged, never returned —
+      // the same convention the rest of this file follows.
+      console.error('[productivity-upload] /sources query failed', err);
+      return res.status(500).json({
+        success: false,
+        message: 'The list of dialler sources could not be loaded because of a server error. Please retry.',
+      });
+    }
+
+    const sources = rows.map((row) => {
+      const columnMappings = readColumnMappings(row.column_mappings);
+      const rawVersion = Number(row.mapping_version);
+      return {
+        diallerSourceId: row.id,
+        sourceCode: row.source_key,
+        displayName: row.display_name,
+        sourceType: row.ingestion_mode,
+        columnMappings,
+        // Kept in lockstep with columnMappings: a version number alongside a null mapping would
+        // invite the caller to POST /commit with mappingVersionUsed set for a mapping it never
+        // received, mislabelling the batch's audit trail.
+        mappingVersion: columnMappings === null || !Number.isFinite(rawVersion) ? null : rawVersion,
+      };
+    });
+
+    return res.json({ success: true, sources });
+  }),
+);
 
 router.post(
   '/preview',

@@ -15,11 +15,30 @@ function readMigration(file: string): string {
   return readFileSync(join(SQL_DIR, file), 'utf-8');
 }
 
+/**
+ * The executable statements only. The path assertion below has to distinguish what the migration
+ * WRITES from what its header comment merely discusses — that header explains why the old
+ * '/wfm/productivity-upload' path was replaced, so a whole-file substring check would read the
+ * explanation as the value and pass or fail for the wrong reason.
+ */
+function statementsOnly(sql: string): string {
+  return sql
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('--'))
+    .join('\n');
+}
+
 describe('WFM_PRODUCTIVITY_UPLOAD page access migration (1639)', () => {
-  it('registers the page_catalog row with the correct path', () => {
-    const sql = readMigration('1639_wfm_productivity_upload_page_access.sql');
+  // page_path must name a route the frontend router actually serves. WFM_PRODUCTIVITY_UPLOAD is a
+  // section-level grant for a tab inside the existing /bulk-upload page (src/pages/BulkUploadHub.tsx),
+  // not a page of its own — there is no /wfm/productivity-upload route, so registering that path
+  // would hand a 404 to anything that reads page_path back. The page_code is unchanged: it stays
+  // the separately grantable permission the tab is gated on.
+  it('registers the page_catalog row against the real /bulk-upload route', () => {
+    const sql = statementsOnly(readMigration('1639_wfm_productivity_upload_page_access.sql'));
     expect(sql).toContain("'WFM_PRODUCTIVITY_UPLOAD',");
-    expect(sql).toContain("'/wfm/productivity-upload',");
+    expect(sql).toContain("'/bulk-upload',");
+    expect(sql).not.toContain("'/wfm/productivity-upload'");
   });
 
   it('grants every role the route admits view + create access', () => {
