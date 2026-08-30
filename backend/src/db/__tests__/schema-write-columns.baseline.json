@@ -151,5 +151,9 @@
   ],
   "workers/domains/leave-sync-handler.ts": [
     "leave_request.updated_at"
+  ],
+  "modules/wfm/productivity-upload-commit.service.ts": [
+    "campaign_master.dialler_source_id",
+    "campaign_master.is_sentinel"
   ]
 }
