@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { RowDataPacket } from 'mysql2/promise';
 import { db } from '../../db/mysql.js';
 import { getUserRoleKeys } from '../../shared/roleResolver.js';
+import { deriveQrToken, qrTokenHash, qrTokenHashEquals, looksLikeQrToken } from './exit-pass.qr.js';
 
 /**
  * Asset & Material Exit Pass service — Phase 1 (create -> approve) and
@@ -190,6 +191,9 @@ interface PassRow extends RowDataPacket {
   movement_type: 'returnable' | 'non_returnable';
   branch_head_employee_id: string | null;
   admin_employee_id: string | null;
+  pass_number: string | null;
+  /** sha256 of the gate QR token (migration 1633). NULL on pre-Phase-4 passes. */
+  qr_token_hash: string | null;
 }
 
 async function getPassRow(passId: string): Promise<PassRow> {
@@ -278,11 +282,16 @@ export async function branchHeadDecision(
     try {
       await conn.beginTransaction();
       const passNumber = await nextPassNumber(conn, pass.branch_id);
+      // Gate QR (Phase 4): the hash goes in with the pass number, in the same
+      // transaction, because those two things becoming printable is one event.
+      // Writing it later would leave a window where an approved pass is
+      // printable but its QR is unresolvable at the gate.
       await conn.execute(
         `UPDATE exit_pass_requests
-         SET status = 'approved', branch_head_decided_at = NOW(), approved_at = NOW(), pass_number = ?
+         SET status = 'approved', branch_head_decided_at = NOW(), approved_at = NOW(), pass_number = ?,
+             qr_token_hash = ?
          WHERE id = ?`,
-        [passNumber, passId],
+        [passNumber, qrTokenHash(deriveQrToken(passId)), passId],
       );
       await conn.execute(
         `INSERT INTO exit_pass_approvals (id, exit_pass_id, stage, approver_employee_id, decision, remarks)
@@ -362,11 +371,14 @@ export async function adminDecision(
     let passNumber: string | null = null;
     if (decision === 'approved') {
       passNumber = await nextPassNumber(conn, pass.branch_id);
+      // Gate QR (Phase 4) — same transaction as the pass number, see the
+      // matching comment in branchHeadDecision's final-approval branch.
       await conn.execute(
         `UPDATE exit_pass_requests
-         SET status = 'approved', admin_employee_id = ?, admin_decided_at = NOW(), approved_at = NOW(), pass_number = ?
+         SET status = 'approved', admin_employee_id = ?, admin_decided_at = NOW(), approved_at = NOW(), pass_number = ?,
+             qr_token_hash = ?
          WHERE id = ?`,
-        [actor.employeeId, passNumber, passId],
+        [actor.employeeId, passNumber, qrTokenHash(deriveQrToken(passId)), passId],
       );
     } else {
       await conn.execute(
@@ -432,27 +444,72 @@ export async function getExitPass(passId: string, actor: RequestingEmployee, act
      WHERE ea.exit_pass_id = ? ORDER BY ea.decided_at ASC`,
     [passId],
   );
-  return { ...pass, items, approvals, letterhead };
+
+  // Phase 4 gate QR. Gated on pass_number, not on status: a pass without a
+  // number has no gate identity at all, and emitting a token for one would put
+  // a scannable QR on a draft that no guard could ever act on.
+  const qrToken = pass.pass_number ? deriveQrToken(pass.id) : null;
+  if (qrToken) await ensureQrTokenHash(pass, qrToken);
+
+  // The hash is a credential verifier — it never leaves the server, even to a
+  // caller already allowed to see the pass. The raw token does (that is what
+  // the print page encodes), but it is re-derivable by anyone who could reach
+  // this row anyway, whereas the hash is what a gate lookup matches against.
+  const passPublic: Record<string, unknown> = { ...pass };
+  delete passPublic.qr_token_hash;
+
+  return { ...passPublic, items, approvals, letterhead, qr_token: qrToken };
+}
+
+/**
+ * Backfills qr_token_hash for a pass approved before migration 1633.
+ *
+ * Those rows carry a pass_number but a NULL hash, so their token derives
+ * perfectly well on the print page and then matches nothing at the gate. The
+ * migration cannot backfill this itself — derivation needs the HMAC secret,
+ * which exists in the process and not in SQL — so the hash is written the first
+ * time the pass is opened. For a printable pass that read IS the print page, so
+ * the QR is registered before anyone can scan it.
+ *
+ * Idempotent under concurrency: the `qr_token_hash IS NULL` guard means a
+ * second caller writes the identical derived value or affects zero rows.
+ */
+async function ensureQrTokenHash(pass: PassRow, token: string): Promise<void> {
+  if (pass.qr_token_hash) return;
+  const hash = qrTokenHash(token);
+  await db.execute(
+    `UPDATE exit_pass_requests SET qr_token_hash = ? WHERE id = ? AND qr_token_hash IS NULL`,
+    [hash, pass.id],
+  );
+  pass.qr_token_hash = hash;
 }
 
 // ─── Phase 2: security guard exit verification ─────────────────────────────
 
-/** Guard's "enter pass number" lookup. Deliberately returns only what a gate check needs. */
-export async function findPassForVerification(passNumber: string) {
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT epr.id, epr.pass_number, epr.status, epr.movement_type, epr.priority,
-            epr.branch_id, bm.branch_name, req.full_name AS requestor_name,
-            epr.carrier_name, epr.carrier_type, epr.planned_exit_at, epr.expected_return_at,
-            epr.exit_verified_at, epr.exit_gate
-     FROM exit_pass_requests epr
-     JOIN branch_master bm ON bm.id = epr.branch_id
-     JOIN employees req ON req.id = epr.requestor_employee_id
-     WHERE epr.pass_number = ? LIMIT 1`,
-    [passNumber],
-  );
-  const pass = rows[0];
-  if (!pass) throw new ExitPassError(404, 'No pass found with that number.');
+/**
+ * Column list a gate check is allowed to see — deliberately narrow, and
+ * deliberately WITHOUT qr_token_hash. Shared by the pass-number and QR-token
+ * lookups so the two can never drift into showing a guard different facts about
+ * the same pass.
+ */
+// Columns and FROM are kept SEPARATE on purpose. Held as one "SELECT ... FROM
+// ... JOIN ..." blob, the token lookup below could only add its extra column by
+// appending after the JOINs — where `, epr.qr_token_hash` parses as another
+// table reference in the FROM clause, not as a select-list entry. That is valid
+// enough to compile and throws at runtime.
+const VERIFICATION_COLUMNS = `
+  epr.id, epr.pass_number, epr.status, epr.movement_type, epr.priority,
+  epr.branch_id, bm.branch_name, req.full_name AS requestor_name,
+  epr.carrier_name, epr.carrier_type, epr.planned_exit_at, epr.expected_return_at,
+  epr.exit_verified_at, epr.exit_gate`;
 
+const VERIFICATION_FROM = `
+  FROM exit_pass_requests epr
+  JOIN branch_master bm ON bm.id = epr.branch_id
+  JOIN employees req ON req.id = epr.requestor_employee_id`;
+
+/** Items + verdict + overdue, identical for both lookup routes. */
+async function shapeForVerification(pass: RowDataPacket) {
   const [items] = await db.execute<RowDataPacket[]>(
     `SELECT id, category, item_name, asset_id, quantity FROM exit_pass_items WHERE exit_pass_id = ? ORDER BY created_at ASC`,
     [pass.id],
@@ -475,11 +532,59 @@ export async function findPassForVerification(passNumber: string) {
   return { ...pass, items, verdict, is_overdue: isOverdue };
 }
 
+/** Guard's "enter pass number" lookup. Deliberately returns only what a gate check needs. */
+export async function findPassForVerification(passNumber: string) {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${VERIFICATION_COLUMNS} ${VERIFICATION_FROM} WHERE epr.pass_number = ? LIMIT 1`,
+    [passNumber],
+  );
+  const pass = rows[0];
+  if (!pass) throw new ExitPassError(404, 'No pass found with that number.');
+  return shapeForVerification(pass);
+}
+
+/**
+ * Guard's "scan the QR" lookup (Phase 4).
+ *
+ * Resolves a scanned token to the same payload the pass-number path returns, so
+ * the verify screen renders one verdict UI regardless of how the pass was
+ * found. Deciding the exit is still a separate authorised POST — this is a read.
+ */
+export async function findPassForVerificationByQrToken(token: string) {
+  // Shape-check before querying: a camera pointed at a courier label or an
+  // asset sticker must not turn into database load.
+  if (!looksLikeQrToken(token)) {
+    throw new ExitPassError(400, 'That code is not a gate pass QR.');
+  }
+  const hash = qrTokenHash(token);
+  const [rows] = await db.execute<RowDataPacket[]>(
+    `SELECT ${VERIFICATION_COLUMNS}, epr.qr_token_hash ${VERIFICATION_FROM}
+     WHERE epr.qr_token_hash = ? LIMIT 1`,
+    [hash],
+  );
+  const pass = rows[0];
+  if (!pass) {
+    // Same message for "no such token" and "malformed" would be friendlier to
+    // an attacker probing for valid tokens; there is nothing to probe FOR here
+    // (a token grants nothing without a security session), so the message
+    // stays useful to the guard actually standing at the gate.
+    throw new ExitPassError(404, 'This QR does not match any gate pass. Enter the pass number instead.');
+  }
+  // Belt-and-braces: the indexed WHERE already matched, this re-asserts it in
+  // constant time so a future rewrite to a scan-and-compare cannot silently
+  // become a `===` on a credential.
+  if (!qrTokenHashEquals(String(pass.qr_token_hash), hash)) {
+    throw new ExitPassError(404, 'This QR does not match any gate pass. Enter the pass number instead.');
+  }
+  delete pass.qr_token_hash;
+  return shapeForVerification(pass);
+}
+
 export async function verifyExit(
   passNumber: string,
   actor: RequestingEmployee,
   actorRoles: string[],
-  input: { gate: string; method: 'qr' | 'manual'; remarks?: string | null },
+  input: { gate: string; method: 'qr' | 'manual'; remarks?: string | null; qr_token?: string | null },
 ): Promise<void> {
   const isAllowed = actorRoles.some((r) => UNRESTRICTED_ROLES.includes(r) || SECURITY_ROLES.includes(r));
   if (!isAllowed) {
@@ -494,6 +599,23 @@ export async function verifyExit(
   if (!pass) throw new ExitPassError(404, 'No pass found with that number.');
   if (pass.status !== 'approved') {
     throw new ExitPassError(409, `Pass is '${pass.status}', not approved — cannot verify exit.`);
+  }
+
+  // exit_verification_method has existed since 1539 but was self-reported: any
+  // client could POST method:'qr' while the guard typed the number off a
+  // forwarded screenshot, and the audit row would claim a scan that never
+  // happened. Proving possession of the token is the entire point of Phase 4,
+  // so an unprovable 'qr' is REFUSED rather than quietly downgraded to
+  // 'manual' — silently rewriting what a guard did would corrupt the same
+  // audit trail this check exists to protect.
+  if (input.method === 'qr') {
+    const scanned = input.qr_token?.trim();
+    if (!scanned) {
+      throw new ExitPassError(400, 'qr_token is required when method is qr.');
+    }
+    if (!pass.qr_token_hash || !qrTokenHashEquals(qrTokenHash(scanned), pass.qr_token_hash)) {
+      throw new ExitPassError(422, 'The scanned QR does not belong to this pass.');
+    }
   }
 
   // Non-returnable material has nothing to bring back — it closes the moment
@@ -613,6 +735,12 @@ export async function listExitPasses(actor: RequestingEmployee, actorRoles: stri
     // not a validation gap.
     [...params, String(filters.limit), String(filters.offset)],
   );
+  // `epr.*` sweeps in qr_token_hash. The list is the widest-audience read in
+  // this module (anyone in the branch), and the hash is what a gate lookup
+  // matches against, so it is stripped here rather than narrowing the SELECT —
+  // the star is load-bearing for the many columns the list UI renders, and an
+  // explicit column list would silently drop future ones.
+  for (const row of rows) delete row.qr_token_hash;
   return rows;
 }
 
@@ -630,6 +758,7 @@ export async function listPendingBranchHead(actor: RequestingEmployee, actorRole
      ORDER BY epr.submitted_at ASC`,
     params,
   );
+  for (const row of rows) delete row.qr_token_hash; // see listExitPasses
   return rows;
 }
 
@@ -652,6 +781,7 @@ export async function listPendingAdmin(actor: RequestingEmployee, actorRoles: st
      ORDER BY epr.branch_head_decided_at ASC`,
     params,
   );
+  for (const row of rows) delete row.qr_token_hash; // see listExitPasses
   return rows;
 }
 

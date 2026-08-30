@@ -67,3 +67,22 @@ export function buildVisitorRegisterQrData(branchId?: string): string {
 export function buildVisitorStatusQrData(trackingToken: string): string {
   return `${APP_BASE_URL}/visitor-status/${encodeURIComponent(trackingToken)}`;
 }
+
+/**
+ * Gate pass QR → opens the security verification screen with the pass already
+ * resolved (Phase 4 of Asset & Material Exit Pass).
+ *
+ * A URL rather than a bare token, for the same reason every other QR in this
+ * file is a URL: the guard's own phone camera app becomes a working scanner, so
+ * the feature needs no in-page camera support and no scanning dependency to be
+ * usable on every device at every gate. /security/exit-pass-verify is behind
+ * ProtectedRoute + a page-code Gate, so scanning still lands on a login if the
+ * guard's session has lapsed — which is correct, not a gap.
+ *
+ * The token proves the printed pass was physically present. It authorises
+ * nothing: recording the exit is a separate POST that re-checks the guard's
+ * role and the pass's status server-side.
+ */
+export function buildExitPassQrData(qrToken: string): string {
+  return `${APP_BASE_URL}/security/exit-pass-verify?t=${encodeURIComponent(qrToken)}`;
+}

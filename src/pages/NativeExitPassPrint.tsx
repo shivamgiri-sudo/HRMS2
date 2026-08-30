@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Printer, AlertTriangle, ArrowLeft } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { buildQrCodeUrl, buildExitPassQrData } from "@/integrations/apis/qrCode.api";
 
 type Item = {
   id: string;
@@ -50,6 +51,12 @@ type PassDetail = {
   items: Item[];
   approvals: Approval[];
   letterhead: Letterhead | null;
+  /**
+   * Gate QR token, derived server-side (Phase 4). Null for a pass with no
+   * pass_number, and for a pass approved before migration 1633 only until the
+   * first load backfills its hash — so the QR block must degrade, not throw.
+   */
+  qr_token?: string | null;
 };
 
 const PRINTABLE_STATUSES = new Set(["approved", "outside_premises", "closed"]);
@@ -74,6 +81,7 @@ export default function NativeExitPassPrint() {
   const [pass, setPass] = useState<PassDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id) return;
@@ -89,6 +97,29 @@ export default function NativeExitPassPrint() {
       }
     })();
   }, [id]);
+
+  // QR rendering is async (canvas → data URL), so it cannot live inside
+  // PrintablePass: that component renders TWICE (screen preview + print-only
+  // block) and both copies must show the same already-resolved image. Generated
+  // once here and passed down instead.
+  useEffect(() => {
+    const token = pass?.qr_token;
+    if (!token) {
+      setQrDataUrl(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      // 176px raster for a 112px render. Measured 2026-08-30: at a 132px raster
+      // shown in 88px, OpenCV needed 8x upscaling to decode (~2.4px per module),
+      // which is fine on paper but marginal for a guard scanning off a screen.
+      const url = await buildQrCodeUrl(buildExitPassQrData(token), 176);
+      if (!cancelled) setQrDataUrl(url);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pass?.qr_token]);
 
   const branchHead = pass?.approvals.find((a) => a.stage === "branch_head" && a.decision === "approved");
   const admin = pass?.approvals.find((a) => a.stage === "admin" && a.decision === "approved");
@@ -138,20 +169,32 @@ export default function NativeExitPassPrint() {
           </div>
         )}
 
-        {pass && isPrintable && <PrintablePass pass={pass} branchHead={branchHead} admin={admin} />}
+        {pass && isPrintable && (
+          <PrintablePass pass={pass} branchHead={branchHead} admin={admin} qrDataUrl={qrDataUrl} />
+        )}
       </div>
 
       {/* Print-only area — invisible on screen, shows on print */}
       {pass && isPrintable && (
         <div className="hidden print:block p-8">
-          <PrintablePass pass={pass} branchHead={branchHead} admin={admin} />
+          <PrintablePass pass={pass} branchHead={branchHead} admin={admin} qrDataUrl={qrDataUrl} />
         </div>
       )}
     </>
   );
 }
 
-function PrintablePass({ pass, branchHead, admin }: { pass: PassDetail; branchHead?: Approval; admin?: Approval }) {
+function PrintablePass({
+  pass,
+  branchHead,
+  admin,
+  qrDataUrl,
+}: {
+  pass: PassDetail;
+  branchHead?: Approval;
+  admin?: Approval;
+  qrDataUrl?: string | null;
+}) {
   const totalQty = pass.items.reduce((sum, it) => sum + (it.quantity || 0), 0);
 
   return (
@@ -171,6 +214,22 @@ function PrintablePass({ pass, branchHead, admin }: { pass: PassDetail; branchHe
             {statusLabel(pass.status)}
           </div>
           <div className="font-mono text-sm font-semibold">{pass.pass_number}</div>
+          {/* Gate QR sits directly under the number it resolves to, so a guard
+              whose scan fails has the manual fallback in the same glance.
+              print:[print-color-adjust:exact] stops the browser's "economy"
+              print path from lightening the modules into an unreadable symbol. */}
+          {qrDataUrl && (
+            <div className="mt-2 flex flex-col items-end">
+              <img
+                src={qrDataUrl}
+                alt={`Scan to verify gate pass ${pass.pass_number ?? ""} at security`}
+                className="h-[112px] w-[112px] print:[print-color-adjust:exact]"
+              />
+              <div className="mt-0.5 text-[8px] font-bold uppercase tracking-widest text-slate-400">
+                Scan at gate
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -230,8 +289,9 @@ function PrintablePass({ pass, branchHead, admin }: { pass: PassDetail; branchHe
       </div>
 
       <div className="px-6 pb-6 text-[10px] text-slate-400 border-t border-slate-200 pt-3">
-        Valid only with Branch Head and Admin approval recorded above. Security verification and QR validation are
-        handled in a later phase of this module.
+        Valid only with the approvals recorded above. Security must verify this pass at the gate — scan the QR, or
+        enter <span className="font-mono">{pass.pass_number}</span> on the Gate Pass Verification screen. This pass is
+        single-use: once an exit is recorded against it, a further scan reads as already used.
       </div>
     </div>
   );

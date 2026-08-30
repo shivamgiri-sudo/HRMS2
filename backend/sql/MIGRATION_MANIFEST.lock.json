@@ -655,7 +655,8 @@
     "1633_attendance_source_rule_store.sql",
     "1634_day_threshold_rule_store.sql",
     "1635_attendance_threshold_and_ceiling_store.sql",
-    "1638_productivity_upload_batch.sql"
+    "1638_productivity_upload_batch.sql",
+    "1633_exit_pass_qr_token.sql"
   ],
   "approvedDeletions": [
     {
