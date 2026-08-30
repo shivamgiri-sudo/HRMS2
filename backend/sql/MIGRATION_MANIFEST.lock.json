@@ -661,7 +661,8 @@
     "1639_wfm_productivity_upload_page_access.sql",
     "1640_apr_manual_write_attribution_triggers.sql",
     "1641_deactivate_test_slabs_and_deduplicate_packages.sql",
-    "1642_attendance_rule_migration_proposal.sql"
+    "1642_attendance_rule_migration_proposal.sql",
+    "1643_dual_review_queue.sql"
   ],
   "approvedDeletions": [
     {
