@@ -654,7 +654,8 @@
     "migrations/440_salary_date_revision_requests.sql",
     "1633_attendance_source_rule_store.sql",
     "1634_day_threshold_rule_store.sql",
-    "1635_attendance_threshold_and_ceiling_store.sql"
+    "1635_attendance_threshold_and_ceiling_store.sql",
+    "1638_productivity_upload_batch.sql"
   ],
   "approvedDeletions": [
     {
