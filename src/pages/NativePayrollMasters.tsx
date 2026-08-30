@@ -48,6 +48,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -136,6 +142,15 @@ interface SalaryBand {
   active_status: number;
 }
 
+interface SalaryComponent {
+  id: string;
+  component_code: string;
+  component_name: string;
+  component_type: string;
+  taxable: number;
+  active_status: number;
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtCurrency(val: number | string | undefined): string {
@@ -191,6 +206,7 @@ function SalarySlabsTab() {
   const [editing, setEditing] = useState<SalarySlab | null>(null);
   const [form, setForm] = useState(EMPTY_SLAB);
   const [mutErr, setMutErr] = useState("");
+  const [selected, setSelected] = useState<SalarySlab | null>(null);
 
   const { data: res, isLoading, isError } = useQuery<ApiList<SalarySlab>>({
     queryKey: ["payroll-masters", "slabs"],
@@ -283,7 +299,11 @@ function SalarySlabsTab() {
                 </TableRow>
               )}
               {slabs.map((s) => (
-                <TableRow key={s.id}>
+                <TableRow
+                  key={s.id}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => setSelected(s)}
+                >
                   <TableCell className="font-mono text-xs">{s.slab_code}</TableCell>
                   <TableCell>{fmtCurrency(s.range_from)}</TableCell>
                   <TableCell>{fmtCurrency(s.range_to)}</TableCell>
@@ -294,7 +314,7 @@ function SalarySlabsTab() {
                       {s.active_status === 1 ? "Active" : "Inactive"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                     <Button variant="ghost" size="icon" onClick={() => openEdit(s)}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
@@ -373,6 +393,65 @@ function SalarySlabsTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Drill-down Sheet */}
+      <Sheet open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>
+        <SheetContent className="max-w-2xl w-full overflow-y-auto" side="right">
+          {selected && (
+            <>
+              <SheetHeader className="mb-4">
+                <div className="flex items-center justify-between">
+                  <SheetTitle className="text-lg">
+                    {selected.label}
+                    <span className="ml-2 font-mono text-sm text-muted-foreground">
+                      {selected.slab_code}
+                    </span>
+                  </SheetTitle>
+                  <Badge variant={selected.active_status === 1 ? "default" : "secondary"}>
+                    {selected.active_status === 1 ? "Active" : "Inactive"}
+                  </Badge>
+                </div>
+              </SheetHeader>
+              <div className="space-y-4">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Slab Details</p>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Slab Code</p>
+                    <p className="font-mono font-medium">{selected.slab_code}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Label</p>
+                    <p className="font-medium">{selected.label}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Range From</p>
+                    <p className="font-medium">{fmtCurrency(selected.range_from)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Range To</p>
+                    <p className="font-medium">{fmtCurrency(selected.range_to)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Seq Order</p>
+                    <p className="font-medium">{selected.seq_order}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Status</p>
+                    <Badge variant={selected.active_status === 1 ? "default" : "secondary"}>
+                      {selected.active_status === 1 ? "Active" : "Inactive"}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="pt-4">
+                  <Button size="sm" variant="outline" onClick={() => { openEdit(selected); setSelected(null); }}>
+                    <Pencil className="h-3.5 w-3.5 mr-1" /> Edit Slab
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </Card>
   );
 }
@@ -1334,6 +1413,7 @@ function SalaryBandsTab() {
   const [editing, setEditing] = useState<SalaryBand | null>(null);
   const [form, setForm] = useState(EMPTY_BAND);
   const [mutErr, setMutErr] = useState("");
+  const [selected, setSelected] = useState<SalaryBand | null>(null);
 
   const { data: res, isLoading, isError } = useQuery<ApiList<SalaryBand>>({
     queryKey: ["payroll-masters", "bands"],
@@ -1429,7 +1509,11 @@ function SalaryBandsTab() {
                 </TableRow>
               )}
               {bands.map((b) => (
-                <TableRow key={b.id}>
+                <TableRow
+                  key={b.id}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => setSelected(b)}
+                >
                   <TableCell className="font-mono text-xs">{b.band_code}</TableCell>
                   <TableCell className="font-medium">{b.band_name}</TableCell>
                   <TableCell>{fmtCurrency(b.slab_from)}</TableCell>
@@ -1439,7 +1523,7 @@ function SalaryBandsTab() {
                       {b.active_status === 1 ? "Active" : "Inactive"}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-right space-x-1">
+                  <TableCell className="text-right space-x-1" onClick={(e) => e.stopPropagation()}>
                     <Button variant="ghost" size="icon" onClick={() => openEdit(b)}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
@@ -1523,6 +1607,199 @@ function SalaryBandsTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Drill-down Sheet */}
+      <Sheet open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>
+        <SheetContent className="max-w-2xl w-full overflow-y-auto" side="right">
+          {selected && (
+            <>
+              <SheetHeader className="mb-4">
+                <div className="flex items-center justify-between">
+                  <SheetTitle className="text-lg">
+                    {selected.band_name}
+                    <span className="ml-2 font-mono text-sm text-muted-foreground">
+                      Band {selected.band_code}
+                    </span>
+                  </SheetTitle>
+                  <Badge variant={selected.active_status === 1 ? "default" : "secondary"}>
+                    {selected.active_status === 1 ? "Active" : "Inactive"}
+                  </Badge>
+                </div>
+              </SheetHeader>
+              <div className="space-y-4">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Band Details</p>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Band Code</p>
+                    <p className="font-mono font-medium">{selected.band_code}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Band Name</p>
+                    <p className="font-medium">{selected.band_name}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Monthly CTC From</p>
+                    <p className="font-medium">{fmtCurrency(selected.slab_from)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Monthly CTC To</p>
+                    <p className="font-medium">{fmtCurrency(selected.slab_to)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Status</p>
+                    <Badge variant={selected.active_status === 1 ? "default" : "secondary"}>
+                      {selected.active_status === 1 ? "Active" : "Inactive"}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="pt-4">
+                  <Button size="sm" variant="outline" onClick={() => { openEdit(selected); setSelected(null); }}>
+                    <Pencil className="h-3.5 w-3.5 mr-1" /> Edit Band
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
+    </Card>
+  );
+}
+
+// ─── Tab 6: Salary Components ─────────────────────────────────────────────────
+
+function SalaryComponentsTab() {
+  const [selected, setSelected] = useState<SalaryComponent | null>(null);
+
+  const { data: res, isLoading, isError } = useQuery<{ success: boolean; data: SalaryComponent[] }>({
+    queryKey: ["payroll", "components"],
+    queryFn: () => hrmsApi.get("/api/payroll/components"),
+  });
+
+  const components: SalaryComponent[] = res?.data ?? [];
+
+  const typeLabel = (t: string) =>
+    t === "earning" ? "Earning" : t === "deduction" ? "Deduction" : t === "employer" ? "Employer" : t;
+  const typeBadge = (t: string) =>
+    t === "earning" ? "default" : t === "deduction" ? "destructive" : "secondary";
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Salary Components</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isLoading && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          </div>
+        )}
+        {isError && (
+          <div className="flex items-center gap-2 text-sm text-destructive py-4">
+            <AlertCircle className="h-4 w-4" /> Failed to load salary components.
+          </div>
+        )}
+        {!isLoading && !isError && (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Code</TableHead>
+                <TableHead>Name</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Taxable</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {components.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-muted-foreground py-6">
+                    No salary components found.
+                  </TableCell>
+                </TableRow>
+              )}
+              {components.map((c) => (
+                <TableRow
+                  key={c.id}
+                  className="cursor-pointer hover:bg-muted/50"
+                  onClick={() => setSelected(c)}
+                >
+                  <TableCell className="font-mono text-xs">{c.component_code}</TableCell>
+                  <TableCell className="font-medium">{c.component_name}</TableCell>
+                  <TableCell>
+                    <Badge variant={typeBadge(c.component_type) as "default" | "destructive" | "secondary"}>
+                      {typeLabel(c.component_type)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={c.taxable === 1 ? "destructive" : "outline"}>
+                      {c.taxable === 1 ? "Taxable" : "Non-taxable"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={c.active_status === 1 ? "default" : "secondary"}>
+                      {c.active_status === 1 ? "Active" : "Inactive"}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+
+      <Sheet open={!!selected} onOpenChange={(o) => { if (!o) setSelected(null); }}>
+        <SheetContent className="max-w-2xl w-full overflow-y-auto" side="right">
+          {selected && (
+            <>
+              <SheetHeader className="mb-4">
+                <div className="flex items-center justify-between">
+                  <SheetTitle className="text-lg">
+                    {selected.component_name}
+                    <span className="ml-2 font-mono text-sm text-muted-foreground">
+                      {selected.component_code}
+                    </span>
+                  </SheetTitle>
+                  <Badge variant={selected.active_status === 1 ? "default" : "secondary"}>
+                    {selected.active_status === 1 ? "Active" : "Inactive"}
+                  </Badge>
+                </div>
+              </SheetHeader>
+              <div className="space-y-4">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Component Details</p>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Component Code</p>
+                    <p className="font-mono font-medium">{selected.component_code}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Component Name</p>
+                    <p className="font-medium">{selected.component_name}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Type</p>
+                    <Badge variant={typeBadge(selected.component_type) as "default" | "destructive" | "secondary"}>
+                      {typeLabel(selected.component_type)}
+                    </Badge>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Taxable</p>
+                    <Badge variant={selected.taxable === 1 ? "destructive" : "outline"}>
+                      {selected.taxable === 1 ? "Taxable" : "Non-taxable"}
+                    </Badge>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Status</p>
+                    <Badge variant={selected.active_status === 1 ? "default" : "secondary"}>
+                      {selected.active_status === 1 ? "Active" : "Inactive"}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
     </Card>
   );
 }
@@ -1541,9 +1818,10 @@ export default function NativePayrollMasters() {
         </div>
 
         <Tabs defaultValue="slabs">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="slabs">Salary Slabs</TabsTrigger>
             <TabsTrigger value="bands">Salary Bands</TabsTrigger>
+            <TabsTrigger value="components">Components</TabsTrigger>
             <TabsTrigger value="matrix">Desig-Band Matrix</TabsTrigger>
             <TabsTrigger value="min-wages">Minimum Wages</TabsTrigger>
             <TabsTrigger value="org">Org Masters</TabsTrigger>
@@ -1555,6 +1833,10 @@ export default function NativePayrollMasters() {
 
           <TabsContent value="bands" className="mt-4">
             <SalaryBandsTab />
+          </TabsContent>
+
+          <TabsContent value="components" className="mt-4">
+            <SalaryComponentsTab />
           </TabsContent>
 
           <TabsContent value="matrix" className="mt-4">

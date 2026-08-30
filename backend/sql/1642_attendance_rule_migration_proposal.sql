@@ -1,4 +1,4 @@
--- 1641 - Attendance rule migration PROPOSAL store: the staging area the Requirement 15
+-- 1642 - Attendance rule migration PROPOSAL store: the staging area the Requirement 15
 -- migration builds into, reviewed and approved before any of it becomes the active rule
 -- store (requirements.md criteria 15.1, 15.2, 15.3, 15.8, 15.11, 15.12).
 --
@@ -228,4 +228,4 @@ CREATE TABLE IF NOT EXISTS attendance_source_rule_proposal_finding (
   COLLATE=utf8mb4_unicode_ci
   COMMENT='Findings for one proposal run: the undated-row list (15.2), the unconstrained-rule resolution (15.3), the seeded default thresholds (15.8) and any scope where two legacy rows disagree on source.';
 
-SELECT 'Migration 1641 applied: attendance rule migration proposal store (7 tables, inert until approved)' AS migration_status;
+SELECT 'Migration 1642 applied: attendance rule migration proposal store (7 tables, inert until approved)' AS migration_status;

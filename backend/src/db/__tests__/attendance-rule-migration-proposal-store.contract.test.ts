@@ -1,6 +1,6 @@
 // backend/src/db/__tests__/attendance-rule-migration-proposal-store.contract.test.ts
 //
-// Migration 1641, the Requirement 15 proposal store. Asserts the conventions that have each
+// Migration 1642, the Requirement 15 proposal store. Asserts the conventions that have each
 // broken a deploy on this codebase at least once, so a future edit to the file cannot
 // reintroduce them:
 //   - the seven tables the builder's output maps onto
@@ -15,7 +15,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 
 const SQL_DIR = join(__dirname, '../../../sql');
-const FILE = '1641_attendance_rule_migration_proposal.sql';
+const FILE = '1642_attendance_rule_migration_proposal.sql';
 
 const RAW = readFileSync(join(SQL_DIR, FILE), 'utf-8');
 
@@ -39,7 +39,7 @@ const TABLES = [
   'attendance_source_rule_proposal_finding',
 ];
 
-describe('attendance rule migration proposal store (1641)', () => {
+describe('attendance rule migration proposal store (1642)', () => {
   it('creates the seven tables the proposal builder writes into, and nothing else', () => {
     const created = [...STATEMENTS.matchAll(/CREATE TABLE IF NOT EXISTS\s+(\w+)/g)].map(
       (m) => m[1]!,

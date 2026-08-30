@@ -731,14 +731,14 @@ describe('determinism - the same legacy data always proposes the same rule set',
   });
 });
 
-// The proposal is persisted into the tables migration 1641 creates, whose ENUM columns will
+// The proposal is persisted into the tables Migration 1642 creates, whose ENUM columns will
 // reject an out-of-set value with a hard error (or, worse, coerce it to '' under a non-strict
 // sql_mode). Every enumerated value the builder can emit therefore has to be in the SQL's value
 // set, and the two files are edited independently - so the check belongs in a test, not in a
 // comment.
-describe('the output maps onto migration 1641', () => {
+describe('the output maps onto Migration 1642', () => {
   const MIGRATION = readFileSync(
-    join(__dirname, '..', '..', '..', '..', 'sql', '1641_attendance_rule_migration_proposal.sql'),
+    join(__dirname, '..', '..', '..', '..', 'sql', '1642_attendance_rule_migration_proposal.sql'),
     'utf-8',
   );
 
