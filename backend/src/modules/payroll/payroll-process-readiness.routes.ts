@@ -130,10 +130,28 @@ async function getOrgWideGovernanceSummary(month: string): Promise<OrgWideGovern
 payrollProcessReadinessRouter.get(
   "/grouped-summary",
   requireAuth,
-  requireRole("payroll_head", "super_admin", "payroll", "admin"),
+  // payroll_hr added here and on the routes below: user_roles has 4 active payroll_hr users
+  // and ZERO holding payroll_branch, so payroll_hr is the branch-payroll role in practice.
+  // payroll-branch-readiness.routes.ts already granted it; this file was missed entirely, so
+  // every process-level route 403d the one role that owns custom_deductions_uploaded.
+  // Sign-off, ho-override and export are deliberately NOT widened.
+  requireRole("payroll_head", "super_admin", "payroll", "admin", "payroll_hr"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
+      // Seed the full (branch x process) grid before reading. The summary enumerates rows, and
+      // rows were only ever created on demand by ensureRecord when somebody browsed to a branch,
+      // so unvisited combinations were missing entirely rather than showing as not-ready - which
+      // on a readiness page reads as nothing being wrong. Idempotent INSERT IGNORE; a failure
+      // here degrades to the previous partial view rather than failing the request.
+      try {
+        await payrollBranchReadinessService.ensureMonthGrid(month);
+      } catch (seedErr: unknown) {
+        console.warn(
+          "[ProcessReadiness] ensureMonthGrid failed - summary may omit unvisited branch/process rows:",
+          seedErr instanceof Error ? seedErr.message : seedErr
+        );
+      }
       const data = await payrollBranchReadinessService.getHOSummaryGrouped(month);
 
       const totalProcesses  = data.reduce((s, b) => s + b.stats.total, 0);
@@ -250,7 +268,7 @@ payrollProcessReadinessRouter.get(
 payrollProcessReadinessRouter.get(
   "/my-pending-count",
   requireAuth,
-  requireRole("wfm", "process_manager", "branch_head", "payroll_branch", "super_admin", "admin"),
+  requireRole("wfm", "process_manager", "branch_head", "payroll_branch", "payroll_hr", "super_admin", "admin"),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
@@ -326,7 +344,7 @@ payrollProcessReadinessRouter.get(
 payrollProcessReadinessRouter.get(
   "/branch/:branchId",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "payroll_head", "super_admin", "payroll", "wfm", "process_manager"),
+  requireRole("branch_head", "payroll_branch", "payroll_hr", "payroll_head", "super_admin", "payroll", "wfm", "process_manager"),
   requireScopedRole(
     ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm", "process_manager"],
     branchScopeTarget,
@@ -371,11 +389,11 @@ payrollProcessReadinessRouter.get(
   "/:branchId/:processId",
   requireAuth,
   requireRole(
-    "branch_head", "payroll_branch", "payroll_head", "super_admin",
+    "branch_head", "payroll_branch", "payroll_hr", "payroll_head", "super_admin",
     "payroll", "wfm", "process_manager", "admin", "hr"
   ),
   requireScopedRole(
-    ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm", "process_manager", "admin", "hr"],
+    ["branch_head", "payroll_branch", "payroll_hr", "payroll_head", "payroll", "wfm", "process_manager", "admin", "hr"],
     branchProcessScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -420,9 +438,9 @@ const CONFIRMED_BY_MAP: Record<ProcessChecklistItem, string | null> = {
 payrollProcessReadinessRouter.post(
   "/:branchId/:processId/checklist",
   requireAuth,
-  requireRole("wfm", "process_manager", "branch_head", "payroll_branch"),
+  requireRole("wfm", "process_manager", "branch_head", "payroll_branch", "payroll_hr"),
   requireScopedRole(
-    ["wfm", "process_manager", "branch_head", "payroll_branch"],
+    ["wfm", "process_manager", "branch_head", "payroll_branch", "payroll_hr"],
     branchProcessScopeTarget,
     SCOPE_OPTIONS
   ),
@@ -561,7 +579,7 @@ payrollProcessReadinessRouter.post(
 payrollProcessReadinessRouter.post(
   "/:branchId/:processId/request-freeze",
   requireAuth,
-  requireRole("wfm", "process_manager", "branch_head", "payroll_branch"),
+  requireRole("wfm", "process_manager", "branch_head", "payroll_branch", "payroll_hr"),
   requireScopedRole(
     ["wfm", "process_manager", "branch_head", "payroll_branch"],
     branchProcessScopeTarget,

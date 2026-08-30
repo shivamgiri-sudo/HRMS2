@@ -66,6 +66,12 @@ export interface BranchReadinessRecord {
   ho_override_by: string | null;
   ho_override_at: string | null;
   ho_override_reason: string | null;
+  // outstanding work behind the manual attestations (migration 1643).
+  // REPORTING ONLY - computeScore/computeStatus never read these.
+  pending_leave_count: number;
+  pending_regularization_count: number;
+  employees_without_attendance: number;
+  incentive_batch_status: string | null;
   // score
   readiness_score: number;
   readiness_status: "not_started" | "in_progress" | "ready" | "blocked";
@@ -265,6 +271,90 @@ export const payrollBranchReadinessService = {
         console.warn(`[BranchReadiness] ensureRecord failed — ${msg}`);
       }
     }
+  },
+
+  // -------------------------------------------------------------------------
+  // ensureMonthGrid
+  // -------------------------------------------------------------------------
+
+  /**
+   * Create the FULL readiness grid for a month: one row per (branch, process) that has an
+   * active employee, plus one branch-level row per branch.
+   *
+   * WHY THIS EXISTS
+   * ensureRecord() above creates a single row on demand, and nothing else seeded the table, so
+   * the grid only ever contained combinations somebody had already browsed to. For 2026-08 that
+   * meant 7 branch-level rows and 24 process-level rows across 3 branches, while 49 distinct
+   * (branch_id, process_id) pairs had active employees. A Payroll Head asking "which branch and
+   * which process is ready" could therefore only be shown the ones already visited — the
+   * unvisited ones were not "not ready", they were absent, which reads identically to nothing
+   * being wrong.
+   *
+   * Set-based and INSERT IGNORE against uk_readiness_month_branch_process
+   * (process_month, branch_id, process_id), so it is idempotent and safe to call on every
+   * summary read. It only ever INSERTs: existing rows, including their ticks and sign-offs, are
+   * never updated or deleted here.
+   *
+   * Column defaults match ensureRecord exactly, including noc_resolved / holiday_work_approved
+   * defaulting to 1 — those two are re-derived by refreshLiveMetrics and are deliberately not
+   * scored, so seeding them at 1 grants no readiness credit.
+   */
+  async ensureMonthGrid(month: string): Promise<{ branchRows: number; processRows: number }> {
+    await ensureTable();
+    if (!(await tableExists())) return { branchRows: 0, processRows: 0 };
+
+    const COLS = `(branch_id, process_month, process_id, process_name,
+            attendance_data_ready, attendance_frozen, incentives_status,
+            custom_deductions_uploaded, overtime_entered,
+            leave_finalized, regularization_complete,
+            bank_details_pct, uan_complete_pct, noc_resolved, holiday_work_approved,
+            branch_head_signoff, ho_override_ready,
+            readiness_score, readiness_status, employee_count)`;
+    const DEFAULTS = `0, 0, 'not_uploaded', 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 'not_started', 0`;
+
+    let processRows = 0;
+    let branchRows = 0;
+
+    // Process-level. process_name is resolved from process_master where it exists; a LEFT JOIN
+    // keeps the row when the process id has no master entry rather than dropping the grid cell.
+    processRows = await safeQuery(
+      async () => {
+        const [res] = await db.execute(
+          `INSERT IGNORE INTO payroll_branch_readiness ${COLS}
+           SELECT DISTINCT e.branch_id, ?, e.process_id, COALESCE(pm.process_name, ''),
+                  ${DEFAULTS}
+             FROM employees e
+             LEFT JOIN process_master pm ON pm.id = e.process_id
+            WHERE e.active_status = 1
+              AND e.branch_id  IS NOT NULL AND e.branch_id  <> ''
+              AND e.process_id IS NOT NULL AND e.process_id <> ''`,
+          [month]
+        );
+        return Number((res as any)?.affectedRows ?? 0);
+      },
+      0,
+      "ensureMonthGrid.process"
+    );
+
+    // Branch-level rollup row (process_id = '').
+    branchRows = await safeQuery(
+      async () => {
+        const [res] = await db.execute(
+          `INSERT IGNORE INTO payroll_branch_readiness ${COLS}
+           SELECT DISTINCT e.branch_id, ?, '', '',
+                  ${DEFAULTS}
+             FROM employees e
+            WHERE e.active_status = 1
+              AND e.branch_id IS NOT NULL AND e.branch_id <> ''`,
+          [month]
+        );
+        return Number((res as any)?.affectedRows ?? 0);
+      },
+      0,
+      "ensureMonthGrid.branch"
+    );
+
+    return { branchRows, processRows };
   },
 
   // -------------------------------------------------------------------------
@@ -536,6 +626,113 @@ export const payrollBranchReadinessService = {
       "holiday_work_approved"
     );
     updates.holiday_work_approved = holidayWorkApproved;
+
+    // --- outstanding-work counters -------------------------------------------
+    // REPORTING ONLY. computeScore() and computeStatus() do not read any of these, so they
+    // cannot move a branch's score or status. They exist because the five manually ticked
+    // checklist items verify nothing — the checklist POST writes the column with no query
+    // behind it — so a branch WFM user attested "Attendance Data Ready" from memory and the
+    // Payroll Head saw a score with no way to tell WHY a branch was short. These four put a
+    // number behind each attestation and give follow-up something to chase.
+    //
+    // Each is wrapped in safeQuery with a 0/null fallback so an environment where migration
+    // 1643 has not yet applied degrades to "nothing known" instead of failing the whole refresh.
+    const [cYear, cMon] = month.split("-").map(Number);
+    const cStart = `${month}-01`;
+    const cEnd = new Date(cYear, cMon, 0).toISOString().slice(0, 10);
+    const cProcJoined = processId ? "AND e.process_id = ?" : "";
+    const cProcParams = processId ? [processId] : [];
+
+    // Leave still awaiting a decision, for leave whose span touches this month. Dates exist
+    // under BOTH naming styles on leave_request (start_date/end_date and from_date/to_date),
+    // so both are COALESCEd rather than assuming one.
+    updates.pending_leave_count = await safeQuery(
+      async () => {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS cnt
+             FROM leave_request lr
+             JOIN employees e ON e.id = lr.employee_id
+            WHERE e.active_status = 1
+              AND e.branch_id = ?
+              AND LOWER(lr.status) = 'pending'
+              AND COALESCE(lr.start_date, lr.from_date) <= ?
+              AND COALESCE(lr.end_date,   lr.to_date)   >= ?
+              ${cProcJoined}`,
+          [branchId, cEnd, cStart, ...cProcParams]
+        );
+        return Number((rows[0] as any)?.cnt ?? 0);
+      },
+      0,
+      "pending_leave_count"
+    );
+
+    // attendance_regularization carries branch_id but NO process_id, so the process cut has to
+    // come from employees via the join rather than from the row itself.
+    updates.pending_regularization_count = await safeQuery(
+      async () => {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS cnt
+             FROM attendance_regularization ar
+             JOIN employees e ON e.id = ar.employee_id
+            WHERE e.active_status = 1
+              AND e.branch_id = ?
+              AND LOWER(ar.status) IN ('pending','escalated')
+              AND ar.session_date BETWEEN ? AND ?
+              ${cProcJoined}`,
+          [branchId, cStart, cEnd, ...cProcParams]
+        );
+        return Number((rows[0] as any)?.cnt ?? 0);
+      },
+      0,
+      "pending_regularization_count"
+    );
+
+    // Active employees with NO attendance row at all this month. This is the number behind
+    // "Attendance Data Ready": a non-zero value means the month demonstrably is not complete.
+    // The column is record_date, not attendance_date.
+    updates.employees_without_attendance = await safeQuery(
+      async () => {
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT COUNT(*) AS cnt
+             FROM employees e
+            WHERE e.active_status = 1
+              AND e.branch_id = ?
+              ${cProcJoined}
+              AND NOT EXISTS (
+                SELECT 1 FROM attendance_daily_record adr
+                 WHERE adr.employee_id = e.id
+                   AND adr.record_date BETWEEN ? AND ?
+              )`,
+          [branchId, ...cProcParams, cStart, cEnd]
+        );
+        return Number((rows[0] as any)?.cnt ?? 0);
+      },
+      0,
+      "employees_without_attendance"
+    );
+
+    // The incentive batch's real state. incentives_status = 'approved' is worth 20 of the 100
+    // readiness points and branch staff cannot set it — POST /api/incentives/batches/:id/approve
+    // is requireRole('admin','finance') — so without this the branch sees a fifth of its score
+    // withheld by a team that appears nowhere on the page. NULL means no batch was uploaded,
+    // which is a different problem from one uploaded and not yet approved.
+    updates.incentive_batch_status = await safeQuery(
+      async () => {
+        const proc = processId ? "AND process_id = ?" : "";
+        const [rows] = await db.execute<RowDataPacket[]>(
+          `SELECT status
+             FROM incentive_upload_batch
+            WHERE salary_month = ? AND branch_id = ? ${proc}
+            ORDER BY updated_at DESC
+            LIMIT 1`,
+          [month, branchId, ...(processId ? [processId] : [])]
+        );
+        const s = (rows[0] as any)?.status;
+        return s == null ? null : String(s);
+      },
+      null as string | null,
+      "incentive_batch_status"
+    );
 
     // --- Persist updates when table exists -----------------------------------
     if (!(await tableExists())) return;
@@ -860,6 +1057,13 @@ export const payrollBranchReadinessService = {
 
     // In-memory assembly (no table or SELECT failed)
     return {
+      // The 1643 reporting counters default to "nothing known" on this path rather than 0-as-fact:
+      // this branch runs when the table is absent or the SELECT failed, so we have not measured
+      // the outstanding work and must not imply that we did and found none.
+      pending_leave_count: Number((record as any).pending_leave_count ?? 0),
+      pending_regularization_count: Number((record as any).pending_regularization_count ?? 0),
+      employees_without_attendance: Number((record as any).employees_without_attendance ?? 0),
+      incentive_batch_status: ((record as any).incentive_batch_status as string | null) ?? null,
       branch_id: branchId,
       branch_name: String(record.branch_name ?? branchId),
       process_month: month,
@@ -1153,11 +1357,36 @@ export const payrollBranchReadinessService = {
   ): Promise<BranchReadinessRecord[]> {
     let processes: Array<{ id: string; process_name: string }> = [];
     try {
+      // UNION of two sources, not process_master alone.
+      //
+      // Listing only `process_master WHERE branch_id = ? AND active_status = 1` made the
+      // readiness page structurally blind to processes that have live staff. Of the 45
+      // (branch, process) pairs holding active employees, only 33 satisfied that predicate:
+      // three processes were active_status <> 1 while still staffed, and one was filed under a
+      // different branch_id than the employees sitting in it. Those 12 combinations were not
+      // shown as "not ready" - they were absent, which on a readiness page reads as nothing
+      // being wrong. Payroll then runs for employees whose process nobody was asked to sign off.
+      //
+      // The second leg draws from the employee population itself, so a staffed process appears
+      // regardless of how its master row is flagged. Kept as a UNION rather than a replacement
+      // because the master leg also surfaces processes with no staff yet, which is legitimate
+      // for a branch planning ahead.
       const [rows] = await db.execute<RowDataPacket[]>(
-        `SELECT id, process_name FROM process_master
-          WHERE branch_id = ? AND active_status = 1
-          ORDER BY process_name`,
-        [branchId]
+        `SELECT pid AS id, MAX(pname) AS process_name FROM (
+           SELECT pm.id AS pid, pm.process_name AS pname
+             FROM process_master pm
+            WHERE pm.branch_id = ? AND pm.active_status = 1
+           UNION
+           SELECT e.process_id AS pid, COALESCE(pm2.process_name, '') AS pname
+             FROM employees e
+             LEFT JOIN process_master pm2 ON pm2.id = e.process_id
+            WHERE e.active_status = 1
+              AND e.branch_id = ?
+              AND e.process_id IS NOT NULL AND e.process_id <> ''
+         ) u
+         GROUP BY pid
+         ORDER BY process_name`,
+        [branchId, branchId]
       );
       processes = rows as Array<{ id: string; process_name: string }>;
     } catch (err: unknown) {

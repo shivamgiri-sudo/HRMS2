@@ -201,6 +201,19 @@ payrollBranchReadinessRouter.get(
   async (req: AuthenticatedRequest, res: Response) => {
     try {
       const month = resolveMonth(req.query.month);
+      // Seed the full (branch x process) grid before reading. The summary enumerates rows, and
+      // rows were only ever created on demand by ensureRecord when somebody browsed to a branch,
+      // so unvisited combinations were missing entirely rather than showing as not-ready - which
+      // on a readiness page reads as nothing being wrong. Idempotent INSERT IGNORE; a failure
+      // here degrades to the previous partial view rather than failing the request.
+      try {
+        await payrollBranchReadinessService.ensureMonthGrid(month);
+      } catch (seedErr: unknown) {
+        console.warn(
+          "[BranchReadiness] ensureMonthGrid failed - summary may omit unvisited branch/process rows:",
+          seedErr instanceof Error ? seedErr.message : seedErr
+        );
+      }
       const data = await payrollBranchReadinessService.getHOSummary(month);
 
       // Compute summary stats

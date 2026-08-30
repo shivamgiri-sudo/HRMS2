@@ -6,6 +6,7 @@ import { leaveService } from '../leave/leave.service.js';
 import { CLOSED_RUN_STATUSES_SQL, LOCK_TERMINAL_STATUSES_SQL } from './run-status.js';
 import { notifyPayrollWindowClosing } from './payroll.notifications.js';
 import { triggerPayrollBranchReadinessIncomplete, triggerPayrollSignOffPending } from '../work-inbox/work-inbox.triggers.js';
+import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
 
 let _timer: ReturnType<typeof setInterval> | null = null;
 
@@ -130,6 +131,23 @@ export async function runPayrollWindowClosingWarning(): Promise<void> {
  * nagged on day one of a new payroll month.
  */
 export async function runPayrollBranchReadinessReminders(): Promise<void> {
+  // Seed the month's full (branch x process) grid before scanning.
+  //
+  // This cron nudges branches whose readiness is incomplete, but it can only nudge a ROW, and
+  // rows were created on demand by ensureRecord when somebody opened a branch. A branch nobody
+  // had visited therefore had no row, so it was never reminded - the branches most in need of a
+  // nudge were exactly the ones invisible to it. Seeding first makes the scan cover every
+  // branch and process that has active employees.
+  //
+  // Idempotent INSERT IGNORE. A failure degrades to the previous behaviour (remind whatever
+  // rows happen to exist) rather than skipping the reminder run.
+  const month = new Date().toISOString().slice(0, 7);
+  try {
+    await payrollBranchReadinessService.ensureMonthGrid(month);
+  } catch (err) {
+    console.warn(`[payroll-window-cron] ensureMonthGrid(${month}) failed — reminders will only cover existing rows:`, err);
+  }
+
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT r.branch_id, COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name, r.process_month
        FROM payroll_branch_readiness r
