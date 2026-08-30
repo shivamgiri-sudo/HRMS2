@@ -390,3 +390,40 @@ Task 2: complete (landed inside sweep commit 6566e77e — implementer killed by 
   but admin's WFM_LIVE_TRACKER grant is inactive and hr has none -> API access with no page = Constraint 3 gap.
   Pre-existing, not introduced. Narrowing would break ReferenceRoleDashboard.tsx:294 which calls /sync-status. Recommend leave.
   OPEN (Minor): GET /billing-config/:id still finance_head/super_admin/admin — wfm/hr can list but not drill down.
+
+
+---
+
+# Attendance Source Rules -- WFM Upload Pipeline Foundations (Phase 3 of 11) -- SDD Progress Ledger
+# Started: 2026-08-31
+# Plan: docs/superpowers/plans/2026-08-30-attendance-source-rules-upload-pipeline.md
+# Branch start commit: fe5966ea83e67aa1504e6fa1c7d471c3bf630783 (stale origin/main -- Phases 1-2 not in this branch history, same as Phase 2 worktree; handle merge the same way: keep ALL migrations, regen lock fresh)
+# Worktree: .claude/worktrees/attendance-source-rule-upload-pipeline (branch worktree-attendance-source-rule-upload-pipeline)
+# Artifact prefix: asrf3- (this dir is shared by many unrelated features; generic task-N-* names collide)
+
+## Tasks
+Task 1: complete (commit 0a18a0af, base 8a9cceb7 -- review clean except reviewer flagged 1638 not yet in MIGRATION_MANIFEST, which is expected/by-design: Task 4 of this same plan is specifically the registration step, same pattern as Phase 1's Task 7 and Phase 2's Task 5. Confirmed Task 4 brief covers it. No fix round needed. 6/6 pass.)
+Task 2: complete (commits db1a4b7f..a940acbe, base 0a18a0af -- 1 fix (Important, controller-applied without a dispatch round given precise scope): whitespace-only value for a mandatory numeric field passed the blank check and silently coerced to 0 via Number("   ")===0 in JS -- fixed by trimming at collection time (also normalizes employee_code/report_date whitespace), 3 new tests added (whitespace-rejected, whitespace-trimmed, duplicate-target-last-wins documented). Reviewer's other findings (report_date has no date-format validation, employee_code case/whitespace not normalized before Task 3's DB lookup) confirmed correctly out-of-scope for this task, noted forward for Task 3/Phase 4. 13/13 pass.)
+Task 3: complete (commit a848a596, base a940acbe -- review clean, no code findings. Reviewer independently traced attendance_productive_contribution's real schema (not in this worktree's own history, same known Phase1/2/3 branch-divergence pattern) from the sibling foundation worktree and confirmed the duplicate-filter query (superseded_at IS NULL AND upload_batch_id IS NOT NULL) is correct in both required scenarios. 1 Minor accepted: no test asserts on the actual SQL text/params, so a future regression dropping either predicate wouldn't be caught by this suite alone -- left as a follow-up, not blocking, since current source is verified correct.)
+Task 4: complete (commit b788f8c8, base a848a596 -- review clean, no findings. Task 1's "1638 not registered" gap confirmed closed by reviewer. 23/23 pass.)
+
+## ALL 4 TASKS COMPLETE -- final whole-branch review next
+
+## Final whole-branch review (opus) -- ready to merge, 1 Minor forward-looking note for Phase 4
+  VERDICT: ready to merge, no code defect in the branch itself.
+  MINOR (Phase 4 forward-note, not a Phase 3 defect -- zero callers exist yet): parseUploadRow's
+    trim fix uses raw?.trim() which throws TypeError on a non-string cell value (e.g. xlsx's
+    sheet_to_json returns real numbers for numeric cells unless raw:false is passed). Declared
+    signature is Record<string,string> so this is type-correct today, but Phase 4's route must
+    either coerce cells to strings before calling this, or pass raw:false to its xlsx parser, or
+    this function should defensively String(raw ?? '').trim(). Flagged for Phase 4, do not fix now.
+  All 6 confirmation items clean: Task2->Task3 composition safe (employee_code trimmed once at
+    collection, both mandatory-check and returned-value paths share the same trimmed source, zero
+    other callers exist in the tree); whitespace fix has no regression against Task 2's original
+    10 tests; 1638's contract test used the established stripSqlComments pattern from the start
+    (4th migration in this feature, bug NOT reintroduced); scope exactly 9 files; Phase 4 deferrals
+    honoured (no route/multer/trigger anywhere); both logged Minor open items confirmed non-blocking.
+  TEST RUN: 3 files / 23 tests, all green.
+
+## PHASE 3 COMPLETE -- merging into main next (same known branch-ancestry hazard as Phase 1->2:
+## this branch also cut from stale origin/main, missing Phases 1-2's tables in its own history)
