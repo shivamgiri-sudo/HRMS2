@@ -149,7 +149,7 @@ interface CsvParseOutcome {
  * RFC-4180-shaped CSV reader. A naive `content.split('\n')` + `line.split(',')` was rejected here
  * for four concrete reasons, each of which corrupts real Excel output:
  *  - Excel's "CSV (Comma delimited)" writes a UTF-8 BOM, which sticks to the first header
- *    ("﻿Emp Code"), so the declared Column_Mapping matches nothing and EVERY row is rejected
+ *    ("\uFEFFEmp Code"), so the declared Column_Mapping matches nothing and EVERY row is rejected
  *    as blank — while the route's own error text tells the uploader to produce exactly that file.
  *  - A quoted field containing a comma ("Smith, John") shifts every later column by one, silently
  *    mis-assigning report_date and login_minutes rather than failing.
