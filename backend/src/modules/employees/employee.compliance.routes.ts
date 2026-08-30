@@ -48,14 +48,15 @@ import {
   synchronizeChecklistFieldValues,
 } from "./universalDigitalFormFill.service.js";
 import { validateEpfCompliance } from "./epfComplianceValidation.service.js";
+import type { WebhookAuthOutcome } from "./employeeCompliancePrivacy.js";
 import {
   buildPublicTokenAuditValue,
+  classifyLuckpayWebhookAuth,
   hashIdentifier,
   maskAadhaar,
   maskPan,
   maskUan,
   sanitizeEpfAuditRecord,
-  verifyLuckpayWebhookSecret,
 } from "./employeeCompliancePrivacy.js";
 
 const h = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
@@ -465,6 +466,122 @@ async function getEpfCompliancePack(employeeId: string, actorUserId: string) {
   };
 }
 
+// --- Luckpay webhook rejection handling (Requirement 2.2, 2.3, 2.4) ----------
+//
+// A rejected delivery has to be diagnosable from the server's own output without
+// the caller learning anything about the environment: status and body stay 401 /
+// { success: false, message: "Unauthorized webhook" } for all three reasons, and
+// the distinction lives only in the log level and the audit action_type.
+
+type LuckpayWebhookRejectionReason = Exclude<WebhookAuthOutcome["reason"], "accepted">;
+
+const LUCKPAY_WEBHOOK_REJECTION_AUDIT_ACTION: Record<LuckpayWebhookRejectionReason, string> = {
+  secret_not_configured: "LUCKPAY_WEBHOOK_REJECTED_UNCONFIGURED",
+  header_mismatch: "LUCKPAY_WEBHOOK_REJECTED_MISMATCH",
+  header_absent: "LUCKPAY_WEBHOOK_REJECTED_NO_HEADER",
+};
+
+type LuckpayWebhookTxRow = RowDataPacket & {
+  id: string;
+  employee_id: string | null;
+  checklist_id: string | null;
+  document_code: string | null;
+};
+
+// employee_joining_document_audit_log.employee_id is NOT NULL (sql/346_...:112), and a
+// rejected delivery carries no verified employee. The only attribution available is the
+// transaction the payload names, matched on client_transaction_id exactly as
+// handleJoiningDocumentEsignWebhook does (both key spellings). The authenticated variant's
+// :employeeId path param is deliberately NOT used as a fallback: it is caller-supplied and
+// unverified, so trusting it would let a probe write audit rows against any employee.
+//
+// The lookup is wrapped because it runs on the rejection path: a database hiccup here must
+// not turn a correct 401 into a 500.
+async function resolveLuckpayWebhookTransaction(
+  payload: Record<string, unknown>,
+): Promise<LuckpayWebhookTxRow | null> {
+  const clientTransactionId = String(payload.client_transaction_id ?? payload.clientTransactionId ?? "").trim();
+  if (!clientTransactionId) return null;
+  try {
+    const [rows] = await db.execute<LuckpayWebhookTxRow[]>(
+      `SELECT id, employee_id, checklist_id, document_code
+         FROM employee_document_esign_transaction
+        WHERE provider = 'luckpay' AND client_transaction_id = ?
+        ORDER BY initiated_at DESC
+        LIMIT 1`,
+      [clientTransactionId],
+    );
+    return rows[0] ?? null;
+  } catch (error) {
+    console.error(
+      `[luckpay-webhook] could not resolve client_transaction_id ${clientTransactionId} while handling a rejected delivery; audit attribution skipped:`,
+      error,
+    );
+    return null;
+  }
+}
+
+async function rejectLuckpayWebhook(req: Request, res: Response, reason: LuckpayWebhookRejectionReason) {
+  const payload = (req.body ?? {}) as Record<string, unknown>;
+  const actionType = LUCKPAY_WEBHOOK_REJECTION_AUDIT_ACTION[reason];
+  const tx = await resolveLuckpayWebhookTransaction(payload);
+  const attribution = tx?.employee_id
+    ? `transaction ${tx.id} (employee ${tx.employee_id})`
+    : "no resolvable transaction";
+
+  if (reason === "secret_not_configured") {
+    // A configuration fault in this environment, not a caller error: LUCKPAY_WEBHOOK_SECRET
+    // is unset, so the endpoint cannot authenticate any delivery at all.
+    console.error(
+      `[luckpay-webhook] ${actionType} on ${req.originalUrl}: LUCKPAY_WEBHOOK_SECRET is not set in this environment, so no delivery can be authenticated; ${attribution}.`,
+    );
+  } else if (reason === "header_mismatch") {
+    console.warn(
+      `[luckpay-webhook] ${actionType} on ${req.originalUrl}: X-HRMS-Webhook-Secret did not match the configured secret; ${attribution}.`,
+    );
+  } else {
+    // An unauthenticated probe against a route that is dormant by provider design. Expected
+    // traffic, recorded at info so it is never read as a configuration fault.
+    console.info(
+      `[luckpay-webhook] ${actionType} on ${req.originalUrl}: no X-HRMS-Webhook-Secret header while the secret is configured; ${attribution}.`,
+    );
+  }
+
+  if (tx?.employee_id) {
+    try {
+      await db.execute(
+        `INSERT INTO employee_joining_document_audit_log
+           (id, employee_id, checklist_id, document_code, action_type, new_value, remarks, actor_user_id, actor_type, ip_address, user_agent)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'system', ?, ?)`,
+        [
+          randomUUID(),
+          tx.employee_id,
+          tx.checklist_id ?? null,
+          tx.document_code ?? null,
+          actionType,
+          JSON.stringify({ rejectionReason: reason, esignTransactionId: tx.id, provider: "luckpay" }),
+          "Inbound Luckpay webhook delivery rejected",
+          req.ip ?? null,
+          req.get("user-agent") ?? null,
+        ],
+      );
+    } catch (error) {
+      // Reported, never swallowed: a silent .catch() here is exactly how the kit audit log
+      // lost every row before joiningKitDispatch.service.ts:57-78 was fixed. The rejection
+      // still answers 401 — an audit failure must not upgrade itself into a 500.
+      console.error(`[luckpay-webhook] ${actionType} audit write failed for employee ${tx.employee_id}:`, error);
+    }
+  } else {
+    // Unattributable delivery: a log event, not an employee audit event. The insert is
+    // skipped rather than attempted with a NULL employee_id and the error swallowed.
+    console.error(
+      `[luckpay-webhook] ${actionType} audit row skipped: no employee_id could be resolved from client_transaction_id, and employee_joining_document_audit_log.employee_id is NOT NULL.`,
+    );
+  }
+
+  return res.status(401).json({ success: false, message: "Unauthorized webhook" });
+}
+
 export const employeeJoiningDocumentsRouter = Router();
 
 // Declared before requireAuth because the provider cannot present a session,
@@ -473,8 +590,9 @@ export const employeeJoiningDocumentsRouter = Router();
 // e-signed: the handler sets esign_completed, signature_mode
 // 'aadhaar_esign_verified', and final_file_locked_at.
 employeeJoiningDocumentsRouter.post("/:employeeId/joining-documents/esign/webhook/luckpay", h(async (req, res) => {
-  if (!verifyLuckpayWebhookSecret(req.get("X-HRMS-Webhook-Secret"), env.LUCKPAY_WEBHOOK_SECRET)) {
-    return res.status(401).json({ success: false, message: "Unauthorized webhook" });
+  const auth = classifyLuckpayWebhookAuth(req.get("X-HRMS-Webhook-Secret"), env.LUCKPAY_WEBHOOK_SECRET);
+  if (!auth.ok) {
+    return rejectLuckpayWebhook(req, res, auth.reason);
   }
   const data = await handleJoiningDocumentEsignWebhook({
     payload: (req.body ?? {}) as Record<string, unknown>,
@@ -1235,11 +1353,36 @@ publicEmployeeDocumentRouter.post("/esign/:token", h(async (req, res) => {
   return res.status(400).json({ success: false, message: "Unsupported action" });
 }));
 
+// DORMANT BY PROVIDER DESIGN — not broken, and not misconfigured.
+//
+// Luckpay never pushes to this route because it was never told the route exists.
+// `luckpay.client.ts` only ever READS a URL back OUT of provider responses —
+// `redirect_url` / `sign_url` / `verificationUrl` (see its field-pick lists) — and never
+// sends a callback parameter in any request it makes. No callback URL is registered with
+// the provider anywhere in this codebase, so there is nowhere for Luckpay to report back
+// to and it pushes nothing. That matches the data: zero webhook events exist in the audit
+// log across all production history.
+//
+// The pull path is the source of truth for completion:
+//   backend/src/workers/esign-reconciliation.worker.ts -> syncEsignStatus()
+// A signature is learned by polling the provider's status endpoint, never by waiting here.
+//
+// If push is ever enabled, the absolute URL to register with Luckpay is:
+//   https://mcnhrms.teammas.in/api/public/employee-documents/esign/webhook/luckpay
+//
+// The route is kept and kept secured deliberately. Being unused is not a reason to delete
+// it or to relax its secret check: `LUCKPAY_WEBHOOK_SECRET` is configured in production
+// (enforced at boot by the guard in `config/env.ts`), and answering 401 to an
+// unauthenticated probe is the correct behaviour, not a fault. Should Luckpay ever be
+// configured to push, a pushed completion enters `handleJoiningDocumentEsignWebhook` and
+// therefore converges on the same completion writer a pulled one does — one writer, one
+// resulting database state, whichever direction the news arrives from.
 publicEmployeeDocumentRouter.post("/esign/webhook/luckpay", h(async (req, res) => {
   const configuredSecret = env.LUCKPAY_WEBHOOK_SECRET;
   const webhookSecret = req.get("X-HRMS-Webhook-Secret");
-  if (!verifyLuckpayWebhookSecret(webhookSecret, configuredSecret)) {
-    return res.status(401).json({ success: false, message: "Unauthorized webhook" });
+  const auth = classifyLuckpayWebhookAuth(webhookSecret, configuredSecret);
+  if (!auth.ok) {
+    return rejectLuckpayWebhook(req, res, auth.reason);
   }
   const body = (req.body ?? {}) as Record<string, unknown>;
   const data = await handleJoiningDocumentEsignWebhook({

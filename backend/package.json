@@ -12,6 +12,7 @@
     "start": "node dist/src/server.js",
     "inbox:reconcile": "tsx scripts/inbox-reconcile.ts",
     "inbox:reconcile:apply": "tsx scripts/inbox-reconcile.ts --apply",
+    "backfill:stranded-kits": "tsx scripts/backfill-stranded-joining-kits.ts",
     "migrate": "tsx src/scripts/migrate.ts",
     "migrate:status": "tsx src/scripts/migrate.ts --status",
     "preflight": "node scripts/deploy-preflight.mjs && npx tsx scripts/migration-target-table-check.ts",

@@ -105,8 +105,51 @@ export function buildPublicTokenAuditValue() {
   return { publicTokenIssued: true };
 }
 
-export function verifyLuckpayWebhookSecret(providedSecret: string | null | undefined, configuredSecret: string | null | undefined) {
+/**
+ * Outcome of authenticating an inbound Luckpay webhook delivery.
+ *
+ * A single boolean cannot tell "this environment has no secret configured" apart
+ * from "the caller sent no header" apart from "the caller sent the wrong header",
+ * and Requirement 2 needs all three recorded distinguishably (R2.2, R2.3, R2.4).
+ */
+export type WebhookAuthOutcome =
+  | { ok: true; reason: "accepted" }
+  | { ok: false; reason: "secret_not_configured" } // R2.2 — configuration fault
+  | { ok: false; reason: "header_absent" } // R2.4 — unauthenticated probe
+  | { ok: false; reason: "header_mismatch" }; // R2.3 — wrong credential
+
+/**
+ * Classify an inbound Luckpay webhook delivery's authentication.
+ *
+ * The decision order is part of the contract and callers depend on it:
+ *   1. configured secret missing/blank -> `secret_not_configured`
+ *   2. provided header missing/blank   -> `header_absent`
+ *   3. values differ                   -> `header_mismatch`
+ *   4. otherwise                       -> `accepted`
+ *
+ * `secret_not_configured` is decided first on purpose: an environment with no
+ * secret must report its own fault rather than blame the caller for not sending
+ * a header it could never have matched.
+ *
+ * Emptiness is judged with the same `normalizeString` trimming the boolean
+ * helper has always used, so classification and `verifyLuckpayWebhookSecret`
+ * agree on every input.
+ */
+export function classifyLuckpayWebhookAuth(
+  providedSecret: string | null | undefined,
+  configuredSecret: string | null | undefined,
+): WebhookAuthOutcome {
   const expected = normalizeString(configuredSecret);
-  if (!expected) return false;
-  return normalizeString(providedSecret) === expected;
+  if (!expected) return { ok: false, reason: "secret_not_configured" };
+
+  const provided = normalizeString(providedSecret);
+  if (!provided) return { ok: false, reason: "header_absent" };
+
+  if (provided !== expected) return { ok: false, reason: "header_mismatch" };
+
+  return { ok: true, reason: "accepted" };
+}
+
+export function verifyLuckpayWebhookSecret(providedSecret: string | null | undefined, configuredSecret: string | null | undefined) {
+  return classifyLuckpayWebhookAuth(providedSecret, configuredSecret).ok;
 }

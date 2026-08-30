@@ -1936,6 +1936,12 @@ async function finalizeChecklistEsign(params: {
   actorUserId?: string | null;
   ipAddress?: string | null;
   userAgent?: string | null;
+  /**
+   * The provider's own completion timestamp, when the caller has one (the
+   * backfill reads it off the Luckpay status response). Absent, `completed_at`
+   * falls back to NOW() — exactly the behaviour before this parameter existed.
+   */
+  completedAt?: Date | null;
 }) {
   const target = await getEmployeeDocumentTarget(params.checklist.employee_id);
   if (!target) {
@@ -2014,48 +2020,121 @@ async function finalizeChecklistEsign(params: {
       ? "internal_employee_acknowledgement"
       : "wet_signature_uploaded";
 
-  await db.execute(
-    `UPDATE employee_joining_document_checklist
-        SET status = ?,
-            fill_status = ?,
-            signature_mode = ?,
-            final_file_locked_at = CASE WHEN ? = 'esign_completed' THEN NOW() ELSE final_file_locked_at END,
-            completed_at = CASE WHEN ? = 'esign_completed' THEN NOW() ELSE completed_at END,
-            updated_at = NOW()
-      WHERE id = ?`,
-    [nextChecklistStatus, nextFillStatus, nextSignatureMode, nextChecklistStatus, nextChecklistStatus, params.checklist.id],
-  );
+  // The completion fact is three writes — the checklist row, the transaction row
+  // and the candidate's token — and they were three independent db.execute calls
+  // with nothing holding them together, so a failure between them left a row
+  // signed but its transaction still 'initiated', or signed with a token still
+  // live. They now commit or roll back as one, the same shape bulkVerifyDocuments
+  // (ats.joiningDocumentsTracker.service.ts) already uses.
+  //
+  // Audit, the payroll-HR inbox notification and recalculateDocumentProgress stay
+  // OUTSIDE, deliberately: an audit failure must not roll back a real signature,
+  // SMTP/inbox I/O must not hold a pool connection open (DB_POOL_MAX is 25), and
+  // the recalculation reads the rows written here — inside it would read
+  // uncommitted state and be rolled back with it, and it is derived data that is
+  // recomputed on next read anyway.
+  const isVerifiedAadhaarEsign = nextSignatureMode === "aadhaar_esign_verified";
+  let priorVerificationState: { status: unknown; verification_status: unknown; due_at: unknown } | null = null;
 
-  if (params.transactionId) {
-    await db.execute(
-      `UPDATE employee_document_esign_transaction
-          SET status = 'signed',
-              signed_file_id = ?,
-              completed_at = NOW(),
-              response_payload = JSON_SET(COALESCE(response_payload, JSON_OBJECT()), '$.signerName', ?, '$.remarks', ?)
+  const connection = await db.getConnection();
+  try {
+    await connection.beginTransaction();
+
+    // Read what the verification write is about to overwrite so the audit row
+    // below can carry it as old_value. A cleared due_at is otherwise
+    // unrecoverable from the row — the audit entry is the only surviving record
+    // of the original deadline.
+    const [priorRows] = await connection.execute<RowDataPacket[]>(
+      `SELECT status, verification_status, due_at
+         FROM employee_joining_document_checklist
+        WHERE id = ?
+        LIMIT 1`,
+      [params.checklist.id],
+    );
+    const prior = priorRows[0] as RowDataPacket | undefined;
+    if (prior) {
+      priorVerificationState = {
+        status: prior.status ?? null,
+        verification_status: prior.verification_status ?? null,
+        due_at: prior.due_at ?? null,
+      };
+    }
+
+    // The verification columns ride on the statement that already sets `status`,
+    // not a second UPDATE, so "verified in the same transaction as completed" is
+    // true at the statement level too.
+    //
+    // The gate is signature_mode = 'aadhaar_esign_verified', NOT
+    // status = 'esign_completed'. 'aadhaar_esign_pending_artefact' also reaches
+    // 'esign_completed' — the provider confirmed the signature but we could not
+    // download the artefact — and a signature we cannot produce the document for
+    // must not be recorded as verified. Those rows heal on a later sync pass.
+    //
+    // verified_by is left NULL on purpose. Every other writer of that column puts
+    // a real user id there; there is no human verifier here and a sentinel would
+    // make the column untrustworthy everywhere else. Provenance lives in
+    // verification_remarks and, structurally, in Audit_Log.
+    await connection.execute(
+      `UPDATE employee_joining_document_checklist
+          SET status = ?,
+              fill_status = ?,
+              signature_mode = ?,
+              final_file_locked_at = CASE WHEN ? = 'esign_completed' THEN NOW() ELSE final_file_locked_at END,
+              completed_at = CASE WHEN ? = 'esign_completed' THEN COALESCE(?, NOW()) ELSE completed_at END,
+              verification_status = CASE WHEN ? = 'aadhaar_esign_verified' THEN 'verified' ELSE verification_status END,
+              verified_at = CASE WHEN ? = 'aadhaar_esign_verified' THEN NOW() ELSE verified_at END,
+              verification_remarks = CASE WHEN ? = 'aadhaar_esign_verified' THEN 'Verified by Aadhaar eSign (Luckpay)' ELSE verification_remarks END,
+              due_at = CASE WHEN ? = 'aadhaar_esign_verified' THEN NULL ELSE due_at END,
+              updated_at = NOW()
         WHERE id = ?`,
-      [signedFileId, params.signerName.trim(), params.signerRemarks ?? null, params.transactionId],
-    ).catch(async () => {
-      await db.execute(
+      [
+        nextChecklistStatus,
+        nextFillStatus,
+        nextSignatureMode,
+        nextChecklistStatus,
+        nextChecklistStatus,
+        params.completedAt ?? null,
+        nextSignatureMode,
+        nextSignatureMode,
+        nextSignatureMode,
+        nextSignatureMode,
+        params.checklist.id,
+      ],
+    );
+
+    if (params.transactionId) {
+      // The .catch() that re-ran this without the JSON_SET is gone: it existed
+      // to salvage a half-written completion when there was no transaction to
+      // roll back. There is one now, so a JSON_SET failure fails the completion
+      // instead of quietly dropping the signer name.
+      await connection.execute(
         `UPDATE employee_document_esign_transaction
             SET status = 'signed',
                 signed_file_id = ?,
-                completed_at = NOW()
+                completed_at = NOW(),
+                response_payload = JSON_SET(COALESCE(response_payload, JSON_OBJECT()), '$.signerName', ?, '$.remarks', ?)
           WHERE id = ?`,
-        [signedFileId, params.transactionId],
+        [signedFileId, params.signerName.trim(), params.signerRemarks ?? null, params.transactionId],
       );
-    });
-  }
+    }
 
-  if (params.publicToken) {
-    const publicTokenHash = sha256(params.publicToken);
-    await db.execute(
-      `UPDATE employee_joining_document_public_token
-          SET token_status = 'consumed',
-              consumed_at = NOW()
-        WHERE public_token_hash = ?`,
-      [publicTokenHash],
-    );
+    if (params.publicToken) {
+      const publicTokenHash = sha256(params.publicToken);
+      await connection.execute(
+        `UPDATE employee_joining_document_public_token
+            SET token_status = 'consumed',
+                consumed_at = NOW()
+          WHERE public_token_hash = ?`,
+        [publicTokenHash],
+      );
+    }
+
+    await connection.commit();
+  } catch (err: unknown) {
+    await connection.rollback();
+    throw err;
+  } finally {
+    connection.release();
   }
 
   await auditDocumentAction({
@@ -2071,6 +2150,31 @@ async function finalizeChecklistEsign(params: {
     ipAddress: params.ipAddress ?? null,
     userAgent: params.userAgent ?? null,
   });
+
+  // A second row, in a vocabulary disjoint from the human-review one, so that
+  // "this was verified by an eSign, not by someone clicking verify" is a value in
+  // the log rather than an inference from timestamps. Written only when the
+  // verification state was actually written.
+  if (isVerifiedAadhaarEsign) {
+    await auditDocumentAction({
+      employeeId: params.checklist.employee_id,
+      candidateId: params.checklist.candidate_id ?? null,
+      checklistId: params.checklist.id,
+      documentCode: params.checklist.document_code,
+      actionType: "ESIGN_VERIFICATION_AUTO",
+      actorUserId: params.actorUserId ?? null,
+      actorType: params.actorType,
+      remarks: "Verified by Aadhaar eSign (Luckpay)",
+      oldValue: priorVerificationState ?? undefined,
+      newValue: {
+        verificationSource: "aadhaar_esign",
+        signatureMode: nextSignatureMode,
+        providerReferenceId: params.providerReferenceId ?? null,
+      },
+      ipAddress: params.ipAddress ?? null,
+      userAgent: params.userAgent ?? null,
+    });
+  }
 
   if (isLuckpayVerifiedWebhook) {
     try {

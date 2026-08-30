@@ -13,6 +13,8 @@ import {
   bulkSetDueDate,
   bulkVerifyDocuments,
   streamBulkDocumentsZip,
+  clampPage,
+  clampLimit,
   type TrackerQueryParams,
 } from './ats.joiningDocumentsTracker.service.js';
 import { sendPayrollHrJoiningDocNotification } from './ats.email.service.js';
@@ -41,6 +43,15 @@ joiningDocumentsTrackerRouter.get('/', h(async (req: AuthenticatedRequest, res: 
       overdue_only: req.query.overdue_only === 'true',
       updated_since: req.query.updated_since as string | undefined,
       search: req.query.search as string | undefined,
+      // The clamps are the service's, not a copy of them. Re-deriving the bounds here
+      // would put the row cap in two files, and the one that got missed on the next
+      // change would be the one deciding how large a page a caller can ask for.
+      //
+      // The raw query value goes in unconverted on purpose: absent, empty string and
+      // non-numeric all read as NaN or 0 through Number() and land on the defaults, so
+      // there is no input shape that reaches the OFFSET arithmetic as NaN.
+      page: clampPage(req.query.page),
+      limit: clampLimit(req.query.limit),
     };
 
     const data = await getJoiningDocumentsTracker(req.authUser!.id, filters);

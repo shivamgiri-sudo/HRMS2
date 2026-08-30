@@ -24,7 +24,11 @@
     // was used without await in the statutory loader: the script was broken on its first db_bill
     // call while `tsc --noEmit` reported clean, because scripts/ was outside the program entirely.
     "scripts/backfill-unbanked-from-dbbill.ts",
-    "scripts/backfill-statutory-ids-from-dbbill.ts"
+    "scripts/backfill-statutory-ids-from-dbbill.ts",
+    // Closes 26 stranded joining kits and their 215 checklist rows through
+    // finalizeKitEsign, and spends one billed provider call per kit, so the same
+    // rule applies: a type error in it is a production data error.
+    "scripts/backfill-stranded-joining-kits.ts"
   ],
   "exclude": ["node_modules", "dist", "tests", "src/tests", "src/**/__tests__"]
 }
