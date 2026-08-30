@@ -266,7 +266,11 @@ describe('commitUploadBatch', () => {
 
     expect(result.acceptedCount).toBe(0); // the chunk that failed does not count as accepted
     expect(result.writeErrors).toHaveLength(1);
-    expect(result.writeErrors[0]).toContain('ER_LOCK_WAIT_TIMEOUT');
+    // The affected row range is named (that is what the uploader can act on), but the raw driver
+    // message is NOT — it carries schema internals verbatim and this response goes straight to a
+    // client, routing around errorHandler.ts, which exists to stop exactly that leaking.
+    expect(result.writeErrors[0]).toContain('rows 2-2');
+    expect(result.writeErrors[0]).not.toContain('ER_LOCK_WAIT_TIMEOUT');
 
     // The persisted status must reflect that NOTHING landed — not 'accepted' just because a
     // writeError happened to exist. This is the exact bug a second review round caught: an
@@ -304,10 +308,37 @@ describe('commitUploadBatch', () => {
     const guardCall = executeMock.mock.calls[0];
     expect(String(guardCall[0])).toContain("status <> 'superseded'");
     expect(String(guardCall[0])).not.toContain('accepted_row_count + rejected_row_count');
+    // Deliberately NOT keyed on date_from/date_to. It was, and that made the whole guard
+    // bypassable by retyping one form field: the byte-identical file resubmitted under a
+    // one-day-wider declared window produced a different key, the guard stayed silent, and every
+    // row landed twice in apr_manual_upload, which has no unique key to stop it.
+    expect(String(guardCall[0])).not.toContain('date_from');
+    expect(String(guardCall[0])).not.toContain('date_to');
     expect(guardCall[1]).toEqual([
       baseParams.diallerSourceId, baseParams.branchId, baseParams.processId,
-      baseParams.dateFrom, baseParams.dateTo, baseParams.contentDigest,
+      baseParams.contentDigest,
     ]);
+  });
+
+  it('the duplicate guard still fires when only the declared date window differs (the bypass it used to have)', async () => {
+    // Same bytes, same dialler_source/branch/process, a window declared one day wider. The prior
+    // batch row that comes back from the guard SELECT is what a real MySQL would return for the
+    // narrowed key, and the guard must reject rather than write a second copy of every row.
+    executeMock.mockResolvedValueOnce([[
+      { id: 'batch-prior', batch_reference: 'batch-prior', accepted_row_count: 1, rejected_row_count: 0 },
+    ]]);
+
+    await expect(commitUploadBatch({
+      ...baseParams,
+      dateFrom: '2026-06-30', // widened by a day; digest and scope unchanged
+      acceptedRows: [
+        { rowNumber: 2, employeeId: 'emp-1', employeeCode: 'MAS1', reportDate: '2026-07-15', loginMinutes: 420 },
+      ],
+      rejectedRows: [],
+    })).rejects.toBeInstanceOf(DuplicateUploadBatchError);
+
+    // Nothing beyond the guard SELECT ran — no campaign resolution, no INSERT of any kind.
+    expect(executeMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not silently return stale success: a duplicate resubmission after a genuine prior failure is rejected too, not short-circuited into a fake success', async () => {
@@ -331,5 +362,119 @@ describe('commitUploadBatch', () => {
     await expect(call).rejects.toBeInstanceOf(DuplicateUploadBatchError);
     await expect(call).rejects.toThrow(/batch-partial/);
     expect(executeMock).toHaveBeenCalledTimes(1); // no write of any kind was attempted
+  });
+
+  it('supersedes the prior batch only AFTER this batch\'s rows have actually landed', async () => {
+    executeMock
+      .mockResolvedValueOnce([[{ id: 'camp-1', campaign_code: 'DEFAULT_ds-1' }]]) // campaign (guard skipped: supersedesBatchId given)
+      .mockResolvedValueOnce([[{
+        id: 'batch-old', dialler_source_id: 'ds-1', branch_id: 'branch-1', process_id: 'process-1',
+        date_from: '2026-07-01', date_to: '2026-07-31', status: 'accepted',
+      }]]) // scope-check SELECT
+      .mockResolvedValueOnce([{}]) // INSERT apr_manual_upload
+      .mockResolvedValueOnce([{}]) // UPDATE ... superseded
+      .mockResolvedValueOnce([{}]); // INSERT productivity_upload_batch
+
+    await commitUploadBatch({
+      ...baseParams,
+      supersedesBatchId: 'batch-old',
+      acceptedRows: [
+        { rowNumber: 2, employeeId: 'emp-1', employeeCode: 'MAS1', reportDate: '2026-07-15', loginMinutes: 420 },
+      ],
+      rejectedRows: [],
+    });
+
+    const sqlByCall = executeMock.mock.calls.map((c) => String(c[0]));
+    const aprInsertAt = sqlByCall.findIndex((s) => s.includes('INSERT INTO apr_manual_upload'));
+    const supersedeAt = sqlByCall.findIndex((s) => s.includes("SET status = 'superseded'"));
+    expect(aprInsertAt).toBeGreaterThanOrEqual(0);
+    expect(supersedeAt).toBeGreaterThan(aprInsertAt);
+  });
+
+  it('does NOT supersede the prior batch when nothing landed — a failed re-upload must not retire good data', async () => {
+    // The supersede UPDATE used to run before the row writes, so a re-upload whose every row was
+    // rejected still retired the prior batch. Criterion 17.7 excludes a superseded batch's rows
+    // from Canonical_Productive_Minutes, so real prior data was replaced by nothing while the
+    // caller was told the request succeeded.
+    executeMock
+      .mockResolvedValueOnce([[{ id: 'camp-1', campaign_code: 'DEFAULT_ds-1' }]])
+      .mockResolvedValueOnce([[{
+        id: 'batch-old', dialler_source_id: 'ds-1', branch_id: 'branch-1', process_id: 'process-1',
+        date_from: '2026-07-01', date_to: '2026-07-31', status: 'accepted',
+      }]])
+      .mockResolvedValueOnce([{}])  // INSERT productivity_upload_rejection
+      .mockResolvedValueOnce([{}]); // INSERT productivity_upload_batch
+
+    const result = await commitUploadBatch({
+      ...baseParams,
+      supersedesBatchId: 'batch-old',
+      acceptedRows: [],
+      rejectedRows: [{ rowNumber: 2, employeeCode: 'MAS1', reason: 'employee code MAS1 does not resolve to any employee' }],
+    });
+
+    const superseded = executeMock.mock.calls.some((c) => String(c[0]).includes("SET status = 'superseded'"));
+    expect(superseded).toBe(false);
+    expect(result.writeErrors.join(' ')).toContain('left live');
+  });
+
+  it('reports a failed batch-row INSERT as a write error instead of throwing after the rows already landed', async () => {
+    // Throwing here reports a total failure to a caller whose rows ARE already in
+    // apr_manual_upload; the caller retries and double-writes, because the duplicate guard cannot
+    // see a batch row that was never created.
+    executeMock
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ id: 'camp-1', campaign_code: 'DEFAULT_ds-1' }]])
+      .mockResolvedValueOnce([{}]) // INSERT apr_manual_upload succeeds
+      .mockRejectedValueOnce(new Error('ER_DATA_TOO_LONG')); // INSERT productivity_upload_batch fails
+
+    const result = await commitUploadBatch({
+      ...baseParams,
+      acceptedRows: [
+        { rowNumber: 2, employeeId: 'emp-1', employeeCode: 'MAS1', reportDate: '2026-07-15', loginMinutes: 420 },
+      ],
+      rejectedRows: [],
+    });
+
+    expect(result.acceptedCount).toBe(1);
+    expect(result.writeErrors).toHaveLength(1);
+    expect(result.writeErrors[0]).toContain('Do NOT re-upload');
+    expect(result.writeErrors[0]).not.toContain('ER_DATA_TOO_LONG');
+  });
+
+  it('truncates over-length rejection values rather than losing the whole rejection chunk', async () => {
+    // productivity_upload_rejection.employee_code is VARCHAR(50) and reason VARCHAR(500) (1638).
+    // A misdelimited file puts a whole line into one cell; under strict mode that is
+    // ER_DATA_TOO_LONG, which fails the chunk that exists to explain what went wrong.
+    executeMock
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ id: 'camp-1', campaign_code: 'DEFAULT_ds-1' }]])
+      .mockResolvedValueOnce([{}])  // rejection chunk
+      .mockResolvedValueOnce([{}]); // batch row
+
+    await commitUploadBatch({
+      ...baseParams,
+      acceptedRows: [],
+      rejectedRows: [{ rowNumber: 2, employeeCode: 'X'.repeat(400), reason: 'Y'.repeat(900) }],
+    });
+
+    const rejectionCall = executeMock.mock.calls.find((c) =>
+      String(c[0]).includes('INSERT INTO productivity_upload_rejection'),
+    );
+    expect(rejectionCall).toBeDefined();
+    const params = rejectionCall![1] as unknown[];
+    expect(String(params[3])).toHaveLength(50);
+    expect(String(params[4])).toHaveLength(500);
+  });
+
+  it('names an error rather than throwing a TypeError when the default campaign cannot be re-selected', async () => {
+    executeMock
+      .mockResolvedValueOnce([[]])  // no existing campaign
+      .mockResolvedValueOnce([[]])  // dialler_source lookup finds nothing
+      .mockResolvedValueOnce([{}])  // INSERT
+      .mockResolvedValueOnce([[]]); // re-select returns nothing
+
+    await expect(resolveOrCreateDefaultCampaign('ds-1')).rejects.toThrow(
+      /could not be resolved after its INSERT/,
+    );
   });
 });

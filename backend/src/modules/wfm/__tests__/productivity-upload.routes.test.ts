@@ -29,15 +29,21 @@ vi.mock('../../../shared/enterpriseScope.js', () => ({
   resolveUserBusinessScope: (...args: unknown[]) => resolveUserBusinessScopeMock(...args),
 }));
 
-vi.mock('../../../middleware/authMiddleware.js', () => ({
-  requireAuth: (req: any, _res: any, next: any) => {
-    req.authUser = { id: 'user-1', role: 'wfm' };
-    next();
-  },
-}));
-vi.mock('../../../middleware/requireRole.js', () => ({
-  requireRole: () => (_req: any, _res: any, next: any) => next(),
-}));
+// Both gates are stubbed so the tests below can exercise the handler bodies — but they are stubbed
+// with NAMED functions, and a test at the bottom of this file asserts they are actually present in
+// the router's middleware stack. Without that, a typo like requireRole('wfm_uploader') or a
+// deleted `router.use(requireAuth)` would pass every test in this file while leaving the endpoint
+// wide open.
+// Declared as hoisted function declarations, not consts: requireRole() is invoked while the route
+// module is being imported (inside router.post(...)), which happens before any const initializer
+// in this file has run.
+function requireAuthStub(req: any, _res: any, next: any) {
+  req.authUser = { id: 'user-1', role: 'wfm' };
+  next();
+}
+function roleGateStub(_req: any, _res: any, next: any) { next(); }
+vi.mock('../../../middleware/authMiddleware.js', () => ({ requireAuth: requireAuthStub }));
+vi.mock('../../../middleware/requireRole.js', () => ({ requireRole: () => roleGateStub }));
 
 import { productivityUploadRouter } from '../productivity-upload.routes.js';
 

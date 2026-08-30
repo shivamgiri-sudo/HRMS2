@@ -83,6 +83,15 @@ export async function resolveOrCreateDefaultCampaign(
     `SELECT id, campaign_code FROM campaign_master WHERE campaign_code = ? LIMIT 1`,
     [defaultCode],
   );
+  // Not `rows[0].id` unguarded: if the INSERT succeeded but the re-select returns nothing
+  // (replica lag, or the row renamed/removed between the two statements) that is a TypeError,
+  // which is a much worse failure mode than a named error — every accepted row of the upload
+  // would already be about to be written against a campaign code that could not be confirmed.
+  if (rows.length === 0) {
+    throw new Error(
+      `default campaign ${defaultCode} could not be resolved after its INSERT — refusing to write upload rows against an unconfirmed campaign`,
+    );
+  }
   return { campaignId: rows[0].id, campaignCode: rows[0].campaign_code };
 }
 
@@ -143,24 +152,34 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
   // an untested string that both sides could independently reword without either test suite
   // noticing, silently degrading a real duplicate submission back into a masked 500 — exactly
   // this codebase's dominant defect class.
+  //
+  // The guard key deliberately does NOT include date_from/date_to. It used to, and that made the
+  // whole guard bypassable by anyone who could retype a form field: upload july.csv declaring
+  // 2026-07-01..2026-07-31, then resubmit the byte-identical file declaring 2026-07-02..07-31 and
+  // the key differs, the guard stays silent, and every row lands a second time in
+  // apr_manual_upload — which has no natural unique key to stop it. Doubled productive minutes in
+  // a table that feeds attendance and, downstream, pay. The declared window is caller-supplied
+  // metadata; the same bytes for the same (source, branch, process) are the same submission
+  // whatever window is claimed for them, and the route now independently rejects any row whose
+  // report_date falls outside the declared window, so a genuinely different window cannot carry
+  // the same rows anyway.
   if (!params.supersedesBatchId) {
     const [existingBatch] = await db.execute<ExistingBatchRow[]>(
       `SELECT id, batch_reference, accepted_row_count, rejected_row_count
          FROM productivity_upload_batch
         WHERE dialler_source_id = ? AND branch_id = ? AND process_id = ?
-          AND date_from = ? AND date_to = ? AND content_digest = ?
+          AND content_digest = ?
           AND status <> 'superseded'
         LIMIT 1`,
-      [params.diallerSourceId, params.branchId, params.processId, params.dateFrom, params.dateTo, params.contentDigest],
+      [params.diallerSourceId, params.branchId, params.processId, params.contentDigest],
     );
     if (existingBatch.length > 0) {
       const row = existingBatch[0];
       throw new DuplicateUploadBatchError(
         row.id,
         `A batch (${row.id}) already exists for this exact file and scope ` +
-        `(dialler_source ${params.diallerSourceId}, branch ${params.branchId}, process ${params.processId}, ` +
-        `${params.dateFrom} to ${params.dateTo}). If this is a deliberate re-upload, resubmit with ` +
-        `supersedesBatchId set to ${row.id}.`,
+        `(dialler_source ${params.diallerSourceId}, branch ${params.branchId}, process ${params.processId}). ` +
+        `If this is a deliberate re-upload, resubmit with supersedesBatchId set to ${row.id}.`,
       );
     }
   }
@@ -170,6 +189,11 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
   const batchId = randomUUID();
   const batchReference = batchId; // simplest guaranteed-unique reference; no human-readable
                                    // scheme is specified anywhere in requirements.md
+
+  // Set when a supersedesBatchId was given, names an existing batch in THIS submission's scope,
+  // and is not already superseded. The UPDATE itself is deliberately deferred until after the
+  // accepted rows have actually landed — see the comment at the supersede write below.
+  let supersedeTargetId: string | null = null;
 
   if (params.supersedesBatchId) {
     // Looked up BEFORE any write, and checked against BOTH existence and scope. A round-4
@@ -205,7 +229,9 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
       && prior.branch_id === params.branchId
       && prior.process_id === params.processId
       && prior.date_from === params.dateFrom
-      && prior.date_to === params.dateTo; // db pool has dateStrings:true — plain string compare is safe
+      && prior.date_to === params.dateTo; // db pool has dateStrings:true, and the route validates
+                                          // both sides to strict YYYY-MM-DD before calling, so a
+                                          // plain string compare cannot false-negative on '2026-7-1'
     if (!sameScope) {
       throw new Error(
         `supersedesBatchId ${params.supersedesBatchId} names an Upload_Batch for a different ` +
@@ -213,16 +239,11 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
         `supersede across scopes`,
       );
     }
+    // else (already 'superseded'): leave supersedeTargetId null — idempotent no-op, a retried
+    // "supersede" request should not itself error.
     if (prior.status !== 'superseded') {
-      await db.execute(
-        `UPDATE productivity_upload_batch
-            SET status = 'superseded', superseded_at = NOW(), superseded_by_batch_id = ?
-          WHERE id = ?`,
-        [batchId, params.supersedesBatchId],
-      );
+      supersedeTargetId = params.supersedesBatchId;
     }
-    // else: already superseded by something else — idempotent no-op, a retried "supersede"
-    // request should not itself error.
   }
 
   // No transaction spans the writes below, matching this codebase's established convention
@@ -235,12 +256,6 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
   // draft of this function assumed.
   //
   // Two accepted, no-transaction trade-offs worth naming rather than hiding:
-  //  - If a supersedesBatchId was given, the prior batch is already marked 'superseded' by this
-  //    point (above), before this batch's own row exists. If the final productivity_upload_batch
-  //    INSERT below throws, the prior batch is left superseded with a superseded_by_batch_id
-  //    pointing at a row that was never created — no FK catches this (1638 deliberately carries
-  //    none). A caller seeing that error should treat the whole commit as failed and investigate,
-  //    not assume the supersession itself is safe to ignore.
   //  - Rows land in apr_manual_upload carrying upload_batch_id = batchId before the batch row
   //    itself exists; the same final-INSERT failure would leave them referencing a batch id that
   //    was never created. Inherent to "write the batch row last so its counts are honest" — the
@@ -299,17 +314,25 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
       );
       actualAccepted += chunk.length;
     } catch (err) {
+      // The raw driver message is logged, never returned. It carries schema internals verbatim
+      // ("Unknown column 'campaign_id'", "Table 'mas_hrms.apr_manual_upload' doesn't exist"),
+      // which errorHandler.ts exists specifically to stop leaking to a client. The row range is
+      // the part the uploader can actually act on, so that is what the response carries.
+      console.error('[productivity-upload] accepted-row chunk failed', err);
       writeErrors.push(
-        `${chunk.length} accepted row(s) (rows ${chunk[0]!.rowNumber}-${chunk[chunk.length - 1]!.rowNumber}) failed to save: ${
-          err instanceof Error ? err.message : String(err)}`,
+        `${chunk.length} accepted row(s) (rows ${chunk[0]!.rowNumber}-${chunk[chunk.length - 1]!.rowNumber}) could not be saved. Re-upload this range once the problem is resolved.`,
       );
     }
   }
 
   for (const chunk of chunkArray(params.rejectedRows, INSERT_CHUNK_SIZE)) {
     const valuesSql = chunk.map(() => `(?, ?, ?, ?, ?)`).join(',\n         ');
+    // employee_code is VARCHAR(50) and reason is VARCHAR(500) in 1638. A misdelimited file (a
+    // semicolon-separated export, say) puts a whole line into one cell, and under strict mode an
+    // over-length value is ER_DATA_TOO_LONG, which fails the entire rejection chunk — losing the
+    // very records that exist to tell the uploader what went wrong. Truncated instead.
     const flatParams = chunk.flatMap((r) => [
-      randomUUID(), batchId, r.rowNumber, r.employeeCode, r.reason,
+      randomUUID(), batchId, r.rowNumber, r.employeeCode.slice(0, 50), r.reason.slice(0, 500),
     ]);
     try {
       await db.execute(
@@ -319,11 +342,39 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
       );
       actualRejected += chunk.length;
     } catch (err) {
+      console.error('[productivity-upload] rejection chunk failed', err);
       writeErrors.push(
-        `${chunk.length} rejection record(s) (rows ${chunk[0]!.rowNumber}-${chunk[chunk.length - 1]!.rowNumber}) failed to save: ${
-          err instanceof Error ? err.message : String(err)}`,
+        `${chunk.length} rejection record(s) (rows ${chunk[0]!.rowNumber}-${chunk[chunk.length - 1]!.rowNumber}) could not be saved.`,
       );
     }
+  }
+
+  // Supersede LAST, and only if this submission actually contributed something.
+  //
+  // This UPDATE used to run before the chunk writes, which meant a re-upload whose every row was
+  // rejected (or whose every chunk failed) still retired the prior batch: criterion 17.7 excludes
+  // a superseded batch's rows from Canonical_Productive_Minutes, so real prior data was replaced
+  // by nothing at all, while the caller was told the request succeeded. Deferring it here means
+  // the worst case is the opposite and much safer one — the prior batch stays live and the
+  // operator sees two batches to reconcile, rather than a silent hole in productive minutes.
+  if (supersedeTargetId !== null && actualAccepted > 0) {
+    try {
+      await db.execute(
+        `UPDATE productivity_upload_batch
+            SET status = 'superseded', superseded_at = NOW(), superseded_by_batch_id = ?
+          WHERE id = ? AND status <> 'superseded'`,
+        [batchId, supersedeTargetId],
+      );
+    } catch (err) {
+      console.error('[productivity-upload] supersede update failed', err);
+      writeErrors.push(
+        `this batch's rows were saved, but the prior batch ${supersedeTargetId} could not be marked superseded — both batches are currently live and must be reconciled by hand`,
+      );
+    }
+  } else if (supersedeTargetId !== null) {
+    writeErrors.push(
+      `no rows were saved, so the prior batch ${supersedeTargetId} was deliberately left live rather than superseded by an empty upload`,
+    );
   }
 
   // NOT `writeErrors.length > 0 || actualAccepted > 0` — that disjunct is backwards and was a
@@ -332,20 +383,35 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
   // reflect what actually landed, nothing else.
   const status = actualAccepted > 0 ? 'accepted' : 'rejected';
 
-  await db.execute(
-    `INSERT INTO productivity_upload_batch
-       (id, batch_reference, dialler_source_id, branch_id, process_id, date_from, date_to,
-        file_name, content_digest, uploaded_by, submitted_row_count, accepted_row_count,
-        rejected_row_count, mapping_version_used, supersedes_batch_id, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      batchId, batchReference, params.diallerSourceId, params.branchId, params.processId,
-      params.dateFrom, params.dateTo, params.fileName, params.contentDigest, params.uploadedBy,
-      params.acceptedRows.length + params.rejectedRows.length,
-      actualAccepted, actualRejected, params.mappingVersionUsed,
-      params.supersedesBatchId ?? null, status,
-    ],
-  );
+  // Wrapped, unlike every earlier draft. This INSERT runs AFTER the row chunks have landed, so an
+  // uncaught throw here reports a total failure to a caller whose rows are in fact already in
+  // apr_manual_upload — the caller retries, and the retry double-writes (the duplicate guard
+  // cannot see a batch row that was never created). Reporting it as a write error instead keeps
+  // the response honest about what happened and names the manual step needed.
+  // file_name is VARCHAR(255) in 1638; multer's originalname is attacker-controlled and can
+  // exceed that, which under strict mode would be exactly the failure described above.
+  try {
+    await db.execute(
+      `INSERT INTO productivity_upload_batch
+         (id, batch_reference, dialler_source_id, branch_id, process_id, date_from, date_to,
+          file_name, content_digest, uploaded_by, submitted_row_count, accepted_row_count,
+          rejected_row_count, mapping_version_used, supersedes_batch_id, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        batchId, batchReference, params.diallerSourceId, params.branchId, params.processId,
+        params.dateFrom, params.dateTo, params.fileName.slice(0, 255), params.contentDigest,
+        params.uploadedBy,
+        params.acceptedRows.length + params.rejectedRows.length,
+        actualAccepted, actualRejected, params.mappingVersionUsed,
+        params.supersedesBatchId ?? null, status,
+      ],
+    );
+  } catch (err) {
+    console.error('[productivity-upload] batch row insert failed', err);
+    writeErrors.push(
+      `${actualAccepted} row(s) were saved but the batch record ${batchId} itself could not be written. Do NOT re-upload this file — the rows are already in the system and a re-upload would duplicate them; have this batch record created by hand instead.`,
+    );
+  }
 
   return { batchId, batchReference, acceptedCount: actualAccepted, rejectedCount: actualRejected, writeErrors };
 }

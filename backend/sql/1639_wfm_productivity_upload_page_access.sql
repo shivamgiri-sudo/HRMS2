@@ -17,6 +17,17 @@
 -- WFM_Uploader is explicitly a branch-scoped role and branch_head is this codebase's existing
 -- branch-scoped operational role.
 --
+-- wfm_analyst is granted too, and is NOT an extra role this migration invents: requireRole()
+-- expands ROLE_ALIASES (platform/policy/roles.ts), which maps wfm <-> wfm_analyst both ways, so
+-- a wfm_analyst already passes the route's requireRole('wfm', ...) gate and can POST /commit.
+-- Omitting it here would leave that role showing as ungranted on the access-control screen while
+-- being fully able to write attendance-feeding rows -- precisely the disagreement the
+-- five-things-must-agree convention exists to prevent. Keep this list and the route's
+-- UPLOAD_ROLES (plus their aliases) identical. wfm_analyst has no workforce_role_catalog row of
+-- its own (003_access_control.sql seeds 'wfm' under the display name "WFM Analyst"), and
+-- role_page_access.role_key carries no foreign key, so this grant is additive and defensive: it
+-- costs one row and closes the gap for any user actually holding that role_key.
+--
 -- ROLLBACK
 --   UPDATE role_page_access SET active_status = 0 WHERE page_code = 'WFM_PRODUCTIVITY_UPLOAD';
 --   UPDATE page_catalog     SET active_status = 0 WHERE page_code = 'WFM_PRODUCTIVITY_UPLOAD';
@@ -41,6 +52,7 @@ INSERT INTO role_page_access (id, role_key, page_code, can_view, can_create, can
 SELECT UUID(), r.role_key, 'WFM_PRODUCTIVITY_UPLOAD', 1, 1, 0, 0, 0, 1, NOW()
   FROM (
     SELECT 'wfm'          AS role_key UNION ALL
+    SELECT 'wfm_analyst'              UNION ALL
     SELECT 'branch_head'              UNION ALL
     SELECT 'hr'                       UNION ALL
     SELECT 'payroll_head'             UNION ALL
@@ -56,6 +68,6 @@ SELECT UUID(), r.role_key, 'WFM_PRODUCTIVITY_UPLOAD', 1, 1, 0, 0, 0, 1, NOW()
 UPDATE role_page_access
    SET can_view = 1, can_create = 1, active_status = 1
  WHERE page_code = 'WFM_PRODUCTIVITY_UPLOAD'
-   AND role_key IN ('wfm','branch_head','hr','payroll_head','admin','super_admin');
+   AND role_key IN ('wfm','wfm_analyst','branch_head','hr','payroll_head','admin','super_admin');
 
 SELECT '1639 applied: WFM_PRODUCTIVITY_UPLOAD page catalog + role_page_access' AS migration_status;
