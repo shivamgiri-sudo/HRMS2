@@ -37,15 +37,22 @@ describe('calculateTrackerSummary', () => {
     // while TrackerSummary has always returned total_employees/completed_count/
     // in_progress_count/pending_count, so it failed on every run since it was added.
     // JoiningDocumentsTrackerPage.tsx reads the service's names, so those are the contract.
+    //
+    // The 85% employee is now `in_progress`, not a fourth `pending_verification`
+    // bucket: that band was counted somewhere no tile rendered. The three buckets
+    // sum to total_employees; overdue_count and needs_correction are cross-cutting
+    // and sit outside the sum (the 0% employee here is both pending and overdue).
     expect(summary).toEqual({
       total_employees: 4,
       completed_count: 1,      // 100%
-      pending_verification: 1, // 75-99%
-      in_progress_count: 1,    // 1-74%
+      in_progress_count: 2,    // 85% (formerly pending_verification) + 50%
       pending_count: 1,        // 0% — "not started"
       overdue_count: 1,        // overdue_count > 0
       needs_correction: 1,     // needs_correction_count > 0
     });
+    expect(
+      summary.completed_count + summary.in_progress_count + summary.pending_count
+    ).toBe(summary.total_employees);
   });
 
   it('should return zeros for empty array', () => {
@@ -53,7 +60,6 @@ describe('calculateTrackerSummary', () => {
     expect(summary).toEqual({
       total_employees: 0,
       completed_count: 0,
-      pending_verification: 0,
       in_progress_count: 0,
       pending_count: 0,
       overdue_count: 0,
@@ -452,9 +458,97 @@ describe('bulkSetDueDate', () => {
 
 // ─── Task 5: bulkVerifyDocuments tests ───────────────────────────────────────
 
+/**
+ * The four statements `bulkVerifyDocuments` can issue per employee.
+ *
+ * Two UPDATEs, one per provenance, and one audit INSERT per UPDATE that actually
+ * affected rows. `other` exists so an unrecognised statement is visible as itself
+ * rather than being silently counted as one of the four.
+ */
+type VerifyStatement =
+  | 'uploaded_update'
+  | 'esigned_update'
+  | 'audit_bulk_verify'
+  | 'audit_bulk_verify_esigned'
+  | 'other';
+
+/**
+ * Which statement a given SQL string is, by content.
+ *
+ * Content, not call index, deliberately. These tests used to queue one
+ * `mockResolvedValueOnce` per expected call, so adding the eSigned UPDATE shifted
+ * every later index by one: the mock meant for the audit INSERT was consumed by
+ * the new UPDATE, and `calls[1]` stopped being the audit row it was named after.
+ * A fifth statement would break a positional harness again; it cannot break this
+ * one.
+ *
+ * Both UPDATEs set `verification_status = 'verified'`, so the SET clause does not
+ * tell them apart — the WHERE does, and the status each one selects on is the
+ * whole point of there being two.
+ */
+function classifyVerifyStatement(sql: string): VerifyStatement {
+  if (/UPDATE\s+employee_joining_document_checklist/i.test(sql)) {
+    if (/status\s*=\s*'uploaded_pending_review'/i.test(sql)) return 'uploaded_update';
+    if (/status\s*=\s*'esign_completed'/i.test(sql)) return 'esigned_update';
+  }
+  if (/INSERT\s+INTO\s+employee_joining_document_audit_log/i.test(sql)) {
+    // Ordered: 'BULK_VERIFY_ESIGNED' contains 'BULK_VERIFY', and the quotes stop
+    // the shorter literal from matching the longer one.
+    if (/'BULK_VERIFY_ESIGNED'/.test(sql)) return 'audit_bulk_verify_esigned';
+    if (/'BULK_VERIFY'/.test(sql)) return 'audit_bulk_verify';
+  }
+  return 'other';
+}
+
+/** Rows each of the two UPDATEs reports for one employee. */
+interface VerifyPlan {
+  /** `affectedRows` for the uploaded-rows UPDATE — a human clicked verify. */
+  uploaded: number;
+  /** `affectedRows` for the eSigned-rows UPDATE — the provider verified the signature. */
+  esigned: number;
+}
+
+/**
+ * Answer `connection.execute` from a per-employee plan instead of a queue.
+ *
+ * The employee id is recovered from the bound parameters (every one of the four
+ * statements binds it) rather than from the order calls arrive in, so the same
+ * stub serves one employee or several without the caller counting statements.
+ */
+function stubVerifyStatements(plan: Record<string, VerifyPlan>): void {
+  mocks.mockConnectionExecute.mockImplementation(async (sql: unknown, params: unknown = []) => {
+    const kind = classifyVerifyStatement(String(sql));
+    const employeeId = (params as unknown[]).find(
+      (p): p is string => typeof p === 'string' && Object.prototype.hasOwnProperty.call(plan, p)
+    );
+
+    if (kind === 'uploaded_update' || kind === 'esigned_update') {
+      if (!employeeId) {
+        throw new Error(`No planned employee id in params for statement: ${String(sql)}`);
+      }
+      const affectedRows = kind === 'uploaded_update' ? plan[employeeId].uploaded : plan[employeeId].esigned;
+      return [{ affectedRows } as ResultSetHeader, []];
+    }
+
+    // Audit inserts: the service never reads the result, only that it happened.
+    return [{ affectedRows: 1 } as ResultSetHeader, []];
+  });
+}
+
+/** Recorded calls of one kind, in the order they were issued. */
+function verifyCallsOfKind(kind: VerifyStatement): unknown[][] {
+  return mocks.mockConnectionExecute.mock.calls.filter(
+    (call) => classifyVerifyStatement(String(call[0])) === kind
+  );
+}
+
 describe('bulkVerifyDocuments', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks() clears recorded calls but keeps any mockImplementation, so a
+    // stub set by one test would answer the next test's statements. Reset the
+    // connection spy outright: every test below states its own statement results.
+    mocks.mockConnectionExecute.mockReset();
     mocks.mockBeginTransaction.mockResolvedValue(undefined);
     mocks.mockCommit.mockResolvedValue(undefined);
     mocks.mockRollback.mockResolvedValue(undefined);
@@ -508,36 +602,62 @@ describe('bulkVerifyDocuments', () => {
   });
 
   it('should skip employees with no pending documents (0 affected rows)', async () => {
-    const updateResult = { affectedRows: 0 } as ResultSetHeader;
-
-    mocks.mockConnectionExecute.mockResolvedValueOnce([updateResult, []]);
+    // Nothing to verify from either provenance: no uploaded rows awaiting review,
+    // no eSigned rows still unverified.
+    stubVerifyStatements({ 'emp-1': { uploaded: 0, esigned: 0 } });
 
     const result = await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
 
-    // Should not make further DB calls (audit, stats, employees update)
-    expect(mocks.mockConnectionExecute).toHaveBeenCalledTimes(1);
+    // Both UPDATEs are still attempted — that is how the service learns there is
+    // nothing to do. What must not happen is anything downstream of them.
+    expect(verifyCallsOfKind('uploaded_update')).toHaveLength(1);
+    expect(verifyCallsOfKind('esigned_update')).toHaveLength(1);
+
+    // No audit row of either kind: an employee whose documents did not change has
+    // nothing to record.
+    expect(verifyCallsOfKind('audit_bulk_verify')).toHaveLength(0);
+    expect(verifyCallsOfKind('audit_bulk_verify_esigned')).toHaveLength(0);
+
+    // Not pushed to recalcNeeded either — recalculating an unchanged employee's
+    // percentage is work for no reason.
+    expect(recalculateDocumentProgress).not.toHaveBeenCalled();
+
     expect(result.verified).toBe(0);
     expect(result.errors).toHaveLength(0);
   });
 
   it('should process multiple employees and accumulate verified count', async () => {
-    const updateResult1 = { affectedRows: 2 } as ResultSetHeader;
-    const updateResult2 = { affectedRows: 3 } as ResultSetHeader;
-    const statsResult = [{ total: 5, verified_count: 5 }];
+    // Deliberately one employee per provenance, and a third with neither, so the
+    // total can only come out right if BOTH statements are counted and the empty
+    // employee contributes nothing.
+    stubVerifyStatements({
+      'emp-1': { uploaded: 2, esigned: 0 }, // uploaded only
+      'emp-2': { uploaded: 0, esigned: 3 }, // eSigned only
+      'emp-3': { uploaded: 0, esigned: 0 }, // nothing to verify
+    });
 
-    mocks.mockConnectionExecute
-      // emp-1
-      .mockResolvedValueOnce([updateResult1, []])
-      .mockResolvedValueOnce([{}, []])
-      // emp-2
-      .mockResolvedValueOnce([updateResult2, []])
-      .mockResolvedValueOnce([{}, []]);
-
-    const result = await bulkVerifyDocuments(['emp-1', 'emp-2'], 'actor-user-1');
+    const result = await bulkVerifyDocuments(['emp-1', 'emp-2', 'emp-3'], 'actor-user-1');
 
     expect(result.success).toBe(true);
+    // 2 uploaded + 3 eSigned. Counting only the first statement gives 2, only the
+    // second gives 3; 5 is reachable only by summing both.
     expect(result.verified).toBe(5);
     expect(result.errors).toHaveLength(0);
+
+    // One audit row per statement that affected rows, and none for emp-3.
+    const uploadedAudits = verifyCallsOfKind('audit_bulk_verify');
+    const esignedAudits = verifyCallsOfKind('audit_bulk_verify_esigned');
+    expect(uploadedAudits).toHaveLength(1);
+    expect(esignedAudits).toHaveLength(1);
+    expect(uploadedAudits[0][1]).toContain('emp-1');
+    expect(esignedAudits[0][1]).toContain('emp-2');
+
+    // Only the two employees whose rows actually changed reach the canonical
+    // completion writer.
+    expect(recalculateDocumentProgress).toHaveBeenCalledWith('emp-1');
+    expect(recalculateDocumentProgress).toHaveBeenCalledWith('emp-2');
+    expect(recalculateDocumentProgress).not.toHaveBeenCalledWith('emp-3');
+    expect(recalculateDocumentProgress).toHaveBeenCalledTimes(2);
   });
 
   it('should collect errors per employee without stopping processing', async () => {
@@ -560,20 +680,39 @@ describe('bulkVerifyDocuments', () => {
   });
 
   it('should log audit with action_type BULK_VERIFY for each verified employee', async () => {
-    const updateResult = { affectedRows: 1 } as ResultSetHeader;
-    const statsResult = [{ total: 5, verified_count: 3 }];
+    // Both provenances affected rows for the same employee, so both audit rows are
+    // expected — and each must carry its own action_type.
+    stubVerifyStatements({ 'emp-1': { uploaded: 1, esigned: 2 } });
 
-    mocks.mockConnectionExecute
-      .mockResolvedValueOnce([updateResult, []])
-      .mockResolvedValueOnce([{}, []]);
+    const result = await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
 
-    await bulkVerifyDocuments(['emp-1'], 'actor-user-1');
+    const [uploadedAudit] = verifyCallsOfKind('audit_bulk_verify');
+    expect(uploadedAudit, 'no BULK_VERIFY audit row was written').toBeDefined();
+    expect(uploadedAudit[0]).toMatch(/employee_joining_document_audit_log/i);
+    expect(uploadedAudit[0]).toMatch(/'BULK_VERIFY'/);
+    expect(uploadedAudit[1]).toContain('actor-user-1');
+    expect(uploadedAudit[1]).toContain('emp-1');
 
-    const auditCall = mocks.mockConnectionExecute.mock.calls[1];
-    expect(auditCall[0]).toMatch(/employee_joining_document_audit_log/i);
-    expect(auditCall[0]).toMatch(/BULK_VERIFY/i);
-    expect(auditCall[1]).toContain('actor-user-1');
-    expect(auditCall[1]).toContain('emp-1');
+    // eSign-origin verification is recorded under its own action_type, so it is
+    // distinguishable from a human verifying an upload by value rather than by
+    // reading timestamps.
+    const [esignedAudit] = verifyCallsOfKind('audit_bulk_verify_esigned');
+    expect(esignedAudit, 'no BULK_VERIFY_ESIGNED audit row was written').toBeDefined();
+    expect(esignedAudit[0]).toMatch(/'BULK_VERIFY_ESIGNED'/);
+    expect(esignedAudit[1]).toContain('actor-user-1');
+    expect(esignedAudit[1]).toContain('emp-1');
+    // The eSigned row carries its provenance and row count as new_value.
+    const esignedNewValue = (esignedAudit[1] as unknown[]).find(
+      (p): p is string => typeof p === 'string' && p.trimStart().startsWith('{')
+    );
+    expect(esignedNewValue, 'BULK_VERIFY_ESIGNED wrote no new_value payload').toBeDefined();
+    expect(JSON.parse(esignedNewValue!)).toMatchObject({
+      verificationSource: 'aadhaar_esign',
+      signatureMode: 'aadhaar_esign_verified',
+      rowsVerified: 2,
+    });
+
+    expect(result.verified).toBe(3);
   });
 });
 

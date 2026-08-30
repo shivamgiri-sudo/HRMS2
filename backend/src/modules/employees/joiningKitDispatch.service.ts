@@ -15,6 +15,9 @@ import { randomUUID, createHash, randomBytes } from "crypto";
 import fs from "fs";
 import path from "path";
 import type { RowDataPacket } from "mysql2";
+// Type-only: the value is still imported dynamically at the call site, so the
+// provider client stays out of this module's load graph.
+import type { luckpayClient } from "../integrations/luckpay/luckpay.client.js";
 import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import { assembleJoiningKit, kitEligibleDocuments } from "./joiningKitAssembly.service.js";
@@ -60,16 +63,23 @@ async function audit(
   action: string,
   actorUserId: string | null,
   detail: unknown,
+  /**
+   * The state this action replaced. Optional because most kit actions have no
+   * meaningful prior state; the verification write does, and it is the only
+   * surviving record of a due_at it cleared.
+   */
+  oldValue?: unknown,
 ) {
   await db.execute(
     `INSERT INTO employee_joining_document_audit_log
        (id, employee_id, checklist_id, document_code, action_type,
-        new_value, remarks, actor_user_id, actor_type)
-     VALUES (?, ?, NULL, 'JOINING_KIT', ?, CAST(? AS JSON), ?, ?, 'system')`,
+        old_value, new_value, remarks, actor_user_id, actor_type)
+     VALUES (?, ?, NULL, 'JOINING_KIT', ?, CAST(? AS JSON), CAST(? AS JSON), ?, ?, 'system')`,
     [
       randomUUID(),
       employeeId,
       action,
+      oldValue === undefined ? null : JSON.stringify(oldValue),
       JSON.stringify({ kitId, ...((detail as object) ?? {}) }),
       `Joining kit ${kitId ?? ""}`.trim(),
       actorUserId,
@@ -453,7 +463,28 @@ export async function finalizeKitEsign(params: {
   transactionId: string;
   clientTransactionId: string | null;
   providerReferenceId: string | null;
+  /**
+   * The provider's own completion time. Absent, every completed_at falls back
+   * to NOW(), which is exactly today's behaviour. The Backfill_Runner passes
+   * the time Luckpay reported, so a remediation run does not restamp 26 kits
+   * as having been signed on the afternoon the script happened to run.
+   */
+  completedAt?: Date | null;
+  /**
+   * Present only when the Backfill_Runner closed this kit rather than the live
+   * pull path. Switches the verification audit action_type and names the
+   * operator who authorised the run, so a bulk remediation is distinguishable
+   * from a normal completion by value rather than by timestamp.
+   */
+  backfill?: { actorUserId: string; providerReferenceId: string };
+  /**
+   * Injection point for the artefact download. Defaults to the real client;
+   * the backfill's counting fake passes itself here so its provider-call
+   * bound covers this internal call as well as its own status call.
+   */
+  client?: Pick<typeof luckpayClient, "downloadESignDocument">;
 }): Promise<{ kitId: string; documentsClosed: number; artefactRetrieved: boolean; placementOk: boolean }> {
+  const completedAt = params.completedAt ?? null;
   const [kits] = await db.execute<RowDataPacket[]>(
     `SELECT id, employee_id, candidate_id, reserved_band_pt FROM employee_joining_esign_kit WHERE id = ? LIMIT 1`,
     [params.kitId],
@@ -471,8 +502,10 @@ export async function finalizeKitEsign(params: {
   // primary key here is what left every earlier signature unretrieved.
   let signedBytes: Buffer | null = null;
   try {
-    const { luckpayClient } = await import("../integrations/luckpay/luckpay.client.js");
-    const doc = await luckpayClient.downloadESignDocument({
+    const client =
+      params.client ??
+      (await import("../integrations/luckpay/luckpay.client.js")).luckpayClient;
+    const doc = await client.downloadESignDocument({
       clientTransactionId: params.clientTransactionId ?? "",
       transactionId: params.providerReferenceId ?? "",
     });
@@ -485,14 +518,17 @@ export async function finalizeKitEsign(params: {
 
   let signedFileId: string | null = null;
   let placementOk = true;
+  let signedPath: string | null = null;
   if (signedBytes) {
     const dir = path.resolve(process.cwd(), "private-storage", "joining-kits", String(kit.employee_id));
     await fs.promises.mkdir(dir, { recursive: true });
-    const signedPath = path.join(dir, `joining-kit-${params.kitId}-signed.pdf`);
+    signedPath = path.join(dir, `joining-kit-${params.kitId}-signed.pdf`);
     await fs.promises.writeFile(signedPath, signedBytes);
 
     // Where did the signature actually land? A provider change should surface
-    // as an alert, not as a silently wrong document.
+    // as an alert, not as a silently wrong document. Deliberately OUTSIDE the
+    // completion boundary below: placement analysis is diagnostic, and a PDF
+    // parser throwing must not roll back a real signature.
     try {
       const { assertSignatureInsideReservedArea } = await import("./joiningKitAssembly.service.js");
       const r = await assertSignatureInsideReservedArea(signedBytes, Number(kit.reserved_band_pt ?? 180));
@@ -502,55 +538,145 @@ export async function finalizeKitEsign(params: {
         [JSON.stringify(r), params.kitId],
       ).catch(() => undefined);
     } catch { /* placement analysis must never block completion */ }
-
-    // One file row per member, all pointing at the same artefact.
-    for (const it of items) {
-      signedFileId = randomUUID();
-      await db.execute(
-        `INSERT INTO employee_joining_document_file
-           (id, checklist_id, employee_id, candidate_id, document_code, file_role,
-            original_filename, stored_filename, storage_path, mime_type, file_size_bytes,
-            file_hash_sha256, uploaded_by_type, uploaded_at)
-         VALUES (?, ?, ?, ?, ?, 'kit_signed', ?, ?, ?, 'application/pdf', ?, ?, 'system', NOW())`,
-        [signedFileId, String(it.checklist_id), String(kit.employee_id), kit.candidate_id ?? null,
-         String(it.document_code), `${it.document_name ?? it.document_code}.pdf`,
-         path.basename(signedPath), signedPath, signedBytes.byteLength,
-         createHash("sha256").update(signedBytes).digest("hex")],
-      ).catch(() => undefined);
-    }
   }
 
   const signatureMode = signedBytes ? "aadhaar_esign_verified" : "aadhaar_esign_pending_artefact";
-  for (const it of items) {
-    await db.execute(
-      `UPDATE employee_joining_document_checklist
-          SET status = 'esign_completed', fill_status = 'esign_completed',
-              signature_mode = ?, final_file_locked_at = NOW(), completed_at = NOW(), updated_at = NOW()
+
+  /**
+   * One boundary around the whole "this kit is signed" fact.
+   *
+   * Every write below used to be an independent statement wrapped in
+   * .catch(() => undefined), so a kit could end half-closed: some members
+   * completed, the kit row still 'sent', the token still live. The .catch()es
+   * are gone on purpose — inside a transaction a swallowed failure is worse
+   * than a thrown one, because it commits a partial kit.
+   *
+   * Kept outside, each for a stated reason: the artefact write and placement
+   * analysis above (filesystem and diagnostics), recalculateDocumentProgress
+   * below (it reads what this commits), audit (best-effort by design — an audit
+   * failure must not undo a signature), and the appointment-letter trigger
+   * (network I/O; it must never hold a pool connection).
+   */
+  const preWriteChecklist: Array<{
+    id: string;
+    status: string | null;
+    verification_status: string | null;
+    due_at: unknown;
+  }> = [];
+  let preWriteKitStatus: string | null = null;
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // Read the pre-write state inside the boundary, so the audit row's
+    // old_value describes the state this transaction actually replaced. For a
+    // cleared due_at this is the only surviving record of the original deadline.
+    const [kitBefore] = await conn.execute<RowDataPacket[]>(
+      `SELECT status FROM employee_joining_esign_kit WHERE id = ? LIMIT 1`,
+      [params.kitId],
+    );
+    preWriteKitStatus = (kitBefore as RowDataPacket[])[0]?.status ?? null;
+
+    if (items.length) {
+      const [rowsBefore] = await conn.execute<RowDataPacket[]>(
+        `SELECT id, status, verification_status, due_at
+           FROM employee_joining_document_checklist
+          WHERE id IN (${items.map(() => "?").join(", ")})`,
+        items.map((it) => String(it.checklist_id)),
+      );
+      for (const r of rowsBefore as RowDataPacket[]) {
+        preWriteChecklist.push({
+          id: String(r.id),
+          status: (r.status as string | null) ?? null,
+          verification_status: (r.verification_status as string | null) ?? null,
+          due_at: r.due_at ?? null,
+        });
+      }
+    }
+
+    // One file row per member, all pointing at the same artefact.
+    if (signedBytes && signedPath) {
+      for (const it of items) {
+        signedFileId = randomUUID();
+        await conn.execute(
+          `INSERT INTO employee_joining_document_file
+             (id, checklist_id, employee_id, candidate_id, document_code, file_role,
+              original_filename, stored_filename, storage_path, mime_type, file_size_bytes,
+              file_hash_sha256, uploaded_by_type, uploaded_at)
+           VALUES (?, ?, ?, ?, ?, 'kit_signed', ?, ?, ?, 'application/pdf', ?, ?, 'system', NOW())`,
+          [signedFileId, String(it.checklist_id), String(kit.employee_id), kit.candidate_id ?? null,
+           String(it.document_code), `${it.document_name ?? it.document_code}.pdf`,
+           path.basename(signedPath), signedPath, signedBytes.byteLength,
+           createHash("sha256").update(signedBytes).digest("hex")],
+        );
+      }
+    }
+
+    for (const it of items) {
+      await conn.execute(
+        // The verification write rides on the statement that already sets
+        // status, so "signed" and "verified" are one statement, not two.
+        //
+        // The gate is signature_mode, NOT status: a provider-confirmed
+        // signature whose artefact we could not download lands as
+        // 'aadhaar_esign_pending_artefact' and must NOT be recorded as
+        // verified. Those rows heal on a later pass, because syncEsignStatus
+        // only short-circuits once signed_file_id is non-NULL.
+        //
+        // verified_by stays NULL: nobody reviewed this. Every other writer of
+        // that column puts a real user id there, and a sentinel would make it
+        // untrustworthy everywhere else. Provenance lives in
+        // verification_remarks and, structurally, in the audit row below.
+        `UPDATE employee_joining_document_checklist
+            SET status = 'esign_completed', fill_status = 'esign_completed',
+                signature_mode = ?, final_file_locked_at = NOW(),
+                completed_at = COALESCE(?, NOW()),
+                verification_status  = CASE WHEN ? = 'aadhaar_esign_verified'
+                                           THEN 'verified' ELSE verification_status END,
+                verified_at          = CASE WHEN ? = 'aadhaar_esign_verified'
+                                           THEN NOW() ELSE verified_at END,
+                verification_remarks = CASE WHEN ? = 'aadhaar_esign_verified'
+                                           THEN 'Verified by Aadhaar eSign (Luckpay)'
+                                           ELSE verification_remarks END,
+                due_at               = CASE WHEN ? = 'aadhaar_esign_verified'
+                                           THEN NULL ELSE due_at END,
+                updated_at = NOW()
+          WHERE id = ?`,
+        [signatureMode, completedAt, signatureMode, signatureMode, signatureMode, signatureMode,
+         String(it.checklist_id)],
+      );
+    }
+
+    await conn.execute(
+      `UPDATE employee_document_esign_transaction
+          SET status = 'signed', signed_file_id = COALESCE(?, signed_file_id),
+              completed_at = COALESCE(?, NOW())
         WHERE id = ?`,
-      [signatureMode, String(it.checklist_id)],
-    ).catch(() => undefined);
+      [signedFileId, completedAt, params.transactionId],
+    );
+
+    await conn.execute(
+      `UPDATE employee_joining_document_public_token
+          SET token_status = 'consumed', consumed_at = NOW()
+        WHERE kit_id = ? AND token_status = 'active'`,
+      [params.kitId],
+    );
+
+    await conn.execute(
+      `UPDATE employee_joining_esign_kit
+          SET status = 'signed', open_marker = NULL, completed_at = COALESCE(?, NOW()), signed_file_id = ?
+        WHERE id = ?`,
+      [completedAt, signedFileId, params.kitId],
+    );
+
+    await conn.commit();
+  } catch (e) {
+    await conn.rollback().catch(() => undefined);
+    throw e;
+  } finally {
+    conn.release();
   }
-
-  await db.execute(
-    `UPDATE employee_document_esign_transaction
-        SET status = 'signed', signed_file_id = COALESCE(?, signed_file_id), completed_at = NOW()
-      WHERE id = ?`,
-    [signedFileId, params.transactionId],
-  ).catch(() => undefined);
-
-  await db.execute(
-    `UPDATE employee_joining_document_public_token
-        SET token_status = 'consumed', consumed_at = NOW()
-      WHERE kit_id = ? AND token_status = 'active'`,
-    [params.kitId],
-  ).catch(() => undefined);
-
-  await db.execute(
-    `UPDATE employee_joining_esign_kit
-        SET status = 'signed', open_marker = NULL, completed_at = NOW(), signed_file_id = ?
-      WHERE id = ?`,
-    [signedFileId, params.kitId],
-  ).catch(() => undefined);
 
   // recalculateDocumentProgress is the documented single writer of completion.
   try {
@@ -558,9 +684,29 @@ export async function finalizeKitEsign(params: {
     await recalculateDocumentProgress(String(kit.employee_id));
   } catch { /* derived value; never block completion on it */ }
 
-  await audit(params.kitId, String(kit.employee_id), "KIT_SIGNED", null, {
+  await audit(params.kitId, String(kit.employee_id), "KIT_SIGNED", params.backfill?.actorUserId ?? null, {
     documents: items.length, artefactRetrieved: Boolean(signedBytes), placementOk,
   });
+
+  // Provenance of the verification, as a VALUE rather than a timestamp
+  // comparison: a bulk remediation must never be readable as 26 candidates
+  // signing on the same afternoon. old_value carries the pre-write status of
+  // the kit and of every member row, so the remediation stays reviewable.
+  await audit(
+    params.kitId,
+    String(kit.employee_id),
+    params.backfill ? "ESIGN_VERIFICATION_BACKFILL" : "ESIGN_VERIFICATION_AUTO",
+    params.backfill?.actorUserId ?? null,
+    {
+      verificationSource: "aadhaar_esign",
+      signatureMode,
+      providerReferenceId: params.backfill?.providerReferenceId ?? params.providerReferenceId ?? null,
+      documents: items.length,
+      completedAtSource: completedAt ? "provider" : "now",
+      ...(params.backfill ? { backfillActorUserId: params.backfill.actorUserId } : {}),
+    },
+    { kit: { status: preWriteKitStatus }, checklist: preWriteChecklist },
+  );
 
   // Fire-and-forget: kit completion must never depend on letter issuance
   // succeeding. issueAppointmentLetter() has its own eligibility gate (BGV,

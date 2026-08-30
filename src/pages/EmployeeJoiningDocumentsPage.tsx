@@ -8,6 +8,7 @@ import {
 
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Button } from "@/components/ui/button";
+import { ESIGN_STATE_COLORS, esignStatusColor } from "@/lib/esignState";
 import { hrmsApi } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
 
@@ -68,24 +69,28 @@ function statusText(value?: string | null) {
   return String(value || "pending").replace(/_/g, " ");
 }
 
+/**
+ * Every Esign_State comes from the mirror of Esign_State_Authority, so a status
+ * that is live in the database cannot render unstyled here (Requirement 6,
+ * criteria 6 and 7). This map used to be maintained by hand and omitted
+ * `ready_for_esign`, `draft_generated`, `hr_fill_required`,
+ * `employee_review_pending` and `correction_requested` — all present in
+ * production data.
+ *
+ * The keys added below are NOT checklist statuses: they are display values this
+ * page renders through the same chip (`linked_from_general_docs` for a document
+ * satisfied from the general document store, and the two sentinels `statusText`
+ * falls back to). They stay local rather than polluting the shared table.
+ */
 const STATUS_COLORS: Record<string, string> = {
-  verified:                  "bg-emerald-50 text-emerald-700",
-  completed:                 "bg-emerald-50 text-emerald-700",
-  signed_verified:           "bg-emerald-50 text-emerald-700",
-  esign_completed:           "bg-emerald-50 text-emerald-700",
-  employee_confirmed:        "bg-emerald-50 text-emerald-700",
-  needs_correction:          "bg-red-50 text-red-700",
-  esign_failed:              "bg-red-50 text-red-700",
-  pending_candidate_esign:   "bg-amber-50 text-amber-700",
-  uploaded_pending_review:   "bg-blue-50 text-blue-700",
-  esign_initiated:           "bg-blue-50 text-blue-700",
+  ...ESIGN_STATE_COLORS,
   linked_from_general_docs:  "bg-indigo-50 text-indigo-700",
   not_started:               "bg-slate-100 text-slate-500",
   pending:                   "bg-slate-100 text-slate-500",
 };
 
 function StatusChip({ value }: { value: string }) {
-  const color = STATUS_COLORS[value] ?? "bg-slate-100 text-slate-500";
+  const color = STATUS_COLORS[value] ?? esignStatusColor(value);
   return (
     <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold capitalize ${color}`}>
       {statusText(value)}

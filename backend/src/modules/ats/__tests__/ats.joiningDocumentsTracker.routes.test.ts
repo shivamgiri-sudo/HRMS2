@@ -2,8 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-// Mock the service module before importing the router
-vi.mock('../ats.joiningDocumentsTracker.service.js', () => ({
+// Mock the service module before importing the router.
+//
+// Spread over the real module rather than replacing it wholesale: the route calls the
+// service's own `clampPage` / `clampLimit` so the page bounds live in one place, and a
+// bare factory would leave those two undefined and turn every GET into a 500 — which is
+// a failure of the mock, not of the route. Only the DB-touching entry points are stubbed.
+vi.mock('../ats.joiningDocumentsTracker.service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../ats.joiningDocumentsTracker.service.js')>()),
   getJoiningDocumentsTracker: vi.fn(),
   sendBulkReminders: vi.fn(),
   bulkGenerateChecklists: vi.fn(),
@@ -27,7 +33,7 @@ vi.mock('../../../middleware/requireRole.js', () => ({
     (_req: express.Request, _res: express.Response, next: express.NextFunction) => next(),
 }));
 
-import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists, bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments, streamBulkDocumentsZip } from '../ats.joiningDocumentsTracker.service.js';
+import { getJoiningDocumentsTracker, sendBulkReminders, bulkGenerateChecklists, bulkAssignHR, bulkSetDueDate, bulkVerifyDocuments, streamBulkDocumentsZip, DEFAULT_PAGE, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from '../ats.joiningDocumentsTracker.service.js';
 
 describe('GET /joining-documents-tracker', () => {
   let app: express.Application;
@@ -106,7 +112,70 @@ describe('GET /joining-documents-tracker', () => {
       overdue_only: true,
       updated_since: undefined,
       search: 'John',
+      page: DEFAULT_PAGE,
+      limit: DEFAULT_PAGE_LIMIT,
     });
+  });
+
+  // ─── Task 3.11: page / limit reach the service ──────────────────────────────
+
+  it('should forward page and limit to the service', async () => {
+    vi.mocked(getJoiningDocumentsTracker).mockResolvedValueOnce({ employees: [], summary: { total: 0, complete: 0, pending_verification: 0, in_progress: 0, not_started: 0, overdue: 0, needs_correction: 0 } });
+
+    await request(app)
+      .get('/joining-documents-tracker?page=3&limit=25')
+      .set('Authorization', 'Bearer test-token');
+
+    expect(getJoiningDocumentsTracker).toHaveBeenCalledWith('test-user-id', expect.objectContaining({
+      page: 3,
+      limit: 25,
+    }));
+  });
+
+  // Table-driven because the interesting cases are all the same shape: a value the
+  // frontend could plausibly send, and the effective page it must resolve to. Every
+  // one of these used to be silently dropped; none of them may 500.
+  const clampCases: Array<{ query: string; page: number; limit: number; why: string }> = [
+    { query: '', page: DEFAULT_PAGE, limit: DEFAULT_PAGE_LIMIT, why: 'absent' },
+    { query: '?page=&limit=', page: DEFAULT_PAGE, limit: DEFAULT_PAGE_LIMIT, why: 'empty string' },
+    { query: '?page=abc&limit=xyz', page: DEFAULT_PAGE, limit: DEFAULT_PAGE_LIMIT, why: 'non-numeric' },
+    { query: '?page=0&limit=0', page: DEFAULT_PAGE, limit: DEFAULT_PAGE_LIMIT, why: 'below the floor' },
+    { query: '?page=-4&limit=-9', page: DEFAULT_PAGE, limit: DEFAULT_PAGE_LIMIT, why: 'negative' },
+    { query: '?page=2.7&limit=25.9', page: 2, limit: 25, why: 'fractional' },
+    { query: '?limit=100000', page: DEFAULT_PAGE, limit: MAX_PAGE_LIMIT, why: 'above the ceiling' },
+  ];
+
+  for (const { query, page, limit, why } of clampCases) {
+    it(`should fall back to usable bounds for a ${why} page/limit`, async () => {
+      vi.mocked(getJoiningDocumentsTracker).mockResolvedValueOnce({ employees: [], summary: { total: 0, complete: 0, pending_verification: 0, in_progress: 0, not_started: 0, overdue: 0, needs_correction: 0 } });
+
+      const response = await request(app)
+        .get(`/joining-documents-tracker${query}`)
+        .set('Authorization', 'Bearer test-token');
+
+      expect(response.status).toBe(200);
+      expect(getJoiningDocumentsTracker).toHaveBeenCalledWith('test-user-id', expect.objectContaining({ page, limit }));
+    });
+  }
+
+  it('should pass the page echo, total and hasNext/hasPrev through to the client', async () => {
+    const serviceResponse = {
+      rows: [],
+      total: 512,
+      summary: { total: 512, completed_count: 1, in_progress_count: 2, pending_count: 3, overdue_count: 0, needs_correction: 0 },
+      page: 2,
+      limit: 50,
+      hasNext: true,
+      hasPrev: true,
+    };
+    vi.mocked(getJoiningDocumentsTracker).mockResolvedValueOnce(serviceResponse);
+
+    const response = await request(app)
+      .get('/joining-documents-tracker?page=2&limit=50')
+      .set('Authorization', 'Bearer test-token');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ success: true, data: serviceResponse });
   });
 
   it('should treat overdue_only=false as false', async () => {
