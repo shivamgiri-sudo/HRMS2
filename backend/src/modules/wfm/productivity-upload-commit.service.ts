@@ -48,12 +48,22 @@ export async function resolveOrCreateDefaultCampaign(
     [diallerSourceId],
   );
   const displayName = sourceRows.length > 0 ? (sourceRows[0] as any).display_name : diallerSourceId;
+  // campaign_master.campaign_name is VARCHAR(255); dialler_source.display_name is also
+  // VARCHAR(255), so "Default campaign for " + displayName can reach 275 chars and overflow
+  // under strict mode. Truncated defensively.
+  const campaignName = `Default campaign for ${displayName}`.slice(0, 255);
 
+  // is_sentinel = 0 (not 1): criterion 16.8's sentinel flag marks a campaign EXCLUDED from
+  // Canonical_Productive_Minutes (the old system-wide 'MANUAL_UPLOAD' catch-all this default
+  // replaces). This default campaign carries real uploaded data and must count — is_sentinel
+  // stays 0 deliberately, despite this function's own docstring calling it "one sentinel per
+  // source" in the loose, everyday sense of "one designated default," not Requirement 16's
+  // is_sentinel flag.
   await db.execute(
     `INSERT INTO campaign_master (id, campaign_code, campaign_name, dialler_source_id, is_sentinel, active_status)
      VALUES (?, ?, ?, ?, 0, 1)
      ON DUPLICATE KEY UPDATE campaign_name = campaign_name`,
-    [randomUUID(), defaultCode, `Default campaign for ${displayName}`, diallerSourceId],
+    [randomUUID(), defaultCode, campaignName, diallerSourceId],
   );
 
   const [rows] = await db.execute<CampaignRow[]>(
@@ -83,38 +93,83 @@ export interface CommitBatchResult {
   batchReference: string;
   acceptedCount: number;
   rejectedCount: number;
+  writeErrors: string[];
+}
+
+interface ExistingBatchRow extends RowDataPacket {
+  id: string;
+  batch_reference: string;
+  accepted_row_count: number;
+  rejected_row_count: number;
 }
 
 export async function commitUploadBatch(params: CommitBatchParams): Promise<CommitBatchResult> {
+  // Retry idempotency (Global Constraints: "a retried request never double-writes"). Neither
+  // productivity_upload_batch nor apr_manual_upload carries a natural business-key unique
+  // constraint (apr_manual_upload's only unique key is its own fresh-UUID primary key, verified
+  // against the live schema), so a second identical request cannot rely on ON DUPLICATE KEY —
+  // instead, a batch already committed for the exact same (source, branch, process, date range,
+  // file content) short-circuits here and returns the original result unchanged.
+  const [existingBatch] = await db.execute<ExistingBatchRow[]>(
+    `SELECT id, batch_reference, accepted_row_count, rejected_row_count
+       FROM productivity_upload_batch
+      WHERE dialler_source_id = ? AND branch_id = ? AND process_id = ?
+        AND date_from = ? AND date_to = ? AND content_digest = ?
+        AND status <> 'superseded'
+      LIMIT 1`,
+    [params.diallerSourceId, params.branchId, params.processId, params.dateFrom, params.dateTo, params.contentDigest],
+  );
+  if (existingBatch.length > 0) {
+    const row = existingBatch[0];
+    return {
+      batchId: row.id,
+      batchReference: row.batch_reference,
+      acceptedCount: row.accepted_row_count,
+      rejectedCount: row.rejected_row_count,
+      writeErrors: [],
+    };
+  }
+
   const { campaignCode } = await resolveOrCreateDefaultCampaign(params.diallerSourceId);
 
   const batchId = randomUUID();
   const batchReference = batchId; // simplest guaranteed-unique reference; no human-readable
                                    // scheme is specified anywhere in requirements.md
 
-  await db.execute(
-    `INSERT INTO productivity_upload_batch
-       (id, batch_reference, dialler_source_id, branch_id, process_id, date_from, date_to,
-        file_name, content_digest, uploaded_by, submitted_row_count, accepted_row_count,
-        rejected_row_count, mapping_version_used, supersedes_batch_id, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted')`,
-    [
-      batchId, batchReference, params.diallerSourceId, params.branchId, params.processId,
-      params.dateFrom, params.dateTo, params.fileName, params.contentDigest, params.uploadedBy,
-      params.acceptedRows.length + params.rejectedRows.length,
-      params.acceptedRows.length, params.rejectedRows.length, params.mappingVersionUsed,
-      params.supersedesBatchId ?? null,
-    ],
-  );
-
   if (params.supersedesBatchId) {
-    await db.execute(
+    // Checked and resolved BEFORE the new batch row is written, so an invalid
+    // supersedesBatchId aborts the whole commit rather than leaving a new batch pointing at
+    // nothing (1638 deliberately carries no FK to enforce this at the schema level).
+    const [updateResult]: any = await db.execute(
       `UPDATE productivity_upload_batch
           SET status = 'superseded', superseded_at = NOW(), superseded_by_batch_id = ?
         WHERE id = ? AND status <> 'superseded'`,
       [batchId, params.supersedesBatchId],
     );
+    if (updateResult.affectedRows === 0) {
+      const [check] = await db.execute<RowDataPacket[]>(
+        `SELECT id FROM productivity_upload_batch WHERE id = ? LIMIT 1`,
+        [params.supersedesBatchId],
+      );
+      if (check.length === 0) {
+        throw new Error(`supersedesBatchId ${params.supersedesBatchId} does not name an existing Upload_Batch`);
+      }
+      // Row exists but was already superseded by something else — idempotent no-op is
+      // acceptable here (a retried "supersede" request should not itself error).
+    }
   }
+
+  // No transaction spans the writes below, matching this codebase's established convention
+  // (attendance-apr-bulk.routes.ts) — each chunk is one multi-row INSERT, atomic in itself, but
+  // chunks are independent of each other and a later chunk's failure never rolls back an
+  // earlier one that already landed. Every chunk is caught individually so one bad chunk cannot
+  // crash the request or silently misreport what actually landed; actualAccepted/actualRejected
+  // track ground truth, and the batch row is written LAST, with real counts and a status that
+  // reflects what happened — never the optimistic "everything requested succeeded" the first
+  // draft of this function assumed.
+  const writeErrors: string[] = [];
+  let actualAccepted = 0;
+  let actualRejected = 0;
 
   for (const chunk of chunkArray(params.acceptedRows, INSERT_CHUNK_SIZE)) {
     // Plain multi-row VALUES, matching the proven pattern in attendance-apr-bulk.routes.ts —
@@ -134,15 +189,23 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
       r.bioMinutes ?? null, r.lunchMinutes ?? null, r.qaMinutes ?? null, r.trainingMinutes ?? null,
       params.uploadedBy, batchId,
     ]);
-    await db.execute(
-      `INSERT INTO apr_manual_upload
-         (id, employee_code, process_id, campaign_id, report_date,
-          calls_handled, aht_seconds, login_minutes,
-          bio_minutes, lunch_minutes, qa_minutes, training_minutes,
-          uploaded_by, upload_batch_id, created_at)
-       VALUES ${valuesSql}`,
-      flatParams,
-    );
+    try {
+      await db.execute(
+        `INSERT INTO apr_manual_upload
+           (id, employee_code, process_id, campaign_id, report_date,
+            calls_handled, aht_seconds, login_minutes,
+            bio_minutes, lunch_minutes, qa_minutes, training_minutes,
+            uploaded_by, upload_batch_id, created_at)
+         VALUES ${valuesSql}`,
+        flatParams,
+      );
+      actualAccepted += chunk.length;
+    } catch (err) {
+      writeErrors.push(
+        `${chunk.length} accepted row(s) (rows ${chunk[0]!.rowNumber}-${chunk[chunk.length - 1]!.rowNumber}) failed to save: ${
+          err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   for (const chunk of chunkArray(params.rejectedRows, INSERT_CHUNK_SIZE)) {
@@ -150,17 +213,37 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
     const flatParams = chunk.flatMap((r) => [
       randomUUID(), batchId, r.rowNumber, r.employeeCode, r.reason,
     ]);
-    await db.execute(
-      `INSERT INTO productivity_upload_rejection (id, batch_id, row_number, employee_code, reason)
-       VALUES ${valuesSql}`,
-      flatParams,
-    );
+    try {
+      await db.execute(
+        `INSERT INTO productivity_upload_rejection (id, batch_id, source_row_number, employee_code, reason)
+         VALUES ${valuesSql}`,
+        flatParams,
+      );
+      actualRejected += chunk.length;
+    } catch (err) {
+      writeErrors.push(
+        `${chunk.length} rejection record(s) (rows ${chunk[0]!.rowNumber}-${chunk[chunk.length - 1]!.rowNumber}) failed to save: ${
+          err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
-  return {
-    batchId,
-    batchReference,
-    acceptedCount: params.acceptedRows.length,
-    rejectedCount: params.rejectedRows.length,
-  };
+  const status = writeErrors.length > 0 || actualAccepted > 0 ? 'accepted' : 'rejected';
+
+  await db.execute(
+    `INSERT INTO productivity_upload_batch
+       (id, batch_reference, dialler_source_id, branch_id, process_id, date_from, date_to,
+        file_name, content_digest, uploaded_by, submitted_row_count, accepted_row_count,
+        rejected_row_count, mapping_version_used, supersedes_batch_id, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      batchId, batchReference, params.diallerSourceId, params.branchId, params.processId,
+      params.dateFrom, params.dateTo, params.fileName, params.contentDigest, params.uploadedBy,
+      params.acceptedRows.length + params.rejectedRows.length,
+      actualAccepted, actualRejected, params.mappingVersionUsed,
+      params.supersedesBatchId ?? null, status,
+    ],
+  );
+
+  return { batchId, batchReference, acceptedCount: actualAccepted, rejectedCount: actualRejected, writeErrors };
 }
