@@ -73,9 +73,5 @@
   ],
   "modules/sales-upload/sales-upload.service.ts": [
     "db_masmis"
-  ],
-  "modules/wfm/productivity-upload-commit.service.ts": [
-    "productivity_upload_batch",
-    "productivity_upload_rejection"
   ]
 }
