@@ -1,7 +1,7 @@
 {
   "generatedFrom": "mas_hrms",
-  "tableCount": 1035,
-  "columnCount": 14921,
+  "tableCount": 1051,
+  "columnCount": 15145,
   "tables": {
     "_migrations": [
       "migration_id",
@@ -1925,6 +1925,16 @@
       "fixed_at",
       "created_by"
     ],
+    "attendance_dual_review_ceiling": [
+      "id",
+      "branch_id",
+      "pay_month",
+      "ceiling_value",
+      "active_status",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
     "attendance_exception": [
       "id",
       "employee_id",
@@ -2002,6 +2012,32 @@
       "applied_to_record_id",
       "applied_at",
       "applied_by"
+    ],
+    "attendance_productive_contribution": [
+      "id",
+      "employee_id",
+      "work_date",
+      "dialler_source_id",
+      "feed",
+      "source_row_ref",
+      "upload_batch_id",
+      "login_at",
+      "logout_at",
+      "magnitude_minutes",
+      "interval_usable",
+      "exclusion_reason",
+      "metrics",
+      "superseded_at",
+      "created_at"
+    ],
+    "attendance_productive_day": [
+      "employee_id",
+      "work_date",
+      "canonical_minutes",
+      "producing_rule",
+      "contribution_count",
+      "derivation_version",
+      "derived_at"
     ],
     "attendance_reason_master": [
       "code",
@@ -2126,6 +2162,23 @@
       "created_at",
       "updated_at"
     ],
+    "attendance_source_rule": [
+      "id",
+      "rule_name",
+      "attendance_source",
+      "effective_from",
+      "effective_to",
+      "change_reason",
+      "active_status",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
+    "attendance_source_rule_dimension_value": [
+      "rule_id",
+      "dimension",
+      "value_id"
+    ],
     "attendance_state_snapshot": [
       "id",
       "source_type",
@@ -2136,6 +2189,24 @@
       "snapshot_json",
       "captured_by",
       "captured_at"
+    ],
+    "attendance_threshold_rule": [
+      "id",
+      "rule_name",
+      "threshold_kind",
+      "threshold_minutes",
+      "effective_from",
+      "effective_to",
+      "change_reason",
+      "active_status",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
+    "attendance_threshold_rule_dimension_value": [
+      "rule_id",
+      "dimension",
+      "value_id"
     ],
     "attrition_record": [
       "id",
@@ -2950,6 +3021,9 @@
       "campaign_name",
       "process_id",
       "lob_id",
+      "dialler_source_id",
+      "owning_branch_id",
+      "is_sentinel",
       "active_status",
       "created_at",
       "updated_at"
@@ -4878,6 +4952,25 @@
       "created_at",
       "updated_at"
     ],
+    "day_threshold_rule": [
+      "id",
+      "rule_name",
+      "full_day_minutes",
+      "half_day_minutes",
+      "grace_minutes",
+      "effective_from",
+      "effective_to",
+      "change_reason",
+      "active_status",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
+    "day_threshold_rule_dimension_value": [
+      "rule_id",
+      "dimension",
+      "value_id"
+    ],
     "department_master": [
       "id",
       "dept_code",
@@ -4962,6 +5055,34 @@
       "source_system",
       "imported_by",
       "created_at"
+    ],
+    "dialler_source": [
+      "id",
+      "source_key",
+      "display_name",
+      "ingestion_mode",
+      "integration_key",
+      "owning_branch_id",
+      "owning_process_id",
+      "metric_availability",
+      "effective_from",
+      "effective_to",
+      "active_status",
+      "created_by",
+      "created_at",
+      "updated_at"
+    ],
+    "dialler_source_column_mapping": [
+      "id",
+      "dialler_source_id",
+      "mapping_version",
+      "column_mappings",
+      "effective_from",
+      "effective_to",
+      "active_status",
+      "created_by",
+      "created_at",
+      "updated_at"
     ],
     "dispatch_log": [
       "id",
@@ -6848,6 +6969,13 @@
       "candidate_id",
       "aadhaar_blind_index"
     ],
+    "employees_active_status_bk_20260830_1242": [
+      "id",
+      "employee_code",
+      "active_status",
+      "employment_status",
+      "date_of_exit"
+    ],
     "employees_backup_20260711": [
       "id",
       "employee_code",
@@ -7172,6 +7300,7 @@
     "exit_pass_requests": [
       "id",
       "pass_number",
+      "qr_token_hash",
       "requestor_employee_id",
       "request_department",
       "branch_id",
@@ -12546,6 +12675,35 @@
       "created_at",
       "updated_at"
     ],
+    "productivity_upload_batch": [
+      "id",
+      "batch_reference",
+      "dialler_source_id",
+      "branch_id",
+      "process_id",
+      "date_from",
+      "date_to",
+      "file_name",
+      "content_digest",
+      "uploaded_by",
+      "submitted_at",
+      "submitted_row_count",
+      "accepted_row_count",
+      "rejected_row_count",
+      "mapping_version_used",
+      "supersedes_batch_id",
+      "superseded_by_batch_id",
+      "superseded_at",
+      "status"
+    ],
+    "productivity_upload_rejection": [
+      "id",
+      "batch_id",
+      "source_row_number",
+      "employee_code",
+      "reason",
+      "created_at"
+    ],
     "profile_update_approval": [
       "id",
       "employee_id",
@@ -13422,6 +13580,40 @@
       "status",
       "created_at"
     ],
+    "salary_component_assignments_pre_pkg_20260830_1233": [
+      "id",
+      "candidate_id",
+      "employee_id",
+      "effective_date",
+      "salary_slab",
+      "package_id",
+      "basic",
+      "hra",
+      "conveyance",
+      "bonus",
+      "portfolio",
+      "medical_allowance",
+      "lta",
+      "other_allowance",
+      "pli",
+      "special_allowance",
+      "gross",
+      "pf_applicable",
+      "esi_applicable",
+      "employer_pf",
+      "employer_esi",
+      "pf_employee",
+      "esic_employee",
+      "ctc",
+      "net_estimate",
+      "assigned_by",
+      "assigned_at",
+      "approval_reference",
+      "status",
+      "created_at",
+      "mobile_deduction",
+      "insurance_deduction"
+    ],
     "salary_component_master": [
       "id",
       "component_code",
@@ -13973,6 +14165,70 @@
       "notes"
     ],
     "salary_prep_line_pre_resync_20260830_1118": [
+      "id",
+      "run_id",
+      "employee_id",
+      "employee_code",
+      "working_days",
+      "present_days",
+      "leave_days",
+      "lwp_days",
+      "late_marks",
+      "dialer_hours",
+      "gross_salary",
+      "total_deductions",
+      "net_salary",
+      "pf_employee",
+      "pf_employer",
+      "esic_employee",
+      "esic_employer",
+      "gratuity",
+      "professional_tax",
+      "tds",
+      "remarks",
+      "status",
+      "tds_amount",
+      "lwp_deduction",
+      "advance_recovery",
+      "gross_before_lwp",
+      "basic",
+      "hra",
+      "special_allowance",
+      "employer_statutory_cost",
+      "manual_adjustment_total",
+      "calculation_status",
+      "calculation_version",
+      "calculation_notes",
+      "overtime_hours",
+      "overtime_amount",
+      "overtime_pay",
+      "paid_working_days",
+      "eligible_weekoff_days",
+      "eligible_holiday_days",
+      "final_payable_days",
+      "active_calendar_days",
+      "salary_start_date",
+      "base_gross_pay",
+      "base_net_pay",
+      "holiday_work_extra_payout",
+      "pending_holiday_work_payout",
+      "earned_salary_till_date",
+      "projected_salary",
+      "needs_recalculation",
+      "recalculation_reason",
+      "incentive_total",
+      "reimbursement_total",
+      "other_deductions",
+      "attendance_data_source",
+      "loan_emi",
+      "payslip_generated",
+      "payslip_generated_at",
+      "bank_transfer_initiated",
+      "bank_transfer_initiated_at",
+      "payslip_emailed",
+      "payslip_emailed_at"
+    ],
+    "salary_prep_line_pre_summary_20260830_1148": [
       "id",
       "run_id",
       "employee_id",
