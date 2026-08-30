@@ -92,6 +92,13 @@ interface CampaignOwnerRow extends RowDataPacket {
  * 16.8). Returns null when the campaign code is not registered in campaign_master at all —
  * criterion 16.5 requires the caller to reject an unresolvable contribution, not silently drop
  * it.
+ *
+ * Deliberately does NOT filter `active_status = 1`, unlike resolveActiveDiallerSource() above.
+ * Migration 1637 adds the `is_sentinel` column with the stated intent that the 'MANUAL_UPLOAD'
+ * sentinel campaign row will be seeded inactive-by-convention (criterion 16.8) when a later
+ * migration actually inserts it — an active-only filter here would make that row, and therefore
+ * is_sentinel, unresolvable once it exists, silently breaking the rejection path this function
+ * exists to serve.
  */
 export async function resolveCampaignOwner(
   campaignCode: string,

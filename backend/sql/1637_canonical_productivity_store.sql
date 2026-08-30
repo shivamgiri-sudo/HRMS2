@@ -22,6 +22,13 @@
 -- (process_id -> process_master, lob_id -> lob_master) are untouched; the two NEW columns this
 -- migration adds carry no FK, matching this feature's established no-FK convention.
 --
+-- PHASE 3 PRE-FLIGHT NOTE: campaign_master itself (015_platform_foundation.sql) declares no
+-- explicit CHARSET/COLLATE and is absent from migration 1627's 49-table collation-repair sweep,
+-- so its actual collation is unverified here. Phase 3's obvious
+-- campaign_master.dialler_source_id -> dialler_source.id join should confirm the two agree
+-- before shipping, or it risks the same ER_CANT_AGGREGATE_2COLLATIONS (1267) class 1627 exists
+-- to repair.
+--
 -- WHAT attendance_productive_day / attendance_productive_contribution ARE
 -- One row per (employee, work_date) holding the derived Canonical_Productive_Minutes and which
 -- of the two Requirement-18 rules produced it; one row per (employee, work_date, dialler_source,
@@ -91,6 +98,9 @@ CREATE TABLE IF NOT EXISTS attendance_productive_day (
   COLLATE=utf8mb4_unicode_ci
   COMMENT='Materialised Canonical_Productive_Minutes (Requirement 18), one row per employee-date. canonical_minutes NULL means absent -- never a measured zero. Not written by anything until Phase 3.';
 
+-- NOTE: dialler_source_id (two l's, the domain term this feature introduces) and the feed
+-- ENUM's 'dialer_session_log' value (one l, the pre-existing table name preserved as-is) are
+-- deliberately different spellings referring to related-but-distinct things -- not a typo.
 CREATE TABLE IF NOT EXISTS attendance_productive_contribution (
   id                 CHAR(36)     NOT NULL,
   employee_id        CHAR(36)     NOT NULL,
