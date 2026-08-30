@@ -138,6 +138,7 @@ import { attendanceEngineRouter } from "./modules/wfm/attendance-engine.routes.j
 import { attendanceDailyScopedRouter } from "./modules/wfm/attendance-daily-scoped.routes.js";
 import { teamAttendanceMonthRouter } from "./modules/wfm/team-attendance-month.routes.js";
 import { attendanceAprBulkRouter } from "./modules/wfm/attendance-apr-bulk.routes.js";
+import { productivityUploadRouter } from "./modules/wfm/productivity-upload.routes.js";
 import { attendanceManualMarkRouter } from "./modules/wfm/attendance-manual-mark.routes.js";
 import { biometricPunchRouter } from "./modules/wfm/biometric-punch.routes.js";
 import { biometricLogsRouter } from "./modules/wfm/biometric-logs.routes.js";
@@ -644,6 +645,7 @@ app.use('/api/wfm/attendance', teamAttendanceMonthRouter);
 app.use('/api/wfm/attendance', attendanceDailyScopedRouter);
 app.use('/api/wfm/attendance', attendanceEngineRouter);
 app.use('/api/wfm/attendance', attendanceAprBulkRouter);
+app.use('/api/wfm/productivity-upload', productivityUploadRouter);
 app.use('/api/wfm/attendance/manual-mark', attendanceManualMarkRouter);
 // Distinct path segment, not a child of /api/wfm/attendance — the three routers above
 // cannot shadow it. Read-only worklist over attendance_reconciliation_issue.
