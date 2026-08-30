@@ -1,7 +1,16 @@
 -- 1632 — Salary Revision page catalog entry and role grants
 --
--- NOT YET EXECUTED. Additive change against production RBAC data; needs the owner's
--- explicit approval before it runs (CLAUDE.md: no SQL on production without it).
+-- APPLIED TO PRODUCTION 2026-08-30 with the owner's explicit approval.
+-- Idempotent: page_catalog upserts on page_code, the grants insert under
+-- WHERE NOT EXISTS, and the trailing UPDATE re-asserts can_view/active_status,
+-- so a replay by the migration runner is a no-op.
+--
+-- Casing note, checked before applying: live user_roles stores 'Employee'
+-- capitalised (1384 users) while this grants lowercase 'employee'. Both
+-- role_key columns are utf8mb4_unicode_ci, so the comparison is
+-- case-insensitive and the grant resolves; 28 pre-existing page grants already
+-- use the lowercase form, so this matches convention rather than setting a new
+-- one. Verified after applying: 1405 distinct users resolve view access.
 --
 -- WHAT THIS DOES
 -- Registers SALARY_REVISION (route /salary-revision), the dual-role page where
