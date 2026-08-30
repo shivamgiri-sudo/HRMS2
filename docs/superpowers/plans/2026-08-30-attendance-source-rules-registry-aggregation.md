@@ -403,7 +403,11 @@ describe('canonical productivity store migration (1637)', () => {
 
   it('does not touch campaign_master\'s existing FOREIGN KEYs (only ADD COLUMN statements against it)', () => {
     const sql = readMigration('1637_canonical_productivity_store.sql');
-    expect(sql).not.toMatch(/FOREIGN KEY/i);
+    // Matches an actual FOREIGN KEY constraint declaration ("FOREIGN KEY (col)"), not prose that
+    // merely mentions the phrase — this migration's own header comment legitimately says
+    // "campaign_master's two PRE-EXISTING FOREIGN KEYs" while adding none itself, so a bare
+    // /FOREIGN KEY/i would false-positive against that comment (the exact bug Task 1's brief had).
+    expect(sql).not.toMatch(/FOREIGN KEY\s*\(/i);
     expect(sql).not.toMatch(/DROP\s+(COLUMN|CONSTRAINT|FOREIGN KEY)/i);
   });
 
