@@ -12,6 +12,7 @@ import {
   listPendingBranchHead,
   listPendingAdmin,
   findPassForVerification,
+  findPassForVerificationByQrToken,
   verifyExit,
   verifyReturn,
   searchEmployeesForCarrier,
@@ -161,6 +162,23 @@ exitPassRouter.get('/employees/search', h(async (req, res) => {
   }
 }));
 
+// Phase 4 — QR token lookup. MUST stay above '/verify/:passNumber': that
+// pattern is two segments and this is three, so Express does not actually
+// confuse them today, but '/verify/token/exit' would match
+// '/verify/:passNumber/exit' with passNumber="token" if this were ever
+// shortened. Ordering it first makes that impossible to reintroduce.
+//
+// Still fully authenticated and role-gated by the router-level requireAuth /
+// requireRole above — the token identifies WHICH pass, it never authorises.
+exitPassRouter.get('/verify/token/:token', h(async (req, res) => {
+  try {
+    const data = await findPassForVerificationByQrToken(req.params.token);
+    return res.json({ success: true, data });
+  } catch (error) {
+    return fail(res, error);
+  }
+}));
+
 exitPassRouter.get('/verify/:passNumber', h(async (req, res) => {
   try {
     const data = await findPassForVerification(req.params.passNumber);
@@ -174,11 +192,17 @@ exitPassRouter.post('/verify/:passNumber/exit', h(async (req, res) => {
   try {
     const requester = await resolveRequestingEmployee(req.authUser!.id);
     const roles = await getActorRoles(req.authUser!.id);
-    const { gate, method, remarks } = req.body as { gate: string; method: 'qr' | 'manual'; remarks?: string };
+    const { gate, method, remarks, qr_token } = req.body as {
+      gate: string; method: 'qr' | 'manual'; remarks?: string; qr_token?: string;
+    };
     if (!['qr', 'manual'].includes(method)) {
       return res.status(400).json({ success: false, message: 'method must be qr or manual' });
     }
-    await verifyExit(req.params.passNumber, requester, roles, { gate, method, remarks: remarks ?? null });
+    // qr_token is validated against this pass's stored hash in verifyExit —
+    // method:'qr' without a matching token is rejected there, not downgraded.
+    await verifyExit(req.params.passNumber, requester, roles, {
+      gate, method, remarks: remarks ?? null, qr_token: qr_token ?? null,
+    });
     return res.json({ success: true });
   } catch (error) {
     return fail(res, error);

@@ -94,6 +94,23 @@ const envSchema = z.object({
   // restarts, candidate-portal tokens use a fully separate secret, same as the client
   // portal already does via PORTAL_JWT_SECRET. (2026-08-13, leave/auth-module audit)
   CANDIDATE_PORTAL_JWT_SECRET: z.string().min(32).optional(),
+  // Signs the Asset & Material Exit Pass gate QR token (exit-pass.qr.ts).
+  // Optional and NOT fatal-checked, on the same reasoning as
+  // CANDIDATE_PORTAL_JWT_SECRET above: when unset the signing key is DERIVED
+  // from JWT_SECRET by HKDF-SHA256 under a distinct `info` label, so shipping
+  // this feature does not refuse to boot a deploy that has not set a new var.
+  //
+  // HKDF derivation is deliberately NOT the mistake that comment describes.
+  // That was signing candidate-portal tokens with JWT_SECRET *directly*, so a
+  // candidate token passed verification as a full employee session. Here the
+  // derived key is one-way and domain-separated: a leaked gate-pass token
+  // reveals nothing about JWT_SECRET and can never be replayed as a session,
+  // and JWT_SECRET is already guaranteed non-default in production by the
+  // fatal check below. Set this explicitly to rotate gate-pass QRs
+  // independently of session signing — note that rotating it invalidates every
+  // QR already printed (they fall back to manual pass-number entry, which is
+  // the pre-Phase-4 behaviour, so nothing is blocked at the gate).
+  EXIT_PASS_QR_SECRET: z.string().min(32).optional(),
   OTP_HMAC_SECRET: z.string().min(32).default('change-me-otp-hmac-secret-32chars!'),
   PORTAL_DEMO_BYPASS: z.string().default("false"),
   PAYROLL_BANK_KEY: z.string().min(16).default("hrms-bank-key-dev"),

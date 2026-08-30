@@ -153,9 +153,12 @@ salaryVerificationRouter.get(
       const [empRows] = await db.execute<RowDataPacket[]>(
         `SELECT e.id AS employee_id, e.employee_code, e.full_name,
                 d.designation_name AS designation_name,
-                e.branch_id, e.process_id
+                e.branch_id, b.branch_name,
+                e.process_id, pm.process_name
            FROM employees e
            LEFT JOIN designation_master d ON d.id = e.designation_id
+           LEFT JOIN branch_master b ON b.id = e.branch_id
+           LEFT JOIN process_master pm ON pm.id = e.process_id
           WHERE ${whereStr}
           ORDER BY e.full_name
           ${sqlLimitOffset(limit, offset)}`,
@@ -168,7 +171,9 @@ salaryVerificationRouter.get(
         full_name: string;
         designation_name: string | null;
         branch_id: string;
-        process_id: string;
+        branch_name: string | null;
+        process_id: string | null;
+        process_name: string | null;
       }>;
 
       const rows = await Promise.all(
