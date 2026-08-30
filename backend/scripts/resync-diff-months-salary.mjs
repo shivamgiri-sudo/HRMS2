@@ -18,7 +18,7 @@ import path  from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import {
-  COMPONENT_MAP, EARNED_COLUMN, totalDeductions, earnedGross, num,
+  COMPONENT_MAP, EARNED_COLUMN, totalDeductions, earnedGross, num, PAID_ROW_FILTER,
 } from './lib/dbbill-salary-mapping.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -64,8 +64,7 @@ async function findDiffMonths(hrms, bill) {
            -- month as divergent and trigger a full destructive re-sync.
            SUM(Gross1) AS gross
     FROM salary_data
-    WHERE EmpCode NOT LIKE 'IDC%'
-      AND (Status = '1' OR Status IS NULL OR Status = '')
+    WHERE ${PAID_ROW_FILTER}
     GROUP BY DATE_FORMAT(SalayDate,'%Y-%m')
     ORDER BY mon
   `);
@@ -139,9 +138,7 @@ async function syncMonth(hrms, bill, empMap, mon, existingRunId = null) {
            SpecialAllowance1, OtherAllowance1, Gross1
     FROM salary_data
     WHERE DATE_FORMAT(SalayDate,'%Y-%m') = ?
-      AND (Status = '1' OR Status IS NULL OR Status = '')
-      AND EmpCode NOT LIKE 'IDC%'
-      AND EmpCode IS NOT NULL AND TRIM(EmpCode) != ''
+      AND ${PAID_ROW_FILTER}
     ORDER BY EmpCode
   `, [mon]);
 
@@ -261,9 +258,7 @@ async function repairComponents(hrms, bill) {
              SpecialAllowance1, OtherAllowance1
       FROM salary_data
       WHERE DATE_FORMAT(SalayDate,'%Y-%m') = ?
-        AND (Status = '1' OR Status IS NULL OR Status = '')
-        AND EmpCode NOT LIKE 'IDC%'
-        AND EmpCode IS NOT NULL AND TRIM(EmpCode) != ''
+        AND ${PAID_ROW_FILTER}
     `, [mon]);
 
     const [existingLines] = await hrms.execute(
@@ -359,8 +354,7 @@ async function main() {
       SELECT COUNT(*) as mon_cnt, COUNT(DISTINCT EmpCode) as emp_cnt,
              SUM(Gross) as gross, SUM(EPF) as pf
       FROM salary_data
-      WHERE EmpCode NOT LIKE 'IDC%'
-        AND (Status = '1' OR Status IS NULL OR Status = '')
+      WHERE ${PAID_ROW_FILTER}
     `);
     const [hd] = await hrms.execute(`
       SELECT COUNT(*) as run_cnt,

@@ -21,14 +21,27 @@
  *      ₹547.83 of real gross had no component row at all for this employee;
  *      736 of 1,595 July lines affected in total.
  *
- * A THIRD issue surfaced while writing these tests, caught before it reached
- * production: calculateNetSalary's residual has no concept of conveyance
- * either (its formula never subtracts it), so writing CONV as its own line
- * *and* the raw residual as SPECIAL double-counts conveyance. The fix
- * subtracts CONV's prorated contribution from the residual before treating
- * the remainder as SPECIAL — every reconciliation test below is exact
- * arithmetic (ratio=1) specifically so this and any future such error cannot
- * hide behind rounding tolerance.
+ * CONTRACT CHANGE 2026-08-30 — THE RESIDUAL IS GONE.
+ * ------------------------------------------------
+ * mas_hrms is becoming the ongoing payroll tool, so it must reproduce db_bill to the
+ * rupee, not merely reach the same gross another way. db_bill stores SpecialAllowance
+ * as a real component and prorates each component on its own:
+ *
+ *   <Component>1 = ROUND(<Component> * EarnedDays / WorkingDays)
+ *   Gross1       = sum of the eight earned components
+ *
+ * A residual cannot match that. Correcting it to subtract EVERY in-gross sibling (not
+ * conveyance alone) still landed within a rupee but not exact on 57 of 1,371 July lines,
+ * because a residual compounds the rounding of each term it subtracts. Sourcing SPECIAL
+ * straight from the assignment gives 0 mismatches at Rs 0 tolerance on all 1,371 July
+ * lines, components and their sum alike (scripts/verify-calculator-parity-vs-dbbill.mjs).
+ *
+ * WHAT THIS MOVES. The reason SPECIAL was ever a residual is defect 2 below: the stored
+ * value could be stale. That was a fact about the DATA, and it no longer holds -
+ * salary_component_assignments is rebuilt from db_bill and satisfies Gross = sum-of-parts
+ * on 1,080 of 1,080 active packages with zero drift. So the correctness guarantee has
+ * moved OUT of this function and INTO the package data, and the last describe block pins
+ * that dependency.
  *
  * Does not call calculateNetSalary or touch gross/net arithmetic anywhere —
  * those stay exactly as they were; calc.basic/calc.hra/calc.special_allowance
@@ -44,107 +57,72 @@ function sum(components: Array<{ amount: number }>): number {
 }
 
 describe("buildPayslipEarningComponents — MAS00175-equivalent (leftover leakage)", () => {
-  // Real production figures: scaRow.gross=80096, basic=34700, hra=17350,
-  // conveyance=1600. Structure template additionally defines BONUS=2891 and
-  // PORTFOLIO=15000 — values the assignment knows nothing about. Ratio fixed
-  // at 1 (full month) so every assertion here is exact arithmetic, not
-  // rounding-tolerant — partial-month proration is its own test below.
   const basic = 34700, hra = 17350, conv = 1600, bonus = 2891, portfolio = 15000;
-  // The residual calculateNetSalary actually computes: grossMonthlyCTC - basic
-  // - hra. This is what gets passed in as calcSpecialAllowance — the function
-  // itself is responsible for subtracting conveyance back out (see the third
-  // bug in the file header).
-  const trueResidual = 80096 - basic - hra; // 28046
-  const gross_salary = basic + hra + trueResidual; // 80096, by construction
+  const special = 80096 - basic - hra - conv;   // 26446, the assignment's own value
+  const gross_salary = 80096;
 
-  it("with compAmounts correctly reset to only basic/hra/conv, the payslip total reconciles to gross_salary exactly", () => {
+  it("with compAmounts reset to the assignment's own components, the total reconciles to gross exactly", () => {
     const components = buildPayslipEarningComponents({
-      hasFixedComponents: true,
-      usedScaRowAssignment: true,
-      compAmounts: { BASIC: basic, HRA: hra, CONV: conv }, // no BONUS, no PORTFOLIO — reset by caller
-      ratio: 1,
-      calcBasic: 0, // unused on this path
-      calcHra: 0,
-      calcSpecialAllowance: trueResidual,
-      convAllowanceDefault: 0,
-      medicalAllowanceDefault: 0,
+      hasFixedComponents: true, usedScaRowAssignment: true,
+      compAmounts: { BASIC: basic, HRA: hra, CONV: conv, SPECIAL: special },
+      ratio: 1, calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0,
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
     });
-
     expect(components.map((c) => c.code).sort()).toEqual(["BASIC", "CONV", "HRA", "SPECIAL"]);
     expect(components.find((c) => c.code === "PORTFOLIO")).toBeUndefined();
-    expect(components.find((c) => c.code === "BONUS")).toBeUndefined();
     expect(sum(components)).toBe(gross_salary);
   });
 
-  it("proves the defect: an UNRESET compAmounts (the pre-fix shape) breaks the invariant by exactly the leftover components' value", () => {
-    // Same inputs, except compAmounts still carries what the structure
-    // template set (the bug the caller no longer allows through).
+  it("an UNRESET compAmounts still overshoots — the caller reset is now the only thing preventing it", () => {
+    // The honest consequence of dropping the residual. While SPECIAL was derived it
+    // silently absorbed anything that leaked in, so the TOTAL stayed right even when the
+    // itemisation was wrong. SPECIAL is now a stored value and absorbs nothing, so leakage
+    // shows up in the total again — the more useful failure, because a wrong total is
+    // detectable and a quietly wrong itemisation is not.
     const components = buildPayslipEarningComponents({
-      hasFixedComponents: true,
-      usedScaRowAssignment: true,
-      compAmounts: { BASIC: basic, HRA: hra, CONV: conv, BONUS: bonus, PORTFOLIO: portfolio },
-      ratio: 1,
-      calcBasic: 0,
-      calcHra: 0,
-      calcSpecialAllowance: trueResidual,
-      convAllowanceDefault: 0,
-      medicalAllowanceDefault: 0,
+      hasFixedComponents: true, usedScaRowAssignment: true,
+      compAmounts: { BASIC: basic, HRA: hra, CONV: conv, SPECIAL: special, BONUS: bonus, PORTFOLIO: portfolio },
+      ratio: 1, calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0,
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
     });
-
-    const overshoot = sum(components) - gross_salary;
-    // CONV appears exactly once regardless of what else leaked through, so
-    // the SPECIAL derivation is unaffected by the leftover keys — the entire
-    // overshoot is exactly the leftover BONUS + PORTFOLIO values.
-    expect(overshoot).toBe(bonus + portfolio);
-    expect(components.find((c) => c.code === "PORTFOLIO")).toBeDefined();
-    expect(components.find((c) => c.code === "BONUS")).toBeDefined();
+    expect(sum(components) - gross_salary).toBe(bonus + portfolio);
   });
 });
 
-describe("buildPayslipEarningComponents — MAS63025-equivalent (SPECIAL residual mismatch)", () => {
-  // Real production figures: scaRow.gross=15059, basic=8000, hra=4793,
-  // conveyance=1600, stored special_allowance=0 (stale). Ratio=1 for exact
-  // arithmetic, matching the MAS00175 block above.
-  const basic = 8000, hra = 4793, conv = 1600;
-  const trueResidual = 15059 - basic - hra; // 2266
-  const gross_salary = basic + hra + trueResidual; // 15059
+describe("buildPayslipEarningComponents — MAS63025-equivalent (stored SPECIAL is authoritative)", () => {
+  // Real production band (salary_package_master band G, 559 employees):
+  //   basic 8000 + hra 4793 + conv 1600 + bonus 666 = gross 15059, special 0.
+  // MAS63025 is the row that originally justified the residual: its stored
+  // special_allowance was 0 while real gross existed. After the db_bill rebuild the
+  // package is exact, so 0 here is the truth — the 666 hole belongs to BONUS.
+  const basic = 8000, hra = 4793, conv = 1600, bonus = 666, special = 0;
+  const gross_salary = basic + hra + conv + bonus + special; // 15059
 
-  it("sources SPECIAL from the computed residual (net of conveyance), not from a stale stored value, and reconciles to gross exactly", () => {
+  it("emits BONUS at its own value and no SPECIAL line, reconciling to gross exactly", () => {
     const components = buildPayslipEarningComponents({
-      hasFixedComponents: true,
-      usedScaRowAssignment: true,
-      compAmounts: { BASIC: basic, HRA: hra, CONV: conv }, // no SPECIAL key at all — reset by caller
-      ratio: 1,
-      calcBasic: 0,
-      calcHra: 0,
-      calcSpecialAllowance: trueResidual,
-      convAllowanceDefault: 0,
-      medicalAllowanceDefault: 0,
+      hasFixedComponents: true, usedScaRowAssignment: true,
+      compAmounts: { BASIC: basic, HRA: hra, CONV: conv, BONUS: bonus, SPECIAL: special },
+      ratio: 1, calcBasic: 0, calcHra: 0,
+      calcSpecialAllowance: gross_salary - basic - hra,   // 2266 — deliberately ignored now
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
     });
-
-    expect(components.find((c) => c.code === "SPECIAL")?.amount).toBe(trueResidual - conv); // 666
+    // The old residual path emitted SPECIAL=666 here: db_bill's Bonus, mislabelled.
+    expect(components.find((c) => c.code === "SPECIAL")).toBeUndefined();
+    expect(components.find((c) => c.code === "BONUS")?.amount).toBe(bonus);
     expect(sum(components)).toBe(gross_salary);
   });
 
-  it("proves the defect: trusting a stale stored special_allowance of 0 leaves real gross unexplained", () => {
-    // Pre-fix shape: usedScaRowAssignment=false simulates the OLD code path,
-    // where SPECIAL was read from compAmounts (sourced from
-    // scaRow.special_allowance) rather than the computed residual.
+  it("a band that does carry a special allowance emits it at its stored value", () => {
+    const b = 9600, h = 4800, c = 1600, bo = 800, sp = 1617;
+    const g = b + h + c + bo + sp;
     const components = buildPayslipEarningComponents({
-      hasFixedComponents: true,
-      usedScaRowAssignment: false,
-      compAmounts: { BASIC: basic, HRA: hra, CONV: conv, SPECIAL: 0 }, // stale stored value
-      ratio: 1,
-      calcBasic: 0,
-      calcHra: 0,
-      calcSpecialAllowance: trueResidual, // ignored on this path — proving exactly why that was the bug
-      convAllowanceDefault: 0,
-      medicalAllowanceDefault: 0,
+      hasFixedComponents: true, usedScaRowAssignment: true,
+      compAmounts: { BASIC: b, HRA: h, CONV: c, BONUS: bo, SPECIAL: sp },
+      ratio: 1, calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0,
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
     });
-
-    expect(components.find((c) => c.code === "SPECIAL")).toBeUndefined();
-    const shortfall = gross_salary - sum(components);
-    expect(shortfall).toBe(trueResidual - conv); // 666 — the exact unexplained-gross figure
+    expect(components.find((c2) => c2.code === "SPECIAL")?.amount).toBe(sp);
+    expect(sum(components)).toBe(g);
   });
 });
 
@@ -239,17 +217,18 @@ describe("buildPayslipEarningComponents — required coverage scenarios", () => 
 
   it("assignment path with a structure genuinely lacking Portfolio (no leftover keys) reconciles exactly — the clean baseline", () => {
     const basic = 4500, hra = 2393, conv = 1600, bonus = 375, special = 7374;
-    const trueResidual = conv + bonus + special; // 9349 — what calculateNetSalary's formula would compute as the residual
-    const gross = basic + hra + trueResidual; // 16242
+    const gross = basic + hra + conv + bonus + special; // 16242
 
     const components = buildPayslipEarningComponents({
       hasFixedComponents: true,
       usedScaRowAssignment: true,
-      compAmounts: { BASIC: basic, HRA: hra, CONV: conv }, // Portfolio genuinely absent — nothing to leak
+      // Portfolio genuinely absent. Every component the assignment holds is passed in,
+      // SPECIAL included - that is the whole contract now.
+      compAmounts: { BASIC: basic, HRA: hra, CONV: conv, BONUS: bonus, SPECIAL: special },
       ratio: 1,
       calcBasic: 0,
       calcHra: 0,
-      calcSpecialAllowance: trueResidual,
+      calcSpecialAllowance: 0,
       convAllowanceDefault: 0,
       medicalAllowanceDefault: 0,
     });
@@ -258,7 +237,7 @@ describe("buildPayslipEarningComponents — required coverage scenarios", () => 
   });
 });
 
-describe("the calling code actually resets compAmounts and sources SPECIAL from the residual", () => {
+describe("the calling code resets compAmounts and passes the assignment SPECIAL through", () => {
   // Source-level assertions, matching this codebase's existing convention
   // (see variance-canonical-run.test.ts) for proving the WIRING is correct —
   // the pure-function tests above prove the LOGIC is correct given proper
@@ -275,8 +254,17 @@ describe("the calling code actually resets compAmounts and sources SPECIAL from 
     expect(scaBlock).toMatch(/for \(const key of Object\.keys\(compAmounts\)\) delete compAmounts\[key\]/);
   });
 
-  it("never sets compAmounts.SPECIAL from scaRow.special_allowance", () => {
-    expect(SOURCE).not.toMatch(/compAmounts\.SPECIAL\s*=\s*Number\(scaRow\.special_allowance\)/);
+  it("sources compAmounts.SPECIAL from scaRow.special_allowance — the db_bill contract", () => {
+    // Inverted 2026-08-30. This asserted the OPPOSITE, because the stored special_allowance
+    // could be stale and was rebuilt downstream as a residual. The package is now rebuilt
+    // from db_bill and exact, and db_bill computes SpecialAllowance1 directly. A residual
+    // cannot reproduce that to the rupee. This assertion is load-bearing for parity: if the
+    // caller stops passing SPECIAL through, the component disappears from every payslip.
+    expect(SOURCE).toMatch(/compAmounts\.SPECIAL\s*=\s*Number\(scaRow\.special_allowance\)/);
+  });
+
+  it("no longer rebuilds SPECIAL from calculateNetSalary's residual", () => {
+    expect(SOURCE).not.toMatch(/specialFromResidual/);
   });
 
   it("calls the extracted, tested builder instead of inlining the loop again", () => {
@@ -294,5 +282,52 @@ describe("the calling code actually resets compAmounts and sources SPECIAL from 
     // Gross/net arithmetic is explicitly out of scope for this fix.
     expect(SOURCE).toMatch(/reconcileNetAndDeductions\(/);
     expect(SOURCE).toMatch(/payrollService\.calculateNetSalary\(/);
+  });
+});
+
+describe("buildPayslipEarningComponents — db_bill parity and proration", () => {
+  const basic = 8000, hra = 4793, conv = 1600, bonus = 666;
+  const pkgGross = basic + hra + conv + bonus; // 15059, special 0
+
+  it("part month: every component prorates independently, as db_bill does", () => {
+    const ratio = 26 / 31;
+    const components = buildPayslipEarningComponents({
+      hasFixedComponents: true, usedScaRowAssignment: true,
+      compAmounts: { BASIC: basic, HRA: hra, CONV: conv, BONUS: bonus },
+      ratio, ratioNumerator: 26, ratioDenominator: 31,
+      calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0,
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
+    });
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    expect(components.find((c) => c.code === "BASIC")?.amount).toBe(r2((basic * 26) / 31));
+    expect(components.find((c) => c.code === "BONUS")?.amount).toBe(r2((bonus * 26) / 31));
+    expect(Math.abs(sum(components) - r2((pkgGross * 26) / 31))).toBeLessThanOrEqual(0.05);
+  });
+
+  it("reproduces db_bill's Bonus1 at a .5 rounding boundary", () => {
+    // MAS60179, 2026-05. db_bill: Bonus 1333, EarnedDays 8.5, WorkingDays 31, Bonus1 = 366.
+    // The exact value is 365.5 and db_bill rounds half up. A precomputed ratio cannot
+    // reproduce it: 8.5/31 is not representable in binary floating point, so
+    // 1333 * (8.5/31) = 365.49999999999994 and rounds DOWN to 365.
+    const components = buildPayslipEarningComponents({
+      hasFixedComponents: true, usedScaRowAssignment: true,
+      compAmounts: { BONUS: 1333 },
+      ratio: 8.5 / 31,        // the lossy form, deliberately still passed
+      ratioNumerator: 8.5,    // the exact pair, which must win
+      ratioDenominator: 31,
+      calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0,
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
+    });
+    expect(components.find((c) => c.code === "BONUS")?.amount).toBe(365.5);
+  });
+
+  it("falls back to the precomputed ratio when no pair is supplied", () => {
+    const components = buildPayslipEarningComponents({
+      hasFixedComponents: true, usedScaRowAssignment: true,
+      compAmounts: { BASIC: 8000 }, ratio: 0.5,
+      calcBasic: 0, calcHra: 0, calcSpecialAllowance: 0,
+      convAllowanceDefault: 0, medicalAllowanceDefault: 0,
+    });
+    expect(components.find((c) => c.code === "BASIC")?.amount).toBe(4000);
   });
 });

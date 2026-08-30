@@ -39,6 +39,39 @@
  * 2026-07 row, difference 0.00 - so the earned set is complete and self-consistent.
  */
 
+/**
+ * Which `salary_data` rows belong in a payroll month.
+ *
+ * WHY THIS IS NOT `Status = '1'`
+ * -----------------------------
+ * `Status` is not a validity flag, it is an EMPLOYMENT flag:
+ *
+ *   Status = '1'    still employed        95,910 rows, 0 carry a LeftStatus date
+ *   Status = '0'    LEAVER                19,263 rows, 19,263 carry a LeftStatus date (100%)
+ *   Status IS NULL  mixed/legacy          14,523 rows, 3,103 of them leavers (21.4%)
+ *   Status = ''     still employed           403 rows, 0 leavers
+ *
+ * A leaver is still PAID for the month they left, and that payment is part of the
+ * month's payroll: 12,482 of the 19,263 leaver rows carry a non-zero NetSalary,
+ * Rs 707.6 lakh of net pay across history.
+ *
+ * `resync-diff-months-salary.mjs` filtered on `(Status='1' OR NULL OR '')` at four
+ * sites, and it CLEARS a run before re-inserting. Run against 2026-07 that would
+ * have deleted 1,371 lines and re-inserted 1,054 - dropping 317 leavers worth
+ * Rs 12,97,720 of net pay. Across all months it would have dropped 19,263 rows /
+ * 15,325 employees / Rs 707.6 lakh. mas_hrms holds those leavers correctly today;
+ * the "correction" was the thing that would have lost them.
+ *
+ * Only `fix-present-days-from-dbbill.mjs` had it right, by including Status='0'.
+ * Kept here as one constant so the next script cannot re-derive it differently -
+ * the divergence between those two filters is the whole bug.
+ *
+ * Nothing is excluded on Status. A row is excluded only if it has no employee code
+ * to attach to, or is IDC (a separate entity, deliberately not migrated).
+ */
+export const PAID_ROW_FILTER =
+  "EmpCode IS NOT NULL AND TRIM(EmpCode) <> '' AND EmpCode NOT LIKE 'IDC%'";
+
 export function num(v) {
   const x = parseFloat(String(v ?? "").replace(/,/g, ""));
   return Number.isNaN(x) ? 0 : x;

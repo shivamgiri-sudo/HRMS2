@@ -140,6 +140,24 @@ export function buildPayslipEarningComponents(params: {
   usedScaRowAssignment: boolean;
   compAmounts: Record<string, number>;
   ratio: number;
+  /**
+   * The ratio's numerator and denominator, when the caller has them.
+   *
+   * Proration MUST multiply before it divides. Precomputing `ratio = days / month` and
+   * then multiplying loses the exact value at rounding boundaries, because the quotient
+   * is not representable in binary floating point:
+   *
+   *   1333 * (8.5/31) = 365.49999999999994  -> Math.round = 365
+   *   (1333 * 8.5)/31 = 365.5               -> Math.round = 366   <- db_bill
+   *
+   * MAS60179, 2026-05: db_bill stores Bonus1 = 366. db_bill computes in MySQL DECIMAL,
+   * which is exact, and its identity ROUND(<Component> * EarnedDays / WorkingDays) holds
+   * on every row from 2019 to 2026 with zero exceptions.
+   *
+   * Optional so existing callers keep working; when absent, `ratio` is used as-is.
+   */
+  ratioNumerator?: number;
+  ratioDenominator?: number;
   calcBasic: number;
   calcHra: number;
   calcSpecialAllowance: number;
@@ -147,31 +165,30 @@ export function buildPayslipEarningComponents(params: {
   medicalAllowanceDefault: number;
 }): PayslipEarningComponent[] {
   const earnings: PayslipEarningComponent[] = [];
+  // Multiply before dividing when the caller supplied the pair - see ratioNumerator.
+  const rNum = params.ratioNumerator;
+  const rDen = params.ratioDenominator;
+  const prorate = (v: number): number =>
+    rNum !== undefined && rDen !== undefined && rDen !== 0
+      ? Math.round((v * rNum * 100) / rDen) / 100
+      : Math.round(v * params.ratio * 100) / 100;
+
   if (params.hasFixedComponents) {
     for (const [code, val] of Object.entries(params.compAmounts)) {
       if (val > 0 && PAYSLIP_COMPONENT_NAMES[code]) {
         earnings.push({
           code,
           name: PAYSLIP_COMPONENT_NAMES[code],
-          amount: Math.round(val * params.ratio * 100) / 100,
+          amount: prorate(val),
         });
       }
     }
-    if (params.usedScaRowAssignment) {
-      // calculateNetSalary's residual (calcSpecialAllowance = grossMonthlyCTC
-      // - basic - hra) has no concept of conveyance at all — its formula
-      // never subtracts it — so conveyance's rupee value is already folded
-      // into this residual. CONV was just written above as its own line from
-      // `compAmounts.CONV`; writing the raw residual as SPECIAL on top of
-      // that double-counts conveyance a second time. Subtract CONV's
-      // (prorated) contribution before treating the remainder as SPECIAL, so
-      // CONV + SPECIAL together still equal exactly what the residual holds.
-      const conveyanceProrated = Math.round((params.compAmounts.CONV ?? 0) * params.ratio * 100) / 100;
-      const specialFromResidual = Math.round((params.calcSpecialAllowance - conveyanceProrated) * 100) / 100;
-      if (specialFromResidual > 0) {
-        earnings.push({ code: "SPECIAL", name: "Special Allowance", amount: specialFromResidual });
-      }
-    }
+    // No SPECIAL residual on this path any more. Every earning line, SPECIAL included, is
+    // written from `compAmounts` in the loop above, which the caller populates from the
+    // per-employee assignment. That is exactly how db_bill itemises: each component
+    // prorated on its own, and Gross1 the sum of them. Rebuilding SPECIAL from
+    // calculateNetSalary's residual double-counted every in-gross sibling except
+    // conveyance, and could not agree with db_bill to the rupee even once corrected.
   } else {
     const { conv, ma, pa } = breakSpecialAllowance(
       params.calcSpecialAllowance,
@@ -1202,6 +1219,21 @@ export async function calculatePayrollRunScoped(
       compAmounts.LTA          = Number(scaRow.lta)               || 0;
       compAmounts.OTHER_ALLOW  = Number(scaRow.other_allowance)   || 0;
       compAmounts.PLI          = Number(scaRow.pli)               || 0;
+      // SPECIAL comes from the assignment too, like every other component.
+      //
+      // It used to be excluded here and rebuilt downstream as a residual, because the
+      // stored special_allowance was not trustworthy: MAS63025 held 0 while Rs 547.83 of
+      // real gross existed. That was true of the DATA, not the design.
+      //
+      // salary_component_assignments is now rebuilt from db_bill and holds the identity
+      // exactly - Gross = Basic + HRA + Bonus + Conv + Portfolio + MedicalAllowance + LTA
+      // + SpecialAllowance + OtherAllowance on 1,080 of 1,080 active packages, 0 drift on
+      // all ten columns - and db_bill computes SpecialAllowance1 as
+      // ROUND(SpecialAllowance * EarnedDays / WorkingDays) directly.
+      //
+      // Deriving it instead compounded the rounding of three or more already-rounded terms
+      // and landed +/-Rs 1 off db_bill on 57 of 1,371 July lines.
+      compAmounts.SPECIAL      = Number(scaRow.special_allowance)  || 0;
       // SPECIAL is deliberately NOT set from scaRow.special_allowance here —
       // that stored value is static and can drift from the residual
       // calculateNetSalary actually computes and gross_salary is built from
@@ -1681,6 +1713,8 @@ export async function calculatePayrollRunScoped(
       usedScaRowAssignment,
       compAmounts,
       ratio: finalPayableDays / daysInMonth,
+      ratioNumerator: finalPayableDays,
+      ratioDenominator: daysInMonth,
       calcBasic: calc.basic,
       calcHra: calc.hra,
       calcSpecialAllowance: calc.special_allowance,

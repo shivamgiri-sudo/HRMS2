@@ -182,7 +182,10 @@ describe("the verification month is chosen by confirmed receipts, not recency", 
 
   it("a db_bill failure returns an unavailable source rather than throwing", () => {
     const idx = SERVICE.indexOf("export async function loadCreditedAccounts");
-    const body = SERVICE.slice(idx, idx + 2200);
+    // Slice to the function's own closing brace rather than a fixed character count. A
+    // fixed 2200-char window silently stopped covering the catch block the moment the
+    // function grew, so this test began failing on a change that did not touch it.
+    const body = SERVICE.slice(idx, SERVICE.indexOf("\n}\n", idx));
     expect(body).toContain("catch (err)");
     expect(body).toMatch(/available:\s*false/);
   });
@@ -240,5 +243,43 @@ describe("existing payment paths are reported, not changed", () => {
     const paymentFile = handlerAt(ROUTES, "/payment-file", 9000);
     expect(paymentFile).not.toMatch(/e\.bank_account_number/);
     expect(paymentFile).toContain("ebd.account_number_enc");
+  });
+});
+
+describe("confirmation is per-account across all history, not per-month", () => {
+  /**
+   * SalaryReceiveStatus is stamped when receipt is confirmed, and that lags the run
+   * unevenly - 2026-07 carried 1,071 confirmations against 1,371 rows while 2026-06
+   * carried 1,122 of 1,432. Reading confirmation from the verification month ALONE
+   * blocks an employee whose account has been receiving confirmed salary for years.
+   *
+   * Verification asks "has money ever demonstrably reached this account". One confirmed
+   * credit answers that permanently. An employee who CHANGES bank is unaffected: the new
+   * account matches no confirmed credit, stays unverified, and goes through penny-drop.
+   */
+  const body = (() => {
+    const i = SERVICE.indexOf("export async function loadCreditedAccounts");
+    return SERVICE.slice(i, SERVICE.indexOf("\n}\n", i));
+  })();
+
+  it("loads every confirmed (EmpCode, AcNo) pair, not just the verification month", () => {
+    expect(body).toMatch(/SELECT DISTINCT EmpCode, AcNo/);
+    const confirmedQuery = body.slice(body.indexOf("SELECT DISTINCT EmpCode, AcNo"));
+    expect(confirmedQuery.slice(0, 260)).not.toMatch(/SalDate\s*=\s*\?/);
+    expect(confirmedQuery).toContain("SalaryReceiveStatus = 'YES'");
+  });
+
+  it("treats a month stamp OR any historical confirmation as confirmed", () => {
+    expect(body).toMatch(/everConfirmed\.has\(/);
+  });
+
+  it("still records an employee absent from the verification month but confirmed earlier", () => {
+    expect(body).toMatch(/if \(!credits\.has\(k\)\) credits\.set\(k, \{ account, confirmed: true \}\)/);
+  });
+
+  it("keeps the conflict comparison on the most recent credited account", () => {
+    // Widening CONFIRMATION must not widen the account the record is compared against:
+    // disagrees_with_credited_account is about the LAST credit.
+    expect(body).toMatch(/WHERE SalDate = \?/);
   });
 });

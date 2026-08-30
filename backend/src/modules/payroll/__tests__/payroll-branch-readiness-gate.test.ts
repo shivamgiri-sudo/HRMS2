@@ -185,10 +185,21 @@ describe("validatePayrollRunCreation", () => {
 // ─── computeStatus ───────────────────────────────────────────────────────────
 
 describe("computeStatus", () => {
-  it("reaches 'ready' on score alone, without the unreachable freeze flag", async () => {
+  it("reaches 'ready' without the freeze flag once WFM has declared attendance ready", async () => {
     // attendance_frozen is a post-creation control — freezeAttendance() needs a runId — so
-    // gating 'ready' on it made 'ready' unreachable for every branch in every month.
-    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0)).toBe("ready");
+    // gating 'ready' on it made 'ready' unreachable for every branch in every month. That
+    // stays out. The 4th argument is attendance_data_ready, the WFM declaration, which
+    // carries no such circularity: it lives on the readiness row, set before any run exists.
+    // frozen is still 0 here, which is the point.
+    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0, 1)).toBe("ready");
+  });
+
+  it("refuses 'ready' when WFM has NOT declared attendance ready, however high the score", async () => {
+    // The hole this closes: the weights used to total 110 and were clamped to 100, so a
+    // branch could skip both attendance gates (25 points) and still clear the threshold of
+    // 80 with 85. Attendance is the input payroll is computed from.
+    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0, 0)).not.toBe("ready");
+    expect(await payrollBranchReadinessService.computeStatus(100, 1, 0, 0)).not.toBe("ready");
   });
 
   it("treats an HO override as ready regardless of score", async () => {
@@ -203,9 +214,9 @@ describe("computeStatus", () => {
 
   it("honours a policy threshold other than the default", async () => {
     minReadinessScore = "90";
-    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0)).not.toBe("ready");
+    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0, 1)).not.toBe("ready");
     minReadinessScore = "70";
-    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0)).toBe("ready");
+    expect(await payrollBranchReadinessService.computeStatus(85, 0, 0, 1)).toBe("ready");
   });
 
   it("still reports blocked and in_progress at the low end", async () => {

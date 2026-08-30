@@ -459,13 +459,54 @@ export async function loadCreditedAccounts(): Promise<{
           AND AcNo IS NOT NULL AND TRIM(AcNo) <> ''`,
       [month],
     );
+    // CONFIRMATION IS NOT PER-MONTH - IT IS PER ACCOUNT, ACROSS ALL HISTORY.
+    //
+    // SalaryReceiveStatus is stamped when receipt is confirmed, and that stamping lags the
+    // run unevenly: 2026-07 carries 1,071 confirmations against 1,371 rows, while 2026-06
+    // carries 1,122 of 1,432. Reading confirmation from the verification month ALONE
+    // therefore blocks an employee whose account has been receiving confirmed salary for
+    // years, purely because this one month has not been stamped yet.
+    //
+    // Measured 2026-08-30: of 271 employees whose 2026-07 receipt is unconfirmed, 120 have
+    // a confirmed credit to THE SAME ACCOUNT in an earlier month.
+    //
+    // What verification actually asks is "has money ever demonstrably reached this
+    // account", and one confirmed credit answers it permanently. An employee who CHANGES
+    // bank is unaffected: their new account matches no confirmed credit, so they stay
+    // unverified and go through penny-drop, which is the intended route for a change.
+    const confirmedRows = await billQuery<RowDataPacket & { EmpCode: string; AcNo: string }>(
+      `SELECT DISTINCT EmpCode, AcNo
+         FROM salary_data
+        WHERE SalaryReceiveStatus = 'YES'
+          AND AcNo IS NOT NULL AND TRIM(AcNo) <> ''`,
+    );
+    const everConfirmed = new Set<string>();
+    for (const r of confirmedRows) {
+      const k = String(r.EmpCode ?? "").trim().toUpperCase();
+      if (!k) continue;
+      everConfirmed.add(`${k}|${normaliseAccount(r.AcNo)}`);
+    }
+
     for (const r of rows) {
       const key = String(r.EmpCode ?? "").trim().toUpperCase();
       if (!key) continue;
+      const account = normaliseAccount(r.AcNo);
       credits.set(key, {
-        account: normaliseAccount(r.AcNo),
-        confirmed: String(r.SalaryReceiveStatus ?? "").toUpperCase() === "YES",
+        account,
+        confirmed:
+          String(r.SalaryReceiveStatus ?? "").toUpperCase() === "YES" ||
+          everConfirmed.has(`${key}|${account}`),
       });
+    }
+
+    // Employees with no row in the verification month at all, but with a confirmed credit in
+    // an earlier one. Without this they fall to no_payment_history_to_verify_against, the
+    // reason reserved for someone who has genuinely never been paid - a new HRMS joiner.
+    for (const compound of everConfirmed) {
+      const sep = compound.lastIndexOf("|");
+      const k = compound.slice(0, sep);
+      const account = compound.slice(sep + 1);
+      if (!credits.has(k)) credits.set(k, { account, confirmed: true });
     }
     return {
       source: {
