@@ -136,4 +136,42 @@ describe('parseUploadRow', () => {
     );
     expect(result.ok).toBe(true);
   });
+
+  it('rejects a whitespace-only value for a mandatory field as blank, not as a present value (review finding: Number("   ") === 0 in JS)', () => {
+    const result = parseUploadRow(
+      {
+        'Emp Code': 'MAS12345',
+        'Report Date': '2026-07-15',
+        'Login Minutes': '   ',
+      },
+      mapping,
+    );
+    expect(result).toEqual({ ok: false, reason: 'login_minutes is required but blank' });
+  });
+
+  it('trims surrounding whitespace from an accepted value', () => {
+    const result = parseUploadRow(
+      {
+        'Emp Code': '  MAS12345  ',
+        'Report Date': '2026-07-15',
+        'Login Minutes': '  420  ',
+      },
+      mapping,
+    );
+    expect(result).toEqual({
+      ok: true,
+      row: { employee_code: 'MAS12345', report_date: '2026-07-15', login_minutes: 420 },
+    });
+  });
+
+  it('when two source headers map to the same target field, the later mapping entry wins', () => {
+    const result = parseUploadRow(
+      { 'Col A': 'AAA111', 'Col B': 'BBB222', 'Report Date': '2026-07-15', 'Login Minutes': '420' },
+      { 'Col A': 'employee_code', 'Col B': 'employee_code', 'Report Date': 'report_date', 'Login Minutes': 'login_minutes' },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.row.employee_code).toBe('BBB222');
+    }
+  });
 });

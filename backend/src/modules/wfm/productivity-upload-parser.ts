@@ -72,11 +72,20 @@ export function parseUploadRow(
   rawRow: Record<string, string>,
   columnMappings: Record<string, string>,
 ): ParseResult {
+  // If two source headers map to the same target field, the later entry in columnMappings wins
+  // (Object.entries iterates in insertion order, so this is deterministic, not undefined
+  // behavior -- but it's worth this comment since a hand-edited mapping JSON could rely on it
+  // by accident).
   const values: Partial<Record<UploadTargetField, string>> = {};
   for (const [sourceHeader, targetField] of Object.entries(columnMappings)) {
     const raw = rawRow[sourceHeader];
-    if (raw !== undefined && raw !== '') {
-      values[targetField as UploadTargetField] = raw;
+    // Trimmed before the blank check: an Excel cell containing only spaces must be treated as
+    // blank, not as a present value -- for a numeric field, Number('   ') === 0 in JS, so
+    // without this trim a visually-empty cell would silently pass as a valid login_minutes: 0
+    // instead of being rejected as blank.
+    const trimmed = raw?.trim();
+    if (trimmed !== undefined && trimmed !== '') {
+      values[targetField as UploadTargetField] = trimmed;
     }
   }
 
