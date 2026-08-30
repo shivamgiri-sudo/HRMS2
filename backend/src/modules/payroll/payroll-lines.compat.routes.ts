@@ -50,7 +50,6 @@ payrollLinesCompatRouter.get(
                 spl.gross_salary AS gross_pay,
                 spl.net_salary   AS net_pay,
                 spl.professional_tax AS pt_amount,
-                spl.tds              AS tds_amount,
                 sp.id AS payslip_id,
                 sp.acknowledged_at,
                 CASE
@@ -60,9 +59,7 @@ payrollLinesCompatRouter.get(
                 END AS payslip_status
            FROM salary_prep_line spl
            LEFT JOIN employees e ON e.id = spl.employee_id
-           LEFT JOIN salary_payslip sp
-             ON CONVERT(sp.prep_line_id USING utf8mb4) COLLATE utf8mb4_unicode_ci
-              = CONVERT(spl.id USING utf8mb4) COLLATE utf8mb4_unicode_ci
+           LEFT JOIN salary_payslip sp ON sp.prep_line_id = spl.id
           WHERE spl.run_id = ?${searchExtra}
           ORDER BY spl.employee_code ASC
           LIMIT ? OFFSET ?`,
