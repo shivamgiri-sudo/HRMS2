@@ -5,6 +5,7 @@ import { db } from "../../db/mysql.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { queueAutoAwards } from "../engagement/badge.service.js";
 import { resolvePii } from "../../shared/piiCiphertext.js";
+import { resolveAccountNumberWithConflict } from "../../shared/fieldEncryption.js";
 
 export interface PayslipData {
   id: string;
@@ -170,8 +171,13 @@ export const payslipService = {
               spl.esic_employee,
               spl.professional_tax AS pt_amount,
               spl.professional_tax,
-              spl.tds            AS tds_amount,
-              spl.tds,
+              -- spl.tds is empty on imported runs; the value lands in tds_amount. Same
+              -- resolution as payroll.routes.ts:1805 and ff-compute.service.ts:367, which
+              -- already read it this way. Selecting spl.tds alone printed TDS 0 on the payslip
+              -- PDF while the deduction had actually been taken - Rs 94,160 across 7 employees
+              -- in 2026-07 - which also understates Form 16.
+              COALESCE(NULLIF(spl.tds_amount, 0), spl.tds) AS tds_amount,
+              COALESCE(NULLIF(spl.tds_amount, 0), spl.tds) AS tds,
               spl.basic,
               spl.hra,
               spl.special_allowance,
@@ -196,9 +202,21 @@ export const payslipService = {
               COALESCE(eu.uan, eu.member_id, e.epf_number) AS epf_number,
               eu.uan AS uan_number,
               e.esic_number      AS esi_number,
-              CASE WHEN e.bank_account_number IS NOT NULL
-                THEN CONCAT('XXXX', RIGHT(e.bank_account_number, 4))
-                ELSE NULL END    AS bank_account_masked,
+              -- The account the employee is actually PAID to, masked.
+              --
+              -- This read employees.bank_account_number, which is frozen legacy data with no
+              -- writer anywhere in the application, while every payment path
+              -- (/neft-export, /payment-file) pays from employee_bank_detail. On the 2026-07 run
+              -- the two columns disagree for 13 employees, so the payslip was showing 12 of them
+              -- the last four digits of an account their salary did not go to.
+              --
+              -- account_number is varbinary and roughly a third of rows hold ciphertext, so
+              -- RIGHT() on it would print garbage. Masking therefore happens in JS via
+              -- resolveAccountNumberWithConflict(), and these two columns are selected raw for
+              -- that. Nothing here widens exposure: the caller emits only the last four digits,
+              -- and the full number still exists solely in /payment-file.
+              ebd_pay.account_number      AS pay_account_raw,
+              ebd_pay.account_number_enc  AS pay_account_enc,
               CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS employee_name,
               d.designation_name  AS designation,
               dept.dept_name      AS department,
@@ -231,11 +249,31 @@ export const payslipService = {
          LEFT JOIN salary_run_disbursal srd
           ON srd.run_id = spl.run_id
           AND srd.employee_id = spl.employee_id
+         LEFT JOIN employee_bank_detail ebd_pay
+           ON ebd_pay.employee_id = spl.employee_id
+          AND ebd_pay.is_primary = 1
+          AND ebd_pay.active_status = 1
         WHERE spl.employee_id = ? AND spl.run_id = ?
         LIMIT 1`,
       [employeeId, runId]
     );
     const rec = (rows as PayslipData[])[0];
+    if (rec) {
+      // Mask the PAID account here rather than in SQL: employee_bank_detail.account_number is
+      // varbinary and about a third of rows hold ciphertext, so RIGHT() on it in SQL prints
+      // garbage. resolveAccountNumberWithConflict handles both encodings.
+      const raw = (rec as unknown as { pay_account_raw?: Buffer | string | null }).pay_account_raw ?? null;
+      const enc = (rec as unknown as { pay_account_enc?: string | null }).pay_account_enc ?? null;
+      let masked: string | null = null;
+      if (raw || enc) {
+        const resolved = resolveAccountNumberWithConflict({ account_number: raw, account_number_enc: enc });
+        const value = String(resolved?.resolved ?? "").trim();
+        if (value.length >= 4) masked = `XXXX${value.slice(-4)}`;
+      }
+      (rec as unknown as { bank_account_masked: string | null }).bank_account_masked = masked;
+      delete (rec as unknown as Record<string, unknown>).pay_account_raw;
+      delete (rec as unknown as Record<string, unknown>).pay_account_enc;
+    }
     if (!rec) throw new Error("Payslip not found");
     (rec as any).pan_number = resolvePii((rec as any).pan_number_encrypted, (rec as any).pan_number).value;
     delete (rec as any).pan_number_encrypted;

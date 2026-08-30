@@ -565,11 +565,18 @@ export const payrollBranchReadinessService = {
   computeScore(record: Partial<BranchReadinessRecord>): number {
     let score = 0;
 
-    if (record.attendance_data_ready) score += 15; // WFM declaration (new)
-    if (record.attendance_frozen)     score += 10; // payroll freeze (was 25)
+    // WEIGHTS TOTAL EXACTLY 100. They previously summed to 110 and were squeezed with
+    // Math.min(100), so the score did not mean what it said and - worse - a branch could
+    // skip BOTH attendance gates (15 + 10) and still reach 85, a pass against the default
+    // threshold of 80. Attendance is the input payroll is computed from.
+    //
+    // Overtime is no longer scored: overtime_allowed is false company-wide, so its 10
+    // points were awarded for a box no branch is permitted to tick. Its weight moved to
+    // the attendance gates, which are the ones that gate correctness.
+    if (record.attendance_data_ready) score += 20; // WFM declares the month closed
+    if (record.attendance_frozen)     score += 15; // payroll freezes the snapshot
     if (record.incentives_status === "approved") score += 20;
     if (record.custom_deductions_uploaded) score += 10;
-    if (record.overtime_entered)         score += 10;
     if (record.leave_finalized)          score += 5;
     if (record.regularization_complete)  score += 5;
 
@@ -579,9 +586,9 @@ export const payrollBranchReadinessService = {
     const uanPct = record.uan_complete_pct ?? 0;
     score += Math.min(10, (uanPct * 10) / 100);
 
-    if (record.noc_resolved) score += 5;
-    if (record.holiday_work_approved) score += 5;
-
+    // noc_resolved and holiday_work_approved DEFAULT to 1 in the table DDL, so scoring
+    // them handed every branch free points for checks nobody performed. They remain hard
+    // blockers elsewhere rather than scored credit.
     return Math.round(Math.min(100, Math.max(0, score)));
   },
 
@@ -592,7 +599,8 @@ export const payrollBranchReadinessService = {
   async computeStatus(
     score: number,
     frozen: number,
-    hoOverride: number
+    hoOverride: number,
+    attendanceDataReady = 0
   ): Promise<"not_started" | "in_progress" | "ready" | "blocked"> {
     if (hoOverride === 1) return "ready";
     const minScore = Number(await getPolicyValue("payroll", "readiness", "min_readiness_score", "80"));
@@ -600,7 +608,17 @@ export const payrollBranchReadinessService = {
     // a run to already exist, so requiring it here made 'ready' unreachable for every branch
     // in every month — 0 of 74 rows have ever held it. The freeze remains a scored input
     // (10 points, computeScore above) and remains a hard gate at lock/finalize/disburse.
-    if (score >= minScore) return "ready";
+    // ATTENDANCE IS MANDATORY FOR 'ready', not merely scored. With the weights now
+    // totalling 100 a branch cannot reach 80 while skipping both attendance gates, but
+    // "cannot reach" is an arithmetic accident of the current weights - one reweighting
+    // away from being false again - so state the rule directly.
+    //
+    // Gated on attendance_data_ready, NOT attendance_frozen. The freeze is genuinely
+    // circular (freezeAttendance() takes a runId, and you need readiness to create the
+    // run), which is why an earlier fix removed it from this limb and why it stays out.
+    // The WFM data-ready declaration has no such dependency. Only the 'ready' limb
+    // changes; the lower bands are untouched.
+    if (score >= minScore && attendanceDataReady === 1) return "ready";
     if (frozen === 0 && score < 50) return "blocked";
     if (score >= 50) return "in_progress";
     if (score > 0) return "in_progress";
@@ -804,7 +822,8 @@ export const payrollBranchReadinessService = {
     const status = await this.computeStatus(
       score,
       Number(record.attendance_frozen ?? 0),
-      Number(record.ho_override_ready ?? 0)
+      Number(record.ho_override_ready ?? 0),
+      Number(record.attendance_data_ready ?? 0)
     );
 
     if (hasTable) {
@@ -1005,7 +1024,8 @@ export const payrollBranchReadinessService = {
     const status = await this.computeStatus(
       score,
       rec.attendance_frozen,
-      rec.ho_override_ready
+      rec.ho_override_ready,
+      Number(rec.attendance_data_ready ?? 0)
     );
 
     try {
@@ -1112,7 +1132,7 @@ export const payrollBranchReadinessService = {
 
     const rec = await this.getOrRefresh(month, branchId, processId);
     const score = this.computeScore(rec);
-    const status = await this.computeStatus(score, rec.attendance_frozen, rec.ho_override_ready);
+    const status = await this.computeStatus(score, rec.attendance_frozen, rec.ho_override_ready, Number(rec.attendance_data_ready ?? 0));
     try {
       await db.execute(
         `UPDATE payroll_branch_readiness

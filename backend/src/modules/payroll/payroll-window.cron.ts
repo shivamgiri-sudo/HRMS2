@@ -3,7 +3,7 @@ import { db } from '../../db/mysql.js';
 import { logSensitiveAction } from '../../shared/auditLog.js';
 import { getIstDateString } from '../../utils/dateUtils.js';
 import { leaveService } from '../leave/leave.service.js';
-import { CLOSED_RUN_STATUSES_SQL } from './run-status.js';
+import { CLOSED_RUN_STATUSES_SQL, LOCK_TERMINAL_STATUSES_SQL } from './run-status.js';
 import { notifyPayrollWindowClosing } from './payroll.notifications.js';
 import { triggerPayrollBranchReadinessIncomplete, triggerPayrollSignOffPending } from '../work-inbox/work-inbox.triggers.js';
 
@@ -27,7 +27,7 @@ export async function runPayrollWindowClosure(): Promise<void> {
        FROM salary_prep_run
       WHERE window_close_date IS NOT NULL
         AND window_close_date <= ?
-        AND status NOT IN (${CLOSED_RUN_STATUSES_SQL},'cancelled')
+        AND status NOT IN (${LOCK_TERMINAL_STATUSES_SQL})
         AND auto_closed_at IS NULL`,
     [today]
   );

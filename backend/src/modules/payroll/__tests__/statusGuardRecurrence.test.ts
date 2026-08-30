@@ -49,12 +49,23 @@ describe("payroll-window.routes.ts no longer hand-rolls the closed-run check", (
 });
 
 describe("payroll-window.cron.ts auto-lock sweep excludes settled runs", () => {
-  it("the exclusion list is built from the shared CLOSED_RUN_STATUSES_SQL (proven to include 'finalized' by run-status.test.ts), not a hand-written literal", () => {
-    expect(WINDOW_CRON).toMatch(/import\s*{\s*CLOSED_RUN_STATUSES_SQL\s*}\s*from\s*['"]\.\/run-status\.js['"]/);
+  it("the auto-lock exclusion list is built from the shared LOCK_TERMINAL_STATUSES_SQL, not a literal and not the recompute set", () => {
+    // This originally pinned CLOSED_RUN_STATUSES_SQL. Its intent — use a shared constant,
+    // never a literal — was right, but the constant was wrong, and pinning it here is what
+    // held the bug in place. CLOSED_RUN_STATUSES answers "may this run be RECOMPUTED" and
+    // correctly contains 'finalized'. The auto-lock sweep asks a different question: "may
+    // this run still MOVE FORWARD". Every production run finishes as 'finalized', so
+    // excluding it meant finalized -> locked never fired; 2026-07 passed its
+    // window_close_date of 2026-08-29 with auto_closed_at still NULL, and
+    // payroll-lifecycle.ts lists 'locked' as finalized's only forward target.
+    expect(WINDOW_CRON).toMatch(/LOCK_TERMINAL_STATUSES_SQL/);
+    // The auto-lock query is the FIRST `status NOT IN (...)` in the file; the second belongs
+    // to the closing-warning sweep, which correctly still uses the recompute set (a
+    // finalized run cannot be corrected, so it must not be warned about).
     const m = WINDOW_CRON.match(/status NOT IN \(([^)]*)\)/);
     expect(m, "exclusion clause has moved or changed shape").toBeTruthy();
-    expect(m![1]).toContain("${CLOSED_RUN_STATUSES_SQL}");
-    expect(m![1].toLowerCase()).toContain("cancelled");
+    expect(m![1]).toContain("${LOCK_TERMINAL_STATUSES_SQL}");
+    expect(m![1]).not.toContain("${CLOSED_RUN_STATUSES_SQL}");
   });
 });
 

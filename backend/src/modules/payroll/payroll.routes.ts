@@ -2215,7 +2215,7 @@ router.get("/minimum-wages", requireRole("admin", "hr", "super_admin", "finance"
 // ─── NEFT Export ─────────────────────────────────────────────────────────────
 
 // GET /api/payroll/runs/:id/neft-summary — count of employees with/without bank details
-router.get("/runs/:id/neft-summary", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/runs/:id/neft-summary", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
   // This is the figure Finance reads BEFORE exporting, so it must use the same definition of
   // "payable" the export itself uses, or the preview and the file disagree.
   //
@@ -2348,7 +2348,7 @@ router.get(
 );
 
 // GET /api/payroll/runs/:id/neft-export — generate NEFT disbursement CSV
-router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance", "payroll"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/runs/:id/neft-export", requireRole("admin", "super_admin", "finance", "payroll", "payroll_head"), h(async (req: AuthenticatedRequest, res: Response) => {
   const runId = req.params.id;
 
   // Bank file — deny a branch-scoped caller rather than row-filter. See

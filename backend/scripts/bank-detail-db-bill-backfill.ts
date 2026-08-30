@@ -149,6 +149,42 @@ async function main(): Promise<void> {
   );
   const masterMap = new Map(masters.map((m) => [norm(m.EmpCode).toUpperCase(), m]));
 
+  // ── masjclrentry: the source this script was missing ────────────────────────
+  //
+  // The header calls employee_master.IFSCCode "nearly useless", and it is - but the
+  // conclusion drawn from that skipped the table that actually maintains this data.
+  // Measured 2026-08-30:
+  //
+  //   table            rows     with AcNo   lastUpdated range
+  //   masjclrentry    33,249      31,660    2016-01-13 .. 2026-08-29 13:59   <- LIVE
+  //   employee_master 35,902      13,111    0000-00-00 .. 0000-00-00         <- dead column
+  //   qual_employee      922         674    (no timestamp at all)
+  //
+  // employee_master is not merely thin here: its lastUpdated is 0000-00-00 on every row,
+  // so nothing can be resolved "latest" against it. masjclrentry also carries db_bill's own
+  // account validation - AccountFlag, AcValidationDate, AcValidatedBy - which
+  // employee_master does not. AccountFlag = 2 is the validated state: 9,477 of its 9,478
+  // rows carry an AcValidationDate, against 130 of 2,944 for flag 0.
+  //
+  // ORDER BY lastUpdated DESC, then first row per employee: the most recently updated
+  // record wins. That is the whole selection rule.
+  const jclr = await billQuery<RowDataPacket & {
+    EmpCode: string; AcNo: string | null; IFSCCode: string | null; AcBank: string | null;
+    AccountFlag: string | null; lastUpdated: string | null;
+  }>(
+    `SELECT EmpCode, AcNo, IFSCCode, AcBank, AccountFlag, lastUpdated
+       FROM masjclrentry
+      WHERE EmpCode IS NOT NULL AND TRIM(EmpCode) <> ''
+        AND AcNo IS NOT NULL AND TRIM(AcNo) <> ''
+      ORDER BY lastUpdated DESC`,
+  );
+  const jclrMap = new Map<string, typeof jclr[number]>();
+  for (const j of jclr) {
+    const k = norm(j.EmpCode).toUpperCase();
+    if (!jclrMap.has(k)) jclrMap.set(k, j);   // first = latest, the list is pre-sorted
+  }
+  console.log(`[bank-backfill] masjclrentry accounts loaded: ${jclrMap.size} (latest-updated row per employee)`);
+
   // Active employees with NO active primary bank record. The NOT EXISTS is the whole safety
   // property of this script: an employee who already has a record can never be selected, so
   // there is no code path here that overwrites an existing account.
@@ -174,8 +210,14 @@ async function main(): Promise<void> {
 
   for (const t of targets as any[]) {
     const code = norm(t.employee_code).toUpperCase();
-    const account = creditMap.get(code);
-    if (!account) { skips.push({ code, reason: "no confirmed salary credit in db_bill" }); continue; }
+    const j = jclrMap.get(code);
+    // A confirmed salary credit is the strongest evidence and stays first choice.
+    // masjclrentry is the fallback for someone with no confirmed credit yet - a new joiner -
+    // which is precisely the population this script could not previously help.
+    const creditAccount = creditMap.get(code);
+    const jclrAccount = norm(j?.AcNo);
+    const account = creditAccount ?? (jclrAccount || undefined);
+    if (!account) { skips.push({ code, reason: "no confirmed salary credit and no masjclrentry account in db_bill" }); continue; }
     if (!isPlausibleAccount(account)) {
       skips.push({ code, reason: `credited account is not a usable number (${mask(account)})` });
       continue;
@@ -184,13 +226,21 @@ async function main(): Promise<void> {
     // employees.ifsc_code first — see the IFSC note in the header. employee_master answers for
     // almost none of the current workforce and is a fallback only.
     const employeesIfsc = norm(t.employees_ifsc).toUpperCase();
+    const jclrIfsc = norm(j?.IFSCCode).toUpperCase();
     const masterIfsc = norm(m?.IFSCCode).toUpperCase();
-    const ifsc = IFSC_RE.test(employeesIfsc) ? employeesIfsc : masterIfsc;
-    const ifscSource = IFSC_RE.test(employeesIfsc) ? "employees.ifsc_code" : "db_bill.employee_master";
+    // masjclrentry first: the only one of the three still being maintained.
+    const candidates: Array<[string, string]> = [
+      [jclrIfsc, "db_bill.masjclrentry"],
+      [employeesIfsc, "employees.ifsc_code"],
+      [masterIfsc, "db_bill.employee_master"],
+    ];
+    const hit = candidates.find(([v]) => IFSC_RE.test(v));
+    const ifsc = hit?.[0] ?? "";
+    const ifscSource = hit?.[1] ?? "(none)";
     if (!IFSC_RE.test(ifsc)) {
       skips.push({
         code,
-        reason: `no valid IFSC in employees.ifsc_code or db_bill employee_master ('${employeesIfsc || "(empty)"}')`,
+        reason: `no valid IFSC in masjclrentry, employees.ifsc_code or employee_master ('${jclrIfsc || employeesIfsc || "(empty)"}')`,
       });
       continue;
     }
@@ -200,7 +250,7 @@ async function main(): Promise<void> {
     const corroborated = norm(t.employees_account) === account;
     planned.push({
       id: t.id, code, name: String(t.full_name ?? "").trim(), account, ifsc, ifscSource, corroborated,
-      bank: m?.AcBank ?? t.employees_bank ?? null,
+      bank: j?.AcBank ?? m?.AcBank ?? t.employees_bank ?? null,
       branch: m?.AcBranch ?? null,
       holder: m?.AccHolder ?? null,
     });
