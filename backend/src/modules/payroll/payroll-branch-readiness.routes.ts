@@ -247,7 +247,7 @@ payrollBranchReadinessRouter.get(
 payrollBranchReadinessRouter.get(
   "/:branchId",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "payroll_head", "super_admin", "payroll", "wfm"),
+  requireRole("branch_head", "payroll_branch", "payroll_hr", "payroll_head", "super_admin", "payroll", "wfm"),
   requireScopedRole(
     ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm"],
     branchScopeTarget,
@@ -286,7 +286,7 @@ type ChecklistItem = (typeof ALLOWED_CHECKLIST_ITEMS)[number];
 payrollBranchReadinessRouter.post(
   "/:branchId/checklist",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "wfm"),
+  requireRole("branch_head", "payroll_branch", "payroll_hr", "wfm"),
   requireScopedRole(["branch_head", "payroll_branch", "wfm"], branchScopeTarget, SCOPE_OPTIONS),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -468,7 +468,7 @@ payrollBranchReadinessRouter.post(
 payrollBranchReadinessRouter.post(
   "/:branchId/request-freeze",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "wfm"),
+  requireRole("branch_head", "payroll_branch", "payroll_hr", "wfm"),
   requireScopedRole(["branch_head", "payroll_branch", "wfm"], branchScopeTarget, SCOPE_OPTIONS),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -508,7 +508,7 @@ payrollBranchReadinessRouter.post(
 payrollBranchReadinessRouter.get(
   "/:branchId/processes",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "payroll_head", "super_admin", "payroll", "wfm"),
+  requireRole("branch_head", "payroll_branch", "payroll_hr", "payroll_head", "super_admin", "payroll", "wfm"),
   requireScopedRole(
     ["branch_head", "payroll_branch", "payroll_head", "payroll", "wfm"],
     branchScopeTarget,
@@ -552,7 +552,7 @@ payrollBranchReadinessRouter.get(
 payrollBranchReadinessRouter.post(
   "/:branchId/:processId/checklist",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "wfm"),
+  requireRole("branch_head", "payroll_branch", "payroll_hr", "wfm"),
   requireScopedRole(["branch_head", "payroll_branch", "wfm"], branchProcessScopeTarget, SCOPE_OPTIONS),
   async (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -604,7 +604,7 @@ payrollBranchReadinessRouter.post(
 payrollBranchReadinessRouter.post(
   "/:branchId/:processId/signoff",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "wfm", "super_admin", "payroll_head", "payroll"),
+  requireRole("branch_head", "payroll_branch", "payroll_hr", "wfm", "super_admin", "payroll_head", "payroll"),
   requireScopedRole(
     ["branch_head", "payroll_branch", "wfm", "payroll_head", "payroll"],
     branchProcessScopeTarget,
@@ -655,7 +655,7 @@ payrollBranchReadinessRouter.post(
 payrollBranchReadinessRouter.get(
   "/:branchId/projection",
   requireAuth,
-  requireRole("branch_head", "payroll_branch", "payroll_head", "super_admin", "payroll"),
+  requireRole("branch_head", "payroll_branch", "payroll_hr", "payroll_head", "super_admin", "payroll"),
   requireScopedRole(
     ["branch_head", "payroll_branch", "payroll_head", "payroll"],
     branchScopeTarget,

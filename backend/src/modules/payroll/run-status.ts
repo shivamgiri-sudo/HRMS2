@@ -43,6 +43,30 @@ export function isRunClosed(status: unknown): boolean {
   return CLOSED_RUN_STATUSES.has(String(status ?? "").trim().toLowerCase());
 }
 
+/**
+ * Statuses past which a run may no longer TRANSITION.
+ *
+ * Deliberately NOT the same set as CLOSED_RUN_STATUSES. That set answers "may this
+ * run be recomputed", and it correctly includes `finalized`. Reusing it to answer
+ * "may this run still move forward" is what stalled the lifecycle: the auto-lock
+ * cron filtered on `status NOT IN (CLOSED_RUN_STATUSES)`, which excluded exactly
+ * the status every production run finishes in, so `finalized -> locked` never fired
+ * for any run. 2026-07 passed its window_close_date of 2026-08-29 with
+ * auto_closed_at still NULL, and payroll-lifecycle.ts lists `locked` as finalized's
+ * only forward target.
+ *
+ * `finalized` is closed to recomputation AND open to locking. Both are true; they
+ * need two sets to say so.
+ */
+export const LOCK_TERMINAL_STATUSES: ReadonlySet<string> = new Set([
+  "locked",
+  "disbursed",
+  "cancelled",
+]);
+
+/** SQL form of LOCK_TERMINAL_STATUSES, for statements that filter in the database. */
+export const LOCK_TERMINAL_STATUSES_SQL = "'locked','disbursed','cancelled'";
+
 /** SQL fragment for the same rule, for statements that filter in the database. */
 export const CLOSED_RUN_STATUSES_SQL = "'locked','disbursed','finalized'";
 

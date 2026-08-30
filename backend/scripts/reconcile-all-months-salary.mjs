@@ -18,6 +18,7 @@
  */
 
 import mysql  from 'mysql2/promise';
+import { PAID_ROW_FILTER } from './lib/dbbill-salary-mapping.mjs';
 import fs     from 'fs';
 import path   from 'path';
 import { fileURLToPath } from 'url';
@@ -91,7 +92,7 @@ async function getMonths(bill) {
     SELECT DISTINCT DATE_FORMAT(SalayDate,'%Y-%m') AS mon
     FROM salary_data
     WHERE EmpCode NOT LIKE 'IDC%'
-      AND (Status='1' OR Status IS NULL OR Status='')
+      AND ${PAID_ROW_FILTER}
     ORDER BY mon
   `);
   return rows.map(r => r.mon);
@@ -109,7 +110,7 @@ async function getBillRows(bill, mon) {
     FROM salary_data
     WHERE DATE_FORMAT(SalayDate,'%Y-%m') = ?
       AND EmpCode NOT LIKE 'IDC%'
-      AND (Status='1' OR Status IS NULL OR Status='')
+      AND ${PAID_ROW_FILTER}
       AND EmpCode IS NOT NULL AND TRIM(EmpCode) != ''
   `, [mon]);
   // Key by EmpCode
