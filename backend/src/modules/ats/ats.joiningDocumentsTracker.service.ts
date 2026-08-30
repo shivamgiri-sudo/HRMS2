@@ -4,6 +4,9 @@ import { getUserRoleKeys } from '../../shared/scopeAccess.js';
 import { getEmployeeForUser } from '../../shared/accessGuard.js';
 import { sendJoiningDocReminderEmail } from './ats.email.service.js';
 import { generateJoiningDocumentChecklist, recalculateDocumentProgress } from '../employees/employeeJoiningDocuments.service.js';
+// Esign_State_Authority. The eSign counters below are GENERATED from it rather
+// than hand-written, so the query cannot drift from `classifyEsignState`.
+import { esignBucketCaseSql } from './esignState.js';
 // archiver ships a CJS default; @types/archiver only declares named exports so we
 // need a type-cast to satisfy the compiler while keeping vi.mock('archiver') working.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -42,8 +45,18 @@ export interface EmployeeDocumentRow {
   verified_count: number;
   needs_correction_count: number;
   overdue_count: number;
-  esign_completed_count: number;
-  esign_pending_count: number;
+  // Null — not 0 — when the employee has no checklist rows at all, so "nothing to
+  // sign" cannot be rendered as "everything signed" (Requirement 8, criterion 1).
+  // Null is produced in exactly one place, the SQL `CASE WHEN COUNT(c.id) = 0`,
+  // and is never coerced afterwards: it was the mapper's `?? 0` that turned an
+  // absent denominator into a green 0/0 badge.
+  //
+  // Every *other* count field on this interface stays non-null. The nullability of
+  // each one is pinned against `EmployeeRow` in `JoiningDocumentsTrackerPage.tsx`
+  // by a contract test (Requirement 8, criterion 3) — the two builds cannot share
+  // a declaration, so the agreement is asserted rather than assumed.
+  esign_completed_count: number | null;
+  esign_pending_count: number | null;
   last_document_update: string | null;
   assigned_hr_name: string | null;
   key_documents: KeyDocumentStatus[];
@@ -51,11 +64,22 @@ export interface EmployeeDocumentRow {
 
 export interface TrackerSummary {
   total_employees: number;
+  /** `classifyEmployeeBucket` === 'completed' */
   completed_count: number;
+  /** 'in_progress' — absorbs the former 75-99 `pending_verification` band */
   in_progress_count: number;
+  /** 'pending' — 0% */
   pending_count: number;
+  // The three buckets above partition the employee set:
+  // completed_count + in_progress_count + pending_count === total_employees.
+  //
+  // The two counts below are *cross-cutting*, not buckets. An employee can be
+  // both in_progress and overdue, so they sit outside the partition and must not
+  // be added into it. `pending_verification` used to live here as a fourth
+  // bucket for 75-99%, which no page rendered — live tiles read Completed 0 /
+  // In Progress 0 above rows badged In Progress. It is removed rather than left
+  // unrendered: a field nothing reads is how this drifted in the first place.
   overdue_count: number;
-  pending_verification: number;
   needs_correction: number;
 }
 
@@ -69,12 +93,66 @@ export interface TrackerQueryParams {
   overdue_only?: boolean;
   updated_since?: string;
   search?: string;
+  /** 1-based. Clamped to >= 1; anything unparseable falls back to `DEFAULT_PAGE`. */
+  page?: number;
+  /** Rows per page. Clamped into [1, `MAX_PAGE_LIMIT`]; default `DEFAULT_PAGE_LIMIT`. */
+  limit?: number;
+}
+
+/** First page when the caller sends nothing, or sends something not a page number. */
+export const DEFAULT_PAGE = 1;
+/** Rows per page when the caller sends no `limit`. */
+export const DEFAULT_PAGE_LIMIT = 50;
+/**
+ * The abuse ceiling, and the reason the hard-coded `LIMIT 500` could be removed.
+ *
+ * `LIMIT 500` was doing two jobs: cutting the list off (the bug — employee 501 was
+ * unreachable) and bounding the scan. Only the first job goes away. Without a cap
+ * here, `?limit=100000` reinstates exactly the unbounded grouped scan the 500 was
+ * preventing, so the ceiling has to move rather than be deleted.
+ */
+export const MAX_PAGE_LIMIT = 200;
+
+/**
+ * `page` as a usable integer, whatever arrived.
+ *
+ * `Number.isFinite` is load-bearing rather than decorative: `Math.max(1, NaN)` is
+ * `NaN` and `Math.max(1, Infinity)` is `Infinity`, either of which would reach the
+ * OFFSET arithmetic and produce a query that fails instead of a page that is empty.
+ */
+export function clampPage(page: unknown): number {
+  const n = Math.trunc(Number(page));
+  return Number.isFinite(n) && n >= 1 ? n : DEFAULT_PAGE;
+}
+
+/** `limit` as a usable integer inside [1, `MAX_PAGE_LIMIT`]. */
+export function clampLimit(limit: unknown): number {
+  const n = Math.trunc(Number(limit));
+  if (!Number.isFinite(n) || n < 1) return DEFAULT_PAGE_LIMIT;
+  return Math.min(n, MAX_PAGE_LIMIT);
 }
 
 export interface TrackerResponse {
   rows: EmployeeDocumentRow[];
+  /**
+   * Employees matching the active filters — NOT `rows.length`.
+   *
+   * These are different numbers the moment pagination is real, and conflating them
+   * is what made `hasNext` unrepresentable: the old `total: employees.length` could
+   * never exceed the page size, so the page after the cut-off could not be known to
+   * exist. Sourced from `COUNT(*) OVER ()` on the same statement as the rows, with a
+   * wrapped-count fallback for the past-the-end case where that window returns no
+   * row to read it from.
+   */
   total: number;
+  /** Computed over the whole filtered set, not over `rows` — see `queryTrackerSummary`. */
   summary: TrackerSummary;
+  /** Echo of the effective (clamped) page, so the caller can see what it actually got. */
+  page: number;
+  /** Echo of the effective (clamped) limit. */
+  limit: number;
+  hasNext: boolean;
+  hasPrev: boolean;
 }
 
 export function parseKeyDocuments(keyDocumentsRaw: string | null): KeyDocumentStatus[] {
@@ -95,41 +173,89 @@ export function parseKeyDocuments(keyDocumentsRaw: string | null): KeyDocumentSt
     });
 }
 
-export function calculateTrackerSummary(employees: EmployeeDocumentRow[]): TrackerSummary {
-  if (employees.length === 0) {
-    return {
-      total_employees: 0,
-      completed_count: 0,
-      in_progress_count: 0,
-      pending_count: 0,
-      overdue_count: 0,
-      pending_verification: 0,
-      needs_correction: 0,
-    };
-  }
+/**
+ * The buckets the tracker tiles render, and the only buckets the summary produces.
+ * One name per tile, so a count cannot exist without somewhere to display it.
+ */
+export type SummaryBucket = 'completed' | 'in_progress' | 'pending';
 
+/**
+ * The single classification the tiles and the row badge both go through.
+ *
+ * Total and coverage are structural: every real number lands in exactly one
+ * bucket, so `calculateTrackerSummary`'s three counts partition its input by
+ * construction rather than by assertion. The former 75-99 `pending_verification`
+ * band is folded into `in_progress` — a verified Aadhaar eSign *is* the
+ * verification, so there is no longer a band that means something different from
+ * "in progress".
+ */
+/**
+ * The two completion-percentage boundaries the cascade below splits on.
+ *
+ * Held as a const because `classifyEmployeeBucket` is no longer the only reader:
+ * with real pagination the summary is computed in SQL over the whole filtered set
+ * (`summaryBucketCaseSql`), so the same two numbers now appear in a `CASE`
+ * expression as well. Typing them twice is how the tiles and the row badges would
+ * drift apart again — the SQL is generated from these, not re-written from memory.
+ */
+const BUCKET_THRESHOLDS = {
+  /** `pct >= this` → 'completed' */
+  completedMin: 100,
+  /** `pct > this` (and short of `completedMin`) → 'in_progress' */
+  inProgressMin: 0,
+} as const;
+
+export function classifyEmployeeBucket(pct: number): SummaryBucket {
+  if (pct >= BUCKET_THRESHOLDS.completedMin) return 'completed';
+  if (pct > BUCKET_THRESHOLDS.inProgressMin) return 'in_progress'; // absorbs the former 75-99 pending_verification band
+  return 'pending';
+}
+
+/** Field on `TrackerSummary` each bucket increments. */
+const BUCKET_COUNT_FIELD: Record<SummaryBucket, 'completed_count' | 'in_progress_count' | 'pending_count'> = {
+  completed: 'completed_count',
+  in_progress: 'in_progress_count',
+  pending: 'pending_count',
+};
+
+/**
+ * `classifyEmployeeBucket` as a SQL `CASE`, from the same thresholds in the same order.
+ *
+ * Same device as `esignBucketCaseSql`: the expression is generated rather than
+ * hand-written, so the aggregate query cannot classify an employee differently from
+ * the function the row badge uses. `CASE` gives mutual exclusion and the `ELSE` gives
+ * exhaustiveness, so `completed + in_progress + pending = COUNT(*)` holds structurally
+ * — which is Requirement 7 criterion 3's sum-to-309 rather than a separate assertion.
+ *
+ * `COALESCE(…, 0)` mirrors the mapper's `Number(row.joining_document_completion_pct)`:
+ * a NULL percentage reads as 0 and lands in 'pending'. Without it every comparison
+ * against NULL yields NULL, the row falls out of all three bands, and the partition
+ * silently stops summing to the total.
+ */
+function summaryBucketCaseSql(column: string): string {
+  const pct = `COALESCE(${column}, 0)`;
+  return `CASE
+              WHEN ${pct} >= ${BUCKET_THRESHOLDS.completedMin} THEN 'completed'
+              WHEN ${pct} > ${BUCKET_THRESHOLDS.inProgressMin} THEN 'in_progress'
+              ELSE 'pending'
+            END`;
+}
+
+export function calculateTrackerSummary(employees: EmployeeDocumentRow[]): TrackerSummary {
   const summary: TrackerSummary = {
     total_employees: employees.length,
     completed_count: 0,
     in_progress_count: 0,
     pending_count: 0,
     overdue_count: 0,
-    pending_verification: 0,
     needs_correction: 0,
   };
 
   for (const emp of employees) {
-    const pct = emp.joining_document_completion_pct;
-
-    if (pct === 100) {
-      summary.completed_count++;
-    } else if (pct >= 75) {
-      summary.pending_verification++;
-    } else if (pct > 0) {
-      summary.in_progress_count++;
-    } else {
-      summary.pending_count++;
-    }
+    // Thresholds are not inlined here: the badge on the row and this tile read the
+    // same function, so they cannot disagree.
+    const bucket = classifyEmployeeBucket(emp.joining_document_completion_pct);
+    summary[BUCKET_COUNT_FIELD[bucket]]++;
 
     if (emp.overdue_count > 0) {
       summary.overdue_count++;
@@ -162,10 +288,28 @@ interface TrackerQueryRow extends RowDataPacket {
   verified_count: number;
   needs_correction_count: number;
   overdue_count: number;
-  esign_completed_count: number;
-  esign_pending_count: number;
+  /** NULL when the employee has no checklist rows — see the SQL `CASE WHEN COUNT(c.id) = 0`. */
+  esign_completed_count: number | null;
+  esign_pending_count: number | null;
   last_document_update: string | null;
   assigned_hr_name: string | null;
+  /**
+   * `COUNT(*) OVER ()` — employees left after WHERE, GROUP BY and HAVING, before
+   * ORDER BY and LIMIT. Identical on every row of the page. Absent entirely when the
+   * page is past the end, because a window function needs a row to be reported on;
+   * that case is covered by the wrapped-count fallback, not by reading this as 0.
+   */
+  total_matching: number;
+}
+
+/** One row, always. Shape of the page-independent summary aggregate. */
+interface TrackerSummaryRow extends RowDataPacket {
+  total_employees: number;
+  completed_count: number;
+  in_progress_count: number;
+  pending_count: number;
+  overdue_count: number;
+  needs_correction: number;
 }
 
 export async function getJoiningDocumentsTracker(
@@ -174,6 +318,15 @@ export async function getJoiningDocumentsTracker(
 ): Promise<TrackerResponse> {
   const roleKeys = await getUserRoleKeys(actorUserId);
   const isBranchHead = roleKeys.includes('branch_head');
+
+  // Clamped here as well as at the route, deliberately. The route is one caller and
+  // this is the function that builds the OFFSET arithmetic, so it cannot assume its
+  // input was already sanitised — a NaN page would otherwise reach the query as
+  // `OFFSET NaN`. Every branch below returns these same effective values, so the
+  // echo the caller reads back is what was actually applied.
+  const page = clampPage(filters.page);
+  const limit = clampLimit(filters.limit);
+  const offset = (page - 1) * limit;
 
   // Build WHERE clause filters
   //
@@ -221,8 +374,17 @@ export async function getJoiningDocumentsTracker(
     }
     if (!actorBranchId) {
       // Cannot resolve a branch for this branch_head — return empty rather than
-      // falling through to an unrestricted query.
-      return { rows: [], total: 0, summary: calculateTrackerSummary([]) };
+      // falling through to an unrestricted query. `hasPrev` is false even on page 5:
+      // there is no page 1 to go back to when the filtered set is empty by construction.
+      return {
+        rows: [],
+        total: 0,
+        summary: calculateTrackerSummary([]),
+        page,
+        limit,
+        hasNext: false,
+        hasPrev: false,
+      };
     }
     whereClauses.push('e.branch_id = ?');
     params.push(actorBranchId);
@@ -268,6 +430,67 @@ export async function getJoiningDocumentsTracker(
 
   const whereSQL = whereClauses.join(' AND ');
 
+  /**
+   * The eSign bucket expression, GENERATED from Esign_State_Authority.
+   *
+   * This replaces three hard-coded states (`= 'esign_completed'` for completed,
+   * `IN ('esign_initiated','pending_candidate_esign')` for pending). Those two
+   * counters did not partition the checklist: a row in `ready_for_esign`,
+   * `draft_generated`, `hr_fill_required`, `employee_review_pending`,
+   * `correction_requested` or `esign_failed` was in neither, so it left the
+   * denominator silently. MAS63411's nine documents read as a green "5/5" with
+   * four of them unsigned.
+   *
+   * Because `ESIGN_STATE_BUCKET` is total, `completed + (not completed)` is
+   * exactly `COUNT(c.id)` — the denominator *is* the row count, so no document
+   * can leave it (Requirement 6, criteria 1 and 3).
+   */
+  const esignBucketSQL = esignBucketCaseSql('c.status');
+
+  /**
+   * The overdue predicate, extracted for the same reason `fromWhereGroupSQL` is.
+   *
+   * `havingClause` filters on the `overdue_count` *alias*, so every statement that
+   * interpolates `fromWhereGroupSQL` has to define that alias — and if two of them
+   * defined it with different expressions, `overdue_only` would filter one population
+   * while the count reported another. One expression, three readers.
+   */
+  const overdueCountSQL = `SUM(CASE WHEN c.due_at < NOW() AND c.verification_status IS NULL THEN 1 ELSE 0 END)`;
+
+  /**
+   * Two spellings, one meaning. The HR-side path writes 'needs_correction' (hence the
+   * original LIKE), but the public/employee correction path writes
+   * 'correction_requested', which the LIKE never matched — so corrections raised from
+   * that path were never counted here or in the summary tile. Shared with the summary
+   * aggregate so the tile and the row column cannot disagree.
+   */
+  const needsCorrectionCountSQL = `SUM(CASE WHEN c.status LIKE '%needs_correction%' OR c.status = 'correction_requested' THEN 1 ELSE 0 END)`;
+
+  /**
+   * `FROM … WHERE … GROUP BY … HAVING` — built once, interpolated everywhere.
+   *
+   * Three statements read it: the row query, the page-independent summary aggregate,
+   * and the past-the-end count fallback. They must scan an *identical* population or
+   * the count and the page disagree, and the tiles describe a different set from the
+   * rows under them. Sharing the text makes that structural rather than a convention
+   * someone has to remember to honour.
+   *
+   * Note this fragment ends after `HAVING`, so any SELECT that interpolates it
+   * must define an `overdue_count` output alias — `havingClause` filters on it.
+   */
+  const fromWhereGroupSQL = `
+    FROM employees e
+    LEFT JOIN branch_master b ON e.branch_id = b.id
+    LEFT JOIN process_master p ON e.process_id = p.id
+    LEFT JOIN employee_joining_document_checklist c ON e.id = c.employee_id
+    LEFT JOIN auth_user u ON c.assigned_hr_user_id = u.id
+    LEFT JOIN employees emp_hr ON emp_hr.user_id = u.id
+
+    WHERE ${whereSQL}
+    GROUP BY e.id
+    ${havingClause}
+  `;
+
   const sql = `
     SELECT
       e.id,
@@ -291,28 +514,54 @@ export async function getJoiningDocumentsTracker(
 
       COUNT(c.id) AS total_documents,
       SUM(CASE WHEN c.verification_status = 'verified' THEN 1 ELSE 0 END) AS verified_count,
-      SUM(CASE WHEN c.status LIKE '%needs_correction%' THEN 1 ELSE 0 END) AS needs_correction_count,
-      SUM(CASE WHEN c.due_at < NOW() AND c.verification_status IS NULL THEN 1 ELSE 0 END) AS overdue_count,
-      SUM(CASE WHEN c.status = 'esign_completed' THEN 1 ELSE 0 END) AS esign_completed_count,
-      SUM(CASE WHEN c.status IN ('esign_initiated', 'pending_candidate_esign') THEN 1 ELSE 0 END) AS esign_pending_count,
+      ${needsCorrectionCountSQL} AS needs_correction_count,
+      ${overdueCountSQL} AS overdue_count,
+
+      -- NULL is produced HERE and nowhere else: no checklist rows means there is
+      -- no eSign denominator to report, which is not the same statement as "0 of 0
+      -- signed". The mapper passes it straight through and the page renders a dash.
+      --
+      -- SUM() over a LEFT JOIN with no matching row already yields NULL, but the
+      -- explicit CASE states the intent and survives a change to the join graph.
+      --
+      -- The pending counter is "everything not completed" rather than a second
+      -- enumerated list, which is what keeps completed + pending = COUNT(c.id).
+      CASE WHEN COUNT(c.id) = 0 THEN NULL
+           ELSE SUM(${esignBucketSQL} = 'completed') END AS esign_completed_count,
+      CASE WHEN COUNT(c.id) = 0 THEN NULL
+           ELSE SUM(${esignBucketSQL} <> 'completed') END AS esign_pending_count,
       MAX(c.updated_at) AS last_document_update,
-      MAX(emp_hr.full_name) AS assigned_hr_name
+      MAX(emp_hr.full_name) AS assigned_hr_name,
 
-    FROM employees e
-    LEFT JOIN branch_master b ON e.branch_id = b.id
-    LEFT JOIN process_master p ON e.process_id = p.id
-    LEFT JOIN employee_joining_document_checklist c ON e.id = c.employee_id
-    LEFT JOIN auth_user u ON c.assigned_hr_user_id = u.id
-    LEFT JOIN employees emp_hr ON emp_hr.user_id = u.id
-
-    WHERE ${whereSQL}
-    GROUP BY e.id
-    ${havingClause}
-    ORDER BY e.date_of_joining DESC
-    LIMIT 500
+      -- The filtered total, from the same statement as the page.
+      --
+      -- MySQL evaluates window functions after WHERE/GROUP BY/HAVING and before
+      -- ORDER BY/LIMIT, so on this grouped-and-having-filtered result COUNT(*) OVER ()
+      -- is exactly the number of matching employees — computed in the same pass, so it
+      -- cannot disagree with the rows the way a separately-built count query can when a
+      -- filter is added to one and not the other.
+      COUNT(*) OVER () AS total_matching
+    ${fromWhereGroupSQL}
+    -- date_of_joining alone is not a total order: 309 employees over ~26 dispatch days
+    -- guarantees ties, and MySQL is free to break a tie differently between the
+    -- OFFSET 0 and OFFSET 50 executions — so an employee could appear on two pages or
+    -- on none, which is precisely what criterion 5 forbids. employee_code is non-null
+    -- by the WHERE above, and e.id closes it as the guaranteed-unique final key.
+    ORDER BY e.date_of_joining DESC, e.employee_code ASC, e.id ASC
+    LIMIT ? OFFSET ?
   `;
 
-  const [rows] = await db.execute<TrackerQueryRow[]>(sql, params);
+  // db.query, not db.execute, and that is load-bearing.
+  //
+  // LIMIT and OFFSET are bound rather than interpolated — but the prepared-statement
+  // protocol behind db.execute() rejects a bound parameter in LIMIT on this server
+  // (MySQL 8.0.42) with ER_WRONG_ARGUMENTS regardless of the JS type, a defect this
+  // repo has hit and documented several times over (see backend/src/db/pagination.ts).
+  // db.query() uses the text protocol, where mysql2 escapes the values client-side, so
+  // the values still never touch the SQL as raw text and the numbers still arrive as
+  // numbers. That is the pattern already working in grn.service.ts:1466 and
+  // client-billing.routes.ts:168 against this same database.
+  const [rows] = await db.query<TrackerQueryRow[]>(sql, [...params, limit, offset]);
 
   const employees: EmployeeDocumentRow[] = rows.map(row => ({
     id: row.id,
@@ -330,16 +579,118 @@ export async function getJoiningDocumentsTracker(
     verified_count: Number(row.verified_count),
     needs_correction_count: Number(row.needs_correction_count),
     overdue_count: Number(row.overdue_count),
-    esign_completed_count: Number(row.esign_completed_count ?? 0),
-    esign_pending_count: Number(row.esign_pending_count ?? 0),
+    // No `?? 0` here, deliberately. The SQL already decided whether there is an
+    // eSign denominator at all; coercing its NULL to 0 was the whole defect —
+    // the page renders a dash for null and a badge for a number, and it was being
+    // handed a number for employees with nothing to sign.
+    esign_completed_count: row.esign_completed_count === null ? null : Number(row.esign_completed_count),
+    esign_pending_count: row.esign_pending_count === null ? null : Number(row.esign_pending_count),
     last_document_update: row.last_document_update,
     assigned_hr_name: row.assigned_hr_name,
     key_documents: parseKeyDocuments(row.key_documents_raw),
   }));
 
-  const summary = calculateTrackerSummary(employees);
+  /**
+   * `total`, resolved in the one case the window function cannot answer.
+   *
+   * COUNT(*) OVER () needs a row to be reported on, so a page past the end returns
+   * nothing at all — not a row saying 0. Reading the absence as `total = 0` would set
+   * `hasPrev` false and strand the caller on an empty page with no way back. So when
+   * the page came back empty AND it is not page 1, ask for the count directly, over the
+   * identical grouped text.
+   *
+   * On page 1 an empty result genuinely means the filters match nobody, and the second
+   * query is skipped — a real 0 costs no extra round trip.
+   */
+  let total: number;
+  if (rows.length > 0) {
+    total = Number(rows[0].total_matching);
+  } else if (page > DEFAULT_PAGE) {
+    const [countRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS total FROM (
+         SELECT e.id, ${overdueCountSQL} AS overdue_count
+         ${fromWhereGroupSQL}
+       ) t`,
+      params
+    );
+    total = Number((countRows[0] as { total: number } | undefined)?.total ?? 0);
+  } else {
+    total = 0;
+  }
 
-  return { rows: employees, total: employees.length, summary };
+  const summary = await queryTrackerSummary(fromWhereGroupSQL, overdueCountSQL, needsCorrectionCountSQL, params);
+
+  return {
+    rows: employees,
+    total,
+    summary,
+    page,
+    limit,
+    // Derived from `total`, not from `rows.length`. `rows.length === limit` would claim
+    // a next page exists whenever the last page happens to be exactly full.
+    hasNext: page * limit < total,
+    hasPrev: page > DEFAULT_PAGE && total > 0,
+  };
+}
+
+/**
+ * The summary tiles, computed over the whole filtered set rather than over one page.
+ *
+ * `calculateTrackerSummary` walks the rows it is handed, which was correct while the
+ * query returned every match. With real pagination those rows are page 1 of n, so the
+ * tiles would describe fifty employees and the list would say there are 309 —
+ * Requirement 7 criterion 3 wants the tiles to sum to the whole population. Hence a
+ * second aggregate over the *same* `fromWhereGroupSQL`, which is what keeps the tiles
+ * and the rows describing one set.
+ *
+ * `calculateTrackerSummary` stays exported and unchanged: it is still the pure function
+ * the unit tests target, and still the shape this returns.
+ */
+async function queryTrackerSummary(
+  fromWhereGroupSQL: string,
+  overdueCountSQL: string,
+  needsCorrectionCountSQL: string,
+  params: (string | number)[]
+): Promise<TrackerSummary> {
+  // The bucket bands and their output aliases both come from the same two tables
+  // `classifyEmployeeBucket` and `calculateTrackerSummary` use, so a fourth bucket
+  // cannot be added to `SummaryBucket` without this SELECT gaining a column for it.
+  const bucketCountSelects = (Object.entries(BUCKET_COUNT_FIELD) as Array<
+    [SummaryBucket, (typeof BUCKET_COUNT_FIELD)[SummaryBucket]]
+  >)
+    .map(([bucket, field]) => `SUM(${summaryBucketCaseSql('t.pct')} = '${bucket}') AS ${field}`)
+    .join(',\n      ');
+
+  const [summaryRows] = await db.execute<TrackerSummaryRow[]>(
+    `SELECT
+      COUNT(*) AS total_employees,
+      ${bucketCountSelects},
+      -- Cross-cutting, not buckets: an employee can be both in_progress and overdue,
+      -- so these sit outside the three-way partition and must not be added into it.
+      SUM(CASE WHEN t.overdue_count > 0 THEN 1 ELSE 0 END) AS overdue_count,
+      SUM(CASE WHEN t.needs_correction_count > 0 THEN 1 ELSE 0 END) AS needs_correction
+    FROM (
+      SELECT
+        e.id,
+        e.joining_document_completion_pct AS pct,
+        ${overdueCountSQL} AS overdue_count,
+        ${needsCorrectionCountSQL} AS needs_correction_count
+      ${fromWhereGroupSQL}
+    ) t`,
+    params
+  );
+
+  const row = summaryRows[0];
+  // An empty filtered set aggregates to one row of NULLs, not to zero rows, so the
+  // `?? 0` here is reading an absent SUM rather than papering over a missing row.
+  return {
+    total_employees: Number(row?.total_employees ?? 0),
+    completed_count: Number(row?.completed_count ?? 0),
+    in_progress_count: Number(row?.in_progress_count ?? 0),
+    pending_count: Number(row?.pending_count ?? 0),
+    overdue_count: Number(row?.overdue_count ?? 0),
+    needs_correction: Number(row?.needs_correction ?? 0),
+  };
 }
 
 // ─── Bulk Action Types ────────────────────────────────────────────────────────
@@ -563,19 +914,41 @@ export async function bulkVerifyDocuments(
     try {
       await connection.beginTransaction();
 
-      const [updateResult] = (await connection.execute(
+      // Two statements, one per provenance. They need different end states and
+      // different audit rows, so they cannot be collapsed into one UPDATE.
+
+      // 1. Uploaded rows — a human clicked verify.
+      const [uploadedResult] = (await connection.execute(
         // `status` has to move as well. Setting only verification_status left
         // the row at 'uploaded_pending_review', which recalculateDocumentProgress
         // — the canonical writer — still counts as incomplete.
         `UPDATE employee_joining_document_checklist
          SET status = 'verified', verification_status = 'verified',
-             verified_at = NOW(), verified_by = ?, updated_at = NOW()
+             verified_at = NOW(), verified_by = ?, due_at = NULL, updated_at = NOW()
          WHERE employee_id = ? AND status = 'uploaded_pending_review'`,
         [actorUserId, employeeId]
       )) as [ResultSetHeader, unknown];
 
-      if (updateResult.affectedRows > 0) {
-        result.verified += updateResult.affectedRows;
+      // 2. eSigned rows — nobody reviewed these, the provider verified the
+      //    signature. `status` deliberately stays at 'esign_completed': it is
+      //    the accurate account of how the document arrived, and unlike
+      //    'uploaded_pending_review' recalculateDocumentProgress already counts
+      //    it as complete, so there is nothing to move it for. `verified_by`
+      //    stays NULL for the same reason — there is no human verifier.
+      //    `verification_status IS NULL` makes a re-run a zero-row no-op.
+      const [esignedResult] = (await connection.execute(
+        `UPDATE employee_joining_document_checklist
+         SET verification_status = 'verified', verified_at = NOW(),
+             verification_remarks = 'Verified by Aadhaar eSign (Luckpay)',
+             due_at = NULL, updated_at = NOW()
+         WHERE employee_id = ? AND status = 'esign_completed'
+           AND signature_mode = 'aadhaar_esign_verified'
+           AND verification_status IS NULL`,
+        [employeeId]
+      )) as [ResultSetHeader, unknown];
+
+      if (uploadedResult.affectedRows > 0) {
+        result.verified += uploadedResult.affectedRows;
 
         await connection.execute(
           `INSERT INTO employee_joining_document_audit_log
@@ -583,7 +956,30 @@ export async function bulkVerifyDocuments(
            VALUES (?, 'BULK_VERIFY', ?, 'Verified all pending documents', NOW())`,
           [employeeId, actorUserId]
         );
+      }
 
+      if (esignedResult.affectedRows > 0) {
+        result.verified += esignedResult.affectedRows;
+
+        // Distinct action_type so eSign-origin verification is distinguishable
+        // from verification of an uploaded document by value, not by timestamp.
+        await connection.execute(
+          `INSERT INTO employee_joining_document_audit_log
+           (employee_id, action_type, actor_user_id, new_value, remarks, created_at)
+           VALUES (?, 'BULK_VERIFY_ESIGNED', ?, ?, 'Verified eSigned documents', NOW())`,
+          [
+            employeeId,
+            actorUserId,
+            JSON.stringify({
+              verificationSource: 'aadhaar_esign',
+              signatureMode: 'aadhaar_esign_verified',
+              rowsVerified: esignedResult.affectedRows,
+            }),
+          ]
+        );
+      }
+
+      if (uploadedResult.affectedRows > 0 || esignedResult.affectedRows > 0) {
         recalcNeeded.push(employeeId);
       }
 

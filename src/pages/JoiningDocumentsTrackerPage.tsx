@@ -1,7 +1,7 @@
-import { useState, useMemo } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { FileCheck, Users, CheckCircle2, Clock, AlertTriangle, RefreshCw, Search, ListChecks, Bell, FilePlus, UserPlus, Calendar, Download, Loader2 } from "lucide-react";
+import { FileCheck, Users, CheckCircle2, Clock, CircleDashed, AlertTriangle, RefreshCw, Search, ListChecks, Bell, FilePlus, UserPlus, Calendar, Download, Loader2 } from "lucide-react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { HrmsBentoTile } from "@/components/ui/hrms-modern";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
@@ -20,6 +20,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
 import { formatISTDate } from "@/lib/utils";
+import { classifyEmployeeBucket, type SummaryBucket } from "@/lib/trackerSummaryBucket";
 
 interface EmployeeRow {
   employee_id: string;
@@ -28,15 +29,42 @@ interface EmployeeRow {
   branch_name: string | null;
   process_name: string | null;
   date_of_joining: string;
-  joining_document_status: "pending" | "in_progress" | "completed";
+  // `joining_document_status` is deliberately absent. The service still sends the
+  // column, but nothing here reads it: the row badge is derived from
+  // `joining_document_completion_pct` through the same classifier the tiles use,
+  // so the badge cannot disagree with the tile above it (Requirement 7,
+  // criterion 4). Declaring a field the page does not read is what let the two
+  // drift apart in the first place.
   joining_document_completion_pct: number;
   total_documents: number;
   verified_count: number;
   needs_correction_count: number;
   overdue_count: number;
+  // Null, not 0, when the employee has no checklist rows in the eSign
+  // denominator — "nothing to sign" is not "everything signed" (Requirement 8).
+  // Nullability here mirrors `EmployeeDocumentRow` in the service.
   esign_completed_count: number | null;
   esign_pending_count: number | null;
   updated_at: string;
+}
+
+/**
+ * Mirrors `TrackerSummary` in
+ * `backend/src/modules/ats/ats.joiningDocumentsTracker.service.ts`, restricted to
+ * the fields this page renders.
+ *
+ * `completed_count`, `in_progress_count` and `pending_count` are a partition of
+ * the employee set and sum to `total_employees`; `overdue_count` is a
+ * cross-cutting count that sits outside that sum. `pending_verification` is gone
+ * — it was a fourth bucket for the 75-99% band that no tile rendered, and it is
+ * now folded into `in_progress` by the classifier.
+ */
+interface TrackerSummary {
+  total_employees: number;
+  completed_count: number;
+  in_progress_count: number;
+  pending_count: number;
+  overdue_count: number;
 }
 
 interface TrackerResponse {
@@ -44,23 +72,26 @@ interface TrackerResponse {
   data: {
     rows: EmployeeRow[];
     total: number;
-    summary: {
-      total_employees: number;
-      completed_count: number;
-      in_progress_count: number;
-      pending_count: number;
-      overdue_count: number;
-    };
+    summary: TrackerSummary;
   };
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const variants: Record<string, { label: string; cls: string }> = {
+/**
+ * The row badge. Three variants, one per summary bucket, so every bucket the
+ * tiles count has a badge and vice versa.
+ *
+ * It reads the completion percentage and classifies it here rather than reading
+ * the `joining_document_status` column, which is written by
+ * `recalculateDocumentProgress` on its own schedule and can therefore contradict
+ * the tiles.
+ */
+function StatusBadge({ pct }: { pct: number }) {
+  const variants: Record<SummaryBucket, { label: string; cls: string }> = {
     completed: { label: "Completed", cls: "bg-emerald-100 text-emerald-800 border-emerald-300" },
     in_progress: { label: "In Progress", cls: "bg-amber-100 text-amber-800 border-amber-300" },
     pending: { label: "Pending", cls: "bg-slate-100 text-slate-700 border-slate-300" },
   };
-  const v = variants[status] ?? variants.pending;
+  const v = variants[classifyEmployeeBucket(pct)];
   return <Badge variant="outline" className={v.cls}>{v.label}</Badge>;
 }
 
@@ -85,7 +116,12 @@ export default function JoiningDocumentsTrackerPage() {
   const [assignedHrUserId, setAssignedHrUserId] = useState("");
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<TrackerResponse>({
-    queryKey: ["joining-documents-tracker", search, statusFilter, overdueOnly, page],
+    // An object, not positional members. A filter added later becomes a new named
+    // key on this object, so it cannot silently occupy a position that already
+    // meant something else — the failure mode of a positional key, where two
+    // different filter states hash to the same entry and the cache serves the
+    // wrong page.
+    queryKey: ["joining-documents-tracker", { search, statusFilter, overdueOnly, page, limit }],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (search) params.set("search", search);
@@ -95,9 +131,21 @@ export default function JoiningDocumentsTrackerPage() {
       params.set("limit", String(limit));
       return await hrmsApi.get(`/api/ats/joining-documents-tracker?${params.toString()}`);
     },
+    // A worker completion is written without the page knowing, so the page has to
+    // ask. Sixty seconds against the worker's five-minute tick means a completion
+    // surfaces within a minute of being written (Requirement 10, criterion 2).
+    refetchInterval: 60_000,
+    // A background tab stops polling. Each refetch is two aggregate queries over
+    // the whole filtered set; a forgotten tab must not keep paying for them.
+    refetchIntervalInBackground: false,
+    // Keep the previous rows on screen through a page change or an interval
+    // refetch instead of dropping to the skeleton (Requirement 10, criterion 4).
+    // v5 form: the boolean `keepPreviousData` option was removed in favour of
+    // this sentinel.
+    placeholderData: keepPreviousData,
   });
 
-  const summary = data?.data?.summary ?? {
+  const summary: TrackerSummary = data?.data?.summary ?? {
     total_employees: 0,
     completed_count: 0,
     in_progress_count: 0,
@@ -113,9 +161,6 @@ export default function JoiningDocumentsTrackerPage() {
   const hasNext = end < total;
   const hasPrev = page > 1;
 
-  // Reset selection when data changes
-  const rowIds = useMemo(() => new Set(rows.map(r => r.employee_id)), [rows]);
-
   // Bulk action mutations
   const bulkRemindMutation = useMutation({
     mutationFn: (data: { employee_ids: string[]; custom_message?: string }) =>
@@ -125,7 +170,11 @@ export default function JoiningDocumentsTrackerPage() {
       setSelectedIds(new Set());
       setRemindModalOpen(false);
       setCustomMessage("");
-      refetch();
+      // Prefix invalidation, not the local `refetch()`: it refreshes every cached
+      // page of the tracker rather than only the visible one, so the tiles (which
+      // describe the whole filtered set) and the list both re-read
+      // (Requirement 10, criterion 1).
+      queryClient.invalidateQueries({ queryKey: ["joining-documents-tracker"] });
     },
     onError: (err: any) => toast({ title: "Failed to send reminders", description: err?.message, variant: "destructive" }),
   });
@@ -136,7 +185,7 @@ export default function JoiningDocumentsTrackerPage() {
     onSuccess: (res: any) => {
       toast({ title: `Checklists generated for ${res.data?.generated_count ?? selectedIds.size} employees` });
       setSelectedIds(new Set());
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ["joining-documents-tracker"] });
     },
     onError: (err: any) => toast({ title: "Failed to generate checklists", description: err?.message, variant: "destructive" }),
   });
@@ -149,7 +198,7 @@ export default function JoiningDocumentsTrackerPage() {
       setSelectedIds(new Set());
       setAssignHrModalOpen(false);
       setAssignedHrUserId("");
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ["joining-documents-tracker"] });
     },
     onError: (err: any) => toast({ title: "Failed to assign HR", description: err?.message, variant: "destructive" }),
   });
@@ -169,7 +218,7 @@ export default function JoiningDocumentsTrackerPage() {
       setSelectedIds(new Set());
       setDueDateModalOpen(false);
       setDueDate("");
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ["joining-documents-tracker"] });
     },
     onError: (err: any) => toast({ title: "Failed to set due date", description: err?.message, variant: "destructive" }),
   });
@@ -181,7 +230,7 @@ export default function JoiningDocumentsTrackerPage() {
       toast({ title: `Documents verified for ${res.data?.verified_count ?? selectedIds.size} employees` });
       setSelectedIds(new Set());
       setConfirmVerifyOpen(false);
-      refetch();
+      queryClient.invalidateQueries({ queryKey: ["joining-documents-tracker"] });
     },
     onError: (err: any) => toast({ title: "Failed to verify documents", description: err?.message, variant: "destructive" }),
   });
@@ -255,7 +304,14 @@ export default function JoiningDocumentsTrackerPage() {
         </div>
         <OnboardingTabBar />
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/*
+          Five tiles, not four. Completed + In Progress + Pending is a partition of
+          the employee set and sums to Total Employees; Overdue is cross-cutting and
+          sits outside that sum. Pending earns a tile because Completed + In Progress
+          cannot reach the total while any employee sits at 0% (Requirement 7,
+          criterion 3).
+        */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
           <HrmsBentoTile
             icon={<Users className="h-5 w-5" />}
             title="Total Employees"
@@ -273,6 +329,12 @@ export default function JoiningDocumentsTrackerPage() {
             title="In Progress"
             value={summary.in_progress_count}
             className="bg-amber-50 text-amber-700"
+          />
+          <HrmsBentoTile
+            icon={<CircleDashed className="h-5 w-5" />}
+            title="Pending"
+            value={summary.pending_count}
+            className="bg-slate-50 text-slate-600"
           />
           <HrmsBentoTile
             icon={<AlertTriangle className="h-5 w-5" />}
@@ -416,7 +478,7 @@ export default function JoiningDocumentsTrackerPage() {
                         <td className="px-4 py-3 text-sm text-slate-600">{row.branch_name || "-"}</td>
                         <td className="px-4 py-3 text-sm text-slate-600">{row.process_name || "-"}</td>
                         <td className="px-4 py-3">
-                          <StatusBadge status={row.joining_document_status} />
+                          <StatusBadge pct={row.joining_document_completion_pct} />
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
