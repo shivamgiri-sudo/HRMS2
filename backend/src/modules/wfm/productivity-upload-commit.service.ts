@@ -110,14 +110,24 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
   // against the live schema), so a second identical request cannot rely on ON DUPLICATE KEY —
   // instead, a batch already committed for the exact same (source, branch, process, date range,
   // file content) short-circuits here and returns the original result unchanged.
+  //
+  // The extra `accepted_row_count + rejected_row_count = ?` predicate is load-bearing, not
+  // decorative: it only matches a PRIOR batch that fully succeeded (every submitted row is
+  // accounted for as either accepted or rejected). A batch that lost rows to a chunk failure
+  // (writeErrors non-empty on that attempt) will never satisfy it, so a retry after a genuine
+  // failure is NOT short-circuited — it proceeds to the write path again and gets a real chance
+  // to land the rows that were lost, rather than being permanently stuck reporting a fake
+  // success forever (the exact defect this comment replaces; caught in a second review round).
+  const submittedThisRequest = params.acceptedRows.length + params.rejectedRows.length;
   const [existingBatch] = await db.execute<ExistingBatchRow[]>(
     `SELECT id, batch_reference, accepted_row_count, rejected_row_count
        FROM productivity_upload_batch
       WHERE dialler_source_id = ? AND branch_id = ? AND process_id = ?
         AND date_from = ? AND date_to = ? AND content_digest = ?
         AND status <> 'superseded'
+        AND accepted_row_count + rejected_row_count = ?
       LIMIT 1`,
-    [params.diallerSourceId, params.branchId, params.processId, params.dateFrom, params.dateTo, params.contentDigest],
+    [params.diallerSourceId, params.branchId, params.processId, params.dateFrom, params.dateTo, params.contentDigest, submittedThisRequest],
   );
   if (existingBatch.length > 0) {
     const row = existingBatch[0];
@@ -167,6 +177,24 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
   // track ground truth, and the batch row is written LAST, with real counts and a status that
   // reflects what happened — never the optimistic "everything requested succeeded" the first
   // draft of this function assumed.
+  //
+  // Two accepted, no-transaction trade-offs worth naming rather than hiding:
+  //  - If a supersedesBatchId was given, the prior batch is already marked 'superseded' by this
+  //    point (above), before this batch's own row exists. If the final productivity_upload_batch
+  //    INSERT below throws, the prior batch is left superseded with a superseded_by_batch_id
+  //    pointing at a row that was never created — no FK catches this (1638 deliberately carries
+  //    none). A caller seeing that error should treat the whole commit as failed and investigate,
+  //    not assume the supersession itself is safe to ignore.
+  //  - Rows land in apr_manual_upload carrying upload_batch_id = batchId before the batch row
+  //    itself exists; the same final-INSERT failure would leave them referencing a batch id that
+  //    was never created. Inherent to "write the batch row last so its counts are honest" — the
+  //    alternative (write it first, optimistically) is the bug this very function was fixed to
+  //    stop doing.
+  //  - criterion 17.11's "accepted + rejected = submitted" therefore holds for
+  //    accepted_row_count + rejected_row_count against what ACTUALLY landed, but
+  //    submitted_row_count still records what was requested — the two only disagree when
+  //    writeErrors is non-empty, which is the signal a caller should watch instead of the raw
+  //    counts alone.
   const writeErrors: string[] = [];
   let actualAccepted = 0;
   let actualRejected = 0;
@@ -228,7 +256,11 @@ export async function commitUploadBatch(params: CommitBatchParams): Promise<Comm
     }
   }
 
-  const status = writeErrors.length > 0 || actualAccepted > 0 ? 'accepted' : 'rejected';
+  // NOT `writeErrors.length > 0 || actualAccepted > 0` — that disjunct is backwards and was a
+  // real bug caught in a second review round: it marks a batch 'accepted' whenever ANY write
+  // error occurred, even a total failure (actualAccepted: 0, every row lost). Status must
+  // reflect what actually landed, nothing else.
+  const status = actualAccepted > 0 ? 'accepted' : 'rejected';
 
   await db.execute(
     `INSERT INTO productivity_upload_batch

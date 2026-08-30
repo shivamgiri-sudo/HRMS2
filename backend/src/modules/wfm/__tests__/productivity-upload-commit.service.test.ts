@@ -184,5 +184,42 @@ describe('commitUploadBatch', () => {
     expect(result.acceptedCount).toBe(0); // the chunk that failed does not count as accepted
     expect(result.writeErrors).toHaveLength(1);
     expect(result.writeErrors[0]).toContain('ER_LOCK_WAIT_TIMEOUT');
+
+    // The persisted status must reflect that NOTHING landed — not 'accepted' just because a
+    // writeError happened to exist. This is the exact bug a second review round caught: an
+    // earlier fix computed `writeErrors.length > 0 || actualAccepted > 0`, which is backwards.
+    const batchInsertCall = executeMock.mock.calls.find((c) =>
+      String(c[0]).includes('INSERT INTO productivity_upload_batch'),
+    );
+    expect(batchInsertCall).toBeDefined();
+    expect(batchInsertCall![1]).toContain('rejected'); // the status value bound into that INSERT
+    expect(batchInsertCall![1]).not.toContain('accepted');
+  });
+
+  it('the retry-idempotency lookup only matches a prior batch that fully landed — the SQL excludes a batch that lost rows to a write failure', async () => {
+    // A mock cannot itself validate SQL semantics (a prior review round's finding was missed
+    // exactly this way), so this asserts on the actual SQL text of the retry-check SELECT
+    // rather than only on mocked behavior: the accepted_row_count + rejected_row_count = ?
+    // predicate is what excludes a partially/fully-failed prior batch from short-circuiting a
+    // legitimate retry.
+    executeMock
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ id: 'camp-1', campaign_code: 'DEFAULT_ds-1' }]])
+      .mockResolvedValueOnce([{}])
+      .mockResolvedValueOnce([{}]);
+
+    await commitUploadBatch({
+      ...baseParams,
+      acceptedRows: [
+        { rowNumber: 2, employeeId: 'emp-1', employeeCode: 'MAS1', reportDate: '2026-07-15', loginMinutes: 420 },
+      ],
+      rejectedRows: [],
+    });
+
+    const retryCheckCall = executeMock.mock.calls[0];
+    expect(String(retryCheckCall[0])).toContain("status <> 'superseded'");
+    expect(String(retryCheckCall[0])).toContain('accepted_row_count + rejected_row_count = ?');
+    // The bound total-submitted-count parameter is the last one in this call's params.
+    expect(retryCheckCall[1]![retryCheckCall[1]!.length - 1]).toBe(1); // 1 accepted + 0 rejected
   });
 });
