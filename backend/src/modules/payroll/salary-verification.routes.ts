@@ -345,6 +345,7 @@ salaryVerificationRouter.get(
       let attendance: Record<string, number> = {};
       let earnings: Array<{ code: string; name: string; amount: number; source: string; type: string }> = [];
       let deductions: Array<{ code: string; name: string; amount: number }> = [];
+      let employerCosts: Array<{ code: string; name: string; amount: number }> = [];
       let gross = 0;
       let totalDeductions = 0;
       let net = 0;
@@ -389,6 +390,16 @@ salaryVerificationRouter.get(
 
           deductions = comps
             .filter((c) => c.type === "deduction")
+            .map((c) => ({ code: c.code, name: c.name, amount: Number(c.amount) }));
+
+          // component_type is enum('earning','deduction','employer_cost'). The
+          // third member was read from the DB and then silently dropped here —
+          // employer PF, employer ESI and admin charges never reached this
+          // endpoint's response, so the salary-verification drawer had no way
+          // to show them even though PayslipViewDialog/NativePayslipCenter
+          // already do for the same underlying rows.
+          employerCosts = comps
+            .filter((c) => c.type === "employer_cost")
             .map((c) => ({ code: c.code, name: c.name, amount: Number(c.amount) }));
 
           const statDeductions = [
@@ -455,6 +466,7 @@ salaryVerificationRouter.get(
         earnings,
         gross_salary: gross,
         deductions,
+        employer_costs: employerCosts,
         total_deductions: totalDeductions,
         net_salary: net,
         is_estimate: isEstimate,

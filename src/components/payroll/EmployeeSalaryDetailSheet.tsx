@@ -56,6 +56,11 @@ interface SalaryDetailResponse {
   };
   earnings: SalaryComponent[];
   deductions: SalaryComponent[];
+  /** Employer PF, employer ESI, admin charges — paid by the company, not
+   *  deducted. The backend previously fetched these (component_type=
+   *  'employer_cost') and dropped them before responding; both sides fixed
+   *  together. */
+  employer_costs?: SalaryComponent[];
   gross_salary: number;
   total_deductions: number;
   net_salary: number;
@@ -305,6 +310,38 @@ export function EmployeeSalaryDetailSheet({
                             </td>
                           </tr>
                         </tfoot>
+                      </table>
+                    </div>
+                  </section>
+                )}
+
+                {/* Employer Contributions — paid by the company, not deducted from the
+                    employee. Shown separately from Deductions so this drill-down never
+                    reads as if the employee's own pay carried them. */}
+                {(data.employer_costs ?? []).length > 0 && (
+                  <section>
+                    <h3 className="text-sm font-semibold text-violet-700 mb-2">
+                      Employer Contributions
+                      <span className="ml-2 text-xs font-normal text-slate-400">not deducted from pay</span>
+                    </h3>
+                    <div className="rounded-lg border border-violet-200 overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="bg-violet-50 border-b border-violet-200">
+                            <th className="text-left px-3 py-1.5 font-medium text-slate-600">Component</th>
+                            <th className="text-right px-3 py-1.5 font-medium text-slate-600">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(data.employer_costs ?? []).map((row) => (
+                            <tr key={row.code} className="border-b border-violet-100 last:border-0 hover:bg-violet-50/60">
+                              <td className="px-3 py-1.5 text-slate-700">{row.name}</td>
+                              <td className="px-3 py-1.5 text-right font-mono text-violet-700">
+                                ₹{fmt(row.amount)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
                       </table>
                     </div>
                   </section>
