@@ -10,7 +10,7 @@ const CHECK_INTERVAL_MS = 30 * 60 * 1000;
 
 function istHour(): number {
   return Number(
-    new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: "Asia/Kolkata" }).format(new Date()),
+    new Intl.DateTimeFormat("en-US", { hour: "numeric", hourCycle: "h23", timeZone: "Asia/Kolkata" }).format(new Date()),
   );
 }
 
