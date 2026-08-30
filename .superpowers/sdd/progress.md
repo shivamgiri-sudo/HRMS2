@@ -441,3 +441,55 @@ Task 7: complete (commit 5e737b18, base f2c4b120 — brief's anchor assumption (
     applied to the worktree copy in 03ff3ae8 (cosmetic doc-sync, not code).
 
 ## PHASE 1 COMPLETE — NOT MERGED to main, pending user decision on migration-registration question above
+
+---
+
+# Attendance Source Rules — Dialler Registry & Canonical Aggregation (Phase 2 of 11) — SDD Progress Ledger
+# Started: 2026-08-30
+# Plan: docs/superpowers/plans/2026-08-30-attendance-source-rules-registry-aggregation.md
+# Branch start commit: b5192593f49521685566f5a9e901433e3a6bccab
+# Worktree: .claude/worktrees/attendance-source-rule-registry-aggregation (branch worktree-attendance-source-rule-registry-aggregation)
+# Artifact prefix: asrf2- (this dir is shared by many unrelated features; generic task-N-* names collide)
+
+## Tasks
+Task 1: complete (commit d5526f48, base 1514dff7 -- implementer caught and fixed a genuine self-contradiction in the brief: two comment lines literally contained the phrase "FOREIGN KEY" (negated: "no FOREIGN KEY") which the brief's own /FOREIGN KEY/i regex test would have matched and failed against; reworded to "no reference constraints" preserving meaning, zero SQL semantic change. Review clean, 1 Minor accepted (active_status vs is_active naming/type inconsistency between the two sibling tables, as specified in the plan itself, not an implementer deviation).)
+Task 2: complete (commits d5526f48..cda96851, base d5526f48 -- implementer correctly reported DONE_WITH_CONCERNS on genuine plan bug (3rd occurrence of the class): negative-regex contract-test assertions ran against whole-file text including the migration's own ROLLBACK/explanatory comments, which legitimately contain "DROP TABLE/COLUMN" and "ADD COLUMN IF NOT EXISTS" text. Controller fixed via stripSqlComments() helper, 6/6 pass. Reviewer independently confirmed the underlying migration SQL was never wrong (grep on non-comment lines: zero real DROP/FK/bad-syntax), and checked the strip helper's trailing-comment gap is real in the abstract but does not manifest anywhere in this codebase's migration convention. Review clean.)
+Task 3: complete (commits cda96851..bad55cce, base cda96851 -- 1 fix round (Important): excludedCount had zero assertions anywhere (a wrong-value mutant survived entirely); the property generator structurally could not produce zero-length/inverted intervals so half of isUsable()'s predicate was untested by any property test; inverted-interval (unapportioned midnight-crossing session) shape had zero coverage anywhere. Fixed: widened generator to genuinely produce all 3 interval shapes, added excludedCount assertions throughout, added a real purity test (snapshot-before-call, would catch an in-place sort), added a floor against negative/non-finite magnitude data (defensive hardening beyond what review strictly required). Algorithm logic itself unchanged/byte-identical to the version already proven correct via 20k-case differential fuzz against a brute-force oracle -- this was a hardening + coverage fix only. Final: 17/17 tests, all M9/M10 mutants now killed deterministically, review clean, 2 Minor accepted (dead usableIntervalArb generator; junk-magnitude now surfaces as measured 0, flagged for Phase 3 ingestion to catch upstream instead of relying on this floor).)
+Task 4: complete (commit 82546a76, base bad55cce -- review clean, no findings. Controller closed the reviewer's one open item (cross-worktree access blocked it from reading Task 1's migration DDL directly) by grepping both: all SQL column names (id, source_key, ingestion_mode, metric_availability, active_status, effective_from/to, dialler_source_id, is_sentinel) match the actual committed migrations exactly.)
+Task 5: complete (commit d11c86b9, base 82546a76 -- review clean, no findings. Reviewer independently confirmed pre-existing manifest-guard failure (62 vs 61 duplicate count) predates this commit byte-for-byte (checked HEAD~1); 1636/1637 are unique numbers, not implicated. Reviewer also confirmed the lock-file regeneration is byte-identical/reproducible by re-running the script independently.)
+
+## ALL 5 TASKS COMPLETE -- final whole-branch review next
+
+## Final whole-branch review (opus) -- ready to merge, 5 findings fixed (1 Important merge-hygiene + 4 Minor), 1 CRITICAL merge-time hazard flagged
+  VERDICT: ready to merge, no code defect in the branch itself.
+  F1 (Important, merge hygiene): worktree had uncommitted fast-check devDependency changes (this
+    branch was cut from stale origin/main, predating Phase 1's fast-check addition on local main) --
+    discarded, not committed, since main already has it byte-identical.
+  F2 (Minor): Task 1's FK-regex test was "fixed" during Task 1's own review by rewording the
+    migration's comment to dodge a naive whole-file regex, losing the specific documented fact and
+    introducing misleading "database bottleneck" prose. Restored the accurate comment, fixed the
+    test properly via comment-stripping + tightened regex (matching 1637's already-proven pattern)
+    instead. Also fixed a real naming inconsistency while here: dialler_source_column_mapping.is_active
+    -> active_status, matching every other table in the whole feature.
+  F3 (Minor): documented why resolveCampaignOwner() deliberately omits the active_status filter
+    its sibling function uses (the future MANUAL_UPLOAD sentinel row must stay resolvable when
+    inactive) -- was previously an undocumented asymmetry a future maintainer could "fix" into a bug.
+  F4 (Minor): documented the deliberate dialler_source_id (2 l's) vs dialer_session_log (1 l)
+    spelling difference so it does not read as a typo.
+  F5 (Minor, forward-looking): flagged campaign_master's unverified collation (absent from 1627's
+    49-table repair sweep) as a Phase 3 pre-flight check before its obvious join to dialler_source.
+  Cross-task consistency, SQL-vs-schema agreement, scope discipline: all CLEAN.
+  TEST RUN: 4 files / 35 tests, all green after fixes (unchanged count).
+  
+  #### CRITICAL MERGE-TIME HAZARD (not a branch defect -- a controller action item)
+  This worktree branched from STALE origin/main (Phase 1's merge to local main was never pushed
+  before this Phase 2 worktree was created), so this branch's own history does NOT include Phase 1.
+  Both phases independently modified runPendingMigrations.ts and MIGRATION_MANIFEST.lock.json from
+  the same common ancestor at DIFFERENT insertion points (Phase 1 after migrations/440_..., Phase 2
+  before it) -- near-certain merge conflict, or worse a silent interleave that drops one phase's
+  entries. MANDATORY merge procedure: (1) resolve keeping ALL FIVE of 1633-1637, verify by count
+  AND by name; (2) regenerate the lock file fresh via update-migration-lock.mjs --write, never
+  hand-edit it; (3) re-run the combined 58-test gate + manifest-guard test post-merge.
+
+## MERGED INTO MAIN — see merge commit for resolution of the runPendingMigrations.ts /
+## MIGRATION_MANIFEST.lock.json hazard flagged above (kept all 5 migrations, lock regenerated fresh).

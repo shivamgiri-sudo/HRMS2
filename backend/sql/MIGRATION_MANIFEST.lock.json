@@ -649,6 +649,8 @@
     "1630_grn_funding_cost_centre.sql",
     "1631_topup_allocation_driver.sql",
     "1631_kpi_capture_submission.sql",
+    "1636_dialler_source_registry.sql",
+    "1637_canonical_productivity_store.sql",
     "migrations/440_salary_date_revision_requests.sql",
     "1633_attendance_source_rule_store.sql",
     "1634_day_threshold_rule_store.sql",
