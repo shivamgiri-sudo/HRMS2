@@ -22,6 +22,13 @@
 -- rejection reason (criterion 17.2: "a reason for each rejected row" is a row, not a truncated
 -- blob appended to the batch).
 --
+-- `source_row_number`, not `row_number`: ROW_NUMBER became a MySQL 8.0.2+ reserved word with the
+-- introduction of window functions. Proven live against this server (8.0.46) before this
+-- migration was corrected: CREATE TABLE with an unquoted `row_number` column fails to parse at
+-- all (ER_PARSE_ERROR), so this table could never have been created as originally written. Caught
+-- in Phase 4's review, before this migration was ever executed -- fixed here rather than living
+-- with backticks at every future read site.
+--
 -- ROLLBACK
 --   DROP TABLE productivity_upload_rejection;
 --   DROP TABLE productivity_upload_batch;
@@ -56,12 +63,12 @@ CREATE TABLE IF NOT EXISTS productivity_upload_batch (
   COMMENT='One row per submitted WFM manual productivity upload (requirements.md Requirement 17). Not written by anything until Phase 4s route.';
 
 CREATE TABLE IF NOT EXISTS productivity_upload_rejection (
-  id             CHAR(36)     NOT NULL,
-  batch_id       CHAR(36)     NOT NULL,
-  row_number     INT UNSIGNED NOT NULL,
-  employee_code  VARCHAR(50)  NULL,
-  reason         VARCHAR(500) NOT NULL,
-  created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  id                CHAR(36)     NOT NULL,
+  batch_id          CHAR(36)     NOT NULL,
+  source_row_number INT UNSIGNED NOT NULL,
+  employee_code     VARCHAR(50)  NULL,
+  reason            VARCHAR(500) NOT NULL,
+  created_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_pur_batch (batch_id)
 ) ENGINE=InnoDB

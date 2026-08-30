@@ -36,8 +36,18 @@ describe('productivity upload batch migration (1638)', () => {
 
   it('declares productivity_upload_rejection with one reason per row, keyed to the batch', () => {
     const sql = readMigration('1638_productivity_upload_batch.sql');
-    expect(sql).toContain('reason         VARCHAR(500) NOT NULL,');
+    expect(sql).toContain('reason            VARCHAR(500) NOT NULL,');
     expect(sql).toContain('KEY idx_pur_batch (batch_id)');
+  });
+
+  it('names the row-number column source_row_number, not row_number (MySQL 8 reserved word since window functions)', () => {
+    const sql = readMigration('1638_productivity_upload_batch.sql');
+    // Positive check only: the column declaration itself must use the safe name. A negative
+    // "SQL must not contain bare row_number" check would also have to exclude this migration's
+    // OWN explanatory comment about why row_number was avoided -- which mentions the word
+    // "row_number" in prose -- so it is deliberately not attempted here (the same class of
+    // comment-vs-check self-contradiction this feature has hit three times before).
+    expect(sql).toContain('source_row_number INT UNSIGNED NOT NULL,');
   });
 
   it('declares COLLATE=utf8mb4_unicode_ci and ENGINE=InnoDB on both tables', () => {
