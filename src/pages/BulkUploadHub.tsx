@@ -5,6 +5,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { StatusBadge as SmartHRStatusBadge, normalizeStatus } from "@/components/ui/status-badge";
 import { AprBulkUpload } from "@/components/attendance/AprBulkUpload";
+import {
+  ProductivityUpload,
+  canUseProductivityTab,
+} from "@/components/wfm/ProductivityUpload";
+import { useWorkforceAccess } from "@/hooks/useUserRole";
 
 type UploadTemplate = {
   id: string;
@@ -563,13 +568,26 @@ function csvHealthHasBlockingError(health: CsvHealth | null) {
   );
 }
 
-type HubTab = "master" | "apr";
+type HubTab = "master" | "apr" | "productivity";
 
 export default function BulkUploadHub() {
   const { user } = useAuth();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [activeTab, setActiveTab] = useState<HubTab>("master");
+
+  // WFM_PRODUCTIVITY_UPLOAD is a section-level grant inside this page, not a page of its own
+  // (backend/sql/1639_wfm_productivity_upload_page_access.sql). A viewer who holds /bulk-upload
+  // does not necessarily hold it, so the third tab is decided separately from the route's own
+  // roles — which are left untouched.
+  const workforceAccess = useWorkforceAccess();
+  const canUploadProductivity = canUseProductivityTab(workforceAccess);
+
+  // Belt and braces against the tab ever being active for someone without the grant: the button
+  // that sets it is not rendered for them, but the grant can also disappear mid-session (the
+  // role query refetches), and a tab left active would then render a panel they may not see.
+  const effectiveTab: HubTab =
+    activeTab === "productivity" && !canUploadProductivity ? "master" : activeTab;
 
   const [templates, setTemplates] = useState<UploadTemplate[]>([]);
   const [batches, setBatches] = useState<UploadBatch[]>([]);
@@ -954,7 +972,7 @@ export default function BulkUploadHub() {
                 </p>
               </div>
 
-              {activeTab === "master" && (
+              {effectiveTab === "master" && (
                 <button
                   onClick={loadData}
                   className="h-10 rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
@@ -969,7 +987,7 @@ export default function BulkUploadHub() {
               <button
                 onClick={() => setActiveTab("master")}
                 className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                  activeTab === "master"
+                  effectiveTab === "master"
                     ? "bg-white text-slate-950 shadow-sm"
                     : "text-slate-500 hover:text-slate-700"
                 }`}
@@ -979,23 +997,43 @@ export default function BulkUploadHub() {
               <button
                 onClick={() => setActiveTab("apr")}
                 className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                  activeTab === "apr"
+                  effectiveTab === "apr"
                     ? "bg-white text-slate-950 shadow-sm"
                     : "text-slate-500 hover:text-slate-700"
                 }`}
               >
                 APR / Dialler Attendance
               </button>
+              {canUploadProductivity && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("productivity")}
+                  aria-pressed={effectiveTab === "productivity"}
+                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                    effectiveTab === "productivity"
+                      ? "bg-white text-slate-950 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  WFM Productivity Upload
+                </button>
+              )}
             </div>
           </section>
 
-          {activeTab === "apr" && (
+          {effectiveTab === "apr" && (
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <AprBulkUpload />
             </section>
           )}
 
-          {activeTab === "master" && (message || errorMessage) && (
+          {canUploadProductivity && effectiveTab === "productivity" && (
+            <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <ProductivityUpload />
+            </section>
+          )}
+
+          {effectiveTab === "master" && (message || errorMessage) && (
             <div
               className={`rounded-2xl border p-4 text-sm ${
                 errorMessage
@@ -1007,7 +1045,7 @@ export default function BulkUploadHub() {
             </div>
           )}
 
-          {activeTab === "master" && (
+          {effectiveTab === "master" && (
           <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
             <StatCard label="Templates" value={stats.templates} />
             <StatCard label="Upload Batches" value={stats.batches} />
@@ -1017,7 +1055,7 @@ export default function BulkUploadHub() {
           </section>
           )}
 
-          {activeTab === "master" && <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
+          {effectiveTab === "master" && <section className="grid gap-5 xl:grid-cols-[1.05fr_0.95fr]">
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <h2 className="text-base font-semibold text-slate-950">
                 New Upload
@@ -1241,7 +1279,7 @@ export default function BulkUploadHub() {
             </div>
           </section>}
 
-          {activeTab === "master" && <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+          {effectiveTab === "master" && <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <h2 className="text-base font-semibold text-slate-950">
@@ -1339,7 +1377,7 @@ export default function BulkUploadHub() {
           </section>}
         </div>
 
-        {activeTab === "master" && selectedBatch && (
+        {effectiveTab === "master" && selectedBatch && (
           <BatchRowsDialog
             batch={selectedBatch}
             rows={selectedBatchRows}
