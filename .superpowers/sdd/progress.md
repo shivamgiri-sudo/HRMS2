@@ -390,3 +390,55 @@ Task 2: complete (landed inside sweep commit 6566e77e — implementer killed by 
   but admin's WFM_LIVE_TRACKER grant is inactive and hr has none -> API access with no page = Constraint 3 gap.
   Pre-existing, not introduced. Narrowing would break ReferenceRoleDashboard.tsx:294 which calls /sync-status. Recommend leave.
   OPEN (Minor): GET /billing-config/:id still finance_head/super_admin/admin — wfm/hr can list but not drill down.
+
+---
+
+# Attendance Source Rules -- WFM Upload Route (Phase 4 of 11) -- SDD Progress Ledger
+# Started: 2026-08-31
+# Plan: docs/superpowers/plans/2026-08-31-attendance-source-rules-upload-route.md
+# Branch start commit: fe5966ea83e67aa1504e6fa1c7d471c3bf630783 (stale origin/main -- same known
+# branch-divergence pattern as Phases 2/3; handle merge the same way: keep ALL migrations, regen lock fresh)
+# Worktree: .claude/worktrees/attendance-source-rule-upload-route (branch worktree-attendance-source-rule-upload-route)
+# Artifact prefix: asrf4- (this dir is shared by many unrelated features; generic task-N-* names collide)
+# NOTE: this is the first phase with a live Express route + real writes to a currently-empty
+# production table (apr_manual_upload) + campaign_master. Reviewed at higher scrutiny than
+# Phases 1-3's pure-schema work. A real SQL column-count bug was already caught and fixed in
+# self-review before dispatch (see plan's commitUploadBatch() comment).
+
+## Tasks
+Task 1: complete (commit 1ad9a331, base 5d4d0492 -- review clean, no findings. All 6 role_key
+  values confirmed real pre-existing roles in workforce_role_catalog. Compared directly against
+  precedent 1632_salary_revision_page.sql -- structure matches, 3 Minor/informational notes (all
+  intentional deviations or expected pending-manifest-registration state, same as every prior
+  phase's Task 1). 3/3 pass.)
+Task 2: complete (commit 3e0942d0, base 1ad9a331 -- review clean, no findings. Reviewer traced
+  all 6 contract points against actual code, confirmed genuine short-circuit on mapping error,
+  no DB calls on parse/employee-resolution failures, sequential (not parallel) row processing,
+  all 6 optional numeric fields carried through correctly against the sibling parser's real
+  ParsedRow shape. 1 Minor accepted (undefined-valued optional keys instead of omitted, spec-legal
+  and wire-safe, cosmetic only). 6/6 pass.)
+Task 3: complete (commits d774f508..76f8564a, base 3e0942d0 -- 4 review rounds, final verdict
+  clean. Round 1: Critical row_number MySQL-8-reserved-word bug (also fixed in migration 1638 on
+  main directly, commit 6dfb1d86, since 1638 was unexecuted); 3 Important (no retry idempotency,
+  supersede no-op'd silently on bad target, optimistic write reporting). Round 2: found round 1's
+  own fix had 2 new Important bugs (status computation backwards; retry guard permanently blocked
+  recovery from a real failure). Round 3: found round 2's fix STILL double-writes
+  apr_manual_upload on a partial-failure retry and silently defeats a deliberate
+  supersedesBatchId re-upload -- explicit verdict "not complete". Round 4: abandoned the
+  auto-detecting short-circuit entirely and redesigned as reject-and-let-caller-decide (identical
+  scope+digest resubmission without supersedesBatchId throws DuplicateUploadBatchError naming the
+  prior batch; supersedesBatchId always bypasses the guard). That SAME round-4 review then found
+  2 more Important bugs IN the redesign: supersedesBatchId checked existence only, not scope
+  (wrong id could supersede an unrelated batch while this submission's own rows land as an
+  undetected duplicate); and the 409-mapping-by-message-substring was untested on both sides and
+  could silently drift back to a masked 500. Both fixed (scope verification before supersede;
+  typed DuplicateUploadBatchError matched by instanceof). Documented, not fixed (deliberate scope
+  decision, needs a schema change): the guard is advisory not exclusive -- two concurrent
+  identical submissions can both pass the SELECT before either's batch row lands; 1638 is still
+  unexecuted so closing this later via a reserve-then-fill 'pending' status is still cheap.
+  Also fixed 2 latent bugs the review found in the NOT-YET-IMPLEMENTED Task 4 route brief before
+  any implementer touched it: success was unconditionally true regardless of writeErrors, and
+  there was no 409 mapping at all. 12/12 tests pass in productivity-upload-commit.service.test.ts,
+  653/653 across the wfm module suite, tsc --noEmit clean. Verdict: approved, with one documented
+  known limitation (concurrent-double-submit race) deferred as an explicit future task, not
+  silently left implicit.)
