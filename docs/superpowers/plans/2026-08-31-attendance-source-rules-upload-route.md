@@ -955,7 +955,7 @@ describe('POST /api/wfm/productivity-upload/commit', () => {
       rejected: [],
     });
     commitUploadBatchMock.mockResolvedValueOnce({
-      batchId: 'batch-1', batchReference: 'batch-1', acceptedCount: 1, rejectedCount: 0,
+      batchId: 'batch-1', batchReference: 'batch-1', acceptedCount: 1, rejectedCount: 0, writeErrors: [],
     });
 
     const res = await request(buildApp())
@@ -969,8 +969,70 @@ describe('POST /api/wfm/productivity-upload/commit', () => {
       .attach('file', Buffer.from(CSV_CONTENT), 'july.csv');
 
     expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
     expect(res.body.batchId).toBe('batch-1');
     expect(commitUploadBatchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 207 with success:false when some rows failed to write, rather than a bare 200', async () => {
+    resolveUserBusinessScopeMock.mockResolvedValueOnce({
+      isSuperAdmin: true, isAdmin: false, isHr: false, isPayroll: false, isFinance: false,
+      assignments: [],
+    });
+    buildUploadPreviewMock.mockResolvedValueOnce({
+      accepted: [{ rowNumber: 2, employeeId: 'emp-1', employeeCode: 'MAS1', reportDate: '2026-07-15', loginMinutes: 420 }],
+      rejected: [],
+    });
+    commitUploadBatchMock.mockResolvedValueOnce({
+      batchId: 'batch-1', batchReference: 'batch-1', acceptedCount: 0, rejectedCount: 0,
+      writeErrors: ['1 accepted row(s) (rows 2-2) failed to save: ER_LOCK_WAIT_TIMEOUT'],
+    });
+
+    const res = await request(buildApp())
+      .post('/api/wfm/productivity-upload/commit')
+      .field('diallerSourceId', 'ds-1')
+      .field('branchId', 'branch-1')
+      .field('processId', 'process-1')
+      .field('dateFrom', '2026-07-01')
+      .field('dateTo', '2026-07-31')
+      .field('columnMappings', JSON.stringify({ 'Emp Code': 'employee_code', 'Report Date': 'report_date', 'Login Minutes': 'login_minutes' }))
+      .attach('file', Buffer.from(CSV_CONTENT), 'july.csv');
+
+    expect(res.status).toBe(207);
+    expect(res.body.success).toBe(false);
+    expect(res.body.writeErrors).toHaveLength(1);
+  });
+
+  it('maps the duplicate-submission guard error to 409 with the actionable message, not a masked 500', async () => {
+    resolveUserBusinessScopeMock.mockResolvedValueOnce({
+      isSuperAdmin: true, isAdmin: false, isHr: false, isPayroll: false, isFinance: false,
+      assignments: [],
+    });
+    buildUploadPreviewMock.mockResolvedValueOnce({
+      accepted: [{ rowNumber: 2, employeeId: 'emp-1', employeeCode: 'MAS1', reportDate: '2026-07-15', loginMinutes: 420 }],
+      rejected: [],
+    });
+    commitUploadBatchMock.mockRejectedValueOnce(
+      new Error(
+        'A batch (batch-existing) already exists for this exact file and scope (dialler_source ds-1, ' +
+        'branch branch-1, process process-1, 2026-07-01 to 2026-07-31). If this is a deliberate ' +
+        're-upload, resubmit with supersedesBatchId set to batch-existing.',
+      ),
+    );
+
+    const res = await request(buildApp())
+      .post('/api/wfm/productivity-upload/commit')
+      .field('diallerSourceId', 'ds-1')
+      .field('branchId', 'branch-1')
+      .field('processId', 'process-1')
+      .field('dateFrom', '2026-07-01')
+      .field('dateTo', '2026-07-31')
+      .field('columnMappings', JSON.stringify({ 'Emp Code': 'employee_code', 'Report Date': 'report_date', 'Login Minutes': 'login_minutes' }))
+      .attach('file', Buffer.from(CSV_CONTENT), 'july.csv');
+
+    expect(res.status).toBe(409);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toContain('supersedesBatchId set to batch-existing');
   });
 
   it('rejects a non-CSV file with a real status, not a masked 500', async () => {
@@ -1163,22 +1225,45 @@ router.post(
     const mappingVersionUsed = Number(req.body.mappingVersionUsed) || 1;
     const supersedesBatchId: string | undefined = req.body.supersedesBatchId || undefined;
 
-    const result = await commitUploadBatch({
-      diallerSourceId: fields.diallerSourceId,
-      branchId: fields.branchId,
-      processId: fields.processId,
-      dateFrom: fields.dateFrom,
-      dateTo: fields.dateTo,
-      fileName: req.file.originalname,
-      contentDigest,
-      uploadedBy: req.authUser.id,
-      mappingVersionUsed,
-      supersedesBatchId,
-      acceptedRows: preview.accepted,
-      rejectedRows: preview.rejected,
-    });
+    // commitUploadBatch() throws a plain Error, not a statused one, when its duplicate-submission
+    // guard fires (an identical file+scope was already committed and this request did not declare
+    // itself a re-upload via supersedesBatchId). That is an expected, actionable outcome — not a
+    // server fault — so it is caught here and turned into 409 with the guard's own message (which
+    // already names the prior batch id the caller needs to pass back as supersedesBatchId to force
+    // it through). Any other error from commitUploadBatch is a genuine unexpected failure and is
+    // deliberately rethrown to the global error handler rather than also mapped to 409.
+    let result;
+    try {
+      result = await commitUploadBatch({
+        diallerSourceId: fields.diallerSourceId,
+        branchId: fields.branchId,
+        processId: fields.processId,
+        dateFrom: fields.dateFrom,
+        dateTo: fields.dateTo,
+        fileName: req.file.originalname,
+        contentDigest,
+        uploadedBy: req.authUser.id,
+        mappingVersionUsed,
+        supersedesBatchId,
+        acceptedRows: preview.accepted,
+        rejectedRows: preview.rejected,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('already exists for this exact file and scope')) {
+        return res.status(409).json({ success: false, message });
+      }
+      throw err;
+    }
 
-    return res.json({ success: true, ...result });
+    // success must reflect whether every row that made it past the preview actually landed in
+    // the database — NOT merely that commitUploadBatch() returned without throwing. A chunk
+    // write failure (writeErrors non-empty) is a partial failure the caller must see and retry,
+    // not a silent 200.
+    return res.status(result.writeErrors.length === 0 ? 200 : 207).json({
+      success: result.writeErrors.length === 0,
+      ...result,
+    });
   },
 );
 
@@ -1201,7 +1286,7 @@ app.use('/api/wfm/productivity-upload', productivityUploadRouter);
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `cd backend && npx vitest run src/modules/wfm/__tests__/productivity-upload.routes.test.ts`
-Expected: PASS, 4 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 6: Commit**
 

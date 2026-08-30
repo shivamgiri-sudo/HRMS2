@@ -104,40 +104,45 @@ interface ExistingBatchRow extends RowDataPacket {
 }
 
 export async function commitUploadBatch(params: CommitBatchParams): Promise<CommitBatchResult> {
-  // Retry idempotency (Global Constraints: "a retried request never double-writes"). Neither
-  // productivity_upload_batch nor apr_manual_upload carries a natural business-key unique
-  // constraint (apr_manual_upload's only unique key is its own fresh-UUID primary key, verified
-  // against the live schema), so a second identical request cannot rely on ON DUPLICATE KEY —
-  // instead, a batch already committed for the exact same (source, branch, process, date range,
-  // file content) short-circuits here and returns the original result unchanged.
+  // Duplicate-submission guard (Global Constraints: "a retried request never double-writes").
   //
-  // The extra `accepted_row_count + rejected_row_count = ?` predicate is load-bearing, not
-  // decorative: it only matches a PRIOR batch that fully succeeded (every submitted row is
-  // accounted for as either accepted or rejected). A batch that lost rows to a chunk failure
-  // (writeErrors non-empty on that attempt) will never satisfy it, so a retry after a genuine
-  // failure is NOT short-circuited — it proceeds to the write path again and gets a real chance
-  // to land the rows that were lost, rather than being permanently stuck reporting a fake
-  // success forever (the exact defect this comment replaces; caught in a second review round).
-  const submittedThisRequest = params.acceptedRows.length + params.rejectedRows.length;
-  const [existingBatch] = await db.execute<ExistingBatchRow[]>(
-    `SELECT id, batch_reference, accepted_row_count, rejected_row_count
-       FROM productivity_upload_batch
-      WHERE dialler_source_id = ? AND branch_id = ? AND process_id = ?
-        AND date_from = ? AND date_to = ? AND content_digest = ?
-        AND status <> 'superseded'
-        AND accepted_row_count + rejected_row_count = ?
-      LIMIT 1`,
-    [params.diallerSourceId, params.branchId, params.processId, params.dateFrom, params.dateTo, params.contentDigest, submittedThisRequest],
-  );
-  if (existingBatch.length > 0) {
-    const row = existingBatch[0];
-    return {
-      batchId: row.id,
-      batchReference: row.batch_reference,
-      acceptedCount: row.accepted_row_count,
-      rejectedCount: row.rejected_row_count,
-      writeErrors: [],
-    };
+  // Three earlier review rounds tried to solve this by auto-detecting "safe to skip vs safe to
+  // retry" from content-digest + row-count matching, and each attempt broke something else:
+  // matching only a fully-succeeded prior batch permanently blocked recovery from a genuine
+  // failure; loosening that to also match a partially-failed prior batch caused a retry to
+  // re-insert rows that had already landed on the first attempt (apr_manual_upload has no
+  // natural unique key — nothing stops a duplicate); and either version silently swallowed a
+  // deliberate supersedesBatchId re-upload of an unchanged file, because the short-circuit fired
+  // before the supersede branch below ever ran.
+  //
+  // The only version of this check that cannot reintroduce any of those three bugs is one that
+  // never tries to guess the caller's intent: an identical (scope + file) resubmission that does
+  // NOT declare itself a deliberate re-upload is rejected outright, naming the prior batch so a
+  // human can explicitly choose what happens next. This cannot double-write (nothing proceeds
+  // past this guard without either genuinely new content or an explicit supersede instruction),
+  // cannot permanently strand a failed upload (the error tells the caller exactly what to pass —
+  // supersedesBatchId — to force it through), and cannot defeat a real supersede
+  // (supersedesBatchId always bypasses this guard entirely and goes straight to the supersede
+  // logic below, unconditionally).
+  if (!params.supersedesBatchId) {
+    const [existingBatch] = await db.execute<ExistingBatchRow[]>(
+      `SELECT id, batch_reference, accepted_row_count, rejected_row_count
+         FROM productivity_upload_batch
+        WHERE dialler_source_id = ? AND branch_id = ? AND process_id = ?
+          AND date_from = ? AND date_to = ? AND content_digest = ?
+          AND status <> 'superseded'
+        LIMIT 1`,
+      [params.diallerSourceId, params.branchId, params.processId, params.dateFrom, params.dateTo, params.contentDigest],
+    );
+    if (existingBatch.length > 0) {
+      const row = existingBatch[0];
+      throw new Error(
+        `A batch (${row.batch_reference}) already exists for this exact file and scope ` +
+        `(dialler_source ${params.diallerSourceId}, branch ${params.branchId}, process ${params.processId}, ` +
+        `${params.dateFrom} to ${params.dateTo}). If this is a deliberate re-upload, resubmit with ` +
+        `supersedesBatchId set to ${row.id}.`,
+      );
+    }
   }
 
   const { campaignCode } = await resolveOrCreateDefaultCampaign(params.diallerSourceId);
