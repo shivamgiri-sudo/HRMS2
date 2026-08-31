@@ -1379,13 +1379,13 @@ export function BudgetLinkedGrnForm({
     : isVendor
       // Vendor: Taxable/GST/Total mirror componentsPreview — the actual invoiceComponents rows
       // that get submitted and are reconciled against form.amount elsewhere — so the summary
-      // matches what saves. P&L has no equivalent in componentsPreview (no recoverable-tax
-      // awareness there), so it borrows the resolved-budget-line-based figure instead.
+      // matches what saves. P&L = taxable base: for a vendor tax invoice the GST is ITC
+      // (balance-sheet item, not an expense), so only the pre-tax amount hits P&L.
       ? {
           base: componentsPreview.rawTotalBase,
           tax: componentsPreview.rawTotalTax,
           gross: componentsPreview.rawTotalGross,
-          pnl: costCentreSplitMoneyTotals.pnl,
+          pnl: componentsPreview.rawTotalBase,
         }
       : costCentreSplitMoneyTotals;
 
@@ -3205,6 +3205,11 @@ export function BudgetLinkedGrnForm({
               onDirectCostCentreChange={setDirectCostCentreKey}
               isUnbudgeted={isUnbudgetedExpense}
               hideGstColumn={!isVendor}
+              invoiceGstRate={
+                isVendor && componentsPreview.rawTotalBase > 0
+                  ? Math.round(componentsPreview.rawTotalTax / componentsPreview.rawTotalBase * 100)
+                  : undefined
+              }
             />
           )}
 
@@ -3891,6 +3896,7 @@ function CostCentreSplitEditor({
   onDirectCostCentreChange,
   isUnbudgeted,
   hideGstColumn,
+  invoiceGstRate,
 }: {
   groups: Array<{
     costCentreKey: string;
@@ -3918,6 +3924,9 @@ function CostCentreSplitEditor({
   isUnbudgeted?: boolean;
   /** Hide GST/Tax column — imprest vouchers don't need tax breakdown */
   hideGstColumn?: boolean;
+  /** Effective GST % derived from the actual invoice components (e.g. 18). Used as fallback
+   *  display when the matched budget line was planned at 0% but the invoice carries GST. */
+  invoiceGstRate?: number;
 }) {
   const reconciled = Math.abs(total - 100) <= 0.5;
   const isDirectMethod = splitMethod === "direct";
@@ -4027,7 +4036,7 @@ function CostCentreSplitEditor({
                       nonTaxable ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"
                     )}
                   >
-                    {nonTaxable ? (line.tax_treatment === "exempt" ? "Exempt" : "Non-GST") : `GST ${line.gst_rate}%`}
+                    {nonTaxable ? (line.tax_treatment === "exempt" ? "Exempt" : "Non-GST") : `GST ${line.gst_rate > 0 ? line.gst_rate : (invoiceGstRate ?? 0)}%`}
                   </span>
                 )}
               </div>
@@ -4130,7 +4139,7 @@ function CostCentreSplitEditor({
                           )}
                           title={line.tax_treatment.replace("_", " ")}
                         >
-                          {nonTaxable ? (line.tax_treatment === "exempt" ? "Exempt" : "Non-GST") : `GST ${line.gst_rate}%`}
+                          {nonTaxable ? (line.tax_treatment === "exempt" ? "Exempt" : "Non-GST") : `GST ${line.gst_rate > 0 ? line.gst_rate : (invoiceGstRate ?? 0)}%`}
                         </span>
                       ) : "—"}
                     </GrnTd>
