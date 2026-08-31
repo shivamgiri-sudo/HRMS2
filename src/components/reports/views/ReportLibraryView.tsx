@@ -1,4 +1,4 @@
-/**
+﻿/**
  * NativeReportsCenterV2 — Production-Grade Report Framework
  *
  * Addresses ALL architectural issues from the audit:
@@ -1469,6 +1469,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
                                       : ""
                                 }`}
                                 title={String(row[col.key] ?? "")}
+                                style={{ minWidth: col.width }}
                               >
                                 {formatReportCell(row[col.key], col, selectedReport)}
                               </td>
