@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { requireAuth } from "../../middleware/authMiddleware.js";
 import { requireRole } from "../../middleware/requireRole.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
 import {
@@ -41,6 +42,12 @@ import type { RoleKey } from "../../platform/policy/index.js";
  * and the obvious scope is unusable because job_requisition.branch_id is NULL on every row.
  */
 const roles: RoleKey[] = ["super_admin", "admin", "hr", "payroll_hr"];
+// requireRole only reads req.authUser (set by requireAuth decoding the JWT) — without
+// requireAuth running first, req.authUser is always undefined and every request here
+// 401s regardless of a valid Bearer token. This mount had requireRole with no requireAuth
+// in front of it, so /api/ats/joining-control-room/* was completely unreachable for every
+// role, every time. Sibling routers (e.g. ats.joiningDocumentsTracker.routes.ts) call both.
+joiningControlRoomRouter.use(requireAuth);
 joiningControlRoomRouter.use(requireRole(...roles));
 
 const h = (fn: (req: AuthenticatedRequest, res: any) => Promise<unknown>) => (

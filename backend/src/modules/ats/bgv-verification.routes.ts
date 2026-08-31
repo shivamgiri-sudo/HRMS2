@@ -68,7 +68,7 @@ async function requireBgvCandidateScope(req: AuthenticatedRequest, candidateId: 
   // (migration 1541/1542) — this inner check alone is not enough: the outer
   // requireRole() middleware runs first and 403s before this function is ever
   // reached, so both layers must carry the same role list.
-  const allowed = await hasScopedAccess(req.authUser!.id, ["admin", "hr", "recruiter", "payroll_head"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
+  const allowed = await hasScopedAccess(req.authUser!.id, ["admin", "hr", "recruiter", "payroll_head", "payroll_hr"], { branchId: candidate.applied_for_branch ?? undefined, processId: candidate.applied_for_process ?? undefined }, { allowAdminBypass: true });
   const recruiterProfile = await resolveRecruiterForActor(req.authUser!.id);
   const candidateRecord = candidate as unknown as Record<string, unknown>;
   const assignedRecruiterIds = [
@@ -275,7 +275,11 @@ router.post("/candidates/:candidateId/waive", requireAuth, requireRole("admin", 
 }));
 
 // ── BGV Report (HR-facing comprehensive report with document checklist + audit lock) ──
-router.get("/report", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+// payroll_hr granted alongside admin/hr so Payroll HR can update the manual, no-API
+// categories (address in particular) from the Joining Control Room BGV tab — mirrors
+// the payroll_head grant on waive/manual-review above; requireBgvCandidateScope's inner
+// role list was updated to match.
+router.get("/report", requireAuth, requireRole("admin", "hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
   const candidateId = String(req.query.candidateId ?? "");
   if (!candidateId) return res.status(400).json({ success: false, message: "candidateId required" });
   await requireBgvCandidateScope(req, candidateId);
@@ -292,7 +296,7 @@ router.get("/report", requireAuth, requireRole("admin", "hr"), h(async (req: Aut
   return res.json({ success: true, data: (rows as RowDataPacket[])[0] ?? null });
 }));
 
-router.post("/report", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res) => {
+router.post("/report", requireAuth, requireRole("admin", "hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res) => {
   const { candidate_id, locked, ...fields } = req.body;
   if (!candidate_id) return res.status(400).json({ success: false, message: "candidate_id required" });
   await requireBgvCandidateScope(req, candidate_id);
@@ -306,9 +310,20 @@ router.post("/report", requireAuth, requireRole("admin", "hr"), h(async (req: Au
     return res.status(403).json({ success: false, message: "BGV report is locked and cannot be modified" });
   }
 
-  const completedAt = locked ? new Date() : null;
-  const completedBy = locked ? req.authUser!.id : null;
+  // overall_status is computed, not picked: the only client-chosen value honoured
+  // here is 'negative' — an explicit HR hard-reject a computed verdict must never
+  // overwrite. Every other submitted value (including 'clear') is discarded and
+  // immediately replaced below by computeAndSaveScore's derivation from the actual
+  // per-category statuses being saved in this same request, so "CLEAR" can no
+  // longer be produced by picking it from a dropdown.
+  const submittedOverallStatus = fields.overall_status === "negative" ? "negative" : undefined;
 
+  // Content fields are saved first, with the report still unlocked and overall_status/
+  // bgv_score left at their prior/default value — computeAndSaveScore (below) is the
+  // only writer of those two once the content is in. If `locked` was requested, that is
+  // applied as a separate step AFTER computeAndSaveScore has run, so the score/verdict
+  // frozen into a "Finalise & Lock" save reflects the content saved in this same
+  // request, not the state from one save ago.
   await db.execute(
     `INSERT INTO candidate_bgv_report
        (candidate_id, photo_received, aadhaar_received, pan_received, passport_received,
@@ -322,9 +337,8 @@ router.post("/report", requireAuth, requireRole("admin", "hr"), h(async (req: Au
         address_status, address_remarks,
         criminal_status, criminal_remarks,
         esignature_status, esignature_remarks,
-        overall_status, bgv_score, hr_remarks,
-        completed_by, completed_at, locked)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        overall_status, bgv_score, hr_remarks)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE
        photo_received=VALUES(photo_received), aadhaar_received=VALUES(aadhaar_received),
        pan_received=VALUES(pan_received), passport_received=VALUES(passport_received),
@@ -339,10 +353,8 @@ router.post("/report", requireAuth, requireRole("admin", "hr"), h(async (req: Au
        address_status=VALUES(address_status), address_remarks=VALUES(address_remarks),
        criminal_status=VALUES(criminal_status), criminal_remarks=VALUES(criminal_remarks),
        esignature_status=VALUES(esignature_status), esignature_remarks=VALUES(esignature_remarks),
-       overall_status=VALUES(overall_status), bgv_score=VALUES(bgv_score), hr_remarks=VALUES(hr_remarks),
-       completed_by=IF(VALUES(locked)=1 AND locked=0, VALUES(completed_by), completed_by),
-       completed_at=IF(VALUES(locked)=1 AND locked=0, VALUES(completed_at), completed_at),
-       locked=IF(VALUES(locked)=1, 1, locked),
+       overall_status=IF(locked=1, overall_status, VALUES(overall_status)),
+       hr_remarks=VALUES(hr_remarks),
        updated_at=NOW()`,
     [
       candidate_id,
@@ -358,10 +370,25 @@ router.post("/report", requireAuth, requireRole("admin", "hr"), h(async (req: Au
       fields.address_status ?? 'not_run', fields.address_remarks ?? null,
       fields.criminal_status ?? 'not_run', fields.criminal_remarks ?? null,
       fields.esignature_status ?? 'not_done', fields.esignature_remarks ?? null,
-      fields.overall_status ?? 'pending', fields.bgv_score ?? 0, fields.hr_remarks ?? null,
-      completedBy, completedAt, locked ? 1 : 0,
+      submittedOverallStatus ?? 'pending', 0, fields.hr_remarks ?? null,
     ],
   );
+
+  // Recompute score + verdict from the content just saved above (merges API check
+  // results with the manual category fields written in this request).
+  await computeAndSaveScore(candidate_id);
+
+  if (locked) {
+    const completedAt = new Date();
+    const completedBy = req.authUser!.id;
+    await db.execute(
+      `UPDATE candidate_bgv_report
+          SET locked = 1, completed_by = ?, completed_at = ?, updated_at = NOW()
+        WHERE candidate_id = ? AND locked = 0`,
+      [completedBy, completedAt, candidate_id],
+    );
+  }
+
   return res.status(201).json({ success: true, message: locked ? "BGV report locked" : "BGV report saved" });
 }));
 
@@ -584,7 +611,7 @@ router.put("/admin/provider-config", requireAuth, requireRole("admin"), h(async 
 }));
 
 // ── Sync API check results → BGV report ──────────────────────────────────────
-router.post("/sync-report", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.post("/sync-report", requireAuth, requireRole("admin", "hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const { candidate_id } = req.body;
   if (!candidate_id) return res.status(400).json({ success: false, message: "candidate_id required" });
   const result = await syncBgvChecksToReport(String(candidate_id));
@@ -592,7 +619,7 @@ router.post("/sync-report", requireAuth, requireRole("admin", "hr"), h(async (re
 }));
 
 // ── Full BGV Report Data (for PDF generation) ─────────────────────────────────
-router.get("/report/full", requireAuth, requireRole("admin", "hr"), h(async (req: AuthenticatedRequest, res: Response) => {
+router.get("/report/full", requireAuth, requireRole("admin", "hr", "payroll_hr"), h(async (req: AuthenticatedRequest, res: Response) => {
   const candidateId = String(req.query.candidateId ?? "");
   if (!candidateId) return res.status(400).json({ success: false, message: "candidateId required" });
   await requireBgvCandidateScope(req, candidateId);
