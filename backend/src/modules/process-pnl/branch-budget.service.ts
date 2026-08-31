@@ -1003,7 +1003,7 @@ export const branchBudgetService = {
               vm.vendor_name AS preferred_vendor_name,
               (l.quantity-l.reserved_quantity-l.consumed_quantity)
                 AS available_quantity,
-              (l.gross_amount-l.reserved_amount-l.consumed_amount)
+              (l.pnl_cost_amount-l.reserved_amount-l.consumed_amount)
                 AS available_gross_amount
          FROM finance_budget_line l
          LEFT JOIN process_master pm ON pm.id = l.process_id
@@ -2199,7 +2199,7 @@ export const branchBudgetService = {
               vm.vendor_name AS preferred_vendor_name,
               (l.quantity-l.reserved_quantity-l.consumed_quantity)
                 AS available_quantity,
-              (l.gross_amount-l.reserved_amount-l.consumed_amount)
+              (l.pnl_cost_amount-l.reserved_amount-l.consumed_amount)
                 AS available_gross_amount,
               -- Per-cost-centre headroom on a BRANCH-LEVEL line (cost_centre_id IS NULL).
               --
@@ -2257,7 +2257,7 @@ export const branchBudgetService = {
               vm.vendor_name AS preferred_vendor_name,
               (l.quantity-l.reserved_quantity-l.consumed_quantity)
                 AS available_quantity,
-              (l.gross_amount-l.reserved_amount-l.consumed_amount)
+              (l.pnl_cost_amount-l.reserved_amount-l.consumed_amount)
                 AS available_gross_amount
          FROM finance_budget_line l
          JOIN finance_budget_header h ON h.id = l.budget_id
