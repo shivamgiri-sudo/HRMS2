@@ -37,64 +37,81 @@ export const portalOverviewService = {
     if (processIds.length === 0) return [];
 
     const placeholders = processIds.map(() => "?").join(",");
-    const currentPeriod = new Date().toISOString().slice(0, 7);
 
-    const [scoreRows] = await db.execute<RowDataPacket[]>(
-      `SELECT
-         p.id AS process_id,
-         p.process_name,
-         cm.client_name,
-         m.metric_code,
-         m.metric_name,
-         m.unit,
-         m.direction,
-         tm.target_value,
-         ks.actual_value,
-         ks.created_at AS last_updated
+    // First: get all active processes (even without KPI data)
+    const [processRows] = await db.execute<RowDataPacket[]>(
+      `SELECT p.id AS process_id, p.process_name, cm.client_name
        FROM process_master p
        JOIN client_master cm ON cm.id = p.client_id
-       JOIN kpi_assignment ka ON ka.designation_id IS NULL AND ka.department_id IS NULL AND ka.employee_id IS NULL
-       JOIN kpi_template_metric tm ON tm.template_id = ka.template_id
-       JOIN kpi_metric_master m ON m.id = tm.metric_id
-       LEFT JOIN kpi_score ks ON ks.metric_id = m.id AND ks.period = ?
        WHERE p.id IN (${placeholders}) AND p.active_status = 1
-       ORDER BY p.id, m.metric_code`,
-      [currentPeriod, ...processIds]
+       ORDER BY p.process_name`,
+      processIds
     );
 
     const processMap = new Map<string, ProcessCard>();
-    for (const row of scoreRows as RowDataPacket[]) {
-      if (!processMap.has(row.process_id)) {
-        processMap.set(row.process_id, {
-          process_id: row.process_id,
-          process_name: row.process_name,
-          client_name: row.client_name,
-          rag: "green",
-          headline_metrics: [],
-          last_updated: null,
-        });
+    for (const row of processRows as RowDataPacket[]) {
+      processMap.set(row.process_id, {
+        process_id: row.process_id,
+        process_name: row.process_name,
+        client_name: row.client_name,
+        rag: "green",
+        headline_metrics: [],
+        last_updated: null,
+      });
+    }
+
+    // If no processes found, return empty
+    if (processMap.size === 0) return [];
+
+    // Second: try to enrich with KPI data (optional - may be empty)
+    const currentPeriod = new Date().toISOString().slice(0, 7);
+    try {
+      const [scoreRows] = await db.execute<RowDataPacket[]>(
+        `SELECT
+           p.id AS process_id,
+           m.metric_code,
+           m.metric_name,
+           m.unit,
+           m.direction,
+           tm.target_value,
+           ks.actual_value,
+           ks.created_at AS last_updated
+         FROM process_master p
+         JOIN kpi_assignment ka ON ka.designation_id IS NULL AND ka.department_id IS NULL AND ka.employee_id IS NULL
+         JOIN kpi_template_metric tm ON tm.template_id = ka.template_id
+         JOIN kpi_metric_master m ON m.id = tm.metric_id
+         LEFT JOIN kpi_score ks ON ks.metric_id = m.id AND ks.period = ?
+         WHERE p.id IN (${placeholders}) AND p.active_status = 1
+         ORDER BY p.id, m.metric_code`,
+        [currentPeriod, ...processIds]
+      );
+
+      for (const row of scoreRows as RowDataPacket[]) {
+        const card = processMap.get(row.process_id);
+        if (!card) continue;
+        if (row.last_updated && (!card.last_updated || row.last_updated > card.last_updated)) {
+          card.last_updated = row.last_updated;
+        }
+        if (HEADLINE_METRICS.includes(row.metric_code)) {
+          const ach = row.actual_value != null
+            ? computeAchievement(row.actual_value, row.target_value, row.direction)
+            : 0;
+          const rag = computeRag(ach);
+          card.headline_metrics.push({
+            metric_code: row.metric_code,
+            metric_name: row.metric_name,
+            unit: row.unit,
+            actual: row.actual_value,
+            target: row.target_value,
+            achievement_pct: ach,
+            rag,
+          });
+          if (rag === "red") card.rag = "red";
+          else if (rag === "amber" && card.rag !== "red") card.rag = "amber";
+        }
       }
-      const card = processMap.get(row.process_id)!;
-      if (row.last_updated && (!card.last_updated || row.last_updated > card.last_updated)) {
-        card.last_updated = row.last_updated;
-      }
-      if (HEADLINE_METRICS.includes(row.metric_code)) {
-        const ach = row.actual_value != null
-          ? computeAchievement(row.actual_value, row.target_value, row.direction)
-          : 0;
-        const rag = computeRag(ach);
-        card.headline_metrics.push({
-          metric_code: row.metric_code,
-          metric_name: row.metric_name,
-          unit: row.unit,
-          actual: row.actual_value,
-          target: row.target_value,
-          achievement_pct: ach,
-          rag,
-        });
-        if (rag === "red") card.rag = "red";
-        else if (rag === "amber" && card.rag !== "red") card.rag = "amber";
-      }
+    } catch {
+      // KPI data unavailable - processes still show without metrics
     }
 
     const cards = Array.from(processMap.values());
