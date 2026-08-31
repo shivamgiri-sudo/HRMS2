@@ -58,6 +58,7 @@ interface PreviewRow {
   error_messages: string[] | string | null;
   created_entity_type: string | null;
   created_entity_id: string | null;
+  employee_name: string | null;
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -470,6 +471,7 @@ export default function BulkUploadApprovals() {
                   <thead>
                     <tr className="bg-slate-50 rounded-lg">
                       <th className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">#</th>
+                      <th className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">Employee</th>
                       {previewColumns.map((c) => (
                         <th key={c} className="px-3 py-2 font-bold uppercase tracking-wide text-slate-500">{c}</th>
                       ))}
@@ -488,6 +490,9 @@ export default function BulkUploadApprovals() {
                           className={row.row_status === "error" ? "bg-rose-50/60" : "hover:bg-slate-50/60"}
                         >
                           <td className="px-3 py-2 font-medium text-slate-400">{row.row_no}</td>
+                          <td className="px-3 py-2 font-medium text-slate-800 whitespace-nowrap">
+                            {row.employee_name ?? <span className="text-slate-400">—</span>}
+                          </td>
                           {previewColumns.map((c) => (
                             <td key={c} className="px-3 py-2 text-slate-700">
                               {String(data[c] ?? "")}

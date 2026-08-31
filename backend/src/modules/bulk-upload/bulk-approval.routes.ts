@@ -140,7 +140,49 @@ bulkApprovalRouter.get("/approvals/batches/:id/preview", h(async (req, res) => {
         LIMIT 1000`,
       [req.params.id],
     );
-    return res.json({ success: true, batch, data: rows });
+
+    // Resolve employee codes → names so the approver sees who they are deciding for.
+    // normalized_data keys vary by upload type; try the common variants.
+    const EMP_CODE_KEYS = ["emp_code", "employee_code", "EmpCode", "employeeCode"];
+    const codeSet = new Set<string>();
+    for (const row of rows) {
+      const nd: Record<string, unknown> =
+        typeof row.normalized_data === "string"
+          ? (JSON.parse(row.normalized_data) as Record<string, unknown>)
+          : (row.normalized_data as Record<string, unknown>) ?? {};
+      for (const key of EMP_CODE_KEYS) {
+        if (nd[key]) { codeSet.add(String(nd[key])); break; }
+      }
+    }
+
+    const nameMap = new Map<string, string>();
+    if (codeSet.size > 0) {
+      const codes = [...codeSet];
+      const [empRows] = await db.execute<RowDataPacket[]>(
+        `SELECT emp_code, TRIM(CONCAT(first_name, ' ', COALESCE(last_name, ''))) AS full_name
+           FROM employees
+          WHERE emp_code IN (${codes.map(() => "?").join(",")})`,
+        codes,
+      );
+      for (const e of empRows) nameMap.set(String(e.emp_code), String(e.full_name));
+    }
+
+    const enriched = rows.map((row) => {
+      const nd: Record<string, unknown> =
+        typeof row.normalized_data === "string"
+          ? (JSON.parse(row.normalized_data) as Record<string, unknown>)
+          : (row.normalized_data as Record<string, unknown>) ?? {};
+      let empCode: string | null = null;
+      for (const key of EMP_CODE_KEYS) {
+        if (nd[key]) { empCode = String(nd[key]); break; }
+      }
+      return {
+        ...row,
+        employee_name: empCode ? (nameMap.get(empCode) ?? null) : null,
+      };
+    });
+
+    return res.json({ success: true, batch, data: enriched });
   } catch (err) {
     return fail(res, err);
   }
