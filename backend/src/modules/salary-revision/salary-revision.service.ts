@@ -266,3 +266,47 @@ export async function bulkValidate(input: BulkValidateInput): Promise<BulkValida
 
   return results;
 }
+
+export interface BulkCreateInput {
+  employee_ids: string[];
+  requested_effective_from: string;
+  reason: string;
+  requested_by: string;
+}
+
+export interface BulkCreateDetailRow {
+  employee_id: string;
+  status: 'ok' | 'error';
+  request_id?: number;
+  reason?: string;
+}
+
+export interface BulkCreateResult {
+  submitted: number;
+  failed: number;
+  details: BulkCreateDetailRow[];
+}
+
+export async function bulkCreate(input: BulkCreateInput): Promise<BulkCreateResult> {
+  const details: BulkCreateDetailRow[] = [];
+
+  for (const employee_id of input.employee_ids) {
+    try {
+      const { id } = await createRevisionRequest({
+        employee_id,
+        requested_effective_from: input.requested_effective_from,
+        reason: input.reason,
+        requested_by: input.requested_by,
+      });
+      details.push({ employee_id, status: 'ok', request_id: id });
+    } catch (err: unknown) {
+      const reason = err instanceof Error ? err.message : String(err);
+      details.push({ employee_id, status: 'error', reason });
+    }
+  }
+
+  const submitted = details.filter((d) => d.status === 'ok').length;
+  const failed = details.filter((d) => d.status === 'error').length;
+
+  return { submitted, failed, details };
+}
