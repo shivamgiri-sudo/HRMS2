@@ -142,7 +142,15 @@ export async function attendanceRegisterMonthly(
     SELECT
       e.id AS employee_id,
       e.employee_code,
-      COALESCE(e.biometric_code, '') AS bio_code,
+      COALESCE(
+        NULLIF(e.biometric_code, ''),
+        (SELECT ebe.cosec_user_id
+           FROM employee_biometric_enrollment ebe
+          WHERE ebe.employee_id = e.id AND ebe.is_active = 1
+          ORDER BY ebe.enrolled_at DESC
+          LIMIT 1),
+        ''
+      ) AS bio_code,
       CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
       COALESCE(dept.dept_name, '') AS department,
       COALESCE(desig.designation_name, '') AS designation,
