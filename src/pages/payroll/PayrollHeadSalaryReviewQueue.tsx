@@ -461,6 +461,41 @@ export function FinalSalarySection({
                 <Calculator className="h-3 w-3" />Build
               </Button>
             </div>
+            {/* Package preview — show selected package breakdown before Assign */}
+            {selectedPkgId && (() => {
+              const prev = packages.find((p) => p.id === selectedPkgId);
+              if (!prev) return null;
+              const pfAmt = Number(prev.epf_employee) > 0 ? Number(prev.epf_employee) : 0;
+              const esicAmt = Number(prev.esic_employee) > 0 ? Number(prev.esic_employee) : 0;
+              const pfApplicable = pfAmt > 0;
+              const esicApplicable = esicAmt > 0;
+              const prevSc = { ...prev, gross_monthly: prev.gross, net_in_hand: prev.net_in_hand, pf_applicable: pfApplicable, esi_applicable: esicApplicable, pf_employee_amt: pfAmt, esic_employee_amt: esicAmt };
+              return (
+                <div className="mt-2 rounded-lg border border-purple-200 bg-purple-50/60 p-2.5">
+                  <p className="text-[10px] font-semibold text-purple-600 uppercase tracking-wide mb-2">Preview — package to be assigned</p>
+                  <div className="grid grid-cols-2 gap-x-4">
+                    <div>
+                      {earningRows(prevSc).map((row) => (
+                        <DrawerSalaryRow key={row.label} label={row.label} value={inr(row.value)} />
+                      ))}
+                      <DrawerSalaryRow label="Gross" value={inr(prevSc.gross_monthly ?? prevSc.gross)} bold separator />
+                    </div>
+                    <div>
+                      <DrawerSalaryRow label={`PF (Emp) — ${pfApplicable ? 'Yes' : 'No'}`} value={pfAmt > 0 ? inr(pfAmt) : '—'} />
+                      <DrawerSalaryRow label={`ESIC (Emp) — ${esicApplicable ? 'Yes' : 'No'}`} value={esicAmt > 0 ? inr(esicAmt) : '—'} />
+                      {otherDeductionRows(prevSc).map((row) => (
+                        <DrawerSalaryRow key={row.label} label={row.label} value={`− ${inr(row.value)}`} />
+                      ))}
+                      <DrawerSalaryRow label="Net in Hand" value={inr(prevSc.net_in_hand)} bold separator />
+                      {employerCostRows(prevSc).map((row) => (
+                        <DrawerSalaryRow key={row.label} label={row.label} value={inr(row.value)} />
+                      ))}
+                      <DrawerSalaryRow label="CTC" value={inr(prevSc.ctc)} bold separator />
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
             {/* Accept */}
             {review?.salary_package_id && !review?.package_accepted && (
               <Button size="sm" disabled={busy} onClick={() => acceptPackage()}
