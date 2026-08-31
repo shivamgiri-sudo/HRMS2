@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Loader2, Plus, Pencil, ToggleLeft, ToggleRight, IndianRupee, Building2, Layers, Save, X, CheckCircle2,
-  Calculator, AlertTriangle,
+  Calculator,
 } from 'lucide-react';
 import { calcFromCtc, calcFromInHand, getProfessionalTax, PT_BY_STATE, type PkgCalcOptions } from '@/lib/salaryCalculator';
 
@@ -72,7 +72,6 @@ export default function NativeSalaryPackageAdmin() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
-  const [msgType, setMsgType] = useState<'success' | 'error'>('success');
 
   // Bands
   const [bands, setBands] = useState<Band[]>([]);
@@ -196,15 +195,7 @@ export default function NativeSalaryPackageAdmin() {
 
   // ── Save Package ───────────────────────────────────────────────────────────
   const savePkg = async () => {
-    if (!editPkg?.branch_name) { setMsg('Select a branch first.'); setMsgType('error'); return; }
-    if (!editPkg?.band_code)   { setMsg('Select a band first.'); setMsgType('error'); return; }
-    if (!editPkg?.package_amount) {
-      setMsg(calcMode === 'manual'
-        ? 'Enter salary components — CTC must be > 0 before saving.'
-        : 'Enter a CTC / In-Hand amount to build the package first.');
-      setMsgType('error');
-      return;
-    }
+    if (!editPkg?.branch_name || !editPkg?.band_code || !editPkg?.package_amount) return;
     setSaving(true); setMsg('');
     try {
       if (editPkg.id) {
@@ -214,8 +205,8 @@ export default function NativeSalaryPackageAdmin() {
       }
       setEditPkg(null);
       await loadPackages();
-      setMsg('Package saved'); setMsgType('success');
-    } catch (e: any) { setMsg(e?.message || 'Save failed — check your role or network.'); setMsgType('error'); }
+      setMsg('Package saved');
+    } catch (e: any) { setMsg(e?.message || 'Failed'); }
     finally { setSaving(false); }
   };
 
@@ -263,15 +254,8 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
         </div>
 
         {msg && (
-          <div className={`rounded-lg border px-4 py-2 text-sm font-semibold flex items-center gap-2 ${
-            msgType === 'error'
-              ? 'bg-red-50 border-red-200 text-red-700'
-              : 'bg-emerald-50 border-emerald-200 text-emerald-700'
-          }`}>
-            {msgType === 'error'
-              ? <AlertTriangle className="h-4 w-4 shrink-0" />
-              : <CheckCircle2 className="h-4 w-4 shrink-0" />}
-            {msg}
+          <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-2 text-sm text-emerald-700 font-semibold flex items-center gap-2">
+            <CheckCircle2 className="h-4 w-4" /> {msg}
             <button onClick={() => setMsg('')} className="ml-auto"><X className="h-3.5 w-3.5" /></button>
           </div>
         )}
@@ -630,28 +614,9 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
                       </div>
                     </div>
 
-                    <div className="flex gap-2 pt-2 border-t items-center">
-                      <Button
-                        size="sm"
-                        onClick={savePkg}
-                        disabled={saving || !editPkg?.branch_name || !editPkg?.band_code || !editPkg?.package_amount}
-                        title={
-                          !editPkg?.branch_name ? 'Select a branch' :
-                          !editPkg?.band_code   ? 'Select a band' :
-                          !editPkg?.package_amount ? 'Build the package first (enter CTC or components)' : ''
-                        }
-                        className="gap-1"
-                      >
-                        <Save className="h-3.5 w-3.5" />{saving ? 'Saving...' : 'Save Package'}
-                      </Button>
+                    <div className="flex gap-2 pt-2 border-t">
+                      <Button size="sm" onClick={savePkg} disabled={saving} className="gap-1"><Save className="h-3.5 w-3.5" />{saving ? 'Saving...' : 'Save Package'}</Button>
                       <Button size="sm" variant="ghost" onClick={() => { setEditPkg(null); setCtcInput(''); setInHandInput(''); }}>Cancel</Button>
-                      {(!editPkg?.branch_name || !editPkg?.band_code || !editPkg?.package_amount) && (
-                        <span className="text-xs text-amber-600 ml-1">
-                          {!editPkg?.branch_name ? 'Branch required' :
-                           !editPkg?.band_code   ? 'Band required' :
-                           'Enter CTC or build components'}
-                        </span>
-                      )}
                     </div>
                   </div>
                 )}
