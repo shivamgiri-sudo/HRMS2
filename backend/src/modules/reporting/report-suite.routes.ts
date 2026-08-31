@@ -368,7 +368,7 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
     }).catch(() => {});
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="${buildSecureFilename(code, 'export')}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${buildSecureFilename(catalogEntry.name, 'export')}"`);
     res.setHeader('Cache-Control', 'no-store, no-cache');
     res.setHeader('Content-Length', catalogBuffer.length);
     res.send(catalogBuffer);
@@ -419,7 +419,7 @@ reportSuiteRouter.get("/:code/export", requireAuth, h(async (req, res) => {
     metadataJson: { userId, rowCount: rows.length, fileSizeBytes: buffer.length, code },
   }).catch(() => {});
 
-  const filename = buildSecureFilename(code, `export`);
+  const filename = buildSecureFilename(catalogEntry.name, `export`);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.setHeader('Cache-Control', 'no-store, no-cache');

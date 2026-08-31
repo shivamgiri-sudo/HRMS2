@@ -1111,7 +1111,7 @@ export default function NativeReportsCenterV2({ preselectedReport }: { preselect
       a.href = URL.createObjectURL(blob);
       const cd = resp.headers.get("content-disposition") ?? "";
       const match = cd.match(/filename[^;=\n]*=\s*(?:['"]?)([^'"\n;]+)/i);
-      a.download = match?.[1] ?? `${selectedReport.code}.xlsx`;
+      a.download = match?.[1] ?? `${selectedReport.name.replace(/[^A-Za-z0-9]+/g, "_")}.xlsx`;
       a.click();
       URL.revokeObjectURL(a.href);
       setDownloadState("idle");
