@@ -194,15 +194,32 @@ function deriveComponents(gross: number, opts: PkgCalcOptions): PkgComponents {
 export function calcFromCtc(monthlyCtc: number, opts: PkgCalcOptions): PkgComponents {
   const { includePf, includeEsic, basicPct } = opts;
   const pfCap = opts.pfWageLimit ?? DEFAULT_PF_WAGE_LIMIT;
-  const estGross = monthlyCtc * 0.88;
-  const estBasic = estGross * (basicPct / 100);
-  const pfBase = Math.min(estBasic, pfCap);
-  const pf_e = includePf ? pfBase * PF_EMPLR_RATE : 0;
-  const esic_e = includeEsic && estGross <= ESIC_LIMIT ? estGross * ESIC_EMPLR_RATE : 0;
-  const adm = includePf ? pfBase * ADMIN_RATE : 0;
-  // CTC = Gross + Employer EPF + Employer ESIC + Admin Charges (no gratuity)
-  const gross = r2(Math.max(0, monthlyCtc - pf_e - esic_e - adm));
-  return deriveComponents(gross, opts);
+  const bFrac = basicPct / 100;
+
+  // Exact analytical solve — replaces the old rough "× 0.88" estimate that produced
+  // CTC overshoot (entering 20,000 showed Monthly CTC 20,077).
+  //
+  // CTC = Gross + EPF_employer + ESIC_employer + Admin
+  //     = Gross × (1 + bFrac × (PF_EMPLR_RATE + ADMIN_RATE) + ESIC_EMPLR_RATE)  [ESIC applies]
+  //     = Gross × (1 + bFrac × (PF_EMPLR_RATE + ADMIN_RATE))                    [ESIC exempt]
+  const pfContribRate   = includePf    ? (PF_EMPLR_RATE + ADMIN_RATE) : 0;
+  const esicContribRate = includeEsic  ? ESIC_EMPLR_RATE              : 0;
+
+  // Assume ESIC applies first; check whether the derived gross is actually ≤ ESIC_LIMIT
+  let gross = monthlyCtc / (1 + bFrac * pfContribRate + esicContribRate);
+  if (includeEsic && gross > ESIC_LIMIT) {
+    gross = monthlyCtc / (1 + bFrac * pfContribRate);
+  }
+
+  // PF wage-cap edge case: pfCap defaults to 999999 in production so this rarely fires,
+  // but when basic would exceed pfCap the employer costs are fixed amounts, not proportional.
+  if (includePf && gross * bFrac > pfCap) {
+    const fixedEmployer = pfCap * (PF_EMPLR_RATE + ADMIN_RATE);
+    const esicAmt = includeEsic && gross <= ESIC_LIMIT ? gross * ESIC_EMPLR_RATE : 0;
+    gross = monthlyCtc - fixedEmployer - esicAmt;
+  }
+
+  return deriveComponents(r2(Math.max(0, gross)), opts);
 }
 
 export function calcFromInHand(monthlyInHand: number, opts: PkgCalcOptions): PkgComponents {
