@@ -726,7 +726,7 @@ async function buildValidations(connection: PoolConnection, grnId: string) {
         AND a.budget_line_id IS NOT NULL
         AND l.cost_centre_id IS NULL
         AND a.cost_centre_id IS NOT NULL
-      GROUP BY a.budget_line_id, a.cost_centre_id, ccm.cost_centre_name, l.head, l.sub_head,
+      GROUP BY a.grn_request_id, a.budget_line_id, a.cost_centre_id, ccm.cost_centre_name, l.head, l.sub_head,
                pool_available, alloc.gross_amount`,
     [grnId]
   );
