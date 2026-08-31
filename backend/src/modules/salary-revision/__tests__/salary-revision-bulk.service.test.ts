@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { execute } = vi.hoisted(() => ({ execute: vi.fn() }));
 vi.mock("../../../db/mysql.js", () => ({ db: { execute } }));
 
-import { bulkValidate } from "../salary-revision.service.js";
+import { bulkValidate, bulkCreate } from "../salary-revision.service.js";
 
 const VALID_DATE = "2024-06-01";
 
@@ -150,5 +150,61 @@ describe("bulkValidate()", () => {
     });
 
     expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe("bulkCreate()", () => {
+  it("both employees succeed — submitted:2, failed:0, 8 execute calls total", async () => {
+    // e1: 4 calls
+    execute.mockResolvedValueOnce([[{ date_of_joining: "2024-01-01" }]]);
+    execute.mockResolvedValueOnce([[{ effective_from: "2024-01-01" }]]);
+    execute.mockResolvedValueOnce([[]]); // no pending dupe
+    execute.mockResolvedValueOnce([{ insertId: 101 }]); // INSERT
+    // e2: 4 calls
+    execute.mockResolvedValueOnce([[{ date_of_joining: "2024-03-01" }]]);
+    execute.mockResolvedValueOnce([[{ effective_from: "2024-03-01" }]]);
+    execute.mockResolvedValueOnce([[]]); // no pending dupe
+    execute.mockResolvedValueOnce([{ insertId: 102 }]); // INSERT
+
+    const result = await bulkCreate({
+      employee_ids: ["e1", "e2"],
+      requested_effective_from: "2024-06-01",
+      reason: "Annual salary revision for employees",
+      requested_by: "admin-1",
+    });
+
+    expect(result).toMatchObject({
+      submitted: 2,
+      failed: 0,
+      details: [
+        { employee_id: "e1", status: "ok", request_id: 101 },
+        { employee_id: "e2", status: "ok", request_id: 102 },
+      ],
+    });
+    expect(execute).toHaveBeenCalledTimes(8);
+  });
+
+  it("e1 succeeds, e2 fails (no active assignment) — batch continues, submitted:1, failed:1", async () => {
+    // e1: 4 calls (success)
+    execute.mockResolvedValueOnce([[{ date_of_joining: "2024-01-01" }]]);
+    execute.mockResolvedValueOnce([[{ effective_from: "2024-01-01" }]]);
+    execute.mockResolvedValueOnce([[]]); // no pending dupe
+    execute.mockResolvedValueOnce([{ insertId: 201 }]); // INSERT
+    // e2: 2 calls — employee found but no active assignment → throws
+    execute.mockResolvedValueOnce([[{ date_of_joining: "2024-01-01" }]]);
+    execute.mockResolvedValueOnce([[]]); // no active assignment
+
+    const result = await bulkCreate({
+      employee_ids: ["e1", "e2"],
+      requested_effective_from: "2024-06-01",
+      reason: "Annual salary revision for employees",
+      requested_by: "admin-1",
+    });
+
+    expect(result.submitted).toBe(1);
+    expect(result.failed).toBe(1);
+    expect(result.details[0]).toMatchObject({ employee_id: "e1", status: "ok", request_id: 201 });
+    expect(result.details[1]).toMatchObject({ employee_id: "e2", status: "error" });
+    expect(result.details[1].reason).toMatch(/salary assignment/i);
   });
 });
