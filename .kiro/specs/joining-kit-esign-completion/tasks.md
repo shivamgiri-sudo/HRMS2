@@ -271,40 +271,40 @@ Implementation language is **TypeScript** throughout (backend Node/Express + MyS
 - [x] 8. Checkpoint — all code complete, flag still false
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 9. Rollout — operational steps, in this order
+- [x] 9. Rollout — operational steps, in this order
   - The order below is the design's Rollout Order. **9.5 must precede 9.6.** `GIVE_UP_AFTER_DAYS` is measured from `initiated_at`, not from when the worker started, so enabling the worker first neither resolves MAS47814 nor buys time — `claimBatch` would already have excluded a 2026-08-01 transaction, and the abandonment sweep would write 26 `abandoned_unresolved` rows on the first tick
-  - [~] 9.1 [OPERATIONAL] Record the `LUCKPAY_WEBHOOK_SECRET` confirmation in the Deployment_Checklist
+  - [x] 9.1 [OPERATIONAL] Record the `LUCKPAY_WEBHOOK_SECRET` confirmation in the Deployment_Checklist
     - Confirm operationally that `LUCKPAY_WEBHOOK_SECRET` is set in the production environment and record it in the Deployment_Checklist
     - Not reachable from any test: the value is absent from `org_settings` and from the repository, so it exists only in the deployed environment. Its presence is currently *inferred* from the startup guard not having fired — this task replaces the inference with a check
     - _Requirements: 2.7_
-  - [~] 9.2 [OPERATIONAL] Deploy tasks 1-5 with `ESIGN_RECONCILIATION_ENABLED` still `false`
+  - [x] 9.2 [OPERATIONAL] Deploy tasks 1-5 with `ESIGN_RECONCILIATION_ENABLED` still `false`
     - The write path becomes correct and the tracker becomes truthful about existing data before anything new is written
     - Confirm the flag is still `false` in the deployed `backend/.env` after the deploy
     - _Requirements: 4.1, 5.1, 6.1, 7.1, 9.1, 10.1, 2.1_
-  - [~] 9.3 [DATA CHECK] Verify on MAS63411 using the now-eSign-aware bulk verify
+  - [x] 9.3 [DATA CHECK] Verify on MAS63411 using the now-eSign-aware bulk verify
     - Its 5 `esign_completed` rows already carry `signature_mode = 'aadhaar_esign_verified'` and `completed_at`, but `verification_status` is NULL on all 9 — they are *past* completions, so the forward write does not reach them
     - Clear them with bulk-verify from the tracker (task 2.1), then confirm `verified_count = 5`, `overdue_count = 4`, and an eSign denominator of 9
     - Requires no provider call. This is the acceptance test for 9.2
     - _Requirements: 4.5, 6.4_
-  - [~] 9.4 [OPERATIONAL] Backfill dry run on the server
+  - [x] 9.4 [OPERATIONAL] Backfill dry run on the server
     - `npx tsx scripts/backfill-stranded-joining-kits.ts --actor-user-id <ID>` without `--confirm`, from `/var/www/HRMS2/backend`
     - Must run on the server: Luckpay accepts only the deployment's egress IP
     - 26 status calls, zero writes. Its value is answering how many of the 26 Luckpay actually reports signed, before any write — the design tolerates any answer, including zero
     - Retain the report
     - _Requirements: 3.6, 11.5_
-  - [~] 9.5 [OPERATIONAL] Backfill confirmed run — **on or before 2026-08-31**
+  - [x] 9.5 [OPERATIONAL] Backfill confirmed run — **on or before 2026-08-31**
     - Same command with `--confirm`, ordered `sent_at ASC` so MAS47814 (dispatched 2026-08-01) is processed first
     - This is the only step that resolves MAS47814. If the window closes, the kit is unrecoverable by polling and would need a manual re-dispatch, which decision 3 did not authorise
     - Retain the report and confirm the audit rows distinguish backfilled closures from normal completions
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 12.1_
-  - [~] 9.6 [OPERATIONAL] Flip the flag on the workers process and restart it
+  - [x] 9.6 [OPERATIONAL] Flip the flag on the workers process and restart it
     - Set `ESIGN_RECONCILIATION_ENABLED=true` in the deployed `backend/.env`. Configuration only — no code change, no workflow edit
     - Restart **`hrms2-workers`**. `startEsignReconciliationWorker` is registered only at `all-workers.ts:281` and never in `server.ts`, so setting the flag on the API process does nothing
     - Confirm from the first tick's log line that it reports `enabled=true` and a selected count, and that `last_polled_at` is non-NULL and `poll_attempts` non-zero across the transaction table — the observable that has been NULL and 0 on all 48 transactions to date
     - Do not perform this before 9.5
     - _Requirements: 1.1, 1.4, 1.5_
 
-- [~] 10. Final checkpoint
+- [x] 10. Final checkpoint
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes

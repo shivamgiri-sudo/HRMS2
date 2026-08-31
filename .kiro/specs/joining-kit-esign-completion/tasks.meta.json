@@ -472,6 +472,11 @@
         "executionId": "6ff752bb-b9e5-4b82-9231-6c89067ad683",
         "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
         "timestamp": 1788092151452
+      },
+      {
+        "executionId": "59e18ce7-55cf-4a17-a73e-dbfa432c557d",
+        "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
+        "timestamp": 1788100141752
       }
     ],
     "9.2 [OPERATIONAL] Deploy tasks 1-5 with `ESIGN_RECONCILIATION_ENABLED` still `false`": [
@@ -479,6 +484,16 @@
         "executionId": "6ff752bb-b9e5-4b82-9231-6c89067ad683",
         "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
         "timestamp": 1788092151489
+      },
+      {
+        "executionId": "59e18ce7-55cf-4a17-a73e-dbfa432c557d",
+        "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
+        "timestamp": 1788098976213
+      },
+      {
+        "executionId": "59e18ce7-55cf-4a17-a73e-dbfa432c557d",
+        "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
+        "timestamp": 1788100143140
       }
     ],
     "9.3 [DATA CHECK] Verify on MAS63411 using the now-eSign-aware bulk verify": [
@@ -486,6 +501,11 @@
         "executionId": "6ff752bb-b9e5-4b82-9231-6c89067ad683",
         "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
         "timestamp": 1788092151525
+      },
+      {
+        "executionId": "59e18ce7-55cf-4a17-a73e-dbfa432c557d",
+        "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
+        "timestamp": 1788100144538
       }
     ],
     "9.4 [OPERATIONAL] Backfill dry run on the server": [
@@ -493,6 +513,11 @@
         "executionId": "6ff752bb-b9e5-4b82-9231-6c89067ad683",
         "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
         "timestamp": 1788092151561
+      },
+      {
+        "executionId": "59000c76-db3b-4281-b1c0-d9163f891b8c",
+        "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
+        "timestamp": 1788105249017
       }
     ],
     "9.5 [OPERATIONAL] Backfill confirmed run — **on or before 2026-08-31**": [
@@ -500,6 +525,11 @@
         "executionId": "6ff752bb-b9e5-4b82-9231-6c89067ad683",
         "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
         "timestamp": 1788092151596
+      },
+      {
+        "executionId": "59000c76-db3b-4281-b1c0-d9163f891b8c",
+        "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
+        "timestamp": 1788105249186
       }
     ],
     "9.6 [OPERATIONAL] Flip the flag on the workers process and restart it": [
@@ -507,6 +537,11 @@
         "executionId": "6ff752bb-b9e5-4b82-9231-6c89067ad683",
         "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
         "timestamp": 1788092151636
+      },
+      {
+        "executionId": "59000c76-db3b-4281-b1c0-d9163f891b8c",
+        "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
+        "timestamp": 1788105849891
       }
     ],
     "10. Final checkpoint": [
@@ -514,6 +549,11 @@
         "executionId": "6ff752bb-b9e5-4b82-9231-6c89067ad683",
         "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
         "timestamp": 1788092151672
+      },
+      {
+        "executionId": "59000c76-db3b-4281-b1c0-d9163f891b8c",
+        "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
+        "timestamp": 1788105850280
       }
     ],
     "1. Workstream 3 — completion writes verification state": [
@@ -556,6 +596,13 @@
         "executionId": "6ff752bb-b9e5-4b82-9231-6c89067ad683",
         "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
         "timestamp": 1788097021535
+      }
+    ],
+    "9. Rollout — operational steps, in this order": [
+      {
+        "executionId": "59000c76-db3b-4281-b1c0-d9163f891b8c",
+        "chatSessionId": "sess_be4649b8-b24e-412a-88d7-f126d07a9148",
+        "timestamp": 1788105849940
       }
     ]
   }
