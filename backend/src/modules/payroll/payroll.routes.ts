@@ -32,6 +32,7 @@ import { taxDeclarationService } from "./taxDeclaration.service.js";
 import { payrollBranchReadinessService } from "./payroll-branch-readiness.service.js";
 import { buildBankReadinessReport } from "./bank-payment-readiness.service.js";
 import { payrollAttendanceControlService } from "./payroll-attendance-control.service.js";
+import { cosecSyncService } from "../wfm/cosec-sync.service.js";
 import { logSensitiveAction } from "../../shared/auditLog.js";
 import { db } from "../../db/mysql.js";
 import type { AuthenticatedRequest } from "../../middleware/authMiddleware.js";
@@ -401,6 +402,102 @@ router.post(
       actorUserId: req.authUser?.id ?? null,
     });
     return res.json({ success: true, data, message: "ADR repair attempt completed" });
+  }),
+);
+
+router.post(
+  "/attendance-control-tower/resync-cosec",
+  requireRole("super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const dateInput = typeof req.body.date === "string" ? req.body.date.trim() : null;
+    const fromInput = typeof req.body.from === "string" ? req.body.from.trim() : null;
+    const toInput = typeof req.body.to === "string" ? req.body.to.trim() : null;
+    const employeeCode = typeof req.body.employeeCode === "string" ? req.body.employeeCode.trim() : undefined;
+
+    const from = dateInput ?? fromInput ?? "";
+    const to = dateInput ?? toInput ?? from;
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      return res.status(400).json({ success: false, message: "Provide a valid date (YYYY-MM-DD)" });
+    }
+    const daysDiff = Math.ceil((new Date(to).getTime() - new Date(from).getTime()) / 86400000);
+    if (daysDiff < 0 || daysDiff > 31) {
+      return res.status(400).json({ success: false, message: "Date range must be 1–31 days" });
+    }
+
+    if (cosecSyncService.isRunning()) {
+      return res.status(409).json({ success: false, message: "A COSEC sync is already in progress. Try again in a few minutes." });
+    }
+
+    const before = await payrollAttendanceControlService.snapshotCosecState(from, to, employeeCode);
+
+    let syncResult: any = null;
+    let syncError: string | null = null;
+    try {
+      syncResult = await cosecSyncService.sync({ from, to });
+    } catch (err: any) {
+      syncError = err?.message ?? String(err);
+    }
+
+    const after = await payrollAttendanceControlService.snapshotCosecState(from, to, employeeCode);
+
+    const beforeMap = new Map<string, any>();
+    for (const row of before) {
+      beforeMap.set(`${row.employee_code}__${row.activity_date}`, row);
+    }
+    const diff: Array<{
+      employeeCode: string; date: string; status: string;
+      before: any | null; after: any | null;
+    }> = [];
+    const seen = new Set<string>();
+    for (const row of after) {
+      const key = `${row.employee_code}__${row.activity_date}`;
+      seen.add(key);
+      const b = beforeMap.get(key) ?? null;
+      let status = "unchanged";
+      if (!b) status = "added";
+      else if (Number(b.biometric_minutes) !== Number(row.biometric_minutes) || Number(b.total_punches) !== Number(row.total_punches)) status = "changed";
+      diff.push({ employeeCode: String(row.employee_code), date: String(row.activity_date), status, before: b, after: row });
+    }
+    for (const row of before) {
+      const key = `${row.employee_code}__${row.activity_date}`;
+      if (!seen.has(key)) {
+        diff.push({ employeeCode: String(row.employee_code), date: String(row.activity_date), status: "removed", before: row, after: null });
+      }
+    }
+    diff.sort((a, b) => `${a.employeeCode}__${a.date}`.localeCompare(`${b.employeeCode}__${b.date}`));
+
+    await logSensitiveAction({
+      actor_user_id: req.authUser?.id ?? "system",
+      action_type: "COSEC_BIOMETRIC_RESYNCED",
+      module_key: "payroll",
+      entity_type: "integration_biometric_daily",
+      entity_id: `${from}__${to}${employeeCode ? `__${employeeCode}` : ""}`,
+      change_summary: {
+        from, to, employeeCode: employeeCode ?? null,
+        beforeCount: before.length, afterCount: after.length,
+        added: diff.filter((d) => d.status === "added").length,
+        changed: diff.filter((d) => d.status === "changed").length,
+        syncError,
+      },
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        from, to,
+        employeeCode: employeeCode ?? null,
+        syncResult,
+        syncError,
+        beforeCount: before.length,
+        afterCount: after.length,
+        added: diff.filter((d) => d.status === "added").length,
+        changed: diff.filter((d) => d.status === "changed").length,
+        removed: diff.filter((d) => d.status === "removed").length,
+        unchanged: diff.filter((d) => d.status === "unchanged").length,
+        diff,
+      },
+    });
   }),
 );
 

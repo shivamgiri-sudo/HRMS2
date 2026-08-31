@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Activity, AlertTriangle, Bell, CheckCircle2, Database, MoreHorizontal, RefreshCw, Search, ShieldAlert, UserCheck, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, Bell, CheckCircle2, Database, MoreHorizontal, RefreshCw, RotateCcw, Search, ShieldAlert, UserCheck, X, XCircle } from "lucide-react";
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { hrmsApi } from "@/lib/hrmsApi";
@@ -394,6 +394,44 @@ export default function AttendanceControlTower() {
 
   const totalIssues = Object.values(data?.summary.issueTypes ?? {}).reduce((a, b) => a + b, 0);
 
+  // ── COSEC Re-sync Panel state ──
+  const [resyncOpen, setResyncOpen] = useState(false);
+  const [resyncDate, setResyncDate] = useState("");
+  const [resyncDateTo, setResyncDateTo] = useState("");
+  const [resyncEmpCode, setResyncEmpCode] = useState("");
+  const [resyncResult, setResyncResult] = useState<null | {
+    from: string; to: string; employeeCode: string | null;
+    syncResult: any; syncError: string | null;
+    beforeCount: number; afterCount: number;
+    added: number; changed: number; removed: number; unchanged: number;
+    diff: Array<{ employeeCode: string; date: string; status: string; before: any; after: any }>;
+  }>(null);
+  const resyncDrawerRef = useRef<HTMLDivElement>(null);
+
+  const resyncMutation = useMutation({
+    mutationFn: async () => {
+      const body: Record<string, string> = {};
+      const dateVal = resyncDate.trim();
+      const dateToVal = resyncDateTo.trim();
+      if (dateVal && dateToVal && dateToVal !== dateVal) {
+        body.from = dateVal;
+        body.to = dateToVal;
+      } else if (dateVal) {
+        body.date = dateVal;
+      }
+      if (resyncEmpCode.trim()) body.employeeCode = resyncEmpCode.trim();
+      const res = await hrmsApi.post<{ success: boolean; data: any }>(
+        "/api/payroll/attendance-control-tower/resync-cosec",
+        body,
+      );
+      return res.data;
+    },
+    onSuccess: (data) => {
+      setResyncResult(data);
+      refetch();
+    },
+  });
+
   return (
     <DashboardLayout>
       <div className="mx-auto max-w-[1440px] space-y-4 p-4 sm:p-5">
@@ -454,6 +492,15 @@ export default function AttendanceControlTower() {
                 disabled={isFetching}
               >
                 <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+              </Button>
+              <Button
+                size="sm"
+                className="h-9 border-white/25 bg-white/10 text-white hover:bg-white/20"
+                variant="outline"
+                onClick={() => { setResyncOpen(true); setResyncResult(null); }}
+              >
+                <RotateCcw className="mr-1.5 h-4 w-4" />
+                Re-sync COSEC
               </Button>
               <Button
                 size="sm"
@@ -927,6 +974,175 @@ export default function AttendanceControlTower() {
         {/* ── Row drill-down ── */}
         <AttendanceGapDetailDrawer gapKey={detailKey} onClose={() => setDetailKey(null)} />
       </div>
+
+      {/* ── COSEC Re-sync Drawer ── */}
+      {resyncOpen && (
+        <div className="fixed inset-0 z-50 flex">
+          <div className="flex-1 bg-black/40" onClick={() => setResyncOpen(false)} />
+          <div ref={resyncDrawerRef} className="flex h-full w-full max-w-xl flex-col overflow-y-auto bg-white shadow-2xl">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b px-5 py-4">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">Re-sync COSEC Biometric</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Pull fresh punch data from COSEC server into mas_hrms for a specific date</p>
+              </div>
+              <button type="button" onClick={() => setResyncOpen(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Form */}
+            <div className="space-y-4 p-5">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">From Date *</label>
+                  <input
+                    type="date"
+                    className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm text-slate-800 focus:border-blue-500 focus:outline-none"
+                    value={resyncDate}
+                    onChange={(e) => setResyncDate(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">To Date (optional)</label>
+                  <input
+                    type="date"
+                    className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm text-slate-800 focus:border-blue-500 focus:outline-none"
+                    value={resyncDateTo}
+                    min={resyncDate}
+                    onChange={(e) => setResyncDateTo(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">Employee Code (optional — blank = all employees)</label>
+                <input
+                  type="text"
+                  className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm text-slate-800 placeholder:text-slate-300 focus:border-blue-500 focus:outline-none"
+                  placeholder="e.g. MAS1042"
+                  value={resyncEmpCode}
+                  onChange={(e) => setResyncEmpCode(e.target.value)}
+                />
+                <p className="mt-1 text-[11px] text-slate-400">Leave blank to re-sync all employees for the selected date range. The COSEC pull is always org-wide; this field only filters the before/after comparison shown below.</p>
+              </div>
+
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
+                <strong>Safe operation:</strong> Only re-writes <code>integration_biometric_daily</code> rows for the selected date range. Locked ADR rows, regularizations, and other employees/dates are not touched.
+              </div>
+
+              {resyncMutation.error && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-700">
+                  {(resyncMutation.error as any)?.response?.data?.message ?? "Re-sync failed. Check if COSEC server is reachable."}
+                </div>
+              )}
+
+              <Button
+                className="w-full h-10 rounded-xl"
+                onClick={() => resyncMutation.mutate()}
+                disabled={!resyncDate || resyncMutation.isPending}
+              >
+                {resyncMutation.isPending ? (
+                  <><RefreshCw className="mr-2 h-4 w-4 animate-spin" /> Syncing from COSEC…</>
+                ) : (
+                  <><RotateCcw className="mr-2 h-4 w-4" /> Start Re-sync</>
+                )}
+              </Button>
+            </div>
+
+            {/* Result */}
+            {resyncResult && (
+              <div className="border-t px-5 py-4 space-y-4">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Sync Result</p>
+                  {resyncResult.syncError ? (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-700">
+                      COSEC sync error: {resyncResult.syncError}
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-4 gap-2">
+                      {[
+                        { label: "Added", value: resyncResult.added, color: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+                        { label: "Changed", value: resyncResult.changed, color: "text-amber-700 bg-amber-50 border-amber-200" },
+                        { label: "Removed", value: resyncResult.removed, color: "text-red-700 bg-red-50 border-red-200" },
+                        { label: "Unchanged", value: resyncResult.unchanged, color: "text-slate-600 bg-slate-50 border-slate-200" },
+                      ].map((s) => (
+                        <div key={s.label} className={`rounded-xl border px-3 py-2 text-center ${s.color}`}>
+                          <p className="text-lg font-extrabold">{s.value}</p>
+                          <p className="text-[10px] font-semibold uppercase">{s.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {resyncResult.syncResult && (
+                    <p className="mt-2 text-[11px] text-slate-500">
+                      COSEC pull: {resyncResult.syncResult.pulledEvents ?? "—"} events · {resyncResult.syncResult.migratedDays ?? "—"} days migrated
+                      {resyncResult.syncResult.unmappedUsers?.length > 0 ? ` · ${resyncResult.syncResult.unmappedUsers.length} unmapped` : ""}
+                    </p>
+                  )}
+                </div>
+
+                {/* Before / After table */}
+                {resyncResult.diff.filter(d => d.status !== "unchanged").length > 0 && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+                      Changed rows ({resyncResult.diff.filter(d => d.status !== "unchanged").length})
+                    </p>
+                    <div className="overflow-x-auto rounded-xl border border-slate-200">
+                      <table className="min-w-full text-xs">
+                        <thead className="bg-slate-50">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-semibold text-slate-500">Emp Code</th>
+                            <th className="px-3 py-2 text-left font-semibold text-slate-500">Date</th>
+                            <th className="px-3 py-2 text-left font-semibold text-slate-500">Change</th>
+                            <th className="px-3 py-2 text-right font-semibold text-slate-500">Before (min)</th>
+                            <th className="px-3 py-2 text-right font-semibold text-slate-500">After (min)</th>
+                            <th className="px-3 py-2 text-right font-semibold text-slate-500">Punches</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {resyncResult.diff
+                            .filter(d => d.status !== "unchanged")
+                            .slice(0, 200)
+                            .map((row, i) => (
+                              <tr key={i} className={
+                                row.status === "added" ? "bg-emerald-50" :
+                                row.status === "changed" ? "bg-amber-50" :
+                                row.status === "removed" ? "bg-red-50" : ""
+                              }>
+                                <td className="px-3 py-1.5 font-medium text-slate-800">{row.employeeCode}</td>
+                                <td className="px-3 py-1.5 text-slate-600">{row.date}</td>
+                                <td className="px-3 py-1.5">
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                    row.status === "added" ? "bg-emerald-100 text-emerald-700" :
+                                    row.status === "changed" ? "bg-amber-100 text-amber-700" :
+                                    "bg-red-100 text-red-700"
+                                  }`}>{row.status}</span>
+                                </td>
+                                <td className="px-3 py-1.5 text-right text-slate-500">{row.before?.biometric_minutes ?? "—"}</td>
+                                <td className="px-3 py-1.5 text-right font-semibold text-slate-800">{row.after?.biometric_minutes ?? "—"}</td>
+                                <td className="px-3 py-1.5 text-right text-slate-500">{row.after?.total_punches ?? row.before?.total_punches ?? "—"}</td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                      {resyncResult.diff.filter(d => d.status !== "unchanged").length > 200 && (
+                        <p className="px-3 py-2 text-[11px] text-slate-400">Showing first 200 changed rows.</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {resyncResult.diff.filter(d => d.status !== "unchanged").length === 0 && !resyncResult.syncError && (
+                  <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-sm text-emerald-700">
+                    <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+                    COSEC data is already up to date for this date range — no changes needed.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   );
 }

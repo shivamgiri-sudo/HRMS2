@@ -107,7 +107,9 @@ function classifyBiometricStatus(minutes: number) {
   return "absent";
 }
 
+let reviewTableEnsured = false;
 async function ensureReviewTable() {
+  if (reviewTableEnsured) return;
   await db.execute(
     `CREATE TABLE IF NOT EXISTS payroll_attendance_conflict_review (
       id              CHAR(36)     NOT NULL DEFAULT (UUID()) PRIMARY KEY,
@@ -128,6 +130,7 @@ async function ensureReviewTable() {
       KEY idx_payroll_att_conflict_manager (manager_user_id)
     )`,
   );
+  reviewTableEnsured = true;
 }
 
 async function attachReviewState(gaps: AttendanceControlGap[]) {
@@ -1201,7 +1204,7 @@ export const payrollAttendanceControlService = {
     const searchScoped = allSources.filter((gap) => matchesSearch(gap, params));
 
     const allGapsBeforeReview = searchScoped.filter((gap) => matchesIssueType(gap, params));
-    const reviewedGaps = await attachResolutionState(await attachReviewState(allGapsBeforeReview));
+    const reviewedGaps = await attachReviewState(allGapsBeforeReview);
     const visibleFilter = (gap: AttendanceControlGap) => {
       const status = String(gap.reviewStatus ?? "open");
       if (params.reviewStatus && params.reviewStatus !== "all") {
@@ -1239,6 +1242,7 @@ export const payrollAttendanceControlService = {
     }
 
     const start = (page - 1) * limit;
+    const pageGaps = await attachResolutionState(visibleGaps.slice(start, start + limit));
     return {
       runMonth,
       from,
@@ -1261,7 +1265,7 @@ export const payrollAttendanceControlService = {
         sourceRowCap: SOURCE_ROW_CAP,
       },
       readiness,
-      gaps: visibleGaps.slice(start, start + limit),
+      gaps: pageGaps,
       total: visibleGaps.length,
       page,
       limit,
@@ -1349,6 +1353,23 @@ export const payrollAttendanceControlService = {
     }
 
     return { runMonth, updated, requested: params.conflictKeys.length, status: params.status };
+  },
+
+  async snapshotCosecState(from: string, to: string, employeeCode?: string) {
+    const empFilter = employeeCode ? " AND ibd.employee_code = ?" : "";
+    const values: unknown[] = employeeCode ? [from, to, employeeCode] : [from, to];
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT ibd.employee_code,
+              DATE_FORMAT(ibd.activity_date, '%Y-%m-%d') AS activity_date,
+              ibd.first_punch, ibd.last_punch, ibd.total_punches, ibd.biometric_minutes,
+              ibd.source_table
+         FROM integration_biometric_daily ibd
+        WHERE ibd.activity_date BETWEEN ? AND ?
+          ${empFilter}
+        ORDER BY ibd.employee_code, ibd.activity_date`,
+      values,
+    );
+    return rows as any[];
   },
 
   async repairMissingAdr(params: { conflictKeys: string[]; actorUserId: string | null }) {
