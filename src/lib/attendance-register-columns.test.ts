@@ -31,7 +31,7 @@ const baseColumns: Col[] = [
   { key: "absent_count", label: "A" },
   { key: "present_count", label: "P" },
   { key: "od_count", label: "OD" },
-  { key: "hd_count", label: "HD/DH/FTP" },
+  { key: "hd_count", label: "HD" },
   { key: "leave_count", label: "L" },
   { key: "holiday_count", label: "H" },
   { key: "weekoff_count", label: "W" },
