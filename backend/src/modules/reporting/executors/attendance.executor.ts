@@ -146,7 +146,7 @@ export async function attendanceRegisterMonthly(
       CONCAT(e.first_name, ' ', COALESCE(e.last_name, '')) AS emp_name,
       COALESCE(dept.dept_name, '') AS department,
       COALESCE(desig.designation_name, '') AS designation,
-      COALESCE(e.profile_type, '') AS profile,
+      COALESCE(NULLIF(e.profile_type, ''), e.employment_type, '') AS profile,
       COALESCE(cc.cost_centre_name, '') AS cost_center,
       COALESCE(b.branch_name, '') AS emp_location,
       CASE WHEN COALESCE(e.is_billable, 1) = 1 THEN 'Yes' ELSE 'No' END AS billable,
