@@ -96,10 +96,26 @@ export async function createWorkItem(input: WorkItemInput): Promise<string> {
  * 16 pending exit clearances, 120 BGV checks stuck in manual_review/mismatch — 162 real
  * items with nowhere a human would see them.
  *
- * Five placeholders in order: leave's (mgr.user_id, role-IN-list), exit clearance's
- * (owner_user_id, owner_role), BGV's (role-IN-list). getMyWorkItems() interpolates this
- * after its own two placeholders (assigned_to_user_id, assigned_to_role) and one
- * (work_inbox_item's user_id) — 3 + 5 = 8 total, unchanged from before this was extracted.
+ * Nine placeholders in order: leave's (mgr.user_id, role-IN-list), exit clearance's
+ * (owner_user_id, owner_role), BGV's (role-IN-list), GRN's (role-IN-list for the
+ * branch_head stage, role-IN-list for the finance_head stage), Branch Budget's (same
+ * shape as GRN). getMyWorkItems() interpolates this after its own two placeholders
+ * (assigned_to_user_id, assigned_to_role) and one (work_inbox_item's user_id) —
+ * 3 + 9 = 12 total.
+ *
+ * GRN and Branch Budget were, until this addition, entirely absent from Work Inbox —
+ * not a producer gap like leave/exit/BGV above (those three ARE in action-item-registry.ts,
+ * just never written to), but never registered anywhere at all: no ACTION_ITEM_REGISTRY
+ * entry, no work_item producer, no branch in this union. Both are real, already-built
+ * multi-stage approval workflows (grn.service.ts's reviewGrn, branch-budget.service.ts's
+ * review) — this only makes their pending-approval rows visible; the actual approve/reject
+ * dispatch lives in inbox-derived.service.ts, calling those same functions.
+ *
+ * Deliberately role-only, not branch-scoped, exactly like the BGV branch above — the row
+ * showing up here is not the authorization; inbox-derived.service.ts's decideDerivedItem()
+ * re-runs the real assertFinanceRecordBranch scope check before acting, so a role match here
+ * that turns out to be out-of-branch surfaces as a 403 on the actual decision, not a false
+ * grant.
  */
 const DERIVED_REGISTRY_UNION_SQL = `
        /*
@@ -201,7 +217,62 @@ const DERIVED_REGISTRY_UNION_SQL = `
          FROM candidate_bgv_check b
          LEFT JOIN ats_candidate c ON c.id = b.candidate_id
         WHERE LOWER(COALESCE(b.status, '')) IN ('manual_review', 'mismatch')
-          AND ? IN ('hr', 'hr_head', 'admin', 'super_admin', 'recruiter', 'recruitment_hr')`;
+          AND ? IN ('hr', 'hr_head', 'admin', 'super_admin', 'recruiter', 'recruitment_hr')
+       UNION ALL
+       /*
+        * GRN approvals. grn.service.ts's reviewGrn() is a real two-stage chain —
+        * 'submitted' needs branch_head, 'branch_head_approved' needs finance_head — but
+        * neither stage was ever visible anywhere a human would look for pending approvals.
+        */
+       SELECT CONCAT('grn:', g.id) AS id,
+              'GRN_APPROVAL_PENDING' AS item_type,
+              CONCAT('GRN ', g.grn_number, COALESCE(CONCAT(' — ', g.vendor_name), ''),
+                     ' (', FORMAT(g.amount, 0), ')') AS title,
+              CONCAT(g.head, COALESCE(CONCAT(' / ', g.sub_head), ''),
+                     COALESCE(CONCAT(' — ', b.branch_name), '')) AS description,
+              'finance' AS module_code,
+              'grn_request' AS entity_type,
+              g.id AS entity_id,
+              'high' AS priority,
+              'pending' AS status,
+              g.due_date AS due_at,
+              g.created_at,
+              '/finance/grn' AS action_url,
+              NULL AS assigned_employee_name,
+              'grn_request' AS source_table
+         FROM grn_request g
+         LEFT JOIN branch_master b ON b.id = g.branch_id
+        WHERE (
+                (g.status = 'submitted' AND ? IN ('branch_head', 'super_admin'))
+             OR (g.status = 'branch_head_approved' AND ? IN ('finance_head', 'super_admin'))
+              )
+       UNION ALL
+       /*
+        * Branch Budget approvals. branch-budget.service.ts's review() is the same
+        * two-stage shape as GRN (submitted -> branch_head_approved -> active), also never
+        * surfaced anywhere pending approvals are meant to be seen.
+        */
+       SELECT CONCAT('budget:', fb.id) AS id,
+              'BUDGET_APPROVAL_PENDING' AS item_type,
+              CONCAT('Branch Budget ', fb.budget_number, COALESCE(CONCAT(' — ', b.branch_name), ''),
+                     ' (', FORMAT(fb.gross_budget_amount, 0), ')') AS title,
+              CONCAT(fb.period_code, ' · FY ', fb.financial_year) AS description,
+              'finance' AS module_code,
+              'finance_budget_header' AS entity_type,
+              fb.id AS entity_id,
+              'high' AS priority,
+              'pending' AS status,
+              NULL AS due_at,
+              fb.created_at,
+              '/process-pnl/budgets' AS action_url,
+              NULL AS assigned_employee_name,
+              'finance_budget_header' AS source_table
+         FROM finance_budget_header fb
+         LEFT JOIN branch_master b ON b.id = fb.branch_id
+        WHERE (
+                (fb.status = 'submitted' AND ? IN ('branch_head', 'finance_head', 'super_admin'))
+             OR (fb.status = 'branch_head_approved' AND ? IN ('finance_head', 'super_admin'))
+              )`;
 
 export async function getMyWorkItems(userId: string, role: string, limit = 50, offset = 0) {
   const safeLimit = Math.max(1, Math.min(500, Number(limit) || 50));
@@ -253,13 +324,13 @@ export async function getMyWorkItems(userId: string, role: string, limit = 50, o
               merged.due_at ASC,
               merged.created_at DESC
      LIMIT ${safeLimit} OFFSET ${safeOffset}`,
-    [userId, role, userId, userId, role, userId, role, role]
+    [userId, role, userId, userId, role, userId, role, role, role, role, role, role]
   );
   return rows;
 }
 
 /**
- * The same three derived queues, standalone — for getMyPending() (modules/inbox/inbox.service.ts),
+ * The same five derived queues, standalone — for getMyPending() (modules/inbox/inbox.service.ts),
  * the endpoint the Work Inbox page actually reads. See DERIVED_REGISTRY_UNION_SQL's comment.
  */
 export async function getDerivedRegistryItems(userId: string, role: string, limit = 200) {
@@ -273,7 +344,7 @@ export async function getDerivedRegistryItems(userId: string, role: string, limi
               merged.due_at ASC,
               merged.created_at DESC
      LIMIT ${safeLimit}`,
-    [userId, role, userId, role, role]
+    [userId, role, userId, role, role, role, role, role, role]
   );
   return rows;
 }
