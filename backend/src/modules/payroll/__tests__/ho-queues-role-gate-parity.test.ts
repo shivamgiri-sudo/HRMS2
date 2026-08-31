@@ -37,9 +37,15 @@ describe("salary-verification.routes.ts — admin/payroll_branch parity with the
 });
 
 describe("payroll-lines.compat.routes.ts — payroll_head reaches the line-editing table it's designed for", () => {
-  it("GET /runs/:id/lines (the route that actually serves, shadowing payroll.routes.ts) accepts payroll_head/super_admin/finance_head", () => {
+  it("GET /runs/:id/lines (the route that actually serves, shadowing payroll.routes.ts) accepts payroll_head/super_admin/finance_head and payslip-center roles", () => {
     const src = read("payroll-lines.compat.routes.ts");
-    expect(src).toMatch(/requireRole\("admin", "hr", "finance", "payroll", "payroll_head", "super_admin", "finance_head"\)/);
+    // Core roles added 2026-08-25; payslip-center roles added 2026-08-28 so NativePayslipCenter
+    // no longer 403s for payroll_admin/payroll_branch/payroll_hr/hr_head/accounts_head.
+    expect(src).toMatch(/requireRole\([^)]*"payroll_head"[^)]*"super_admin"[^)]*"finance_head"[^)]*\)/);
+    expect(src).toMatch(/"payroll_admin"/);
+    expect(src).toMatch(/"payroll_branch"/);
+    expect(src).toMatch(/"hr_head"/);
+    expect(src).toMatch(/"accounts_head"/);
   });
 });
 
