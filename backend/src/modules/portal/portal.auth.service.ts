@@ -7,6 +7,12 @@ import { db } from "../../db/mysql.js";
 import { env } from "../../config/env.js";
 import type { PortalTokenPayload, ClientUser } from "./portal.types.js";
 
+/** Format Date as MySQL DATETIME in local timezone (not UTC). */
+function toMySQLDatetime(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
 export const portalAuthService = {
   async purgeExpiredOtps(): Promise<void> {
     try {
@@ -45,7 +51,7 @@ export const portalAuthService = {
     db.execute(
       `INSERT INTO portal_user_sessions (id, client_user_id, jti, expires_at)
        VALUES (?, ?, ?, ?)`,
-      [randomUUID(), payload.clientUserId, jti, expiresAt]
+      [randomUUID(), payload.clientUserId, jti, toMySQLDatetime(expiresAt)]
     ).catch((error) => {
       console.error("[portal] session not recorded; token stays valid but is not individually revocable", error);
     });
@@ -104,7 +110,7 @@ export const portalAuthService = {
 
     await db.execute(
       "INSERT INTO portal_otp (id, email, otp_hash, expires_at) VALUES (?, ?, ?, ?)",
-      [randomUUID(), email, hash, expiresAt.toISOString().slice(0, 19).replace("T", " ")]
+      [randomUUID(), email, hash, toMySQLDatetime(expiresAt)]
     );
 
     try {
