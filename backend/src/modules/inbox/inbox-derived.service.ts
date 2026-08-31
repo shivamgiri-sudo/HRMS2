@@ -20,8 +20,17 @@ import { canViewEmployee } from "../../shared/enterpriseScope.js";
 import { canReviewLeave } from "../leave/leave.secure.routes.js";
 import { leaveService } from "../leave/leave.service.js";
 import { manualReview } from "../ats/bgv-verification.service.js";
+import { assertFinanceRecordBranch } from "../finance/finance-access-scope.js";
+import { resolveFinanceStageRole } from "../finance/finance-workflow-role.js";
+import { grnService } from "../finance/grn.service.js";
+import { branchBudgetService } from "../process-pnl/branch-budget.service.js";
 
-export type DerivedEntityType = "leave_request" | "exit_clearance_task" | "candidate_bgv_check";
+export type DerivedEntityType =
+  | "leave_request"
+  | "exit_clearance_task"
+  | "candidate_bgv_check"
+  | "grn_request"
+  | "finance_budget_header";
 export type DerivedDecision = "approve" | "reject";
 
 function apiError(statusCode: number, message: string): Error & { statusCode: number } {
@@ -29,7 +38,40 @@ function apiError(statusCode: number, message: string): Error & { statusCode: nu
 }
 
 export function isDerivedEntityType(v: string): v is DerivedEntityType {
-  return v === "leave_request" || v === "exit_clearance_task" || v === "candidate_bgv_check";
+  return (
+    v === "leave_request" ||
+    v === "exit_clearance_task" ||
+    v === "candidate_bgv_check" ||
+    v === "grn_request" ||
+    v === "finance_budget_header"
+  );
+}
+
+/**
+ * GRN and Branch Budget review (grnService.reviewGrn / branchBudgetService.review) both take
+ * an "effective role" resolved from every role the actor holds, via resolveFinanceStageRole —
+ * not the actor id alone, and not req.userRoles (that's populated by requireRole middleware,
+ * which the /derived/* routes deliberately don't carry, since not every derived type needs a
+ * finance role). Read directly from user_roles instead, matching how inbox.service.ts's
+ * getMyPending() already resolves the caller's roles for the same union query these two
+ * branches were just added to.
+ */
+async function getActorRoleContext(actorUserId: string): Promise<{ primaryRole: string; userRoles: string[] }> {
+  const [rows] = await db.execute<RowDataPacket[]>(
+    "SELECT role_key FROM user_roles WHERE user_id = ? AND active_status = 1",
+    [actorUserId],
+  );
+  const userRoles = (rows as RowDataPacket[]).map((r) => String(r.role_key));
+  return { primaryRole: userRoles[0] ?? "unknown", userRoles };
+}
+
+/** Wraps a bare `Error` (no statusCode) the way this codebase's finance guards do, so
+ * errorHandler.ts doesn't replace the real reason with a generic 500 in production — see
+ * resolveFinanceStageRole's own comment on exactly this failure mode. */
+function withStatus(err: unknown, fallback: number): Error & { statusCode: number } {
+  if (err instanceof Error && "statusCode" in err) return err as Error & { statusCode: number };
+  const message = err instanceof Error ? err.message : String(err);
+  return apiError(fallback, message);
 }
 
 export async function decideDerivedItem(
@@ -82,22 +124,87 @@ export async function decideDerivedItem(
     return { id: entityId, status };
   }
 
-  // candidate_bgv_check
-  if (!(await hasAnyRole(actorUserId, "hr", "hr_head", "admin", "super_admin", "recruiter", "recruitment_hr"))) {
-    throw apiError(403, "Forbidden: BGV review is outside your role");
+  if (entityType === "candidate_bgv_check") {
+    if (!(await hasAnyRole(actorUserId, "hr", "hr_head", "admin", "super_admin", "recruiter", "recruitment_hr"))) {
+      throw apiError(403, "Forbidden: BGV review is outside your role");
+    }
+    const [checkRows] = await db.execute<RowDataPacket[]>(
+      `SELECT candidate_id, check_type FROM candidate_bgv_check WHERE id = ? LIMIT 1`,
+      [entityId],
+    );
+    const check = checkRows[0];
+    if (!check) throw apiError(404, "BGV check not found");
+    const status = decision === "approve" ? "verified" : "failed";
+    return manualReview(
+      String(check.candidate_id),
+      { checkId: entityId, status, remarks: trimmedRemarks || `Reviewed from Work Inbox (${decision})` },
+      actorUserId,
+    );
   }
-  const [checkRows] = await db.execute<RowDataPacket[]>(
-    `SELECT candidate_id, check_type FROM candidate_bgv_check WHERE id = ? LIMIT 1`,
-    [entityId],
-  );
-  const check = checkRows[0];
-  if (!check) throw apiError(404, "BGV check not found");
-  const status = decision === "approve" ? "verified" : "failed";
-  return manualReview(
-    String(check.candidate_id),
-    { checkId: entityId, status, remarks: trimmedRemarks || `Reviewed from Work Inbox (${decision})` },
-    actorUserId,
-  );
+
+  if (entityType === "grn_request") {
+    // Dispatches to the exact same function GET /finance/grns/:id/review calls — see
+    // grn.service.ts's reviewGrn(). Branch scope and stage-role resolution are the same real
+    // guards that route enforces (assertFinanceRecordBranch, resolveFinanceStageRole), not a
+    // looser reimplementation of them.
+    let grn: { branch_id?: string | null; status?: string } | undefined;
+    try {
+      grn = await grnService.getGrn(entityId);
+    } catch (err) {
+      throw withStatus(err, 404);
+    }
+    if (!grn) throw apiError(404, "GRN not found");
+    const { primaryRole, userRoles } = await getActorRoleContext(actorUserId);
+    try {
+      await assertFinanceRecordBranch({ userId: actorUserId, primaryRole, userRoles, recordBranchId: grn.branch_id ?? null });
+    } catch (err) {
+      throw withStatus(err, 403);
+    }
+    const effectiveRole = resolveFinanceStageRole({
+      primaryRole, userRoles, currentStatus: String(grn.status ?? ""), workflow: "grn",
+    });
+    try {
+      return await grnService.reviewGrn(
+        entityId,
+        { decision: decision === "approve" ? "approved" : "rejected", reviewNote: trimmedRemarks || undefined },
+        actorUserId,
+        effectiveRole,
+      );
+    } catch (err) {
+      throw withStatus(err, 400);
+    }
+  }
+
+  // finance_budget_header (Branch Budget)
+  {
+    let budget: { branch_id?: string | null; status?: string } | undefined;
+    try {
+      budget = await branchBudgetService.get(entityId) as { branch_id?: string | null; status?: string };
+    } catch (err) {
+      throw withStatus(err, 404);
+    }
+    if (!budget) throw apiError(404, "Budget not found");
+    const { primaryRole, userRoles } = await getActorRoleContext(actorUserId);
+    try {
+      await assertFinanceRecordBranch({ userId: actorUserId, primaryRole, userRoles, recordBranchId: budget.branch_id ?? null });
+    } catch (err) {
+      throw withStatus(err, 403);
+    }
+    const effectiveRole = resolveFinanceStageRole({
+      primaryRole, userRoles, currentStatus: String(budget.status ?? ""), workflow: "budget",
+    });
+    try {
+      return await branchBudgetService.review(
+        entityId,
+        decision === "approve" ? "approve" : "reject",
+        actorUserId,
+        effectiveRole,
+        trimmedRemarks || undefined,
+      );
+    } catch (err) {
+      throw withStatus(err, 400);
+    }
+  }
 }
 
 export async function getDerivedItemDetail(
@@ -147,17 +254,51 @@ export async function getDerivedItemDetail(
     return task;
   }
 
-  // candidate_bgv_check
-  if (!(await hasAnyRole(actorUserId, "hr", "hr_head", "admin", "super_admin", "recruiter", "recruitment_hr"))) {
-    throw apiError(403, "Forbidden: BGV review is outside your role");
+  if (entityType === "candidate_bgv_check") {
+    if (!(await hasAnyRole(actorUserId, "hr", "hr_head", "admin", "super_admin", "recruiter", "recruitment_hr"))) {
+      throw apiError(403, "Forbidden: BGV review is outside your role");
+    }
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT bc.*, c.full_name AS candidate_name, c.candidate_code, c.mobile, c.email
+         FROM candidate_bgv_check bc
+         LEFT JOIN ats_candidate c ON c.id = bc.candidate_id
+        WHERE bc.id = ? LIMIT 1`,
+      [entityId],
+    );
+    if (!rows[0]) throw apiError(404, "BGV check not found");
+    return rows[0];
   }
-  const [rows] = await db.execute<RowDataPacket[]>(
-    `SELECT bc.*, c.full_name AS candidate_name, c.candidate_code, c.mobile, c.email
-       FROM candidate_bgv_check bc
-       LEFT JOIN ats_candidate c ON c.id = bc.candidate_id
-      WHERE bc.id = ? LIMIT 1`,
-    [entityId],
-  );
-  if (!rows[0]) throw apiError(404, "BGV check not found");
-  return rows[0];
+
+  if (entityType === "grn_request") {
+    let grn: Record<string, unknown> | undefined;
+    try {
+      grn = await grnService.getGrn(entityId);
+    } catch (err) {
+      throw withStatus(err, 404);
+    }
+    if (!grn) throw apiError(404, "GRN not found");
+    const { primaryRole, userRoles } = await getActorRoleContext(actorUserId);
+    try {
+      await assertFinanceRecordBranch({ userId: actorUserId, primaryRole, userRoles, recordBranchId: (grn as { branch_id?: string | null }).branch_id ?? null });
+    } catch (err) {
+      throw withStatus(err, 403);
+    }
+    return grn;
+  }
+
+  // finance_budget_header (Branch Budget)
+  let budget: Record<string, unknown> | undefined;
+  try {
+    budget = await branchBudgetService.get(entityId);
+  } catch (err) {
+    throw withStatus(err, 404);
+  }
+  if (!budget) throw apiError(404, "Budget not found");
+  const { primaryRole, userRoles } = await getActorRoleContext(actorUserId);
+  try {
+    await assertFinanceRecordBranch({ userId: actorUserId, primaryRole, userRoles, recordBranchId: (budget as { branch_id?: string | null }).branch_id ?? null });
+  } catch (err) {
+    throw withStatus(err, 403);
+  }
+  return budget;
 }
