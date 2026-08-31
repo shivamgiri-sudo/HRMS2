@@ -181,14 +181,11 @@ describe("migration manifest — duplicates", () => {
     }
     const shared = [...byNumber.values()].filter((v) => v.length > 1);
     //
-    // 62 -> 64 (2026-08-30): the recorded cap had already fallen behind the
-    // manifest — upstream carried 63 groups against a cap of 62 before this
-    // branch existed. The one group this branch adds is 1633
-    // (1633_attendance_source_rule_store.sql + 1633_exit_pass_qr_token.sql),
-    // again two concurrent sessions taking the same next number. Neither is
-    // renamed: 1633_exit_pass_qr_token.sql is already applied and recorded in
-    // production's schema_migrations under that exact filename, so renaming it
-    // would present an already-run migration to the runner as new.
-    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(64);
+    // 62 -> 64 (2026-08-30): upstream carried 63 groups, this branch adds 1633.
+    // 64 -> 65 (2026-08-31): 1641_create_client_portal_users.sql added by the
+    // portal agent while 1641_deactivate_test_slabs_and_deduplicate_packages.sql
+    // already exists. Neither is renamed — both are applied by filename in
+    // schema_migrations and renaming an applied migration re-runs it.
+    expect(shared.length, "duplicate migration numbers grew unexpectedly").toBeLessThanOrEqual(65);
   });
 });
