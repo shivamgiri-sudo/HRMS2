@@ -220,17 +220,34 @@ export const performanceFeedbackController = {
   /**
    * 7. GET /api/performance-feedback/requests - Get requests with filters
    */
-  async getRequests(req: Request, res: Response) {
+  async getRequests(req: AuthenticatedRequest, res: Response) {
     try {
       const parsed = feedbackFiltersSchema.safeParse(req.query);
       if (!parsed.success) {
         return res.status(400).json({ error: parsed.error.flatten() });
       }
 
+      // Had no server-derived reviewer scope at all: "My Feedback Assignments"
+      // (NativePerformanceFeedbackAssignments.tsx) calls this with zero query params
+      // expecting "my own pending reviews," but got every request in the system, and
+      // any authenticated user could pass ?employeeId=<anyone> to see someone else's
+      // feedback request/ratings. Fixed 2026-09-01: non-admin/hr callers are always
+      // restricted to requests where they are the reviewer, regardless of query params.
+      const isPrivileged = await hasRole(req.authUser!.id, "admin", "hr");
+      let reviewer_id: string | undefined;
+      let employee_id = parsed.data.employeeId;
+      if (!isPrivileged) {
+        const emp = await getEmployeeForUser(req.authUser!.id);
+        if (!emp) return res.status(200).json({ data: [] });
+        reviewer_id = emp.id;
+        employee_id = undefined; // ignore any client-supplied employee_id
+      }
+
       // Map camelCase to snake_case
       const filters = {
         cycle_id: parsed.data.cycleId,
-        employee_id: parsed.data.employeeId,
+        employee_id,
+        reviewer_id,
         status: parsed.data.status?.toLowerCase().replace("-", "_"),
       };
 
@@ -245,13 +262,26 @@ export const performanceFeedbackController = {
   /**
    * 8. GET /api/performance-feedback/requests/:id - Get single request by ID
    */
-  async getRequestById(req: Request, res: Response) {
+  async getRequestById(req: AuthenticatedRequest, res: Response) {
     try {
       const requestId = req.params.id;
       const request = await service.getRequestById(requestId);
 
       if (!request) {
         return res.status(404).json({ error: "Request not found" });
+      }
+
+      // Same gap as getRequests above — no scope check at all. Fixed 2026-09-01: a
+      // non-admin/hr caller may only view a request where they are the reviewer or the
+      // subject employee.
+      const isPrivileged = await hasRole(req.authUser!.id, "admin", "hr");
+      if (!isPrivileged) {
+        const emp = await getEmployeeForUser(req.authUser!.id);
+        const isReviewer = emp && (request as any).reviewer_id === emp.id;
+        const isSubject = emp && (request as any).employee_id === emp.id;
+        if (!isReviewer && !isSubject) {
+          return res.status(403).json({ error: "This feedback request is outside your access" });
+        }
       }
 
       return res.status(200).json({ data: request });
