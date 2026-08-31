@@ -399,12 +399,14 @@ export default function AttendanceControlTower() {
   const [resyncDate, setResyncDate] = useState("");
   const [resyncDateTo, setResyncDateTo] = useState("");
   const [resyncEmpCode, setResyncEmpCode] = useState("");
+  const [resyncAutoRepair, setResyncAutoRepair] = useState(true);
   const [resyncResult, setResyncResult] = useState<null | {
     from: string; to: string; employeeCode: string | null;
     syncResult: any; syncError: string | null;
     beforeCount: number; afterCount: number;
     added: number; changed: number; removed: number; unchanged: number;
     diff: Array<{ employeeCode: string; date: string; status: string; before: any; after: any }>;
+    repairResult: { requested: number; repaired: number; skipped: number } | null;
   }>(null);
   const resyncDrawerRef = useRef<HTMLDivElement>(null);
 
@@ -422,7 +424,7 @@ export default function AttendanceControlTower() {
       if (resyncEmpCode.trim()) body.employeeCode = resyncEmpCode.trim();
       const res = await hrmsApi.post<{ success: boolean; data: any }>(
         "/api/payroll/attendance-control-tower/resync-cosec",
-        body,
+        { ...body, autoRepair: resyncAutoRepair },
       );
       return res.data;
     },
@@ -1030,6 +1032,23 @@ export default function AttendanceControlTower() {
                 <strong>Safe operation:</strong> Only re-writes <code>integration_biometric_daily</code> rows for the selected date range. Locked ADR rows, regularizations, and other employees/dates are not touched.
               </div>
 
+              {/* Auto-repair toggle */}
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-blue-600"
+                  checked={resyncAutoRepair}
+                  onChange={(e) => setResyncAutoRepair(e.target.checked)}
+                />
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Also repair missing ADR records</p>
+                  <p className="mt-0.5 text-[11px] text-slate-500">
+                    After syncing, automatically create attendance day records for employees who have biometric minutes but <strong>no ADR entry at all</strong>.
+                    Short working hour rows (where an ADR already exists) are intentionally skipped — those need human review.
+                  </p>
+                </div>
+              </label>
+
               {resyncMutation.error && (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-700">
                   {(resyncMutation.error as any)?.response?.data?.message ?? "Re-sync failed. Check if COSEC server is reachable."}
@@ -1080,6 +1099,42 @@ export default function AttendanceControlTower() {
                     </p>
                   )}
                 </div>
+
+                {/* Repair result */}
+                {resyncResult.repairResult !== null && resyncResult.repairResult !== undefined && (
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">ADR Repair Result</p>
+                    {resyncResult.repairResult.requested === 0 ? (
+                      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs text-slate-600">
+                        <CheckCircle2 className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                        No completely missing ADR records found for this date range — nothing to repair.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { label: "Repaired", value: resyncResult.repairResult.repaired, color: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+                          { label: "Skipped", value: resyncResult.repairResult.skipped, color: "text-amber-700 bg-amber-50 border-amber-200" },
+                          { label: "Requested", value: resyncResult.repairResult.requested, color: "text-slate-600 bg-slate-50 border-slate-200" },
+                        ].map((s) => (
+                          <div key={s.label} className={`rounded-xl border px-3 py-2 text-center ${s.color}`}>
+                            <p className="text-lg font-extrabold">{s.value}</p>
+                            <p className="text-[10px] font-semibold uppercase">{s.label}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {(resyncResult.repairResult.repaired ?? 0) > 0 && (
+                      <p className="mt-2 text-[11px] text-emerald-700 font-medium">
+                        ✓ {resyncResult.repairResult.repaired} attendance day records created from biometric evidence. Payroll will pick these up on the next recalculation.
+                      </p>
+                    )}
+                    {(resyncResult.repairResult.skipped ?? 0) > 0 && (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {resyncResult.repairResult.skipped} rows skipped — locked/regularized ADR already exists or biometric minutes were zero.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 {/* Before / After table */}
                 {resyncResult.diff.filter(d => d.status !== "unchanged").length > 0 && (

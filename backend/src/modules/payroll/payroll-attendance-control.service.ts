@@ -1355,6 +1355,30 @@ export const payrollAttendanceControlService = {
     return { runMonth, updated, requested: params.conflictKeys.length, status: params.status };
   },
 
+  async getMissingAdrKeys(from: string, to: string, employeeCode?: string) {
+    const empFilter = employeeCode ? " AND e.employee_code = ?" : "";
+    const values: unknown[] = employeeCode ? [from, to, employeeCode] : [from, to];
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT e.id AS employee_id,
+              DATE_FORMAT(ibd.activity_date, '%Y-%m-%d') AS activity_date
+         FROM integration_biometric_daily ibd
+         JOIN employees e ON e.employee_code = ibd.employee_code
+         LEFT JOIN attendance_daily_record adr
+                ON adr.employee_id = e.id AND adr.record_date = ibd.activity_date
+        WHERE ibd.activity_date BETWEEN ? AND ?
+          AND ibd.biometric_minutes > 0
+          ${empFilter}
+          AND adr.id IS NULL
+          AND (
+            e.active_status = 1
+            OR (e.date_of_leaving IS NOT NULL AND e.date_of_leaving >= ibd.activity_date)
+          )
+        LIMIT 500`,
+      values,
+    );
+    return (rows as any[]).map((row) => `ncosec:${row.employee_id}:${row.activity_date}`);
+  },
+
   async snapshotCosecState(from: string, to: string, employeeCode?: string) {
     const empFilter = employeeCode ? " AND ibd.employee_code = ?" : "";
     const values: unknown[] = employeeCode ? [from, to, employeeCode] : [from, to];

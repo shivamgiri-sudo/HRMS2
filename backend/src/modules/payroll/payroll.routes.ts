@@ -413,6 +413,7 @@ router.post(
     const fromInput = typeof req.body.from === "string" ? req.body.from.trim() : null;
     const toInput = typeof req.body.to === "string" ? req.body.to.trim() : null;
     const employeeCode = typeof req.body.employeeCode === "string" ? req.body.employeeCode.trim() : undefined;
+    const autoRepair = req.body.autoRepair === true || req.body.autoRepair === "true";
 
     const from = dateInput ?? fromInput ?? "";
     const to = dateInput ?? toInput ?? from;
@@ -467,6 +468,23 @@ router.post(
     }
     diff.sort((a, b) => `${a.employeeCode}__${a.date}`.localeCompare(`${b.employeeCode}__${b.date}`));
 
+    // Auto-repair: find ncosec_missing_adr keys (employee has biometric minutes but
+    // NO attendance_daily_record at all) and write the ADR. Short-working-hours rows
+    // (ncosec_minutes_not_in_adr, where ADR exists but minutes don't match) are
+    // intentionally skipped — those are legitimate edge cases that need human review.
+    let repairResult: { requested: number; repaired: number; skipped: number } | null = null;
+    if (autoRepair && !syncError) {
+      const missingKeys = await payrollAttendanceControlService.getMissingAdrKeys(from, to, employeeCode);
+      if (missingKeys.length > 0) {
+        repairResult = await payrollAttendanceControlService.repairMissingAdr({
+          conflictKeys: missingKeys,
+          actorUserId: req.authUser?.id ?? null,
+        });
+      } else {
+        repairResult = { requested: 0, repaired: 0, skipped: 0 };
+      }
+    }
+
     await logSensitiveAction({
       actor_user_id: req.authUser?.id ?? "system",
       action_type: "COSEC_BIOMETRIC_RESYNCED",
@@ -478,7 +496,7 @@ router.post(
         beforeCount: before.length, afterCount: after.length,
         added: diff.filter((d) => d.status === "added").length,
         changed: diff.filter((d) => d.status === "changed").length,
-        syncError,
+        syncError, autoRepair, repairResult,
       },
     });
 
@@ -496,6 +514,7 @@ router.post(
         removed: diff.filter((d) => d.status === "removed").length,
         unchanged: diff.filter((d) => d.status === "unchanged").length,
         diff,
+        repairResult,
       },
     });
   }),
