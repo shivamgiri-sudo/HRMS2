@@ -41,8 +41,11 @@ function fail(res: Response, err: unknown): Response {
 
 function actorOf(req: AuthenticatedRequest) {
   return {
-    userId: String((req as any).user?.id ?? (req as any).user?.userId ?? ""),
-    role: (req as any).user?.role ?? null,
+    // Was reading req.user, which authMiddleware never sets (it sets req.authUser) —
+    // userId was always "", so the self-approval guard below could never trigger and
+    // requested_by/decided_by were always logged as "". Fixed 2026-09-01.
+    userId: String(req.authUser?.id ?? ""),
+    role: req.authUser?.role ?? null,
     ip: req.ip ?? null,
     userAgent: req.get?.("user-agent") ?? null,
   };

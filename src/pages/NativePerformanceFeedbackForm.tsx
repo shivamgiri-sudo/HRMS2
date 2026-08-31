@@ -82,16 +82,19 @@ export default function NativePerformanceFeedbackForm() {
   const handleSubmit = async () => {
     setSubmitting(true);
     try {
+      // The backend's schema is competency-based only (performance_feedback_response has
+      // no KPI response store) and deliberately 400s the whole submission — including
+      // valid competency ratings — the instant `kpis` is non-empty, rather than silently
+      // discarding them (performance-feedback.service.ts submitFeedback, code
+      // KPI_RATINGS_UNSUPPORTED: "KPI scoring belongs to the KPI module"). Sending an
+      // empty array here every time template.kpis.length > 0 made "Submit Feedback"
+      // fail end-to-end for any employee with KPIs assigned. Fixed 2026-09-01 by not
+      // sending kpis at all — KPI actuals are recorded through the KPI module instead.
       const payload = {
         request_id: requestId,
         ratings_json: {
           competencies: Object.entries(ratings).map(([competency_id, data]) => ({
             competency_id,
-            rating: data.rating,
-            comment: data.comment || undefined,
-          })),
-          kpis: Object.entries(kpiRatings).map(([metric_id, data]) => ({
-            metric_id,
             rating: data.rating,
             comment: data.comment || undefined,
           })),
@@ -192,31 +195,14 @@ export default function NativePerformanceFeedbackForm() {
                   </p>
                 </div>
 
-                <div className="space-y-3">
-                  <div>
-                    <Label>Rating</Label>
-                    <RatingSlider
-                      value={kpiRatings[kpi.id]?.rating || 3}
-                      onChange={(value) => setKpiRatings({
-                        ...kpiRatings,
-                        [kpi.id]: { ...kpiRatings[kpi.id], rating: value }
-                      })}
-                    />
-                  </div>
-
-                  <div>
-                    <Label>Comment (Optional)</Label>
-                    <Textarea
-                      placeholder="Context or explanation..."
-                      value={kpiRatings[kpi.id]?.comment || ""}
-                      onChange={(e) => setKpiRatings({
-                        ...kpiRatings,
-                        [kpi.id]: { ...kpiRatings[kpi.id], comment: e.target.value }
-                      })}
-                      rows={2}
-                    />
-                  </div>
-                </div>
+                {/* KPI ratings are shown read-only here (target/actual above). The
+                    feedback schema has no KPI response store, and this section's
+                    rating/comment inputs were previously silently dropped on submit —
+                    never saved anywhere, with no error shown. Removed 2026-09-01;
+                    KPI scoring is recorded through the KPI module, not this form. */}
+                <p className="text-xs text-gray-500 italic">
+                  KPI actuals are scored in the KPI module, not here — this card is for reference only.
+                </p>
               </div>
             ))}
           </CardContent>

@@ -412,7 +412,7 @@ salaryVerificationRouter.get(
             { code: "PF_EMP", name: "PF — Employee (12%)",                    amount: Number(line.pf_employee ?? 0) },
             { code: "ESIC",   name: "ESIC (0.75%)",                           amount: Number(line.esic_employee ?? 0) },
             { code: "PT",     name: "Professional Tax",                        amount: Number(line.professional_tax ?? 0) },
-            { code: "TDS",    name: "TDS",                                     amount: Number(line.tds_amount ?? 0) },
+            { code: "TDS",    name: "TDS",                                     amount: Number(line.tds ?? 0) },
             { code: "LOAN",   name: "Loan EMI",                                amount: Number(line.loan_emi ?? 0) },
           ].filter((d) => d.amount > 0 && !deductions.some((x) => x.code === d.code));
 
@@ -888,7 +888,7 @@ salaryVerificationRouter.get(
            LEFT JOIN employees e ON e.id = svf.employee_id
            LEFT JOIN process_master pm ON pm.id = svf.process_id
            LEFT JOIN branch_master bm ON bm.id = svf.branch_id
-           LEFT JOIN users u ON u.id = svf.raised_by
+           LEFT JOIN auth_user u ON u.id = svf.raised_by
           WHERE ${where.join(" AND ")}
           ORDER BY svf.raised_at DESC`,
         params

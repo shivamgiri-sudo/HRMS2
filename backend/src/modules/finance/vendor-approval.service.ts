@@ -80,6 +80,16 @@ export const vendorApprovalService = {
     if (request.status !== "pending") {
       throw Object.assign(new Error(`Request is already ${request.status}`), { statusCode: 409 });
     }
+    // Maker-checker: finance_head/super_admin appear in both RAISE_ROLES and
+    // APPROVAL_WRITE_ROLES, so without this check the same person could raise and
+    // approve their own vendor create/update — the exact fraud vector vendor-bank.service.ts
+    // guards against for bank-account changes. Fixed 2026-09-01.
+    if (String(request.raised_by) === String(reviewerId)) {
+      throw Object.assign(
+        new Error("A vendor approval request must be approved by someone other than the person who raised it."),
+        { statusCode: 403 }
+      );
+    }
 
     const storedPayload = typeof request.payload === "string"
       ? JSON.parse(request.payload)

@@ -362,7 +362,7 @@ function InvoicesTab() {
       if (filters.branchName) params.set("branchName", filters.branchName);
       params.set("page", filters.page.toString());
       params.set("limit", "25");
-      const res = await hrmsApi.get(`/finance/client-payments/invoices?${params}`);
+      const res = await hrmsApi.get(`/api/finance/client-payments/invoices?${params}`);
       return res.data as {
         invoices: ClientInvoice[];
         total: number;
@@ -373,7 +373,7 @@ function InvoicesTab() {
 
   const updateMutation = useMutation({
     mutationFn: async (payload: any) => {
-      const res = await hrmsApi.post("/finance/client-payments/update", payload);
+      const res = await hrmsApi.post("/api/finance/client-payments/update", payload);
       return res.data;
     },
     onSuccess: () => {
@@ -576,7 +576,7 @@ function TrendsTab() {
       if (clientName) params.set("clientName", clientName);
       if (branchName) params.set("branchName", branchName);
       params.set("months", "12");
-      const res = await hrmsApi.get(`/finance/client-payments/trends?${params}`);
+      const res = await hrmsApi.get(`/api/finance/client-payments/trends?${params}`);
       return res.data.trends as PaymentTrend[];
     },
   });
@@ -657,7 +657,7 @@ function ClientsTab() {
   const { data, isLoading } = useQuery({
     queryKey: ["client-summary"],
     queryFn: async () => {
-      const res = await hrmsApi.get("/finance/client-payments/clients");
+      const res = await hrmsApi.get("/api/finance/client-payments/clients");
       return res.data.clients as ClientSummary[];
     },
   });
@@ -775,7 +775,7 @@ function SeatRatesTab() {
     queryKey: ["seat-rates", financeYear, month],
     queryFn: async () => {
       const res = await hrmsApi.get(
-        `/finance/client-payments/seat-rates?financeYear=${financeYear}&month=${month}`
+        `/api/finance/client-payments/seat-rates?financeYear=${financeYear}&month=${month}`
       );
       return res.data.rates as SeatRate[];
     },
@@ -786,7 +786,7 @@ function SeatRatesTab() {
     queryKey: ["predictive-revenue", financeYear, month],
     queryFn: async () => {
       const res = await hrmsApi.get(
-        `/finance/client-payments/predictive-revenue?financeYear=${financeYear}&month=${month}`
+        `/api/finance/client-payments/predictive-revenue?financeYear=${financeYear}&month=${month}`
       );
       return res.data as {
         total_seats: number;

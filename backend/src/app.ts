@@ -51,7 +51,6 @@ import { disbursalRouter } from "./modules/payroll/disbursal.routes.js";
 import { payrollWindowCronRouter } from "./modules/payroll/payroll-window.routes.js";
 import { nocRouter } from "./modules/payroll/noc.routes.js";
 import { runningSalaryRouter } from "./modules/payroll/running-salary.routes.js";
-import salaryPackageRouter from "./modules/payroll/payroll-masters.routes.js";
 import { employeeRouter } from "./modules/employees/employee.routes.js";
 import { requireAuth as requireAuthForDpdpGuard } from "./middleware/authMiddleware.js";
 import { checkDpdpRestriction } from "./modules/privacy/dpdpRestrictionGuard.js";
@@ -427,7 +426,11 @@ app.use("/api/payroll", disbursalRouter);
 app.use("/api/payroll", payrollWindowCronRouter);
 app.use("/api/payroll/noc", nocRouter);
 app.use("/api/payroll", runningSalaryRouter);
-app.use("/api/payroll-masters", salaryPackageRouter);
+// NOTE: /api/payroll-masters is mounted once, below, with payrollMastersRouter.
+// A duplicate `app.use("/api/payroll-masters", salaryPackageRouter)` used to sit here —
+// payroll-masters.routes.ts (the salaryPackageRouter file) is just a re-export of the
+// same payrollMastersRouter instance mounted at line ~636, so every request to this
+// prefix was handled twice. Removed 2026-09-01; see hrms2 audit findings.
 app.use("/api/payroll-compliance", payrollComplianceRouter);
 app.use("/api/payroll/pf", pfCreationRouter);
 // DPDP Act 2023 §13. checkDpdpRestriction shipped in 45b13ab1 (2026-07-20) together with the

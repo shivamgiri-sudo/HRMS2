@@ -164,7 +164,28 @@ export default function NativeEmployee360() {
     enabled: !!id,
   });
 
-  const data: Employee360 | undefined = raw ? unwrap<Employee360>(raw) : undefined;
+  // The backend (employee-360.service.ts) returns
+  // { employee, attendance, wfm, quality, kpi: {metrics,...}, dialer, risk, pip, alerts, manager_context }
+  // while every section below this file was written against attendanceMetrics/wfmMetrics/
+  // qualityMetrics/kpiMetrics(array)/dialerMetrics/riskMetrics/pipStatus/openAlerts/managerContext.
+  // Every key but `employee` mismatched, so the whole page beyond the identity header
+  // rendered permanent "No data" states. Remapped at the API boundary 2026-09-01 rather
+  // than renaming every usage site in this file.
+  const raw360 = raw ? unwrap<any>(raw) : undefined;
+  const data: Employee360 | undefined = raw360
+    ? {
+        employee: raw360.employee,
+        attendanceMetrics: raw360.attendance ?? null,
+        wfmMetrics: raw360.wfm ?? null,
+        qualityMetrics: raw360.quality ?? null,
+        kpiMetrics: raw360.kpi?.metrics ?? [],
+        dialerMetrics: raw360.dialer ?? null,
+        riskMetrics: raw360.risk ?? null,
+        pipStatus: raw360.pip ?? null,
+        openAlerts: raw360.alerts ?? [],
+        managerContext: raw360.manager_context ?? null,
+      }
+    : undefined;
 
   // ── Loading ──
   if (isLoading) {
