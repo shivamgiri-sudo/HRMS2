@@ -13,6 +13,7 @@ import {
   Loader2, RefreshCw, ShieldAlert, Users, XCircle,
 } from "lucide-react";
 import { hrmsApi } from "@/lib/hrmsApi";
+import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { OnboardingTabBar } from "@/components/onboarding/OnboardingTabBar";
 
 type Blocker = { code: string; reason: string; severity: "critical" | "warning" };
@@ -126,6 +127,7 @@ export default function NativeAppointmentLetterQueue() {
   };
 
   return (
+    <DashboardLayout>
     <div className="bg-blue-50 min-h-screen px-4 py-8">
       <div className="mx-auto max-w-6xl space-y-5">
 
@@ -347,6 +349,7 @@ export default function NativeAppointmentLetterQueue() {
         )}
       </div>
     </div>
+    </DashboardLayout>
   );
 }
 
