@@ -446,7 +446,7 @@ function BulkSubmitFields({ onSuccess }: { onSuccess: () => void }) {
         </Label>
         <Textarea
           value={reason}
-          onChange={(e) => { setReason(e.target.value); setResults(null); }}
+          onChange={(e) => setReason(e.target.value)}
           placeholder="Explain why the salary date needs to change (min 10 characters)…"
           rows={3}
           className="rounded-xl resize-none text-sm"
