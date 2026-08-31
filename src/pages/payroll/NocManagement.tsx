@@ -75,6 +75,10 @@ interface NocRecord {
   validated_at?: string;
   rejection_reason?: string;
   note?: string;
+  // Backend has always returned these; the Validate table never surfaced a way to
+  // actually view the uploaded document. Fixed 2026-09-01.
+  doc_path?: string | null;
+  doc_original_name?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +152,21 @@ export default function NocManagement() {
   const [rejectReason, setRejectReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [validating, setValidating] = useState<string | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<string | null>(null);
+
+  const viewNocDocument = useCallback(async (nocId: string, originalName?: string | null) => {
+    setViewingDoc(nocId);
+    try {
+      const blob = await hrmsApi.getBlob(`/api/payroll/noc/${nocId}/document`);
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener,noreferrer");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      toast.error(`Failed to open ${originalName ?? "NOC document"}`);
+    } finally {
+      setViewingDoc(null);
+    }
+  }, []);
 
   // ---------------------------------------------------------------------------
   // Employee search debounce
@@ -761,6 +780,16 @@ export default function NocManagement() {
                           <TableCell className="text-right">
                             {noc.upload_status === "uploaded" ? (
                               <div className="flex items-center justify-end gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-slate-700 border-slate-300 hover:bg-slate-50 h-7 px-2 text-xs"
+                                  disabled={viewingDoc === noc.id}
+                                  onClick={() => viewNocDocument(noc.id, noc.doc_original_name)}
+                                >
+                                  <FileText className="h-3.5 w-3.5 mr-1" />
+                                  {viewingDoc === noc.id ? "Opening…" : "View"}
+                                </Button>
                                 <Button
                                   size="sm"
                                   variant="outline"
