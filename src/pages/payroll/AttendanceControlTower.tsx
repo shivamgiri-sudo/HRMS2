@@ -1049,7 +1049,7 @@ export default function AttendanceControlTower() {
         )}
 
         {/* ── Row drill-down ── */}
-        <AttendanceGapDetailDrawer gapKey={detailKey} onClose={() => setDetailKey(null)} />
+        <AttendanceGapDetailDrawer gapKey={detailKey} onClose={() => setDetailKey(null)} runMonth={runMonth} />
       </div>
 
       {/* ── COSEC Re-sync Drawer ── */}

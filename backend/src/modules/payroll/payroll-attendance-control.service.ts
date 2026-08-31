@@ -501,12 +501,23 @@ async function crossEvidencePenaltyConflicts(from: string, to: string, params: C
        ) apr ON apr.UserID = e.employee_code AND apr.ReportDate = adr.record_date
        LEFT JOIN integration_biometric_daily ibd
               ON ibd.employee_code = e.employee_code AND ibd.activity_date = adr.record_date
+       LEFT JOIN wfm_roster_assignment wra
+              ON wra.employee_id = adr.employee_id AND wra.roster_date = adr.record_date
       WHERE adr.record_date BETWEEN ? AND ?
         AND adr.regularization_id IS NULL
         ${scope.sql}
         AND (
           COALESCE(apr.apr_minutes, 0) > 0
           OR COALESCE(ibd.biometric_minutes, 0) > 0
+        )
+        -- Exclude night-shift rostered employees: their punches cross midnight so
+        -- COSEC attributes them to the roster start date while APR may log to the
+        -- calendar date, producing apparent conflicts that are not real discrepancies.
+        AND NOT (
+          wra.id IS NOT NULL
+          AND wra.shift_start_time IS NOT NULL
+          AND wra.shift_end_time IS NOT NULL
+          AND TIME(wra.shift_end_time) < TIME(wra.shift_start_time)
         )
       LIMIT ${SOURCE_ROW_CAP + 1}`,
     [from, to, from, to, ...scope.values],
@@ -1321,12 +1332,41 @@ export const payrollAttendanceControlService = {
   }) {
     const runMonth = params.runMonth ?? new Date().toISOString().slice(0, 7);
     const range = monthRange(runMonth);
+    // Only need to fetch cross-evidence conflicts for their manager metadata.
+    // All other key types (apr:, ncosec:, regularization:, salary:) are valid
+    // targets for review-status changes too — build a fallback gap object from
+    // the key itself so they are not silently dropped.
     const conflicts = await crossEvidencePenaltyConflicts(range.from, range.to, {});
     const byKey = new Map(conflicts.map((gap) => [gap.id, gap]));
     let updated = 0;
     for (const key of params.conflictKeys) {
-      const gap = byKey.get(key);
-      if (!gap) continue;
+      let gap = byKey.get(key);
+      if (!gap) {
+        // Non-conflict key: parse employeeId + issueDate from the key
+        const parts = String(key).split(":");
+        let employeeId: string | null = null;
+        let issueDate: string | null = null;
+        if (parts[0] === "regularization" && parts[1]) {
+          const [rows] = await db.execute<RowDataPacket[]>(
+            `SELECT employee_id, DATE_FORMAT(session_date,'%Y-%m-%d') AS session_date
+               FROM attendance_regularization WHERE id = ? LIMIT 1`,
+            [parts[1]],
+          );
+          const row = (rows as any[])[0];
+          if (row) { employeeId = String(row.employee_id); issueDate = String(row.session_date); }
+        } else if (parts[0] === "conflict") {
+          employeeId = parts[2] ?? null; issueDate = parts[3] ?? null;
+        } else {
+          employeeId = parts[1] ?? null; issueDate = parts[2] ?? null;
+        }
+        if (!employeeId || !issueDate) continue;
+        gap = {
+          id: key, issueDate, employeeId, employeeCode: null, employeeName: null,
+          branchName: null, processName: null, issueType: parts[0] ?? "unknown",
+          severity: "blocker", source: "adr", sourceMinutes: null,
+          adrMinutes: null, adrStatus: null, payrollImpact: "", actionNeeded: "",
+        } as AttendanceControlGap;
+      }
       await upsertReview(gap, params.status, params.actorUserId, params.note ?? null);
       updated += 1;
     }
