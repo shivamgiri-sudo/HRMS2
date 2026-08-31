@@ -962,7 +962,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
     viewRoles: ROLES_WFM,
     exportRoles: ["super_admin", "admin", "hr", "wfm"],
     sourceTables: ["attendance_daily_record", "wfm_roster_assignment", "wfm_shift_master", "employees"],
-    calculationNotes: "Shift from date-specific roster. 'Roster Not Assigned' shown when no roster exists.",
+    calculationNotes: "Shift from date-specific roster (template, shift master, or the roster row's own imported start/end time). 'Roster Not Assigned' shown only when no roster row exists for that employee/date.",
     branchScoped: true,
     processScoped: true,
   },

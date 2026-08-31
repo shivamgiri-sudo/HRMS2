@@ -30,6 +30,50 @@ import {
   LEAVE_STATUSES,
 } from "../../../shared/attendanceStatus.js";
 
+/**
+ * Shared "what shift name do we show for this roster row" expression, used by every report
+ * below that joins wra/ws/wst. Fixes a real gap: the spreadsheet roster-importer's commit path
+ * (roster-import.service.ts) writes wfm_roster_assignment.shift_start_time/shift_end_time
+ * directly from the parsed cell and never sets shift_id or shift_template_id (there is no shift
+ * master/template row to link to — the time comes straight off the sheet). Before this, that
+ * left ws.shift_name and wst.shift_name both NULL for every imported row, so these reports
+ * showed 'Roster Not Assigned' even for a roster that was genuinely uploaded and committed.
+ *
+ * Resolution order, mirroring roster-view.service.ts's cellLabel() (the roster table screen,
+ * which already handles this correctly):
+ *   1. wst.shift_name       — cycle-based roster generator (shift_template_id)
+ *   2. ws.shift_name        — legacy/manual-assign path (shift_id)
+ *   3. wra's own start/end  — spreadsheet import path, no shift master row exists
+ *   4. wra.assignment_type  — non-shift day types (WEEK_OFF/LEAVE/HOLIDAY/etc.) that never
+ *                             carry a shift by definition
+ *   5. 'Roster Not Assigned' — only when wra has no row for this employee+date at all, or
+ *                             (SHIFT type only) is missing every timing source above.
+ */
+const ROSTER_SHIFT_NAME_SQL = `COALESCE(
+           wst.shift_name,
+           ws.shift_name,
+           CASE WHEN wra.shift_start_time IS NOT NULL AND wra.shift_end_time IS NOT NULL
+                THEN CONCAT(wra.shift_start_time, '-', wra.shift_end_time) END,
+           CASE WHEN wra.assignment_type IN ('WEEK_OFF','LEAVE','HOLIDAY','TRAINING','ABSENT','HALF_DAY','UNSCHEDULED')
+                THEN wra.assignment_type END,
+           'Roster Not Assigned'
+         )`;
+
+/**
+ * Cross-midnight-safe minutes between the import path's own shift_start_time/shift_end_time,
+ * for use only where wst/ws (which already carry a correct minutes column) resolve to nothing.
+ * Same formula as 1201_shift_versioning_backfill.sql's scheduled_minutes backfill — a plain
+ * TIMESTAMPDIFF(MINUTE, start, end) goes negative for an overnight shift like 22:00-06:00.
+ */
+const ROSTER_IMPORT_MINUTES_SQL = `(
+           TIME_TO_SEC(
+             CASE WHEN TIME_TO_SEC(CAST(wra.shift_end_time AS TIME)) <= TIME_TO_SEC(CAST(wra.shift_start_time AS TIME))
+                  THEN ADDTIME(CAST(wra.shift_end_time AS TIME), '24:00:00')
+                  ELSE CAST(wra.shift_end_time AS TIME)
+             END
+           ) - TIME_TO_SEC(CAST(wra.shift_start_time AS TIME))
+         ) / 60`;
+
 async function query(sql: string, params: unknown[]): Promise<RowDataPacket[]> {
   const [rows] = await db.execute<RowDataPacket[]>(sql, params);
   return rows;
@@ -361,9 +405,9 @@ export async function attendanceDaily(
          COALESCE(d.dept_name, 'UNASSIGNED') AS department_name,
          desig.designation_name,
          COALESCE(NULLIF(rm.full_name,''), CONCAT(rm.first_name,' ',COALESCE(rm.last_name,''))) AS reporting_manager,
-         COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned') AS shift_name,
-         TIME_FORMAT(COALESCE(wst.start_time, ws.start_time), '%H:%i') AS shift_start,
-         TIME_FORMAT(COALESCE(wst.end_time, ws.end_time), '%H:%i') AS shift_end,
+         ${ROSTER_SHIFT_NAME_SQL} AS shift_name,
+         TIME_FORMAT(COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)), '%H:%i') AS shift_start,
+         TIME_FORMAT(COALESCE(wst.end_time, ws.end_time, CAST(wra.shift_end_time AS TIME)), '%H:%i') AS shift_end,
          TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
          TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
          CASE
@@ -455,7 +499,7 @@ export async function dailyHcShift(
     SELECT adr.record_date,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned') AS shift_name,
+           ${ROSTER_SHIFT_NAME_SQL} AS shift_name,
            COUNT(*) AS scheduled_headcount,
            SUM(adr.attendance_status IN ('present','half_day','week_off_worked')) AS present_count,
            SUM(adr.attendance_status = 'absent') AS absent_count,
@@ -475,7 +519,7 @@ export async function dailyHcShift(
       LEFT JOIN wfm_shift_master ws ON ws.id = wra.shift_id
       LEFT JOIN wfm_shift_template wst ON wst.id = wra.shift_template_id
      WHERE ${clauses.join(" AND ")}
-     GROUP BY adr.record_date, b.branch_name, p.process_name, COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned')
+     GROUP BY adr.record_date, b.branch_name, p.process_name, ${ROSTER_SHIFT_NAME_SQL}
      ORDER BY adr.record_date DESC, b.branch_name, p.process_name, shift_name`;
 
   // One execution, not two: the page and its total come from the same fetch wherever the result
@@ -532,9 +576,9 @@ export async function shiftAdherenceDetail(
          COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
          COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
          COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-         COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned') AS shift_name,
-         TIME_FORMAT(COALESCE(wst.start_time, ws.start_time), '%H:%i') AS scheduled_start,
-         TIME_FORMAT(COALESCE(wst.end_time, ws.end_time), '%H:%i') AS scheduled_end,
+         ${ROSTER_SHIFT_NAME_SQL} AS shift_name,
+         TIME_FORMAT(COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)), '%H:%i') AS scheduled_start,
+         TIME_FORMAT(COALESCE(wst.end_time, ws.end_time, CAST(wra.shift_end_time AS TIME)), '%H:%i') AS scheduled_end,
          TIME_FORMAT(agg_ses.earliest_punch, '%H:%i') AS punch_in,
          TIME_FORMAT(agg_ses.latest_punch, '%H:%i') AS punch_out,
          CASE
@@ -542,26 +586,27 @@ export async function shiftAdherenceDetail(
            THEN TIME_FORMAT(SEC_TO_TIME(TIMESTAMPDIFF(SECOND, agg_ses.earliest_punch, agg_ses.latest_punch)), '%H:%i')
            ELSE NULL
          END AS total_login_duration,
-         COALESCE(wst.productive_minutes, ws.required_minutes, 540) AS scheduled_minutes,
+         COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL}, 540) AS scheduled_minutes,
          COALESCE(agg_ses.total_login_minutes, 0) AS actual_minutes,
          adr.late_by_minutes AS late_minutes,
          CASE
-           WHEN agg_ses.latest_punch IS NOT NULL AND COALESCE(wst.end_time, ws.end_time) IS NOT NULL
-                AND TIME(agg_ses.latest_punch) < COALESCE(wst.end_time, ws.end_time)
-           THEN TIMESTAMPDIFF(MINUTE, TIME(agg_ses.latest_punch), COALESCE(wst.end_time, ws.end_time))
+           WHEN agg_ses.latest_punch IS NOT NULL AND COALESCE(wst.end_time, ws.end_time, CAST(wra.shift_end_time AS TIME)) IS NOT NULL
+                AND TIME(agg_ses.latest_punch) < COALESCE(wst.end_time, ws.end_time, CAST(wra.shift_end_time AS TIME))
+           THEN TIMESTAMPDIFF(MINUTE, TIME(agg_ses.latest_punch), COALESCE(wst.end_time, ws.end_time, CAST(wra.shift_end_time AS TIME)))
            ELSE 0
          END AS early_logout_minutes,
          CASE
-           WHEN COALESCE(wst.productive_minutes, ws.required_minutes) IS NOT NULL AND COALESCE(wst.productive_minutes, ws.required_minutes) > 0
-           THEN ROUND(LEAST(COALESCE(agg_ses.total_login_minutes, 0), COALESCE(wst.productive_minutes, ws.required_minutes)) / COALESCE(wst.productive_minutes, ws.required_minutes) * 100, 1)
+           WHEN COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL}) IS NOT NULL
+                AND COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL}) > 0
+           THEN ROUND(LEAST(COALESCE(agg_ses.total_login_minutes, 0), COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL})) / COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL}) * 100, 1)
            ELSE NULL
          END AS adherence_pct,
          adr.attendance_status,
          CASE
            WHEN adr.attendance_status = 'absent' THEN 'ABSENT'
-           WHEN adr.late_mark = 1 AND COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(wst.productive_minutes, ws.required_minutes, 540) * 0.85 THEN 'LATE_AND_SHORT'
+           WHEN adr.late_mark = 1 AND COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL}, 540) * 0.85 THEN 'LATE_AND_SHORT'
            WHEN adr.late_mark = 1 THEN 'LATE'
-           WHEN COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(wst.productive_minutes, ws.required_minutes, 540) * 0.85 THEN 'SHORT'
+           WHEN COALESCE(agg_ses.total_login_minutes, 0) < COALESCE(wst.productive_minutes, ws.required_minutes, ${ROSTER_IMPORT_MINUTES_SQL}, 540) * 0.85 THEN 'SHORT'
            ELSE 'ON_TIME'
          END AS adherence_status,
          CASE WHEN adr.regularization_id IS NOT NULL THEN 'Yes' ELSE 'No' END AS exception_applied
@@ -731,8 +776,8 @@ export async function lateArrivalSummary(
            COALESCE(rcc.cost_centre_name, 'UNASSIGNED') AS cost_centre_name,
            COALESCE(b.branch_name, 'UNASSIGNED') AS branch_name,
            COALESCE(p.process_name, 'UNASSIGNED') AS process_name,
-           COALESCE(wst.shift_name, ws.shift_name, 'Roster Not Assigned') AS roster_shift,
-           COALESCE(wst.start_time, ws.start_time) AS scheduled_start,
+           ${ROSTER_SHIFT_NAME_SQL} AS roster_shift,
+           COALESCE(wst.start_time, ws.start_time, CAST(wra.shift_start_time AS TIME)) AS scheduled_start,
            was.login_time AS punch_in,
            adr.late_by_minutes AS late_minutes,
            COALESCE(arc.grace_minutes, 15) AS grace_minutes,
