@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Activity, AlertTriangle, Bell, CheckCircle2, Database, MoreHorizontal, RefreshCw, RotateCcw, Search, ShieldAlert, UserCheck, X, XCircle } from "lucide-react";
@@ -429,14 +429,15 @@ export default function AttendanceControlTower() {
   }>(null);
   const resyncDrawerRef = useRef<HTMLDivElement>(null);
 
-  // Poll for job completion every 3 seconds while a job is running
+  // Poll for job completion every 3 seconds while a job is running.
+  // queryFn unwraps the API envelope so jobPollData = { jobId, status, result, error }.
   const { data: jobPollData } = useQuery({
     queryKey: ["cosec-resync-job", resyncJobId],
     queryFn: async () => {
       const res = await hrmsApi.get<{ success: boolean; data: any }>(
         `/api/payroll/attendance-control-tower/resync-cosec/status/${resyncJobId}`,
       );
-      return res.data;
+      return res.data.data as { jobId: string; status: string; result: any; error: string | null };
     },
     enabled: !!resyncJobId && !resyncResult,
     refetchInterval: (q) => {
@@ -446,17 +447,18 @@ export default function AttendanceControlTower() {
     },
   });
 
-  // When job finishes, extract result
-  useMemo(() => {
+  // Side effect: when job finishes, populate result panel and stop polling.
+  // Must be useEffect (not useMemo) because it calls setState.
+  useEffect(() => {
     if (!jobPollData) return;
-    const { status, result, error } = jobPollData;
-    if (status === "done" && result) {
-      setResyncResult(result);
+    if (jobPollData.status === "done" && jobPollData.result) {
+      setResyncResult(jobPollData.result);
       setResyncJobId(null);
       refetch();
-    } else if (status === "error") {
+    } else if (jobPollData.status === "error") {
       setResyncJobId(null);
     }
+  // refetch is stable; only re-run when poll data changes
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobPollData]);
 
@@ -1124,7 +1126,7 @@ export default function AttendanceControlTower() {
                 </div>
               </label>
 
-              {(resyncMutation.error || (jobPollData?.status === "error")) && (
+              {(resyncMutation.error || jobPollData?.status === "error") && (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-700">
                   {(resyncMutation.error as any)?.response?.data?.message ?? jobPollData?.error ?? "Re-sync failed. Check if COSEC server is reachable."}
                 </div>
