@@ -316,6 +316,11 @@ export async function getMyWorkItems(userId: string, role: string, limit = 50, o
               'work_inbox_item' AS source_table
          FROM work_inbox_item wii
         WHERE wii.user_id = ? AND wii.is_actioned = 0
+          -- grn_approval_pending / budget_approval_pending are bell-only alerts (see
+          -- grn.service.ts / branch-budget.service.ts) — the same GRN/Budget already appears
+          -- below, live, from DERIVED_REGISTRY_UNION_SQL, with real Approve/Reject wiring.
+          -- Without this exclusion every pending GRN and Branch Budget would list twice.
+          AND wii.type NOT IN ('grn_approval_pending', 'budget_approval_pending')
        UNION ALL
        ${DERIVED_REGISTRY_UNION_SQL}
      ) merged

@@ -15,6 +15,56 @@ import {
 import { isPeriodLocked } from "./finance-period-lock.js";
 
 import { refuse } from "./finance-error.js";
+import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
+
+/**
+ * Bell notification for a Branch Budget awaiting a stage. Same gap as GRN: Work Inbox's derived
+ * BUDGET_APPROVAL_PENDING query (work-inbox.service.ts) surfaces it on the Work Inbox page, but
+ * nothing ever wrote a `work_inbox_item` row, so the bell (GET /api/inbox — work_inbox_item only)
+ * never showed it. Non-fatal — a notification failure must never block the budget transition.
+ */
+async function notifyBudgetStage(
+  budgetId: string,
+  budgetNumber: string | null,
+  branchId: string | null,
+  periodCode: string | null,
+  grossAmount: number | null,
+  role: "branch_head" | "finance_head",
+) {
+  try {
+    const { inboxService } = await import("../inbox/inbox.service.js");
+    const userIds = await resolveRoleHolderUserIds(role, branchId);
+    const amountLabel = grossAmount != null ? `₹${Number(grossAmount).toLocaleString("en-IN")}` : "";
+    for (const userId of userIds) {
+      await inboxService.createItem({
+        user_id: userId,
+        type: "budget_approval_pending",
+        title: `[ACTION REQUIRED] Branch Budget ${budgetNumber ?? ""}${periodCode ? ` — ${periodCode}` : ""}`,
+        description: `Awaiting your ${role === "branch_head" ? "Branch Head" : "Finance Head"} review${amountLabel ? ` (${amountLabel})` : ""}.`,
+        entity_type: "finance_budget_header",
+        entity_id: budgetId,
+        action_url: "/process-pnl/budgets",
+        priority: "high",
+      });
+    }
+  } catch {
+    // Non-fatal.
+  }
+}
+
+/** The decision is made — close the bell alert(s) raised for this budget, at any stage. */
+async function resolveBudgetNotifications(budgetId: string) {
+  try {
+    const { inboxService } = await import("../inbox/inbox.service.js");
+    await inboxService.resolveItems({
+      entity_type: "finance_budget_header",
+      entity_id: budgetId,
+      types: ["budget_approval_pending"],
+    });
+  } catch {
+    // Non-fatal.
+  }
+}
 export type BudgetTaxTreatment =
   | "inclusive"
   | "exclusive"
@@ -1295,7 +1345,16 @@ export const branchBudgetService = {
     } finally {
       connection.release();
     }
-    return this.get(id);
+    const submitted = await this.get(id);
+    await notifyBudgetStage(
+      id,
+      submitted?.budget_number ? String(submitted.budget_number) : null,
+      submitted?.branch_id ? String(submitted.branch_id) : null,
+      submitted?.period_code ? String(submitted.period_code) : null,
+      Number(submitted?.gross_budget_amount ?? 0) || null,
+      "branch_head",
+    );
+    return submitted;
   },
 
   /** Let the reviewer whose stage a budget is sitting at correct the lines in place, instead of
@@ -2036,6 +2095,11 @@ export const branchBudgetService = {
     }
 
     const connection = await db.getConnection();
+    // Set inside the transaction below, for the bell notification raised after it commits — the
+    // stage advances from branch_head to finance_head only when a branch_head-stage approval
+    // completes; a rejection, a revision bounce, or the finance_head's own terminal decision end
+    // the chain and raise nothing new.
+    let notifyFinanceHead = false;
     try {
       await connection.beginTransaction();
       const [rows] = await connection.execute<RowDataPacket[]>(
@@ -2123,6 +2187,9 @@ export const branchBudgetService = {
       if (result.affectedRows !== 1) {
         throw refuse(409, "BUDGET_STATUS_CHANGED", "Budget status changed during review; refresh and retry");
       }
+      if (stage.key === "branch_head" && decision === "approve") {
+        notifyFinanceHead = true;
+      }
 
       for (const entry of corrections) {
         await connection.execute(
@@ -2164,7 +2231,19 @@ export const branchBudgetService = {
     } finally {
       connection.release();
     }
-    return this.get(id);
+    const reviewed = await this.get(id);
+    await resolveBudgetNotifications(id);
+    if (notifyFinanceHead) {
+      await notifyBudgetStage(
+        id,
+        reviewed?.budget_number ? String(reviewed.budget_number) : null,
+        reviewed?.branch_id ? String(reviewed.branch_id) : null,
+        reviewed?.period_code ? String(reviewed.period_code) : null,
+        Number(reviewed?.gross_budget_amount ?? 0) || null,
+        "finance_head",
+      );
+    }
+    return reviewed;
   },
 
   async availableLines(filters: {

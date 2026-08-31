@@ -26,6 +26,59 @@ import {
 } from "../process-pnl/budget-headroom-gate.service.js";
 import { budgetClosureService } from "../process-pnl/budget-closure.service.js";
 import { refuse } from "../process-pnl/finance-error.js";
+import { resolveRoleHolderUserIds } from "../../shared/recipient-resolver.js";
+
+/**
+ * Bell notification for a GRN awaiting a stage. GRN approval was entirely notification-silent
+ * before this — Work Inbox's derived GRN_APPROVAL_PENDING query (work-inbox.service.ts) surfaces
+ * it on the Work Inbox page, but nothing ever wrote a `work_inbox_item` row, so the bell
+ * (GET /api/inbox, which reads work_inbox_item only — see inbox.service.ts) never showed a GRN
+ * at all. Mirrors leave.service.ts's submission notify: resolve every user holding the stage's
+ * role in this GRN's branch, raise one item each. Non-fatal by design — a notification failure
+ * must never roll back or block the GRN transition that triggered it.
+ */
+async function notifyGrnStage(
+  grnId: string,
+  grnNumber: string | null,
+  branchId: string | null,
+  vendorName: string | null,
+  amount: number | null,
+  role: "branch_head" | "finance_head",
+) {
+  try {
+    const { inboxService } = await import("../inbox/inbox.service.js");
+    const userIds = await resolveRoleHolderUserIds(role, branchId);
+    const amountLabel = amount != null ? `₹${Number(amount).toLocaleString("en-IN")}` : "";
+    for (const userId of userIds) {
+      await inboxService.createItem({
+        user_id: userId,
+        type: "grn_approval_pending",
+        title: `[ACTION REQUIRED] GRN ${grnNumber ?? ""}${vendorName ? ` — ${vendorName}` : ""}`,
+        description: `Awaiting your ${role === "branch_head" ? "Branch Head" : "Finance Head"} review${amountLabel ? ` (${amountLabel})` : ""}.`,
+        entity_type: "grn_request",
+        entity_id: grnId,
+        action_url: "/finance/grn",
+        priority: "high",
+      });
+    }
+  } catch {
+    // Non-fatal — notification failure must not block the GRN transition.
+  }
+}
+
+/** The decision is made — close the bell alert(s) raised for this GRN, at any stage. */
+async function resolveGrnNotifications(grnId: string) {
+  try {
+    const { inboxService } = await import("../inbox/inbox.service.js");
+    await inboxService.resolveItems({
+      entity_type: "grn_request",
+      entity_id: grnId,
+      types: ["grn_approval_pending"],
+    });
+  } catch {
+    // Non-fatal.
+  }
+}
 
 export type GrnType = "vendor" | "imprest";
 export type GrnStatus =
@@ -732,6 +785,14 @@ export const grnService = {
       remarks: payload.remarks?.trim() || null,
       details: { grnNumber: String(grnNumber ?? ""), branchId: String(grn.branch_id ?? "") },
     });
+    await notifyGrnStage(
+      grnId,
+      String(grnNumber ?? ""),
+      grn.branch_id ? String(grn.branch_id) : null,
+      grn.vendor_name ? String(grn.vendor_name) : null,
+      Number(grn.amount_with_tax ?? grn.amount ?? 0) || null,
+      "branch_head",
+    );
     return { success: true, newStatus: "submitted" as const, grnNumber };
   },
 
@@ -752,6 +813,13 @@ export const grnService = {
     const connection = await db.getConnection();
     let paymentId: string | null = null;
     let newStatus: GrnStatus;
+    // Captured inside the transaction below, for the bell notification raised after it commits —
+    // `grn` and `effectiveStage` are declared inside the try block and go out of scope at `finally`.
+    let notifyStage: "branch_head" | "finance_head" | null = null;
+    let notifyGrnNumber: string | null = null;
+    let notifyBranchId: string | null = null;
+    let notifyVendorName: string | null = null;
+    let notifyAmount: number | null = null;
 
     try {
       await connection.beginTransaction();
@@ -762,6 +830,10 @@ export const grnService = {
       const grn = rows[0] as any;
       if (!grn) throw new Error("GRN not found");
       if (!grn.budget_line_id) throw new Error("GRN has no approved budget mapping");
+      notifyGrnNumber = grn.grn_number ? String(grn.grn_number) : null;
+      notifyBranchId = grn.branch_id ? String(grn.branch_id) : null;
+      notifyVendorName = grn.vendor_name ? String(grn.vendor_name) : null;
+      notifyAmount = Number(grn.amount_with_tax ?? grn.amount ?? 0) || null;
 
       const effectiveStage = role === "super_admin"
         ? grn.status === "submitted"
@@ -1002,6 +1074,10 @@ export const grnService = {
         connection
       );
 
+      if (effectiveStage === "branch_head" && payload.decision === "approved") {
+        notifyStage = "finance_head";
+      }
+
       await connection.commit();
     } catch (error) {
       await connection.rollback();
@@ -1023,6 +1099,14 @@ export const grnService = {
     );
     if (paymentId) {
       await vendorPaymentService.notifyPaymentPending(paymentId).catch(() => undefined);
+    }
+    // The stage this decision cleared is done with; close its bell alert regardless of outcome,
+    // then raise the next stage's alert only when the chain continues (branch_head approved into
+    // finance_head_approved's next stage). A rejection or the finance_head's own final decision
+    // ends the chain, so nothing new is raised.
+    await resolveGrnNotifications(grnId);
+    if (notifyStage) {
+      await notifyGrnStage(grnId, notifyGrnNumber, notifyBranchId, notifyVendorName, notifyAmount, notifyStage);
     }
     return { success: true, newStatus: newStatus!, paymentId };
   },
