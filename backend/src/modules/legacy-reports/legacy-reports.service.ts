@@ -8,6 +8,7 @@
  * Column names verified against actual mas_hrms table schemas (2026-08-22).
  */
 import type { RowDataPacket } from "mysql2/promise";
+import * as XLSX from "xlsx";
 import { db } from "../../db/mysql.js";
 
 export type LegacyFilter = {
@@ -1850,5 +1851,27 @@ export const legacyReportsService = {
       result.columns.map(c => esc(r[c.key])).join(",")
     ).join("\n");
     return warning + header + "\n" + body;
+  },
+
+  // Column keys whose values are account/identity codes — prefix with ' so Excel
+  // renders them as text (no scientific notation, no leading-zero stripping).
+  toXlsb(result: LegacyReportResult, sheetName = "Report"): Buffer {
+    const TEXT_PREFIX_KEYS = new Set([
+      "ac_no", "account_number", "uan", "epf_no", "esic_no",
+      "cheque_no", "ifsc_code",
+    ]);
+    const header = result.columns.map(c => c.label);
+    const dataRows = result.rows.map(r =>
+      result.columns.map(c => {
+        const v = r[c.key];
+        const s = v != null ? String(v) : "";
+        if (TEXT_PREFIX_KEYS.has(c.key) && s.trim() !== "") return `'${s}`;
+        return v ?? "";
+      })
+    );
+    const ws = XLSX.utils.aoa_to_sheet([header, ...dataRows]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
+    return XLSX.write(wb, { type: "buffer", bookType: "xlsb" }) as Buffer;
   },
 };

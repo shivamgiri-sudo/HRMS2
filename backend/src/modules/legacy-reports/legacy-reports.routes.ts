@@ -59,13 +59,13 @@ legacyReportsRouter.get(
       parseFilter(req.query as Record<string, unknown>),
       { forExport: true },
     );
-    const csv    = legacyReportsService.toCsv(result);
+    const xlsb   = legacyReportsService.toXlsb(result, req.params.code);
     const period = req.query.month ? `-${String(req.query.month)}` : "";
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Type", "application/octet-stream");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="legacy-${req.params.code}${period}.csv"`,
+      `attachment; filename="legacy-${req.params.code}${period}.xlsb"`,
     );
-    res.send(csv);
+    res.send(xlsb);
   }),
 );
