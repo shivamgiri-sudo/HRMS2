@@ -1450,11 +1450,13 @@ export function BudgetLinkedGrnForm({
         // Client-side budget cap per cost-centre split — catches over-budget vendor GRNs before the API call.
         if (!next.costCentreSplit && !next.components && costCentreSplits.length > 0 && componentsPreview.rawTotalGross > 0) {
           const overBudgetMessages: string[] = [];
+          // Vendor budget is checked against base (P&L cost), not gross — GST is ITC.
+          const splitBasis = componentsPreview.rawTotalBase;
           for (const split of costCentreSplits) {
             const group = vendorCostCentreGroups.find((g) => g.costCentreKey === split.costCentreKey);
             const line = (group?.fundableLines ?? group?.lines)?.find((l) => l.id === split.budgetLineId);
             if (line) {
-              const splitGross = componentsPreview.rawTotalGross * (split.percentage / 100);
+              const splitGross = splitBasis * (split.percentage / 100);
               const available = Number(line.available_gross_amount);
               if (splitGross > available + 0.01) {
                 overBudgetMessages.push(
@@ -3161,7 +3163,11 @@ export function BudgetLinkedGrnForm({
                   </div>
                 </div>
               </div>
-            ) : headroom.aggregateAvailable <= 0 || (Number(form.amount) > 0 && headroom.aggregateAvailable < Number(form.amount)) ? (
+            ) : headroom.aggregateAvailable <= 0 || (
+              // Budget tracks P&L cost (base), not invoice gross — GST is ITC for vendor GRNs.
+              (isVendor ? componentsPreview.rawTotalBase : Number(form.amount)) > 0 &&
+              headroom.aggregateAvailable < (isVendor ? componentsPreview.rawTotalBase : Number(form.amount))
+            ) ? (
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-800">
                 <div className="flex items-start gap-2">
                   <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-500" />
