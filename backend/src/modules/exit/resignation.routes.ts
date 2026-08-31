@@ -284,6 +284,23 @@ resignationRouter.patch(
     if (!["accept", "reject"].includes(employee_response)) {
       return res.status(400).json({ success: false, message: "employee_response must be 'accept' or 'reject'" });
     }
+    // Was gated only by router-level requireAuth with no ownership check at all — any
+    // authenticated user who knew/guessed exitId+offerId could accept or reject someone
+    // else's retention offer. Mirrors the ownership check already used by /:exitId/withdraw
+    // in this same file. Fixed 2026-09-01.
+    const userId = req.authUser!.id;
+    const isPrivileged = await hasRole(userId, "admin", "hr", "manager");
+    if (!isPrivileged) {
+      const emp = await getEmployeeForUser(userId);
+      if (!emp) return res.status(403).json({ success: false, message: "Forbidden" });
+      const [check] = await db.execute(
+        `SELECT id FROM exit_request WHERE id = ? AND employee_id = ? LIMIT 1`,
+        [req.params.exitId, emp.id]
+      ) as any[];
+      if (!(check as any[]).length) {
+        return res.status(403).json({ success: false, message: "You may only respond to your own retention offer" });
+      }
+    }
     await db.execute(
       `UPDATE retention_offer
        SET employee_response = ?, response_date = NOW(), response_remarks = ?

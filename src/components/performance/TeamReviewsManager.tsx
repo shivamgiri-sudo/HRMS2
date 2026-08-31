@@ -88,8 +88,16 @@ export function TeamReviewsManager({ managerId, managerName }: TeamReviewsManage
   const { data: teamMembers, isLoading: teamLoading } = useQuery({
     queryKey: ["team-members-for-review", managerId],
     queryFn: async () => {
+      // Same over-exposure this file's sibling TeamGoalsView.tsx had: GET /api/employees
+      // returns the caller's full scope (usually company-wide or branch-wide for a
+      // manager role in production), not this manager's direct reports. managerId is
+      // always the viewing manager's own employee id (see Performance.tsx). Filtered
+      // client-side 2026-09-01 — otherwise any manager could create/edit/delete any
+      // employee's review via the mutations below.
       const res = await hrmsApi.get<{success:boolean;data:any}>("/api/employees");
-      return (res.data ?? []) as TeamMember[];
+      return ((res.data ?? []) as TeamMember[]).filter(
+        (emp: any) => String(emp.reporting_manager_id ?? "") === String(managerId)
+      );
     },
     enabled: !!managerId,
   });
