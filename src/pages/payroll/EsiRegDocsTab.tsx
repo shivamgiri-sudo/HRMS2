@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { hrmsApi } from "@/lib/hrmsApi";
+import { hrmsApi, getAuthToken } from "@/lib/hrmsApi";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,17 +37,12 @@ interface ListResponse {
 function useEsiList(params: { search: string; branchId: string; page: number }) {
   return useQuery<ListResponse>({
     queryKey: ["esi-reg-docs", params],
-    queryFn: () =>
-      hrmsApi
-        .get("/payroll/esi-reg-docs", {
-          params: {
-            search: params.search || undefined,
-            branch_id: params.branchId || undefined,
-            page: params.page,
-            limit: 50,
-          },
-        })
-        .then((r) => r.data),
+    queryFn: () => {
+      const qs = new URLSearchParams({ page: String(params.page), limit: "50" });
+      if (params.search) qs.set("search", params.search);
+      if (params.branchId) qs.set("branch_id", params.branchId);
+      return hrmsApi.get<ListResponse>(`/api/payroll/esi-reg-docs?${qs}`);
+    },
     staleTime: 30_000,
   });
 }
@@ -329,18 +324,22 @@ export default function EsiRegDocsTab() {
     }
   }
 
+  function triggerBlobDownload(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function downloadSingle(employeeId: string) {
     setDownloading(employeeId);
     try {
-      const res = await hrmsApi.get(`/payroll/esi-reg-docs/${employeeId}/download`, {
-        responseType: "blob",
-      });
-      const url = URL.createObjectURL(new Blob([res.data], { type: "application/zip" }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = res.headers["content-disposition"]?.match(/filename="(.+)"/)?.[1] ?? "ESI_Docs.zip";
-      a.click();
-      URL.revokeObjectURL(url);
+      const blob = await hrmsApi.getBlob(`/api/payroll/esi-reg-docs/${employeeId}/download`);
+      const date = new Date().toISOString().slice(0, 10);
+      const emp = employees.find((e) => e.employee_id === employeeId);
+      triggerBlobDownload(blob, `ESI_Docs_${emp?.emp_code ?? employeeId}_${date}.zip`);
     } catch {
       toast({ title: "Download failed", description: "Could not download ESI documents.", variant: "destructive" });
     } finally {
@@ -352,17 +351,19 @@ export default function EsiRegDocsTab() {
     if (selected.size === 0) return;
     setBulkDownloading(true);
     try {
-      const res = await hrmsApi.post(
-        "/payroll/esi-reg-docs/bulk-download",
-        { employee_ids: Array.from(selected) },
-        { responseType: "blob" }
-      );
-      const url = URL.createObjectURL(new Blob([res.data], { type: "application/zip" }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `ESI_Bulk_Docs_${new Date().toISOString().slice(0, 10)}.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const token = getAuthToken();
+      const res = await fetch("/api/payroll/esi-reg-docs/bulk-download", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ employee_ids: Array.from(selected) }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      triggerBlobDownload(blob, `ESI_Bulk_Docs_${new Date().toISOString().slice(0, 10)}.zip`);
       setSelected(new Set());
     } catch {
       toast({ title: "Bulk download failed", variant: "destructive" });
@@ -373,13 +374,8 @@ export default function EsiRegDocsTab() {
 
   async function exportCsv() {
     try {
-      const res = await hrmsApi.get("/payroll/esi-reg-docs/export-csv", { responseType: "blob" });
-      const url = URL.createObjectURL(new Blob([res.data], { type: "text/csv" }));
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `ESI_Reg_${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const blob = await hrmsApi.getBlob("/api/payroll/esi-reg-docs/export-csv");
+      triggerBlobDownload(blob, `ESI_Reg_${new Date().toISOString().slice(0, 10)}.csv`);
     } catch {
       toast({ title: "CSV export failed", variant: "destructive" });
     }
