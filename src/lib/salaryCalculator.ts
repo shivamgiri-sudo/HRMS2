@@ -176,9 +176,11 @@ function deriveComponents(gross: number, opts: PkgCalcOptions): PkgComponents {
 
   const epf_employer = includePf ? r2(pfBase * PF_EMPLR_RATE) : 0;
   const esic_employer = includeEsic && gross <= ESIC_LIMIT ? r2(gross * ESIC_EMPLR_RATE) : 0;
-  const gratuity = r2(basic * GRATUITY_RATE);
   const admin_charges = includePf ? r2(pfBase * ADMIN_RATE) : 0;
-  const ctc = r2(gross + epf_employer + esic_employer + gratuity + admin_charges);
+  // Gratuity is NOT part of CTC in the package definition. It is a statutory
+  // liability accrued separately and shown in cost analyses, not in the monthly
+  // package amount that employees or payroll work against.
+  const ctc = r2(gross + epf_employer + esic_employer + admin_charges);
 
   return {
     basic, hra, conveyance: CONV, special_allowance,
@@ -197,9 +199,9 @@ export function calcFromCtc(monthlyCtc: number, opts: PkgCalcOptions): PkgCompon
   const pfBase = Math.min(estBasic, pfCap);
   const pf_e = includePf ? pfBase * PF_EMPLR_RATE : 0;
   const esic_e = includeEsic && estGross <= ESIC_LIMIT ? estGross * ESIC_EMPLR_RATE : 0;
-  const grat = estBasic * GRATUITY_RATE;
   const adm = includePf ? pfBase * ADMIN_RATE : 0;
-  const gross = r2(Math.max(0, monthlyCtc - pf_e - esic_e - grat - adm));
+  // CTC = Gross + Employer EPF + Employer ESIC + Admin Charges (no gratuity)
+  const gross = r2(Math.max(0, monthlyCtc - pf_e - esic_e - adm));
   return deriveComponents(gross, opts);
 }
 
