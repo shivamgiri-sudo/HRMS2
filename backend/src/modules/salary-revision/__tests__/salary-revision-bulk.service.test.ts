@@ -151,6 +151,25 @@ describe("bulkValidate()", () => {
 
     expect(execute).not.toHaveBeenCalled();
   });
+
+  it("processes a two-code batch where first resolves ok and second is not found", async () => {
+    // EMP001: ok path (3 execute calls)
+    execute.mockResolvedValueOnce([[{ id: "1", name: "Alice Smith", date_of_joining: "2020-01-01" }]]);
+    execute.mockResolvedValueOnce([[{ id: 99 }]]);
+    execute.mockResolvedValueOnce([[]]);
+    // EMP002: not found (1 execute call)
+    execute.mockResolvedValueOnce([[]]);
+
+    const result = await bulkValidate({
+      employee_codes: ["EMP001", "EMP002"],
+      requested_effective_from: "2026-09-01",
+    });
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({ code: "EMP001", status: "ok" });
+    expect(result[1]).toMatchObject({ code: "EMP002", status: "error", reason: "Employee not found" });
+    expect(execute).toHaveBeenCalledTimes(4);
+  });
 });
 
 describe("bulkCreate()", () => {

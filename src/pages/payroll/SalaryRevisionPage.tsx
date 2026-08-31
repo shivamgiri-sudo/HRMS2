@@ -355,6 +355,7 @@ function BulkSubmitFields({ onSuccess }: { onSuccess: () => void }) {
   const [reason, setReason]                 = useState('');
   const [results, setResults]               = useState<BulkValidateRow[] | null>(null);
   const [submitSummary, setSubmitSummary]   = useState<{ submitted: number; failed: number } | null>(null);
+  const [failedDetails, setFailedDetails]   = useState<{ employee_id: string; reason?: string }[]>([]);
   const [err, setErr]                       = useState<string | null>(null);
 
   function parseCodes(raw: string): string[] {
@@ -374,6 +375,7 @@ function BulkSubmitFields({ onSuccess }: { onSuccess: () => void }) {
       hrmsApi.post('/api/salary-revision/bulk', payload) as Promise<any>,
     onSuccess: (res: any) => {
       setSubmitSummary({ submitted: res.submitted ?? 0, failed: res.failed ?? 0 });
+      setFailedDetails((res.details ?? []).filter((d: any) => d.status === 'error'));
       setCodes(''); setNewDate(''); setReason(''); setResults(null); setErr(null);
       onSuccess();
     },
@@ -407,6 +409,22 @@ function BulkSubmitFields({ onSuccess }: { onSuccess: () => void }) {
           <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" />
           {submitSummary.submitted} request{submitSummary.submitted !== 1 ? 's' : ''} submitted
           {submitSummary.failed > 0 && ` · ${submitSummary.failed} failed`}.
+        </div>
+      )}
+      {failedDetails.length > 0 && (
+        <div className="rounded-xl border border-red-200 overflow-hidden">
+          <div className="px-3 py-2 bg-red-50 border-b border-red-200">
+            <p className="text-xs font-bold uppercase tracking-wide text-red-400">Failed Submissions</p>
+          </div>
+          <div className="divide-y divide-red-100 max-h-40 overflow-y-auto">
+            {failedDetails.map((d, i) => (
+              <div key={i} className="flex items-center gap-3 px-3 py-2 text-sm bg-white">
+                <XCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
+                <span className="font-mono text-xs text-slate-500 w-20 flex-shrink-0">{d.employee_id}</span>
+                <span className="text-red-600 text-xs flex-1">{d.reason ?? 'Unknown error'}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -557,7 +575,7 @@ function SubmitForm({ onSuccess }: { onSuccess: () => void }) {
             </button>
             <button
               type="button"
-              onClick={() => setMode('bulk')}
+              onClick={() => { setMode('bulk'); setEmployee(null); setNewDate(''); setReason(''); setErr(null); }}
               className={`px-3 py-1.5 transition-colors duration-150 cursor-pointer ${
                 mode === 'bulk' ? 'bg-white text-blue-700' : 'bg-white/10 text-white hover:bg-white/20'
               }`}

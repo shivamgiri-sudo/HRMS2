@@ -34,10 +34,13 @@ router.get("/", requireAuth, requireRole(...REVIEWER_ROLES), h(async (req, res) 
   res.json({ success: true, data });
 }));
 
-router.post("/bulk-validate", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES), h(async (req, res) => {
+router.post("/bulk-validate", requireAuth, requireRole(...FIXER_ROLES), h(async (req, res) => {
   const { employee_codes, requested_effective_from } = req.body as Record<string, unknown>;
   if (!Array.isArray(employee_codes) || employee_codes.length === 0) {
     return res.status(400).json({ success: false, message: "employee_codes must be a non-empty array." });
+  }
+  if (employee_codes.length > 200) {
+    return res.status(400).json({ success: false, message: "Maximum 200 employee codes per request." });
   }
   if (!requested_effective_from) {
     return res.status(400).json({ success: false, message: "requested_effective_from is required." });
@@ -53,6 +56,9 @@ router.post("/bulk", requireAuth, requireWriteAccess, requireRole(...FIXER_ROLES
   const { employee_ids, requested_effective_from, reason } = req.body as Record<string, unknown>;
   if (!Array.isArray(employee_ids) || employee_ids.length === 0) {
     return res.status(400).json({ success: false, message: "employee_ids must be a non-empty array." });
+  }
+  if (employee_ids.length > 200) {
+    return res.status(400).json({ success: false, message: "Maximum 200 employee IDs per request." });
   }
   if (!requested_effective_from || !reason) {
     return res.status(400).json({ success: false, message: "requested_effective_from and reason are required." });
