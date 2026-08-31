@@ -526,29 +526,73 @@ export const attendanceEngineService = {
     employeeId: string,
     date: string
   ): Promise<{ minutes: number; sourceSystem: string; sourceReference: string | null }> {
-    const [rows] = await db.execute<RowDataPacket[]>(
-      `SELECT evidence.minutes, evidence.source_system, evidence.source_reference
-       FROM (
-         SELECT COALESCE(SUM(was.total_login_minutes), 0) AS minutes,
-                'wfm_attendance_session' AS source_system,
-                CAST(MAX(was.id) AS CHAR) AS source_reference
-         FROM wfm_attendance_session was
-         WHERE was.employee_id = ? AND was.session_date = ?
-         UNION ALL
-         SELECT COALESCE(MAX(ibd.biometric_minutes), 0) AS minutes,
-                CONCAT('integration:', MAX(ibd.integration_key)) AS source_system,
-                CAST(MAX(ibd.id) AS CHAR) AS source_reference
-         FROM integration_biometric_daily ibd
-         JOIN employees e
-           ON e.id = ?
-          AND (ibd.employee_code = e.employee_code OR ibd.employee_code = e.biometric_code)
-         WHERE ibd.activity_date = ?
-       ) evidence
-       ORDER BY evidence.minutes DESC
-       LIMIT 1`,
-      [employeeId, date, employeeId, date]
+    // Get all sessions for this IST date
+    const [sessRows] = await db.execute<RowDataPacket[]>(
+      `SELECT id, total_login_minutes, current_status, login_time
+       FROM wfm_attendance_session
+       WHERE employee_id = ? AND session_date = ?`,
+      [employeeId, date]
     );
-    const row = rows[0] as any;
+    const sessions = sessRows as any[];
+    let totalMinutes = sessions.reduce((s: number, r: any) => s + Number(r.total_login_minutes ?? 0), 0);
+    const sourceRef = sessions.length > 0 ? String(sessions[sessions.length - 1].id) : null;
+
+    // Night-shift cross-midnight merge: if any session on this IST date is Partial and started
+    // after 20:00 IST, the shift continues into the next calendar day. Add those early-morning
+    // continuation minutes so the full shift is counted against the shift-start date.
+    // Feature flag: night_shift_cross_midnight_merge (default on).
+    const mergeCrossMidnight = await getFeatureFlagBool('night_shift_cross_midnight_merge', true);
+    if (mergeCrossMidnight && sessions.length > 0) {
+      const hasNightStart = sessions.some((s: any) => {
+        if (s.current_status !== 'Partial' || !s.login_time) return false;
+        const loginDate = new Date(s.login_time);
+        // Convert UTC to IST minutes-of-day (IST = UTC + 5h30m = +330 min)
+        const istMinutesOfDay = (loginDate.getUTCHours() * 60 + loginDate.getUTCMinutes() + 330) % 1440;
+        return istMinutesOfDay >= 20 * 60; // after 20:00 IST
+      });
+
+      if (hasNightStart) {
+        const nextDate = nextIstDate(date);
+        const [nextRows] = await db.execute<RowDataPacket[]>(
+          `SELECT total_login_minutes, current_status, login_time
+           FROM wfm_attendance_session
+           WHERE employee_id = ? AND session_date = ?`,
+          [employeeId, nextDate]
+        );
+        for (const s of nextRows as any[]) {
+          if (!s.login_time) continue;
+          const loginDate = new Date(s.login_time);
+          const istMinutesOfDay = (loginDate.getUTCHours() * 60 + loginDate.getUTCMinutes() + 330) % 1440;
+          // Include only early-morning sessions (before 08:00 IST) — these are the tail of the
+          // night shift that started on `date`, not a new shift that began on the next day.
+          if (istMinutesOfDay < 8 * 60) {
+            totalMinutes += Number(s.total_login_minutes ?? 0);
+          }
+        }
+      }
+    }
+
+    if (totalMinutes > 0) {
+      return {
+        minutes: totalMinutes,
+        sourceSystem: 'wfm_attendance_session',
+        sourceReference: sourceRef,
+      };
+    }
+
+    // Fallback: integration_biometric_daily
+    const [intRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COALESCE(MAX(ibd.biometric_minutes), 0) AS minutes,
+              CONCAT('integration:', MAX(ibd.integration_key)) AS source_system,
+              CAST(MAX(ibd.id) AS CHAR) AS source_reference
+       FROM integration_biometric_daily ibd
+       JOIN employees e
+         ON e.id = ?
+        AND (ibd.employee_code = e.employee_code OR ibd.employee_code = e.biometric_code)
+       WHERE ibd.activity_date = ?`,
+      [employeeId, date]
+    );
+    const row = intRows[0] as any;
     const minutes = Number(row?.minutes ?? 0);
     return {
       minutes,
