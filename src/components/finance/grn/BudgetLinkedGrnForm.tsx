@@ -4257,7 +4257,7 @@ function InvoiceComponentsEditor({
     <GrnCard>
       <GrnCardHeader
         title="Invoice components"
-        description="Break the invoice into its GST slabs — add another row if the same invoice carries more than one rate."
+        description="Enter the taxable base (before GST) for each rate slab — not the gross total. For an 18% GST invoice of ₹11,699, enter ₹9,915 (= ÷ 1.18) as the base. Verify that the 'Incl. GST' column matches your invoice total."
         action={
           <Button onClick={onAdd}>
             <Plus className="h-3.5 w-3.5" /> Add component
@@ -4286,7 +4286,7 @@ function InvoiceComponentsEditor({
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <Label className="text-[11px] text-grn-ink-soft">Amount without tax</Label>
+                  <Label className="text-[11px] text-grn-ink-soft">Taxable Base (excl. GST)</Label>
                   <Input
                     type="number"
                     inputMode="decimal"
@@ -4294,7 +4294,7 @@ function InvoiceComponentsEditor({
                     step="0.01"
                     className="h-11 text-right"
                     value={component.amountWithoutTax || ""}
-                    placeholder="0.00"
+                    placeholder="Base, excl. GST"
                     onChange={(event) => onUpdate(component.key, { amountWithoutTax: Number(event.target.value) })}
                   />
                 </div>
@@ -4332,7 +4332,7 @@ function InvoiceComponentsEditor({
           <thead>
             <tr>
               <GrnTh sticky={false} className="w-8">#</GrnTh>
-              <GrnTh sticky={false} align="right" className="w-36">Amount without tax</GrnTh>
+              <GrnTh sticky={false} align="right" className="w-36">Taxable Base (excl. GST)</GrnTh>
               <GrnTh sticky={false} align="right" className="w-24">GST slab</GrnTh>
               <GrnTh sticky={false} align="right" className="w-32">GST Amount</GrnTh>
               <GrnTh sticky={false} align="right" className="w-32">Incl. GST</GrnTh>
@@ -4354,7 +4354,7 @@ function InvoiceComponentsEditor({
                       step="0.01"
                       className="text-right"
                       value={component.amountWithoutTax || ""}
-                      placeholder="0.00"
+                      placeholder="Base excl. GST"
                       onChange={(event) => onUpdate(component.key, { amountWithoutTax: Number(event.target.value) })}
                     />
                   </GrnTd>
