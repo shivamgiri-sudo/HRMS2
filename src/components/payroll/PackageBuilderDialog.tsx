@@ -200,8 +200,9 @@ export function PackageBuilderDialog({
   const similarPkg = useMemo(() => {
     if (!draft.ctc || existingPkgs.length === 0) return null;
     return existingPkgs.find(p => {
-      const monthly = p.package_amount / 12;
-      return Math.abs(monthly - draft.ctc) / draft.ctc < 0.05; // within ±5%
+      // package_amount is stored as monthly CTC (same unit as draft.ctc)
+      const monthly = Number(p.ctc ?? p.package_amount);
+      return monthly > 0 && Math.abs(monthly - draft.ctc) / draft.ctc < 0.05; // within ±5%
     });
   }, [draft.ctc, existingPkgs]);
 

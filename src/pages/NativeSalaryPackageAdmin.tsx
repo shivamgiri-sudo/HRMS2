@@ -11,7 +11,7 @@ import {
   Loader2, Plus, Pencil, ToggleLeft, ToggleRight, IndianRupee, Building2, Layers, Save, X, CheckCircle2,
   Calculator,
 } from 'lucide-react';
-import { calcFromCtc, calcFromInHand, getProfessionalTax, type PkgCalcOptions } from '@/lib/salaryCalculator';
+import { calcFromCtc, calcFromInHand, getProfessionalTax, PT_BY_STATE, type PkgCalcOptions } from '@/lib/salaryCalculator';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface Band { id: string; band_code: string; band_name: string; slab_from: number; slab_to: number; active_status: number; }
@@ -606,6 +606,12 @@ It will stop appearing in salary package dropdowns. Employees already assigned t
                               />
                             </div>
                           ))}
+                          {/* Gratuity provision — informational P&L cost, NOT part of CTC */}
+                          <div className="flex items-center gap-2 mb-2">
+                            <Label className="text-xs w-36 shrink-0 text-slate-400">Gratuity (P&L prov.)</Label>
+                            <Input className="h-8 text-xs flex-1 bg-amber-50 text-amber-600" readOnly
+                              value={editPkg.basic ? fmt(Math.round(editPkg.basic * (15 / 26 / 12))) : '₹0'} />
+                          </div>
                           <div className="flex items-center gap-2 pt-1 border-t mt-1">
                             <Label className="text-xs w-36 font-bold">CTC (Monthly)</Label>
                             <Input className="h-8 text-xs flex-1 bg-blue-50 font-bold text-blue-700" readOnly value={editPkg.ctc ? fmt(editPkg.ctc) : ''} />
