@@ -400,6 +400,7 @@ export default function AttendanceControlTower() {
   const [resyncDateTo, setResyncDateTo] = useState("");
   const [resyncEmpCode, setResyncEmpCode] = useState("");
   const [resyncAutoRepair, setResyncAutoRepair] = useState(true);
+  const [resyncJobId, setResyncJobId] = useState<string | null>(null);
   const [resyncResult, setResyncResult] = useState<null | {
     from: string; to: string; employeeCode: string | null;
     syncResult: any; syncError: string | null;
@@ -410,9 +411,40 @@ export default function AttendanceControlTower() {
   }>(null);
   const resyncDrawerRef = useRef<HTMLDivElement>(null);
 
+  // Poll for job completion every 3 seconds while a job is running
+  const { data: jobPollData } = useQuery({
+    queryKey: ["cosec-resync-job", resyncJobId],
+    queryFn: async () => {
+      const res = await hrmsApi.get<{ success: boolean; data: any }>(
+        `/api/payroll/attendance-control-tower/resync-cosec/status/${resyncJobId}`,
+      );
+      return res.data;
+    },
+    enabled: !!resyncJobId && !resyncResult,
+    refetchInterval: (q) => {
+      const status = q.state.data?.status;
+      if (status === "done" || status === "error") return false;
+      return 3000;
+    },
+  });
+
+  // When job finishes, extract result
+  useMemo(() => {
+    if (!jobPollData) return;
+    const { status, result, error } = jobPollData;
+    if (status === "done" && result) {
+      setResyncResult(result);
+      setResyncJobId(null);
+      refetch();
+    } else if (status === "error") {
+      setResyncJobId(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobPollData]);
+
   const resyncMutation = useMutation({
     mutationFn: async () => {
-      const body: Record<string, string> = {};
+      const body: Record<string, unknown> = {};
       const dateVal = resyncDate.trim();
       const dateToVal = resyncDateTo.trim();
       if (dateVal && dateToVal && dateToVal !== dateVal) {
@@ -422,15 +454,16 @@ export default function AttendanceControlTower() {
         body.date = dateVal;
       }
       if (resyncEmpCode.trim()) body.employeeCode = resyncEmpCode.trim();
-      const res = await hrmsApi.post<{ success: boolean; data: any }>(
+      body.autoRepair = resyncAutoRepair;
+      const res = await hrmsApi.post<{ success: boolean; data: { jobId: string; status: string } }>(
         "/api/payroll/attendance-control-tower/resync-cosec",
-        { ...body, autoRepair: resyncAutoRepair },
+        body,
       );
       return res.data;
     },
     onSuccess: (data) => {
-      setResyncResult(data);
-      refetch();
+      setResyncJobId(data.jobId);
+      setResyncResult(null);
     },
   });
 
@@ -1049,23 +1082,30 @@ export default function AttendanceControlTower() {
                 </div>
               </label>
 
-              {resyncMutation.error && (
+              {(resyncMutation.error || (jobPollData?.status === "error")) && (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs text-red-700">
-                  {(resyncMutation.error as any)?.response?.data?.message ?? "Re-sync failed. Check if COSEC server is reachable."}
+                  {(resyncMutation.error as any)?.response?.data?.message ?? jobPollData?.error ?? "Re-sync failed. Check if COSEC server is reachable."}
                 </div>
               )}
 
               <Button
                 className="w-full h-10 rounded-xl"
                 onClick={() => resyncMutation.mutate()}
-                disabled={!resyncDate || resyncMutation.isPending}
+                disabled={!resyncDate || resyncMutation.isPending || !!resyncJobId}
               >
                 {resyncMutation.isPending ? (
+                  <><RefreshCw className="mr-2 h-4 w-4 animate-spin" /> Starting sync…</>
+                ) : resyncJobId ? (
                   <><RefreshCw className="mr-2 h-4 w-4 animate-spin" /> Syncing from COSEC…</>
                 ) : (
                   <><RotateCcw className="mr-2 h-4 w-4" /> Start Re-sync</>
                 )}
               </Button>
+              {resyncJobId && !resyncResult && (
+                <p className="text-center text-xs text-slate-500 mt-1">
+                  Running in background — checking every 3 seconds…
+                </p>
+              )}
             </div>
 
             {/* Result */}
