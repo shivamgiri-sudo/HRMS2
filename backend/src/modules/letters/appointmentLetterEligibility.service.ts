@@ -19,6 +19,10 @@
  *                'wet_signed_uploaded'), mirroring isChecklistTerminalStatus and
  *                the live payroll gate in payroll-governance.service.ts. Wet
  *                signatures count: they are HR-gated and cannot be self-asserted.
+ *
+ *   Joining kit e-signed = separate from the above: at least one mandatory
+ *                checklist row has actually reached an e-sign/wet-signature
+ *                terminal state, not merely "verified" some other way.
  */
 import type { RowDataPacket } from "mysql2";
 import { db } from "../../db/mysql.js";
@@ -143,6 +147,34 @@ export async function evaluateAppointmentLetterEligibility(employeeId: string): 
       reason: `${total - done} of ${total} mandatory joining documents are still outstanding: ${d?.pending_names ?? "unnamed"}.`,
       severity: "critical",
     });
+  }
+
+  // ── joining kit e-sign ────────────────────────────────────────────────────
+  // Distinct from (and in addition to) joining_documents_incomplete above: that check
+  // only asks whether every mandatory row reached a terminal status, one of which is
+  // 'verified' — a status a document can reach without the candidate ever having
+  // e-signed anything (e.g. HR marking an uploaded copy verified). Appointment letter
+  // issuance requires that the candidate has actually e-signed (or, for the HR-gated
+  // wet-signature path, been verified as wet-signed) at least their joining kit — not
+  // merely that paperwork is "complete" some other way. Only checked when the employee
+  // has any joining-document checklist rows at all; no_joining_documents above already
+  // covers the case where none exist.
+  if (total > 0) {
+    const [esignRows] = await db.execute<RowDataPacket[]>(
+      `SELECT COUNT(*) AS signed_count
+         FROM employee_joining_document_checklist
+        WHERE employee_id = ? AND mandatory = 1
+          AND status IN ('esign_completed', 'signed_verified', 'wet_signed_uploaded')`,
+      [employeeId],
+    ).catch(() => [[]] as unknown as [RowDataPacket[]]);
+    const signedCount = Number((esignRows as RowDataPacket[])[0]?.signed_count ?? 0);
+    if (signedCount === 0) {
+      blockers.push({
+        code: "joining_kit_not_esigned",
+        reason: "The candidate has not e-signed (or had a wet signature verified on) any joining kit document yet.",
+        severity: "critical",
+      });
+    }
   }
 
   // ── branch address (letterhead) ───────────────────────────────────────────

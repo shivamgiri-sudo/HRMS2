@@ -101,7 +101,6 @@ function StatusIcon({ status }: { status: VerifStatus | OverallStatus }) {
 }
 
 const VERIFSTATUSES: VerifStatus[] = ['not_run', 'passed', 'failed', 'partial'];
-const OVERALL_STATUSES: OverallStatus[] = ['pending', 'in_progress', 'clear', 'refer', 'negative'];
 
 function emptyReport(candidateId: string): BGVReport {
   return {
@@ -122,17 +121,6 @@ function emptyReport(candidateId: string): BGVReport {
     overall_status: 'pending', bgv_score: 0, hr_remarks: '',
     locked: false,
   };
-}
-
-function computeScore(r: BGVReport): number {
-  const checks: VerifStatus[] = [r.aadhaar_status, r.pan_status, r.bank_status, r.education_status, r.employment_status, r.address_status, r.criminal_status];
-  const weights = [25, 20, 15, 10, 10, 10, 10];
-  let score = 0;
-  checks.forEach((s, i) => {
-    if (s === 'passed') score += weights[i];
-    else if (s === 'partial') score += Math.round(weights[i] * 0.5);
-  });
-  return Math.min(100, score);
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -182,13 +170,13 @@ export default function BGVReportTab({ candidateId, candidateEmail, candidateNam
     void fetchDigilockerPhotoBase64(candidateId).then(setDigilockerPhoto);
   }, [candidateId]);
 
+  // Score and overall_status are no longer computed client-side: the backend
+  // (computeAndSaveScore, called on every save) is the one canonical formula, so
+  // there is nothing here for a local copy to drift from any more. Editing a check
+  // field just updates that field; the score/status shown stay as last returned by
+  // the server until the next save/sync refreshes them.
   const setF = (key: keyof BGVReport, value: unknown) => {
-    setReport(p => {
-      if (!p) return p;
-      const updated = { ...p, [key]: value };
-      updated.bgv_score = computeScore(updated);
-      return updated;
-    });
+    setReport(p => (p ? { ...p, [key]: value } : p));
   };
 
   const saveReport = async (lock = false) => {
@@ -196,12 +184,33 @@ export default function BGVReportTab({ candidateId, candidateEmail, candidateNam
     setSaving(true);
     try {
       await hrmsApi.post('/api/ats/bgv/report', { ...report, locked: lock || report.locked });
+      // The server recomputes bgv_score and overall_status from the fields just
+      // saved (and, for locked, freezes them) — refetch so what's on screen is the
+      // real persisted verdict, not whatever was in `report` before the save.
+      const r = await hrmsApi.get<any>(`/api/ats/bgv/report?candidateId=${candidateId}`);
+      if (r?.data) setReport(r.data);
       if (lock) {
-        setReport(p => p ? { ...p, locked: true } : p);
         toast({ title: 'Report locked', description: 'BGV report finalised as audit evidence.' });
       } else {
         toast({ title: 'BGV report saved.' });
       }
+    } catch (e: any) {
+      toast({ title: 'Save failed', description: e?.message ?? 'Unknown error', variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  /** The only overall_status a user may set directly: an explicit hard-reject. */
+  const markNegative = async () => {
+    if (!report) return;
+    setF('overall_status', 'negative');
+    setSaving(true);
+    try {
+      await hrmsApi.post('/api/ats/bgv/report', { ...report, overall_status: 'negative', locked: report.locked });
+      const r = await hrmsApi.get<any>(`/api/ats/bgv/report?candidateId=${candidateId}`);
+      if (r?.data) setReport(r.data);
+      toast({ title: 'Marked NEGATIVE', description: 'This candidate is blocked from appointment letter issuance.' });
     } catch (e: any) {
       toast({ title: 'Save failed', description: e?.message ?? 'Unknown error', variant: 'destructive' });
     } finally {
@@ -569,14 +578,24 @@ export default function BGVReportTab({ candidateId, candidateEmail, candidateNam
         <CardContent className="space-y-4">
           <div className="grid md:grid-cols-2 gap-4">
             <div>
-              <Label>Overall Status *</Label>
-              <select disabled={report.locked}
-                className="w-full border rounded px-2 py-1.5 text-sm mt-1 bg-background disabled:opacity-60"
-                value={report.overall_status}
-                onChange={e => setF('overall_status', e.target.value as OverallStatus)}>
-                {OVERALL_STATUSES.map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
-              </select>
-              <p className="text-xs text-slate-400 mt-1">CLEAR = proceed to payroll · REFER = escalate · NEGATIVE = revoke offer</p>
+              <Label>Overall Status (auto-computed)</Label>
+              <div className="mt-2 flex items-center gap-3 flex-wrap">
+                <span className={`text-sm font-bold px-3 py-1 rounded-full ${statusBadge[report.overall_status]}`}>
+                  {report.overall_status.toUpperCase()}
+                </span>
+                {!report.locked && report.overall_status !== 'negative' && (
+                  <Button type="button" size="sm" variant="outline"
+                    className="border-red-300 text-red-700 hover:bg-red-50"
+                    disabled={saving} onClick={() => void markNegative()}>
+                    Mark NEGATIVE (hard reject)
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Computed from the checks above — CLEAR requires every applicable category verified/waived
+                (DigiLocker covers Aadhaar + PAN). REFER means a category came back mismatched/failed.
+                NEGATIVE is the one status a person sets directly, to hard-block appointment letter issuance.
+              </p>
             </div>
             <div>
               <Label>BGV Score (auto-computed)</Label>

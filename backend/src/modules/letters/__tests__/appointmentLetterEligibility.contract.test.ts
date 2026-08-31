@@ -14,7 +14,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 type Rows = Record<string, unknown>[];
 const state: {
-  employee?: Rows; issued?: Rows; bgv?: Rows; docs?: Rows; salary?: Rows;
+  employee?: Rows; issued?: Rows; bgv?: Rows; docs?: Rows; esign?: Rows; salary?: Rows;
 } = {};
 
 vi.mock("../../../db/mysql.js", () => ({
@@ -24,6 +24,7 @@ vi.mock("../../../db/mysql.js", () => ({
       if (s.includes("FROM employees e")) return [state.employee ?? []];
       if (s.includes("FROM appointment_letter_issue")) return [state.issued ?? []];
       if (s.includes("FROM candidate_bgv_report")) return [state.bgv ?? []];
+      if (s.includes("signed_count")) return [state.esign ?? []];
       if (s.includes("employee_joining_document_checklist")) return [state.docs ?? []];
       if (s.includes("salary_component_assignments")) return [state.salary ?? []];
       return [[]];
@@ -46,6 +47,7 @@ function setup(over: Partial<typeof state> = {}) {
   state.issued = [];
   state.bgv = [{ overall_status: "clear", is_auto_approved: 0 }];
   state.docs = [{ mandatory_total: 6, mandatory_done: 6, pending_names: null }];
+  state.esign = [{ signed_count: 1 }];
   state.salary = [{ sca: 1, legacy: 0 }];
   Object.assign(state, over);
 }
@@ -103,6 +105,28 @@ describe("joining documents", () => {
     // one definition of "done" rather than a second competing one.
     expect(TERMINAL_DOCUMENT_STATUSES).toContain("wet_signed_uploaded");
     expect(TERMINAL_DOCUMENT_STATUSES).toContain("esign_completed");
+  });
+});
+
+describe("joining kit e-sign", () => {
+  it("blocks issuance when no mandatory document has ever been e-signed or wet-signed", async () => {
+    setup({ esign: [{ signed_count: 0 }] });
+    const r = await evaluateAppointmentLetterEligibility("emp-1");
+    expect(r.eligible).toBe(false);
+    expect(codes(r)).toContain("joining_kit_not_esigned");
+  });
+
+  it("is satisfied by a single e-signed mandatory document, distinct from joining_documents_incomplete", async () => {
+    setup({ esign: [{ signed_count: 1 }] });
+    const r = await evaluateAppointmentLetterEligibility("emp-1");
+    expect(codes(r)).not.toContain("joining_kit_not_esigned");
+  });
+
+  it("is not checked at all when there is no checklist (no_joining_documents covers that case)", async () => {
+    setup({ docs: [{ mandatory_total: 0, mandatory_done: 0, pending_names: null }], esign: [{ signed_count: 0 }] });
+    const r = await evaluateAppointmentLetterEligibility("emp-1");
+    expect(codes(r)).not.toContain("joining_kit_not_esigned");
+    expect(codes(r)).toContain("no_joining_documents");
   });
 });
 
