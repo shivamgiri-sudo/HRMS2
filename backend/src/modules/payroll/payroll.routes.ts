@@ -405,6 +405,26 @@ router.post(
   }),
 );
 
+router.post(
+  "/attendance-control-tower/lock-regularizations",
+  requireRole("super_admin", "admin", "payroll_head", "payroll_branch", "payroll", "hr", "wfm"),
+  h(async (req: AuthenticatedRequest, res: Response) => {
+    const conflictKeys = Array.isArray(req.body.conflictKeys) ? req.body.conflictKeys.map(String).filter(Boolean) : [];
+    if (conflictKeys.length === 0) {
+      return res.status(400).json({ success: false, message: "Select at least one regularization gap row" });
+    }
+    const invalid = conflictKeys.some((key) => !String(key).startsWith("regularization:"));
+    if (invalid) {
+      return res.status(400).json({ success: false, message: "Only approved_regularization_not_locked_in_adr rows can be locked from this action" });
+    }
+    const data = await payrollAttendanceControlService.lockUnlockedRegularizations({
+      conflictKeys,
+      actorUserId: req.authUser?.id ?? null,
+    });
+    return res.json({ success: true, data, message: "Regularization lock attempt completed" });
+  }),
+);
+
 // ── Async job store for COSEC re-sync (avoids browser HTTP timeout on full-month pulls) ──
 interface CosecResyncJob {
   id: string;

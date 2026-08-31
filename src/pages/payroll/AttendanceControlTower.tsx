@@ -334,6 +334,20 @@ export default function AttendanceControlTower() {
     },
   });
 
+  const lockRegularizations = useMutation({
+    mutationFn: async (conflictKeys: string[]) => {
+      const res = await hrmsApi.post<{ success: boolean; data: { requested: number; locked: number; skipped: number } }>(
+        "/api/payroll/attendance-control-tower/lock-regularizations",
+        { conflictKeys },
+      );
+      return res.data;
+    },
+    onSuccess: () => {
+      setSelected([]);
+      refetch();
+    },
+  });
+
   const repairMissingAdr = useMutation({
     mutationFn: async (conflictKeys: string[]) => {
       const res = await hrmsApi.post<{ success: boolean; data: { requested: number; repaired: number; skipped: number } }>(
@@ -359,6 +373,7 @@ export default function AttendanceControlTower() {
   const selectableRows = rows.filter((row) =>
     row.issueType === "dialler_missing_adr" ||
     row.issueType === "ncosec_missing_adr" ||
+    row.issueType === "approved_regularization_not_locked_in_adr" ||
     ["dialler_penalty_biometric_supports_better", "biometric_penalty_dialler_supports_better"].includes(row.issueType),
   );
   const selectedConflictCount = selected.filter((id) =>
@@ -366,6 +381,9 @@ export default function AttendanceControlTower() {
   ).length;
   const selectedRepairCount = selected.filter((id) =>
     rows.some((row) => row.id === id && (row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr")),
+  ).length;
+  const selectedRegularizationCount = selected.filter((id) =>
+    rows.some((row) => row.id === id && row.issueType === "approved_regularization_not_locked_in_adr"),
   ).length;
   const allSelectableSelected = selectableRows.length > 0 && selectableRows.every((row) => selected.includes(row.id));
   const toggleSelected = (id: string) => {
@@ -573,6 +591,16 @@ export default function AttendanceControlTower() {
         {repairMissingAdr.data && (
           <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
             ✓ Repaired {repairMissingAdr.data.repaired} ADR rows. {repairMissingAdr.data.skipped} rows skipped.
+          </div>
+        )}
+        {lockRegularizations.data && (
+          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            ✓ Locked {lockRegularizations.data.locked} regularizations into ADR. {lockRegularizations.data.skipped} skipped (already locked or protected).
+          </div>
+        )}
+        {lockRegularizations.error && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+            Failed to lock regularizations into ADR.
           </div>
         )}
         {(notifyManagers.error || repairMissingAdr.error) && (
@@ -802,8 +830,14 @@ export default function AttendanceControlTower() {
                   {selected.length} selected
                   {selectedConflictCount > 0 ? ` · ${selectedConflictCount} conflict` : ""}
                   {selectedRepairCount > 0 ? ` · ${selectedRepairCount} ADR-repair` : ""}
+                  {selectedRegularizationCount > 0 ? ` · ${selectedRegularizationCount} regularization` : ""}
                 </span>
                 <div className="flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" className="h-7 text-xs"
+                    onClick={() => lockRegularizations.mutate(selected.filter((id) => rows.some((row) => row.id === id && row.issueType === "approved_regularization_not_locked_in_adr")))}
+                    disabled={lockRegularizations.isPending || selectedRegularizationCount === 0}>
+                    <CheckCircle2 className="mr-1 h-3.5 w-3.5" />Lock Regularizations
+                  </Button>
                   <Button size="sm" variant="outline" className="h-7 text-xs"
                     onClick={() => repairMissingAdr.mutate(selected.filter((id) => rows.some((row) => row.id === id && (row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr"))))}
                     disabled={repairMissingAdr.isPending || selectedRepairCount === 0}>Repair ADR</Button>
@@ -874,6 +908,7 @@ export default function AttendanceControlTower() {
                     >
                       <TableCell className="px-3 py-1.5" onClick={(e) => e.stopPropagation()}>
                         {(row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr" ||
+                          row.issueType === "approved_regularization_not_locked_in_adr" ||
                           ["dialler_penalty_biometric_supports_better", "biometric_penalty_dialler_supports_better"].includes(row.issueType)) ? (
                           <input type="checkbox" className="h-4 w-4 rounded border-slate-300"
                             checked={selected.includes(row.id)} onChange={() => toggleSelected(row.id)}
@@ -958,6 +993,11 @@ export default function AttendanceControlTower() {
                             {(row.issueType === "dialler_missing_adr" || row.issueType === "ncosec_missing_adr") && (
                               <DropdownMenuItem onClick={() => repairMissingAdr.mutate([row.id])} disabled={repairMissingAdr.isPending}>
                                 <RefreshCw className="mr-2 h-4 w-4" /> Repair ADR
+                              </DropdownMenuItem>
+                            )}
+                            {row.issueType === "approved_regularization_not_locked_in_adr" && (
+                              <DropdownMenuItem onClick={() => lockRegularizations.mutate([row.id])} disabled={lockRegularizations.isPending}>
+                                <CheckCircle2 className="mr-2 h-4 w-4" /> Lock into ADR
                               </DropdownMenuItem>
                             )}
                             {row.issueType === "salary_payable_days_mismatch" && row.employeeId && !data?.run?.attendance_snapshot_locked && (

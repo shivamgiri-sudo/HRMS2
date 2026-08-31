@@ -1355,6 +1355,80 @@ export const payrollAttendanceControlService = {
     return { runMonth, updated, requested: params.conflictKeys.length, status: params.status };
   },
 
+  async lockUnlockedRegularizations(params: { conflictKeys: string[]; actorUserId: string | null }) {
+    let locked = 0;
+    let skipped = 0;
+
+    for (const key of params.conflictKeys) {
+      const parts = String(key).split(":");
+      if (parts[0] !== "regularization" || !parts[1]) { skipped++; continue; }
+      const regId = parts[1];
+
+      const [rows] = await db.execute<RowDataPacket[]>(
+        `SELECT ar.id, ar.employee_id,
+                DATE_FORMAT(ar.session_date,'%Y-%m-%d') AS session_date,
+                ar.requested_status,
+                e.branch_id, e.process_id,
+                adr.id AS adr_id, adr.is_locked,
+                adr.regularization_id AS existing_reg_id
+           FROM attendance_regularization ar
+           JOIN employees e ON e.id = ar.employee_id
+           LEFT JOIN attendance_daily_record adr
+                  ON adr.employee_id = ar.employee_id AND adr.record_date = ar.session_date
+          WHERE ar.id = ? AND ar.status = 'approved'
+          LIMIT 1`,
+        [regId],
+      );
+      const row = (rows as any[])[0];
+      if (!row) { skipped++; continue; }
+
+      // Already correctly locked to this regularization — nothing to do
+      if (row.adr_id && Number(row.is_locked) === 1 && row.existing_reg_id === regId) { skipped++; continue; }
+
+      // Locked to a different regularization — don't overwrite
+      if (row.adr_id && Number(row.is_locked) === 1 && row.existing_reg_id && row.existing_reg_id !== regId) { skipped++; continue; }
+
+      const requestedStatus = String(row.requested_status ?? "present");
+      const lwpValue = requestedStatus === "present" ? 0 : requestedStatus === "half_day" ? 0.5 : 1;
+
+      await db.execute(
+        `INSERT INTO attendance_daily_record
+           (id, employee_id, record_date, branch_id, process_id, attendance_source, source_system,
+            source_record_date, source_reference, attendance_status, lwp_value,
+            regularization_id, is_locked, late_mark, late_by_minutes, processed_at, created_by)
+         VALUES (UUID(), ?, ?, ?, ?, 'manual', 'attendance_regularization',
+                 ?, ?, ?, ?, ?, 1, 0, 0, NOW(), 'payroll_attendance_control')
+         ON DUPLICATE KEY UPDATE
+           attendance_status = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(attendance_status), attendance_status),
+           lwp_value         = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(lwp_value), lwp_value),
+           regularization_id = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), VALUES(regularization_id), regularization_id),
+           source_system     = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), 'attendance_regularization', source_system),
+           is_locked         = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), 1, is_locked),
+           processed_at      = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), NOW(), processed_at),
+           created_by        = IF(is_locked = 0 OR regularization_id = VALUES(regularization_id), 'payroll_attendance_control', created_by)`,
+        [row.employee_id, row.session_date, row.branch_id ?? null, row.process_id ?? null,
+         row.session_date, regId, requestedStatus, lwpValue, regId],
+      );
+      locked++;
+    }
+
+    if (locked > 0) {
+      await logSensitiveAction({
+        actor_user_id: params.actorUserId ?? "system",
+        action_type: "REGULARIZATION_ADR_LOCKED",
+        module_key: "payroll",
+        entity_type: "attendance_daily_record",
+        entity_id: `lock:${locked}`,
+        change_summary: {
+          requested: params.conflictKeys.length, locked, skipped,
+          conflict_keys: params.conflictKeys,
+        },
+      });
+    }
+
+    return { requested: params.conflictKeys.length, locked, skipped };
+  },
+
   async getMissingAdrKeys(from: string, to: string, employeeCode?: string) {
     const empFilter = employeeCode ? " AND e.employee_code = ?" : "";
     const values: unknown[] = employeeCode ? [from, to, employeeCode] : [from, to];
