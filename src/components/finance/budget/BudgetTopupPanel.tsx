@@ -1,5 +1,5 @@
 // src/components/finance/budget/BudgetTopupPanel.tsx
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Circle, Clock, PlusCircle, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -488,6 +488,11 @@ export function BudgetTopupPanel({
   const [newLineSubHead, setNewLineSubHead] = useState(presetNewLineSubHead ?? "");
   const [newLineUnit, setNewLineUnit] = useState("");
   const [newLineUnitRate, setNewLineUnitRate] = useState("");
+  /** Group D fix: "Quantity needed" drives the auto-calculated amount below (Quantity × Unit
+   *  rate) for a new-line request. Previously there was no quantity input at all — Unit rate sat
+   *  next to "Additional amount needed" with nothing multiplying it, so the amount had to be
+   *  typed by hand even though the two numbers needed to produce it were right there on screen. */
+  const [newLineQuantity, setNewLineQuantity] = useState("");
   /** How the top-up should be shared across cost centres. "" means the requester will type the
    *  per-cost-centre amounts themselves, which is what this page used to do and only do. */
   const [allocationDriver, setAllocationDriver] = useState("");
@@ -557,6 +562,20 @@ export function BudgetTopupPanel({
   const requestedAmountNumber = Number(requestedAmount) || 0;
   const directAmountNumber = Number(directAmount) || 0;
 
+  /** Auto-calculate "Additional amount needed" from Quantity × Unit rate for a new-line request,
+   *  the same way any budget line's own amount is quantity × rate. Runs only in "new" mode — the
+   *  existing-line tab has no quantity/rate inputs of its own to compute from. The amount field
+   *  stays editable: this only overwrites it when quantity/rate change, so a user can still
+   *  fine-tune the final figure by hand afterward. */
+  useEffect(() => {
+    if (createMode !== "new") return;
+    const quantity = Number(newLineQuantity);
+    const rate = Number(newLineUnitRate);
+    if (Number.isFinite(quantity) && quantity > 0 && Number.isFinite(rate) && rate > 0) {
+      setRequestedAmount(String(Math.round(quantity * rate * 100) / 100));
+    }
+  }, [newLineQuantity, newLineUnitRate, createMode]);
+
   /** Every line returned for this branch+period shares one budget header (availableLines() scopes
    *  on branchId/period), so any line's budget_id stands in for "the current budget's id". Falls
    *  back to the parent workspace's own currentBudgetId when no line exists yet at all — exactly
@@ -573,6 +592,7 @@ export function BudgetTopupPanel({
     setNewLineSubHead("");
     setNewLineUnit("");
     setNewLineUnitRate("");
+    setNewLineQuantity("");
     setAllocationDriver("");
   };
 
@@ -588,6 +608,10 @@ export function BudgetTopupPanel({
         const unitRate = Number(newLineUnitRate);
         if (!(unitRate > 0)) {
           throw new Error("Enter a positive unit rate");
+        }
+        const quantity = Number(newLineQuantity);
+        if (!(quantity > 0)) {
+          throw new Error("Enter a positive quantity");
         }
         if (!budgetIdForNewLine) {
           throw new Error(
@@ -618,7 +642,7 @@ export function BudgetTopupPanel({
           unitRate,
           allocationDriver: allocationDriver || undefined,
           requestedAmount: amount,
-          requestedQuantity: amount / unitRate,
+          requestedQuantity: quantity,
           reason,
           costCentreSplits,
         });
@@ -1046,6 +1070,21 @@ export function BudgetTopupPanel({
                     onChange={(event) => setNewLineUnitRate(event.target.value)}
                   />
                 </div>
+                <div className="col-span-2">
+                  <Label className="text-xs">Quantity needed *</Label>
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    className="mt-1 h-9"
+                    placeholder="e.g. 5"
+                    value={newLineQuantity}
+                    onChange={(event) => setNewLineQuantity(event.target.value)}
+                  />
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    "Additional amount needed" below is auto-calculated as Quantity × Unit rate — edit
+                    it directly if you need to fine-tune the final figure.
+                  </p>
+                </div>
               </div>
             )}
             <div>
@@ -1100,7 +1139,15 @@ export function BudgetTopupPanel({
           <DialogFooter>
             <Button variant="ghost" onClick={() => setCreateOpen(false)}>Cancel</Button>
             <Button
-              disabled={createMutation.isPending || !validateTopupSplits(createSplitRows, requestedAmountNumber).ok}
+              // Group D fix: when a sharing rule is picked, the split editor below is hidden and
+              // createSplitRows stays an empty, unfilled row — so validating it here left Submit
+              // permanently disabled no matter what was chosen. Only require a valid manual split
+              // when the requester is actually doing one (allocationDriver is unset).
+              disabled={
+                createMutation.isPending ||
+                requestedAmountNumber <= 0 ||
+                (!allocationDriver && !validateTopupSplits(createSplitRows, requestedAmountNumber).ok)
+              }
               onClick={() => createMutation.mutate()}
             >
               Submit for branch_head review

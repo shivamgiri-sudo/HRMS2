@@ -1328,7 +1328,11 @@ export const grnSmartService = {
             raiserPickedNoLine: isUnbudgetedRow,
           });
 
-          drawnAmountByLineId.set(String(fundingLine.id), (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + draw.amount);
+          // available_gross_amount = planned_gross − reserved_pnl − consumed_pnl (mixed units).
+          // consumptionBasis() writes the P&L cost (net) for ITC invoices, so within-save netting
+          // must subtract the same unit — net — not the invoice gross. Convert: pnl = gross × (net/gross).
+          const pnlDraw = grossTarget > 0 ? roundMoney(draw.amount * (netTarget ?? grossTarget) / grossTarget) : draw.amount;
+          drawnAmountByLineId.set(String(fundingLine.id), (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + pnlDraw);
           drawnQuantityByLineId.set(String(fundingLine.id), (drawnQuantityByLineId.get(String(fundingLine.id)) ?? 0) + drawQuantity);
         }
       }
@@ -1965,7 +1969,9 @@ export const grnSmartService = {
             );
           }
 
-          drawnAmountByLineId.set(String(fundingLine.id), (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + draw.amount);
+          // Same unit-conversion as saveAllocations: accumulate the P&L cost, not invoice gross.
+          const pnlDrawComp = splitTotalGross > 0 ? roundMoney(draw.amount * splitTotalNet / splitTotalGross) : draw.amount;
+          drawnAmountByLineId.set(String(fundingLine.id), (drawnAmountByLineId.get(String(fundingLine.id)) ?? 0) + pnlDrawComp);
         }
 
         // Residual-rounding correction, per original cell: per-draw multiplication rounding can

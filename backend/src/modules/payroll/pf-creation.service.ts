@@ -506,7 +506,7 @@ export const pfCreationService = {
       params.push(filters.branchId);
     }
     if (filters.search) {
-      whereClauses.push("(e.employee_code LIKE ? OR e.full_name LIKE ?)");
+      whereClauses.push("(e.employee_code LIKE ? OR CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) LIKE ?)");
       params.push(`%${filters.search}%`, `%${filters.search}%`);
     }
 
@@ -518,7 +518,9 @@ export const pfCreationService = {
       `SELECT bi.id, bi.batch_id, bi.employee_id, bi.item_status, bi.error_count,
               bi.validation_errors, bi.validation_warnings,
               bi.epfo_uan_assigned, bi.epfo_member_id_assigned,
-              e.employee_code, e.full_name, e.date_of_joining,
+              e.employee_code,
+              CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS full_name,
+              e.date_of_joining,
               p.uan_masked, p.aadhaar_masked, p.pan_masked,
               p.basic_wage, p.pf_wage, p.pf_applicable,
               p.previous_pf_member, p.previous_eps_member,

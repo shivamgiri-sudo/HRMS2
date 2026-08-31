@@ -122,7 +122,7 @@ export async function reportCatalogAccessMiddleware(
     const roleCanView = catalogCanView || Boolean(roleGrant?.can_view);
 
     // 3. Per-employee grant fallback (user_report_permissions)
-    const userGrant = roleCanView ? null : await getUserReportGrant(req.authUser.id, code);
+    const userGrant = roleCanView ? null : await getUserReportGrant(Number(req.authUser.id), code);
     const canView = roleCanView || Boolean(userGrant?.can_view);
 
     if (!canView) {
@@ -135,7 +135,7 @@ export async function reportCatalogAccessMiddleware(
       const exportRoleGrant = catalogCanExport ? null : (roleGrant ?? await getRoleReportGrant(roles, code));
       const exportUserGrant = (catalogCanExport || Boolean(exportRoleGrant?.can_export))
         ? null
-        : (userGrant ?? await getUserReportGrant(req.authUser.id, code));
+        : (userGrant ?? await getUserReportGrant(Number(req.authUser.id), code));
       const canExport = catalogCanExport
         || Boolean(exportRoleGrant?.can_export)
         || Boolean(exportUserGrant?.can_export);

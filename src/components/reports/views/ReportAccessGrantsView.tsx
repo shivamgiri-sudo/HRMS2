@@ -62,7 +62,7 @@ function EmployeeSearchBox({ onSelect }: { onSelect: (emp: EmployeeRow) => void 
   const [q, setQ] = useState("");
   const { data, isFetching } = useQuery<{ data: EmployeeRow[] }>({
     queryKey: ["emp-search", q],
-    queryFn: () => hrmsApi.get(`/employees?search=${encodeURIComponent(q)}&limit=10`),
+    queryFn: () => hrmsApi.get(`/api/employees?search=${encodeURIComponent(q)}&limit=10`),
     enabled: q.trim().length >= 2,
     staleTime: 10_000,
   });
@@ -114,7 +114,7 @@ function GrantPickerModal({
 
   const { data: catalogData } = useQuery<{ data: CatalogEntry[] }>({
     queryKey: ["report-grant-catalog"],
-    queryFn: () => hrmsApi.get("/reports/access-grants/catalog"),
+    queryFn: () => hrmsApi.get("/api/reports/access-grants/catalog"),
     staleTime: 60_000,
   });
   const catalog = catalogData?.data ?? [];
@@ -127,8 +127,8 @@ function GrantPickerModal({
 
   const addMutation = useMutation({
     mutationFn: (code: string) => mode === "user"
-      ? hrmsApi.post("/reports/access-grants/user", { userId: target, reportCode: code, canExport })
-      : hrmsApi.post("/reports/access-grants/role", { roleKey: target, reportCode: code, canExport }),
+      ? hrmsApi.post("/api/reports/access-grants/user", { userId: target, reportCode: code, canExport })
+      : hrmsApi.post("/api/reports/access-grants/role", { roleKey: target, reportCode: code, canExport }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["report-grants"] });
     },
@@ -204,13 +204,13 @@ function EmployeeGrantsPanel() {
 
   const { data, isLoading, isError } = useQuery<{ data: UserGrant[] }>({
     queryKey: ["report-grants", "user", selectedEmp?.user_id],
-    queryFn: () => hrmsApi.get(`/reports/access-grants/user?userId=${selectedEmp!.user_id}`),
+    queryFn: () => hrmsApi.get(`/api/reports/access-grants/user?userId=${selectedEmp!.user_id}`),
     enabled: !!selectedEmp?.user_id,
   });
   const grants = data?.data ?? [];
 
   const revoke = useMutation({
-    mutationFn: (id: number) => hrmsApi.delete(`/reports/access-grants/user/${id}`),
+    mutationFn: (id: number) => hrmsApi.delete(`/api/reports/access-grants/user/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["report-grants"] }),
   });
 
@@ -324,13 +324,13 @@ function RoleGrantsPanel() {
 
   const { data, isLoading } = useQuery<{ data: RoleGrant[] }>({
     queryKey: ["report-grants", "role", selectedRole],
-    queryFn: () => hrmsApi.get(`/reports/access-grants/role?roleKey=${selectedRole}`),
+    queryFn: () => hrmsApi.get(`/api/reports/access-grants/role?roleKey=${selectedRole}`),
     enabled: !!selectedRole,
   });
   const grants = data?.data ?? [];
 
   const revoke = useMutation({
-    mutationFn: (id: number) => hrmsApi.delete(`/reports/access-grants/role/${id}`),
+    mutationFn: (id: number) => hrmsApi.delete(`/api/reports/access-grants/role/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["report-grants"] }),
   });
 

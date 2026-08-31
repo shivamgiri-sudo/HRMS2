@@ -119,6 +119,56 @@ export function resolvePendingWith(
     return { role: null, label: "Completed", isPending: false };
   }
 
+  /*
+   * The GRN post-approval tail.
+   *
+   * grn_request.status carries nine values past Branch Head that no budget or top-up row ever
+   * holds, and until they were listed here every one of them fell through to "Unknown". That is
+   * not a cosmetic gap: after the db_bill migration 82,247 of 84,818 GRNs sit in exactly these
+   * states (61,353 `approved`, 18,463 `paid`, 2,431 `pending_accounts_payment`), so the GRN
+   * register and the list endpoint reported "Unknown" for 97% of every page — which reads as
+   * "this system does not know what happened to your voucher".
+   *
+   * The split below is the one the workflow actually makes:
+   *
+   *   `approved`                  imprest terminal state — Finance Head approval posts the
+   *                               ledger debit and the voucher is done. Nobody owes anything.
+   *   `pending_accounts_payment`  vendor payable created, Accounts owes the payment run. This is
+   *                               the ONE post-approval state that is still pending, and it is
+   *                               owed by accounts_head, not finance_head.
+   *   `payment_scheduled`         scheduled but not yet remitted — still Accounts'.
+   *   `partially_paid`            some instalments settled, balance outstanding — still Accounts'.
+   *   `paid`                      settled in full. Terminal.
+   *   `consumption_reversed`      budget consumption reversed by Finance Head. Terminal; the row
+   *                               is a historical record, not a queue item.
+   *   `returned_to_raiser` /      sent back for correction. Pending, but on the person who
+   *   `returned_to_branch_head`   raised it / the Branch Head — not on the stage that returned it.
+   *
+   * `returned_to_raiser` reports no stage role, because the raiser is an individual rather than
+   * one of the three approval stages; the label carries the meaning and `isPending` keeps it in
+   * the "still outstanding" counts, which is what the ageing columns need.
+   */
+  if (status === "approved") return { role: null, label: "Approved", isPending: false };
+  if (status === "paid") return { role: null, label: "Paid", isPending: false };
+  if (status === "consumption_reversed") {
+    return { role: null, label: "Consumption reversed", isPending: false };
+  }
+  if (status === "pending_accounts_payment") {
+    return { role: "accounts_head", label: STAGE_LABELS.accounts_head, isPending: true };
+  }
+  if (status === "payment_scheduled") {
+    return { role: "accounts_head", label: "Accounts Head · payment scheduled", isPending: true };
+  }
+  if (status === "partially_paid") {
+    return { role: "accounts_head", label: "Accounts Head · part paid", isPending: true };
+  }
+  if (status === "returned_to_branch_head") {
+    return { role: "branch_head", label: "Returned to Branch Head", isPending: true };
+  }
+  if (status === "returned_to_raiser") {
+    return { role: null, label: "Returned to raiser", isPending: true };
+  }
+
   // An unrecognised status is reported as unknown rather than guessed at. Silently showing
   // "Completed" for a status nobody anticipated is how a stuck request stops being chased.
   return { role: null, label: "Unknown", isPending: false };
