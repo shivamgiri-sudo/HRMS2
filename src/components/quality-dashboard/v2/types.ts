@@ -103,6 +103,8 @@ export interface RoiProjection {
 }
 
 export interface RoiData {
+  is_estimate?: boolean;
+  assumptions_note?: string;
   current_metrics: {
     quality: number;
     conversion: number;

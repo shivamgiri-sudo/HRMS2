@@ -254,7 +254,29 @@ export async function calculateQualityROI(from: string, to: string) {
   `, [from, to]);
 
   const current = data[0];
+  // current.avg_quality is a MySQL DECIMAL, which mysql2 returns as a string. Left as a
+  // string, `current.avg_quality + proj.improvement` below did string concatenation
+  // ("73.45" + 5 -> "73.455") instead of arithmetic. Fixed 2026-09-01.
+  const avgQuality = Number(current.avg_quality ?? 0);
   const conversionRate = (current.sales_count / current.total_calls) * 100;
+
+  // These projections were presented as computed fact (an "×ROI" badge, "Add. Revenue"
+  // in ₹) but rest on two invented, unconfigurable constants: a 1%-quality→0.3%-conversion
+  // correlation with no supporting regression anywhere in this codebase, and a flat
+  // per-sale deal value that was hardcoded in USD ($500) while the UI labels the result
+  // with a ₹ sign — a currency-unit bug on top of the fabrication. No real per-sale value
+  // or cost-per-improvement config exists yet to source these from (see ASSUMPTIONS_NOTE).
+  // Until one does, this stays a labeled illustrative scenario, not a claimed prediction —
+  // no mock metric should be presented as measured fact. Fixed 2026-09-01.
+  const ASSUMED_CONVERSION_LIFT_PER_QUALITY_PCT = 0.003; // 0.3% conversion per 1% quality
+  const ASSUMED_AVG_DEAL_VALUE_INR = 40000; // ₹ — placeholder until real config exists
+  const ASSUMED_COST_PER_QUALITY_PCT_INR = 80000; // ₹ — placeholder until real config exists
+  const ASSUMPTIONS_NOTE =
+    "Illustrative scenario, not a measured prediction. Assumes a 1% quality " +
+    "improvement lifts conversion by 0.3%, an average deal value of " +
+    `₹${ASSUMED_AVG_DEAL_VALUE_INR.toLocaleString("en-IN")}, and an improvement cost of ` +
+    `₹${ASSUMED_COST_PER_QUALITY_PCT_INR.toLocaleString("en-IN")} per 1% of quality gained. ` +
+    "None of these are configured/measured values yet.";
 
   // Projections based on quality improvements
   const projections = [
@@ -262,27 +284,27 @@ export async function calculateQualityROI(from: string, to: string) {
     { improvement: 10, label: '+10% Quality' },
     { improvement: 15, label: '+15% Quality' }
   ].map(proj => {
-    // Empirical: 1% quality improvement = 0.3% conversion improvement
-    const newConversion = conversionRate * (1 + (proj.improvement * 0.003));
+    const newConversion = conversionRate * (1 + (proj.improvement * ASSUMED_CONVERSION_LIFT_PER_QUALITY_PCT));
     const additionalSales = (current.total_calls * (newConversion - conversionRate) / 100);
-    const avgDealValue = 500; // $ - would come from config
-    const additionalRevenue = additionalSales * avgDealValue;
+    const additionalRevenue = additionalSales * ASSUMED_AVG_DEAL_VALUE_INR;
 
     return {
       ...proj,
-      current_quality: current.avg_quality,
-      projected_quality: current.avg_quality + proj.improvement,
+      current_quality: avgQuality,
+      projected_quality: avgQuality + proj.improvement,
       current_conversion: conversionRate.toFixed(2),
       projected_conversion: newConversion.toFixed(2),
       additional_sales: Math.round(additionalSales),
       additional_revenue: Math.round(additionalRevenue),
-      roi_multiple: (additionalRevenue / (proj.improvement * 1000)).toFixed(1) // Assumes $1k per % improvement cost
+      roi_multiple: (additionalRevenue / (proj.improvement * ASSUMED_COST_PER_QUALITY_PCT_INR)).toFixed(1)
     };
   });
 
   return {
+    is_estimate: true,
+    assumptions_note: ASSUMPTIONS_NOTE,
     current_metrics: {
-      quality: current.avg_quality,
+      quality: avgQuality,
       conversion: conversionRate,
       total_calls: current.total_calls,
       total_sales: current.sales_count
