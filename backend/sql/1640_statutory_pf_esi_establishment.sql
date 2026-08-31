@@ -27,4 +27,4 @@ ON DUPLICATE KEY UPDATE
 INSERT IGNORE INTO pf_establishment_master
   (id, establishment_code, establishment_name, active_status)
 VALUES
-  (UUID(), 'DSNHP0032026000', '<ESTABLISHMENT_NAME>', 1);
+  (UUID(), 'DSNHP0032026000', 'MAS CALLNET INDIA PRIVATE LIMITED', 1);
