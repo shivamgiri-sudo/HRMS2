@@ -309,11 +309,33 @@ resignationRouter.post(
     // value. exitService.updateExitStatus already writes to exit_approval_log itself, so the
     // separate logExitStatusChange call below (which this handler used to also make) is
     // removed — keeping both would double-log this one event.
+    //
+    // Was also the one lifecycle route on this router with no FSM precondition at all — every
+    // sibling below (withdraw / mark-clearance-pending / mark-fnf-pending / close) reads the
+    // current status and calls assertValidExitTransition() first. updateExitStatus() itself
+    // does NOT validate that lockedStatus -> 'accepted' is a legal transition — its
+    // expectedStatus param only guards against a race (the row changing between this read and
+    // its own write), not against an illegal one. Without this check, POST .../accept could
+    // silently flip an exit request already 'closed', 'exited', 'rejected', 'revoked' or
+    // 'withdrawn' back to 'accepted' — while employees.active_status (already set to 0 by a
+    // prior 'exited' transition) stays untouched, producing the exact split-state bug
+    // (exit_request says active/in-notice, employees says deactivated) the transactional
+    // rewrite above exists to prevent on the forward path.
+    const [rows] = await db.execute<RowDataPacket[]>(
+      `SELECT status FROM exit_request WHERE id = ? LIMIT 1`,
+      [req.params.exitId]
+    );
+    const current = (rows as RowDataPacket[])[0];
+    if (!current) return res.status(404).json({ success: false, message: "Exit request not found" });
+    const transition = assertValidExitTransition(current.status, "accepted");
+    if (!transition.ok) return res.status(409).json({ success: false, message: transition.message });
+
     const data = await exitService.updateExitStatus(
       req.params.exitId,
       "accepted",
       "Resignation accepted",
-      req.authUser!.id
+      req.authUser!.id,
+      current.status
     );
     return res.json({ success: true, data, message: "Resignation accepted" });
   })
