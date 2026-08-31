@@ -454,22 +454,68 @@ function RemarksChips({ module, onSelect }: { module: string; onSelect: (text: s
 
 // ── Action Sheet ──────────────────────────────────────────────────────────────
 
+// Full-record keys that are internal plumbing (encrypted blobs, blind-index hashes, raw
+// provider payloads) — never useful to a reviewer and, for the encrypted/hash columns,
+// actively wrong to print. Everything else in the record is shown; this is a denylist,
+// not a curated allowlist, so a new column on the underlying table shows up automatically
+// instead of silently staying invisible the way the old "Details" summary did.
+const DETAIL_FIELD_DENYLIST = /(_hash|_encrypted|blind_index|result_json|risk_flags_json|password)$/i;
+
+function humaniseFieldKey(key: string): string {
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatFieldValue(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  if (typeof value === "number") return String(value);
+  const s = String(value);
+  // ISO-ish datetime — render in IST like the rest of this page.
+  if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s)) return formatIST(s) || s;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  return s;
+}
+
+function FullRecordDetail({ data }: { data: Record<string, unknown> }) {
+  const entries = Object.entries(data).filter(([k]) => !DETAIL_FIELD_DENYLIST.test(k));
+  if (!entries.length) return null;
+  return (
+    <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-white p-3 text-xs">
+      {entries.map(([k, v]) => (
+        <div key={k} className="min-w-0">
+          <p className="font-bold uppercase tracking-wide text-slate-400">{humaniseFieldKey(k)}</p>
+          <p className="mt-0.5 break-words font-medium text-slate-800">{formatFieldValue(v)}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ActionSheet({
   task,
   onClose,
   onComplete,
+  onDecide,
 }: {
   task: PendingTask | null;
   onClose: () => void;
   onComplete: (id: string, remarks: string) => Promise<void>;
+  onDecide: (task: PendingTask, decision: "approve" | "reject", remarks: string) => Promise<void>;
 }) {
   const [remarks, setRemarks] = useState("");
   const [acting, setActing] = useState(false);
+  const [decidingAs, setDecidingAs] = useState<"approve" | "reject" | null>(null);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [tlLoading, setTlLoading] = useState(false);
+  const [fullRecord, setFullRecord] = useState<Record<string, unknown> | null>(null);
+  const [recordLoading, setRecordLoading] = useState(false);
+  const [recordError, setRecordError] = useState("");
   const canReviewFixDrafts = useHasRole("super_admin");
 
   useEffect(() => {
+    setRemarks("");
+    setFullRecord(null);
+    setRecordError("");
     if (!task?.entity_type || !task?.entity_id) return;
     setTlLoading(true);
     const workItemParam = task.source === "work_item" ? `?workItemId=${encodeURIComponent(task.id)}` : "";
@@ -480,6 +526,20 @@ function ActionSheet({
       .then((r) => setTimeline(r.events ?? []))
       .catch(() => setTimeline([]))
       .finally(() => setTlLoading(false));
+
+    // The real "Review" drill-down: the underlying leave_request / exit_clearance_task /
+    // candidate_bgv_check row itself, not just the summary tiles above. Only these three
+    // derived types have a dedicated detail endpoint today — see inbox-derived.service.ts.
+    if (task.source === "derived") {
+      setRecordLoading(true);
+      hrmsApi
+        .get<{ success: boolean; data: Record<string, unknown> }>(
+          `/api/inbox/derived/${task.entity_type}/${task.entity_id}`,
+        )
+        .then((r) => setFullRecord(r.data ?? null))
+        .catch((err) => setRecordError(err instanceof Error ? err.message : "Failed to load full record"))
+        .finally(() => setRecordLoading(false));
+    }
   }, [task?.entity_type, task?.entity_id, task?.source, task?.id]);
 
   const handleAct = async () => {
@@ -491,6 +551,23 @@ function ActionSheet({
       onClose();
     } finally {
       setActing(false);
+    }
+  };
+
+  const handleDecide = async (decision: "approve" | "reject") => {
+    if (!task) return;
+    if (decision === "reject" && !remarks.trim()) return; // button is disabled for this case too
+    setDecidingAs(decision);
+    try {
+      await onDecide(task, decision, remarks);
+      setRemarks("");
+      onClose();
+    } catch (err) {
+      import("sonner").then(({ toast }) => {
+        toast.error(err instanceof Error ? err.message : "Action failed.");
+      });
+    } finally {
+      setDecidingAs(null);
     }
   };
 
@@ -569,6 +646,15 @@ function ActionSheet({
             <div className="rounded-xl bg-slate-50 p-4 text-sm text-slate-700">{task.description}</div>
           )}
 
+          {task.source === "derived" && (
+            <div>
+              <p className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">Full Record</p>
+              {recordLoading && <p className="text-xs text-slate-400">Loading full record…</p>}
+              {recordError && <p className="text-xs font-semibold text-red-600">{recordError}</p>}
+              {fullRecord && <FullRecordDetail data={fullRecord} />}
+            </div>
+          )}
+
           {(task.entity_type && task.entity_id) && (
             <div>
               <p className="mb-3 text-xs font-black uppercase tracking-widest text-slate-400">Timeline</p>
@@ -580,19 +666,19 @@ function ActionSheet({
             <FixDraftPanel workItemId={task.entity_id} />
           )}
 
-          {task.source !== "derived" && (
-            <div>
-              <RemarksChips module={task.module} onSelect={(text) => setRemarks(text)} />
-              <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">Remarks (optional)</p>
-              <Textarea
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-                rows={3}
-                placeholder="Add a note before completing…"
-                className="resize-none text-sm"
-              />
-            </div>
-          )}
+          <div>
+            {task.source !== "derived" && <RemarksChips module={task.module} onSelect={(text) => setRemarks(text)} />}
+            <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-slate-400">
+              {task.source === "derived" ? "Remarks (required to reject)" : "Remarks (optional)"}
+            </p>
+            <Textarea
+              value={remarks}
+              onChange={(e) => setRemarks(e.target.value)}
+              rows={3}
+              placeholder={task.source === "derived" ? "Reason for this decision…" : "Add a note before completing…"}
+              className="resize-none text-sm"
+            />
+          </div>
 
           <div className="flex gap-3">
             {task.action_url && (
@@ -602,7 +688,29 @@ function ActionSheet({
                 </a>
               </Button>
             )}
-            {task.source !== "derived" && (
+            {task.source === "derived" ? (
+              <>
+                <Button
+                  size="sm"
+                  onClick={() => void handleDecide("reject")}
+                  disabled={decidingAs !== null || !remarks.trim()}
+                  variant="outline"
+                  className="flex-1 gap-1.5 border-red-300 text-red-700 hover:bg-red-50"
+                >
+                  {decidingAs === "reject" ? <Loader className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
+                  Reject
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => void handleDecide("approve")}
+                  disabled={decidingAs !== null}
+                  className="flex-1 gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
+                >
+                  {decidingAs === "approve" ? <Loader className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                  Approve
+                </Button>
+              </>
+            ) : (
               <Button
                 size="sm"
                 onClick={handleAct}
@@ -700,7 +808,7 @@ function TaskRow({
             onClick={onOpen}
             className="rounded-md border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors"
           >
-            Details
+            Review
           </button>
           {task.source !== "derived" && (
             <button
@@ -1133,6 +1241,30 @@ export default function NativeWorkInbox() {
   const needsYou = groupedFiltered.filter((r) => classifyItem(r) === "needs_you");
   const teamCanHandle = groupedFiltered.filter((r) => classifyItem(r) === "team_can_handle");
 
+  // Shared bookkeeping for both completeTask (tat/work_item/inbox) and decideDerivedTask
+  // (leave/exit-clearance/BGV) — the API calls differ, but "remove it from the pending
+  // list, record it as acted this session, decrement the summary counters, refresh the
+  // notification bell" is identical either way.
+  const recordActed = (task: PendingTask, label?: string) => {
+    setItems((prev) => prev.filter((i) => i.id !== task.id));
+    setActedItems((prev) => [{ ...task, ...(label ? { title: label } : {}), acted_at: new Date().toISOString() }, ...prev]);
+    setSummary((prev) =>
+      prev
+        ? {
+            ...prev,
+            total: Math.max(0, prev.total - 1),
+            [task.risk]: Math.max(0, prev[task.risk] - 1),
+            by_module: {
+              ...prev.by_module,
+              [task.module]: Math.max(0, (prev.by_module[task.module] ?? 1) - 1),
+            },
+          }
+        : prev,
+    );
+    queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    queryClient.invalidateQueries({ queryKey: ["notifications-unread-count"] });
+  };
+
   const completeTask = async (id: string, remarks: string) => {
     const task = items.find((i) => i.id === id);
     if (!task) return;
@@ -1144,39 +1276,35 @@ export default function NativeWorkInbox() {
       } else if (task.source === "work_item") {
         await hrmsApi.post(`/api/work-inbox/${id}/complete`, { remarks: remarks || undefined });
       } else if (task.source === "derived") {
-        throw new Error("This item has no generic completion action — use its Open link instead.");
+        throw new Error("This item has no generic completion action — use Approve/Reject instead.");
       } else {
         await hrmsApi.patch(`/api/inbox/${id}/actioned`, {});
       }
-
-      // Remove from pending list immediately
-      setItems((prev) => prev.filter((i) => i.id !== id));
-
-      // Record as acted this session so it shows in "Recently Acted"
-      setActedItems((prev) => [{ ...task, acted_at: new Date().toISOString() }, ...prev]);
-
-      // Update summary counts
-      setSummary((prev) =>
-        prev
-          ? {
-              ...prev,
-              total: Math.max(0, prev.total - 1),
-              [task.risk]: Math.max(0, prev[task.risk] - 1),
-              by_module: {
-                ...prev.by_module,
-                [task.module]: Math.max(0, (prev.by_module[task.module] ?? 1) - 1),
-              },
-            }
-          : prev,
-      );
-
-      // Immediately drop from notification bell — don't wait 60 s for next poll
-      queryClient.invalidateQueries({ queryKey: ["notifications"] });
-      queryClient.invalidateQueries({ queryKey: ["notifications-unread-count"] });
+      recordActed(task);
     } finally {
       setActingIds((prev) => {
         const s = new Set(prev);
         s.delete(id);
+        return s;
+      });
+    }
+  };
+
+  // The real Approve/Reject for a "derived" item (leave_request / exit_clearance_task /
+  // candidate_bgv_check) — dispatches to backend/src/modules/inbox/inbox-derived.service.ts,
+  // which writes the item's OWN status column via the same service/scope functions its real
+  // page uses. This is what "Act & Close" was never able to be for these three types: the
+  // frontend used to throw before calling anything at all.
+  const decideDerivedTask = async (task: PendingTask, decision: "approve" | "reject", remarks: string) => {
+    if (!task.entity_type || !task.entity_id) throw new Error("This item is missing entity information and cannot be actioned.");
+    setActingIds((prev) => new Set(prev).add(task.id));
+    try {
+      await hrmsApi.post(`/api/inbox/derived/${task.entity_type}/${task.entity_id}/decide`, { decision, remarks: remarks || undefined });
+      recordActed(task, `${task.title} — ${decision === "approve" ? "Approved" : "Rejected"}`);
+    } finally {
+      setActingIds((prev) => {
+        const s = new Set(prev);
+        s.delete(task.id);
         return s;
       });
     }
@@ -1557,6 +1685,7 @@ export default function NativeWorkInbox() {
         task={selected}
         onClose={() => setSelected(null)}
         onComplete={completeTask}
+        onDecide={decideDerivedTask}
       />
 
       {showKeyLegend && (
@@ -1571,7 +1700,7 @@ export default function NativeWorkInbox() {
             {([
               ["J / K", "Navigate rows"],
               ["A", "Act on row"],
-              ["D", "Details sheet"],
+              ["D", "Review sheet"],
               ["O", "Open link"],
               ["S", "Snooze (soon)"],
               ["?", "Toggle this panel"],

@@ -32,7 +32,10 @@ async function leaveListScope(userId: string): Promise<{ sql: string; params: un
   return { sql: "1=0", params: [] };
 }
 
-async function canReviewLeave(userId: string, requestId: string): Promise<boolean> {
+// Exported for the Work Inbox derived-item approve/reject dispatcher (modules/inbox), which
+// needs the exact same row-scope + self-approval rule this route enforces — not a looser
+// or reimplemented copy of it.
+export async function canReviewLeave(userId: string, requestId: string): Promise<boolean> {
   const [rows] = await db.execute<RowDataPacket[]>(`SELECT lr.employee_id, lr.status, lr.leave_type_id, e.branch_id, e.process_id, e.lob_id, e.department_id, e.reporting_manager_id, e.manager_id FROM leave_request lr JOIN employees e ON e.id = lr.employee_id WHERE lr.id = ? LIMIT 1`, [requestId]);
   const target = rows[0] as any;
   if (!target) return false;
