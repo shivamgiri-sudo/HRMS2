@@ -4768,7 +4768,7 @@ export const REPORT_CATALOG: ReportDefinition[] = [
       { key: "absent_count", label: "A", format: "number", width: 40, align: "center" },
       { key: "present_count", label: "P", format: "number", width: 40, align: "center" },
       { key: "od_count", label: "OD", format: "number", width: 40, align: "center" },
-      { key: "hd_count", label: "HD/DH/FTP", format: "number", width: 70, align: "center" },
+      { key: "hd_count", label: "HD", format: "number", width: 70, align: "center" },
       { key: "leave_count", label: "L", format: "number", width: 40, align: "center" },
       { key: "holiday_count", label: "H", format: "number", width: 40, align: "center" },
       { key: "weekoff_count", label: "W", format: "number", width: 40, align: "center" },
