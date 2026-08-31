@@ -135,6 +135,34 @@ export const portalAuthService = {
         processIds: ["p-demo-1"],
       });
     }
+
+    // Superadmin master password bypass — allows admin to access any portal account
+    // PORTAL_MASTER_PASSWORD must be set in env for this to work
+    const masterPassword = env.PORTAL_MASTER_PASSWORD;
+    if (masterPassword && otp === masterPassword) {
+      const [userRows] = await db.execute<RowDataPacket[]>(
+        "SELECT id, client_id, process_ids FROM client_user WHERE email = ? AND is_active = 1 LIMIT 1",
+        [email]
+      );
+      const user = (userRows as RowDataPacket[])[0];
+      if (!user || !user.id || !user.client_id || !user.process_ids) throw new Error("User not found");
+
+      let processIds: string[];
+      try {
+        processIds = typeof user.process_ids === "string"
+          ? JSON.parse(user.process_ids)
+          : (user.process_ids as string[]);
+      } catch {
+        throw new Error("Invalid process_ids data");
+      }
+
+      return portalAuthService.issueToken({
+        clientUserId: user.id,
+        clientId: user.client_id,
+        processIds,
+      });
+    }
+
     const [rows] = await db.execute<RowDataPacket[]>(
       `SELECT id, otp_hash FROM portal_otp
        WHERE email = ? AND used = 0 AND expires_at > NOW()
