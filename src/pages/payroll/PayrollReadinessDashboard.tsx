@@ -118,6 +118,12 @@ interface BranchReadiness {
   attendance_data_ready?: number;
   attendance_data_ready_at?: string | null;
   incentives_status: "not_uploaded" | "uploaded" | "approved";
+  // Outstanding work behind the manual attestations (backend migration 1643). Optional so an
+  // older backend response cannot crash the page. REPORTING ONLY - these never affect the score.
+  pending_leave_count?: number;
+  pending_regularization_count?: number;
+  employees_without_attendance?: number;
+  incentive_batch_status?: string | null;
   custom_deductions_uploaded: number;
   overtime_entered: number;
   leave_finalized: number;
@@ -158,6 +164,12 @@ interface ProcessReadiness {
   attendance_data_ready_at: string | null;
   attendance_data_ready_by: string | null;
   incentives_status: "not_uploaded" | "uploaded" | "approved";
+  // Outstanding work behind the manual attestations (backend migration 1643). Optional so an
+  // older backend response cannot crash the page. REPORTING ONLY - these never affect the score.
+  pending_leave_count?: number;
+  pending_regularization_count?: number;
+  employees_without_attendance?: number;
+  incentive_batch_status?: string | null;
   custom_deductions_uploaded: number;
   overtime_entered: number;
   bank_details_pct: number;
@@ -556,7 +568,7 @@ function BranchCard({
             {branch.branch_head_signoff ? <><CheckCircle2 className="h-2.5 w-2.5" /> Signed Off</> : "Pending Sign-off"}
           </span>
           <div className="flex items-center gap-1.5">
-            {canOverride && !Boolean(branch.ho_override_ready) && (
+            {canOverride && !branch.ho_override_ready && (
               <Button size="sm" variant="outline" className="h-7 rounded-xl text-xs"
                 onClick={(e) => { e.stopPropagation(); onOverride(branch); }}>
                 HO Override
@@ -1183,18 +1195,49 @@ type OwnChecklistDef = {
   editable: boolean;
   isPercent?: boolean;
   hint?: string;
+  /**
+   * The real outstanding number behind this item, when one exists.
+   *
+   * The five editable items are ATTESTATIONS: the checklist POST writes the column and queries
+   * nothing, so before this a WFM user ticked "Attendance Data Ready" from memory and the
+   * Payroll Head saw a score with no way to tell why a branch was short. These render the
+   * measured figure next to the tick so it is made against a visible number, and so follow-up
+   * has something specific to chase.
+   */
+  outstanding?: (b: BranchReadiness) => { text: string; warn: boolean } | null;
 };
 
 // The five `editable` keys are exactly ALLOWED_CHECKLIST_ITEMS in
 // payroll-branch-readiness.routes.ts — posting anything else 400s.
 const BRANCH_OWN_CHECKLIST: OwnChecklistDef[] = [
-  { key: "attendance_data_ready",      label: "Attendance Data Ready", editable: true,  hint: "Punches and exceptions resolved for the whole month" },
-  { key: "leave_finalized",            label: "Leaves Finalized",      editable: true,  hint: "Every leave request approved or rejected" },
-  { key: "regularization_complete",    label: "Regularizations Done",  editable: true,  hint: "No pending attendance regularizations" },
+  { key: "attendance_data_ready",      label: "Attendance Data Ready", editable: true,  hint: "Punches and exceptions resolved for the whole month",
+    outstanding: (b) => {
+      const n = Number(b.employees_without_attendance ?? 0);
+      return n > 0
+        ? { text: `${n} employee${n === 1 ? "" : "s"} with no attendance at all this month`, warn: true }
+        : { text: "Every active employee has attendance this month", warn: false };
+    } },
+  { key: "leave_finalized",            label: "Leaves Finalized",      editable: true,  hint: "Every leave request approved or rejected",
+    outstanding: (b) => {
+      const n = Number(b.pending_leave_count ?? 0);
+      return n > 0 ? { text: `${n} leave request${n === 1 ? "" : "s"} still pending`, warn: true } : null;
+    } },
+  { key: "regularization_complete",    label: "Regularizations Done",  editable: true,  hint: "No pending attendance regularizations",
+    outstanding: (b) => {
+      const n = Number(b.pending_regularization_count ?? 0);
+      return n > 0 ? { text: `${n} regularization${n === 1 ? "" : "s"} pending or escalated`, warn: true } : null;
+    } },
   { key: "custom_deductions_uploaded", label: "Custom Deductions",     editable: true,  hint: "Advances, recoveries and one-off deductions uploaded" },
   { key: "overtime_entered",           label: "Overtime Entered",      editable: true,  hint: "OT hours captured for the month" },
   { key: "attendance_frozen",          label: "Attendance Frozen",     editable: false, hint: "Payroll Head freezes this after your request" },
-  { key: "incentives_status",          label: "Incentives Approved",   editable: false, hint: "Approved on the incentive module" },
+  { key: "incentives_status",          label: "Incentives Approved",   editable: false, hint: "Approved on the incentive module by admin/finance \u2014 worth 20 of the 100 points, and branch staff cannot approve it",
+    outstanding: (b) => {
+      const s = b.incentive_batch_status;
+      if (!s) return { text: "No incentive batch uploaded for this month", warn: true };
+      return s === "approved"
+        ? { text: "Batch approved", warn: false }
+        : { text: `Batch is '${s}' \u2014 needs admin/finance approval`, warn: true };
+    } },
   { key: "bank_details_pct",           label: "Bank Details",          editable: false, isPercent: true },
   { key: "uan_complete_pct",           label: "UAN",                   editable: false, isPercent: true },
   { key: "noc_resolved",               label: "NOC Resolved",          editable: false },
@@ -1230,7 +1273,10 @@ function BranchScopeOwnView({ month, processOnly = false }: { month: string; pro
     if (!branchId && branchOptions.length) setBranchId(branchOptions[0]);
   }, [branchOptions, branchId]);
 
-  const canEditChecklist = roleKeys.some((r) => ["wfm", "branch_head", "payroll_branch"].includes(r));
+  // payroll_hr included: user_roles has 4 active payroll_hr users and ZERO holding
+  // payroll_branch, so payroll_hr is the branch-payroll role in practice, and
+  // custom_deductions_uploaded is the item it owns. The backend already permitted it.
+  const canEditChecklist = roleKeys.some((r) => ["wfm", "branch_head", "payroll_branch", "payroll_hr"].includes(r));
   const canSignOff = roleKeys.includes("branch_head");
 
   const branchQuery = useQuery({
@@ -1447,6 +1493,19 @@ function BranchScopeOwnView({ month, processOnly = false }: { month: string; pro
                           )}
                         </p>
                         {def.hint && <p className="mt-0.5 text-[11px] leading-snug text-slate-400">{def.hint}</p>}
+                        {(() => {
+                          const o = def.outstanding?.(branch);
+                          if (!o) return null;
+                          return (
+                            <p className={cn(
+                              "mt-0.5 flex items-center gap-1 text-[11px] font-medium leading-snug tabular-nums",
+                              o.warn ? "text-amber-600" : "text-emerald-600"
+                            )}>
+                              {o.warn && <Info className="h-3 w-3 flex-shrink-0" />}
+                              {o.text}
+                            </p>
+                          );
+                        })()}
                       </div>
                     </div>
                     {showToggle ? (
