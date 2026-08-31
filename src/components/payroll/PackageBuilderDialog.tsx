@@ -228,7 +228,8 @@ export function PackageBuilderDialog({
     const esic_employer = o.includeEsic && gross <= 21000 ? r2(gross * 0.0325) : 0;
     const gratuity      = r2((d.basic || 0) * (15 / 26 / 12));
     const admin_charges = o.includePf ? r2(pfBase * ADMIN_RATE) : 0;
-    const ctc = r2(gross + epf_employer + esic_employer + gratuity + admin_charges);
+    // Gratuity is a statutory accrual shown as a P&L provision — NOT part of monthly CTC.
+    const ctc = r2(gross + epf_employer + esic_employer + admin_charges);
     return { ...d, gross, epf_employee, esic_employee, professional_tax, net_in_hand, epf_employer, esic_employer, gratuity, admin_charges, ctc, package_amount: ctc };
   }, [getOpts]);
 
