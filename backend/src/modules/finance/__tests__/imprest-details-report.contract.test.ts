@@ -48,7 +48,12 @@ const REFERENCE_ROWS = [
 
 function scriptLedger(rows: unknown[], openingCredits: number, openingDebits: number) {
   execute.mockImplementation(async (sql: string) => {
-    if (/SUM\(CASE WHEN l\.direction='credit'/.test(sql) && /transaction_date < \?/.test(sql)) {
+    // The opening query is the aggregate one with a single upper bound; the rows query has no
+    // SUM at all. Matched on `< ?` rather than on `transaction_date < ?` because the windowing
+    // predicate is now the EFFECTIVE_DATE CASE expression — a row whose transaction_date is the
+    // '0000-00-00' the db_bill backfill wrote has to be windowed by its period_code instead, or
+    // every one of them lands in every window's opening balance.
+    if (/SUM\(CASE WHEN l\.direction='credit'/.test(sql) && /<\s*\?/.test(sql)) {
       return [[{ credits: openingCredits, debits: openingDebits }], []];
     }
     return [rows, []];
