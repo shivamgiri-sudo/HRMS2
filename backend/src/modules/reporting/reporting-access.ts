@@ -74,7 +74,7 @@ export async function reportScopeMiddleware(
 }
 
 /** Returns the active per-employee grant for (userId, reportCode), or null. */
-async function getUserReportGrant(userId: number, reportCode: string) {
+async function getUserReportGrant(userId: string | number, reportCode: string) {
   const [rows] = await db.execute<RowDataPacket[]>(
     `SELECT can_view, can_export FROM user_report_permissions
      WHERE user_id = ? AND report_code = ? AND active_status = 1
