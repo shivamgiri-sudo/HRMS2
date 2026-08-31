@@ -65,7 +65,7 @@ esiRegDocsRouter.get(
          e.id                                              AS employee_id,
          e.employee_code,
          CONCAT(e.first_name, ' ', COALESCE(e.last_name,'')) AS name,
-         COALESCE(b.name, e.branch, '')                   AS branch,
+         COALESCE(b.branch_name, e.branch, '')             AS branch,
          e.esic_number,
          (SELECT COUNT(*) FROM employee_documents ed
           WHERE ed.employee_id = e.id
@@ -87,7 +87,7 @@ esiRegDocsRouter.get(
                                                           AS bank_ready
        FROM employees e
        LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
-       LEFT JOIN branches b ON b.id = e.branch_id
+       LEFT JOIN branch_master b ON b.id = e.branch_id
        WHERE ${whereClause}
        ORDER BY e.employee_code
        LIMIT ? OFFSET ?`,
@@ -356,7 +356,7 @@ esiRegDocsRouter.get(
       `SELECT
          e.employee_code,
          CONCAT(e.first_name,' ',COALESCE(e.last_name,'')) AS name,
-         COALESCE(b.name, e.branch, '')                   AS branch,
+         COALESCE(b.branch_name, e.branch, '')             AS branch,
          e.esic_number,
          e.pan_number,
          (SELECT ebd.bank_name FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id ORDER BY ebd.created_at DESC LIMIT 1) AS bank_name,
@@ -368,7 +368,7 @@ esiRegDocsRouter.get(
          (SELECT COUNT(*) FROM employee_bank_detail ebd WHERE ebd.employee_id = e.id AND ebd.ifsc_code IS NOT NULL) > 0 AS bank_ready
        FROM employees e
        LEFT JOIN employee_statutory_info esi ON esi.employee_id = e.id
-       LEFT JOIN branches b ON b.id = e.branch_id
+       LEFT JOIN branch_master b ON b.id = e.branch_id
        WHERE ${whereParts.join(" AND ")}
        ORDER BY e.employee_code`,
       params
