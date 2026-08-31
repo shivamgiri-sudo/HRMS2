@@ -609,7 +609,6 @@ export function PackageBuilderDialog({
                 ['epf_employer',  includePf ? 'PF Employer (12%)' : 'PF Employer (off)'],
                 ['esic_employer', includeEsic && draft.gross <= 21000 ? 'ESIC Employer (3.25%)' : 'ESIC Employer (off/exempt)'],
                 ['admin_charges', includePf ? 'Admin Charges (1%)' : 'Admin Charges (off)'],
-                ['gratuity',      'Gratuity Monthly Provision'],
               ].map(([field, label]) => (
                 <div key={field} className="flex items-center gap-2">
                   <Label className="text-[11px] w-32 shrink-0 text-slate-500 truncate">{label}</Label>
@@ -635,11 +634,6 @@ export function PackageBuilderDialog({
                 <p className="text-slate-400 mb-0.5">Annual Take-Home</p>
                 <p className="font-bold text-base text-emerald-400 tabular-nums">{inr(draft.net_in_hand * 12)}</p>
                 <p className="text-slate-500 text-[10px]">{takeHomePct}% of gross</p>
-              </div>
-              <div>
-                <p className="text-slate-400 mb-0.5">Annual Gratuity</p>
-                <p className="font-semibold tabular-nums text-amber-300">{inr(draft.gratuity * 12)}</p>
-                <p className="text-slate-500 text-[10px]">P&L provision</p>
               </div>
               <div>
                 <p className="text-slate-400 mb-0.5">Annual Bonus (Bonus Act)</p>
