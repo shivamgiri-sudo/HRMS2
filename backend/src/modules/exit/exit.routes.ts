@@ -281,6 +281,22 @@ exitRouter.get("/:id", h(async (req: AuthenticatedRequest, res: Response) => {
     const emp = await getEmployeeForUser(userId);
     if (!emp) return res.status(403).json({ success: false, message: "Forbidden" });
     (req as any).resolvedEmployeeId = emp.id;
+  } else {
+    // The privileged branch had no row-level scope check at all — unlike GET
+    // /:id/clearance and PATCH /:id/clearance/:taskId in this same file (delta-audit
+    // 2026-08-14, P1), any user holding manager/finance/payroll (not just that
+    // employee's own manager) could pull exit detail for any employee company-wide by
+    // enumerating exit-request IDs. admin/hr keep canViewEmployee's own bypass. Fixed
+    // 2026-09-01.
+    const [exitRows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id FROM exit_request WHERE id = ?`,
+      [req.params.id]
+    );
+    const employeeId = (exitRows[0] as any)?.employee_id;
+    if (!employeeId) return res.status(404).json({ success: false, message: "Exit request not found" });
+    if (!(await canViewEmployee(userId, String(employeeId)))) {
+      return res.status(403).json({ success: false, message: "This exit request is outside your assigned scope" });
+    }
   }
   return exitController.getExitRequest(req, res);
 }));
@@ -295,6 +311,19 @@ exitRouter.get(
   requireRole("admin", "hr", "manager", "finance", "payroll"),
   h(async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params;
+
+    // Same gap as GET /:id above: requireRole only, no row-level scope check — any
+    // manager/finance/payroll user could pull full exit detail (reason, notice dates,
+    // approval timeline) for any employee company-wide. Fixed 2026-09-01.
+    const [scopeRows] = await db.execute<RowDataPacket[]>(
+      `SELECT employee_id FROM exit_request WHERE id = ?`,
+      [id]
+    );
+    const scopeEmployeeId = (scopeRows[0] as any)?.employee_id;
+    if (!scopeEmployeeId) return res.status(404).json({ success: false, message: "Exit request not found" });
+    if (!(await canViewEmployee(req.authUser!.id, String(scopeEmployeeId)))) {
+      return res.status(403).json({ success: false, message: "This exit request is outside your assigned scope" });
+    }
 
     // Full exit record with employee, manager, branch, process, department
     const [rows] = await db.execute<RowDataPacket[]>(
